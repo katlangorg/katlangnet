@@ -1077,7 +1077,8 @@ public class BranchLazyModuleLoadingTests
 
     [Theory]
     [InlineData("F(1, 2)", false)]
-    [InlineData("[(1, 2)].map(F)", false)]
+    [InlineData("reduce([1], F, 2)", false)]
+    [InlineData("[(1, 2)].map(F)", true)]
     [InlineData("F()", true)]
     [InlineData("F", true)]
     [InlineData("Box.F", true)]

@@ -290,41 +290,37 @@ public class CallbackNestedPatternBindingTests
         }
     }
 
-    // ── The reducer's accumulator-slot route (top-level collecting accumulator) ──
+    // ── The reducer's collecting accumulator side: the accumulator is ONE argument ──
 
     /// <summary>
-    /// Initial accumulators and the ordinary-call spelling of the SAME supply: a reducer with
-    /// a top-level collecting accumulator parameter receives the element followed by the
-    /// accumulator's one-level slots, so the ordinary call supplies those slots as written
-    /// arguments (a slot is collected exactly in both: final there, a non-lone written slot
-    /// or a lone list here).
+    /// Initial accumulators for the collecting accumulator side: the reducer is an ordinary
+    /// two-argument callback (THE CALLBACK LAW), so `reduce([E], R, A)` binds exactly as the
+    /// ordinary call `R(E, A)` — the accumulator is ONE argument whatever its value, and a
+    /// collecting accumulator parameter collects it as one item.
     /// </summary>
-    private static readonly (string Initial, string Slots)[] Accumulators =
-    [
-        ("0", "0"),
-        ("(1, 2)", "1, 2"),
-        ("((1, 2), 3)", "(1, 2), 3"),
-        ("[1, 2]", "[1, 2]"),
-    ];
+    private static readonly string[] Accumulators = ["0", "(1, 2)", "((1, 2), 3)", "[1, 2]", "()", "[]"];
 
     [Theory]
     [MemberData(nameof(Patterns))]
-    public void AccumulatorSlotReducers_BindTheElementLikeTheOrdinaryCallWithTheSameSupply(string pattern, string names)
+    public void CollectingAccumulatorReducers_BindLikeTheOrdinaryTwoArgumentCall(string pattern, string names)
     {
         var reducer = $"R({pattern}, *acc) = [{names}, acc]\n";
         foreach (var value in Values)
         {
-            foreach (var (initial, slots) in Accumulators)
+            foreach (var initial in Accumulators)
             {
                 AssertEqualOutcome(
-                    Run(reducer + $"R({value}, {slots})"),
+                    Run(reducer + $"R({value}, {initial})"),
                     Run(reducer + $"reduce([{value}], R, {initial})"),
-                    $"reduce([{value}], R, {initial}) vs R({value}, {slots}) for {pattern}");
+                    $"reduce([{value}], R, {initial}) vs R({value}, {initial}) for {pattern}");
             }
         }
 
-        // The documented example, pinned by value.
-        AssertDisplay("R((a, *r), *acc) = [a, r, acc]\nreduce([7], R, (1, 2))\nR(7, 1, 2)", "[7, [], [1, 2]]\n[7, [], [1, 2]]");
+        // The documented example, pinned by value: the accumulator (1, 2) is one
+        // collected item, and only the spread call supplies its two items.
+        AssertDisplay(
+            "R((a, *r), *acc) = [a, r, acc]\nreduce([7], R, (1, 2))\nR(7, (1, 2))\nR(7, (1, 2)*)",
+            "[7, [], [(1, 2)]]\n[7, [], [(1, 2)]]\n[7, [], [1, 2]]");
     }
 
     // ── The explorer's direct/callback template pairs are related, value by value ──

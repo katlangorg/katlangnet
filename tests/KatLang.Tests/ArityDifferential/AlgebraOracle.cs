@@ -24,14 +24,9 @@ namespace KatLang.Tests.ArityDifferential;
 /// StructureItems                   CoreArityAlgebra.structureItems? (= Result.structureItems?)
 /// OpenLoneStructure                CoreArityAlgebra.openLoneStructure
 /// IsLoneStructure                  CoreArityAlgebra.loneStructure
-/// OracleOrigin / Written / Final   CoreArityAlgebra.Origin / written / final (= SupplyOrigin on
-///                                  ParameterPatternInput, recorded by collectVariadicCallItems)
-/// Values                           CoreArityAlgebra.values
-/// LoneWrittenSeq                   CoreArityAlgebra.loneWrittenSeq?
-/// CollectorSupply                  CoreArityAlgebra.collectorSupply (= KatLang.lean collectorSupply)
-/// FuseCollectorSegment             CoreArityAlgebra.fuseCollectorSegment
 /// BindPats                         CoreArityAlgebra.bindPats
-/// BindArgs                         CoreArityAlgebra.bindArgs = bindPats ∘ fuseCollectorSegment
+/// BindArgs                         CoreArityAlgebra.bindArgs = bindPats (the call supply binds as it is:
+///                                  one item per non-spread argument, the operand's items per spread)
 /// BindDeconstruct                  CoreArityAlgebra.bindDeconstruct = bindPats ∘ openLoneStructure
 /// SpreadSupply (stars >= 1)        items, then (stars-1) × (items ∘ capture)
 ///                                  — CoreArityAlgebraProofs.repeated_spread_cardinality,
@@ -97,25 +92,6 @@ public sealed record OraclePat(string Name, bool Collecting)
 {
     public static OraclePat Fixed(string name) => new(name, false);
     public static OraclePat Collect(string name) => new(name, true);
-}
-
-/// <summary>
-/// Slot provenance of one supplied call item (CoreArityAlgebra.Origin; full
-/// model: <c>SupplyOrigin</c>). <see cref="Written"/> is a non-spread written
-/// slot; <see cref="Final"/> is an item an explicit spread already produced
-/// (or any other established supply: pattern-opened items, loop state slots,
-/// the reducer's accumulator slots).
-/// </summary>
-public enum OracleOrigin
-{
-    Written,
-    Final,
-}
-
-/// <summary>One supplied call item with its slot provenance (one element of CoreArityAlgebra.CallSupply).</summary>
-public readonly record struct OracleSlot(OracleVal Value, OracleOrigin Origin)
-{
-    public override string ToString() => Origin == OracleOrigin.Written ? $"{Value.Neutral}·w" : $"{Value.Neutral}·f";
 }
 
 public static class AlgebraOracle
@@ -239,80 +215,21 @@ public static class AlgebraOracle
             .ToArray();
     }
 
-    /// <summary>Lean: <c>CoreArityAlgebra.written</c> — a plain supply tagged as non-spread written slots.</summary>
-    public static IReadOnlyList<OracleSlot> Written(IReadOnlyList<OracleVal> supply) =>
-        supply.Select(v => new OracleSlot(v, OracleOrigin.Written)).ToArray();
-
-    /// <summary>Lean: <c>CoreArityAlgebra.final</c> — a plain supply tagged as final items (an explicit spread's output).</summary>
-    public static IReadOnlyList<OracleSlot> Final(IReadOnlyList<OracleVal> supply) =>
-        supply.Select(v => new OracleSlot(v, OracleOrigin.Final)).ToArray();
-
-    /// <summary>Lean: <c>CoreArityAlgebra.values</c> — forgets the slot provenance.</summary>
-    public static IReadOnlyList<OracleVal> Values(IReadOnlyList<OracleSlot> callSupply) =>
-        callSupply.Select(s => s.Value).ToArray();
-
     /// <summary>
-    /// Lean: <c>CoreArityAlgebra.loneWrittenSeq?</c> — the ONE segment shape the
-    /// collector supply-boundary law rewrites: exactly one WRITTEN slot holding
-    /// a sequence value, projected to its items; null for every other segment.
-    /// </summary>
-    public static IReadOnlyList<OracleVal>? LoneWrittenSeq(IReadOnlyList<OracleSlot> segment) =>
-        segment is [{ Origin: OracleOrigin.Written, Value: OracleVal.SeqVal seq }] ? seq.Items : null;
-
-    /// <summary>
-    /// Lean: <c>CoreArityAlgebra.collectorSupply</c> (full model: <c>KatLang.lean
-    /// collectorSupply</c>, applied by the two parameter-pattern binders to the
-    /// segment they allocate to the collecting binding). THE COLLECTOR
-    /// SUPPLY-BOUNDARY LAW (September 2026): a segment that is exactly one lone
-    /// written sequence value stands for the collector's whole supply, opening
-    /// exactly one level (<c>Coll((1, 2))</c> is <c>[1, 2]</c>, <c>Coll(())</c>
-    /// is <c>[]</c>); every other segment — several items, a list, a scalar, or
-    /// a final item even when it is the lone item — is collected exactly.
-    /// (Theorems: collector_lone_written_sequence_opens,
-    /// collector_lone_written_empty_sequence_is_empty, collector_lone_list_is_exact,
-    /// collector_explicit_spread_item_is_final, collector_opening_is_one_level.)
-    /// </summary>
-    public static IReadOnlyList<OracleVal> CollectorSupply(IReadOnlyList<OracleSlot> segment) =>
-        LoneWrittenSeq(segment) ?? Values(segment);
-
-    /// <summary>
-    /// Lean: <c>CoreArityAlgebra.fuseCollectorSegment</c> — the collector law as
-    /// a call-supply preparation: locate the segment the fixed prefix/suffix
-    /// positions leave to the single collecting pattern and, when that segment
-    /// is the fusing shape, replace it by the sequence's items; otherwise the
-    /// supply's values are used as supplied. (Theorems:
-    /// fuseCollectorSegment_final, fuseCollectorSegment_written_lone_seq,
-    /// fuseCollectorSegment_written_lone_list, collector_opens_after_suffix_allocation.)
-    /// </summary>
-    public static IReadOnlyList<OracleVal> FuseCollectorSegment(
-        IReadOnlyList<OraclePat> patterns, IReadOnlyList<OracleSlot> callSupply)
-    {
-        var index = patterns.ToList().FindIndex(p => p.Collecting);
-        if (index < 0)
-            return Values(callSupply);
-
-        var suffixCount = patterns.Count - index - 1;
-        var segmentLength = Math.Max(0, callSupply.Count - suffixCount - index);
-        var segment = callSupply.Skip(index).Take(segmentLength).ToArray();
-        var fused = LoneWrittenSeq(segment);
-        if (fused is null)
-            return Values(callSupply);
-
-        return Values(callSupply.Take(index).ToArray())
-            .Concat(fused)
-            .Concat(Values(callSupply.Skip(callSupply.Count - suffixCount).ToArray()))
-            .ToArray();
-    }
-
-    /// <summary>
-    /// Lean: <c>CoreArityAlgebra.bindArgs</c> = <c>bindPats ps ∘ fuseCollectorSegment ps</c>
-    /// — call-argument binding consumes the supplied slots exactly, except at the
-    /// collector's own boundary (<see cref="CollectorSupply"/>). On final items
-    /// (<c>F(A*)</c>) it IS the shared binder (bindArgs_final).
+    /// Lean: <c>CoreArityAlgebra.bindArgs</c> = <c>bindPats</c> — call-argument
+    /// binding consumes the supplied items AS THEY ARE (VALUES STAY VALUES,
+    /// September 2026): a call's supply holds ONE item per non-spread argument,
+    /// whatever its value, plus the immediate items of each explicitly spread
+    /// operand (<see cref="Items"/>), so a fixed capture takes one item unchanged
+    /// and a collector collects exactly its allocated items (THE EXACT COLLECTOR
+    /// LAW; Theorems: bindArgs_eq_bindPats, collector_lone_argument_is_one_item,
+    /// collector_spread_argument_is_its_items, fixed_parameter_binds_item_unchanged).
+    /// A callback element and a reducer's accumulator are ordinary arguments too
+    /// (THE CALLBACK LAW): <c>map([E], F)</c> binds <c>BindArgs(F, [E])</c>.
     /// </summary>
     public static IReadOnlyList<(string Name, OracleVal Value)>? BindArgs(
-        IReadOnlyList<OraclePat> patterns, IReadOnlyList<OracleSlot> callSupply) =>
-        BindPats(patterns, FuseCollectorSegment(patterns, callSupply));
+        IReadOnlyList<OraclePat> patterns, IReadOnlyList<OracleVal> callSupply) =>
+        BindPats(patterns, callSupply);
 
     /// <summary>
     /// Lean: <c>CoreArityAlgebra.bindDeconstruct</c> — assignment

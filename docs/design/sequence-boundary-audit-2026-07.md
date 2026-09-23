@@ -124,7 +124,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 2,283 surface cases is in the machine-readable report
+all 2,286 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -300,7 +300,12 @@ while lists stay exact (`variadic_collect_distinguishes_spread_list`,
 `receivers_never_same_on_lone_list`) — see `AGENTS.md` and
 `docs/design/language-rules/sequences-lists-and-calls.md` § Collecting parameters. The correction pass additionally routed flat
 callbacks with a top-level variadic parameter through the shared prefix/collecting/suffix binder,
-so `[7].map(Collect)` collects `items = [7]`.)*
+so `[7].map(Collect)` collects `items = [7]`. Superseded once more in September 2026 by
+VALUES STAY VALUES: a collector never opens an argument, so `F(V)` collects `[V]` for a
+sequence and a list alike and never coincides with `F(V*)`
+(`variadic_collect_distinguishes_spread_seq` / `_list`,
+`receivers_never_same_on_lone_structure`), and every callback element is one ordinary
+argument bound exactly as the direct call — the flat-callback row convention is gone.)*
 
 **Unresolved design choices (pre-existing, unchanged):** zero-item root output
 displaying as empty text (not reconstructable as a program).
@@ -320,7 +325,7 @@ relates the direct and callback spellings.)*
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**2,242 surface cases** as of this update — the surface corpus minus its 41
+(**2,245 surface cases** as of this update — the surface corpus minus its 41
 parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, `1 ; 2`, and `open count, Lib`, which
 are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
@@ -370,12 +375,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,283 | 2,074 template cases (61 receiver templates x 34 values) + 209 specials; outcomes 1,946 ok / 296 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 2,242 | the 2,283 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 2,286 | 2,074 template cases (61 receiver templates x 34 values) + 212 specials; outcomes 1,947 ok / 298 err / 41 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 2,245 | the 2,286 above minus the 41 parse-level cases (34 `indexNeg__*` + seven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 2,256 | 2,242 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 2,259 | 2,245 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 2,283 attempted, 2,242 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 41 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 2,286 attempted, 2,245 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 41 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -398,10 +403,10 @@ open-target dedup, inline blocks, dotted paths, ownership-first shadowing,
 nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
-2,283 surface cases, 41 parse-level exclusions, 2,242 Lean-representable
+2,286 surface cases, 41 parse-level exclusions, 2,245 Lean-representable
 surface cases, and 14 internal-node cases. The September 2026 "zero-argument
 value demand follows actual call arity" change extended the surface corpus with seven specials pinning that a collecting-only callable is a
-zero-argument value while a required fixed parameter beside a collector is not. The September 2026 Boolean review added eight scalar/nested Boolean value forms crossed with all receiver templates, and the September 2026 "dot-call passes a value" correction added the three dotted-collecting templates `dotCollectingViaProp` / `literalDotCollecting` / `fluentSpreadCollecting` (57 templates in all), which differentially pin `x.F == F(x)`, `(v).F == F((v))`, and `x*.F == F(x*)` for every corpus value. The September 2026 S3 correction (callback binding uses the ordinary call's nested-pattern rules) added the four templates `patternHead` / `patternHeadMap` / `patternPair` / `patternPairMap` (61 templates in all): each spelling is pinned against Lean for every corpus value — a nested head-plus-collector pattern and a nested fixed pair, called directly and as a `map` callback — and `CallbackNestedPatternBindingTests.ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall` relates the two spellings value by value (`map([v], P)` maps `v` exactly as `P(v)` binds it).
+zero-argument value while a required fixed parameter beside a collector is not. The September 2026 Boolean review added eight scalar/nested Boolean value forms crossed with all receiver templates, and the September 2026 "dot-call passes a value" correction added the three dotted-collecting templates `dotCollectingViaProp` / `literalDotCollecting` / `fluentSpreadCollecting` (57 templates in all), which differentially pin `x.F == F(x)`, `(v).F == F((v))`, and `x*.F == F(x*)` for every corpus value. The September 2026 S3 correction (callback binding uses the ordinary call's nested-pattern rules) added the four templates `patternHead` / `patternHeadMap` / `patternPair` / `patternPairMap` (61 templates in all): each spelling is pinned against Lean for every corpus value — a nested head-plus-collector pattern and a nested fixed pair, called directly and as a `map` callback — and `CallbackNestedPatternBindingTests.ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall` relates the two spellings value by value (`map([v], P)` maps `v` exactly as `P(v)` binds it). The September 2026 explicit-value-opening decision (values stay values: a non-spread argument is one item at every collector, and a callback element is one ordinary argument, with no flat-callback row convention) re-pinned every collecting template's sequence cells as one collected item (`Coll((1, 2))` is `[(1, 2)]`), turned `mapPairSwapOk` into the structural-pattern form `Swap((a, b))`, and added three specials: `mapPairSwapFlatIsArity` (the flat two-parameter callback is the ordinary arity error), `callbackMixedCollectingRowPattern` (the structural row pattern beside `callbackMixedCollectingRow`, whose flat form is now an arity error), and `callbackCollectingElementIsOneArgument` (a collecting callback counts one argument per element, a sequence and a list alike).
 
 Corpus fidelity note (M11, August 2026): NO corpus Lean program is
 hand-transcribed any more. `LeanAstEncoder` prints the Lean constructor form of

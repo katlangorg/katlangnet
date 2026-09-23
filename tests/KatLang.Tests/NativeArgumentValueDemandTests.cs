@@ -255,7 +255,7 @@ public class NativeArgumentValueDemandTests
         => AssertEval("F(x) = Math.Abs(x)\nF(0 - 9)", 9);
 
     /// <summary>
-    /// The counted tier still wins for a flat-callback invocation, so a native
+    /// The counted tier still wins for a callback invocation, so a native
     /// used directly as a callback reads its callback-bound argument (the
     /// established <c>map(abs)</c> behavior).
     /// </summary>

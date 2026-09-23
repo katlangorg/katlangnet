@@ -58,36 +58,24 @@ public enum ReceiverLaw
     CAPTURE_CANONICALIZES_SUPPLY,
 
     /// <summary>
-    /// A collecting binding collects exactly the segment allocated to it as one
-    /// list — no erasure, no normalization — at every segment shape except the
-    /// ONE the collector supply-boundary law rewrites
-    /// (<see cref="COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL"/>).
+    /// THE EXACT COLLECTOR LAW (September 2026): a collecting binding collects
+    /// exactly the items allocated to it as one list — no erasure, no
+    /// normalization, and no opening of any item: a non-spread argument is ONE
+    /// item whatever its value, so `Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])`
+    /// is `[[1, 2]]`, `Coll(())` is `[()]`, and only the caller's explicit
+    /// spread supplies a value's items.
     /// </summary>
     COLLECT_PRESERVES_EXACT_SUPPLY,
 
     /// <summary>
-    /// THE COLLECTOR SUPPLY-BOUNDARY LAW (September 2026): when the segment
-    /// allocated to a collecting parameter is exactly one lone NON-SPREAD
-    /// (written) sequence value, that sequence provides the collector's whole
-    /// supply, opening exactly one level — `Coll((1, 2))` is `[1, 2]`,
-    /// `Coll(())` is `[]`, `Coll(((1, 2), 3))` is `[(1, 2), 3]`. Lists stay
-    /// exact, several items are collected exactly, and fixed prefix/suffix
-    /// positions are allocated BEFORE the law reads the segment. The rule reads
-    /// only slot provenance (written slot vs explicit-spread item), never how
-    /// the value was computed.
+    /// Items an explicit spread produced are established supplied items that
+    /// nothing reopens: a lone spread-produced structured item is collected
+    /// exactly (`Coll([(1, 2)]*)` is `[(1, 2)]`, `Coll([()]*)` is `[()]`,
+    /// `Coll([[1, 2]]*)` is `[[1, 2]]`) — spread opens exactly one level.
     /// </summary>
-    COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL,
+    SPREAD_ITEMS_ARE_NEVER_REOPENED,
 
-    /// <summary>
-    /// Items an explicit spread produced are FINAL supplied items: a lone
-    /// spread-produced sequence value is collected exactly (`Coll([(1, 2)]*)`
-    /// is `[(1, 2)]`), so writing a value's items as literal slots and
-    /// spreading the value coincide except when the item view is exactly one
-    /// sequence value.
-    /// </summary>
-    COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL,
-
-    /// <summary>Mixed fixed/collecting parameter lists bind front and back fixed captures first and apply the collector law to exactly the middle segment.</summary>
+    /// <summary>Mixed fixed/collecting parameter lists bind front and back fixed captures first and collect exactly the middle segment.</summary>
     COLLECT_SEGMENT_ALLOCATION,
 
     /// <summary>
@@ -97,23 +85,21 @@ public enum ReceiverLaw
     /// shape (a stored property, an inline group, a nested group, a list
     /// literal, a captured spread) — so it never satisfies arity by its item
     /// count, a fixed parameter binds it whole, and a collecting parameter
-    /// binds it through the collector supply-boundary law exactly as for the
-    /// written call (a lone written sequence receiver opens one level, a list
-    /// receiver stays one item). Same allocation, same diagnostics, receiver
-    /// evaluated once, before the written arguments. The spread marker opens a
-    /// receiver into final items (<see cref="FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL"/>).
+    /// collects it exactly as for the written call (a sequence receiver and a
+    /// list receiver alike stay one item). Same allocation, same diagnostics,
+    /// receiver evaluated once, before the written arguments. Only the spread
+    /// marker opens a receiver into items (<see cref="FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL"/>).
     /// </summary>
     DOTTED_CALL_EQUALS_DIRECT_REWRITE,
 
-    /// <summary>A spread receiver keeps the supply: operand*.F lowers to the lexical call F(operand*); its items are final.</summary>
+    /// <summary>A spread receiver keeps the supply: operand*.F lowers to the lexical call F(operand*).</summary>
     FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL,
 
     /// <summary>
     /// Parentheses around a spread are the capture receiver: (A*).F dot-calls F
-    /// on ONE captured value — F((A*)) — for every callee. That capture is a
-    /// WRITTEN slot, so at a lone collector the collector supply-boundary law
-    /// applies to it (a captured multi-item supply is a sequence value and
-    /// opens one level), while the fluent A*.F supplies final items.
+    /// on ONE captured value — F((A*)) — for every callee. That capture is one
+    /// argument, so a lone collector collects it as one item, while the fluent
+    /// A*.F supplies the items.
     /// </summary>
     GROUPED_SPREAD_RECEIVER_CAPTURES,
 
@@ -133,15 +119,14 @@ public enum ReceiverLaw
     CALLBACK_ELEMENT_IS_ONE_INVOCATION_VALUE,
 
     /// <summary>
-    /// A whole iterated element is ONE written slot of the callback call, so a
-    /// single-collecting callback binds it through the collector supply-boundary
-    /// law: a sequence element opens one level, a list or scalar element is one
-    /// exact collected slot.
+    /// THE CALLBACK LAW (September 2026): a whole iterated element is ONE
+    /// ordinary argument of the callback call, bound exactly as the direct call
+    /// with that element: a single-collecting callback collects it as one item
+    /// and a multi-parameter flat callee rejects it with the ordinary arity
+    /// error — a sequence and a list element alike. There is no row convention;
+    /// only an explicit pattern opens an element.
     /// </summary>
-    CALLBACK_ITEM_IS_A_WRITTEN_SLOT,
-
-    /// <summary>A multi-parameter flat callee opens a lone SEQUENCE element into row slots; exact-list elements stay opaque and arity-error.</summary>
-    CALLBACK_FLAT_ROW_CONVENTION,
+    CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT,
 
     /// <summary>A nested sequence-value parameter pattern opens exactly one boundary of a sequence OR list element.</summary>
     CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
@@ -188,22 +173,20 @@ public static class ReceiverLaws
         [ReceiverLaw.CAPTURE_CANONICALIZES_SUPPLY] =
             "CoreArityAlgebra: capture; CoreArityAlgebraProofs: capture_singleton, capture_items_of_canonical, capture_items_of_list; KatLangArityLaws: capture_spreadItems_of_canonical_non_list, capture_spreadItems_of_list",
         [ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY] =
-            "CoreArityAlgebra: collect; CoreArityAlgebraProofs: collect_is_list, collect_singleton, collector_many_items_are_exact, collector_lone_list_is_exact, variadic_collect_value_grouped_list/_spread; KatLangArityLaws: collectSegment_eq_listValue, collectSegment_singleton, collector_many_items_are_exact, collector_lone_scalar_is_exact, collector_lone_list_is_exact",
-        [ReceiverLaw.COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL] =
-            "CoreArityAlgebra: collectorSupply / fuseCollectorSegment / bindArgs; CoreArityAlgebraProofs: collector_lone_written_sequence_opens, collector_lone_written_empty_sequence_is_empty, collector_opening_is_one_level, variadic_collect_written_seq_eq_spread, receivers_agree_on_lone_seq_lone_collecting; "
-            + "KatLangArityLaws: collector_lone_sequence_opens_once, collector_lone_empty_sequence_is_empty_supply, collector_opening_is_non_recursive, collector_binder_lone_written_sequence_binds_items, selection_origin_does_not_change_collector_binding; KatLang.lean collectorSupply; C# Evaluator.CollectorSupply; CoreTests CollectorSupplyBoundary; CollectorSupplyBoundaryTests",
-        [ReceiverLaw.COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL] =
-            "CoreArityAlgebraProofs: collector_explicit_spread_item_is_final, fuseCollectorSegment_final, bindArgs_final; KatLangArityLaws: collector_explicit_spread_item_is_final, collector_binder_lone_final_sequence_is_exact; KatLang.lean collectVariadicCallItems (spread items carry SupplyOrigin.finalItem)",
+            "CoreArityAlgebra: collect / bindArgs = bindPats; CoreArityAlgebraProofs: collect_is_list, collect_singleton, bindArgs_eq_bindPats, collector_lone_argument_is_one_item, collector_lone_sequence_is_one_item, collector_lone_list_is_one_item, collector_lone_empty_values_are_one_item, collector_many_items_are_exact, variadic_collect_value_grouped; "
+            + "KatLangArityLaws: collectSegment_eq_listValue, collectSegment_singleton, collector_lone_sequence_is_one_item, collector_lone_list_is_one_item, collector_lone_empty_values_are_one_item, collector_binder_two_written_items_are_exact, selection_origin_does_not_change_collector_binding; C# Evaluator.CollectSegment; CoreTests ExplicitValueOpening; ExplicitValueOpeningTests",
+        [ReceiverLaw.SPREAD_ITEMS_ARE_NEVER_REOPENED] =
+            "CoreArityAlgebraProofs: collector_spread_argument_is_its_items, collector_spread_supply_is_collected, collector_spread_opening_is_one_level, variadic_collect_value_spread; KatLangArityLaws: explicit_spread_opens_one_level, collector_collects_spread_items_exactly; CoreTests ExplicitValueOpening spreadItemsAreNeverReopened",
         [ReceiverLaw.COLLECT_SEGMENT_ALLOCATION] =
-            "CoreArityAlgebraProofs: bindPats_collect_exact, bindPats_middle_collecting, collector_opens_after_suffix_allocation, collector_opens_after_prefix_allocation, collector_multi_item_segment_after_suffix_is_exact; KatLangArityLaws: bindParameterPatternList_middle_collecting_binds_collect (leading/trailing twins), collector_binder_opens_after_suffix_allocation",
+            "CoreArityAlgebraProofs: bindPats_collect_exact, bindPats_middle_collecting, collector_lone_segment_after_suffix_is_exact, collector_lone_segment_after_prefix_is_exact, collector_multi_item_segment_after_suffix_is_exact, collector_lone_middle_is_exact_and_spread_opens; KatLangArityLaws: bindParameterPatternList_middle_collecting_binds_collect (leading/trailing twins), collector_binder_lone_segment_after_suffix_is_exact, collector_binder_multi_item_segment_after_suffix_is_exact",
         [ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE] =
             "AGENTS.md dot-call passes a value; KatLang.lean prepareLexicalDotCallArgs / callLexicalWithReceiverCounted (the receiver is the ordinary leading argument of the ONE evalResolvedCallCounted funnel); "
-            + "KatLangArityLaws: dot_receiver_is_ordinary_leading_argument, dot_receiver_slot_is_a_written_slot, dot_receiver_count_never_satisfies_arity, dot_call_uses_same_collector_binding_as_plain_call; "
+            + "KatLangArityLaws: dot_receiver_is_ordinary_leading_argument, argumentless_dot_receiver_is_the_one_argument, dot_receiver_is_one_collected_item, dot_receiver_count_never_satisfies_arity, dot_call_uses_same_collector_binding_as_plain_call; "
             + "C# Evaluator.BuildLexicalReceiverCallArgs + BuildCallArgumentInputs; DotCallValueBoundaryTests, DotCallCollectingReceiverTests, DottedReceiverEvaluationTests (receiver charged once)",
         [ReceiverLaw.FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL] =
             "AGENTS.md: operand*.Member(...) lowers to Member(operand*, ...); C# parser fluent dot-chain lowering (spread receiver becomes the leading argument slot); KatLangArityLaws: spread_dot_receiver_is_ordinary_spread_argument",
         [ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES] =
-            "CoreArityAlgebra: capture, then bindArgs on a written slot; tutorial spec spread-capture-count ((A*).count = 3); KatLangArityLaws: capture_spreadItems_of_list, dot_receiver_slot_is_a_written_slot; StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply",
+            "CoreArityAlgebra: capture, then bindArgs on one argument; tutorial spec spread-capture-count ((A*).count = 3); KatLangArityLaws: capture_spreadItems_of_list, dot_receiver_is_one_collected_item; StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply",
         [ReceiverLaw.DECONSTRUCTION_OPENS_LONE_STRUCTURE] =
             "CoreArityAlgebra: openLoneStructure/bindDeconstruct; CoreArityAlgebraProofs: deconstruct_fixed_single_sequence_opens, deconstruct_singleton_eq_args_items; KatLangArityLaws: deconstruct_fixed_single_list_opens, deconstruct_collecting_single_list_opens",
         [ReceiverLaw.DECONSTRUCTION_RHS_CAPTURE_BOUNDARY] =
@@ -214,10 +197,8 @@ public static class ReceiverLaws
             "AGENTS.md A vs A() cache rule (same value, cache bypass only); C# ZeroArgPropertyResultCacheTests.ExplicitZeroArgCallBypassesCache",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_INVOCATION_VALUE] =
             "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial map contract (item is what S:i returns, nested values stay intact)",
-        [ReceiverLaw.CALLBACK_ITEM_IS_A_WRITTEN_SLOT] =
-            "KatLang.lean bindCountedCallbackParameterPatternList (a whole item is a writtenSlot input; collectorSupply then applies); CoreTests CollectorSupplyBoundary callbacksUseTheSameLaw; CollectorSupplyBoundaryTests.Callbacks_UseTheSameLaw_ThroughTheOrdinaryCallbackBinder",
-        [ReceiverLaw.CALLBACK_FLAT_ROW_CONVENTION] =
-            "KatLang.lean bindCountedCallbackParams + unpackArgs (final-arg unpack; lists stay one item); AGENTS.md flat-callback row convention",
+        [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT] =
+            "KatLang.lean evalUserCallbackCallCounted (the ONE ordinary counted binder bindCountedParameterPatternList over the supplied callback arguments; no row convention); CoreArityAlgebra: bindCallback; CoreArityAlgebraProofs: callback_is_the_ordinary_call, callback_element_is_one_ordinary_argument, callback_two_fixed_rejects_structured_element; CoreTests ExplicitValueOpening callbacksPassEachElementAsOneArgument / callbackBindingMatchesTheDirectCall; ExplicitValueOpeningTests",
         [ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY] =
             "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.sequenceValuePatternItems: structureItems? with the scalar one-item fallback at every group size, the SAME rule bindParameterPattern uses for the ordinary call)",
         [ReceiverLaw.REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT] =

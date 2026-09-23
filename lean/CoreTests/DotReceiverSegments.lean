@@ -14,18 +14,15 @@ open KatLang (Pattern CondBranch)
 -- `evalResolvedCallCounted` funnel): the receiver is ONE ordinary leading
 -- argument whatever it is — a stored property, a written group `(10, 20)`, a
 -- brace block, a list literal, a capture of a spread `(Pair*)`, `()` — so its
--- item count never satisfies arity and a FIXED parameter binds it whole. What a
--- COLLECTING parameter then binds is decided by the collector supply-boundary
--- law (`collectorSupply`, September 2026) exactly as for the written call: the
--- segment allocated to the collector after the fixed prefix/suffix positions
--- is collected exactly, except that a segment that is ONE lone written
--- (non-spread) sequence value opens one level — so `Pair.NItems` is
--- `NItems(Pair)` is 2, `[1, 2].Collect` is `[[1, 2]]`, and `(1, 2).G` with
--- `G(*middle, last)` binds `last` to the whole pair. The spread marker is the
--- other way to open a receiver: `Pair*.F(args)` is the ordinary spread call
--- `F(Pair*, args)`, whose items are already final. The guards below pin the
--- dotted spelling against its written rewrite for every callee shape (fixed,
--- collecting, prefix/collector/suffix, patterned).
+-- item count never satisfies arity and a FIXED parameter binds it whole. A
+-- COLLECTING parameter then collects the arguments allocated to it after the
+-- fixed prefix/suffix positions EXACTLY (THE EXACT COLLECTOR LAW, September
+-- 2026) — a sequence and a list alike — so `Pair.NItems` is `NItems(Pair)` is
+-- 1, `[1, 2].Collect` is `[[1, 2]]`, and `(1, 2).G` with `G(*middle, last)`
+-- binds `last` to the whole pair. The spread marker is the ONLY way to open a
+-- receiver: `Pair*.F(args)` is the ordinary spread call `F(Pair*, args)`. The
+-- guards below pin the dotted spelling against its written rewrite for every
+-- callee shape (fixed, collecting, prefix/collector/suffix, patterned).
 
 def expectInnermostTypeMismatch (result : Except Error (List Int)) : Bool :=
   match result with
@@ -60,24 +57,23 @@ def runReceiverSymmetryCase (receiverProp calleeProp : Prod String Algorithm)
   runFlat (.algorithmExpr (algPrivate [] [] [receiverProp, calleeProp] [out]))
 
 -- Pair normalizes to the two-item sequence it contains; the dotted receiver
--- and the written argument are the SAME one written sequence-valued slot. It
--- is the lone collector's whole segment, so the collector supply-boundary law
--- opens it one level: `values = [10, 20]`, count 2.
-def sequenceValueReceiverLeadingVariadicOpensOneLevel : Bool :=
+-- and the written argument are the SAME one argument, and the collector
+-- collects it exactly: `values = [(10, 20)]`, count 1.
+def sequenceValueReceiverLeadingVariadicIsOneArgument : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.dotCall (resolve "Pair") "NItems" none)) [2] &&
+    (.dotCall (resolve "Pair") "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "NItems") [resolve "Pair"])) [2]
+    (.call (resolve "NItems") [resolve "Pair"])) [1]
 
-#guard sequenceValueReceiverLeadingVariadicOpensOneLevel
+#guard sequenceValueReceiverLeadingVariadicIsOneArgument
 
 -- The spread receiver `Pair*.NItems` is the written spread call
--- `NItems(Pair*)`: two final slots, collected as one exact list of count 2.
--- The CAPTURE of the spread `(Pair*)` is one written sequence value again —
--- `(Pair*).NItems` is `NItems((Pair*))` — and, being the lone collector's
--- whole segment, it opens one level to the same count 2: for a SEQUENCE value
--- at a lone collector the grouped and the spread spellings coincide.
+-- `NItems(Pair*)`: two items, collected as one exact list of count 2. The
+-- CAPTURE of the spread `(Pair*)` is one sequence value again —
+-- `(Pair*).NItems` is `NItems((Pair*))` — and so ONE argument (count 1): the
+-- grouped and the spread spellings differ for a sequence value exactly as for
+-- a list.
 def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
@@ -85,87 +81,85 @@ def sequenceValueReceiverSpreadFeedsItemSupply : Bool :=
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.call (resolve "NItems") [sequenceSpread (resolve "Pair")])) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "NItems" none)) [2] &&
+    (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "NItems") [sequenceSpreadReceiver (resolve "Pair")])) [2]
+    (.call (resolve "NItems") [sequenceSpreadReceiver (resolve "Pair")])) [1]
 
 #guard sequenceValueReceiverSpreadFeedsItemSupply
 
 -- BeforeLastCount(*values, last): the dotted spelling assembles exactly the
--- written call's slots. `Pair.BeforeLastCount(99)` is
--- `BeforeLastCount(Pair, 99)` — the suffix takes 99 FIRST, and the segment
--- left to the collector is the lone written sequence slot, which opens one
--- level (collected count 2); the spread receiver supplies Pair's two final
--- items before the suffix (count 2); the captured spread is one written
--- sequence slot again (count 2).
+-- written call's arguments. `Pair.BeforeLastCount(99)` is
+-- `BeforeLastCount(Pair, 99)` — the suffix takes 99 FIRST, and the collector
+-- collects the one remaining argument exactly (count 1); the spread receiver
+-- supplies Pair's two items before the suffix (count 2); the captured spread
+-- is one argument again (count 1).
 def sequenceValueReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
   let suffixArgs : List KatLang.Expr := [.num 99]
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.dotCall (resolve "Pair") "BeforeLastCount" (some suffixArgs))) [2] &&
+    (.dotCall (resolve "Pair") "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "BeforeLastCount") [resolve "Pair", .num 99])) [2] &&
+    (.call (resolve "BeforeLastCount") [resolve "Pair", .num 99])) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.dotCall (sequenceSpread (resolve "Pair")) "BeforeLastCount" (some suffixArgs))) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
     (.call (resolve "BeforeLastCount") [sequenceSpread (resolve "Pair"), .num 99])) [2] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "BeforeLastCount" (some suffixArgs))) [2] &&
+    (.dotCall (sequenceSpreadReceiver (resolve "Pair")) "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase sequenceValuePairReceiverProp callee
-    (.call (resolve "BeforeLastCount") [sequenceSpreadReceiver (resolve "Pair"), .num 99])) [2]
+    (.call (resolve "BeforeLastCount") [sequenceSpreadReceiver (resolve "Pair"), .num 99])) [1]
 
 #guard sequenceValueReceiverWithSuffixMatchesCanonicalCalls
 
 -- Values emits two top-level values, which reach a caller as ONE sequence
--- value `(10, 20)`. The ordinary forms pass that one written sequence-valued
--- slot, which the lone collector opens one level (count 2); the spread forms
--- supply two final slots (count 2); the captured spread is one written
--- sequence slot (count 2). Dot-call and written call agree within each shape.
+-- value `(10, 20)`. The ordinary forms pass that one argument, which the lone
+-- collector collects exactly (count 1); the spread forms supply two items
+-- (count 2); the captured spread is one argument (count 1). Dot-call and
+-- written call agree within each shape.
 def multiOutputReceiverCountsMatchCanonicalCalls : Bool :=
   let callee := ("NItems", receiverSymmetryNItemsAlg)
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (resolve "Values") "NItems" none)) [2] &&
+    (.dotCall (resolve "Values") "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "NItems") [resolve "Values"])) [2] &&
+    (.call (resolve "NItems") [resolve "Values"])) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpread (resolve "Values")) "NItems" none)) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.call (resolve "NItems") [sequenceSpread (resolve "Values")])) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "NItems" none)) [2] &&
+    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "NItems" none)) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "NItems") [sequenceSpreadReceiver (resolve "Values")])) [2]
+    (.call (resolve "NItems") [sequenceSpreadReceiver (resolve "Values")])) [1]
 
 #guard multiOutputReceiverCountsMatchCanonicalCalls
 
 -- BeforeLastCount(*values, last) over the multi-output property: the same
--- three shapes, each agreeing with its written rewrite, and all count 2 —
--- the suffix takes 99 and the collector's segment is the lone written
--- sequence value (opened one level) or its two final items.
+-- three shapes, each agreeing with its written rewrite — the suffix takes 99
+-- and the collector collects the one remaining argument (count 1) or the
+-- spread's two items (count 2).
 def multiOutputReceiverWithSuffixMatchesCanonicalCalls : Bool :=
   let callee := ("BeforeLastCount", receiverSymmetryBeforeLastCountAlg)
   let suffixArgs : List KatLang.Expr := [.num 99]
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (resolve "Values") "BeforeLastCount" (some suffixArgs))) [2] &&
+    (.dotCall (resolve "Values") "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "BeforeLastCount") [resolve "Values", .num 99])) [2] &&
+    (.call (resolve "BeforeLastCount") [resolve "Values", .num 99])) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpread (resolve "Values")) "BeforeLastCount" (some suffixArgs))) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.call (resolve "BeforeLastCount") [sequenceSpread (resolve "Values"), .num 99])) [2] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "BeforeLastCount" (some suffixArgs))) [2] &&
+    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "BeforeLastCount" (some suffixArgs))) [1] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "BeforeLastCount") [sequenceSpreadReceiver (resolve "Values"), .num 99])) [2]
+    (.call (resolve "BeforeLastCount") [sequenceSpreadReceiver (resolve "Values"), .num 99])) [1]
 
 #guard multiOutputReceiverWithSuffixMatchesCanonicalCalls
 
 -- SumPlusLast(*values, last) with no extra argument receives exactly one
--- written sequence value. Fixed positions are allocated BEFORE the collector
--- law reads its segment: the suffix `last` takes that value whole, the
--- collector's segment is empty, and the numeric body fails — in the dotted
--- spelling exactly as in the written one. The lone-sequence opening never
--- reaches a fixed position.
+-- sequence-valued argument. Fixed positions are allocated BEFORE the
+-- collector collects its segment: the suffix `last` takes that value whole,
+-- the collector's segment is empty, and the numeric body fails — in the
+-- dotted spelling exactly as in the written one.
 def ordinaryMultiOutputReceiverStaysOneSlotAtSuffixAllocation : Bool :=
   let callee := ("SumPlusLast", receiverSymmetrySumAlg)
   expectInnermostTypeMismatch (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
@@ -193,39 +187,43 @@ def capturedSpreadReceiverIsOneValueAtSuffixAllocation : Bool :=
 
 #guard capturedSpreadReceiverIsOneValueAtSuffixAllocation
 
--- With an extra written argument the suffix takes it from the back and the
--- collector's segment is the receiver: the spread receiver supplies the final
--- items [10, 20] (sum 35), and the captured spread is one written sequence
--- slot that is the collector's whole segment, so it opens one level to the
--- same [10, 20] (sum 35) — each agreeing with its written rewrite.
+-- With an extra argument the suffix takes it from the back and the
+-- collector's segment is the receiver: the spread receiver supplies the items
+-- [10, 20] (sum 35), while the captured spread is ONE argument, collected as
+-- `[(10, 20)]`, whose sequence element the numeric sum rejects — each
+-- agreeing with its written rewrite.
 def spreadReceiverWithSuffixArgSuppliesSlots : Bool :=
   let callee := ("SumPlusLast", receiverSymmetrySumAlg)
+  let rejectsElement (out : KatLang.Expr) : Bool :=
+    match runReceiverSymmetryCase multiOutputValuesReceiverProp callee out with
+    | Except.error err => innermostIsBadArity err
+    | _ => false
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpread (resolve "Values")) "SumPlusLast" (some [.num 5]))) [35] &&
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.call (resolve "SumPlusLast") [sequenceSpread (resolve "Values"), .num 5])) [35] &&
-  expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "SumPlusLast" (some [.num 5]))) [35] &&
-  expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
-    (.call (resolve "SumPlusLast") [sequenceSpreadReceiver (resolve "Values"), .num 5])) [35]
+  rejectsElement
+    (.dotCall (sequenceSpreadReceiver (resolve "Values")) "SumPlusLast" (some [.num 5])) &&
+  rejectsElement
+    (.call (resolve "SumPlusLast") [sequenceSpreadReceiver (resolve "Values"), .num 5])
 
 #guard spreadReceiverWithSuffixArgSuppliesSlots
 
 -- A written inline group receiver is ONE value: `(10, 20).NItems` is
--- `NItems((10, 20))`, exactly like the written call — one written sequence
--- slot, which the lone collector opens one level (count 2). The spread group
--- `(10, 20)*.NItems` is `NItems(10, 20)`: two final items, count 2.
-def inlineGroupReceiverOpensOneLevelAtLoneCollector : Bool :=
+-- `NItems((10, 20))`, exactly like the written call — one argument, which the
+-- lone collector collects exactly (count 1). The spread group
+-- `(10, 20)*.NItems` is `NItems(10, 20)`: two items, count 2.
+def inlineGroupReceiverIsOneArgumentAtLoneCollector : Bool :=
   expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [
     ("NItems", receiverSymmetryNItemsAlg)
   ] [
     .dotCall (.capture [.num 10, .num 20]) "NItems" none
-  ]))) [2] &&
+  ]))) [1] &&
   expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [
     ("NItems", receiverSymmetryNItemsAlg)
   ] [
     .call (resolve "NItems") [.capture [.num 10, .num 20]]
-  ]))) [2] &&
+  ]))) [1] &&
   expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [
     ("NItems", receiverSymmetryNItemsAlg)
   ] [
@@ -237,17 +235,16 @@ def inlineGroupReceiverOpensOneLevelAtLoneCollector : Bool :=
     .call (resolve "NItems") [sequenceSpread (.capture [.num 10, .num 20])]
   ]))) [2]
 
-#guard inlineGroupReceiverOpensOneLevelAtLoneCollector
+#guard inlineGroupReceiverIsOneArgumentAtLoneCollector
 
 --------------------------------------------------------------------------------
 -- Dot-call passes a value: the required regression matrix
 --------------------------------------------------------------------------------
 -- Mean(*vector) = vector.sum / vector.count — the integer twin of the C#
--- headline example: the direct flat call, the SPREAD group receiver, and the
--- unspread group receiver all produce the same mean (2 under integer
--- division). The unspread group `(1, 2, 3).Mean` is `Mean((1, 2, 3))`: one
--- written sequence slot that is the lone collector's whole segment, opened
--- one level by the collector supply-boundary law.
+-- headline example: the direct flat call and the SPREAD group receiver
+-- produce the same mean (2 under integer division), while the unspread group
+-- `(1, 2, 3).Mean` is `Mean((1, 2, 3))`: ONE argument, `vector = [(1, 2, 3)]`,
+-- whose sequence element the numeric sum rejects.
 def dotReceiverMeanAlg : Algorithm :=
   algWithParameters [{ name := "vector", kind := .collecting }] [] [] [
     .binary .div
@@ -260,9 +257,15 @@ def dotReceiverMeanIntegerTwin : Bool :=
     ("Mean", dotReceiverMeanAlg)
   ] [
     .call (resolve "Mean") [.num 1, .num 2, .num 3],
-    .dotCall (sequenceSpread (.capture [.num 1, .num 2, .num 3])) "Mean" none,
+    .dotCall (sequenceSpread (.capture [.num 1, .num 2, .num 3])) "Mean" none
+  ]))) [2, 2] &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Mean", dotReceiverMeanAlg)
+  ] [
     .dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none
-  ]))) [2, 2, 2]
+  ])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false)
 
 #guard dotReceiverMeanIntegerTwin
 
@@ -309,22 +312,19 @@ def expectCollectResult (receiver : KatLang.Expr) (expected : Result) : Bool :=
       | _ => false)
 
 -- Boundary and cardinality matrix of the rule. Every unspread receiver is ONE
--- written slot, and at the lone collector that slot is the whole segment, so
--- the collector supply-boundary law decides what is collected: a written
--- group, a nested group (normalized to the same sequence value), `()` (a
--- visible empty sequence value, whose opening supplies nothing), a spread-join
--- group, a brace block, a stored property, and a stored `()` property are
--- SEQUENCE values and open exactly one level — a nested sequence element stays
--- one collected item; a list literal of any depth is an exact value and never
--- opens. The spread receiver supplies the value's items as final slots, which
--- are collected exactly as supplied; nothing is recursively flattened.
+-- argument and the lone collector collects it exactly: a written group, a
+-- nested group (normalized to the same sequence value), `()` (a visible empty
+-- sequence value), a spread-join group, a brace block, a stored property, a
+-- stored `()` property, and a list literal of any depth are each one collected
+-- item. The spread receiver supplies the value's items, which are collected
+-- exactly as supplied; nothing is recursively flattened.
 def dotReceiverCollectBoundaryMatrix : Bool :=
   expectCollectResult (.capture [.num 1, .num 2])
-    (.listValue [.atom 1, .atom 2]) &&
+    (.listValue [.sequenceValue [.atom 1, .atom 2]]) &&
   expectCollectResult (.capture [.capture [.num 1, .num 2]])
-    (.listValue [.atom 1, .atom 2]) &&
+    (.listValue [.sequenceValue [.atom 1, .atom 2]]) &&
   expectCollectResult (.emptySequence 1)
-    (.listValue []) &&
+    (.listValue [.sequenceValue []]) &&
   expectCollectResult (.listLiteral [])
     (.listValue [.listValue []]) &&
   expectCollectResult (.listLiteral [.num 1, .num 2])
@@ -332,15 +332,15 @@ def dotReceiverCollectBoundaryMatrix : Bool :=
   expectCollectResult (.listLiteral [.listLiteral [.num 1, .num 2]])
     (.listValue [.listValue [.listValue [.atom 1, .atom 2]]]) &&
   expectCollectResult (.capture [.num 1, .capture [.num 2, .num 3]])
-    (.listValue [.atom 1, .sequenceValue [.atom 2, .atom 3]]) &&
+    (.listValue [.sequenceValue [.atom 1, .sequenceValue [.atom 2, .atom 3]]]) &&
   expectCollectResult (.capture [sequenceSpread (resolve "Values"), .num 7])
-    (.listValue [.atom 1, .atom 2, .atom 3, .atom 7]) &&
+    (.listValue [.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 7]]) &&
   expectCollectResult (.algorithmExpr (alg [] [] [] [.num 1, .num 2, .num 3]))
-    (.listValue [.atom 1, .atom 2, .atom 3]) &&
+    (.listValue [.sequenceValue [.atom 1, .atom 2, .atom 3]]) &&
   expectCollectResult (resolve "Values")
-    (.listValue [.atom 1, .atom 2, .atom 3]) &&
+    (.listValue [.sequenceValue [.atom 1, .atom 2, .atom 3]]) &&
   expectCollectResult (resolve "E")
-    (.listValue []) &&
+    (.listValue [.sequenceValue []]) &&
   expectCollectResult (sequenceSpread (.capture [.num 1, .num 2]))
     (.listValue [.atom 1, .atom 2]) &&
   expectCollectResult (sequenceSpread (.listLiteral [.num 1, .num 2]))
@@ -360,24 +360,23 @@ def dotReceiverCollectBoundaryMatrix : Bool :=
 
 #guard dotReceiverCollectBoundaryMatrix
 
--- The written spelling and the spread spelling of a lone SEQUENCE receiver
--- coincide at a lone collector, while a lone LIST receiver keeps the
--- grouped/spread distinction: lists are exact values and only the spread
--- marker opens them.
-def dotReceiverSequenceCoincidesListDistinguishes : Bool :=
+-- The grouped spelling and the spread spelling of a lone receiver DIFFER at a
+-- lone collector, for a SEQUENCE and a LIST alike: every value is one argument
+-- and only the spread marker opens it.
+def dotReceiverGroupedAndSpreadDifferForSequenceAndList : Bool :=
   (match runDotReceiverCollect (.capture [.num 1, .num 2]),
          runDotReceiverCollect (sequenceSpread (.capture [.num 1, .num 2])) with
-   | Except.ok grouped, Except.ok spread => reprStr grouped == reprStr spread
+   | Except.ok grouped, Except.ok spread => reprStr grouped != reprStr spread
    | _, _ => false) &&
   (match runDotReceiverCollect (.listLiteral [.num 1, .num 2]),
          runDotReceiverCollect (sequenceSpread (.listLiteral [.num 1, .num 2])) with
    | Except.ok grouped, Except.ok spread => reprStr grouped != reprStr spread
    | _, _ => false)
 
-#guard dotReceiverSequenceCoincidesListDistinguishes
+#guard dotReceiverGroupedAndSpreadDifferForSequenceAndList
 
 -- F(first, *middle, last) with the written pair receiver and one extra
--- argument: the receiver is the first written slot, so the fixed prefix binds
+-- argument: the receiver is the first argument, so the fixed prefix binds
 -- the whole pair, the collector collects nothing, and the suffix takes 9.
 def dotReceiverPrefixSuffixAlg : Algorithm :=
   algWithParameters [
@@ -411,8 +410,8 @@ def dotReceiverFixedPrefixBindsValue : Bool :=
 
 -- The receiver's item count never satisfies arity: one receiver against two
 -- required fixed parameters is the ordinary minimum-arity error, in the
--- dotted spelling exactly as in the written one. The collector law never
--- runs before arity is satisfied.
+-- dotted spelling exactly as in the written one. The collector never runs
+-- before arity is satisfied.
 def dotReceiverCountNeverSatisfiesArity : Bool :=
   expectInnermostArityMismatch 2 1 (runFlat (.algorithmExpr (algPrivate [] [] [
     ("F", dotReceiverPrefixSuffixAlg)
@@ -454,18 +453,17 @@ def dotReceiverSuffixTakesReceiverWhole : Bool :=
 
 #guard dotReceiverSuffixTakesReceiverWhole
 
--- Scale(*values, factor) with an extra argument: the suffix takes the factor
--- FIRST, and the segment left to the collector is the receiver — one lone
--- written sequence slot, opened one level to `[1, 2, 3]`; the spread receiver
--- supplies the same three items as final slots. Written and spread receivers
--- coincide for a sequence value here.
-def dotReceiverScaleOpensReceiverAfterSuffix : Bool :=
+-- Scale(*values, factor) with a SEQUENCE receiver and an extra argument: the
+-- suffix takes the factor FIRST, and the collector collects the one remaining
+-- argument exactly — `(1, 2, 3).Scale(10)` collects `[(1, 2, 3)]` like the
+-- list receiver below — while the spread receiver supplies the three items.
+def dotReceiverScaleKeepsSequenceReceiverExactAfterSuffix : Bool :=
   expectSuffixResult "Scale"
     (.dotCall (.capture [.num 1, .num 2, .num 3]) "Scale" (some [.num 10]))
-    (Result.sequenceValue [.listValue [.atom 1, .atom 2, .atom 3], .atom 10]) &&
+    (Result.sequenceValue [.listValue [.sequenceValue [.atom 1, .atom 2, .atom 3]], .atom 10]) &&
   expectSuffixResult "Scale"
     (.call (resolve "Scale") [.capture [.num 1, .num 2, .num 3], .num 10])
-    (Result.sequenceValue [.listValue [.atom 1, .atom 2, .atom 3], .atom 10]) &&
+    (Result.sequenceValue [.listValue [.sequenceValue [.atom 1, .atom 2, .atom 3]], .atom 10]) &&
   expectSuffixResult "Scale"
     (.dotCall (sequenceSpread (.capture [.num 1, .num 2, .num 3])) "Scale" (some [.num 10]))
     (Result.sequenceValue [.listValue [.atom 1, .atom 2, .atom 3], .atom 10]) &&
@@ -473,12 +471,12 @@ def dotReceiverScaleOpensReceiverAfterSuffix : Bool :=
     (.call (resolve "Scale") [sequenceSpread (.capture [.num 1, .num 2, .num 3]), .num 10])
     (Result.sequenceValue [.listValue [.atom 1, .atom 2, .atom 3], .atom 10])
 
-#guard dotReceiverScaleOpensReceiverAfterSuffix
+#guard dotReceiverScaleKeepsSequenceReceiverExactAfterSuffix
 
 -- Scale(*values, factor) with a LIST receiver and an extra argument: the
--- suffix takes the factor and the collector's lone written slot is a list,
--- which never opens — `[1, 2, 3].Scale(10)` collects `[[1, 2, 3]]`, while the
--- spread list receiver supplies three final items.
+-- suffix takes the factor and the collector collects the one remaining
+-- argument exactly — `[1, 2, 3].Scale(10)` collects `[[1, 2, 3]]`, while the
+-- spread list receiver supplies three items.
 def dotReceiverScaleKeepsListReceiverExactAfterSuffix : Bool :=
   expectSuffixResult "Scale"
     (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "Scale" (some [.num 10]))

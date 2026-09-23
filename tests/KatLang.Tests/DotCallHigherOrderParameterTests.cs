@@ -425,26 +425,25 @@ public class DotCallHigherOrderParameterTests
         => AssertResult("(1, 2, 3).count", Atom(3));
 
     [Fact]
-    public void CollectingCallee_ParameterChannelKeepsReceiverSegmentRule()
+    public void CollectingCallee_ParameterChannelKeepsTheOneArgumentRule()
     {
-        // A named parameter receiver is ONE written slot of the callback call in
-        // both spellings, so the collecting callee applies the collector
-        // supply-boundary law to it: a sequence value opens one level, a list
-        // stays one item, and a second written argument keeps the value whole.
+        // A named parameter receiver is ONE argument of the call in both spellings,
+        // so the collecting callee collects it as one item — a sequence and a list
+        // alike — alone or beside a second written argument.
         AssertResult(
             """
             Collect(*items) = items
             K(a, t) = a.t
             K((1, 2), Collect)
             """,
-            List(Atom(1), Atom(2)));
+            List(Seq(Atom(1), Atom(2))));
         AssertResult(
             """
             Collect(*items) = items
             K(a, t) = t(a)
             K((1, 2), Collect)
             """,
-            List(Atom(1), Atom(2)));
+            List(Seq(Atom(1), Atom(2))));
         AssertResult(
             """
             Collect(*items) = items

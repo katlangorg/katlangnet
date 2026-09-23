@@ -523,40 +523,39 @@ def dotCallParityCases : List DotCallParityCase :=
     -- leading argument: 5.Double == Double(5).
     { label := "A/lexical-user-callee", target := .num 5, name := "Double",
       expectedAtoms := some [10] },
-    -- B: sequence-valued property receiver is ONE written argument slot:
-    -- Pair.NItems == NItems(Pair). It is the lone collector's whole segment,
-    -- so the collector supply-boundary law opens it one level —
-    -- `values = [10, 20]`, count 2.
-    { label := "B/sequenceValue-receiver-opens-one-level", target := resolve "Pair", name := "NItems",
-      expectedAtoms := some [2] },
+    -- B: sequence-valued property receiver is ONE argument:
+    -- Pair.NItems == NItems(Pair), and the collector collects it exactly —
+    -- `values = [(10, 20)]`, count 1.
+    { label := "B/sequenceValue-receiver-is-one-argument", target := resolve "Pair", name := "NItems",
+      expectedAtoms := some [1] },
     -- C: the spread receiver `Values*.NItems` is the written spread call
-    -- `NItems(Values*)`: the two emitted values are final slots, count 2;
-    -- the CAPTURED spread `(Values*).NItems` is `NItems((Values*))`, one
-    -- written sequence value that opens one level again, count 2.
+    -- `NItems(Values*)`: the two emitted values are supplied as two items,
+    -- count 2; the CAPTURED spread `(Values*).NItems` is `NItems((Values*))`,
+    -- one sequence value and so ONE argument again, count 1.
     { label := "C/spread-multi-output-receiver",
       target := sequenceSpread (resolve "Values"), name := "NItems",
       expectedAtoms := some [2] },
     { label := "C2/captured-spread-multi-output-receiver",
       target := sequenceSpreadReceiver (resolve "Values"), name := "NItems",
-      expectedAtoms := some [2] },
+      expectedAtoms := some [1] },
     -- D: the same for a sequence-valued property: `Pair*.NItems` supplies the
     -- two elements (count 2), `(Pair*).NItems` captures them back into one
-    -- written sequence slot that the collector opens (count 2).
+    -- sequence value — one argument (count 1).
     { label := "D/spread-sequenceValue-receiver",
       target := sequenceSpread (resolve "Pair"), name := "NItems",
       expectedAtoms := some [2] },
     { label := "D2/captured-spread-sequenceValue-receiver",
       target := sequenceSpreadReceiver (resolve "Pair"), name := "NItems",
-      expectedAtoms := some [2] },
+      expectedAtoms := some [1] },
     -- E: leading variadic with suffix: Pair.BeforeLastCount(99) allocates 99
-    -- to the suffix first; the segment left to the collector is the lone
-    -- written sequence slot, opened one level — count 2.
+    -- to the suffix first; the collector collects the one remaining argument
+    -- exactly — count 1.
     { label := "E/leading-variadic-with-suffix", target := resolve "Pair",
       name := "BeforeLastCount", argsOpt := dotCallArgs [.num 99],
-      expectedAtoms := some [2] },
-    -- E2: a LIST receiver never opens at the collector: ListPair.NItems
-    -- collects `values = [[10, 20]]`, count 1, while the spread list
-    -- receiver supplies two final items.
+      expectedAtoms := some [1] },
+    -- E2: a LIST receiver is the same rule: ListPair.NItems collects
+    -- `values = [[10, 20]]`, count 1, while the spread list receiver supplies
+    -- two items.
     { label := "E2/list-receiver-stays-exact", target := resolve "ListPair", name := "NItems",
       expectedAtoms := some [1] },
     { label := "E3/spread-list-receiver", target := sequenceSpread (resolve "ListPair"),

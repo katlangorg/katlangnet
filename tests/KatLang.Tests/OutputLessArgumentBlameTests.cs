@@ -113,7 +113,7 @@ public class OutputLessArgumentBlameTests
     [InlineData("count([])", "0")]
     [InlineData("count(())", "0")]
     [InlineData(Collector + "\nColl([])", "[[]]")]
-    [InlineData(Collector + "\nColl(())", "[]")]
+    [InlineData(Collector + "\nColl(())", "[()]")]
     public void LegitimateEmptyValueArgument_IsOneOrdinaryArgument(string source, string expectedDisplay)
         => Assert.Equal(expectedDisplay, AssertEvalSuccessDisplay(source));
 

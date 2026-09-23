@@ -2111,7 +2111,7 @@ public static partial class Evaluator
                 if (suppliedR.IsError)
                     return suppliedR.Error;
 
-                // Explicit spread produces FINAL supply items (SupplyOrigin.FinalItem).
+                // Explicit spread supplies the operand's items, one level.
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
                     inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null));
 
@@ -2123,12 +2123,11 @@ public static partial class Evaluator
             var evaluatedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
             if (evaluatedR.IsOk)
             {
-                // A non-spread slot is ONE written slot (SupplyOrigin.WrittenSlot).
+                // A non-spread slot is exactly ONE item: its value, never opened.
                 inputs.Add(new ParameterPatternInput(
                     evaluatedR.Value.Value,
                     maybeAlg,
-                    ValueError: null,
-                    SupplyOrigin.WrittenSlot)
+                    ValueError: null)
                 {
                     Source = argExpr,
                 });
@@ -2140,8 +2139,7 @@ public static partial class Evaluator
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
                     maybeAlg,
-                    evaluatedR.Error,
-                    SupplyOrigin.WrittenSlot)
+                    evaluatedR.Error)
                 {
                     Source = argExpr,
                 });
@@ -2842,6 +2840,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
+        var userCallee = callee;
         switch (callee)
         {
             case Algorithm.Builtin(var builtin):
@@ -2857,70 +2856,31 @@ public static partial class Evaluator
                     valEnv).ConfigureAwait(false);
 
             case Algorithm.Conditional:
-                if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-                {
-                    if (simpleCallee.Output.Count == 0)
-                        return new EvalError.MissingOutput();
+                if (TryGetFlatBinderUserEquivalent(callee) is not { } simpleCallee)
+                    return await EvalConditionalCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
 
-                    var parameterNames = simpleCallee.Params;
-                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
-                    if (countedEnvR.IsError)
-                        return AttachImplicitParameterProvenance(countedEnvR.Error, simpleCallee);
-
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
-                    return await EvalAlgOutputCountedCoreAsync(simpleCallee, newCtx, valEnv).ConfigureAwait(false);
-                }
-
-                return await EvalConditionalCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
-
-            default:
-                {
-                    if (callee.Output.Count == 0)
-                        return new EvalError.MissingOutput();
-
-                    if (UsesPatternBinding(callee))
-                    {
-                        var countedPatternEnvR = BindCountedParameterPatternList(
-                            callee.ParameterPatterns,
-                            WrittenCallbackInputs(args),
-                            ctx,
-                            (required, actual) => new EvalError.ArityMismatch(required, actual));
-                        if (countedPatternEnvR.IsError)
-                            return AttachImplicitParameterProvenance(countedPatternEnvR.Error, callee);
-
-                        var patternBindings = countedPatternEnvR.Value;
-                        var patternCtx = WithCountedParameterEnvironments(
-                            ctx,
-                            patternBindings.CountedBindings,
-                            patternBindings.CountedBindings.Select(static binding => binding.Name));
-                        return await EvalAlgOutputCountedCoreAsync(callee, patternCtx, valEnv).ConfigureAwait(false);
-                    }
-
-                    // Flat collecting-parameter callback binding — see the synchronous twin.
-                    if (ParameterPattern.HasCollectingCaptureAtCurrentLevel(callee.ParameterPatterns))
-                    {
-                        var collectingPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
-                        if (collectingPatternEnvR.IsError)
-                            return AttachImplicitParameterProvenance(collectingPatternEnvR.Error, callee);
-
-                        var collectingBindings = collectingPatternEnvR.Value;
-                        var collectingCtx = WithCountedParameterEnvironments(
-                            ctx,
-                            collectingBindings.CountedBindings,
-                            collectingBindings.CountedBindings.Select(static binding => binding.Name));
-                        return await EvalAlgOutputCountedCoreAsync(callee, collectingCtx, valEnv).ConfigureAwait(false);
-                    }
-
-                    // Fixed-only flat callback binding — see the synchronous twin.
-                    var parameterNames = callee.Params;
-                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
-                    if (countedEnvR.IsError)
-                        return AttachImplicitParameterProvenance(countedEnvR.Error, callee);
-
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
-                    return await EvalAlgOutputCountedCoreAsync(callee, newCtx, valEnv).ConfigureAwait(false);
-                }
+                userCallee = simpleCallee;
+                break;
         }
+
+        // THE CALLBACK LAW — the ONE ordinary counted binder; see the synchronous twin.
+        if (userCallee.Output.Count == 0)
+            return new EvalError.MissingOutput();
+
+        var bindingsR = BindCountedParameterPatternList(
+            userCallee.ParameterPatterns,
+            args,
+            ctx,
+            static (required, actual) => new EvalError.ArityMismatch(required, actual));
+        if (bindingsR.IsError)
+            return AttachImplicitParameterProvenance(bindingsR.Error, userCallee);
+
+        var bindings = bindingsR.Value;
+        var calleeCtx = WithCountedParameterEnvironments(
+            ctx,
+            bindings.CountedBindings,
+            bindings.CountedBindings.Select(static binding => binding.Name));
+        return await EvalAlgOutputCountedCoreAsync(userCallee, calleeCtx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalSequenceCallbackCallCounted"/> — keep in lock-step.</summary>
@@ -2960,81 +2920,20 @@ public static partial class Evaluator
         return await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalReducerAccumulatorCollectingCallbackCallCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalReducerAccumulatorCollectingCallbackCallCountedAsync(
-        Algorithm.User callee,
-        IReadOnlyList<CountedResult> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // Charged dynamic invocation boundary — dispatched INSTEAD of the ordinary
-        // callback chokepoint, so one reduce step stays one charged invocation.
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return limitError;
-
-        try
-        {
-            return await EvalReducerAccumulatorCollectingCallbackCallCountedCoreAsync(callee, args, ctx, valEnv).ConfigureAwait(false);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
-    }
-
-    /// <summary>MIRROR OF <see cref="EvalReducerAccumulatorCollectingCallbackCallCountedCore"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalReducerAccumulatorCollectingCallbackCallCountedCoreAsync(
-        Algorithm.User callee,
-        IReadOnlyList<CountedResult> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        if (callee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        var countedPatternEnvR = BindCountedParameterPatternList(
-            callee.ParameterPatterns,
-            FinalCallbackInputs(args),
-            ctx,
-            (required, actual) => new EvalError.ArityMismatch(required, actual));
-        if (countedPatternEnvR.IsError)
-            return AttachImplicitParameterProvenance(countedPatternEnvR.Error, callee);
-
-        var patternBindings = countedPatternEnvR.Value;
-        var callbackCtx = WithCountedParameterEnvironments(
-            ctx,
-            patternBindings.CountedBindings,
-            patternBindings.CountedBindings.Select(static binding => binding.Name));
-        return await EvalAlgOutputCountedCoreAsync(callee, callbackCtx, valEnv).ConfigureAwait(false);
-    }
-
     /// <summary>MIRROR OF <see cref="EvalSequenceReduceStepCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalSequenceReduceStepCountedAsync(
+    private static ValueTask<EvalResult<CountedResult>> EvalSequenceReduceStepCountedAsync(
         Algorithm callee,
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
         ValEnv valEnv,
         string calleeName = "conditional")
-    {
-        var elementArg = CountedSequenceCallbackItem(element);
-        if (callee is Algorithm.User userReducer && ReducerAccumulatorSideHasTopLevelCollecting(userReducer))
-        {
-            var accumulatorSlots = accumulator.ToItems();
-            var args = new List<CountedResult>(1 + accumulatorSlots.Count) { elementArg };
-            foreach (var slot in accumulatorSlots)
-                args.Add(new CountedResult(slot, slot.ValueCount()));
-
-            return await EvalReducerAccumulatorCollectingCallbackCallCountedAsync(userReducer, args, ctx, valEnv).ConfigureAwait(false);
-        }
-
-        return await EvalResolvedCallbackCallCountedAsync(
+        => EvalResolvedCallbackCallCountedAsync(
             callee,
-            [elementArg, new CountedResult(accumulator, accumulator.ValueCount())],
+            [CountedSequenceCallbackItem(element), new CountedResult(accumulator, accumulator.ValueCount())],
             ctx,
             valEnv,
-            calleeName).ConfigureAwait(false);
-    }
+            calleeName);
 
     // ── map/filter/reduce twins ─────────────────────────────────────────────
 
@@ -3066,7 +2965,7 @@ public static partial class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level collecting accumulator parameters receive state slots)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
                 await EvalSequenceReduceStepCountedAsync(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step").ConfigureAwait(false));
             if (stepR.IsError) return stepR.Error;
 

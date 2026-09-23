@@ -81,10 +81,10 @@ public enum CountedConsumer
     /// receiver is the ONE ordinary leading argument of the extension call (Lean
     /// <c>prepareLexicalDotCallArgs</c> through the one <c>evalResolvedCallCounted</c>
     /// funnel), so a written group/brace receiver, a named receiver, a capture, and
-    /// `()` are each one argument value; a collecting parameter binds it by the
-    /// collector supply-boundary law exactly as the written argument (a lone
-    /// sequence value opens one level, a list stays one item), and the spread
-    /// marker (<see cref="FluentSpreadReceiver"/>) opens it into final items.
+    /// `()` are each one argument value; a collecting parameter collects it
+    /// exactly as the written argument (a sequence value and a list alike stay
+    /// one item), and only the spread marker (<see cref="FluentSpreadReceiver"/>)
+    /// opens it into items.
     /// The category name is historical; runtime receiver segments no longer exist.</summary>
     DotReceiverSegment,
 

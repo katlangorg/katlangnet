@@ -474,24 +474,23 @@ public class CallableBindingPlanParityTests
         AssertArity(variadicPlan, min: 0, max: null, hasTopLevelVariadic: true);
 
         // Runtime receiver law (outside the plan): dot-call passes a value, so
-        // the receiver is the ONE ordinary leading argument — an inline group
-        // and the capture of a spread are each one written slot, which the
-        // lone collector opens one level by the collector supply-boundary law
-        // (a list receiver stays one item) — and the fluent spread supplies
-        // the items as final slots. No callee-shape inspection is involved:
-        // the plan describes the layout, the runtime binder applies the law.
+        // the receiver is the ONE ordinary leading argument — an inline group,
+        // the capture of a spread, and a list receiver are each one item for the
+        // lone collector — and only the fluent spread supplies the items. No
+        // callee-shape inspection is involved: the plan describes the layout,
+        // the runtime binder collects exactly what was supplied.
         AssertEval(
             """
             Collect(*list) = list.count
             (10, 20, 30).Collect
             """,
-            3);
+            1);
         AssertEval(
             """
             Collect(*list) = list.count
             ((10, 20, 30)*).Collect
             """,
-            3);
+            1);
         AssertEval(
             """
             Collect(*list) = list.count
@@ -574,21 +573,20 @@ public class CallableBindingPlanParityTests
     }
 
     [Fact]
-    public void FlatVariadicPrefixMiddleSuffix_LoneSequenceMiddleIsWrittenForTheCallAndFinalForTheLoopStep()
+    public void FlatVariadicPrefixMiddleSuffix_LoneSequenceMiddleIsOneItemForTheCallAndTheLoopStep()
     {
-        // Context-specific runtime input construction: the user call's grouped
-        // middle argument is a WRITTEN slot, so the collector supply-boundary law
-        // opens the lone sequence one level (middle.count 2), while a loop step is
-        // never called with written arguments — its state slots are established
-        // supply (FINAL items), so the same lone sequence stays one collected item
-        // (middle.count 1) in the generic and the optimized loop alike.
+        // One rule for every input construction: the user call's grouped middle
+        // argument is ONE item, collected exactly (middle.count 1), and a loop
+        // step's state slots are established supply, so the same lone sequence
+        // stays one collected item (middle.count 1) in the generic and the
+        // optimized loop alike.
         var userResult = EvalResult(
             """
             Shape(first, *middle, last) = first, middle.count, last
             Shape(10, (20, 30), 40)
             """,
             enableLoopOptimization: false);
-        AssertResult(ResultFromAtoms(10, 2, 40), userResult);
+        AssertResult(ResultFromAtoms(10, 1, 40), userResult);
 
         const string loopSource = """
             Step(first, *middle, last) = first, middle.count, last

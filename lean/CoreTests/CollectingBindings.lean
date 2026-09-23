@@ -155,38 +155,38 @@ def variadicCaptureCollectsExactList : Bool :=
    | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.listLiteral [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  -- Inspect((1, 2)) => [1, 2]: the lone written sequence slot is the whole
-  -- collector segment and opens one level (the collector supply-boundary
-  -- law); Inspect((1, 2)*) => [1, 2] supplies the same two final items.
+  -- Inspect((1, 2)) => [(1, 2)]: a non-spread argument is ONE supplied item,
+  -- so the collector collects the sequence value exactly as it collects a list
+  -- (THE EXACT COLLECTOR LAW); only Inspect((1, 2)*) => [1, 2] supplies the
+  -- pair's two items.
   (match runCollectInspect [.capture [.num 1, .num 2]] with
-   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.capture [.num 1, .num 2])] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  -- Inspect((1, 2), 3) => [(1, 2), 3]: beside another slot the sequence value
-  -- is collected exactly; Inspect(((1, 2), 3)) => [(1, 2), 3]: opening is one
-  -- level, never recursive.
+  -- Inspect((1, 2), 3) => [(1, 2), 3]: each argument is one collected item;
+  -- Inspect(((1, 2), 3)) => [((1, 2), 3)]: the one argument stays one item.
   (match runCollectInspect [.capture [.num 1, .num 2], .num 3] with
    | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2], Result.atom 3]) =>
        true
    | _ => false) &&
   (match runCollectInspect [.capture [.capture [.num 1, .num 2], .num 3]] with
-   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2], Result.atom 3]) =>
+   | Except.ok (Result.listValue [Result.sequenceValue
+       [Result.sequenceValue [Result.atom 1, Result.atom 2], Result.atom 3]]) =>
        true
    | _ => false)
 
 #guard variadicCaptureCollectsExactList
 
--- Empty-structure arguments: an unspread `()` is ONE written slot, and as the
--- lone collector's whole segment the empty sequence value opens to zero items
--- (`Inspect(())` collects `[]`), while beside another slot it is one visible
--- collected item (`Inspect((), 3)` collects `[(), 3]`); an unspread `[]` is
--- an exact list and never opens (`Inspect([])` collects `[[]]`); the spreads
--- contribute zero items (`Inspect(()*)` and `Inspect([]*)` both collect `[]`)
--- — zero-item-spread neutrality at the collect boundary.
+-- Empty-structure arguments: an unspread `()` or `[]` is ONE supplied item, a
+-- visible empty value, never the zero-item supply of `Inspect()` —
+-- `Inspect(())` collects `[()]`, `Inspect((), 3)` collects `[(), 3]`, and
+-- `Inspect([])` collects `[[]]`; only the spreads contribute zero items
+-- (`Inspect(()*)` and `Inspect([]*)` both collect `[]`) — zero-item-spread
+-- neutrality at the collect boundary.
 def variadicCaptureEmptyStructureArguments : Bool :=
   (match runCollectInspect [.emptySequence 0] with
-   | Except.ok (Result.listValue []) => true | _ => false) &&
+   | Except.ok (Result.listValue [Result.sequenceValue []]) => true | _ => false) &&
   (match runCollectInspect [.emptySequence 0, .num 3] with
    | Except.ok (Result.listValue [Result.sequenceValue [], Result.atom 3]) => true | _ => false) &&
   (match runCollectInspect [.sequenceSpread (.emptySequence 0)] with
@@ -199,13 +199,12 @@ def variadicCaptureEmptyStructureArguments : Bool :=
 #guard variadicCaptureEmptyStructureArguments
 
 -- Middle collecting parameter, direct user call: `Middle(first, *middle, last) = middle`.
--- The fixed prefix and suffix are allocated first; the segment left to the
--- collector decides. A lone grouped middle argument is one written sequence
--- slot that IS the whole segment, so it opens one level
--- (`Middle(10, (20, 30), 40)` collects `[20, 30]`, exactly like the explicit
--- spread `Middle(10, (20, 30)*, 40)`), while a grouped argument beside another
--- middle slot is collected exactly (`Middle(10, (20, 30), 35, 40)` collects
--- `[(20, 30), 35]`).
+-- The fixed prefix and suffix are allocated first; the collector then collects
+-- its segment EXACTLY. A lone grouped middle argument is one item
+-- (`Middle(10, (20, 30), 40)` collects `[(20, 30)]`), the explicit spread
+-- supplies its items (`Middle(10, (20, 30)*, 40)` collects `[20, 30]`), and a
+-- grouped argument beside another middle argument is one item of the two
+-- (`Middle(10, (20, 30), 35, 40)` collects `[(20, 30), 35]`).
 def collectMiddleAlg : Algorithm :=
   algWithParameters
     [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }]
@@ -218,7 +217,7 @@ def runCollectMiddle (args : List KatLang.Expr) : Except KatLang.Error Result :=
 def middleVariadicGroupedAndSpreadDirectCall : Bool :=
   (match runCollectMiddle
       [.num 10, .capture [.num 20, .num 30], .num 40] with
-   | Except.ok (Result.listValue [Result.atom 20, Result.atom 30]) => true
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 20, Result.atom 30]]) => true
    | _ => false) &&
   (match runCollectMiddle
       [.num 10, .sequenceSpread (.capture [.num 20, .num 30]), .num 40] with
@@ -275,12 +274,12 @@ def variadicForwardAsOnePassesWholeList : Bool :=
 
 #guard variadicForwardAsOnePassesWholeList
 
--- Receiver distinction: the call receiver keeps a LIST argument exact
--- (`Inspect(A)` is one collected element, `Inspect(A*)` supplies its items),
--- while a lone SEQUENCE argument is the collector's whole segment and opens
--- one level, so `Inspect(B)` and `Inspect(B*)` coincide. Beside a second
--- slot the sequence is collected exactly (`Inspect(B, 0)` is `[(1, 2, 3), 0]`
--- while `Inspect(B*, 0)` is `[1, 2, 3, 0]`).
+-- Receiver distinction: the call receiver keeps EVERY argument exact — a list
+-- and a sequence alike (`Inspect(A)` and `Inspect(B)` are one collected
+-- element each) — and only the explicit spread supplies the items
+-- (`Inspect(A*)`, `Inspect(B*)`). Beside a second argument nothing changes
+-- (`Inspect(B, 0)` is `[(1, 2, 3), 0]` while `Inspect(B*, 0)` is
+-- `[1, 2, 3, 0]`).
 def variadicReceiverDistinctionObservable : Bool :=
   let inspect (args : List KatLang.Expr) : Except KatLang.Error Result :=
     runResult (.algorithmExpr (algPrivate [] []
@@ -296,7 +295,8 @@ def variadicReceiverDistinctionObservable : Bool :=
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
    | _ => false) &&
   (match inspect [resolve "B"] with
-   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]]) =>
+       true
    | _ => false) &&
   (match inspect [sequenceSpread (resolve "B")] with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) => true
@@ -312,7 +312,7 @@ def variadicReceiverDistinctionObservable : Bool :=
 #guard variadicReceiverDistinctionObservable
 
 -- Dotted receiver injection: `A.Inspect` is `Inspect(A)` — the receiver is one
--- written argument slot, and a LIST never opens at the collector, so the
+-- argument, which the collector never opens (a list or a sequence alike), so the
 -- collected list is `[[1, 2]]`.
 def variadicDotReceiverCollectsOneSlot : Bool :=
   match runResult (.algorithmExpr (algPrivate [] []
@@ -390,14 +390,14 @@ def ordinaryCaptureStaysCanonicalSequence : Bool :=
 #guard ordinaryCaptureStaysCanonicalSequence
 
 --------------------------------------------------------------------------------
--- Flat callbacks with collecting parameters bind through the shared binder
+-- Flat callbacks with collecting parameters bind through the ordinary binder
 --------------------------------------------------------------------------------
--- A flat callee with a top-level collecting parameter routes through
--- bindCountedCallbackParameterPatternList: the callback supply keeps the
--- flat-callback row convention (a lone under-supplied final argument opens
--- into its items), then the shared prefix/collecting/suffix binder COLLECTS the
--- matched segment as one list. A single-collecting callee keeps the whole
--- iterated element as one collected slot.
+-- THE CALLBACK LAW: a callback element is ONE ordinary argument. A flat callee
+-- binds it through the ordinary counted binder (`evalUserCallbackCallCounted`
+-- → `bindCountedParameterPatternList`) exactly as the direct call `F(element)`
+-- binds it: a collecting parameter collects the supplied arguments as one
+-- exact list, a fixed parameter binds the element unchanged, and only an
+-- explicit sequence-value pattern opens it. No row convention exists.
 -- C# parity: EvaluatorTests callback sections and CollectingBindingTests.
 
 def callbackCollectAlg : Algorithm :=
@@ -420,12 +420,10 @@ def restOnlyMapCallbackCollectsOneElementSlot : Bool :=
 
 #guard restOnlyMapCallbackCollectsOneElementSlot
 
--- A whole callback item is ONE written slot of the callback call, so the
--- collector supply-boundary law applies exactly as for a written call: a LIST
--- element stays one exact collected item ([[1, 2]].map(Collect) =>
--- [[[1, 2]]]; [[]].map(Collect) => [[[]]]), while a SEQUENCE element is the
--- lone collector's whole segment and opens one level ([(1, 2)].map(Collect)
--- => [[1, 2]]; [()].map(Collect) => [[]]).
+-- A whole callback item is ONE argument of the callback call, so the exact
+-- collector law applies exactly as for a written call, a list and a sequence
+-- alike: [[1, 2]].map(Collect) => [[[1, 2]]]; [[]].map(Collect) => [[[]]];
+-- [(1, 2)].map(Collect) => [[(1, 2)]]; [()].map(Collect) => [[()]].
 def restOnlyMapCallbackPreservesElementKind : Bool :=
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.listLiteral [.num 1, .num 2]]) "Collect" with
@@ -434,7 +432,7 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.capture [.num 1, .num 2]]) "Collect" with
-   | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) =>
+   | Except.ok (Result.listValue [Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]]) =>
        true
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
@@ -443,7 +441,7 @@ def restOnlyMapCallbackPreservesElementKind : Bool :=
    | _ => false) &&
   (match runCallbackMap [("Collect", callbackCollectAlg)]
       (.listLiteral [.emptySequence 1]) "Collect" with
-   | Except.ok (Result.listValue [Result.listValue []]) => true
+   | Except.ok (Result.listValue [Result.listValue [Result.sequenceValue []]]) => true
    | _ => false)
 
 #guard restOnlyMapCallbackPreservesElementKind
@@ -457,10 +455,12 @@ def restOnlyMapCallbackDottedReceiverAgrees : Bool :=
 
 #guard restOnlyMapCallbackDottedReceiverAgrees
 
--- Mixed flat variadic callbacks: the lone sequence element opens into row slots
--- (the flat-callback row convention), then the shared binder allocates
--- front/collecting/back — agreeing with the structured-pattern form.
-def mixedVariadicMapCallbackBindsRowSlots : Bool :=
+-- Mixed flat variadic callbacks: the element is ONE argument, so the shared
+-- binder allocates front/collecting/back over that one supplied item exactly
+-- as the direct call does — a flat callee with two fixed positions rejects it
+-- with the ordinary arity error, while the explicit structured-pattern form
+-- opens the element and binds its items.
+def mixedVariadicMapCallbackBindsOneArgument : Bool :=
   let middleFlat : Algorithm := algWithParameters
     [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }]
     [] [] [.param "middle"]
@@ -473,27 +473,31 @@ def mixedVariadicMapCallbackBindsRowSlots : Bool :=
     [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]
   let row4 : KatLang.Expr := .listLiteral [.capture [.num 1, .num 2, .num 3, .num 4]]
   let row3 : KatLang.Expr := .listLiteral [.capture [.num 1, .num 2, .num 3]]
-  -- [(1, 2, 3, 4)].map(F) with F(first, *middle, last) = middle => [[2, 3]]
+  -- [(1, 2, 3, 4)].map(F) with F(first, *middle, last) = middle: one supplied
+  -- item against two fixed positions — the ordinary arity error, as for
+  -- F((1, 2, 3, 4)).
   (match runCallbackMap [("F", middleFlat)] row4 "F" with
-   | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
+   | Except.error err => innermostIsArityMismatch 2 1 err
    | _ => false) &&
-  -- ... and the structured form F((first, *middle, last)) agrees.
+  -- ... while the structured form F((first, *middle, last)) opens the element.
   (match runCallbackMap [("F", middleStructured)] row4 "F" with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
    | _ => false) &&
-  -- [(1, 2, 3)].map(Head) with Head(first, *rest) = rest => [[2, 3]]
+  -- [(1, 2, 3)].map(Head) with Head(first, *rest) = rest: `first` binds the
+  -- whole element and nothing is left to collect => [[]]
   (match runCallbackMap [("Head", headFlat)] row3 "Head" with
-   | Except.ok (Result.listValue [Result.listValue [Result.atom 2, Result.atom 3]]) => true
+   | Except.ok (Result.listValue [Result.listValue []]) => true
    | _ => false) &&
-  -- [7].map(Head): the scalar row opens to one slot, the rest is empty => [[]]
+  -- [7].map(Head): the scalar element is `first`, the rest is empty => [[]]
   (match runCallbackMap [("Head", headFlat)] (.listLiteral [.num 7]) "Head" with
    | Except.ok (Result.listValue [Result.listValue []]) => true | _ => false) &&
-  -- [(1, 2, 3)].map(Init) with Init(*init, last) = init => [[1, 2]]
+  -- [(1, 2, 3)].map(Init) with Init(*init, last) = init: `last` binds the
+  -- whole element => [[]]
   (match runCallbackMap [("Init", initFlat)] row3 "Init" with
-   | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
+   | Except.ok (Result.listValue [Result.listValue []]) => true
    | _ => false)
 
-#guard mixedVariadicMapCallbackBindsRowSlots
+#guard mixedVariadicMapCallbackBindsOneArgument
 
 -- Filter predicates observe the collected list kind: items == [7] holds only
 -- when the collecting parameter collected exactly [7] — scalar 7 vs [7] is distinguishable.
@@ -552,13 +556,12 @@ def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
 #guard restOnlyReducerCollectsElementAndAccumulatorSlots
 
 -- Explicit-argument semantics behind implicit forwarding elaboration: an
--- ordinary parameter passed UNSPREAD into a variadic callee is one written
--- argument slot (`Use(items) = Target(items)`) — exact for a list or a
--- scalar, and opened one level when it is a sequence value that is the lone
--- collector's whole segment — while a collecting parameter forwarded WITH
--- spread re-supplies its collected items (`Use(*items) = Target(items*)`).
--- The front-end resolver synthesizes exactly these two elaborated forms from
--- the source binding kind.
+-- ordinary parameter passed UNSPREAD into a variadic callee is one argument
+-- (`Use(items) = Target(items)`) — collected exactly for a list, a sequence,
+-- and a scalar alike — while a collecting parameter forwarded WITH spread
+-- re-supplies its collected items (`Use(*items) = Target(items*)`). The
+-- front-end resolver synthesizes exactly these two elaborated forms from the
+-- source binding kind.
 def forwardingElaborationKindsObservable : Bool :=
   let useOrdinary : Algorithm := alg ["items"] [] [] [
     .call (resolve "Target") [.param "items"]
@@ -567,18 +570,22 @@ def forwardingElaborationKindsObservable : Bool :=
     runResult (.algorithmExpr (algPrivate [] []
       [("Target", collectTargetAlg), ("Use", useAlg)]
       [.call (resolve "Use") args]))
-  -- Use(items) = Target(items): Use([1, 2]) => [[1, 2]]; Use((1, 2)) => [1, 2].
+  -- Use(items) = Target(items): Use([1, 2]) => [[1, 2]]; Use((1, 2)) => [(1, 2)].
   (match run useOrdinary [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match run useOrdinary [.capture [.num 1, .num 2]] with
-   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false) &&
   (match run useOrdinary [.num 7] with
    | Except.ok (Result.listValue [Result.atom 7]) => true | _ => false) &&
-  -- Use(*items) = Target(items*): Use([1, 2]) => [[1, 2]] (round trip).
+  -- Use(*items) = Target(items*): Use([1, 2]) => [[1, 2]] and
+  -- Use((1, 2)) => [(1, 2)] (round trips).
   (match run collectForwardAlg [.listLiteral [.num 1, .num 2]] with
    | Except.ok (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]) => true
+   | _ => false) &&
+  (match run collectForwardAlg [.capture [.num 1, .num 2]] with
+   | Except.ok (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]) => true
    | _ => false)
 
 #guard forwardingElaborationKindsObservable

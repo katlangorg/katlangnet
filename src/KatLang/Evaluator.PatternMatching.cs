@@ -320,119 +320,6 @@ public static partial class Evaluator
         return algorithm;
     }
 
-    /// <summary>
-    /// The flat-callback row convention for a pre-evaluated callback argument:
-    /// a final sequence-valued argument may unpack across remaining parameters;
-    /// exact lists stay opaque. Ordinary direct calls keep one slot per argument.
-    /// </summary>
-    private static IReadOnlyList<CountedResult> UnpackCountedArg(CountedResult arg)
-        => UnpackArgs(arg.Value)
-            .Select(value => new CountedResult(value, value.ValueCount()))
-            .ToList();
-
-    /// <summary>
-    /// Bind callback parameters with the item's ordinary value-boundary count,
-    /// just like <c>S:i</c>, without making them callable algorithms.
-    /// </summary>
-    private static EvalResult<CountedParamEnv> BindCountedCallbackParams(
-        IReadOnlyList<string> paramNames,
-        IReadOnlyList<CountedResult> args)
-    {
-        if (args.Count > paramNames.Count)
-            return new EvalError.ArityMismatch(paramNames.Count, args.Count);
-
-        var boundValues = new List<CountedResult>(paramNames.Count);
-        for (var argIndex = 0; argIndex < args.Count; argIndex++)
-        {
-            var isFinalArg = argIndex == args.Count - 1;
-            var remainingParams = paramNames.Count - boundValues.Count;
-
-            if (isFinalArg && remainingParams > 1)
-            {
-                boundValues.AddRange(UnpackCountedArg(args[argIndex]));
-                break;
-            }
-
-            boundValues.Add(args[argIndex]);
-        }
-
-        if (boundValues.Count != paramNames.Count)
-            return new EvalError.ArityMismatch(paramNames.Count, boundValues.Count);
-
-        var bindings = new List<(string Name, CountedResult Value)>(paramNames.Count);
-        for (var i = 0; i < paramNames.Count; i++)
-            bindings.Add((paramNames[i], boundValues[i]));
-
-        return EvalResult<CountedParamEnv>.Ok(bindings);
-    }
-
-    /// <summary>
-    /// Callback binding for a flat callee whose top-level parameters include a
-    /// collecting parameter. The callback argument supply keeps the established
-    /// flat-callback row convention: when fewer argument slots are supplied
-    /// than top-level parameters, the final supplied argument opens into its
-    /// items (sequence rows only; exact lists stay opaque), exactly
-    /// as <see cref="BindCountedCallbackParams"/> does for fixed-only flat
-    /// callees. The resulting slots then bind through the shared
-    /// prefix/collecting/suffix binder, so the collecting parameter COLLECTS its allocated
-    /// slots as one list under the collector supply-boundary law
-    /// (<see cref="CollectorSupply"/>): a whole callback argument is a written
-    /// slot (a lone sequence item on a single-collecting callee opens one level —
-    /// <c>((1, 2), (3, 4)).map(Coll)</c> is <c>[[1, 2], [3, 4]]</c>), while
-    /// row-unpacked slots are final items. Lean:
-    /// <c>bindCountedCallbackParameterPatternList</c>.
-    /// </summary>
-    private static EvalResult<CountedParameterPatternBindings> BindCountedCallbackParameterPatternList(
-        IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedResult> args,
-        EvalCtx ctx)
-    {
-        IReadOnlyList<CountedPatternInput> slots;
-        if (args.Count > 0 && args.Count < patterns.Count)
-        {
-            var expanded = new List<CountedPatternInput>(patterns.Count);
-            for (var index = 0; index < args.Count - 1; index++)
-                expanded.Add(new CountedPatternInput(args[index], SupplyOrigin.WrittenSlot));
-            foreach (var slot in UnpackCountedArg(args[^1]))
-                expanded.Add(new CountedPatternInput(slot, SupplyOrigin.FinalItem));
-            slots = expanded;
-        }
-        else
-        {
-            slots = WrittenCallbackInputs(args);
-        }
-
-        return BindCountedParameterPatternList(
-            patterns,
-            slots,
-            ctx,
-            static (required, actual) => new EvalError.ArityMismatch(required, actual));
-    }
-
-    /// <summary>
-    /// One counted binder input (the callback binding path): the counted value plus
-    /// its <see cref="SupplyOrigin"/>. Lean: <c>CountedPatternInput</c>.
-    /// </summary>
-    private readonly record struct CountedPatternInput(CountedResult Counted, SupplyOrigin Origin);
-
-    /// <summary>Whole callback arguments are written slots (Lean: `origin := .writtenSlot`).</summary>
-    private static IReadOnlyList<CountedPatternInput> WrittenCallbackInputs(IReadOnlyList<CountedResult> args)
-    {
-        var inputs = new CountedPatternInput[args.Count];
-        for (var index = 0; index < args.Count; index++)
-            inputs[index] = new CountedPatternInput(args[index], SupplyOrigin.WrittenSlot);
-        return inputs;
-    }
-
-    /// <summary>Already-opened slots (a reducer's accumulator state) are final items (Lean: `origin := .finalItem`).</summary>
-    private static IReadOnlyList<CountedPatternInput> FinalCallbackInputs(IReadOnlyList<CountedResult> args)
-    {
-        var inputs = new CountedPatternInput[args.Count];
-        for (var index = 0; index < args.Count; index++)
-            inputs[index] = new CountedPatternInput(args[index], SupplyOrigin.FinalItem);
-        return inputs;
-    }
-
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPattern(
         ParameterPattern pattern,
         CountedResult input,
@@ -459,13 +346,11 @@ public static partial class Evaluator
                     // (September 2026, S3; the callback path formerly fell back only
                     // for one-item groups). Lean: bindCountedParameterPattern.
                     //
-                    // Pattern-opened items are FINAL supply items: a nested
-                    // collecting binding collects them exactly (one boundary
-                    // opened, never two).
+                    // The pattern's explicit structure opens exactly this one
+                    // boundary; a nested collecting binding collects the opened
+                    // items exactly.
                     var nestedInputs = SequenceValuePatternItems(input.Value)
-                        .Select(static item => new CountedPatternInput(
-                            new CountedResult(item, item.ValueCount()),
-                            SupplyOrigin.FinalItem))
+                        .Select(static item => new CountedResult(item, item.ValueCount()))
                         .ToList();
                     return BindCountedParameterPatternList(
                         group.Items,
@@ -492,7 +377,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPatternList(
         IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedPatternInput> inputs,
+        IReadOnlyList<CountedResult> inputs,
         EvalCtx ctx,
         Func<int, int, EvalError> arityMismatch)
     {
@@ -527,20 +412,14 @@ public static partial class Evaluator
             new LevelNames(patterns, 0, collectingIndex, collectingCapture.Name));
         if (suffixR.IsError) return suffixR.Error;
 
-        var segmentCount = suffixInputStart - collectingIndex;
-        var capturedValues = new List<Result>(segmentCount);
-        var capturedOrigins = new List<SupplyOrigin>(segmentCount);
+        var capturedValues = new List<Result>(suffixInputStart - collectingIndex);
         for (var inputIndex = collectingIndex; inputIndex < suffixInputStart; inputIndex++)
-        {
-            capturedValues.Add(inputs[inputIndex].Counted.Value);
-            capturedOrigins.Add(inputs[inputIndex].Origin);
-        }
+            capturedValues.Add(inputs[inputIndex].Value);
 
-        // Collecting binding COLLECTS the collector supply of its allocated
-        // segment (CollectorSupply: exact, except that one lone written sequence
-        // slot opens one level) as one exact immutable list value, emitted
-        // count 1 (a list is one visible value).
-        var capturedResultR = CollectSegment(ctx, CollectorSupply(capturedValues, capturedOrigins), collectingCapture.Span);
+        // Collecting binding COLLECTS exactly the items allocated to it as one
+        // exact immutable list value, emitted count 1 (a list is one visible
+        // value): it never opens an item (THE EXACT COLLECTOR LAW).
+        var capturedResultR = CollectSegment(ctx, capturedValues, collectingCapture.Span);
         if (capturedResultR.IsError) return capturedResultR.Error;
         var collector = new UserCallBindings(
             [],
@@ -574,7 +453,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<PatternRangeBindings> BindCountedParameterPatternRange(
         IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedPatternInput> inputs,
+        IReadOnlyList<CountedResult> inputs,
         int patternStart,
         int inputStart,
         int count,
@@ -586,7 +465,7 @@ public static partial class Evaluator
 
         if (count == 1)
         {
-            var singleR = BindCountedParameterPattern(patterns[patternStart], inputs[inputStart].Counted, ctx);
+            var singleR = BindCountedParameterPattern(patterns[patternStart], inputs[inputStart], ctx);
             if (singleR.IsError) return singleR.Error;
             return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(AsCountedContribution(singleR.Value), null));
         }
@@ -594,7 +473,7 @@ public static partial class Evaluator
         var bound = new UserCallBindings[count];
         for (var offset = 0; offset < count; offset++)
         {
-            var boundR = BindCountedParameterPattern(patterns[patternStart + offset], inputs[inputStart + offset].Counted, ctx);
+            var boundR = BindCountedParameterPattern(patterns[patternStart + offset], inputs[inputStart + offset], ctx);
             if (boundR.IsError) return boundR.Error;
             bound[offset] = AsCountedContribution(boundR.Value);
         }
@@ -656,6 +535,20 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// Callback dispatch. THE CALLBACK LAW (September 2026): every value a callback
+    /// operation supplies is ONE ordinary argument, bound exactly as the ordinary call
+    /// with the same supply — <c>map(xs, F)</c> calls <c>F(E)</c> for each element
+    /// <c>E</c>, <c>reduce</c> calls <c>R(E, Acc)</c> — so a user callee (and a clause
+    /// family's flat-binder equivalent) binds through the ONE counted binder
+    /// <see cref="BindCountedParameterPatternList"/>: fixed parameters take their values
+    /// unchanged, a collector collects the supplied values exactly, and only the callee's
+    /// explicit sequence-value patterns open a value. There is no callback row
+    /// convention: <c>map([(1, 2)], Add)</c> with <c>Add(x, y)</c> is the ordinary
+    /// arity error, while <c>AddPair((x, y))</c> opens the element explicitly. The
+    /// user-callee arm is written inline (one frame, like the dispatch it replaced).
+    /// Lean: <c>evalResolvedCallbackCallCounted</c> / <c>evalUserCallbackCallCounted</c>.
+    /// </summary>
     private static EvalResult<CountedResult> EvalResolvedCallbackCallCountedCore(
         Algorithm callee,
         IReadOnlyList<CountedResult> args,
@@ -663,6 +556,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
+        var userCallee = callee;
         switch (callee)
         {
             case Algorithm.Builtin(var builtin):
@@ -678,88 +572,30 @@ public static partial class Evaluator
                     valEnv);
 
             case Algorithm.Conditional:
-                if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-                {
-                    if (simpleCallee.Output.Count == 0)
-                        return new EvalError.MissingOutput();
+                if (TryGetFlatBinderUserEquivalent(callee) is not { } simpleCallee)
+                    return EvalConditionalCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
 
-                    var parameterNames = simpleCallee.Params;
-                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
-                    if (countedEnvR.IsError)
-                        return AttachImplicitParameterProvenance(countedEnvR.Error, simpleCallee);
-
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
-                    return EvalAlgOutputCounted(simpleCallee, newCtx, valEnv);
-                }
-
-                return EvalConditionalCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
-
-            default:
-                {
-                    if (callee.Output.Count == 0)
-                        return new EvalError.MissingOutput();
-
-                    if (UsesPatternBinding(callee))
-                    {
-                        // Whole callback arguments are written slots; the
-                        // sequence-value patterns open them and their items are final.
-                        // Each supplied callback value binds exactly as the ordinary
-                        // call `P(V)` binds it: the same slot allocation and the same
-                        // nested-pattern opening (SequenceValuePatternItems), with no
-                        // row expansion.
-                        var countedPatternEnvR = BindCountedParameterPatternList(
-                            callee.ParameterPatterns,
-                            WrittenCallbackInputs(args),
-                            ctx,
-                            (required, actual) => new EvalError.ArityMismatch(required, actual));
-                        if (countedPatternEnvR.IsError)
-                            return AttachImplicitParameterProvenance(countedPatternEnvR.Error, callee);
-
-                        var patternBindings = countedPatternEnvR.Value;
-                        var patternCtx = WithCountedParameterEnvironments(
-                            ctx,
-                            patternBindings.CountedBindings,
-                            patternBindings.CountedBindings.Select(static binding => binding.Name));
-                        return EvalAlgOutputCounted(callee, patternCtx, valEnv);
-                    }
-
-                    // A flat callee with a top-level collecting parameter (`Rows.map(F)`
-                    // with `F(x, *y, z)` or a single-collecting `Collect(*items)`)
-                    // binds through the shared prefix/collecting/suffix binder so the
-                    // collecting parameter COLLECTS one list, after the
-                    // same final-argument row expansion the fixed-only flat path
-                    // uses below. Single-collecting callees keep the whole iterated
-                    // element as one collected slot.
-                    if (ParameterPattern.HasCollectingCaptureAtCurrentLevel(callee.ParameterPatterns))
-                    {
-                        var collectingPatternEnvR = BindCountedCallbackParameterPatternList(callee.ParameterPatterns, args, ctx);
-                        if (collectingPatternEnvR.IsError)
-                            return AttachImplicitParameterProvenance(collectingPatternEnvR.Error, callee);
-
-                        var collectingBindings = collectingPatternEnvR.Value;
-                        var collectingCtx = WithCountedParameterEnvironments(
-                            ctx,
-                            collectingBindings.CountedBindings,
-                            collectingBindings.CountedBindings.Select(static binding => binding.Name));
-                        return EvalAlgOutputCounted(callee, collectingCtx, valEnv);
-                    }
-
-                    // Fixed-only flat callback binding keeps each selected item
-                    // whole unless the final sequence row must unpack across
-                    // remaining parameter names; it does not apply item-supply
-                    // singleton-boundary normalization. No nested pattern is
-                    // involved here (a callee with one routes to the patterned
-                    // branch above), so the row convention is the whole callback
-                    // supply-shape policy of this path.
-                    var parameterNames = callee.Params;
-                    var countedEnvR = BindCountedCallbackParams(parameterNames, args);
-                    if (countedEnvR.IsError)
-                        return AttachImplicitParameterProvenance(countedEnvR.Error, callee);
-
-                    var newCtx = WithCountedParameterEnvironments(ctx, countedEnvR.Value, parameterNames);
-                    return EvalAlgOutputCounted(callee, newCtx, valEnv);
-                }
+                userCallee = simpleCallee;
+                break;
         }
+
+        if (userCallee.Output.Count == 0)
+            return new EvalError.MissingOutput();
+
+        var bindingsR = BindCountedParameterPatternList(
+            userCallee.ParameterPatterns,
+            args,
+            ctx,
+            static (required, actual) => new EvalError.ArityMismatch(required, actual));
+        if (bindingsR.IsError)
+            return AttachImplicitParameterProvenance(bindingsR.Error, userCallee);
+
+        var bindings = bindingsR.Value;
+        var calleeCtx = WithCountedParameterEnvironments(
+            ctx,
+            bindings.CountedBindings,
+            bindings.CountedBindings.Select(static binding => binding.Name));
+        return EvalAlgOutputCounted(userCallee, calleeCtx, valEnv);
     }
 
     /// <summary>

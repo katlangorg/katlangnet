@@ -288,12 +288,10 @@ def spreadOpensListIntoCallArguments : Bool :=
 
 -- A fixed-arity callee rejects an unspread list (calls never open lists).
 -- The list behaves exactly like any other single non-openable argument
--- (scalar, string): the Lean final-arg binding path reports the remaining
--- parameter/argument counts after the first binding step (`2 0`), a
--- pre-existing payload shape shared by `F(5)` and `F('xy')`; the C# runtime
--- reports the full signature counts (`3 1`). Both are category `arity`.
+-- (scalar, string): both Lean and C# report the complete fixed binding
+-- counts (`3 1`), never the residual counts after consuming a prefix.
 def callDoesNotImplicitlyOpenList : Bool :=
-  expectInnermostArityMismatch 2 0 (runFlat (.algorithmExpr (algPrivate [] []
+  expectInnermostArityMismatch 3 1 (runFlat (.algorithmExpr (algPrivate [] []
     [("F", alg ["a", "b", "c"] [] []
         [.binary .add (.binary .add (.param "a") (.param "b")) (.param "c")]),
      ("A", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]

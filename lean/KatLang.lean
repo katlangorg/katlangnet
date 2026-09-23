@@ -1248,16 +1248,17 @@ namespace Result
         | _      => none
     | listValue _ => none   -- lists never coerce to numbers, not even `[5]`
 
-  /-- Extract top-level items from a result.
-      Atom/string -> singleton list; sequence value -> its items.
-      A list value stays OPAQUE here: it is one item, so non-spread consumers
-      (boundary re-counting, call binding) treat a list as a single exact
-      value. Only the spread marker (`spreadItems`), deconstruction binding
-      (`structureItems?`), the indexing `:` TARGET position view
-      (`projectionItems` — the target's positions, never the selected
-      element), and the post-binding builtin collection view
-      (`builtinCollectionItems`, applied to the bound `collection` argument)
-      open a list boundary. -/
+  /-- Top-level items of a MULTI-ITEM counted result: a sequence value's items;
+      any other value is itself. This is not an opening operation — call
+      binding never uses it (every non-spread argument is ONE item) — it only
+      recovers the rows a multi-output body emitted (`countedTopLevelValues`)
+      and serves as the non-list branch of the one-level views below. The
+      explicit openers are the spread marker (`spreadItems`), explicit
+      sequence-value patterns and deconstruction (`structureItems?`), the
+      indexing `:` TARGET position view (`projectionItems` — the target's
+      positions, never the selected element), and the post-binding builtin
+      collection view (`builtinCollectionItems`, applied to the bound
+      `collection` argument); each opens a sequence and a list alike. -/
   def toItems : Result -> List Result
     | atom n   => [atom n]
     | str s    => [str s]
@@ -1278,7 +1279,8 @@ namespace Result
       opens to its immediate items; atoms, strings, and Booleans are not
       openable (`sequenceValuePatternItems` adds the ONE scalar one-item
       fallback both binders share). Call-argument binding never uses this
-      view — a list argument stays one argument.
+      view — every non-spread argument stays one argument, a sequence or a
+      list alike; only an explicit pattern or spread opens it.
       C#: `Result.StructureItems`. -/
   def structureItems? : Result -> Option (List Result)
     | sequenceValue rs => some rs
@@ -1400,7 +1402,7 @@ end AlgEnv
 /-- Counted parameter environment for callback-bound values: higher-order
     sequence items (selected values re-counted through `countedSequenceCallbackItem`,
     so a `()` item carries emitted count 0 and every other item count 1) and the
-    accumulator / row slots bound beside them. Collecting bindings also record
+    reducer accumulator bound beside them. Collecting bindings also record
     their bound value here; since collecting binding collects ONE exact
     immutable list value, those entries always carry emitted count 1 and agree
     with ordinary value-environment lookup (there is no separate raw-supply
@@ -2452,26 +2454,15 @@ structure CountedParameterPatternBindings where
   countedParamEnv : CountedParamEnv := []
   deriving Repr
 
-partial def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
-  match ps, vs with
-  | [], [] => .ok []
-  | p::ps', v::vs' => do
-      let rest <- bindParams ps' vs'
-      pure ((p,v)::rest)
-  | _, _ => .error (Error.arityMismatch ps.length vs.length)
-
-/-- Argument passing rule: a single atom is wrapped in a one-element list;
-    a sequence value is unpacked into its elements.  This is the canonical ABI for
-    translating an evaluated Result into positional arguments for bindParams.
-    Exact list values are NOT unpacked: call-argument binding preserves a list
-    as one argument; only an explicit caller-site spread `value*` opens it. -/
-def unpackArgs (r : Result) : List Result :=
-  match r with
-  | .atom _ => [r]
-  | .str _  => [r]
-  | .bool _ => [r]
-  | .sequenceValue rs => rs
-  | .listValue _ => [r]
+/-- Flat fixed binding preserves each supplied value. Check the complete supply
+    before zipping, so an arity error reports the original lengths, not the
+    unmatched recursive tails. This agrees with the pattern/callback binders
+    and C# `BindParams`: two parameters and one pair value is `(2, 1)`. -/
+def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
+  if ps.length != vs.length then
+    .error (Error.arityMismatch ps.length vs.length)
+  else
+    pure (ps.zip vs)
 
 /-- Bind algorithm-typed parameters: zip parameter names with algorithms.
     Only includes entries where the argument resolved to an algorithm.
@@ -2484,43 +2475,6 @@ def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
     match a with
     | some alg => (p, alg) :: bindAlgParams ps' as'
     | none     => bindAlgParams ps' as'
-
-/-- How one binder input entered the argument supply — the ONE assembly fact
-    the COLLECTOR SUPPLY-BOUNDARY LAW reads (September 2026):
-
-    - `writtenSlot`: one non-spread argument slot — a written argument, the
-      extension dot-call receiver (`R.F(args)` is `F(R, args)`), or a whole
-      callback item. Such a slot is one value; when it is a collecting
-      parameter's ENTIRE allocated segment and holds a sequence value, that
-      sequence may fuse with the collector's own supply boundary
-      (`collectorSupply`).
-    - `finalItem`: an item that a boundary opening already produced — an
-      explicit spread item, a callback row slot, a sequence-value pattern
-      item, a loop-state slot, a reducer accumulator slot. Final items are
-      collected exactly; nothing reopens them.
-
-    This is slot provenance, never result provenance: it records how a slot
-    was WRITTEN, not where its value came from, so `Coll((1, 2))` and
-    `Coll([(1, 2)]*)` differ while every origin of a `(1, 2)` value agrees.
-    C#: `SupplyOrigin`. -/
-inductive SupplyOrigin where
-  | writtenSlot
-  | finalItem
-  deriving Repr, BEq, DecidableEq
-
-/-- One call argument slot prepared for parameter binding: its value view
-    (`value?`), its algorithm view where resolvable, a retained value error,
-    and its supply origin. Every slot is exactly ONE argument whatever spelling supplied it:
-    a written argument, an explicit spread item, or an extension dot-call
-    receiver (DOT-CALL PASSES A VALUE, September 2026: `R.F(args)` assembles
-    exactly the slots of `F(R, args)`; no slot carries a raw supply of its
-    own). C#: `ParameterPatternInput` (via `VariadicCallItem`). -/
-structure VariadicItem where
-  value? : Option Result := none
-  algorithm? : Option Algorithm := none
-  error? : Option Error := none
-  origin : SupplyOrigin := .finalItem
-  deriving Repr
 
 structure FlatFixedCallSlot where
   value? : Option Result := none
@@ -2539,20 +2493,20 @@ structure CallableCallItem where
   callable? : Option Algorithm := none
   deriving Repr
 
+/-- One supplied item prepared for parameter binding: its value view
+    (`value?`), its algorithm view where resolvable, and a retained value
+    error. VALUES STAY VALUES (September 2026): every item is exactly ONE
+    argument whatever supplied it — a non-spread written argument (whatever its
+    value: scalar, sequence, list, `()`, `[]`), an explicit spread item, an
+    extension dot-call receiver (`R.F(args)` assembles exactly the items of
+    `F(R, args)`), a pattern-opened item, or a loop-state slot. No item
+    records how it was written, because no binder reinterprets one item as
+    several: only explicit spread and explicit structural patterns open a
+    value. C#: `ParameterPatternInput`. -/
 structure ParameterPatternInput where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
-  /-- Supply origin (`SupplyOrigin`); `finalItem` unless call assembly
-      records a non-spread written slot. -/
-  origin : SupplyOrigin := .finalItem
-  deriving Repr
-
-/-- One counted binder input (the callback binding path): the counted value
-    plus its supply origin. C#: `CountedPatternInput`. -/
-structure CountedPatternInput where
-  counted : CountedResult
-  origin : SupplyOrigin := .finalItem
   deriving Repr
 
 structure ParameterPatternBindings where
@@ -2687,12 +2641,6 @@ def builtinCollectionItems : Result -> List Result
   | .sequenceValue elems => elems
   | .listValue elems => elems
   | value => [value]
-
-def variadicItemToPatternInput (item : VariadicItem) : ParameterPatternInput :=
-  { value? := item.value?,
-    algorithm? := item.algorithm?,
-    error? := item.error?,
-    origin := item.origin }
 
 /-- Compatibility fallback for manually constructed core conditionals.
   Surface clause elaboration should already route eligible single-branch
@@ -2895,48 +2843,26 @@ def Algorithm.isFunctionShaped : Algorithm -> Bool
     - `spread : Value -> Supply` — the spread marker (`Result.spreadItems`), which
       opens one sequence OR list boundary.
 
-    Every collecting binding — deconstruction collecting bindings, single collecting parameters,
-    and mixed prefix/collecting/suffix parameter lists — binds its assigned middle
-    supply through this single helper, after the receiver-specific supply
-    preparation (a call applies the collector supply-boundary law
-    `collectorSupply` to the collector's allocated segment: a lone written
-    sequence slot opens one level, everything else is the slots as supplied;
-    deconstruction may open one lone sequence or list). The round trip
-    `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter forwarding
-    ordinary list spread: `Forward(*items) = Target(items*)` re-supplies
-    exactly the collected items with no hidden raw-supply metadata. A collecting
-    value is one visible value, so its emitted count is always 1 (including
-    `[]`). C#: `CollectSegment` (inside `CreateCollectingCapture`). -/
+    THE EXACT COLLECTOR LAW (September 2026): every collecting binding —
+    single collecting parameters, mixed prefix/collecting/suffix parameter
+    lists, nested pattern collectors, and deconstruction collecting bindings —
+    binds exactly the items allocated to it through this single helper and
+    never inspects their values. A collector opens nothing: one written
+    argument is one item whatever its value, so `Coll((1, 2))` is
+    `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`, and
+    `Coll([])` is `[[]]` — only the caller's explicit spread turns a value into
+    several items (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`).
+    Deconstruction and nested sequence-value patterns open their one value
+    BEFORE allocation, as explicit structural syntax, and the collector then
+    collects the opened items exactly. The round trip
+    `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter
+    forwarding ordinary list spread: `Forward(*items) = Target(items*)`
+    re-supplies exactly the collected items with no hidden raw-supply
+    metadata. A collecting value is one visible value, so its emitted count is
+    always 1 (including `[]`). C#: `CollectSegment` (inside
+    `CreateCollectingCapture`). -/
 def collectSegment (items : List Result) : Result :=
   Result.listValue items
-
-/-- COLLECTOR SUPPLY-BOUNDARY LAW (September 2026). The supply a collecting
-    parameter collects from the segment the binder allocated to it — AFTER
-    fixed prefix/suffix allocation, on that segment alone:
-
-    - several supplied items are collected exactly as supplied
-      (`Coll((1, 2), 3)` is `[(1, 2), 3]`);
-    - ONE lone non-spread sequence value (`.writtenSlot`) may stand for the
-      collector's whole supply: its immediate items are the supply, exactly
-      one level (`Coll((1, 2))` is `[1, 2]`, `Coll(((1, 2), 3))` is
-      `[(1, 2), 3]`, `Coll(())` is `[]` — the same rule, no emptiness case);
-    - lists are exact values and never open here (`Coll([1, 2])` is
-      `[[1, 2]]`, `Coll([])` is `[[]]`);
-    - a `.finalItem` — produced by explicit spread, callback row unpacking,
-      sequence-value pattern opening, loop state, or a reducer accumulator —
-      is collected unchanged even when it is the lone item
-      (`Coll([(1, 2)]*)` is `[(1, 2)]`, `Coll([()]*)` is `[()]`).
-
-    Fixed parameters bind their allocated values unchanged (`Id((1, 2))` is
-    `(1, 2)`); dot-call is ordinary receiver injection, so `(1, 2).Coll` is
-    `Coll((1, 2))` by this rule and not by any receiver rule; selection chooses
-    a value, so `Coll(A:0)` depends only on the selected value and on the slot
-    being written non-spread. Laws: `collector_*` in `KatLangArityLaws.lean`.
-    C#: `CollectorSupply`. -/
-def collectorSupply (segment : List (Result × SupplyOrigin)) : List Result :=
-  match segment with
-  | [(.sequenceValue items, .writtenSlot)] => items
-  | _ => segment.map Prod.fst
 
 /-- Re-count a counted result at a public property/call/builtin RESULT boundary.
 
@@ -3016,45 +2942,6 @@ def countedArgAlgorithm (arg : CountedResult) : Algorithm :=
     | _ => (countedTopLevelValues arg).map resultToExpr
   Algorithm.mk none [] [] [] output
 
-/-- Ordinary call-style unpacking for a pre-evaluated explicit argument whose
-    expression-level emitted count is already known.
-
-    A final explicit argument may still unpack its value across the remaining
-    parameters (the flat-callback row convention: a lone sequence element opens
-    into row slots, a list element stays opaque) without changing global call
-    semantics; each unpacked slot is re-counted as one plain value. -/
-def unpackCountedArg (arg : CountedResult) : List CountedResult :=
-  unpackArgs arg.fst |>.map (fun value => (value, Result.valueCount value))
-
-/-- Bind callback parameters through counted argument semantics: each bound
-    parameter keeps its counted view (a `()` item emits zero values, every other
-    item one — selection is a value boundary) and remains a parameter value,
-    not a callable algorithm. -/
-partial def bindCountedCallbackParams (ps : List Ident) (args : List CountedResult)
-    : EvalM CountedParamEnv := do
-  let rec collect
-      (remainingParams : List Ident)
-      (remainingArgs : List CountedResult)
-      : EvalM (List Ident × List CountedResult) :=
-    match remainingParams, remainingArgs with
-    | [], _ => pure ([], [])
-    | params, [] => pure (params, [])
-    | p :: ps', [arg] =>
-        match ps' with
-        | [] => pure ([p], [arg])
-        | _ => pure (p :: ps', unpackCountedArg arg)
-    | p :: ps', arg :: args' => do
-        let (boundParams, boundArgs) <- collect ps' args'
-        pure (p :: boundParams, arg :: boundArgs)
-  if args.length > ps.length then
-    .error (Error.arityMismatch ps.length args.length)
-  else do
-    let (boundParams, boundArgs) <- collect ps args
-    if boundParams.length != boundArgs.length then
-      .error (Error.arityMismatch boundParams.length boundArgs.length)
-    else
-      pure (List.zip boundParams boundArgs)
-
 mutual
 partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : CountedResult)
     : EvalM CountedParameterPatternBindings := do
@@ -3073,14 +2960,14 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
       -- like `P(7)`, and `P((x, y))` rejects a scalar with the nested group's
       -- ordinary `arityMismatch 2 1` in both (September 2026, S3; the
       -- callback path formerly fell back only for one-item groups).
-      -- Pattern-opened items are FINAL supply items: a nested collecting
-      -- binding collects them exactly (one boundary opened, never two).
+      -- The pattern's explicit structure opens exactly this one boundary; a
+      -- nested collecting binding collects the opened items exactly.
       let nestedInputs := (Result.sequenceValuePatternItems input.fst).map (fun value =>
-        { counted := (value, Result.valueCount value) : CountedPatternInput })
+        (value, Result.valueCount value))
       bindCountedParameterPatternList items nestedInputs
 
 partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
-  (inputs : List CountedPatternInput) : EvalM CountedParameterPatternBindings := do
+  (inputs : List CountedResult) : EvalM CountedParameterPatternBindings := do
   let rec findCollecting : List ParameterPattern -> Nat -> Option (Nat × CallableParameter)
     | [], _ => none
     | (.capture parameter) :: rest, index =>
@@ -3095,10 +2982,10 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
   -- channel, so an unequal repeat is `badArity`.
   let asContribution (bindings : CountedParameterPatternBindings) : ParameterPatternBindings :=
     { countedParamEnv := bindings.countedParamEnv }
-  let rec bindPairs : List ParameterPattern -> List CountedPatternInput -> EvalM (List ParameterPatternBindings)
+  let rec bindPairs : List ParameterPattern -> List CountedResult -> EvalM (List ParameterPatternBindings)
     | [], [] => pure []
     | pattern :: patterns', input :: inputs' => do
-        let current <- bindCountedParameterPattern pattern input.counted
+        let current <- bindCountedParameterPattern pattern input
         let rest <- bindPairs patterns' inputs'
         pure (asContribution current :: rest)
     | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
@@ -3138,12 +3025,10 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         let suffixBound <- bindPairs suffixPatterns suffixInputs
         settle (fun name => ParameterPattern.anyBindsName name prefixPatterns
           || collectingParameter.name == name) suffixBound
-        -- Collecting binding COLLECTS the collector supply of its allocated
-        -- segment (`collectorSupply`: exact, except that one lone written
-        -- sequence slot opens one level) as one exact immutable list value,
-        -- emitted count 1 (a list is one visible value).
-        let segment := capturedInputs.map (fun input => (input.counted.fst, input.origin))
-        let captured := collectSegment (collectorSupply segment)
+        -- Collecting binding COLLECTS exactly the items allocated to it as one
+        -- exact immutable list value, emitted count 1 (a list is one visible
+        -- value): it never opens an item (THE EXACT COLLECTOR LAW).
+        let captured := collectSegment (capturedInputs.map Prod.fst)
         let capturedBinding := (collectingParameter.name, (captured, 1))
         let collectingBindings : ParameterPatternBindings :=
           { countedParamEnv := [capturedBinding] }
@@ -3160,34 +3045,6 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
             | some error => .error error
             | none => pure (merged (leftSide ++ suffixBound))
       end
-
-/-- Callback binding for a flat callee whose top-level parameters include a
-    collecting parameter. The callback argument supply keeps the established
-    flat-callback row convention: when fewer argument slots are supplied than
-    top-level parameters, the final supplied argument opens into its items
-    (a lone sequence element into row slots; exact lists stay opaque), exactly
-    as `bindCountedCallbackParams` does for fixed-only flat callees. The resulting
-    slots then bind through the shared prefix/collecting/suffix binder, so the collecting
-    parameter COLLECTS its allocated slots as one list under the collector
-    supply-boundary law: a whole callback argument is a written slot (a lone
-    sequence item on a single-collecting callee opens one level —
-    `((1, 2), (3, 4)).map(Coll)` is `[[1, 2], [3, 4]]`), while row-unpacked
-    slots are final items.
-    C#: `BindCountedCallbackParameterPatternList`. -/
-def bindCountedCallbackParameterPatternList (patterns : List ParameterPattern)
-    (args : List CountedResult) : EvalM CountedParameterPatternBindings :=
-  let written (arg : CountedResult) : CountedPatternInput :=
-    { counted := arg, origin := .writtenSlot }
-  let final (arg : CountedResult) : CountedPatternInput :=
-    { counted := arg, origin := .finalItem }
-  let slots :=
-    if args.length != 0 && args.length < patterns.length then
-      match args.getLast? with
-      | some last => args.dropLast.map written ++ (unpackCountedArg last).map final
-      | none => args.map written
-    else
-      args.map written
-  bindCountedParameterPatternList patterns slots
 
 def describeSequenceItem : Result -> String
   | .atom n => s!"numeric value {n}"
@@ -4031,16 +3888,6 @@ def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
     countedParamEnv := if bindingContextFree then none else some (reprStr ctx.countedParamEnv),
     bindingContext := if bindingContextFree then none else some ctx.bindingContext
   }
-
-def reducerAccumulatorSideHasTopLevelCollecting : Algorithm -> Bool
-  | .mk _ patterns _ _ _ _ =>
-      match patterns with
-      | [] => false
-      | _ :: accumulatorPatterns =>
-          accumulatorPatterns.any (fun
-            | .capture parameter => parameter.kind == .collecting
-            | _ => false)
-  | _ => false
 
 def requireCallableValues (items : List CallableCallItem)
     : EvalM (List Result) := do
@@ -5083,18 +4930,15 @@ mutual
           let suffixBound <- bindPairs suffixPatterns suffixInputs
           settle (fun name => ParameterPattern.anyBindsName name prefixPatterns
             || collectingParameter.name == name) suffixBound
-          let rec collectValues : List ParameterPatternInput -> EvalM (List (Result × SupplyOrigin))
+          let rec collectValues : List ParameterPatternInput -> EvalM (List Result)
             | [] => pure []
             | input :: rest =>
                 match input.value? with
                 | some value => do
                     let values <- collectValues rest
-                    -- Every slot allocated to the flat top-level collecting
-                    -- position contributes its ONE reified value together with
-                    -- its supply origin; `collectorSupply` below decides, on
-                    -- the whole allocated segment, whether a lone written
-                    -- sequence slot fuses with the collector's boundary.
-                    pure ((value, input.origin) :: values)
+                    -- Every item allocated to the flat top-level collecting
+                    -- position contributes its ONE reified value, unopened.
+                    pure (value :: values)
                 | none =>
                     -- A collecting binding collects VALUES. A callable-shaped
                     -- argument (builtin, clause family, or parameterized
@@ -5115,11 +4959,10 @@ mutual
                           .error (input.error?.getD Error.badArity)
                     | none => .error (input.error?.getD Error.badArity)
           let segment <- collectValues capturedInputs
-          -- Collecting binding COLLECTS the collector supply of its allocated
-          -- segment (`collectorSupply`: exact, except that one lone written
-          -- sequence slot opens one level) as one exact immutable list value,
-          -- emitted count 1 (a list is one visible value).
-          let captured := collectSegment (collectorSupply segment)
+          -- Collecting binding COLLECTS exactly the items allocated to it as
+          -- one exact immutable list value, emitted count 1 (a list is one
+          -- visible value): it never opens an item (THE EXACT COLLECTOR LAW).
+          let captured := collectSegment segment
           let collectingBindings : ParameterPatternBindings :=
             { argEnv := [(collectingParameter.name, captured)],
               countedParamEnv := [(collectingParameter.name, (captured, 1))],
@@ -5302,11 +5145,6 @@ mutual
     let (argEnv, countedParamEnv) <- bindLoopStepState step stateSlots
     let stepCtx <- ctx.bindParameters (Algorithm.params step) [] countedParamEnv
     evalAlgOutputSlots step stepCtx (argEnv ++ env) (Algorithm.requiresPatternBinding step)
-
-  /-- Run a step algorithm with the given state bound to its params. -/
-  partial def runStep (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : Result) : EvalM Result := do
-    let outputSlots <- runStepSlots step ctx env (unpackArgs s)
-    pure (loopStateResult outputSlots)
 
   /-- Initial loop state preserves explicit argument boundaries: `repeat(Step, 3, a, b)`
       starts with two slots, while `repeat(Step, 3, Pair)` starts with one slot even when
@@ -5539,13 +5377,35 @@ mutual
       | none =>
           .error (Error.noMatchingBranch calleeName)
 
+  /-- Bind pre-evaluated callback arguments to a user algorithm through the ONE
+      ordinary counted binder and evaluate its output. THE CALLBACK LAW
+      (September 2026): every value a callback operation supplies is ONE
+      ordinary argument, bound exactly as the ordinary call with the same
+      supply — `map(xs, F)` calls `F(E)` for each element `E`, `reduce` calls
+      `R(E, Acc)` — so fixed parameters take their values unchanged, a
+      collector collects the supplied values exactly, and only the callee's
+      explicit sequence-value patterns open a value. There is no callback row
+      convention: `map([(1, 2)], Add)` with `Add(x, y)` is the ordinary arity
+      error of `Add((1, 2))`, while `AddPair((x, y))` opens the element
+      explicitly. -/
+  partial def evalUserCallbackCallCounted (callee : Algorithm)
+      (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM CountedResult := do
+    if (Algorithm.output callee).isEmpty then
+      .error Error.missingOutput
+    else do
+      let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) args
+      let names := bindings.countedParamEnv.map Prod.fst
+      let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
+      evalAlgOutputCounted callee newCtx env
+
   /-- Evaluate a resolved algorithm against pre-evaluated callback arguments
       that preserve their emitted top-level counts.
 
       This is the shared callback-binding path for higher-order sequence
-      builtins. It retains the flat-callback row convention for final-argument
-      unpacking; the callback item itself is a selected value, so inside the
-      callback body it behaves exactly like `S:i` — one value, never opened. -/
+      builtins. Each callback item is a selected value, so inside the callback
+      body it behaves exactly like `S:i` — one value, never opened — and it is
+      bound as one ordinary argument (`evalUserCallbackCallCounted`). -/
   partial def evalResolvedCallbackCallCounted (callee : Algorithm)
       (args : List CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
@@ -5555,54 +5415,10 @@ mutual
         applyBuiltinCounted b (args.map fun arg => { algorithm := countedArgAlgorithm arg }) ctx env
     | .conditional _ _ _ _ =>
         match flatBinderUserEquivalent? callee with
-        | some simple => do
-            if (Algorithm.output simple).isEmpty then
-              .error Error.missingOutput
-            else do
-              let countedParamEnv <- bindCountedCallbackParams (Algorithm.params simple) args
-              let newCtx <- ctx.bindParameters (Algorithm.params simple) [] countedParamEnv
-              evalAlgOutputCounted simple newCtx env
+        | some simple => evalUserCallbackCallCounted simple args ctx env
         | none =>
             evalConditionalCallbackCallCounted callee args ctx env calleeName
-    | _ =>
-        if (Algorithm.output callee).isEmpty then
-          .error Error.missingOutput
-        else do
-          if Algorithm.requiresPatternBinding callee then do
-            -- Whole callback arguments are written slots; the sequence-value
-            -- patterns open them and their items are final. Each supplied
-            -- callback value binds exactly as the ordinary call `P(V)` binds
-            -- it: the same slot allocation and the same nested-pattern opening
-            -- (`Result.sequenceValuePatternItems`), with no row expansion.
-            let inputs := args.map (fun arg => { counted := arg, origin := .writtenSlot : CountedPatternInput })
-            let bindings <- bindCountedParameterPatternList (Algorithm.parameterPatterns callee) inputs
-            let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
-            evalAlgOutputCounted callee newCtx env
-          -- A flat callee with a top-level collecting parameter (`Rows.map(F)` with
-          -- `F(x, *y, z)` or a single-collecting `Collect(*items)`) binds through
-          -- the shared prefix/collecting/suffix binder so the collecting parameter
-          -- COLLECTS one list, after the same final-argument
-          -- row expansion the fixed-only flat path uses below. Single-variadic
-          -- callees keep the whole iterated element as one collected slot.
-          else if ParameterPattern.hasCollectingCaptureAtCurrentLevel
-              (Algorithm.parameterPatterns callee) then do
-            let bindings <- bindCountedCallbackParameterPatternList
-              (Algorithm.parameterPatterns callee) args
-            let names := bindings.countedParamEnv.map Prod.fst
-            let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
-            evalAlgOutputCounted callee newCtx env
-          else do
-            -- Fixed-only flat callback binding allocates each selected item to
-            -- slots and binds those slots to the algorithm's flat parameter
-            -- names (the final item is unpacked across any remaining names);
-            -- it does not apply item-supply singleton-boundary normalization.
-            -- No nested pattern is involved here (a callee with one routes to
-            -- the patterned branch above), so the row convention is the whole
-            -- callback supply-shape policy of this path.
-            let countedParamEnv <- bindCountedCallbackParams (Algorithm.params callee) args
-            let newCtx <- ctx.bindParameters (Algorithm.params callee) [] countedParamEnv
-            evalAlgOutputCounted callee newCtx env
+    | _ => evalUserCallbackCallCounted callee args ctx env
 
   /-- Non-counted wrapper for callback calls (the value projection of
       `evalResolvedCallbackCallCounted`). -/
@@ -5613,47 +5429,24 @@ mutual
     let out <- evalResolvedCallbackCallCounted callee args ctx env calleeName
     pure out.fst
 
-  partial def evalReducerAccumulatorVariadicCallbackCallCounted (callee : Algorithm)
-      (args : List CountedResult)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      : EvalM CountedResult := do
-    match callee with
-    | .mk _ patterns _ _ output _ =>
-        if output.isEmpty then
-          .error Error.missingOutput
-        else do
-          -- Accumulator state slots are already the opened accumulator
-          -- (`Result.toItems`), so every slot here is a FINAL item: the
-          -- collector collects the presented slots exactly, like loop state.
-          let inputs := args.map (fun arg => { counted := arg : CountedPatternInput })
-          let bindings <- bindCountedParameterPatternList patterns inputs
-          let names := bindings.countedParamEnv.map Prod.fst
-          let newCtx <- ctx.bindParameters names [] bindings.countedParamEnv
-          evalAlgOutputCounted callee newCtx env
-    | _ =>
-        evalResolvedCallbackCallCounted callee args ctx env calleeName
-
-  /-- Evaluate a `reduce` step on one collected iteration item. Reducers with
-      a top-level variadic accumulator parameter bind accumulator state slots
-      like loop state; other reducers keep ordinary structural accumulator
-      binding. -/
+  /-- Evaluate a `reduce` step on one collected iteration item. The reducer is
+      an ordinary two-argument callback (THE CALLBACK LAW): it receives the
+      element and the accumulator as exactly two arguments, each ONE value —
+      `reduce(xs, R, init)` calls `R(E, Acc)` — so a collecting parameter on
+      either side collects those argument values exactly and a structured
+      accumulator is opened only by the reducer's own explicit pattern
+      (`R(x, (a, b))`). The accumulator is always one value: the initial
+      accumulator is reified at the value boundary and every step must return
+      exactly one value (`expectSingleAccumulator`). -/
   partial def evalSequenceReduceStepCounted (callee : Algorithm)
       (element : CountedResult) (accumulator : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
-      : EvalM CountedResult := do
-    let elementArg := countedSequenceCallbackItem element
-    if reducerAccumulatorSideHasTopLevelCollecting callee then
-      let accumulatorArgs :=
-        (Result.toItems accumulator).map (fun value => (value, Result.valueCount value))
-      evalReducerAccumulatorVariadicCallbackCallCounted callee
-        (elementArg :: accumulatorArgs)
-        ctx env calleeName
-    else
-      evalResolvedCallbackCallCounted callee
-        [ elementArg
-        , (accumulator, Result.valueCount accumulator)
-        ]
-        ctx env calleeName
+      : EvalM CountedResult :=
+    evalResolvedCallbackCallCounted callee
+      [ countedSequenceCallbackItem element
+      , (accumulator, Result.valueCount accumulator)
+      ]
+      ctx env calleeName
 
     partial def collectSequenceCallableCallItems
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -5789,10 +5582,10 @@ mutual
       `reduce(collection, reducer, initial)` processes top-level
       collection elements from left to right.
       `step(element, accumulator)` receives each item exactly as collected
-      from the post-binding collection view; nested sequence values stay
-      intact. Normal accumulator parameters keep ordinary structural semantics,
-      while top-level variadic accumulator parameters receive accumulator state
-      slots. The step must
+      from the post-binding collection view and the accumulator as ONE value —
+      two ordinary callback arguments (THE CALLBACK LAW); nested sequence
+      values stay intact, and only the reducer's own explicit pattern opens a
+      structured element or accumulator. The step must
       return exactly one accumulator value: one atom, one string, one sequence
       value, or one exact list value is valid (the empty list `[]` counts as
       one value), while empty-sequence and multi-output results are rejected.
@@ -5818,7 +5611,7 @@ mutual
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level collecting accumulator parameters receive state slots)" <|
+            "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
@@ -6124,11 +5917,15 @@ mutual
       fixed, flat/mixed variadic, patterned, and multi-clause conditional):
       each written argument slot is evaluated exactly once, left to right; every non-spread slot is
       reified as exactly ONE argument value (with its dual algorithm view
-      where resolvable), and every explicit spread slot is expanded by
-      exactly one value boundary into ordinary argument slots. The final
-      argument supply is formed BEFORE any arity checking, clause selection,
-      conditional dispatch, or pattern binding — the callee's internal
-      representation never influences the meaning of caller-side spread.
+      where resolvable) whatever that value is — a scalar, a sequence, a list,
+      `()`, or `[]` — and every explicit spread slot is expanded by exactly one
+      value boundary into ordinary argument slots. VALUES STAY VALUES: this is
+      the ONLY place a call turns one value into several supplied items, and it
+      does so only for a written spread. The final argument supply is formed
+      BEFORE any arity checking, clause selection, conditional dispatch, or
+      pattern binding, and no binder reinterprets an item afterwards — the
+      callee's internal representation never influences the meaning of
+      caller-side spread.
       DOT-CALL PASSES A VALUE: an extension dot-call receiver reaches this
       assembly as the ordinary FIRST slot of `F(R, args)`
       (`prepareLexicalDotCallArgs`) — one reified value like any written
@@ -6145,25 +5942,25 @@ mutual
       C#: `BuildCallArgumentInputs`. -/
   partial def collectVariadicCallItems (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
-      : EvalM (List VariadicItem) := do
+      : EvalM (List ParameterPatternInput) := do
     let maybeAlgs <- tryResolveArgAlgs args ctx
     let rec appendCounted (counted : CountedResult) (maybeAlg : Option Algorithm) (expand : Bool)
-        (acc : List VariadicItem) : List VariadicItem :=
+        (acc : List ParameterPatternInput) : List ParameterPatternInput :=
       if expand then
-        -- Explicit spread produces FINAL supply items (`SupplyOrigin.finalItem`).
+        -- Explicit spread supplies the operand's items, one level.
         let expanded := (countedTopLevelValues counted).map (fun value =>
-          { value? := some value : VariadicItem })
+          { value? := some value : ParameterPatternInput })
         expanded.reverse ++ acc
       else
-        -- A non-spread slot is ONE written slot (`SupplyOrigin.writtenSlot`).
+        -- A non-spread slot is exactly ONE item: its value, never opened.
         { value? := some counted.fst,
-          algorithm? := maybeAlg,
-          origin := .writtenSlot : VariadicItem } :: acc
+          algorithm? := maybeAlg : ParameterPatternInput } :: acc
     let shouldExpand (e : Expr) : Bool :=
       match e with
       | .sequenceSpread _ => true
       | _ => false
-    let rec loop : List Expr -> List (Option Algorithm) -> List VariadicItem -> EvalM (List VariadicItem)
+    let rec loop : List Expr -> List (Option Algorithm) -> List ParameterPatternInput
+        -> EvalM (List ParameterPatternInput)
       | [], _, acc => pure acc.reverse
       | e :: es, ma :: mas, acc => do
           let expand := shouldExpand e
@@ -6172,7 +5969,7 @@ mutual
             loop es mas (appendCounted counted ma expand acc)
           | .error err =>
             match ma with
-            | some alg => loop es mas ({ algorithm? := some alg, error? := some err, origin := .writtenSlot : VariadicItem } :: acc)
+            | some alg => loop es mas ({ algorithm? := some alg, error? := some err : ParameterPatternInput } :: acc)
             | none => .error err
       | e :: es, [], acc => do
           let expand := shouldExpand e
@@ -6189,8 +5986,7 @@ mutual
   partial def bindDeconstructionUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env
-    let inputs := items.map variadicItemToPatternInput
+    let inputs <- collectVariadicCallItems args ctx env
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
 
@@ -6267,8 +6063,7 @@ mutual
   partial def bindPatternedUserCall (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM (ValEnv × CountedParamEnv × AlgEnv) := do
-    let items <- collectVariadicCallItems args ctx env
-    let inputs := items.map variadicItemToPatternInput
+    let inputs <- collectVariadicCallItems args ctx env
     let bindings <- bindParameterPatternList (Algorithm.parameterPatterns callee) inputs true
     pure (bindings.argEnv, bindings.countedParamEnv, bindings.algEnv)
 

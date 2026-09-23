@@ -31,7 +31,7 @@ public class LeanCoreTestsCompositionTests
         "ValueDemand",
         "ComparisonChains",
         "SelectionValueBoundary",
-        "CollectorSupplyBoundary",
+        "ExplicitValueOpening",
     ];
 
     [Fact]

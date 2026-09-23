@@ -988,7 +988,7 @@ public static partial class Evaluator
     /// Collects a host operation's evaluated argument values from the wrapper's bound
     /// parameter environments, in declaration order, as the read-only snapshot handed
     /// to host code. Lookup is the shared counted-first native-argument rule
-    /// (<see cref="LookupNativeArgument"/>), so a flat-callback invocation hands the
+    /// (<see cref="LookupNativeArgument"/>), so a callback invocation hands the
     /// host its callback-bound arguments — never a same-named ambient value. Unlike
     /// Math natives there is no numeric coercion: host operations receive the full
     /// KatLang values.

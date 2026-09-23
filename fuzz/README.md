@@ -534,18 +534,20 @@ receiver evaluates to a value, and no generated source contains `public `.
 
 ### Callback-wrapper preconditions, and why similar-looking pairs are rejected
 
-KatLang's flat-callback binding is receiver-specific and is **not** ordinary call
-argument binding. A consumer supplies a fixed number of values per invocation, and only a wrapper
-that binds exactly those values positionally sees what the direct builtin sees. Two projections
+A callback binds each value it is supplied exactly as an ordinary call does (the callback law: an
+element is ONE ordinary argument), but a consumer supplies a fixed number of values per invocation
+(one for `map`/`filter`, two for `reduce`), so only a wrapper that binds exactly those values
+positionally sees what the direct builtin sees. Two projections
 are therefore **rejected**, not compared:
 
 * **Collecting** (`MmWrap(*xs)`) — a collecting parameter *collects* the supplied slots into an exact list,
   so the wrapper receives `[element]` where the builtin receives `element`. Measured:
   `[[1, 2], [3]].map(count)` is `[2, 1]` while the collecting wrapper gives `[1, 1]`. That is correct
   language behaviour and a false equivalence, not a defect.
-* **Arity-mismatched** — a flat multi-parameter callee first opens a lone *sequence*-valued
-  element into row slots and arity-errors on other kinds, so it matches neither a one-value nor a
-  two-value consumer.
+* **Arity-mismatched** — a callee whose parameter count differs from the consumer's supply is the
+  ordinary arity error of the direct call with that supply (a flat two-parameter callee receives a
+  `map`/`filter` element as ONE argument), so it matches neither a one-value nor a two-value
+  consumer.
 
 Both are still *generated*, so the rejection path is exercised and counted, and both have
 dedicated tests proving the non-equivalence they guard against.

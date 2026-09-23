@@ -722,16 +722,17 @@ public closed record Result
     }
 
     /// <summary>
-    /// Extract top-level items from a result.
-    /// Number/Boolean/string -> singleton list; sequence value -> its items.
-    /// A list value stays OPAQUE here: it is one item, so non-spread consumers
-    /// (boundary re-counting, call binding) treat a list as a single exact
-    /// value. Only the spread marker (<see cref="SpreadItems"/>), deconstruction
-    /// binding, the indexing <c>:</c> TARGET position view
-    /// (<see cref="ProjectionItems"/> — the target's positions, never the
-    /// selected element), and the builtin collection-item view
-    /// (the bound collection argument after ordinary fixed binding) open a
-    /// list boundary.
+    /// Top-level items of a MULTI-ITEM counted result: a sequence value's items;
+    /// any other value (a number, Boolean, string, or list) is itself. This is not
+    /// an opening operation — call binding never uses it (every non-spread argument
+    /// is ONE item) — it only recovers the rows a multi-output body emitted and
+    /// serves as the non-list branch of the one-level views below. The explicit
+    /// openers are the spread marker (<see cref="SpreadItems"/>), explicit
+    /// sequence-value patterns and deconstruction (<see cref="StructureItems"/>),
+    /// the indexing <c>:</c> TARGET position view (<see cref="ProjectionItems"/> —
+    /// the target's positions, never the selected element), and the builtin
+    /// collection-item view (the bound collection argument after ordinary fixed
+    /// binding); each opens a sequence and a list alike.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>
     public IReadOnlyList<Result> ToItems()
@@ -765,8 +766,9 @@ public closed record Result
     /// parameter pattern binders: a received sequence value or exact list
     /// value opens to its immediate items; numbers, Booleans, and strings are not openable
     /// (<c>Evaluator.SequenceValuePatternItems</c> adds the ONE scalar one-item fallback
-    /// both binders share). Call-argument binding never uses this view — a list argument
-    /// stays one argument.
+    /// both binders share). Call-argument binding never uses this view — every non-spread
+    /// argument stays one argument, a sequence or a list alike; only an explicit pattern or
+    /// spread opens it.
     /// Lean: <c>Result.structureItems?</c>.
     /// </summary>
     public IReadOnlyList<Result>? StructureItems()

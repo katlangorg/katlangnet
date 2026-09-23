@@ -28,16 +28,24 @@ def variadicSimpleRoot : Algorithm :=
     .dotCall (.dotCall (resolve "Arg") "Collect" none) "count" none
   ]
 
--- `Arg.Collect` is `Collect(Arg)`: the receiver is ONE written argument
--- slot holding the sequence value `(1, 2, 3)`; it is the lone collector's
--- whole segment, so the collector supply-boundary law opens it one level and
--- the collecting parameter collects `list = [1, 2, 3]` (count 3).
-def variadicDotCallReceiverOpensOneLevel : Bool :=
-  match runFlat (.algorithmExpr variadicSimpleRoot) with
-  | Except.ok [3] => true
-  | _ => false
+-- `Arg.Collect` is `Collect(Arg)`: the receiver is ONE argument holding the
+-- sequence value `(1, 2, 3)`, and the collecting parameter collects exactly
+-- that one supplied item — `list = [(1, 2, 3)]` (count 1). Only the spread
+-- receiver `Arg*.Collect` supplies the three items (count 3).
+def variadicDotCallReceiverIsOneArgument : Bool :=
+  (match runFlat (.algorithmExpr variadicSimpleRoot) with
+   | Except.ok [1] => true
+   | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [
+      ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
+      ("Collect", variadicCollectAlg)
+    ] [
+      .dotCall (.dotCall (sequenceSpread (resolve "Arg")) "Collect" none) "count" none
+    ])) with
+   | Except.ok [3] => true
+   | _ => false)
 
-#guard variadicDotCallReceiverOpensOneLevel
+#guard variadicDotCallReceiverIsOneArgument
 
 def normalParameterStillPreservesBoundary : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
@@ -63,12 +71,12 @@ def variadicNestedSequenceValuesRoot : Algorithm :=
     .dotCall (.call (resolve "atoms") [.dotCall (resolve "Arg") "Collect" none]) "count" none
   ]
 
--- The lone written receiver slot opens exactly ONE level: `Arg.Collect`
--- collects `list = [(1, 2), (3, 4)]` (count 2, the nested pairs intact), and
--- `atoms` still reaches all four numeric leaves through the collected list.
+-- The receiver is ONE argument: `Arg.Collect` collects
+-- `list = [((1, 2), (3, 4))]` (count 1, the nested value intact), and `atoms`
+-- still reaches all four numeric leaves through the collected list.
 def variadicPreservesNestedSequenceValues : Bool :=
   match runFlat (.algorithmExpr variadicNestedSequenceValuesRoot) with
-  | Except.ok [2, 4] => true
+  | Except.ok [1, 4] => true
   | _ => false
 
 #guard variadicPreservesNestedSequenceValues
@@ -111,13 +119,13 @@ def ordinaryCountAlg : Algorithm :=
 
 -- Supplying a NAMED property's items to the variadic mean: the explicit
 -- spread call `Mean(Arg*)` and the spread receiver `Arg*.Mean` (which IS
--- `Mean(Arg*)`) supply three final items; the stored receiver `Arg.Mean` is
--- `Mean(Arg)` — one written sequence slot that is the lone collector's whole
--- segment, opened one level to the same three items — and so is the captured
--- spread `(Arg*).Mean` = `Mean((Arg*))`. All agree with the builtin
--- sum/count pipeline.
+-- `Mean(Arg*)`) supply three items and agree with the builtin sum/count
+-- pipeline. The stored receiver `Arg.Mean` is `Mean(Arg)` — ONE argument, so
+-- `values = [(1, 2, 3)]` and the numeric `sum` constraint rejects the
+-- sequence element — and so is the captured spread `(Arg*).Mean` =
+-- `Mean((Arg*))`.
 def variadicMeanMatchesBuiltinSumCount : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  let props : List (Prod String Algorithm) := [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Mean", variadicMeanAlg),
     ("Direct", alg [] [] [] [
@@ -125,26 +133,31 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
         (.dotCall (resolve "Arg") "sum" none)
         (.dotCall (resolve "Arg") "count" none)
     ])
-  ] [
+  ]
+  let rejectsElement (receiver : KatLang.Expr) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] [] props [.dotCall receiver "Mean" none])) with
+    | Except.error err => innermostIsBadArity err
+    | _ => false
+  (match runFlat (.algorithmExpr (algPrivate [] [] props [
     .call (resolve "Mean") [sequenceSpread (resolve "Arg")],
     .dotCall (sequenceSpread (resolve "Arg")) "Mean" none,
-    .dotCall (resolve "Arg") "Mean" none,
-    .dotCall (sequenceSpreadReceiver (resolve "Arg")) "Mean" none,
     resolve "Direct"
   ])) with
-  | Except.ok [2, 2, 2, 2, 2] => true
-  | _ => false
+  | Except.ok [2, 2, 2] => true
+  | _ => false) &&
+  rejectsElement (resolve "Arg") &&
+  rejectsElement (sequenceSpreadReceiver (resolve "Arg"))
 
 #guard variadicMeanMatchesBuiltinSumCount
 
--- `CountViaVariadic(Arg)` and `Arg.CountViaVariadic` supply ONE written
--- argument slot, the sequence value `((1, 2), (3, 4))`; as the lone
--- collector's whole segment it opens one level, so the collecting parameter
--- collects `values = [(1, 2), (3, 4)]` (count 2) — the same count the
--- fixed-collection builtin `Arg.count` reports through its post-binding
--- view; `atoms` recursively reaches all four numeric leaves through the
--- collected list.
-def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
+-- `CountViaVariadic(Arg)` and `Arg.CountViaVariadic` supply ONE argument, the
+-- sequence value `((1, 2), (3, 4))`, so the collecting parameter collects
+-- `values = [((1, 2), (3, 4))]` (count 1) — it counts ARGUMENTS — while the
+-- fixed-collection builtin `Arg.count` reads the value's contents through its
+-- post-binding view (count 2), exactly what the explicit spread
+-- `CountViaVariadic(Arg*)` supplies; `atoms` recursively reaches all four
+-- numeric leaves through the collected list.
+def variadicCountsArgumentsWhileBuiltinCountReadsContents : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [
       .capture [.num 1, .num 2],
@@ -156,19 +169,19 @@ def variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms : Bool :=
     .call (resolve "CountViaVariadic") [resolve "Arg"],
     .dotCall (resolve "Arg") "CountViaVariadic" none,
     .dotCall (resolve "Arg") "count" none,
+    .call (resolve "CountViaVariadic") [sequenceSpread (resolve "Arg")],
     .call (resolve "CountAtoms") [resolve "Arg"]
   ])) with
-  | Except.ok [2, 2, 2, 4] => true
+  | Except.ok [1, 1, 2, 2, 4] => true
   | _ => false
 
-#guard variadicNestedSequenceValuesAgreeWithBuiltinCountAndAtoms
+#guard variadicCountsArgumentsWhileBuiltinCountReadsContents
 
 -- A fixed parameter binds the receiver value itself, so the collection
 -- builtin opens it through its post-binding view (count 3 for a sequence
--- and for a list alike); a collecting parameter applies the collector
--- supply-boundary law to its lone written slot: a SEQUENCE receiver opens
--- one level (count 3), a LIST receiver stays one exact collected element
--- (count 1). The two shapes remain observably different on a list.
+-- and for a list alike); a collecting parameter collects its one supplied
+-- argument exactly (count 1 for a sequence and for a list alike). The two
+-- shapes are observably different on every structured receiver.
 def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
@@ -181,7 +194,7 @@ def ordinaryAndVariadicCountStayStructurallyDifferent : Bool :=
     .dotCall (resolve "ArgList") "Ordinary" none,
     .dotCall (resolve "ArgList") "Variadic" none
   ])) with
-  | Except.ok [3, 3, 3, 1] => true
+  | Except.ok [3, 1, 3, 1] => true
   | _ => false
 
 #guard ordinaryAndVariadicCountStayStructurallyDifferent
@@ -219,29 +232,35 @@ def variadicInlineTupleDotCallWithSuffixCapturesReceiverItems : Bool :=
 #guard variadicInlineTupleDotCallWithSuffixCapturesReceiverItems
 
 -- `Data.TotalWithFee(5)` is `TotalWithFee(Data, 5)`: the named receiver is one
--- written argument slot; the suffix takes 5 first, and the segment left to
--- the collector is that lone sequence value, which opens one level —
--- `values = [10, 20, 30]`, total 65, exactly like the spread receiver above.
-def collectingNamedMultiOutputDotCallWithSuffixOpensOneLevel : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+-- argument; the suffix takes 5, and the collector collects the remaining ONE
+-- item exactly — `values = [(10, 20, 30)]`, whose sequence element the numeric
+-- `sum` constraint rejects — while the spread receiver
+-- `Data*.TotalWithFee(5)` supplies the three items (total 65).
+def collectingNamedMultiOutputDotCallWithSuffixIsOneArgument : Bool :=
+  let props : List (Prod String Algorithm) := [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
     ("TotalWithFee", variadicTotalWithFeeAlg)
-  ] [
+  ]
+  (match runResult (.algorithmExpr (algPrivate [] [] props [
     .dotCall (resolve "Data") "TotalWithFee" (some [.num 5])
   ])) with
+  | Except.error err => innermostIsBadArity err
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] props [
+    .dotCall (sequenceSpread (resolve "Data")) "TotalWithFee" (some [.num 5])
+  ])) with
   | Except.ok [65] => true
-  | _ => false
+  | _ => false)
 
-#guard collectingNamedMultiOutputDotCallWithSuffixOpensOneLevel
+#guard collectingNamedMultiOutputDotCallWithSuffixIsOneArgument
 
--- For a SEQUENCE-valued receiver the named receiver, the spread receiver
--- `Data*.TotalWithFee(5)`, and the CAPTURED spread `(Data*).TotalWithFee(5)`
--- all total 65: the named and captured forms are one written sequence slot
--- opened by the collector law, the spread form supplies the three final
--- items. A LIST receiver keeps the distinction: `List.TotalWithFee(5)`
--- collects `[[10, 20, 30]]` (numeric-constraint error) while
--- `List*.TotalWithFee(5)` totals 65 — only the spread marker opens a list.
-def variadicInlineTupleSpreadReceiverAgreesForSequenceDiffersForList : Bool :=
+-- A SEQUENCE-valued and a LIST-valued receiver behave ALIKE: the named
+-- receiver and the CAPTURED spread `(Data*).TotalWithFee(5)` are each ONE
+-- argument, so the collector collects the whole value as one element
+-- (numeric-constraint error), while the spread receivers
+-- `Data*.TotalWithFee(5)` and `List*.TotalWithFee(5)` supply the three items
+-- and total 65 — only the spread marker opens a value.
+def variadicSpreadReceiverOpensSequenceAndListAlike : Bool :=
   let dataProps : List (Prod String Algorithm) := [
     ("Data", alg [] [] [] [.num 10, .num 20, .num 30]),
     ("List", alg [] [] [] [.listLiteral [.num 10, .num 20, .num 30]]),
@@ -259,40 +278,40 @@ def variadicInlineTupleSpreadReceiverAgreesForSequenceDiffersForList : Bool :=
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
-  totals65 (resolve "Data") &&
+  rejectsElement (resolve "Data") &&
   totals65 (sequenceSpread (resolve "Data")) &&
-  totals65 (.capture [sequenceSpread (resolve "Data")]) &&
+  rejectsElement (.capture [sequenceSpread (resolve "Data")]) &&
   rejectsElement (resolve "List") &&
   totals65 (sequenceSpread (resolve "List"))
 
-#guard variadicInlineTupleSpreadReceiverAgreesForSequenceDiffersForList
+#guard variadicSpreadReceiverOpensSequenceAndListAlike
 
 -- A nested inline sequence receiver `((10, 20, 30))` normalizes to the same
--- sequence value `(10, 20, 30)` and opens one level like it (65), while a
--- genuinely nested receiver `((10, 20), 30)` opens exactly ONE level: the
--- collected list holds the inner pair, so `values.sum` hits the numeric
--- element constraint.
-def variadicNestedInlineTupleDotCallOpensOneLevel : Bool :=
-  (match runFlat (.algorithmExpr (algPrivate [] [] [
-    ("TotalWithFee", variadicTotalWithFeeAlg)
-  ] [
-    .dotCall (.capture [
-      .capture [.num 10, .num 20, .num 30]
-    ]) "TotalWithFee" (some [.num 5])
-  ])) with
-  | Except.ok [65] => true
-  | _ => false) &&
-  (match runResult (.algorithmExpr (algPrivate [] [] [
-    ("TotalWithFee", variadicTotalWithFeeAlg)
-  ] [
-    .dotCall (.capture [
-      .capture [.num 10, .num 20], .num 30
-    ]) "TotalWithFee" (some [.num 5])
-  ])) with
-  | Except.error err => innermostIsBadArity err
-  | _ => false)
+-- sequence value `(10, 20, 30)` and is ONE argument like it (the collected
+-- sequence element fails the numeric `sum` constraint), and so is a genuinely
+-- nested receiver `((10, 20), 30)`; the explicit spread
+-- `((10, 20, 30))*.TotalWithFee(5)` supplies the items (65), while spreading
+-- `((10, 20), 30)` opens exactly ONE level, so the inner pair is still one
+-- collected element.
+def variadicNestedInlineTupleDotCallIsOneArgument : Bool :=
+  let run (receiver : KatLang.Expr) : Except KatLang.Error Result :=
+    runResult (.algorithmExpr (algPrivate [] [] [
+      ("TotalWithFee", variadicTotalWithFeeAlg)
+    ] [
+      .dotCall receiver "TotalWithFee" (some [.num 5])
+    ]))
+  let rejectsElement (receiver : KatLang.Expr) : Bool :=
+    match run receiver with
+    | Except.error err => innermostIsBadArity err
+    | _ => false
+  rejectsElement (.capture [.capture [.num 10, .num 20, .num 30]]) &&
+  rejectsElement (.capture [.capture [.num 10, .num 20], .num 30]) &&
+  (match run (sequenceSpread (.capture [.capture [.num 10, .num 20, .num 30]])) with
+   | Except.ok (.atom 65) => true
+   | _ => false) &&
+  rejectsElement (sequenceSpread (.capture [.capture [.num 10, .num 20], .num 30]))
 
-#guard variadicNestedInlineTupleDotCallOpensOneLevel
+#guard variadicNestedInlineTupleDotCallIsOneArgument
 
 def ordinaryInlineTupleDotCallStillPreservesReceiverBoundary : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [
@@ -1247,17 +1266,6 @@ def variadicLoopStepExtraMiddleRepeatsTwice : Bool :=
 
 #guard variadicLoopStepExtraMiddleRepeatsTwice
 
-def ordinaryRunStepStillRejectsMultiValueState : Bool :=
-  match KatLang.runEvalM <| KatLang.runStep
-      (alg ["history"] [] [] [.param "history"])
-      KatLang.EvalCtx.empty
-      []
-      (.sequenceValue [.atom 1, .atom 2, .atom 4]) with
-  | Except.error err => innermostIsArityMismatch 0 2 err
-  | _ => false
-
-#guard ordinaryRunStepStillRejectsMultiValueState
-
 def loopBoundaryPairStepAlg : Algorithm :=
   alg ["a", "b"] [] [] [
     .param "b",
@@ -1437,7 +1445,7 @@ def loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams : Bool :=
   ] [
     .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "Pair"])
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
 
 #guard loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams
@@ -1659,11 +1667,14 @@ def sequenceValueDeconstructionCallbackOnScalarBindsLikeCall : Bool :=
 
 #guard sequenceValueDeconstructionCallbackOnScalarBindsLikeCall
 
--- Aspect 2 callback boundary (positive parity, mirrors C#
+-- Aspect 2 callback boundary (parity, mirrors C#
 -- DeconstructionBindingTests.CallbackDeconstruction_OnSequenceValueRows_BindsPerRow):
--- a deconstruction-shaped callback applied per sequence-value row binds x/*y/z
--- within each row. With Rows = (1, 2, 3), (4, 5, 6) and F(x, *y, z) = x + y.sum + z,
--- Rows.map(F) is 6 and 15. Scalar elements bind like the ordinary call too (see
+-- a callback element is ONE argument, so the FLAT deconstruction-shaped callee
+-- F(x, *y, z) = x + y.sum + z rejects each row with the ordinary arity error
+-- (one supplied item against the fixed x and z, exactly as `F((1, 2, 3))`),
+-- while the explicit structural pattern G((x, *y, z)) = x + y.sum + z binds
+-- x/*y/z within each row: with Rows = (1, 2, 3), (4, 5, 6), Rows.map(G) is
+-- 6 and 15. Scalar elements bind like the ordinary call too (see
 -- sequenceValueDeconstructionCallbackOnScalarBindsLikeCall above).
 def deconstructionRowsAlg : Algorithm :=
   alg [] [] [] [
@@ -1671,24 +1682,40 @@ def deconstructionRowsAlg : Algorithm :=
     sequenceItems [.num 4, .num 5, .num 6]
   ]
 
+def deconstructStructuredSumAlg : Algorithm :=
+  algWithParameterPatterns [
+    .sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting },
+      .capture { name := "z" }]
+  ] [] [] [
+    .binary .add (.binary .add (.param "x") (.dotCall (.param "y") "sum" none)) (.param "z")
+  ]
+
 def deconstructionCallbackOnSequenceValueRows : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  (match runResult (.algorithmExpr (algPrivate [] [] [
     ("Rows", deconstructionRowsAlg),
     ("F", deconstructSumAlg)
   ] [
     .dotCall (resolve "Rows") "map" (some [resolve "F"])
   ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("Rows", deconstructionRowsAlg),
+    ("G", deconstructStructuredSumAlg)
+  ] [
+    .dotCall (resolve "Rows") "map" (some [resolve "G"])
+  ])) with
   | Except.ok [6, 15] => true
-  | _ => false
+  | _ => false)
 
 #guard deconstructionCallbackOnSequenceValueRows
 
--- A single collecting parameter collects the segment allocated to it as one
--- exact list. One grouped SEQUENCE argument is the whole segment and opens
--- one level (`Sum(A)` binds `values = [1, 2, 3, 4, 5]`, sum 15), separate
--- slots collect their items (sum 6), and one grouped LIST argument is one
--- exact collected element (`Sum([1, 2, 3])` binds `values = [[1, 2, 3]]`,
--- so the numeric `sum` constraint rejects the list element).
+-- A single collecting parameter collects the arguments supplied to it as one
+-- exact list. One grouped SEQUENCE argument and one grouped LIST argument are
+-- each ONE collected element (`Sum(A)` binds `values = [(1, 2, 3, 4, 5)]` and
+-- `Sum([1, 2, 3])` binds `values = [[1, 2, 3]]`, so the numeric `sum`
+-- constraint rejects the structured element), separate arguments collect
+-- their items (sum 6), and the explicit spread supplies A's items (sum 15).
 def restOnlyCollectAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "sum" none
@@ -1696,8 +1723,14 @@ def restOnlyCollectAlg : Algorithm :=
 
 def restOnlyConsumesItemSupply : Bool :=
   let singleGroupedArg :=
-    match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
+    match runResult (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
       .call (resolve "Sum") [resolve "A"]
+    ])) with
+    | Except.error err => innermostIsBadArity err
+    | _ => false
+  let spreadArg :=
+    match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
+      .call (resolve "Sum") [sequenceSpread (resolve "A")]
     ])) with
     | Except.ok [15] => true
     | _ => false
@@ -1713,7 +1746,7 @@ def restOnlyConsumesItemSupply : Bool :=
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
-  singleGroupedArg && multipleSlots && singleListArg
+  singleGroupedArg && spreadArg && multipleSlots && singleListArg
 
 #guard restOnlyConsumesItemSupply
 
@@ -1780,13 +1813,12 @@ def itemSupplySumAlg : Algorithm :=
   ]
 
 -- Single-collecting `G(*x)`: a lone grouped SEQUENCE argument — `G(A)` and
--- the written-group call alike — is the collector's whole segment and opens
--- one level, so it sums to 15 exactly like `G(A*)` and the separate slots.
--- The grouped value stays exact where it is NOT the whole segment
--- (`G(A, 0)` collects `[(1, …, 5), 0]`, a numeric `sum` constraint error),
--- and a lone LIST argument never opens (`G([1, …, 5])` fails the same way
--- while `G([1, …, 5]*)` sums to 15).
-def restOnlyLoneSequenceOpensOneLevel : Bool :=
+-- the written-group call alike — is ONE collected element, exactly like a lone
+-- LIST argument, so the numeric `sum` constraint rejects it; so does the
+-- grouped value beside another argument (`G(A, 0)` collects
+-- `[(1, …, 5), 0]`). Only the separate arguments and the explicit spreads
+-- `G(A*)` and `G([1, …, 5]*)` sum to 15.
+def restOnlyLoneSequenceIsOneArgument : Bool :=
   let sumsTo15 (args : List KatLang.Expr) : Bool :=
     match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
       .call (resolve "G") args
@@ -1799,15 +1831,15 @@ def restOnlyLoneSequenceOpensOneLevel : Bool :=
     ])) with
     | Except.error err => innermostIsBadArity err
     | _ => false
-  sumsTo15 [resolve "A"]
+  elementFails [resolve "A"]
     && sumsTo15 [sequenceSpread (resolve "A")]
     && sumsTo15 deconstructFiveItems
-    && sumsTo15 [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
+    && elementFails [.capture [.num 1, .num 2, .num 3, .num 4, .num 5]]
     && elementFails [resolve "A", .num 0]
     && elementFails [.listLiteral deconstructFiveItems]
     && sumsTo15 [sequenceSpread (.listLiteral deconstructFiveItems)]
 
-#guard restOnlyLoneSequenceOpensOneLevel
+#guard restOnlyLoneSequenceIsOneArgument
 
 -- An empty call binds an empty item supply (min arity 0): `G()` sums to 0.
 def restOnlyEmptyCallSumsToZero : Bool :=

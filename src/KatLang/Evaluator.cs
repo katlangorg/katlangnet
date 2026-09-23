@@ -212,7 +212,7 @@ public static partial class Evaluator
     /// parameters, so this is EXACTLY the <see cref="Expr.Param"/> value read —
     /// <see cref="EvalParamCounted"/> projected to its value — and not a
     /// separate lookup rule: counted callback-parameter environment first (the
-    /// flat-callback/loop-step funnel), then the value environment (direct
+    /// callback/loop-step funnel), then the value environment (direct
     /// calls), then the algorithm binding.
     /// <para>The algorithm tier is reachable whenever an argument bound only on
     /// the algorithm channel — its value evaluation failed, or it names a

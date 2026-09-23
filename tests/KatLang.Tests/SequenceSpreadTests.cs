@@ -264,21 +264,19 @@ public class SequenceSpreadTests
             37m);
 
     [Fact]
-    public void VariadicSuffixBinding_NormalArgumentOpensAfterSuffixAllocation()
+    public void VariadicSuffixBinding_NormalArgumentIsOneItemAfterSuffixAllocation()
     {
-        // The plain argument is one supplied slot. The suffix takes 7 first;
-        // the segment left to the collector is that lone written sequence
-        // value, which opens one level (collector supply-boundary law), so
-        // `values = [10, 20]` and the body evaluates 30 + 7 = 37 — exactly like
-        // the spread form above. A list argument never opens, and a second
-        // middle slot keeps the sequence value as one (non-numeric) item.
-        AssertEval(
+        // The plain argument is one supplied item. The suffix takes 7 first and the
+        // collector collects the one remaining item exactly, so `values = [(10, 20)]`
+        // and the numeric body fails — a sequence and a list argument alike, and
+        // beside a second middle argument too. Only the spread form above supplies
+        // the two items.
+        AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(*values, val) = values.sum + val
             Sum(Values, 7)
-            """,
-            37m);
+            """);
 
         AssertEvaluationFailure(
             """
@@ -320,28 +318,37 @@ public class SequenceSpreadTests
             """);
 
     [Fact]
-    public void VariadicSuffixBinding_DotCallReceiverWithSuffixOpensAfterSuffixAllocation()
-        // The named receiver is the one leading argument of `Sum(Values, 7)`:
-        // the suffix binds 7, and the lone written sequence left to the
-        // collector opens one level — 37, exactly like the canonical call.
-        => AssertEval(
+    public void VariadicSuffixBinding_DotCallReceiverWithSuffixIsOneItemAfterSuffixAllocation()
+    {
+        // The named receiver is the one leading argument of `Sum(Values, 7)`: the
+        // suffix binds 7 and the collector collects the one receiver value exactly —
+        // a non-numeric element, exactly like the canonical call; the spread
+        // receiver supplies the items.
+        AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(*values, val) = values.sum + val
             Values.Sum(7)
+            """);
+
+        AssertEval(
+            """
+            Values = 10, 20
+            Sum(*values, val) = values.sum + val
+            Values*.Sum(7)
             """,
             37m);
+    }
 
     [Fact]
     public void VariadicSuffixBinding_SpreadReceiverSuppliesItemsAfterSuffixAllocation()
     {
-        // The fluent spread receiver supplies its items as final slots —
-        // `(10, 20)*.Sum(7)` is `Sum(10, 20, 7)`: the suffix binds 7 from the
-        // back, the collecting parameter collects [10, 20], and the body
-        // evaluates 30 + 7 = 37. The unspread inline group is ONE written value
-        // (dot-call passes a value), so `(10, 20).Sum(7)` is `Sum((10, 20), 7)`,
-        // whose lone sequence the collector opens one level: 37 as well. A list
-        // receiver stays one non-numeric item.
+        // The fluent spread receiver supplies its items — `(10, 20)*.Sum(7)` is
+        // `Sum(10, 20, 7)`: the suffix binds 7 from the back, the collecting
+        // parameter collects [10, 20], and the body evaluates 30 + 7 = 37. The
+        // unspread inline group is ONE value (dot-call passes a value), so
+        // `(10, 20).Sum(7)` is `Sum((10, 20), 7)`, whose one collected item is
+        // non-numeric — exactly like a list receiver.
         AssertEval(
             """
             Sum(*values, val) = values.sum + val
@@ -349,12 +356,11 @@ public class SequenceSpreadTests
             """,
             37m);
 
-        AssertEval(
+        AssertEvaluationFailure(
             """
             Sum(*values, val) = values.sum + val
             (10, 20).Sum(7)
-            """,
-            37m);
+            """);
 
         AssertEvaluationFailure(
             """
@@ -406,16 +412,24 @@ public class SequenceSpreadTests
             true);
 
     [Fact]
-    public void SingleVariadic_MultiOutputPropertyOpensOneLevelAtTheLoneCollector()
+    public void SingleVariadic_MultiOutputPropertyIsOneArgument()
     {
-        // A named multi-output property is ONE written argument holding the
-        // sequence value (10, 20); as the lone collector's whole segment it
-        // opens one level (count 2). Beside another slot it is one item.
+        // A named multi-output property is ONE argument holding the sequence value
+        // (10, 20): the collector collects it as one item (count 1), alone or beside
+        // another argument; only `Count(Values*)` supplies two.
         AssertEval(
             """
             Values = 10, 20
             Count(*args) = args.count
             Count(Values)
+            """,
+            1m);
+
+        AssertEval(
+            """
+            Values = 10, 20
+            Count(*args) = args.count
+            Count(Values*)
             """,
             2m);
 
@@ -429,24 +443,24 @@ public class SequenceSpreadTests
     }
 
     [Fact]
-    public void SingleVariadic_VisibleGroupOpensOneLevelAtTheLoneCollector()
+    public void SingleVariadic_VisibleGroupIsOneArgument()
         => AssertEval(
             """
             Pair = (10, 20)
             Count(*args) = args.count
             Count(Pair)
             """,
-            2m);
+            1m);
 
     [Fact]
-    public void SingleVariadic_DotCallVisibleGroupOpensOneLevelAtTheLoneCollector()
+    public void SingleVariadic_DotCallVisibleGroupIsOneArgument()
         => AssertEval(
             """
             Pair = (10, 20)
             Count(*args) = args.count
             Pair.Count()
             """,
-            2m);
+            1m);
 
     [Fact]
     public void FlatFixedCall_DotCallReceiverDoesNotImplicitlySpreadMultiOutputProperty()
@@ -718,21 +732,18 @@ public class SequenceSpreadTests
     // Dot-call receiver law: dot-call passes a value. The receiver is the ONE
     // ordinary leading argument of the extension call, whatever its shape, and
     // only the spread marker opens it. A capture of a spread `(Values*)` is one
-    // sequence value, so `(Values*).Sum` is `Sum((Values*))`: one WRITTEN slot
-    // at the lone collector, which the collector supply-boundary law opens one
-    // level — [10, 20], sum 30 — exactly what the fluent `Values*.Sum` =
-    // `Sum(Values*)` supplies as final items. Beside a written argument the
-    // capture is one non-numeric collected item.
+    // sequence value, so `(Values*).Sum` is `Sum((Values*))`: ONE argument,
+    // collected as one non-numeric item, alone or beside a written argument;
+    // the fluent `Values*.Sum` = `Sum(Values*)` supplies the items.
     [Fact]
-    public void DotCall_CapturedSpreadReceiverIsOneWrittenValue_FluentSpreadSuppliesFinalItems()
+    public void DotCall_CapturedSpreadReceiverIsOneValue_FluentSpreadSuppliesItems()
     {
-        AssertEval(
+        AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(*values) = values.sum
             (Values*).Sum
-            """,
-            30m);
+            """);
 
         AssertEval(
             """
@@ -758,21 +769,20 @@ public class SequenceSpreadTests
             37m);
     }
 
-    // `(Values*, 7)` is a capture receiver too — one sequence value
-    // (10, 20, 7) — which the lone collector opens one level (sum 37);
-    // spreading that capture back (`(Values*, 7)*.Sum`) supplies the three
-    // items as final slots, and so does the written call `Sum(Values*, 7)`.
-    // (`Values* 7` without the comma would be multiplication.)
+    // `(Values*, 7)` is a capture receiver too — ONE sequence value (10, 20, 7),
+    // collected as one non-numeric item; spreading that capture back
+    // (`(Values*, 7)*.Sum`) supplies the three items, and so does the written
+    // call `Sum(Values*, 7)`. (`Values* 7` without the comma would be
+    // multiplication.)
     [Fact]
-    public void DotCall_SpreadJoinGroupReceiver_OpensOneLevelLikeItsSpread()
+    public void DotCall_SpreadJoinGroupReceiver_IsOneValue_WhileItsSpreadSuppliesItems()
     {
-        AssertEval(
+        AssertEvaluationFailure(
             """
             Values = 10, 20
             Sum(*values) = values.sum
             (Values*, 7).Sum
-            """,
-            37m);
+            """);
 
         AssertEval(
             """
@@ -792,18 +802,17 @@ public class SequenceSpreadTests
     }
 
     // Same rule for a sequence-valued source: `(Pair*)` and `(Pair*, 7)` are
-    // captures — one written value each, opened one level by the lone
-    // collector — and the fluent spread supplies the same items as final slots.
+    // captures — ONE value each, one collected item — and only the fluent spread
+    // supplies the items.
     [Fact]
-    public void DotCall_GroupSequenceSpreadReceiver_OpensOneLevelLikeItsSpread()
+    public void DotCall_GroupSequenceSpreadReceiver_IsOneValue_WhileItsSpreadSuppliesItems()
     {
-        AssertEval(
+        AssertEvaluationFailure(
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
             (Pair*).Sum
-            """,
-            30m);
+            """);
 
         AssertEval(
             """
@@ -813,13 +822,12 @@ public class SequenceSpreadTests
             """,
             30m);
 
-        AssertEval(
+        AssertEvaluationFailure(
             """
             Pair = (10, 20)
             Sum(*values) = values.sum
             (Pair*, 7).Sum
-            """,
-            37m);
+            """);
 
         AssertEval(
             """

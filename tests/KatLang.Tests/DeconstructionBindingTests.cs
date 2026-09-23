@@ -667,12 +667,12 @@ public class DeconstructionBindingTests
     [Fact]
     public void SingleVariadicCall_ConsumesItemSupply()
     {
-        // Single-variadic `Sum(*values)` collects the segment allocated to it. A
-        // single grouped SEQUENCE argument is the collector's whole segment and
-        // opens one level (sum 6, like the spread and the inline slots); a
-        // single LIST argument is one exact collected element, so the numeric
-        // `.sum` fails on it; beside another slot the sequence is one element.
-        AssertAtoms("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)", 6);
+        // Single-variadic `Sum(*values)` collects the arguments supplied to it
+        // exactly. A single grouped SEQUENCE argument and a single LIST argument
+        // are each ONE collected element, so the numeric `.sum` fails on them —
+        // alone or beside another argument; only the spread and the inline items
+        // supply the three numbers (sum 6).
+        AssertEvalError<EvalError.BadArity>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)");
         AssertAtoms("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c*)", 6);
         AssertAtoms("Sum(*values) = values.sum\nSum(1, 2, 3)", 6);
         AssertEvalError<EvalError.BadArity>("Sum(*values) = values.sum\nSum([1, 2, 3])");
@@ -689,19 +689,18 @@ public class DeconstructionBindingTests
     // ─────────────────── Aspect 2: unified item-supply binding ─────────────────
 
     [Fact]
-    public void SingleVariadic_GroupedSequenceOpensOneLevel_ListStaysExact()
+    public void SingleVariadic_GroupedSequenceAndListAreBothOneElement()
     {
         // G(*x) = x.sum exposes the collector boundary: plain A and grouped
-        // `(1, 2, 3, 4, 5)` each supply ONE written sequence-valued argument,
-        // which — as the lone collector's whole segment — opens one level (sum
-        // 15, like A* and the inline items). A list argument never opens
-        // implicitly, so its one non-numeric element fails `.sum`, and a
-        // sequence beside another slot is one non-numeric element too.
+        // `(1, 2, 3, 4, 5)` each supply ONE sequence-valued argument, collected as
+        // one non-numeric element exactly like a list argument, alone or beside
+        // another argument; only A*, the list's spread, and the inline items
+        // supply the five numbers (sum 15).
         const string g = "A = 1, 2, 3, 4, 5\nG(*x) = x.sum\n";
-        AssertAtoms(g + "G(A)", 15);
+        AssertEvalError<EvalError.BadArity>(g + "G(A)");
         AssertAtoms(g + "G(A*)", 15);
         AssertAtoms("G(*x) = x.sum\nG(1, 2, 3, 4, 5)", 15);
-        AssertAtoms("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", 15);
+        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG((1, 2, 3, 4, 5))");
         AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG([1, 2, 3, 4, 5])");
         AssertAtoms("G(*x) = x.sum\nG([1, 2, 3, 4, 5]*)", 15);
         AssertEvalError<EvalError.BadArity>(g + "G(A, 0)");
@@ -753,10 +752,10 @@ public class DeconstructionBindingTests
     {
         // Redundant unary grouping normalizes the value, and calls still
         // receive ONE argument unless explicit spread is written: the lone
-        // collecting shape opens that one written sequence one level (sum 15,
-        // like the spread), while the mixed shapes bind their fixed positions
-        // to the whole value and fail.
-        AssertAtoms("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))", 15);
+        // collecting shape collects that one sequence as one non-numeric element,
+        // and the mixed shapes bind their fixed positions to the whole value —
+        // every shape fails until the spread supplies the items.
+        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))");
         AssertAtoms("G(*x) = x.sum\nG(((1, 2, 3, 4, 5))*)", 15);
         AssertEvalError<EvalError.TypeMismatch>("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5)))");
         AssertAtoms("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5))*)", 15);
@@ -830,14 +829,17 @@ public class DeconstructionBindingTests
     [Fact]
     public void CallbackDeconstruction_OnSequenceValueRows_BindsPerRow()
     {
-        // A variadic-shaped callback applied per sequence-value row binds x, *y, z
-        // within each row: (1, 2, 3) -> 1 + 2 + 3 = 6 and (4, 5, 6) -> 15.
-        // The flat form opens the lone row into slots (the flat-callback row
-        // convention) and the shared binder collects y as an exact list; the
-        // sequence-value parameter form opens the row through its nested
-        // pattern. Both agree, and scalar elements bind like the ordinary call
-        // above.
-        AssertAtoms("Rows = (1, 2, 3), (4, 5, 6)\nF(x, *y, z) = x + y.sum + z\nRows.map(F)", 6, 15);
+        // A callback element is ONE ordinary argument (THE CALLBACK LAW), so the
+        // flat variadic-shaped callee F(x, *y, z) rejects each sequence-value row
+        // with the ordinary arity error — one argument cannot fill x and z, exactly
+        // like F((1, 2, 3)) — while the sequence-value parameter form opens the row
+        // through its explicit nested pattern and binds x, *y, z within each row:
+        // (1, 2, 3) -> 1 + 2 + 3 = 6 and (4, 5, 6) -> 15. Scalar elements bind like
+        // the ordinary call above.
+        var flat = AssertEvalError<EvalError.ArityMismatch>(
+            "Rows = (1, 2, 3), (4, 5, 6)\nF(x, *y, z) = x + y.sum + z\nRows.map(F)");
+        Assert.Equal(2, flat.Expected);
+        Assert.Equal(1, flat.Actual);
         AssertAtoms("Rows = (1, 2, 3), (4, 5, 6)\nF((x, *y, z)) = x + y.sum + z\nRows.map(F)", 6, 15);
     }
 }

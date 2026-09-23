@@ -874,18 +874,16 @@ public class KatLangEngineTests
     {
         // A call boundary always returns one value, and dot-call passes a
         // value: the inline group is the ONE leading argument of
-        // `Collect((10, 20, 30))` — a written sequence value that the lone
-        // collector opens one level — so the collected list is [10, 20, 30],
-        // displayed as a single row; beside a written argument the group is
-        // one collected item. The fluent spread receiver supplies the three
-        // items as final slots.
+        // `Collect((10, 20, 30))`, collected as one item — [(10, 20, 30)],
+        // displayed as a single row — alone or beside a written argument. Only
+        // the fluent spread receiver supplies the three items.
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
             (10, 20, 30).Collect
             """);
 
-        Assert.Equal("[10, 20, 30]", result.ToDisplayString());
+        Assert.Equal("[(10, 20, 30)]", result.ToDisplayString());
 
         var beside = KatLangEngine.Run(
             """

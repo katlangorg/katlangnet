@@ -651,14 +651,28 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_VariadicAccumulatorState_FlattensNaturally()
+    public void Eval_Reduce_CollectingAccumulator_CollectsTheOneAccumulatorValue()
     {
+        // The accumulator is ONE argument, so `history` is always the one-element
+        // list of the current accumulator and each step nests it whole; only the
+        // reducer's explicit pattern `(*history)` opens it.
         var source = """
             Append(item, *history) = (history*, item)
             reduce((2, 3, 4), Append, 1)
             """;
 
-        AssertEvalResultSequenceModes(source, ResultFromAtoms(1, 2, 3, 4));
+        AssertEvalResultSequenceModes(
+            source,
+            new Result.SequenceValue([
+                new Result.SequenceValue([ResultFromAtoms(1, 2), new Result.Atom(3)]),
+                new Result.Atom(4)]));
+
+        var opened = """
+            Append(item, (*history)) = (history*, item)
+            reduce((2, 3, 4), Append, 1)
+            """;
+
+        AssertEvalResultSequenceModes(opened, ResultFromAtoms(1, 2, 3, 4));
     }
 
     [Fact]

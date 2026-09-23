@@ -649,7 +649,7 @@ def spreadThenJoinIsOneSequenceValueArgument : Bool :=
     .call (.resolve "F") [.sequenceConstruct (sequenceSpread (.resolve "A")) (.num 2)]
   ]
   match runFlat (.algorithmExpr joined) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
 
 #guard spreadThenJoinIsOneSequenceValueArgument
@@ -775,15 +775,13 @@ def sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm : Bool :=
 
 #guard sequenceSpreadAfterSequenceConstructMatchesSequenceValueForm
 
--- Single-collecting `X(*values)` collects the segment allocated to the
--- collector: the explicit-spread form `X((1, b)*)` supplies two final items
--- (`values = [1, (2, 3)]`, count 2), and the constructed sequence-value form
--- `X((1, b))` supplies ONE written sequence slot that is the collector's
--- whole segment, so the collector supply-boundary law opens it one level to
--- the same `values = [1, (2, 3)]` (count 2). Beside a second slot the grouped
--- value is collected exactly: `X((1, b), 0)` counts 2 (`[(1, (2, 3)), 0]`)
--- while `X((1, b)*, 0)` counts 3.
-def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :=
+-- Single-collecting `X(*values)` collects the arguments supplied to it
+-- exactly: the explicit-spread form `X((1, b)*)` supplies two items
+-- (`values = [1, (2, 3)]`, count 2), while the constructed sequence-value
+-- form `X((1, b))` supplies ONE argument (`values = [(1, (2, 3))]`, count 1).
+-- Beside a second argument the grouped value is still one item:
+-- `X((1, b), 0)` counts 2 (`[(1, (2, 3)), 0]`) while `X((1, b)*, 0)` counts 3.
+def sequenceSpreadOpensTheConstructedSequenceValue : Bool :=
   let countValues := algWithParameters [{ name := "values", kind := .collecting }] [] [] [
     .dotCall (.param "values") "count" none
   ]
@@ -795,11 +793,11 @@ def sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue : Bool :
     | Except.ok [n] => n == expected
     | _ => false
   countOf [sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b"))] 2 &&
-  countOf [.sequenceConstruct (.num 1) (.resolve "b")] 2 &&
+  countOf [.sequenceConstruct (.num 1) (.resolve "b")] 1 &&
   countOf [.sequenceConstruct (.num 1) (.resolve "b"), .num 0] 2 &&
   countOf [sequenceSpread (.sequenceConstruct (.num 1) (.resolve "b")), .num 0] 3
 
-#guard sequenceSpreadAfterSequenceConstructMatchesConstructedSequenceValue
+#guard sequenceSpreadOpensTheConstructedSequenceValue
 
 def missingOutputBodyAsResultStillFails : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [missingOutputBodyExpr])) with

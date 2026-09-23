@@ -9,7 +9,7 @@ Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
 
 | File | Role |
 |---|---|
-| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, the origin-tagged call supply (`OracleSlot` / `OracleOrigin`, `written` / `final` / `values`), `loneWrittenSeq?` / `collectorSupply` / `fuseCollectorSegment` (the collector supply-boundary law), `bindPats`/`bindArgs`/`bindDeconstruct`, the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `src/KatLang`. |
+| `AlgebraOracle.cs` | Test-only executable oracle: `OracleVal` (atom/seq/list) plus `items`, `normalize`, `capture`, `collect`, `structureItems?`, `openLoneStructure`, `bindPats`/`bindArgs`/`bindDeconstruct` (`bindArgs` is `bindPats` itself: values stay values), the repeated-spread composition, `valueCount`, and the root-row rule. Each member's doc comment names its Lean anchor. References nothing from `src/KatLang`. |
 | `ArityDifferentialModel.cs` | The dimensions (`ReceiverKind`, `BindingForm`, `SpreadMultiplicity`), the `ReceiverLaw` taxonomy with Lean references, and the case records. |
 | `ArityDifferentialMatrix.cs` | The deterministic generator: value-shape catalog, receiver templates, relational families, diagnostic matrix, and the exclusion ledger that accounts for every theoretical cell. |
 | `ArityDifferentialTests.cs` | The xunit runner: per-case theories, relational checks, diagnostics, receiver-once budget probes, oracle self-checks, determinism check, coverage accounting, and the `ArityDifferentialReport.json` side-car. |
@@ -55,9 +55,7 @@ Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
 | `StructureItems` | `CoreArityAlgebra.structureItems?` = `Result.structureItems?` |
 | `OpenLoneStructure` | `CoreArityAlgebra.openLoneStructure` |
 | `IsLoneStructure` | `CoreArityAlgebra.loneStructure` |
-| `OracleOrigin` / `Written` / `Final` / `Values` | `CoreArityAlgebra.Origin` / `written` / `final` / `values` (full model: `SupplyOrigin` on `ParameterPatternInput`, marked by `collectVariadicCallItems`) |
-| `LoneWrittenSeq` / `CollectorSupply` / `FuseCollectorSegment` | `CoreArityAlgebra.loneWrittenSeq?` / `collectorSupply` / `fuseCollectorSegment` (full model: `KatLang.lean collectorSupply` inside the pattern binders) |
-| `BindPats` / `BindArgs` / `BindDeconstruct` | `CoreArityAlgebra.bindPats` / `bindArgs = bindPats ∘ fuseCollectorSegment` / `bindDeconstruct = bindPats ∘ openLoneStructure` (`bindPats_collect_exact` allocation) |
+| `BindPats` / `BindArgs` / `BindDeconstruct` | `CoreArityAlgebra.bindPats` / `bindArgs = bindPats` (and `bindCallback = bindArgs`) / `bindDeconstruct = bindPats ∘ openLoneStructure` (`bindPats_collect_exact` allocation) |
 | `SpreadSupply(v, stars)` | first star `items`, each further star `items ∘ capture` — `repeated_spread_cardinality`; evaluator: `evalSequenceSpreadCounted` |
 | `ValueCount` | `Result.valueCount` (`valueCount_le_one`, `valueCount_empty_list`) |
 | `RootNonSpreadRow` | `evalAlgOutputCountedCore`'s non-spread slot rule (a non-spread row is one visible slot even when empty) |
@@ -121,8 +119,8 @@ of the plain algebra:
    >
    > **Refined (September 2026, the collector supply-boundary law).** The
    > dotted equivalence is untouched, but what a COLLECTING callee binds for
-   > its lone written sequence slot changed: the oracle's call supply now
-   > carries slot provenance (`OracleSlot` = value × `OracleOrigin`;
+   > its lone written sequence slot changed: the oracle's call supply then
+   > carried slot provenance (`OracleSlot` = value × `OracleOrigin`;
    > `Written` for a non-spread written slot, `Final` for an explicit-spread
    > item), and `BindArgs` is `BindPats ∘ FuseCollectorSegment` — the
    > segment allocated to the collector after fixed prefix/suffix allocation
@@ -144,6 +142,30 @@ of the plain algebra:
    > item view is exactly one sequence value (the literal slot is written,
    > the spread item final). Loop init and state slots are unchanged (final
    > items: `Snap.repeat(1, V)` still collects `[V]`).
+   >
+   > **Superseded (September 2026, values stay values — explicit value
+   > opening).** The collector supply-boundary law above is GONE with its slot
+   > provenance: the oracle's call supply is a plain supply again
+   > (`OracleSlot`, `OracleOrigin`, `LoneWrittenSeq`, `CollectorSupply`, and
+   > `FuseCollectorSegment` are deleted) and `BindArgs` IS `BindPats` — a
+   > non-spread argument is ONE item whatever its value, a collector collects
+   > exactly its allocated items, and only an explicit spread supplies a
+   > value's items, which are never reopened (laws
+   > **`COLLECT_PRESERVES_EXACT_SUPPLY`** and
+   > **`SPREAD_ITEMS_ARE_NEVER_REOPENED`**; `COLLECTOR_LONE_WRITTEN_SEQUENCE_OPENS_ONE_LEVEL`
+   > removed, `COLLECTOR_EXPLICIT_SPREAD_ITEM_IS_FINAL` renamed). The callback
+   > law followed: a callback element is ONE ordinary argument, bound exactly
+   > as the direct call (`CALLBACK_ITEM_IS_A_WRITTEN_SLOT` became
+   > **`CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT`**, and the flat-callback
+   > row convention law `CALLBACK_FLAT_ROW_CONVENTION` was removed with the
+   > convention). Consequences in the matrix: `Gather(V)` / `V.Gather` /
+   > `(V, 9).Gather` / `[V].map(GatherCb)` collect `[V]` for a sequence and a
+   > list alike (`().Gather` is `[()]` like `Gather(())`), `Mid3(0, V, 9)` and
+   > `Suffix2((V, 9), 5)` collect the lone value left after fixed allocation
+   > whole, `(V*).Gather` is the capture `Gather((V*))` and collects one item,
+   > differing from the fluent `V*.Gather` except on a singleton supply, and
+   > `spread-vs-literal-items` agrees on every shape. Loop init and state
+   > slots are still unchanged (`Snap.repeat(1, V)` collects `[V]`).
 2. **Loop init arity floor** — `repeat`/`while` require at least one initial
    state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
    is an ordinary arity rejection after spreading.

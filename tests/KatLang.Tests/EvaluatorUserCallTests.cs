@@ -395,13 +395,19 @@ public class EvaluatorUserCallTests
     [Fact]
     public void Eval_Count_UserCallFlatVariadicRouteCountsCurrentOutputShape()
     {
-        // The grouped call supplies ONE written sequence slot, which the lone
-        // collector opens one level: the returned list is [1, 2, 3] (count 3);
-        // beside another slot the group is one collected item (count 2).
+        // The grouped call supplies ONE argument, collected as one item: the
+        // returned list is [(1, 2, 3)] (count 1); beside another argument the group
+        // is one collected item too (count 2), and only the spread supplies three.
         AssertEval(
             """
             F(*xs) = xs
             F((1, 2, 3)).count
+            """,
+            1);
+        AssertEval(
+            """
+            F(*xs) = xs
+            F((1, 2, 3)*).count
             """,
             3);
         AssertEval(
@@ -582,20 +588,19 @@ public class EvaluatorUserCallTests
     }
 
     [Fact]
-    public void Eval_TopLevelCollectingParameter_GroupedArgumentOpensAfterSuffixAllocation()
+    public void Eval_TopLevelCollectingParameter_GroupedArgumentIsOneItemAfterSuffixAllocation()
     {
-        // The top-level collecting parameter and the sequence-value pattern below agree
-        // on a lone grouped argument (both count 2): the suffix takes 3, and the
-        // lone written sequence left to the collector opens one level. They differ
-        // where the grouped value is not the whole segment — `F((1, 2), 4, 3)`
-        // collects [(1, 2), 4] (count 2) while the pattern form is an arity error —
-        // and on a list, which the collector keeps exact (count 1) but the pattern opens.
+        // The top-level collecting parameter collects ARGUMENTS: the suffix takes 3,
+        // and the one remaining grouped argument is one item (count 1) — a sequence
+        // and a list alike — while `F((1, 2), 4, 3)` collects [(1, 2), 4] (count 2).
+        // The sequence-value pattern `F((*xs), y)` below is the explicit opener: it
+        // opens the grouped value's items instead.
         AssertEval(
             """
             F(*xs, y) = xs.count, y
             F((1, 2), 3)
             """,
-            2, 3);
+            1, 3);
         AssertEval(
             """
             F(*xs, y) = xs.count, y
@@ -745,9 +750,9 @@ public class EvaluatorUserCallTests
     public void OrdinaryParameter_RemainsStructuralAfterVariadicSupport()
     {
         // The fixed parameter binds the receiver value untouched (count 3 via
-        // the collection view); the collecting parameter applies the collector
-        // supply-boundary law to its lone written slot — a sequence receiver
-        // opens one level (count 3), a list receiver is one list element (count 1).
+        // the collection view); the collecting parameter collects its one
+        // argument exactly — a sequence and a list receiver alike are one
+        // element (count 1).
         AssertEvalSequenceModes(
             """
             Arg = 1, 2, 3
@@ -756,7 +761,7 @@ public class EvaluatorUserCallTests
             Variadic(*list) = list.count
             Arg.Ordinary, Arg.Variadic, ArgList.Ordinary, ArgList.Variadic
             """,
-            3, 3, 3, 1);
+            3, 1, 3, 1);
     }
 
     [Fact]

@@ -259,22 +259,36 @@ def test67 : Bool :=
 
 #guard test67
 
--- Test 68: kept sequence values are preserved whole and in order as exact list elements
+-- Test 68: a callback element is ONE argument (THE CALLBACK LAW): the flat
+-- two-binder family `KeepPair(tag, value)` rejects each pair element with the
+-- ordinary callback arity error, while the explicit structural pattern
+-- `KeepPair((tag, value))` opens each pair — and the kept sequence values are
+-- preserved whole and in order as exact list elements.
+def keepPairPatternAlg68 : Algorithm :=
+  .conditional none [] [
+    ⟨ .sequenceValue [.sequenceValue [.bind "tag", .bind "value"]],
+      alg [] [] [] [.compare .eq (.binary .mod (.param "tag") (.num 2)) (.num 0)] ⟩
+  ]
+
 def test68 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
-    .call (resolve "filter") [sequenceItems [
-      .capture [.num 1, .num 10],
-      .capture [.num 2, .num 20],
-      .capture [.num 3, .num 30],
-      .capture [.num 4, .num 40]],
-      .resolve "KeepPair"
-    ]
+  let pairs := sequenceItems [
+    .capture [.num 1, .num 10],
+    .capture [.num 2, .num 20],
+    .capture [.num 3, .num 30],
+    .capture [.num 4, .num 40]]
+  (match runResult (.algorithmExpr (algPrivate [] [] [("KeepPair", keepPairAlg67)] [
+    .call (resolve "filter") [pairs, .resolve "KeepPair"]
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | _ => false) &&
+  (match runResult (.algorithmExpr (algPrivate [] [] [("KeepPair", keepPairPatternAlg68)] [
+    .call (resolve "filter") [pairs, .resolve "KeepPair"]
   ])) with
   | Except.ok (.listValue [
       .sequenceValue [.atom 2, .atom 20],
       .sequenceValue [.atom 4, .atom 40]
     ]) => true
-  | _ => false
+  | _ => false)
 
 #guard test68
 
@@ -848,18 +862,31 @@ def test88 : Bool :=
 
 #guard test88
 
--- Test 89: sequenceValue collection elements are passed to the transform as whole values
+-- Test 89: sequenceValue collection elements are passed to the transform as
+-- whole values — ONE argument each — so the flat two-binder family
+-- `TakeValue(tag, value)` rejects them with the ordinary callback arity error,
+-- while the explicit structural pattern `TakeValue((tag, value))` opens each.
+def takePairValuePatternAlg89 : Algorithm :=
+  .conditional none [] [
+    ⟨ .sequenceValue [.sequenceValue [.bind "tag", .bind "value"]],
+      alg [] [] [] [.param "value"] ⟩
+  ]
+
 def test89 : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("TakeValue", takePairValueAlg89)] [
-    .call (resolve "map") [sequenceItems [
-      .capture [.num 1, .num 10],
-      .capture [.num 2, .num 20],
-      .capture [.num 3, .num 30]],
-      .resolve "TakeValue"
-    ]
+  let pairs := sequenceItems [
+    .capture [.num 1, .num 10],
+    .capture [.num 2, .num 20],
+    .capture [.num 3, .num 30]]
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("TakeValue", takePairValueAlg89)] [
+    .call (resolve "map") [pairs, .resolve "TakeValue"]
+  ])) with
+  | Except.error err => innermostIsArityMismatch 2 1 err
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("TakeValue", takePairValuePatternAlg89)] [
+    .call (resolve "map") [pairs, .resolve "TakeValue"]
   ])) with
   | Except.ok [10, 20, 30] => true
-  | _ => false
+  | _ => false)
 
 #guard test89
 
@@ -1018,10 +1045,11 @@ def s3DirectAndFilterBindAlike (patterns : List KatLang.ParameterPattern) (value
   | .error direct, .error filtered => reprStr (innermostError direct) == reprStr (innermostError filtered)
   | _, _ => false
 
-/-- reduce supplies the element AND the accumulator: `reduce([V], R, 0)` agrees
-    with the two-argument call `R(V, 0)`; with a top-level collecting accumulator
-    parameter the reducer receives the accumulator's one-level slots instead, so
-    `reduce([V], R, (1, 2))` agrees with `R(V, 1, 2)` — the same supply. -/
+/-- reduce supplies the element AND the accumulator as two ordinary arguments:
+    `reduce([V], R, 0)` agrees with the two-argument call `R(V, 0)`, and with a
+    top-level collecting accumulator parameter the reducer still receives the
+    accumulator as ONE value, so `reduce([V], R, (1, 2))` agrees with
+    `R(V, (1, 2))` — the same supply. -/
 def s3DirectAndReduceBindAlike (patterns : List KatLang.ParameterPattern) (names : List String)
     (value : KatLang.Expr) : Bool :=
   let fixedAcc := algWithParameterPatterns (patterns ++ [.capture { name := "acc" }]) [] []
@@ -1034,7 +1062,7 @@ def s3DirectAndReduceBindAlike (patterns : List KatLang.ParameterPattern) (names
       (run fixedAcc (.call (resolve "R") [value, .num 0]))
       (run fixedAcc (.call (resolve "reduce") [.listLiteral [value], .resolve "R", .num 0])) &&
   s3SameOutcome
-      (run slotAcc (.call (resolve "R") [value, .num 1, .num 2]))
+      (run slotAcc (.call (resolve "R") [value, .capture [.num 1, .num 2]]))
       (run slotAcc (.call (resolve "reduce") [.listLiteral [value], .resolve "R", .capture [.num 1, .num 2]]))
 
 #guard s3CallbackPatterns.all fun (patterns, _) =>
@@ -1081,9 +1109,9 @@ def s3CallbackScalarCells : Bool :=
 -- `filter([7, 1], P)` keeps 7 with `P((x, *rest)) = x > 1`; reduce binds the
 -- scalar element (`R((x, *rest), acc)`) and the scalar accumulator
 -- (`R(e, (a, *r))`) exactly as the two-argument ordinary call `R(7, 0)` does,
--- and the element beside a top-level collecting accumulator (`R((a, *r), *acc)`,
--- the accumulator-slot path) exactly as the ordinary call with the same supply —
--- the scalar initial `0` has the one slot `[0]`, so that call is again `R(7, 0)`.
+-- and the element beside a top-level collecting accumulator (`R((a, *r), *acc)`)
+-- exactly as the ordinary call with the same supply — the accumulator is ONE
+-- ordinary argument, so that call is again `R(7, 0)`.
 def s3FilterAndReduceBindLikeCalls : Bool :=
   let headRest : List KatLang.ParameterPattern :=
     [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]

@@ -406,77 +406,15 @@ public static partial class Evaluator
         return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
     }
 
-    private static bool ReducerAccumulatorSideHasTopLevelCollecting(Algorithm.User reducer)
-    {
-        try
-        {
-            var signature = CallableSignature.FromUserAlgorithm("reduce step", reducer);
-            var plan = CallableBindingPlan.FromSignature(signature);
-            return plan.TopLevelPatternList.Nodes
-                .Skip(1)
-                .Any(static node => node is CollectingCaptureBindingNode { IsTopLevel: true });
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-    }
-
-    private static EvalResult<CountedResult> EvalReducerAccumulatorCollectingCallbackCallCounted(
-        Algorithm.User callee,
-        IReadOnlyList<CountedResult> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // Charged dynamic invocation boundary. This reducer shape is dispatched INSTEAD
-        // of EvalResolvedCallbackCallCounted, never in addition to it, so charging here
-        // keeps one reduce step at exactly one charged invocation.
-        if (ctx.Budget.TryEnterInvocation() is { } limitError)
-            return limitError;
-
-        try
-        {
-            return EvalReducerAccumulatorCollectingCallbackCallCountedCore(callee, args, ctx, valEnv);
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
-    }
-
-    private static EvalResult<CountedResult> EvalReducerAccumulatorCollectingCallbackCallCountedCore(
-        Algorithm.User callee,
-        IReadOnlyList<CountedResult> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        if (callee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        // Accumulator state slots are already the opened accumulator
-        // (Result.ToItems), so every slot here is a FINAL item: the collector
-        // collects the presented slots exactly, like loop state.
-        var countedPatternEnvR = BindCountedParameterPatternList(
-            callee.ParameterPatterns,
-            FinalCallbackInputs(args),
-            ctx,
-            (required, actual) => new EvalError.ArityMismatch(required, actual));
-        if (countedPatternEnvR.IsError)
-            return AttachImplicitParameterProvenance(countedPatternEnvR.Error, callee);
-
-        var patternBindings = countedPatternEnvR.Value;
-        var callbackCtx = WithCountedParameterEnvironments(
-            ctx,
-            patternBindings.CountedBindings,
-            patternBindings.CountedBindings.Select(static binding => binding.Name));
-        return EvalAlgOutputCounted(callee, callbackCtx, valEnv);
-    }
-
     /// <summary>
-    /// Evaluate a <c>reduce</c> step on one collected iteration item. Reducers
-    /// with a top-level collecting accumulator parameter bind accumulator state
-    /// slots like loop state; other reducers keep ordinary structural
-    /// accumulator binding.
+    /// Evaluate a <c>reduce</c> step on one collected iteration item. The reducer is an
+    /// ordinary two-argument callback (THE CALLBACK LAW): it receives the element and the
+    /// accumulator as exactly two arguments, each ONE value — <c>reduce(xs, R, init)</c>
+    /// calls <c>R(E, Acc)</c> — so a collecting parameter on either side collects those
+    /// argument values exactly and a structured accumulator is opened only by the
+    /// reducer's own explicit pattern (<c>R(x, (a, b))</c>). The accumulator is always one
+    /// value: the initial accumulator is reified at the value boundary and every step must
+    /// return exactly one value. Lean: <c>evalSequenceReduceStepCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
         Algorithm callee,
@@ -485,25 +423,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv,
         string calleeName = "conditional")
-    {
-        var elementArg = CountedSequenceCallbackItem(element);
-        if (callee is Algorithm.User userReducer && ReducerAccumulatorSideHasTopLevelCollecting(userReducer))
-        {
-            var accumulatorSlots = accumulator.ToItems();
-            var args = new List<CountedResult>(1 + accumulatorSlots.Count) { elementArg };
-            foreach (var slot in accumulatorSlots)
-                args.Add(new CountedResult(slot, slot.ValueCount()));
-
-            return EvalReducerAccumulatorCollectingCallbackCallCounted(userReducer, args, ctx, valEnv);
-        }
-
-        return EvalResolvedCallbackCallCounted(
+        => EvalResolvedCallbackCallCounted(
             callee,
-            [elementArg, new CountedResult(accumulator, accumulator.ValueCount())],
+            [CountedSequenceCallbackItem(element), new CountedResult(accumulator, accumulator.ValueCount())],
             ctx,
             valEnv,
             calleeName);
-    }
 
     /// <summary>
     /// Recover the top-level values emitted at one algorithm boundary from a
@@ -1001,11 +926,10 @@ public static partial class Evaluator
     /// case. The fixed <c>collection</c> argument supplies the items through
     /// the post-binding collection view; the reducer and initial accumulator
     /// are fixed control arguments.
-    /// The current item is passed to the reducer exactly as collected;
-    /// nested sequence values stay intact.
-    /// Normal accumulator parameters keep ordinary structural semantics; a
-    /// top-level collecting accumulator parameter receives accumulator state
-    /// slots.
+    /// The current item is passed to the reducer exactly as collected and the
+    /// accumulator as ONE value — two ordinary callback arguments (THE CALLBACK
+    /// LAW); nested sequence values stay intact, and only the reducer's own
+    /// explicit pattern opens a structured element or accumulator.
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
@@ -1043,7 +967,7 @@ public static partial class Evaluator
         foreach (var item in items)
         {
             var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list, nested sequence and list values stay intact, and top-level collecting accumulator parameters receive state slots)",
+                "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
             if (stepR.IsError) return stepR.Error;
 

@@ -184,11 +184,10 @@ public static class SemanticExplorerCorpus
             v => $"F(*a) = a\nx = {v.Source}\nF(x)"),
         // DOT-CALL PASSES A VALUE: the extension-call receiver is the ordinary
         // leading argument, so `x.F` is `F(x)` and `(v).F` is `F((v))` — which,
-        // PARENTHESES GROUPING SYNTAX, is `F(v)` — one written slot that the lone
-        // collector binds by the collector supply-boundary law (a sequence value
-        // opens one level, `()` to nothing, every other value is one item) — while
-        // the fluent spread `x*.F` — `F(x*)` — supplies the value's items as final
-        // slots. The three templates differentially pin the rule, per value,
+        // PARENTHESES GROUPING SYNTAX, is `F(v)` — one argument that the lone
+        // collector collects as one item whatever its value (THE EXACT COLLECTOR
+        // LAW) — while the fluent spread `x*.F` — `F(x*)` — supplies the value's
+        // items. The three templates differentially pin the rule, per value,
         // against the written spellings `collectingViaProp` / `collecting` /
         // `collectingSpread`.
         new("dotCollectingViaProp",
@@ -359,7 +358,11 @@ public static class SemanticExplorerCorpus
         Special("filterOneSurvivorCount", "Big(a) = a > 2\ncount(filter((1, 2, 3), Big))"),
         Special("filterZeroSurvivors", "No(a) = false\nfilter((1, 2, 3), No)"),
         Special("mapPairSwap", "Swap(a, b) = b, a\nmap(((1, 2), (3, 4)), Swap)"),
-        Special("mapPairSwapOk", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)"),
+        // A callback element is ONE ordinary argument: the structural pattern opens
+        // each pair explicitly, while a flat two-parameter callee is the ordinary
+        // arity error of `Swap((1, 2))`.
+        Special("mapPairSwapOk", "Swap((a, b)) = (b, a)\nmap(((1, 2), (3, 4)), Swap)"),
+        Special("mapPairSwapFlatIsArity", "Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)"),
         Special("mapToOne", "M(a) = a\nmap((7), M)"),
         Special("orderSingle", "order(5)"),
         Special("orderEmpty", "order(())"),
@@ -457,6 +460,8 @@ public static class SemanticExplorerCorpus
         Special("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])"),
         Special("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)"),
         Special("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)"),
+        Special("callbackMixedCollectingRowPattern", "F((first, *middle, last)) = middle\n[(1, 2, 3, 4)].map(F)"),
+        Special("callbackCollectingElementIsOneArgument", "Cnt(*xs) = xs.count\nmap([(10, 7), [10, 7], 20], Cnt)"),
         Special("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*"),
         Special("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)"),
         Special("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)"),

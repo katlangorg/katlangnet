@@ -163,14 +163,15 @@ public class CollectingBindingTests
         AssertCollects(inspect + "Inspect(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(inspect + "Inspect([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(inspect + "Inspect([1, 2]*)", List(Atom(1), Atom(2)));
-        // The collector supply-boundary law: a lone written sequence value is the
-        // collector's whole segment and opens one level; beside another slot it
-        // is collected exactly, and the opening is never recursive.
-        AssertCollects(inspect + "Inspect((1, 2))", List(Atom(1), Atom(2)));
+        // THE EXACT COLLECTOR LAW: a written sequence value is ONE collected item,
+        // exactly like a list, alone or beside another argument; only the explicit
+        // spread supplies its items.
+        AssertCollects(inspect + "Inspect((1, 2))", List(Seq(Atom(1), Atom(2))));
         AssertCollects(inspect + "Inspect((1, 2)*)", List(Atom(1), Atom(2)));
         AssertCollects(inspect + "Inspect((1, 2), 3)", List(Seq(Atom(1), Atom(2)), Atom(3)));
-        AssertCollects(inspect + "Inspect(((1, 2), 3))", List(Seq(Atom(1), Atom(2)), Atom(3)));
-        // A spread-produced item is final, even when it is the lone item.
+        AssertCollects(inspect + "Inspect(((1, 2), 3))", List(Seq(Seq(Atom(1), Atom(2)), Atom(3))));
+        AssertCollects(inspect + "Inspect(((1, 2), 3)*)", List(Seq(Atom(1), Atom(2)), Atom(3)));
+        // A spread-produced item is never reopened, even when it is the lone item.
         AssertCollects(inspect + "Inspect([(1, 2)]*)", List(Seq(Atom(1), Atom(2))));
     }
 
@@ -180,21 +181,24 @@ public class CollectingBindingTests
     [InlineData("CountArgs(1, 2)", 2)]
     [InlineData("CountArgs([10, 20])", 1)]
     [InlineData("CountArgs([10, 20]*)", 2)]
-    [InlineData("CountArgs((10, 20))", 2)]
+    [InlineData("CountArgs((10, 20))", 1)]
     [InlineData("CountArgs((10, 20)*)", 2)]
     [InlineData("CountArgs((10, 20), 30)", 2)]
-    [InlineData("CountArgs(((10, 20), 30))", 2)]
+    [InlineData("CountArgs(((10, 20), 30))", 1)]
+    [InlineData("CountArgs(((10, 20), 30)*)", 2)]
     [InlineData("CountArgs([(10, 20)]*)", 1)]
-    public void VariadicCounting_ObservesTheCollectorSupply(string call, decimal expected)
+    [InlineData("CountArgs(())", 1)]
+    [InlineData("CountArgs(()*)", 0)]
+    public void VariadicCounting_CountsSuppliedArguments(string call, decimal expected)
         => AssertCollects("CountArgs(*items) = items.count\n" + call, Atom(expected));
 
-    // ── Empty-structure arguments: a lone written `()` opens to nothing, `[]` stays exact ─
+    // ── Empty-structure arguments: a written `()` or `[]` is ONE item; only its spread supplies nothing ─
 
     [Fact]
-    public void CollectingCapture_EmptyStructureArgumentsFollowTheCollectorLaw()
+    public void CollectingCapture_EmptyStructureArgumentsAreOneItem()
     {
         const string inspect = "Inspect(*items) = items\n";
-        AssertCollects(inspect + "Inspect(())", List());
+        AssertCollects(inspect + "Inspect(())", List(Seq()));
         AssertCollects(inspect + "Inspect((), 3)", List(Seq(), Atom(3)));
         AssertCollects(inspect + "Inspect(()*)", List());
         AssertCollects(inspect + "Inspect(()*, 3)", List(Atom(3)));
@@ -214,15 +218,14 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void MixedPatterns_GroupedMiddleOpensOneLevelWhenItIsTheWholeSegment()
+    public void MixedPatterns_GroupedMiddleIsOneItem()
     {
-        // Direct user call: the fixed prefix and suffix are allocated first, and a
-        // lone grouped middle argument is then the collector's whole segment, so
-        // it opens one level — exactly like the explicit spread — while a grouped
-        // argument beside another middle slot is collected exactly.
+        // Direct user call: the fixed prefix and suffix are allocated first, and the
+        // collector then collects the middle exactly — a lone grouped middle argument
+        // is one item — while only the explicit spread supplies its items.
         AssertCollects(
             "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30), 40)",
-            List(Atom(20), Atom(30)));
+            List(Seq(Atom(20), Atom(30))));
         AssertCollects(
             "Middle(first, *middle, last) = middle\nMiddle(10, (20, 30)*, 40)",
             List(Atom(20), Atom(30)));
@@ -248,9 +251,11 @@ public class CollectingBindingTests
         AssertCollects(defs + "Forward(1, 2)", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(defs + "Forward([1, 2]*)", List(Atom(1), Atom(2)));
-        // The lone written pair opens at Forward's collector; the spread then
-        // re-supplies exactly the collected [1, 2] as final items.
-        AssertCollects(defs + "Forward((1, 2))", List(Atom(1), Atom(2)));
+        // The written pair is ONE collected item at Forward's collector; the spread
+        // then re-supplies exactly that item (spread(collect(xs)) = xs).
+        AssertCollects(defs + "Forward((1, 2))", List(Seq(Atom(1), Atom(2))));
+        AssertCollects(defs + "Forward(())", List(Seq()));
+        AssertCollects(defs + "Forward([(1, 2)]*)", List(Seq(Atom(1), Atom(2))));
         AssertCollects(defs + "Forward((1, 2)*)", List(Atom(1), Atom(2)));
         AssertCollects(defs + "Forward((1, 2), 3)", List(Seq(Atom(1), Atom(2)), Atom(3)));
     }
@@ -266,18 +271,17 @@ public class CollectingBindingTests
     // ── Implicit forwarding: spread decided by the SOURCE binding kind ──────
     // The implicit-argument resolver re-spreads a forwarded value only when the
     // caller-side binding is itself a collecting binding's exact list. An ordinary source
-    // parameter always forwards as ONE written argument, even into a collecting
-    // destination — where the collector supply-boundary law then applies (a
-    // forwarded sequence value opens one level, a list stays one item).
+    // parameter always forwards as ONE argument, even into a collecting destination —
+    // which collects it as one item, a sequence and a list alike.
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceParameterIsOneArgument()
     {
         const string defs = "Target(*items) = items\nUse(items) = Target\n";
         AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
-        AssertCollects(defs + "Use((1, 2))", List(Atom(1), Atom(2)));
+        AssertCollects(defs + "Use((1, 2))", List(Seq(Atom(1), Atom(2))));
         AssertCollects(defs + "Use(7)", List(Atom(7)));
-        AssertCollects("Target(*items) = items\nUse(items, z) = Target\nUse((1, 2), 3)", List(Atom(1), Atom(2)));
+        AssertCollects("Target(*items) = items\nUse(items, z) = Target\nUse((1, 2), 3)", List(Seq(Atom(1), Atom(2))));
     }
 
     [Fact]
@@ -386,12 +390,12 @@ public class CollectingBindingTests
                 List(List(Atom(1), Atom(2)))));
     }
 
-    // ── Callback collecting binding: flat callees route through the shared binder ─
-    // map/filter/reduce callbacks with a top-level collecting parameter collect
-    // exactly like ordinary calls: a single-variadic callee keeps the iterated
-    // element as ONE collected slot, and a multi-parameter flat callee opens
-    // the lone element into row slots first (the established flat-callback
-    // row convention) before prefix/collecting/suffix allocation.
+    // ── Callback collecting binding: flat callees route through the ordinary binder ─
+    // THE CALLBACK LAW: map/filter/reduce pass each iterated element as ONE
+    // ordinary argument, bound exactly as the direct call with that element — a
+    // single-variadic callee collects it as one item, a multi-parameter flat
+    // callee rejects it with the ordinary arity error, and only an explicit
+    // structural pattern opens it. There is no row convention.
 
     [Fact]
     public void SingleVariadicMapCallback_CollectsOneElementSlot()
@@ -403,36 +407,43 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void SingleVariadicMapCallback_BindsEachElementByTheCollectorLaw()
+    public void SingleVariadicMapCallback_CollectsEachElementAsOneItem()
     {
-        // A whole callback item is ONE written slot of the callback call: list
-        // elements stay exact, sequence elements open one level.
+        // A whole callback item is ONE argument of the callback call: list and
+        // sequence elements alike are one collected item.
         const string defs = "Collect(*items) = items\n";
         AssertCollects(defs + "[[1, 2]].map(Collect)", List(List(List(Atom(1), Atom(2)))));
-        AssertCollects(defs + "[(1, 2)].map(Collect)", List(List(Atom(1), Atom(2))));
-        AssertCollects(defs + "[((1, 2), 3)].map(Collect)", List(List(Seq(Atom(1), Atom(2)), Atom(3))));
+        AssertCollects(defs + "[(1, 2)].map(Collect)", List(List(Seq(Atom(1), Atom(2)))));
+        AssertCollects(defs + "[((1, 2), 3)].map(Collect)", List(List(Seq(Seq(Atom(1), Atom(2)), Atom(3)))));
         AssertCollects(defs + "[[]].map(Collect)", List(List(List())));
-        AssertCollects(defs + "[()].map(Collect)", List(List()));
+        AssertCollects(defs + "[()].map(Collect)", List(List(Seq())));
     }
 
     [Fact]
-    public void MixedVariadicMapCallback_OpensRowSlotsThenCollects()
+    public void MixedVariadicMapCallback_ElementIsOneArgument()
     {
-        AssertCollects(
-            "F(first, *middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
-            List(List(Atom(2), Atom(3))));
+        // The flat mixed callee receives ONE argument: the fixed `first` and `last`
+        // cannot both be filled, so it is the ordinary arity error of
+        // `F((1, 2, 3, 4))`; the explicit structural pattern opens the row.
+        var flat = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(
+            "F(first, *middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)"));
+        Assert.Equal(KatLangErrorCode.ArityMismatch, flat.Errors[0].Code);
         AssertCollects(
             "F((first, *middle, last)) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)",
             List(List(Atom(2), Atom(3))));
+        // A fixed prefix or suffix binds the whole element; the collector collects nothing.
         AssertCollects(
             "F(first, *rest) = rest\n[(1, 2, 3)].map(F)",
-            List(List(Atom(2), Atom(3))));
+            List(List()));
         AssertCollects(
             "F(first, *rest) = rest\n[7].map(F)",
             List(List()));
         AssertCollects(
             "F(*init, last) = init\n[(1, 2, 3)].map(F)",
-            List(List(Atom(1), Atom(2))));
+            List(List()));
+        AssertCollects(
+            "F((first, *rest)) = rest\n[(1, 2, 3)].map(F)",
+            List(List(Atom(2), Atom(3))));
     }
 
     [Fact]
@@ -477,10 +488,16 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void ReducerAccumulatorSideCollectingParameter_KeepsSharedPatternBinding()
+    public void ReducerAccumulatorSideCollectingParameter_CollectsTheOneAccumulatorValue()
     {
+        // The accumulator is ONE argument: `history` is always the one-element list of
+        // the current accumulator, so each step nests the previous accumulator whole.
         AssertCollects(
             "Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
+            Seq(Seq(Seq(Atom(1), Atom(2)), Atom(3)), Atom(4)));
+        // Only the reducer's explicit pattern opens a structured accumulator.
+        AssertCollects(
+            "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
             Seq(Atom(1), Atom(2), Atom(3), Atom(4)));
         AssertCollects(
             "R(el, acc, *extra) = (acc, el, extra)\nreduce((5), R, 0)",
@@ -488,25 +505,36 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void FixedFlatCallbacks_KeepExistingRowBehavior()
+    public void FixedFlatCallbacks_RejectAStructuredElement_WhileAnExplicitPatternOpensIt()
     {
-        AssertCollects(
+        foreach (var source in new[]
+        {
             "Add(x, y) = x + y\n((1, 2), (3, 4)).map(Add)",
+            "Add(x, y) = x + y\n[(1, 2), (3, 4)].map(Add)",
+            "Add(x, y) = x + y\n[[1, 2], [3, 4]].map(Add)",
+        })
+        {
+            var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+            Assert.Equal(KatLangErrorCode.ArityMismatch, failure.Errors[0].Code);
+        }
+
+        AssertCollects(
+            "AddPair((x, y)) = x + y\n((1, 2), (3, 4)).map(AddPair)",
             List(Atom(3), Atom(7)));
         AssertCollects(
-            "Add(x, y) = x + y\n[(1, 2), (3, 4)].map(Add)",
+            "AddPair((x, y)) = x + y\n[[1, 2], [3, 4]].map(AddPair)",
             List(Atom(3), Atom(7)));
     }
 
     // ── Receiver distinction ────────────────────────────────────────────────
 
     [Fact]
-    public void CallReceiver_KeepsListsExact_AndOpensALoneSequenceOneLevel()
+    public void CallReceiver_KeepsSequencesAndListsExact()
     {
         const string defs = "Inspect(*items) = items\nA = [1, 2, 3]\nB = (1, 2, 3)\n";
         AssertCollects(defs + "Inspect(A)", List(List(Atom(1), Atom(2), Atom(3))));
         AssertCollects(defs + "Inspect(A*)", List(Atom(1), Atom(2), Atom(3)));
-        AssertCollects(defs + "Inspect(B)", List(Atom(1), Atom(2), Atom(3)));
+        AssertCollects(defs + "Inspect(B)", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertCollects(defs + "Inspect(B*)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Inspect(B, 0)", List(Seq(Atom(1), Atom(2), Atom(3)), Atom(0)));
         AssertCollects(defs + "Inspect(B*, 0)", List(Atom(1), Atom(2), Atom(3), Atom(0)));
@@ -527,16 +555,16 @@ public class CollectingBindingTests
     }
 
     [Fact]
-    public void InlineGroupDottedReceiver_IsOneWrittenSlotBoundByTheCollectorLaw()
+    public void InlineGroupDottedReceiver_IsOneCollectedItem()
     {
         // An inline group receiver is one sequence value and, like every
         // receiver, the ONE leading argument — `(1, 2).Inspect` is
-        // `Inspect((1, 2))` — so the lone collector opens it one level to
-        // [1, 2], exactly like the spread `(1, 2)*.Inspect` = `Inspect(1, 2)`;
-        // beside a written argument the group is one collected item.
+        // `Inspect((1, 2))` — so the collector collects it as one item, alone or
+        // beside a written argument; only the spread `(1, 2)*.Inspect` =
+        // `Inspect(1, 2)` supplies its items.
         AssertCollects(
             "Inspect(*items) = items\n(1, 2).Inspect",
-            List(Atom(1), Atom(2)));
+            List(Seq(Atom(1), Atom(2))));
         AssertCollects(
             "Inspect(*items) = items\n(1, 2)*.Inspect",
             List(Atom(1), Atom(2)));
@@ -721,8 +749,8 @@ public class CollectingBindingTests
     // ── Mutation campaign 2026-08-22: two suffix parameters after a collector ──
     // Every pre-campaign mixed-collecting case used exactly ONE suffix parameter,
     // where suffix layout arithmetic is degenerate (its index term is always 0).
-    // This pins the two-suffix shape for the direct call AND the callback row
-    // form across all evaluation modes. The PRIMARY pin of the counted patterned
+    // This pins the two-suffix shape for the direct call AND the callback's
+    // structural row pattern across all evaluation modes. The PRIMARY pin of the counted patterned
     // suffix arithmetic is the dedicated CountedFamily_MapCallback... test below;
     // this one is additional cross-mode coverage. CallableBindingPlanParityTests
     // routes the same shape through loop-step binding, which reaches
@@ -735,11 +763,13 @@ public class CollectingBindingTests
         var direct = EvaluateAllModes("Take(*mid, a, b) = (mid, a, b)\nTake(1, 2, 3, 4)");
         AssertSemanticallyEqual(Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)), direct);
 
-        // Callback rows bind through BindCountedCallbackParameterPatternList ->
+        // A callback element is ONE argument, so the row form opens each element
+        // through the explicit structural pattern — BindCountedParameterPattern ->
         // BindCountedParameterPatternList under counted evaluation, where the
-        // counted suffix arithmetic lives.
+        // counted suffix arithmetic lives. (The flat `F(*mid, a, b)` callee is the
+        // ordinary arity error: one item cannot fill `a` and `b`.)
         var callback = EvaluateAllModes(
-            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF(*mid, a, b) = (mid, a, b)\nRows.map(F)");
+            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF((*mid, a, b)) = (mid, a, b)\nRows.map(F)");
         AssertSemanticallyEqual(
             List(
                 Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)),
@@ -750,16 +780,16 @@ public class CollectingBindingTests
     // DEDICATED counted-family pin (primary evidence for the counted patterned
     // suffix arithmetic — the "3315" Stryker survivor). RunCounted is invoked
     // directly, so the route does not depend on EvaluateAllModes retaining its
-    // counted mode: a flat map callee with a top-level collecting parameter binds
-    // each iterated row through BindCountedCallbackParameterPatternList ->
+    // counted mode: the map callee's explicit structural pattern opens each
+    // iterated row through BindCountedParameterPattern ->
     // BindCountedParameterPatternList, whose suffix loop must bind a and b by
-    // position AFTER the collector (both suffix-arithmetic mutants there fail
-    // this test independently; verified by injection 2026-08-28).
+    // position AFTER the collector (the callback element itself is ONE argument,
+    // so the pattern is what supplies the four items).
     [Fact]
     public void CountedFamily_MapCallbackCollectingWithTwoSuffixes_BindsBothSuffixesByPosition()
     {
         var root = SourceProvenance.ParseValid(
-            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF(*mid, a, b) = (mid.count, a, b)\nRows.map(F)").Root;
+            "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF((*mid, a, b)) = (mid.count, a, b)\nRows.map(F)").Root;
 
         var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(root));
 

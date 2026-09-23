@@ -159,34 +159,32 @@ public class EvaluatorExpressionListTests
     [Theory]
     [InlineData("X(*values) = values.count\nX((1, 2))")]
     [InlineData("X(*values) = values.count\nX ((1, 2))")]
-    public void Eval_CallArgumentGroupedSequence_SingleVariadicOpensItOneLevel(string source)
-        // The call supplies ONE written sequence-valued argument (the space before
-        // the group changes nothing); as the lone collector's whole segment it opens
-        // one level — the collector supply-boundary law — so `values = [1, 2]`, count 2.
-        => AssertEval(source, 2);
+    public void Eval_CallArgumentGroupedSequence_IsOneCollectedItem(string source)
+        // The call supplies ONE sequence-valued argument (the space before the group
+        // changes nothing), collected exactly — `values = [(1, 2)]`, count 1.
+        => AssertEval(source, 1);
 
     [Theory]
     [InlineData("X(*values) = values.count\nX((1, 2), 3)")]
     [InlineData("X(*values) = values.count\nX([1, 2])")]
     public void Eval_CallArgumentGroupedSequence_BesideAnotherOrAList_StaysOneCollectedItem(string source)
-        // Beside another slot the sequence value is collected exactly (count 2 for
-        // two slots), and a lone list never opens (count 1).
+        // Beside another argument the sequence value is one item too (count 2 for
+        // two arguments), and a lone list is one item exactly like a sequence
+        // (count 1).
         => AssertEval(source, source.Contains(", 3)") ? 2 : 1);
 
     [Fact]
-    public void Eval_SingleVariadicWithCollectionOperation_GroupedArgumentOpensOneLevel()
+    public void Eval_SingleVariadicWithCollectionOperation_GroupedArgumentIsOneElement()
     {
-        // F((1, 2)) supplies one written argument: the sequence value (1, 2). It is
-        // the lone collector's whole segment, so the collecting parameter binds
-        // x = [1, 2] and x.sum is 3 — exactly like the explicit spread F((1, 2)*).
-        // A list argument stays one non-numeric element, and a second slot keeps
-        // the sequence value as one element.
-        AssertEval(
+        // F((1, 2)) supplies one argument: the sequence value (1, 2), collected as
+        // ONE non-numeric element (`x = [(1, 2)]`), exactly like a list argument and
+        // like the grouped value beside a second argument; only the explicit spread
+        // F((1, 2)*) supplies the items, so x.sum is 3.
+        AssertEvalFails(
             """
             F(*x) = x.sum
             F((1, 2))
-            """,
-            3);
+            """);
 
         AssertEval(
             """
@@ -411,11 +409,11 @@ public class EvaluatorExpressionListTests
     [InlineData("X((a\nb*))")]
     public void Eval_SequenceValuePostfixSequenceSpreadInCall_BindsAsOneSequenceValueArgument(string source)
     {
-        // Explicit parentheses materialize the spread items into ONE written
-        // argument, the sequence value (1, 2, 3); the lone collector then opens
-        // it one level (count 3) — beside another slot it is one collected item.
+        // Explicit parentheses materialize the spread items into ONE argument, the
+        // sequence value (1, 2, 3), collected as one item (count 1) — beside another
+        // argument too.
         var program = "a = 1\nb = 2, 3\nX(*values) = values.count\n" + source;
-        AssertEval(program, 3);
+        AssertEval(program, 1);
         AssertEval(program.Replace("))", "), 0)"), 2);
     }
 

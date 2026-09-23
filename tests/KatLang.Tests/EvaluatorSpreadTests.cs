@@ -143,12 +143,11 @@ public class EvaluatorSpreadTests
     public void Eval_SequenceSpreadAfterSequenceConstruct_AppliesToImmediateExpression()
     {
         // The inner `*` binds to `b` only, so both forms supply the ONE
-        // sequence-valued argument (1, 2); as the lone collector's whole segment
-        // it opens one level and the collecting parameter collects [1, 2] — the
-        // same list the whole-group spread `X((a, b)*)` collects, but through a
-        // different route (one written slot versus two final items), which the
-        // trailing-argument form below keeps observable: `X((a, b*), 3)` collects
-        // [(1, 2), 3] while `X((a, b)*, 3)` collects [1, 2, 3].
+        // sequence-valued argument (1, 2), which the collecting parameter collects
+        // as one item — [(1, 2)] — while the whole-group spread `X((a, b)*)`
+        // supplies the two items; beside a trailing argument the same holds:
+        // `X((a, b*), 3)` collects [(1, 2), 3] while `X((a, b)*, 3)` collects
+        // [1, 2, 3].
         var concise = EvalFull(
             """
             X(*values) = values
@@ -172,9 +171,9 @@ public class EvaluatorSpreadTests
         Assert.True(Result.ValueComparer.Equals(sequenceValueResult.Value, concise.Value));
         Assert.True(
             Result.ValueComparer.Equals(
-                ListValue(Atom(1), Atom(2)),
+                ListValue(SequenceValue(Atom(1), Atom(2))),
                 concise.Value),
-            $"Expected [1, 2] but got {concise.Value}");
+            $"Expected [(1, 2)] but got {concise.Value}");
 
         var besideConcise = EvalFull("X(*values) = values\na = 1\nb = 2\nX((a, b*), 3)");
         Assert.True(
@@ -705,24 +704,23 @@ public class EvaluatorSpreadTests
     [InlineData("Sum((1, 2, 3))")]
     [InlineData("Seq = (1, 2, 3)\nSum(Seq)")]
     [InlineData("Seq = 1, 2, 3\nSum(Seq)")]
-    public void Eval_SingleVariadic_GroupedArgumentOpensOneLevelAtTheLoneCollector(string call)
-        // Each call supplies ONE written sequence-valued argument; it is the lone
-        // collector's whole segment, so the collector supply-boundary law opens it
-        // one level and the collecting binding collects [1, 2, 3] (count 3).
+    public void Eval_SingleVariadic_GroupedArgumentIsOneCollectedItem(string call)
+        // Each call supplies ONE sequence-valued argument, which the collecting
+        // binding collects exactly: [(1, 2, 3)] (count 1).
         => AssertEval(
             $$"""
             Sum(*values) = values.count
             {{call}}
             """,
-            3m);
+            1m);
 
     [Theory]
     [InlineData("Sum((1, 2, 3), 0)")]
     [InlineData("Seq = (1, 2, 3)\nSum(Seq, 0)")]
     [InlineData("Sum([1, 2, 3])")]
     public void Eval_SingleVariadic_GroupedArgumentBesideAnotherOrAListStaysOneItem(string call)
-        // A sequence value beside another slot, or a lone list, is collected
-        // exactly: the law rewrites only a segment that is ONE written sequence.
+        // A sequence value beside another argument, or a lone list, is collected
+        // exactly too: every argument is one item.
         => AssertEval(
             $$"""
             Sum(*values) = values.count
@@ -769,17 +767,16 @@ public class EvaluatorSpreadTests
 
     [Theory]
     [InlineData("F((1, 2, 3), 99)")]
-    public void Eval_VariadicWithSuffix_SequenceArgumentOpensAfterSuffixAllocation(string call)
+    public void Eval_VariadicWithSuffix_SequenceArgumentIsOneItemAfterSuffixAllocation(string call)
         // F((1, 2, 3), 99) supplies one sequence-valued argument plus the suffix:
-        // last binds 99 from the back FIRST, and the lone written sequence left to
-        // the collector opens one level (count 3) — the collector supply-boundary
-        // law reads the segment after fixed allocation.
+        // last binds 99 from the back FIRST, and the collector collects the one
+        // remaining item exactly (count 1).
         => AssertEval(
             $$"""
             F(*values, last) = values.count, last
             {{call}}
             """,
-            3m,
+            1m,
             99m);
 
     [Theory]

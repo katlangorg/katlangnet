@@ -70,10 +70,8 @@ abbrev Supply := List Val      -- many slots (the ungrouped, multi-output contex
 | deconstruction-specific lone-structure opening of a supply | `openLoneStructure : Supply → Supply` |
 | the one supply shape that opening rewrites | `loneStructure : Supply → Bool` |
 | front / collecting / back binding kernel      | `bindPats : List Pat → Supply → Option Env` |
-| a call's supplied items with their slot provenance | `CallSupply := List (Val × Origin)` (`written` / `final` tag a supply; `values` forgets the tags) |
-| the collector supply-boundary law on one segment | `collectorSupply : CallSupply → Supply` (`loneWrittenSeq?` names the one shape it rewrites) |
-| the same law as a call-supply preparation | `fuseCollectorSegment : List Pat → CallSupply → Supply` |
-| call parameter binding (fuses the collector's segment) | `bindArgs : List Pat → CallSupply → Option Env` |
+| call parameter binding (binds the supply as it is — values stay values) | `bindArgs : List Pat → Supply → Option Env` (the shared `bindPats` itself) |
+| callback binding (the ordinary call binder) | `bindCallback : List Pat → List Val → Option Env` (`bindArgs`) |
 | assignment deconstruction binding (opens a lone structure) | `bindDeconstruct : List Pat → Supply → Option Env` |
 
 Several of these operations look superficially similar but are semantically
@@ -86,71 +84,85 @@ distinct, and the paper's terminology keeps them apart:
 | `normalize`         | value → value   | persistent-value normalization (sequence singletons erase; list boundaries never do) |
 | `capture`           | supply → value  | ordinary value capture, `normalize ∘ Val.seq` |
 | `collect`           | supply → value  | exact segment collection, always a `Val.list` |
-| `collectorSupply`   | call supply → supply | the collector supply-boundary law: a lone WRITTEN sequence slot stands for the collector's whole supply (its items); every other segment is its values, exactly |
-| `openLoneStructure` | supply → supply | deconstruction-specific supply preparation (opens a lone sequence OR list, written or not) |
+| `openLoneStructure` | supply → supply | deconstruction-specific supply preparation (opens a lone sequence OR list) |
 
 ## The receiver split
 
 The two binding receivers are the same front/collecting/back kernel (`bindPats`)
-with different supply preparation:
+with different supply preparation — and the call receiver has none:
 
 ```lean
-def bindArgs        (ps : List Pat) (xs : CallSupply) := bindPats ps (fuseCollectorSegment ps xs)
+def bindArgs        (ps : List Pat) (xs : Supply)     := bindPats ps xs
+def bindCallback    (ps : List Pat) (args : List Val) := bindArgs ps args
 def bindDeconstruct (ps : List Pat) (xs : Supply)     := bindPats ps (openLoneStructure xs)
 ```
 
-A call's supply carries each item's *origin* — a non-spread WRITTEN slot, or a
-FINAL item that an explicit spread already produced (`written xs` / `final xs`
-tag a plain supply; `values` forgets the tags). `fuseCollectorSegment` applies
-the **collector supply-boundary law** (September 2026) to the one segment that
-the fixed prefix and suffix positions leave to the collecting binding: if that
-segment is exactly one written sequence slot (`loneWrittenSeq?`), the sequence's
-items ARE the collector's supply — opened exactly one level — and otherwise the
-segment is collected exactly (`collectorSupply`). So `Coll((1, 2))` binds
-`[1, 2]`, `Coll(())` binds `[]`, `Coll(((1, 2), 3))` binds `[(1, 2), 3]`,
-`Coll((1, 2), 3)` binds `[(1, 2), 3]`, `Coll([1, 2])` binds `[[1, 2]]`, and
-`Coll([(1, 2)]*)` binds `[(1, 2)]` (a final item is already final). Fixed
-positions are allocated BEFORE the law reads the segment: `F(x, *rest)` on
-`F(1, (2, 3))` binds `rest = [2, 3]`, on `F(1, (2, 3), 4)` it binds
+**Values stay values** (September 2026; this supersedes the collector
+supply-boundary law and its `CallSupply` / `Origin` / `collectorSupply` /
+`fuseCollectorSegment` call-supply preparation, which are deleted). A call's
+supply holds ONE item per non-spread argument — whatever its value: an atom, a
+sequence, a list, `()`, `[]` — plus the immediate items of each explicitly
+spread operand (`items`), and `bindArgs` binds that supply AS IT IS: fixed
+captures take one item unchanged, and a collector collects exactly its
+allocated items. So `Coll((1, 2))` binds `[(1, 2)]`, `Coll(())` binds `[()]`,
+`Coll(((1, 2), 3))` binds `[((1, 2), 3)]`, `Coll((1, 2), 3)` binds
+`[(1, 2), 3]`, `Coll([1, 2])` binds `[[1, 2]]`, and only the spread supplies
+`Coll((1, 2)*)` and `Coll([1, 2]*)` bind `[1, 2]` (`Coll([(1, 2)]*)` binds
+`[(1, 2)]`: a spread-produced item is never reopened). Fixed positions are
+allocated first and the collector collects the rest: `F(x, *rest)` on
+`F(1, (2, 3))` binds `rest = [(2, 3)]`, on `F(1, (2, 3), 4)` it binds
 `rest = [(2, 3), 4]`, and a lone sequence against a fixed position stays one
-value (`Add((1, 2))` is an arity error, `Id((1, 2))` binds the pair). On final
-items the call receiver IS the shared binder (`fuseCollectorSegment_final`,
-`bindArgs_final`).
+value (`Add((1, 2))` is an arity error, `Id((1, 2))` binds the pair). The
+collector laws are `collector_lone_sequence_is_one_item`,
+`collector_lone_list_is_one_item`, `collector_lone_empty_values_are_one_item`,
+`collector_many_items_are_exact`, `collector_spread_supply_is_collected`,
+`collector_spread_opening_is_one_level`, the
+`collector_*_segment_*_is_exact` allocation instances,
+`collector_lone_middle_is_exact_and_spread_opens`,
+`collector_lone_argument_is_one_item` / `collector_spread_argument_is_its_items`
+(stated over `bindArgs`), and `forwarding_resupplies_the_collected_supply`
+(`spread(collect(S)) = S` through a forwarding collector).
+
+**The callback law** is the same binder: a callback operation supplies each
+value it passes — a `map`/`filter` element, a `reduce` element and accumulator
+— as ONE ordinary argument, so `map(xs, F)` binds `bindCallback ps [e]`,
+exactly the direct call `F(e)` (`callback_is_the_ordinary_call`,
+`callback_element_is_one_ordinary_argument`). A structured element is one
+argument, so a two-fixed flat callee rejects it
+(`callback_two_fixed_rejects_structured_element`: `map([(1, 2)], Add)` fails
+like `Add((1, 2))`), and the reducer's accumulator is one argument beside the
+element (`callback_accumulator_is_one_ordinary_argument`: `Acc(x, *acc)`
+collects `[acc]`).
 
 Assignment deconstruction instead opens ONE lone sequence or lone list of the
-whole supply, written or not (`loneStructure` characterizes exactly that supply
-shape). The receiver theorems split the whole story on that predicate:
+whole supply (`loneStructure` characterizes exactly that supply shape). The
+receiver theorems split the whole story on that predicate:
 
-* `receivers_agree_outside_lone_structure` — on a FINAL supply with
+* `receivers_agree_outside_lone_structure` — on a supply with
   `loneStructure xs = false` the receivers are equal, so the entire asymmetry
   lives in the lone-structure case;
 * `deconstruct_singleton_eq_args_items` — on a single-value supply the
   deconstruction receiver binds exactly what the call receiver binds on the
-  value's immediate item view supplied as final items;
-* `receivers_never_same_on_lone_list` — on a lone written LIST the call
-  receiver (which never opens a list — `fuseCollectorSegment_written_lone_list`)
-  and the deconstruction receiver (which opens it) NEVER both succeed with the
-  same environment, for any pattern list;
-* `receivers_never_same_on_lone_seq_with_fixed` — on a lone written SEQUENCE the
-  same holds for every pattern list except the lone collecting pattern
-  (`fuseCollectorSegment_written_singleton`): a fixed position binds the whole
-  sequence on the call side and one of its items on the other;
-* `receivers_agree_on_lone_seq_lone_collecting` — the lone collecting pattern is
-  exactly where the two receivers coincide on a lone written sequence:
-  `Coll(A)` and `*x = A` both bind `collect ys`. Shared *success* is the
-  strongest correct claim for the non-coincidence theorems — both receivers can
-  fail identically (two fixed names vs a one-item payload), so plain Option
-  inequality would be false;
-* `lone_collecting_disagrees_on_lone_list` — a concrete lone-collecting disagreement
-  where both modes DO succeed, so even the Option values differ: lists never
-  open at a call collector (`rest = [A]`), while deconstruction opens them.
+  value's immediate item view (the supply of the explicit spread `F(v*)`);
+* `receivers_never_same_on_lone_structure`, with its
+  `receivers_never_same_on_lone_seq` / `receivers_never_same_on_lone_list`
+  instances — on a lone SEQUENCE or LIST the call receiver (which keeps the one
+  supplied value) and the deconstruction receiver (which opens it) NEVER both
+  succeed with the same environment, for ANY pattern list, the lone collecting
+  pattern included. Shared *success* is the strongest correct claim — both
+  receivers can fail identically (two fixed names vs a one-item payload), so
+  plain Option inequality would be false;
+* `lone_collecting_disagrees_on_lone_structure` — the lone-collecting instance,
+  where both modes DO succeed, so even the Option values differ: a call
+  collector collects the one argument (`rest = [A]`), while deconstruction
+  opens it.
 
 The grouped/spread relation at a single collecting parameter follows:
-`variadic_collect_written_seq_eq_spread` (`F(A)` and `F(A*)` coincide for a
-stored SEQUENCE `A`), `variadic_collect_distinguishes_spread_list` (they differ
-for a stored LIST), with the exact bound values in
-`variadic_collect_value_grouped`, `variadic_collect_value_grouped_list`, and
-`variadic_collect_value_spread`.
+`variadic_collect_distinguishes_spread_seq` and
+`variadic_collect_distinguishes_spread_list` (`F(A)` and `F(A*)` differ for
+every stored structure, a sequence and a list alike), with the exact bound
+values in `variadic_collect_value_grouped` (`rest = [A]`) and
+`variadic_collect_value_spread` (`rest = [a₁, …]`).
 
 The item-view equation is deliberately receiver-level. It is not an
 unrestricted source rewrite from `x, y = A` to `x, y = A*`, because a
@@ -341,15 +353,14 @@ the full model's binder additionally merges duplicate bindings with an
 equality check that the extraction omits.
 
 The Lean algebra permits a lone collecting binding:
-`bindArgs [Pat.collecting "x"] (written xs)` is the single collecting parameter
+`bindArgs [Pat.collecting "x"] xs` is the single collecting parameter
 `F(*items)`, and the lone-collecting assignment `*all = 1, 2, 3` reaches
 the same shape through the deconstruction receiver (`bindDeconstruct`),
 collecting the complete supply as one exact list. The generic law is stated
-over `bindPats`, the shared kernel; `bindArgs` reaches it AFTER the collector
-supply-boundary law has prepared the call supply, so on a lone written
-sequence the collector's `mid` is the sequence's items
-(`bindArgs_lone_collecting_written_seq`), and on final items it is the items
-as supplied (`bindArgs_lone_collecting`).
+over `bindPats`, the shared kernel, and `bindArgs` IS that kernel, so the
+collector's `mid` is always exactly the supplied items
+(`bindArgs_lone_collecting`): one item per non-spread argument, a lone
+sequence included (`collector_lone_argument_is_one_item`).
 
 ## Canonical values and the canonical-supply invariant
 
@@ -415,20 +426,19 @@ in `KatLang.lean`, including the subtle points:
   two-or-more items stay `[…]`. In `KatLang.lean` the shared helper is
   `collectSegment`; in the C# runtime it is `CollectSegment` inside
   `CreateCollectingCapture`.
-* `bindArgs` consumes the call's supplied slots exactly, except at the
-  collector's own boundary: `F(A)` is ONE written argument, while `F(A*)`
-  explicitly spreads `A` into final items before binding. A single stored
-  sequence or list value against fixed parameters is therefore an arity error
-  (`Add(A)` fails; `Id(A)` binds the value whole), a single-collecting call
-  distinguishes a stored LIST `F(A)` (`rest = [A]`) from `F(A*)`
-  (`rest = [a₁, …]`), and for a stored SEQUENCE the collector supply-boundary
-  law makes `F(A)` and `F(A*)` coincide (`rest = [a₁, …]`, one level:
-  `Coll(((1, 2), 3))` is `[(1, 2), 3]`). In `KatLang.lean` the law is
-  `collectorSupply` applied by `bindParameterPatternList` /
-  `bindCountedParameterPatternList` to the segment they allocate, with
-  `collectVariadicCallItems` recording each item's `SupplyOrigin`; in the C#
-  runtime it is `CollectorSupply` inside the same two binders, fed by
-  `BuildCallArgumentInputs`.
+* `bindArgs` consumes the call's supplied slots exactly, with no exception:
+  `F(A)` is ONE argument, while `F(A*)` explicitly spreads `A` into its items
+  before binding. A single stored sequence or list value against fixed
+  parameters is therefore an arity error (`Add(A)` fails; `Id(A)` binds the
+  value whole), and a single-collecting call distinguishes `F(A)`
+  (`rest = [A]`) from `F(A*)` (`rest = [a₁, …]`) for a stored sequence and a
+  stored list alike (`Coll(((1, 2), 3))` is `[((1, 2), 3)]`). In `KatLang.lean`
+  the binders `bindParameterPatternList` / `bindCountedParameterPatternList`
+  collect the segment they allocate through `collectSegment`, fed by
+  `collectVariadicCallItems` (one item per non-spread argument); in the C#
+  runtime the same two binders use `CollectSegment`, fed by
+  `BuildCallArgumentInputs`. Callbacks bind through the same counted binder
+  (`evalUserCallbackCallCounted`), which is `bindCallback = bindArgs`.
 * `bindDeconstruct` is `bindPats ∘ openLoneStructure`: assignment
   deconstruction is an unpacking receiver, so a single sequence- or
   list-valued right-hand side is opened and matched element-by-element.
@@ -442,12 +452,11 @@ in `KatLang.lean`, including the subtle points:
 * After the receiver-specific supply preparation, call and deconstruction collecting
   bindings share the SAME collection rule: both are `bindPats`, whose single
   collecting case materializes through `collect`
-  (`bindArgs ps = bindPats ps ∘ fuseCollectorSegment ps`,
+  (`bindArgs ps = bindPats ps`,
   `bindDeconstruct = bindPats ∘ openLoneStructure` — definitional in
-  `CoreArityAlgebra.lean`). The two preparations differ in scope: the call
-  law rewrites only the collector's allocated segment and only a WRITTEN
-  sequence slot, while deconstruction opens a lone structure of either kind
-  before any allocation.
+  `CoreArityAlgebra.lean`). Only deconstruction prepares its supply: it opens
+  a lone structure of either kind before any allocation, while a call binds
+  its supply as it is.
 * `structureItems?` mirrors the authoritative `Result.structureItems?`, and
   `openLoneStructure [v]` is definitionally
   `(structureItems? v).getD [v]` — the exact shape of the full model's

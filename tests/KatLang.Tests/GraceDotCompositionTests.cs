@@ -696,12 +696,11 @@ public class GraceDotCompositionTests
 
         // Dot-call passes a value: the dotted receiver IS the direct call's
         // argument, and Grace changes nothing about that — a collecting callee
-        // binds it by the collector supply-boundary law (a lone written
-        // sequence opens one level) in every spelling.
+        // collects it as ONE item in every spelling.
         AssertResult("S = 1, 2, 3\nK = v~.count\nK(S)", Atom(3));
         AssertResult("S = 1, 2, 3\ncount(S)", Atom(3));
-        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Atom(1), Atom(2), Atom(3)));
-        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Atom(1), Atom(2), Atom(3)));
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertResult("Collect(*items) = items\n(1, 2, 3)*.Collect", List(Atom(1), Atom(2), Atom(3)));
         AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect(0)\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3)), Atom(0)));
         AssertResult("Collect(*items) = items\nL = [1, 2, 3]\nK = v~.Collect\nK(L)", List(List(Atom(1), Atom(2), Atom(3))));
@@ -712,16 +711,15 @@ public class GraceDotCompositionTests
     {
         // The receiver is the ordinary leading argument (dot-call passes a
         // value), so Grace inherits that unchanged: a WRITTEN GROUP receiver
-        // and a NAMED receiver are each ONE written slot, which a lone
-        // collector opens one level (the collector supply-boundary law), and
-        // the spread marker supplies the same items as final slots. A group is
-        // not a Grace-eligible receiver, so only the named form has both
-        // spellings — and they agree exactly.
+        // and a NAMED receiver are each ONE argument, which a lone collector
+        // collects as one item, while the spread marker supplies the items. A
+        // group is not a Grace-eligible receiver, so only the named form has
+        // both spellings — and they agree exactly.
         AssertResult("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)*.Mean", Atom(1.906m));
-        AssertResult("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", Atom(1.906m));
-        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Atom(1), Atom(2), Atom(3)));
-        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS.Collect", List(Atom(1), Atom(2), Atom(3)));
-        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Atom(1), Atom(2), Atom(3)));
+        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean"));
+        AssertResult("Collect(*items) = items\n(1, 2, 3).Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nS.Collect", List(Seq(Atom(1), Atom(2), Atom(3))));
+        AssertResult("Collect(*items) = items\nS = 1, 2, 3\nK = v~.Collect\nK(S)", List(Seq(Atom(1), Atom(2), Atom(3))));
         AssertGraceIneffective("Collect(*items) = items\nS = 1, 2, 3\nS~.Collect", "S", "it already resolves to a property");
         AssertSameElaboratedBody("Collect(*items) = items\nK = v~.Collect", "Collect(*items) = items\nK(v) = v.Collect");
         AssertParseFails("Collect(*items) = items\n(1, 2, 3)~.Collect", GraceEligibilityFragment);

@@ -50,7 +50,7 @@ public class ForwardedCallableChannelTests
         { "map", "map([1, 2], Cnt)", "Apply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])", "[1, 1]" },
         { "dot map", "[1, 2].map(Cnt)", "Apply(f, xs) = xs.map(f)\nApply(Cnt, [1, 2])", "[1, 1]" },
         { "dot map on a written receiver", "[1, 2].map(Cnt)", "Apply(f) = [1, 2].map(f)\nApply(Cnt)", "[1, 1]" },
-        { "map with list results", "map([(1, 2), 3], Only)", "Apply(f, xs) = map(xs, f)\nApply(Only, [(1, 2), 3])", "[[1, 2], [3]]" },
+        { "map with list results", "map([(1, 2), 3], Only)", "Apply(f, xs) = map(xs, f)\nApply(Only, [(1, 2), 3])", "[[(1, 2)], [3]]" },
         { "filter", "filter([1, 2, 3], Big)", "Apply(f, xs) = filter(xs, f)\nApply(Big, [1, 2, 3])", "[2, 3]" },
         { "dot filter", "[1, 2, 3].filter(Big)", "Apply(f, xs) = xs.filter(f)\nApply(Big, [1, 2, 3])", "[2, 3]" },
         { "reduce", "reduce([1, 2, 3], SumAll, 0)", "Apply(f, xs) = reduce(xs, f, 0)\nApply(SumAll, [1, 2, 3])", "6" },

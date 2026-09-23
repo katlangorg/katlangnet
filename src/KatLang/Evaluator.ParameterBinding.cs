@@ -31,21 +31,6 @@ public static partial class Evaluator
         return EvalResult<ValEnv>.Ok(result);
     }
 
-    /// <summary>
-    /// Argument passing rule: a single atom is wrapped in a one-element list;
-    /// a sequence value is unpacked into its elements. Exact list values are
-    /// NOT unpacked: call-argument binding preserves a list as one argument;
-    /// only an explicit caller-site <c>spread</c> opens it. Lean: unpackArgs.
-    /// </summary>
-    private static IReadOnlyList<Result> UnpackArgs(Result r) => r switch
-    {
-        Result.Atom(var n) => [new Result.Atom(n)],
-        Result.Str _ => [r],
-        Result.Bool _ => [r],
-        Result.SequenceValue(var items) => items,
-        Result.ListValue _ => [r],
-    };
-
     private readonly record struct VariadicCallItem(
         Result? Value,
         Algorithm? Algorithm,
@@ -165,40 +150,21 @@ public static partial class Evaluator
         CountedResult CountedValue);
 
     /// <summary>
-    /// How one binder input entered the argument supply — the ONE assembly fact
-    /// the COLLECTOR SUPPLY-BOUNDARY LAW reads (September 2026; see
-    /// <see cref="CollectorSupply"/>). <see cref="WrittenSlot"/>: one non-spread
-    /// argument slot — a written argument, the extension dot-call receiver
-    /// (<c>R.F(args)</c> is <c>F(R, args)</c>), or a whole callback item.
-    /// <see cref="FinalItem"/>: an item a boundary opening already produced — an
-    /// explicit spread item, a callback row slot, a sequence-value pattern item,
-    /// a loop-state slot, a reducer accumulator slot — collected unchanged.
-    /// This is slot provenance, never result provenance: it records how a slot
-    /// was WRITTEN, not where its value came from, so <c>Coll((1, 2))</c> and
-    /// <c>Coll([(1, 2)]*)</c> differ while every origin of a <c>(1, 2)</c> value
-    /// agrees. Lean: <c>SupplyOrigin</c>.
-    /// </summary>
-    private enum SupplyOrigin
-    {
-        FinalItem,
-        WrittenSlot,
-    }
-
-    /// <summary>
-    /// One call argument slot prepared for parameter binding: its value view
-    /// (<see cref="Value"/>), its algorithm view where resolvable, a retained
-    /// value error, and its <see cref="SupplyOrigin"/>. Every slot is exactly ONE argument
-    /// whatever spelling supplied it: a written argument, an explicit spread
-    /// item, or an extension dot-call receiver (DOT-CALL PASSES A VALUE,
-    /// September 2026: <c>R.F(args)</c> assembles exactly the slots of
-    /// <c>F(R, args)</c>; no slot carries a raw supply of its own).
+    /// One supplied item prepared for parameter binding: its value view
+    /// (<see cref="Value"/>), its algorithm view where resolvable, and a retained
+    /// value error. VALUES STAY VALUES (September 2026): every item is exactly ONE
+    /// argument whatever supplied it — a non-spread written argument (whatever its
+    /// value: scalar, sequence, list, <c>()</c>, <c>[]</c>), an explicit spread
+    /// item, an extension dot-call receiver (<c>R.F(args)</c> assembles exactly the
+    /// items of <c>F(R, args)</c>), a pattern-opened item, or a loop-state slot. No
+    /// item records how it was written, because no binder reinterprets one item as
+    /// several: only explicit spread and explicit structural patterns open a value.
     /// Lean: <c>ParameterPatternInput</c>.
     /// </summary>
     private readonly record struct ParameterPatternInput(
         Result? Value,
         Algorithm? Algorithm,
-        EvalError? ValueError,
-        SupplyOrigin Origin = SupplyOrigin.FinalItem)
+        EvalError? ValueError)
     {
         /// <summary>
         /// The written argument expression this slot was assembled from, retained for the
@@ -206,8 +172,7 @@ public static partial class Evaluator
         /// demand later surfaces <see cref="ValueError"/>. This is the user-call twin of
         /// <see cref="ResolvedArgumentAlgorithm.Source"/>: diagnostic identity only, never
         /// consulted for binding, and <c>null</c> for a slot no single written expression
-        /// produced (an explicit spread's items, a pattern-opened item, a loop state slot,
-        /// a reducer accumulator slot).
+        /// produced (an explicit spread's items, a pattern-opened item, a loop state slot).
         ///
         /// <para>Retaining the node rather than a rendered description is what keeps the
         /// deferred path free: a slot whose value is never demanded (<c>F(x, y) = x</c>
@@ -215,41 +180,6 @@ public static partial class Evaluator
         /// only where an error actually surfaces.</para>
         /// </summary>
         public Expr? Source { get; init; }
-    }
-
-    /// <summary>
-    /// COLLECTOR SUPPLY-BOUNDARY LAW (September 2026). The supply a collecting
-    /// parameter collects from the segment the binder allocated to it — AFTER
-    /// fixed prefix/suffix allocation, on that segment alone: several supplied
-    /// items are collected exactly as supplied (<c>Coll((1, 2), 3)</c> is
-    /// <c>[(1, 2), 3]</c>); ONE lone non-spread sequence value (a
-    /// <see cref="SupplyOrigin.WrittenSlot"/>) may stand for the collector's whole
-    /// supply — its immediate items are the supply, exactly one level
-    /// (<c>Coll((1, 2))</c> is <c>[1, 2]</c>, <c>Coll(((1, 2), 3))</c> is
-    /// <c>[(1, 2), 3]</c>, <c>Coll(())</c> is <c>[]</c> by the same rule); lists
-    /// are exact values and never open here (<c>Coll([1, 2])</c> is
-    /// <c>[[1, 2]]</c>); a <see cref="SupplyOrigin.FinalItem"/> — produced by
-    /// explicit spread, callback row unpacking, sequence-value pattern opening,
-    /// loop state, or a reducer accumulator — is collected unchanged even when it
-    /// is the lone item (<c>Coll([(1, 2)]*)</c> is <c>[(1, 2)]</c>). Fixed
-    /// parameters bind their allocated values unchanged; dot-call is ordinary
-    /// receiver injection, so <c>(1, 2).Coll</c> is <c>Coll((1, 2))</c> by this
-    /// rule alone; selection chooses a value, so <c>Coll(A:0)</c> depends only on
-    /// the selected value and on the slot being written non-spread.
-    /// Lean: <c>collectorSupply</c>.
-    /// </summary>
-    private static IReadOnlyList<Result> CollectorSupply(
-        IReadOnlyList<Result> segmentValues,
-        IReadOnlyList<SupplyOrigin> segmentOrigins)
-    {
-        if (segmentValues.Count == 1
-            && segmentOrigins[0] == SupplyOrigin.WrittenSlot
-            && segmentValues[0] is Result.SequenceValue(var items))
-        {
-            return items;
-        }
-
-        return segmentValues;
     }
 
     private static bool HasStructuredParameterPattern(Algorithm algorithm)
@@ -986,7 +916,6 @@ public static partial class Evaluator
         if (suffixR.IsError) return suffixR.Error;
 
         var capturedValues = new List<Result>(suffixInputStart - collectingIndex);
-        var capturedOrigins = new List<SupplyOrigin>(suffixInputStart - collectingIndex);
         for (var inputIndex = collectingIndex; inputIndex < suffixInputStart; inputIndex++)
         {
             var input = inputs[inputIndex];
@@ -1012,19 +941,16 @@ public static partial class Evaluator
                 return SurfacedSlotValueError(input);
             }
 
-            // Every slot allocated to the flat top-level collecting position
-            // contributes its ONE reified value together with its supply
-            // origin; CollectorSupply decides, on the whole allocated segment,
-            // whether a lone written sequence slot fuses with the collector's
-            // boundary.
+            // Every item allocated to the flat top-level collecting position
+            // contributes its ONE reified value, unopened: the collector collects
+            // exactly the items allocated to it (THE EXACT COLLECTOR LAW).
             capturedValues.Add(input.Value);
-            capturedOrigins.Add(input.Origin);
         }
 
         var captureR = CreateCollectingCapture(
             ctx,
             collectingCapture.Name,
-            CollectorSupply(capturedValues, capturedOrigins),
+            capturedValues,
             collectingCapture.Span);
         if (captureR.IsError) return captureR.Error;
         var capture = captureR.Value;
@@ -1590,11 +1516,15 @@ public static partial class Evaluator
     /// fixed, flat/mixed variadic, patterned, and multi-clause conditional):
     /// each written argument slot is evaluated exactly once, left to right; every non-spread slot is
     /// reified as exactly ONE argument value (with its dual algorithm view
-    /// where resolvable), and every explicit spread slot is expanded by
-    /// exactly one value boundary into ordinary argument slots. The final
+    /// where resolvable) whatever that value is — a scalar, a sequence, a list,
+    /// <c>()</c>, or <c>[]</c> — and every explicit spread slot is expanded by
+    /// exactly one value boundary into ordinary argument slots. VALUES STAY
+    /// VALUES: this is the ONLY place a call turns one value into several
+    /// supplied items, and it does so only for a written spread. The final
     /// argument supply is formed BEFORE any arity checking, clause selection,
-    /// conditional dispatch, or pattern binding — the callee's internal
-    /// representation never influences the meaning of caller-side spread.
+    /// conditional dispatch, or pattern binding, and no binder reinterprets an
+    /// item afterwards — the callee's internal representation never influences
+    /// the meaning of caller-side spread.
     /// DOT-CALL PASSES A VALUE: an extension dot-call receiver reaches this
     /// assembly as the ordinary FIRST slot of <c>F(R, args)</c>
     /// (<see cref="BuildLexicalReceiverCallArgs"/>) — one reified value like
@@ -1629,7 +1559,7 @@ public static partial class Evaluator
                 if (suppliedR.IsError)
                     return suppliedR.Error;
 
-                // Explicit spread produces FINAL supply items (SupplyOrigin.FinalItem).
+                // Explicit spread supplies the operand's items, one level.
                 foreach (var value in CountedTopLevelValues(suppliedR.Value))
                     inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null));
 
@@ -1645,12 +1575,11 @@ public static partial class Evaluator
             var evaluatedR = EvalCounted(argExpr, ctx, valEnv);
             if (evaluatedR.IsOk)
             {
-                // A non-spread slot is ONE written slot (SupplyOrigin.WrittenSlot).
+                // A non-spread slot is exactly ONE item: its value, never opened.
                 inputs.Add(new ParameterPatternInput(
                     evaluatedR.Value.Value,
                     maybeAlg,
-                    ValueError: null,
-                    SupplyOrigin.WrittenSlot)
+                    ValueError: null)
                 {
                     Source = argExpr,
                 });
@@ -1665,8 +1594,7 @@ public static partial class Evaluator
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
                     maybeAlg,
-                    evaluatedR.Error,
-                    SupplyOrigin.WrittenSlot)
+                    evaluatedR.Error)
                 {
                     Source = argExpr,
                 });

@@ -13,10 +13,10 @@ namespace KatLang.ParserFuzz;
 ///                                   MmRows.map(MmWrap)
 /// </code>
 ///
-/// <para><b>Equivalence argument, and why it is narrow.</b> KatLang's flat-callback binding is
-/// receiver-specific and is NOT ordinary function-call argument binding. A consumer supplies a
-/// fixed number of values per invocation (one for <c>map</c>/<c>filter</c>, two for
-/// <c>reduce</c>), and only a wrapper whose parameter list binds exactly those values
+/// <para><b>Equivalence argument, and why it is narrow.</b> A callback binds each supplied value
+/// exactly as an ordinary call does (the callback law: an element is ONE ordinary argument), but a
+/// consumer supplies a fixed number of values per invocation (one for <c>map</c>/<c>filter</c>,
+/// two for <c>reduce</c>), and only a wrapper whose parameter list binds exactly those values
 /// positionally sees the same per-invocation values as the direct builtin. Two projections are
 /// therefore always REJECTED, not compared:</para>
 /// <list type="bullet">
@@ -24,9 +24,10 @@ namespace KatLang.ParserFuzz;
 ///   the wrapper sees <c>[element]</c> where the builtin sees <c>element</c>. Measured:
 ///   <c>[[1, 2], [3]].map(count)</c> is <c>[2, 1]</c> while the collecting wrapper gives
 ///   <c>[1, 1]</c>. That is correct language behaviour and a false equivalence, not a defect.</item>
-///   <item><b>ArityMismatched</b> — a flat multi-parameter callee first opens a lone
-///   SEQUENCE-valued element into row slots and arity-errors on other kinds, so it neither
-///   matches a one-value consumer nor a two-value one.</item>
+///   <item><b>ArityMismatched</b> — a callee whose parameter count differs from the consumer's
+///   supply is the ordinary arity error of the direct call with that supply (a flat
+///   multi-parameter callee receives a <c>map</c>/<c>filter</c> element as ONE argument), so it
+///   neither matches a one-value consumer nor a two-value one.</item>
 /// </list>
 ///
 /// <para><b>Algorithm/value duality.</b> The callback is written as a NAME in both members, so

@@ -12,20 +12,19 @@ public class EvaluatorCollectingParameterTests
     // â”€â”€ Grace operator end-to-end tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_CollectingParameter_DotCallReceiverOpensOneLevelAtTheLoneCollector()
+    public void Eval_CollectingParameter_DotCallReceiverIsOneCollectedItem()
     {
         // Dot-call passes a value: the receiver is the one leading argument of
-        // `Collect(Arg)` — a written sequence value that is the lone collector's
-        // whole segment, so the collector supply-boundary law opens it one
-        // level: [1, 2, 3] (count 3). A list receiver stays one exact item, and
-        // beside a written argument the sequence is one collected item.
+        // `Collect(Arg)` — a sequence value collected as ONE item (count 1),
+        // exactly like a list receiver, alone or beside a written argument; only
+        // the spread receiver supplies the items.
         AssertEval(
             """
             Arg = 1, 2, 3
             Collect(*list) = list
             Arg.Collect.count
             """,
-            3);
+            1);
         AssertEval(
             """
             Arg = [1, 2, 3]
@@ -53,16 +52,15 @@ public class EvaluatorCollectingParameterTests
             """,
             3);
 
-        // The parenthesized spread is a capture — one written sequence value —
-        // which the lone collector opens one level again, exactly like the bare
-        // named receiver.
+        // The parenthesized spread is a capture — ONE sequence value — collected
+        // as one item, exactly like the bare named receiver.
         AssertEval(
             """
             Arg = 1, 2, 3
             Collect(*list) = list
             (Arg*).Collect.count
             """,
-            3);
+            1);
     }
 
     [Fact]
@@ -204,25 +202,31 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverOpensOneLevel()
+    public void Eval_CollectingParameter_NestedInlineTupleDotCall_ReceiverIsOneArgument()
     {
         // The nested capture `((10, 20, 30))` is one sequence value, and so is
         // the single group `(10, 20, 30)`: dot-call passes a value, the suffix
-        // binds 5 first, and the lone written sequence left to the collector
-        // opens one level — 65, exactly like the fluent spread forms above. A
-        // genuinely nested receiver `((10, 20), 30)` opens exactly ONE level,
-        // so the inner pair stays one element and the numeric `values.sum` fails.
-        AssertEval(
+        // binds 5 first, and the collector collects the one remaining item — a
+        // sequence element the numeric `values.sum` rejects. Only the fluent
+        // spread supplies the items (65); spreading a genuinely nested receiver
+        // `((10, 20), 30)` opens exactly ONE level, so the inner pair stays one
+        // element and the numeric `values.sum` fails.
+        AssertEvalFails(
             """
             TotalWithFee(*values, fee) = values.sum + fee
             ((10, 20, 30)).TotalWithFee(5)
+            """);
+        AssertEval(
+            """
+            TotalWithFee(*values, fee) = values.sum + fee
+            ((10, 20, 30))*.TotalWithFee(5)
             """,
             65);
 
         var result = EvalFull(
             """
             TotalWithFee(*values, fee) = values.sum + fee
-            ((10, 20), 30).TotalWithFee(5)
+            ((10, 20), 30)*.TotalWithFee(5)
             """);
         Assert.True(result.IsError, $"Expected failure but got: {(result.IsOk ? result.Value : null)}");
         Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
@@ -246,12 +250,11 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_CollectingParameter_SpreadReceiverExpandsReceiverItems()
     {
-        // The spread marker opens a receiver into final items:
+        // The spread marker opens a receiver into items:
         // `(10, 20, 30)*.Collect` is `Collect(10, 20, 30)`, so the collecting
         // parameter collects [10, 20, 30]; the plain inline group
-        // `(10, 20, 30).Collect` passes ONE written sequence value, which the
-        // lone collector opens one level to the same three items, while a list
-        // receiver stays one exact item.
+        // `(10, 20, 30).Collect` passes ONE sequence value, collected as one item
+        // exactly like a list receiver.
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
@@ -263,7 +266,7 @@ public class EvaluatorCollectingParameterTests
             Collect(*list) = list.count
             (10, 20, 30).Collect
             """,
-            3);
+            1);
         AssertEvalSequenceModes(
             """
             Collect(*list) = list.count
@@ -417,10 +420,10 @@ public class EvaluatorCollectingParameterTests
     {
         // PARENTHESES GROUP SYNTAX: a group of one non-spread slot is that slot, so
         // `((1, 2, 3))` IS the sequence value `(1, 2, 3)` at every depth. The lone
-        // top-level collector (1) opens the one written sequence slot one level
-        // (count 3), and the pattern callee (2) opens the argument's VALUE one level
-        // — the same three items whatever grouping the call site wrote. A pattern
-        // never sees a "written level": non-unary structure is what it opens, so
+        // top-level collector (1) collects that one argument exactly (count 1), and
+        // the explicit pattern callee (2) opens the argument's VALUE one level — the
+        // same three items whatever grouping the call site wrote. A pattern never
+        // sees a "written level": non-unary structure is what it opens, so
         // `((1, 2), 3)` and `(1, (2, 3))` count 2.
         AssertEval(
             """
@@ -435,7 +438,7 @@ public class EvaluatorCollectingParameterTests
             CountSequenceValue2(((1, 2), 3))
             CountSequenceValue2((1, (2, 3)))
             """,
-            3, 3, 3, 3, 3, 2, 2);
+            1, 1, 3, 3, 3, 2, 2);
     }
 
     [Fact]

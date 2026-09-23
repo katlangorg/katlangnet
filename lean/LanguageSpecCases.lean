@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 295
+- specification surface cases: 297
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 15
-- Lean-guarded cases: 242
-- probe observations (C#-only by design): 821
+- Lean-guarded cases: 244
+- probe observations (C#-only by design): 856
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -403,22 +403,32 @@ def case_variadic_forwarding_list_spread : Expr :=
 -- implicit-forwarding-source-kind [variadic-calls]: Target(*items) = items \n Use(items) = Target \n UseVariadic(*items) = Target \n  \n Use([1, 2]) \n Use((1, 2)) \n UseVariadic(1, 2)
 def case_implicit_forwarding_source_kind : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [(.call (.resolve "Target") [.param "items"])]), privateProp "UseVariadic" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.call (.resolve "Target") [(.sequenceSpread (.param "items"))])])] [(.call (.resolve "Use") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Use") [(.capture [.num 1, .num 2])]), (.call (.resolve "UseVariadic") [.num 1, .num 2])])
-#guard obs case_implicit_forwarding_source_kind == "ok raw=S[L[L[1, 2]], L[1, 2], L[1, 2]] n=3"
+#guard obs case_implicit_forwarding_source_kind == "ok raw=S[L[L[1, 2]], L[S[1, 2]], L[1, 2]] n=3"
 
 -- variadic-receiver-distinction [variadic-calls]: Inspect(*items) = items \n A = [1, 2, 3] \n  \n Inspect(A) \n Inspect(A*)
 def case_variadic_receiver_distinction : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "Inspect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Inspect") [.resolve "A"]), (.call (.resolve "Inspect") [(.sequenceSpread (.resolve "A"))])])
 #guard obs case_variadic_receiver_distinction == "ok raw=S[L[L[1, 2, 3]], L[1, 2, 3]] n=2"
 
--- dot-receiver-passes-a-value [variadic-calls]: Mean(*Vector) = Vector.sum / Vector.count \n  \n Mean(1, 2, 3) \n (1, 2, 3)*.Mean \n (1, 2, 3).Mean
+-- dot-receiver-passes-a-value [variadic-calls]: Mean(*Vector) = Vector.sum / Vector.count \n  \n Mean(1, 2, 3) \n (1, 2, 3)*.Mean \n [1, 2, 3]*.Mean
 def case_dot_receiver_passes_a_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [(.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none))])] [(.call (.resolve "Mean") [.num 1, .num 2, .num 3]), (.call (.resolve "Mean") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))]), (.dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none)])
+  .algorithmExpr (alg [] [] [privateProp "Mean" (algWithParameters [{ name := "Vector", kind := .collecting }] [] [] [(.binary .div (.dotCall (.param "Vector") "sum" none) (.dotCall (.param "Vector") "count" none))])] [(.call (.resolve "Mean") [.num 1, .num 2, .num 3]), (.call (.resolve "Mean") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))]), (.call (.resolve "Mean") [(.sequenceSpread (.listLiteral [.num 1, .num 2, .num 3]))])])
 #guard obs case_dot_receiver_passes_a_value == "ok raw=S[2, 2, 2] n=3"
+
+-- values-stay-values [variadic-calls]: Coll(*xs) = xs \n Cnt(*xs) = xs.count \n CntValue(x) = x.count \n  \n Coll((1, 2)) \n Coll([1, 2]) \n Coll((1, 2)*) \n Cnt((10, 7)) \n CntValue((10, 7))
+def case_values_stay_values : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "CntValue" (alg ["x"] [] [] [(.dotCall (.param "x") "count" none)])] [(.call (.resolve "Coll") [(.capture [.num 1, .num 2])]), (.call (.resolve "Coll") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Coll") [(.sequenceSpread (.capture [.num 1, .num 2]))]), (.call (.resolve "Cnt") [(.capture [.num 10, .num 7])]), (.call (.resolve "CntValue") [(.capture [.num 10, .num 7])])])
+#guard obs case_values_stay_values == "ok raw=S[L[S[1, 2]], L[L[1, 2]], L[1, 2], 1, 2] n=5"
+
+-- callback-element-is-one-argument [collection-builtins]: AddPair((x, y)) = x + y \n  \n map([(1, 2)], AddPair) \n map([[1, 2]], AddPair)
+def case_callback_element_is_one_argument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "AddPair" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "AddPair"]), (.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "AddPair"])])
+#guard obs case_callback_element_is_one_argument == "ok raw=S[L[3], L[3]] n=2"
 
 -- parentheses-group-syntax [item-supply-vs-value]: Collect(*items) = items \n S = 1, 2 \n L = [1, 2] \n E = () \n  \n Collect(S), Collect((S)), Collect(((S))) \n Collect(L), Collect((L)) \n Collect(E), Collect((E)) \n S.Collect, (S).Collect, ((S)).Collect \n E*.Collect, (E)*.Collect
 def case_parentheses_group_syntax : Expr :=
   .algorithmExpr (alg [] [] [privateProp "S" (alg [] [] [] [.num 1, .num 2]), privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "E" (alg [] [] [] [(.emptySequence 0)]), privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "S"]), (.call (.resolve "Collect") [.resolve "L"]), (.call (.resolve "Collect") [.resolve "L"]), (.call (.resolve "Collect") [.resolve "E"]), (.call (.resolve "Collect") [.resolve "E"]), (.dotCall (.resolve "S") "Collect" none), (.dotCall (.resolve "S") "Collect" none), (.dotCall (.resolve "S") "Collect" none), (.call (.resolve "Collect") [(.sequenceSpread (.resolve "E"))]), (.call (.resolve "Collect") [(.sequenceSpread (.resolve "E"))])])
-#guard obs case_parentheses_group_syntax == "ok raw=S[L[1, 2], L[1, 2], L[1, 2], L[L[1, 2]], L[L[1, 2]], L[], L[], L[1, 2], L[1, 2], L[1, 2], L[], L[]] n=12"
+#guard obs case_parentheses_group_syntax == "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[S[1, 2]], L[L[1, 2]], L[L[1, 2]], L[S[]], L[S[]], L[S[1, 2]], L[S[1, 2]], L[S[1, 2]], L[], L[]] n=12"
 
 -- mixed-collecting-parameter [variadic-calls]: F(x, *y, z) = x + y.sum + z \n F(1, 2, 3, 4, 5)
 def case_mixed_collecting_parameter : Expr :=
@@ -428,7 +438,7 @@ def case_mixed_collecting_parameter : Expr :=
 -- mixed-front-back-family [variadic-calls]: Arg = 1, 2, 3 \n  \n Head(first, *rest) = first \n Tail(first, *rest) = rest \n Init(*init, last) = init \n Last(*init, last) = last \n  \n Head(1, (2, 3)) \n Tail(1, (2, 3)) \n Init((1, 2), 3) \n Last(Arg, 3)
 def case_mixed_front_back_family : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Arg" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "Head" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "first"]), privateProp "Tail" (algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]), privateProp "Init" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "init"]), privateProp "Last" (algWithParameters [{ name := "init", kind := .collecting }, { name := "last" }] [] [] [.param "last"])] [(.call (.resolve "Head") [.num 1, (.capture [.num 2, .num 3])]), (.call (.resolve "Tail") [.num 1, (.capture [.num 2, .num 3])]), (.call (.resolve "Init") [(.capture [.num 1, .num 2]), .num 3]), (.call (.resolve "Last") [.resolve "Arg", .num 3])])
-#guard obs case_mixed_front_back_family == "ok raw=S[1, L[2, 3], L[1, 2], 3] n=4"
+#guard obs case_mixed_front_back_family == "ok raw=S[1, L[S[2, 3]], L[S[1, 2]], 3] n=4"
 
 -- collecting-minimum-arity [variadic-calls]: F(first, *middle, last) = middle \n  \n F(1, 2) \n F(1, 2, 3)
 def case_collecting_minimum_arity : Expr :=
@@ -448,7 +458,7 @@ def case_variadic_nested_not_flattened : Expr :=
 -- supply-vs-value-patterns [variadic-calls]: CountValues(*values) = values.count \n CountSequenceValue((*values)) = values.count \n  \n CountValues() \n CountValues(1, 2, 3) \n CountValues((1, 2, 3)) \n CountSequenceValue((1, 2, 3))
 def case_supply_vs_value_patterns : Expr :=
   .algorithmExpr (alg [] [] [privateProp "CountValues" (algWithParameters [{ name := "values", kind := .collecting }] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountValues") []), (.call (.resolve "CountValues") [.num 1, .num 2, .num 3]), (.call (.resolve "CountValues") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])])])
-#guard obs case_supply_vs_value_patterns == "ok raw=S[0, 3, 3, 3] n=4"
+#guard obs case_supply_vs_value_patterns == "ok raw=S[0, 3, 1, 3] n=4"
 
 -- ordinary-sequence-pattern-opens-sequence-or-list [variadic-calls]: PairSum((x, y)) = x + y \n PairSum((2, 3)) \n PairSum([2, 3])
 def case_ordinary_sequence_pattern_opens_sequence_or_list : Expr :=
@@ -755,19 +765,19 @@ def case_map_single_item : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [.num 7, .resolve "M"])])
 #guard obs case_map_single_item == "ok raw=L[7] n=1"
 
--- map-pair-callback [collection-builtins]: Swap(a, b) = (b, a) \n map(((1, 2), (3, 4)), Swap)
+-- map-pair-callback [collection-builtins]: Swap((a, b)) = (b, a) \n map(((1, 2), (3, 4)), Swap)
 def case_map_pair_callback : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [(.capture [.param "b", .param "a"])])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
+  .algorithmExpr (alg [] [] [privateProp "Swap" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", .param "a"])])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
 #guard obs case_map_pair_callback == "ok raw=L[S[2, 1], S[4, 3]] n=1"
 
 -- callback-variadic-collects [collection-builtins]: Collect(*items) = items \n  \n [7].map(Collect) \n [(1, 2)].map(Collect) \n [[1, 2]].map(Collect)
 def case_callback_variadic_collects : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.dotCall (.listLiteral [.num 7]) "map" (some [.resolve "Collect"])), (.dotCall (.listLiteral [(.capture [.num 1, .num 2])]) "map" (some [.resolve "Collect"])), (.dotCall (.listLiteral [(.listLiteral [.num 1, .num 2])]) "map" (some [.resolve "Collect"]))])
-#guard obs case_callback_variadic_collects == "ok raw=S[L[L[7]], L[L[1, 2]], L[L[L[1, 2]]]] n=3"
+#guard obs case_callback_variadic_collects == "ok raw=S[L[L[7]], L[L[S[1, 2]]], L[L[L[1, 2]]]] n=3"
 
--- callback-mixed-variadic-rows [collection-builtins]: F(first, *middle, last) = middle \n Rows = [(1, 2, 3, 4)] \n  \n Rows.map(F)
+-- callback-mixed-variadic-rows [collection-builtins]: F((first, *middle, last)) = middle \n Rows = [(1, 2, 3, 4)] \n  \n Rows.map(F)
 def case_callback_mixed_variadic_rows : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])])]), privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }] [] [] [.param "middle"])] [(.dotCall (.resolve "Rows") "map" (some [.resolve "F"]))])
+  .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])])]), privateProp "F" (algWithParameterPatterns [.sequenceValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "middle"])] [(.dotCall (.resolve "Rows") "map" (some [.resolve "F"]))])
 #guard obs case_callback_mixed_variadic_rows == "ok raw=L[L[2, 3]] n=1"
 
 -- callback-nested-pattern-binds-like-call [collection-builtins]: Head((x, *rest)) = [x, rest] \n  \n Head(7) \n [7].map(Head) \n map((7, (8, 9)), Head)
@@ -890,9 +900,9 @@ def case_builtin_fixed_collection_arity : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obs case_builtin_fixed_collection_arity == "ok raw=3 n=1"
 
--- reduce-accumulates-value [collection-builtins]: Append(item, *history) = (history*, item) \n reduce((2, 3, 4), Append, 1)
+-- reduce-accumulates-value [collection-builtins]: Append(item, (*history)) = (history*, item) \n reduce((2, 3, 4), Append, 1)
 def case_reduce_accumulates_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Append" (algWithParameters [{ name := "item" }, { name := "history", kind := .collecting }] [] [] [(.capture [(.sequenceSpread (.param "history")), .param "item"])])] [(.call (.resolve "reduce") [(.capture [.num 2, .num 3, .num 4]), .resolve "Append", .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Append" (algWithParameterPatterns [.capture { name := "item" }, .sequenceValue [.capture { name := "history", kind := .collecting }]] [] [] [(.capture [(.sequenceSpread (.param "history")), .param "item"])])] [(.call (.resolve "reduce") [(.capture [.num 2, .num 3, .num 4]), .resolve "Append", .num 1])])
 #guard obs case_reduce_accumulates_value == "ok raw=S[1, 2, 3, 4] n=1"
 
 -- reduce-empty-initial-is-one-value [collection-builtins]: R(x, acc) = acc + x \n Init = 1, 2 \n reduce((), R, Init)
@@ -918,7 +928,7 @@ def case_index_selects_one_value : Expr :=
 -- selection-forms-agree [equality-and-indexing]: Coll(*xs) = xs \n Pairs = (1, 2), (3, 4) \n first(Pairs).Coll \n Pairs:0.Coll \n (Pairs:0)*.Coll \n Pairs:0.Coll(3)
 def case_selection_forms_agree : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.dotCall (.call (.resolve "first") [.resolve "Pairs"]) "Coll" none), (.dotCall (.index (.resolve "Pairs") (.num 0)) "Coll" none), (.call (.resolve "Coll") [(.sequenceSpread (.index (.resolve "Pairs") (.num 0)))]), (.dotCall (.index (.resolve "Pairs") (.num 0)) "Coll" (some [.num 3]))])
-#guard obs case_selection_forms_agree == "ok raw=S[L[1, 2], L[1, 2], L[1, 2], L[S[1, 2], 3]] n=4"
+#guard obs case_selection_forms_agree == "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[1, 2], L[S[1, 2], 3]] n=4"
 
 -- index-nested-stays-intact [equality-and-indexing]: Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8)) \n Bags:0 \n Bags:0:1
 def case_index_nested_stays_intact : Expr :=
@@ -1310,7 +1320,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 242 canonical Lean-guarded specification cases.
+-- 244 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1381,6 +1391,8 @@ def specCaseIds : List String := [
   "implicit-forwarding-source-kind",
   "variadic-receiver-distinction",
   "dot-receiver-passes-a-value",
+  "values-stay-values",
+  "callback-element-is-one-argument",
   "parentheses-group-syntax",
   "mixed-collecting-parameter",
   "mixed-front-back-family",
@@ -1561,6 +1573,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 242
+#guard specCaseIds.length == 244
 
 end LanguageSpecCases

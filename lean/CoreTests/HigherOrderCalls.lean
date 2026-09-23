@@ -342,7 +342,7 @@ def test16SequenceValueArgDoesNotUnpack : Bool :=
     [("Inc", incAlg15), ("UsePair", usePairAlg16), ("Pair", pairArg16)] [
     .call (resolve "UsePair") [resolve "Inc", resolve "Pair"]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard test16SequenceValueArgDoesNotUnpack
@@ -386,7 +386,7 @@ def dotCallBoundarySequenceValueDirectCallDoesNotUnpack16a : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
     .call (resolve "F") [.algorithmExpr dotCallBoundaryPairReceiverAlg16a]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard dotCallBoundarySequenceValueDirectCallDoesNotUnpack16a
@@ -453,7 +453,7 @@ def dotCallBoundaryFinalExplicitSequenceValueArgDoesNotUnpack16a : Bool :=
       .capture [.num 4, .num 5]
     ])
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard dotCallBoundaryFinalExplicitSequenceValueArgDoesNotUnpack16a
@@ -494,7 +494,7 @@ def flatFixedIssue101PairDoesNotUnpack : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .call (resolve "Add") [resolve "Pair"]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard flatFixedIssue101PairDoesNotUnpack
@@ -503,7 +503,7 @@ def flatFixedIssue101AtomsDoesNotSpread : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101SequenceValuePairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .call (resolve "Add") [.dotCall (resolve "Pair") "atoms" none]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard flatFixedIssue101AtomsDoesNotSpread
@@ -533,7 +533,7 @@ def flatFixedIssue101MixedPrefixDoesNotUnpack : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Tail", alg [] [] [] [.num 2, .num 3]), ("Use", flatFixedIssue101UseAlg)] [
     .call (resolve "Use") [.num 1, resolve "Tail"]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard flatFixedIssue101MixedPrefixDoesNotUnpack
@@ -862,7 +862,7 @@ def flatFixedIssue101DotReceiverDoesNotUnpack : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .dotCall (resolve "Pair") "Add" none
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard flatFixedIssue101DotReceiverDoesNotUnpack
@@ -871,7 +871,7 @@ def flatFixedIssue101SequenceSpreadDotReceiverDoesNotUnpack : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .dotCall (sequenceSpreadReceiver (resolve "Pair")) "Add" none
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard flatFixedIssue101SequenceSpreadDotReceiverDoesNotUnpack

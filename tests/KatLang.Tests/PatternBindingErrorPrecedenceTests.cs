@@ -99,10 +99,12 @@ public class PatternBindingErrorPrecedenceTests
         { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, 7)], P)", "ArityMismatch(2, 1) in [(a, b)]" },
         { "P((x, x, *m, (a, b))) = [a]\nmap([(1, 2, 9, 7)], P)", "BadArity in []" },
         { "P((x, *m, x)) = [x]\nmap([(1, 9, 2)], P)", "BadArity in []" },
-        // The reducer's accumulator-slot route (a top-level collecting parameter after the
-        // element) binds its final slots through the same order: the suffix (a, b) fails
-        // before the unequal x is merged.
-        { "R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))", "ArityMismatch(2, 1) in [(a, b)]" },
+        // The reducer is an ordinary two-argument callback: a flat reducer needing three
+        // items is the ordinary arity failure of `R(1, (9, 2, 7))`, while the reducer's
+        // explicit accumulator pattern binds the accumulator's items through the same
+        // order: the suffix (a, b) fails before the unequal x is merged.
+        { "R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))", "ArityMismatch(3, 2) in []" },
+        { "R(e, (x, *m, x, (a, b))) = [a]\nreduce([1], R, (9, 3, 2, 7))", "ArityMismatch(2, 1) in [(a, b)]" },
     };
 
     [Theory]
@@ -161,7 +163,7 @@ public class PatternBindingErrorPrecedenceTests
     [InlineData("F((x, *m, x)) = m\nmap([(1, 9, 1)], F)", "[[9]]")]
     [InlineData("R((x, x), acc) = acc + x\nreduce([(1, 1), (2, 2)], R, 0)", "3")]
     [InlineData("Equal(x, x) = 1\nEqual(x, y) = 0\nEqual(1, 1), Equal(1, 2)", "1\n0")]
-    [InlineData("R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 1, (7, 8)))", "[7]")]
+    [InlineData("R(e, (x, *m, x, (a, b))) = [a]\nreduce([1], R, (1, 9, 1, (7, 8)))", "[7]")]
     public void RepeatedEqualBinders_StillBind(string source, string expected)
         => AssertDisplay(source, expected);
 
@@ -384,18 +386,13 @@ public class PatternBindingErrorPrecedenceTests
     {
         // Exercise the actual counted pattern binder with noncanonical host-side
         // inputs. Surface callback supply normally re-counts these values first.
-        var inputType = typeof(Evaluator).GetNestedType("CountedPatternInput", BindingFlags.NonPublic)!;
-        var originType = typeof(Evaluator).GetNestedType("SupplyOrigin", BindingFlags.NonPublic)!;
-        var finalItem = Enum.Parse(originType, "FinalItem");
         var bind = typeof(Evaluator).GetMethod("BindCountedParameterPatternList", BindingFlags.Static | BindingFlags.NonPublic)!;
         var patterns = Enumerable.Range(0, count).Select(_ => (ParameterPattern)new CaptureParameterPattern("f")).ToArray();
         for (var changed = 0; changed < count; changed++)
         {
-            var inputs = Array.CreateInstance(inputType, count);
+            var inputs = new Evaluator.CountedResult[count];
             for (var index = 0; index < count; index++)
-                inputs.SetValue(Activator.CreateInstance(inputType,
-                    new Evaluator.CountedResult(new Result.Atom(5), index == changed ? 2 : 1),
-                    finalItem), index);
+                inputs[index] = new Evaluator.CountedResult(new Result.Atom(5), index == changed ? 2 : 1);
             var result = bind.Invoke(null, [patterns, inputs, Evaluator.EvalCtx.Empty,
                 (Func<int, int, EvalError>)((required, actual) => new EvalError.ArityMismatch(required, actual))])!;
             Assert.True((bool)result.GetType().GetProperty("IsError")!.GetValue(result)!);

@@ -15,12 +15,11 @@ namespace KatLang.Tests;
 /// forgotten, so every count-sensitive consumer (a lone root row, a collecting dotted
 /// receiver, a loop-step output row, the map/reduce single-element checks, a
 /// callback parameter) sees exactly what it would see for a property holding the same
-/// value. A selection passed unspread is ONE written slot, so a collecting parameter
-/// applies the collector supply-boundary law to it exactly as to <c>Coll(V)</c>: a lone
-/// selected SEQUENCE value opens one level, a selected list, scalar, or a value beside
-/// another slot is collected exactly (<c>CollectorSupplyBoundaryTests</c>). The spread
-/// marker <c>*</c> OPENS a selected sequence or list — one boundary, per the ordinary
-/// spread law.</para>
+/// value. A selection passed unspread is ONE argument, so a collecting parameter
+/// collects it exactly as it collects <c>Coll(V)</c>: a selected sequence value, list,
+/// scalar, or <c>()</c> is one collected item (THE EXACT COLLECTOR LAW,
+/// <c>ExplicitValueOpeningTests</c>). The spread marker <c>*</c> OPENS a selected
+/// sequence or list — one boundary, per the ordinary spread law.</para>
 ///
 /// <para>Lean: <c>Result.select?</c> + the <c>.index</c> arm of <c>evalCounted</c>,
 /// <c>evalFirstCounted</c>/<c>evalLastCounted</c>, <c>countedSequenceCallbackItem</c>
@@ -36,31 +35,28 @@ public class SelectionValueBoundaryTests
     /// <summary>
     /// The semantic table of the rule: one representative per selected-value kind, with
     /// the collecting-receiver observation of the bare selection and of its explicit
-    /// spread. <c>selection.Coll</c> is <c>Coll(selection)</c> — one written slot at a
-    /// lone collector — so the middle column is decided by the collector supply-boundary
-    /// law exactly as for <c>Coll(V)</c>: a selected SEQUENCE value opens one level
-    /// (<c>()</c> to nothing, <c>(1, 2)</c> to <c>[1, 2]</c>, <c>((1, 2), 3)</c> to
-    /// <c>[(1, 2), 3]</c> — never recursively), while a selected list, string, number, or
-    /// Boolean is one exact collected item. <c>()</c> and <c>[]</c> are deliberately
-    /// distinct rows: an empty SEQUENCE value emits zero values at a value boundary (so it
-    /// spreads to nothing and opens to nothing) while an empty LIST is one exact value
-    /// (<c>[].Coll</c> is <c>[[]]</c>, <c>[]*.Coll</c> is <c>[]</c>).
+    /// spread. <c>selection.Coll</c> is <c>Coll(selection)</c> — ONE argument at a lone
+    /// collector — so the middle column is always the one-element list holding the
+    /// selected value, whatever its kind (THE EXACT COLLECTOR LAW), while the spread
+    /// column opens exactly one boundary. <c>()</c> and <c>[]</c> are deliberately
+    /// distinct rows: as arguments both are one visible item (<c>().Coll</c> is
+    /// <c>[()]</c>, <c>[].Coll</c> is <c>[[]]</c>), and both spread to nothing.
     /// </summary>
     public static TheoryData<string, string, string> SelectedValueTable => new()
     {
         // selected value   selection.Coll      (selection)*.Coll
-        { "()",             "[]",               "[]" },
+        { "()",             "[()]",             "[]" },
         { "1",              "[1]",              "[1]" },
         { "'s'",            "[s]",              "[s]" },
         { "true",           "[true]",           "[true]" },
-        { "(1, 2)",         "[1, 2]",           "[1, 2]" },
+        { "(1, 2)",         "[(1, 2)]",         "[1, 2]" },
         { "[]",             "[[]]",             "[]" },
         { "[1, 2]",         "[[1, 2]]",         "[1, 2]" },
         { "[()]",           "[[()]]",           "[()]" },
         { "[(1, 2)]",       "[[(1, 2)]]",       "[(1, 2)]" },
-        { "((1, 2), 3)",    "[(1, 2), 3]",      "[(1, 2), 3]" },
-        { "([1, 2], 3)",    "[[1, 2], 3]",      "[[1, 2], 3]" },
-        { "((), 3)",        "[(), 3]",          "[(), 3]" },
+        { "((1, 2), 3)",    "[((1, 2), 3)]",    "[(1, 2), 3]" },
+        { "([1, 2], 3)",    "[([1, 2], 3)]",    "[[1, 2], 3]" },
+        { "((), 3)",        "[((), 3)]",        "[(), 3]" },
     };
 
     /// <summary>
@@ -109,17 +105,15 @@ public class SelectionValueBoundaryTests
             // Fluent spread receiver spelling: `selection*.Coll` is `Coll(selection*)`.
             Assert.Equal(expectedSpreadColl, Display(defs + selection + "*.Coll"));
 
-            // The direct call passes the selected value as ONE written slot — the very
-            // same slot the dotted spelling supplies (dot-call passes a value: `R.Coll`
-            // is `Coll(R)` for every receiver, `()` included) — and the same slot a
-            // property holding the value supplies, so the collector supply-boundary law
-            // decides all three alike.
+            // The direct call passes the selected value as ONE argument — the very same
+            // item the dotted spelling supplies (dot-call passes a value: `R.Coll` is
+            // `Coll(R)` for every receiver, `()` included) — and the same item a property
+            // holding the value supplies, so the collector collects all three alike.
             Assert.Equal(expectedColl, Display(defs + "Coll(" + selection + ")"));
             Assert.Equal(expectedColl, Display(defs + "V = " + selected + "\nColl(V)"));
 
-            // Beside another written slot the selected value is collected EXACTLY,
-            // whatever it is: the law rewrites only a segment that is ONE lone written
-            // sequence value. The dotted spelling is the same call.
+            // Beside another argument the selected value is collected EXACTLY too,
+            // whatever it is. The dotted spelling is the same call.
             var beside = Display("[" + selected + ", 9]");
             Assert.Equal(beside, Display(defs + "Coll(" + selection + ", 9)"));
             Assert.Equal(beside, Display(defs + selection + ".Coll(9)"));
@@ -161,12 +155,12 @@ public class SelectionValueBoundaryTests
     public void EmptySequence_SelectedThroughAnyRoute_IsPlainEmpty()
     {
         // The motivating examples: `()` selected from a sequence, read from a property,
-        // returned by a call, or chosen by `if` is simply `()` — one written slot when
-        // passed (dot-call passes a value: `().Coll` is `Coll(())`), whose lone empty
-        // sequence the collector opens to zero items exactly like the spread, while
-        // beside another argument it stays ONE visible collected item. No route preserves
-        // "one element was selected", and no route turns the value-boundary count 0 into
-        // a missing argument (`One(a) = 1` accepts every one of them).
+        // returned by a call, or chosen by `if` is simply `()` — ONE argument when passed
+        // (dot-call passes a value: `().Coll` is `Coll(())`), collected as one visible
+        // item alone or beside another argument; only its spread supplies nothing. No
+        // route preserves "one element was selected", and no route turns the
+        // value-boundary count 0 into a missing argument (`One(a) = 1` accepts every one
+        // of them).
         const string defs = Coll + "A = ((), 1)\nE = ()\nFz(x) = ()\nB = (1, ())\nOne(a) = 1\n";
         foreach (var program in new[]
         {
@@ -176,7 +170,7 @@ public class SelectionValueBoundaryTests
             "X = A:0\nX.Coll", "Y = first(A)\nY.Coll", "Z = last(B)\nZ.Coll",
         })
         {
-            Assert.Equal("[]", Display(defs + program));
+            Assert.Equal("[()]", Display(defs + program));
         }
 
         foreach (var program in new[]
@@ -452,12 +446,12 @@ public class SelectionValueBoundaryTests
         Assert.Equal("[((1, 2), (3, 4)), 9]", Display(defs + "first(Bags).Coll(9)"));
         Assert.Equal("[(3, 4), 9]", Display(defs + "Coll(Bags:0:1, 9)"));
         Assert.Equal("[(3, 4), 9]", Display(defs + "last(first(Bags)).Coll(9)"));
-        // Alone at the collector the selected sequence opens exactly one level — the
-        // nested pairs stay intact — exactly as its spread supplies them.
-        Assert.Equal("[(1, 2), (3, 4)]", Display(defs + "Bags:0.Coll"));
-        Assert.Equal("[(1, 2), (3, 4)]", Display(defs + "first(Bags).Coll"));
-        Assert.Equal("[3, 4]", Display(defs + "Bags:0:1.Coll"));
-        Assert.Equal("[3, 4]", Display(defs + "last(first(Bags)).Coll"));
+        // Alone at the collector the selection is ONE collected item too; only its
+        // explicit spread opens it — exactly one level, the nested pairs intact.
+        Assert.Equal("[((1, 2), (3, 4))]", Display(defs + "Bags:0.Coll"));
+        Assert.Equal("[((1, 2), (3, 4))]", Display(defs + "first(Bags).Coll"));
+        Assert.Equal("[(3, 4)]", Display(defs + "Bags:0:1.Coll"));
+        Assert.Equal("[(3, 4)]", Display(defs + "last(first(Bags)).Coll"));
         Assert.Equal("[(1, 2), (3, 4)]", Display(defs + "(Bags:0)*.Coll"));
         Assert.Equal("[3, 4]", Display(defs + "(Bags:0:1)*.Coll"));
         Assert.Equal("[3, 4]", Display(defs + "(last(first(Bags)))*.Coll"));
@@ -468,9 +462,9 @@ public class SelectionValueBoundaryTests
     }
 
     [Theory]
-    [InlineData("()", "[]")]
-    [InlineData("(1, 2)", "[1, 2]")]
-    [InlineData("((1, 2), 3)", "[(1, 2), 3]")]
+    [InlineData("()", "[()]")]
+    [InlineData("(1, 2)", "[(1, 2)]")]
+    [InlineData("((1, 2), 3)", "[((1, 2), 3)]")]
     [InlineData("[]", "[[]]")]
     [InlineData("[1, 2]", "[[1, 2]]")]
     [InlineData("[()]", "[[()]]")]

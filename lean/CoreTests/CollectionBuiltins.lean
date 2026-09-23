@@ -1666,21 +1666,28 @@ def test152 : Bool :=
 
 #guard test152
 
+-- Each sequence-valued element is ONE callback argument: the flat two-binder
+-- family `TakeValue(tag, value)` rejects it with the ordinary callback arity
+-- error, while the explicit structural pattern `TakeValue((tag, value))`
+-- opens each element.
 def test153 : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
-    ("TakeValue", takePairValueAlg89),
-    ("Values", alg [] [] [] [
-      .capture [.num 1, .num 2],
-      .capture [.num 3, .num 4]
-    ])
-  ] [
-    .call (resolve "map") [
-      .resolve "Values",
-      .resolve "TakeValue"
-    ]
-  ])) with
-  | Except.ok [2, 4] => true
-  | _ => false
+  let run (takeValue : Algorithm) : Except Error (List Int) :=
+    runFlat (.algorithmExpr (algPrivate [] [] [
+      ("TakeValue", takeValue),
+      ("Values", alg [] [] [] [
+        .capture [.num 1, .num 2],
+        .capture [.num 3, .num 4]
+      ])
+    ] [
+      .call (resolve "map") [
+        .resolve "Values",
+        .resolve "TakeValue"
+      ]
+    ]))
+  expectInnermostArityMismatch 2 1 (run takePairValueAlg89) &&
+  (match run takePairValuePatternAlg89 with
+   | Except.ok [2, 4] => true
+   | _ => false)
 
 #guard test153
 
