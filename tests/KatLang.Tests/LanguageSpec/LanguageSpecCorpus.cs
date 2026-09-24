@@ -5165,5 +5165,56 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "Logarithms of arguments near 1 lose digits to cancellation in a naive ln(1 + ε), so the runtime evaluates them through the log1p reformulation: `Math.Ln(1 + 1e-20)` is `1e-20 − 5e-41 + …`, correct to the last digit of its 34 significant digits. `Lg` and `Log` share the reformulation, and a near-1 base raised to a fractional exponent is computed as `exp(y · ln x)` over it.",
         },
+        new()
+        {
+            // Numeric audit #6 (September 2026): `avg` divided the left-to-right
+            // Decimal128 sum, so a sum that rounded on the way produced a mean with no
+            // correct digits (this source returned `0`), while an OVERFLOWING sum already
+            // took the exact mean.
+            Id = "avg-is-the-correctly-rounded-exact-mean",
+            Category = "collection-builtins",
+            Source = "avg((1, 1e34, -1e34))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0.3333333333333333333333333333333333",
+            ExpectedRaw = "0.3333333333333333333333333333333333",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Decimal128 rounding of the running sum and the fractional mean: the Lean Int core adds exactly and truncates the mean with `Int.tdiv`, so neither the 34-digit rounding of `sum` nor the correctly rounded decimal mean has a Lean counterpart.",
+            Probes =
+            [
+                // The left-to-right `sum` rounds `1 + 1e34` back to `1e34`; `avg` is not that sum over the count.
+                new SpecProbe("sum((1, 1e34, -1e34)) / 3", "ok raw=0 n=1"),
+                // (1e34 + 2) / 3 is exactly 3333333333333333333333333333333334.
+                new SpecProbe("avg((1e34, 1, 1))", "ok raw=3333333333333333333333333333333334 n=1"),
+                // For finite elements the mean does not depend on their order.
+                new SpecProbe("avg((1e34, -1e34, 1)) == avg((1, 1e34, -1e34))", "ok raw=true n=1"),
+                // An exact sum keeps the ordinary division and its IEEE quantum.
+                new SpecProbe("avg((1.0, 2.00))", "ok raw=1.50 n=1"),
+            ],
+            Explanation = "`avg` is the exact total of its elements divided by their count, rounded once to 34 significant digits. The left-to-right `sum` can round on the way (`1 + 1e34` is `1e34` again), so the mean is not `sum(x) / count(x)` whenever that sum was inexact: `avg((1, 1e34, -1e34))` is one third, while `sum((1, 1e34, -1e34)) / 3` is `0`. When every addition was exact the two agree, quantum included (`avg((1.0, 2.00))` is `1.50`).",
+        },
+        new()
+        {
+            // Numeric audit #6 (September 2026): the near-one power band admitted only
+            // positive bases, so a negative base near -1 with an integral exponent beyond
+            // `long` took the runtime power, which kept four correct digits here.
+            Id = "negative-near-one-base-power-is-sign-symmetric",
+            Category = "arithmetic",
+            Source = "B = 0.9999999999999999999999999999999999\n(-B) ^ 1e34 == B ^ 1e34",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
+            ExpectedEmittedCount = 1,
+            LeanExclusionReason = "Near-one powers with fractional values and exponents beyond `long` are Decimal128 approximations (the Lean Int core has no fractional power, and `negativeIntPow` rejects every non-unit reciprocal), so the sign-symmetry of the delegated power is a runtime accuracy property.",
+            Probes =
+            [
+                // An odd exponent beyond `long` keeps the magnitude and negates it.
+                new SpecProbe("B = 1.0000000000000000001\n(-B) ^ 10000000000000000001 == -(B ^ 10000000000000000001)", "ok raw=true n=1"),
+                // Inside `long` the certified integer power was already symmetric.
+                new SpecProbe("B = 1.0000000000000000001\n(-B) ^ 9223372036854775807 == -(B ^ 9223372036854775807)", "ok raw=true n=1"),
+                // A fractional power of a negative base stays NaN.
+                new SpecProbe("(-0.995) ^ 12345.5", "ok raw=NaN n=1"),
+            ],
+            Explanation = "For an integral exponent `n`, `(-b) ^ n` is `b ^ n` for even `n` and `-(b ^ n)` for odd `n`, whichever computation the exponent routes through: a base whose magnitude is within `0.99 <= |b| <= 1.01` takes the near-one power for a fractional exponent, an exponent beyond `long`, or a negative exponent whose positive power overflows, and a negative base there takes its magnitude's power with the exponent's parity sign.",
+        },
     ];
 }

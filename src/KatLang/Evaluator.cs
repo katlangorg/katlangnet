@@ -3185,10 +3185,12 @@ public static partial class Evaluator
     /// Exhaustion returns IllegalInEval with the expression span, never an
     /// uncertified approximation. The optional internal precision arguments are
     /// a test seam for this otherwise difficult-to-reach error path.</para>
-    /// <para>Delegation to Decimal128.Pow is unchanged from before B4: fractional,
+    /// <para>The delegation domain is unchanged from before B4: fractional,
     /// non-finite, and beyond-long exponents, plus negative integral exponents
     /// whose legacy positive-power chain overflows (10^-6146 remains a nonzero
-    /// subnormal). These dependency results are quantum-canonicalized and are
+    /// subnormal), take <see cref="DelegatedPower"/> — Decimal128.Pow, or the
+    /// near-one fixed-point power for a finite exponent over a base whose MAGNITUDE
+    /// is in the near-one band. These results are quantum-canonicalized and are
     /// not covered by the certification guarantee. Special bases retain IEEE
     /// sign/parity and x^0 is 1.</para>
     /// <para>ZERO BASE, NEGATIVE EXPONENT: a zero-valued base (signed zeros included)
@@ -3232,19 +3234,12 @@ public static partial class Evaluator
         // delegate: IEEE pow fully specifies the special bases (0, ±1, NaN, the
         // infinities resolve exactly by sign and parity — pinned by tests), and for
         // any other finite base the true power needs more than 34 digits, so no
-        // squaring loop could deliver exactness either; bases very close to 1 give
-        // genuine finite approximations that Decimal128.Pow computes directly.
+        // squaring loop could deliver exactness either; bases of magnitude very
+        // close to 1 give genuine finite approximations, which the near-one power
+        // computes (DelegatedPower).
         if (!Decimal128.IsInteger(exp) || Decimal128.Abs(exp) > long.MaxValue)
         {
-            // A near-1 base is the one delegated shape the platform power gets wrong by
-            // far more than the last digit or two (it inherits the logarithm's
-            // cancellation near 1 — see Decimal128Numerics.IsInNearOnePowerBand); a
-            // finite exponent over such a base takes exp(exp · ln b) over the accurate
-            // near-1 logarithm. Non-finite exponents keep the IEEE pow verdicts.
-            result = CanonicalizeMathResult(
-                Decimal128.IsFinite(exp) && Decimal128Numerics.IsInNearOnePowerBand(b)
-                    ? Decimal128Numerics.NearOnePower(b, exp)
-                    : Decimal128.Pow(b, exp));
+            result = CanonicalizeMathResult(DelegatedPower(b, exp));
             return true;
         }
 
@@ -3271,7 +3266,7 @@ public static partial class Evaluator
             {
                 // Preserve the pre-B4 delegation domain: a positive intermediate
                 // can overflow while its reciprocal is a representable subnormal.
-                result = CanonicalizeMathResult(Decimal128.Pow(b, exp));
+                result = CanonicalizeMathResult(DelegatedPower(b, exp));
                 return true;
             }
 
@@ -3292,6 +3287,38 @@ public static partial class Evaluator
         if (previousReciprocal is { } previous && previous == result)
             result = previous;
         return true;
+    }
+
+    /// <summary>
+    /// The DELEGATED power — every shape the certified integer path does not take (a
+    /// fractional, non-finite, or beyond-<see cref="long"/> exponent, and a negative
+    /// integral exponent whose positive power overflows): the platform
+    /// <see cref="Decimal128.Pow"/>, except for a finite exponent over a base whose
+    /// MAGNITUDE lies in the near-one band. The platform power inherits the logarithm's
+    /// cancellation near 1 there (see <see cref="Decimal128Numerics.IsInNearOnePowerBand"/>),
+    /// so the band takes <see cref="Decimal128Numerics.NearOnePower"/> instead — for a
+    /// NEGATIVE base too (numeric audit #6, September 2026): the band once admitted only
+    /// positive bases, so <c>(-0.9999999999999999999999999999999999) ^ 1e34</c> kept four
+    /// correct digits while its positive twin kept all 34. A negative base reaches the band
+    /// only with an integral exponent (a fractional power of a negative base stays the
+    /// platform's NaN) and takes its magnitude's power with the exponent's parity sign —
+    /// the sign rule the certified integer path applies — so <c>(-b) ^ n</c> is exactly
+    /// <c>(-1) ^ n · b ^ n</c> on both sides of every routing boundary.
+    /// </summary>
+    private static Decimal128 DelegatedPower(Decimal128 b, Decimal128 exp)
+    {
+        if (Decimal128.IsFinite(exp) && Decimal128Numerics.IsInNearOnePowerBand(Decimal128.Abs(b)))
+        {
+            if (!Decimal128.IsNegative(b))
+                return Decimal128Numerics.NearOnePower(b, exp);
+            if (Decimal128.IsInteger(exp))
+            {
+                var magnitude = Decimal128Numerics.NearOnePower(-b, exp);
+                return Decimal128.IsOddInteger(exp) ? -magnitude : magnitude;
+            }
+        }
+
+        return Decimal128.Pow(b, exp);
     }
 
     /// <summary>

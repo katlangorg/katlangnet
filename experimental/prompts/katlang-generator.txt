@@ -716,7 +716,7 @@ Direct consumers:
 - `take(collection, count)` / `collection.take(count)`: first count items as one exact list value (`take((1, 2, 3), 2)` is `[1, 2]`)
 - `skip(collection, count)` / `collection.skip(count)`: skip first count items and return the rest as one exact list value (`skip((1, 2, 3), 1)` is `[2, 3]`)
 
-`avg(collection)` / `collection.avg` returns the decimal arithmetic mean of the numeric top-level items (the total divided by the count), so `avg((1, 2))` is `1.5`, `avg((-1, -2))` is `-1.5`, and `avg((1, 2, 3))` is `2`. For numeric values it is equivalent to `sum(collection) / count(collection)` (apart from `avg`'s empty/non-numeric validation), so use `avg` freely for fractional means. Ordinary `/` is decimal division (`7 / 2` is `3.5`), `div` is truncating integer division, and `mod` is the remainder.
+`avg(collection)` / `collection.avg` returns the decimal arithmetic mean of the numeric top-level items (the exact total divided by the count, rounded once to 34 significant digits), so `avg((1, 2))` is `1.5`, `avg((-1, -2))` is `-1.5`, and `avg((1, 2, 3))` is `2`. It equals `sum(collection) / count(collection)` whenever that left-to-right `sum` is exact, and stays correct when the sum would round (`avg((1, 1e34, -1e34))` is one third, while `sum((1, 1e34, -1e34)) / 3` is `0`), so use `avg` freely for fractional means. Ordinary `/` is decimal division (`7 / 2` is `3.5`), `div` is truncating integer division, and `mod` is the remainder.
 
 Sequence values are preserved as whole top-level items unless a builtin explicitly says otherwise (selection `:`, `first`, and `last` return them whole). Use a spread star `value*` to open exactly one outer sequence-value boundary from one value into the surrounding output, argument, or item supply; it does not turn one fixed-call argument expression into several parameters. Do not recursively flatten nested sequence values.
 
@@ -887,7 +887,7 @@ Do not `open Math` merely to shorten spellings (the aliases already do that). Us
 
 Multi-argument Math members (always supply every argument):
 - `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`; it is not a one-argument natural log.
-- `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
+- `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents, and negative integer exponents whose positive power overflows, use the near-one fixed-point approximation when the base's magnitude is within [0.99, 1.01] (a negative base with an integer exponent keeps the exponent's sign parity, so `(-b) ^ n` is exactly `(-1) ^ n · b ^ n`). Outside that band, and for non-finite exponents, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted or the formula naturally calls for it.
 - `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 
 Single-argument logarithms:
@@ -1048,7 +1048,7 @@ Numeric, operator, and literal correctness:
 - `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`);
 - range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`), never as `a < b and b < c` (which evaluates `b` twice);
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
-- `avg` returns the decimal arithmetic mean and is used freely for fractional means (it equals `sum(x) / count(x)` for numeric values);
+- `avg` returns the decimal arithmetic mean and is used freely for fractional means (the exact total over the count, rounded once — it equals `sum(x) / count(x)` whenever that left-to-right sum is exact);
 - display-precision requests use a top-level `DisplayDecimals = n`;
 - Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(value, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for the `Math.X` forms);
 - numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators;
@@ -1079,7 +1079,7 @@ Repeated parameter names use one order-independent compatibility rule: all suppl
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (103 of the 298-case canonical language specification,
+Verified reference examples (103 of the 300-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

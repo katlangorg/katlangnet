@@ -1619,10 +1619,44 @@ public static partial class Evaluator
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
     private static Decimal128 SumNumbers(IReadOnlyList<Decimal128> numbers)
+        => SumNumbers(numbers, noteExactness: false, out _);
+
+    /// <summary>
+    /// The ONE left-to-right Decimal128 sum behind <c>sum</c> and <c>avg</c>, starting
+    /// from zero. With <paramref name="noteExactness"/> it also reports whether every
+    /// addition was PROVABLY exact: an IEEE sum whose result carries the preferred
+    /// quantum (the smaller operand quantum) or a finer one is exact, because an inexact
+    /// sum needs all 34 digits at a coarser quantum. The converse does not hold — an
+    /// exact sum can need a coarser quantum (<c>9999999999999999999999999999999999 + 1</c>
+    /// is exactly <c>1e34</c> at quantum 1) — so "not provably exact" is only a reason
+    /// for the caller to decide exactness exactly. A NaN or infinite operand or result is
+    /// never provably exact.
+    /// </summary>
+    private static Decimal128 SumNumbers(IReadOnlyList<Decimal128> numbers, bool noteExactness, out bool provablyExact)
     {
         Decimal128 total = Decimal128.Zero;
+        var totalQuantumExponent = 0; // Decimal128.Zero's
+        provablyExact = noteExactness;
         foreach (var numeric in numbers)
-            total += numeric;
+        {
+            var next = total + numeric;
+            if (provablyExact)
+            {
+                if (Decimal128.IsFinite(numeric) && Decimal128.IsFinite(next))
+                {
+                    var nextQuantumExponent = Decimal128Numerics.QuantumExponent(next);
+                    provablyExact = nextQuantumExponent
+                        <= Math.Min(totalQuantumExponent, Decimal128Numerics.QuantumExponent(numeric));
+                    totalQuantumExponent = nextQuantumExponent;
+                }
+                else
+                {
+                    provablyExact = false;
+                }
+            }
+
+            total = next;
+        }
 
         return total;
     }
@@ -1636,15 +1670,22 @@ public static partial class Evaluator
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(SumNumbers(numbers)), 1));
 
     /// <summary>
-    /// Evaluate <c>avg(collection)</c> by averaging the top-level sequence
-    /// elements from left to right.
+    /// Evaluate <c>avg(collection)</c>: the arithmetic mean of the top-level sequence
+    /// elements — their EXACT total divided by the count, rounded ONCE to 34 significant
+    /// digits (IEEE round-to-nearest, ties to even).
     /// The collection must be non-empty, and each top-level element must be
     /// exactly one atomic numeric value; sequence values are not flattened and strings
     /// are rejected.
-    /// The Decimal128 runtime returns the true arithmetic mean (total / count),
-    /// correctly rounded to 34 significant digits. Lean's Int-only core
-    /// approximates this with truncation toward zero (Int.tdiv); that integer
-    /// approximation is a Lean model limitation, not the C# runtime contract.
+    /// The left-to-right Decimal128 sum that <c>sum</c> returns can round (or overflow)
+    /// on the way, so the mean is NOT that sum divided by the count whenever the sum was
+    /// inexact: <c>avg((1, 1e34, -1e34))</c> is <c>0.333…</c>, not <c>0 / 3</c>
+    /// (numeric audit #6, September 2026 — the mean was correctly rounded only when
+    /// the sum overflowed). When every addition was exact, <c>total / count</c> IS the
+    /// correctly rounded mean and is kept bit-for-bit, IEEE quantum included
+    /// (<c>avg((1.0, 2.00))</c> is <c>1.50</c>); a NaN or infinite element keeps that
+    /// ordinary IEEE result. Lean's Int-only core approximates the mean with truncation
+    /// toward zero (Int.tdiv); that integer approximation is a Lean model limitation,
+    /// not the C# runtime contract.
     /// Lean: <c>evalAvgCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<Decimal128> numbers)
@@ -1652,62 +1693,71 @@ public static partial class Evaluator
         if (numbers.Count == 0)
             return new EvalError.BadArity();
 
-        var total = SumNumbers(numbers);
-        // Preserve the ordinary left-to-right IEEE result, including explicit
-        // NaN/infinity inputs. Only an overflow created from entirely finite inputs
-        // needs the exact fallback: a finite arithmetic mean is bounded by its
-        // extrema and therefore remains representable even when the intermediate
-        // sum is not (MaxValue averaged with itself is the simplest case).
-        var average = Decimal128.IsFinite(total)
-            || numbers.Any(static number => !Decimal128.IsFinite(number))
+        var total = SumNumbers(numbers, noteExactness: true, out var provablyExact);
+        var average = provablyExact || numbers.Any(static number => !Decimal128.IsFinite(number))
             ? total / numbers.Count
-            : AverageFiniteNumbersExactly(numbers);
+            : AverageFiniteNumbersExactly(numbers, total);
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
     }
 
     /// <summary>
-    /// Computes the correctly rounded arithmetic mean of finite Decimal128 values
-    /// without a Decimal128-sized intermediate sum. Every finite Decimal128 is an
-    /// integer coefficient times a power-of-ten quantum, so a BigInteger sum at the
-    /// smallest input quantum is exact. The final rational division is rounded once,
-    /// using IEEE round-to-nearest/ties-to-even, to either 34 significant digits or
-    /// the Decimal128 subnormal quantum floor.
+    /// The correctly rounded arithmetic mean of finite Decimal128 values whose
+    /// left-to-right sum <paramref name="sequentialTotal"/> was not provably exact
+    /// (it rounded, overflowed, or needed a coarser quantum). Every finite Decimal128 is
+    /// an integer coefficient times a power-of-ten quantum, so a BigInteger sum at the
+    /// smallest element quantum is the exact total. When that exact total is a Decimal128,
+    /// it is divided once by the correctly rounded Decimal128 division — as the
+    /// sequential total itself when the two are equal (an exact sum at a coarser quantum,
+    /// kept bit-for-bit), otherwise at the quantum an exact left-to-right sum carries
+    /// (the smallest element quantum, or zero's). A total that is not a Decimal128 (more
+    /// than 34 significant digits, or beyond the range: a finite mean is bounded by its
+    /// extrema, so it stays representable when the sum is not — MaxValue averaged with
+    /// itself is the simplest case) is rounded once as the exact rational, to 34
+    /// significant digits or the subnormal quantum floor.
     /// </summary>
-    private static Decimal128 AverageFiniteNumbersExactly(IReadOnlyList<Decimal128> numbers)
+    private static Decimal128 AverageFiniteNumbersExactly(IReadOnlyList<Decimal128> numbers, Decimal128 sequentialTotal)
     {
         var coefficientsByExponent = new Dictionary<int, BigInteger>();
-        var minimumExponent = int.MaxValue;
+        var minimumExponent = 0; // the zero the left-to-right sum starts from
+        var nonzeroMinimumExponent = int.MaxValue;
 
         foreach (var number in numbers)
         {
+            var exponent = Decimal128Numerics.QuantumExponent(number);
+            if (exponent < minimumExponent)
+                minimumExponent = exponent;
             if (number == Decimal128.Zero)
                 continue;
 
-            var quantum = Decimal128.GetQuantum(number);
-            var exponent = Decimal128.ILogB(quantum);
-            var coefficient = BigInteger.CreateChecked((Int128)(number / quantum));
+            var coefficient = Decimal128Numerics.CoefficientOf(Decimal128.Abs(number), out _);
+            if (Decimal128.IsNegative(number))
+                coefficient = -coefficient;
             coefficientsByExponent[exponent] = coefficientsByExponent.TryGetValue(exponent, out var existing)
                 ? existing + coefficient
                 : coefficient;
-            if (exponent < minimumExponent)
-                minimumExponent = exponent;
+            if (exponent < nonzeroMinimumExponent)
+                nonzeroMinimumExponent = exponent;
         }
 
-        if (coefficientsByExponent.Count == 0)
-            return Decimal128.Zero;
-
+        // Horner's scheme over the distinct quanta, largest first, lands the exact total at
+        // the smallest nonzero quantum with one small power-of-ten multiplication per
+        // distinct quantum — never one power of ten spanning the whole exponent range per
+        // quantum, which made thousands of distinct quanta cost seconds.
         var exactScaledSum = BigInteger.Zero;
-        foreach (var (exponent, coefficient) in coefficientsByExponent)
+        int? previousExponent = null;
+        foreach (var (exponent, coefficient) in coefficientsByExponent.OrderByDescending(static entry => entry.Key))
         {
-            if (!coefficient.IsZero)
-                exactScaledSum += coefficient * BigInteger.Pow(10, exponent - minimumExponent);
+            if (previousExponent is { } previous)
+                exactScaledSum *= BigInteger.Pow(10, previous - exponent);
+            exactScaledSum += coefficient;
+            previousExponent = exponent;
         }
 
-        if (exactScaledSum.IsZero)
-            return Decimal128.Zero;
+        if (Decimal128Numerics.TryExactDecimal128(exactScaledSum, nonzeroMinimumExponent, minimumExponent, out var exactTotal))
+            return (sequentialTotal == exactTotal ? sequentialTotal : exactTotal) / numbers.Count;
 
-        return RoundScaledRationalToDecimal128(exactScaledSum, numbers.Count, minimumExponent);
+        return RoundScaledRationalToDecimal128(exactScaledSum, numbers.Count, nonzeroMinimumExponent);
     }
 
     /// <summary>

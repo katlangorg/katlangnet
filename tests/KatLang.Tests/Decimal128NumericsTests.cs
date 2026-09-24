@@ -1021,7 +1021,8 @@ public class Decimal128NumericsTests
         string baseExpression, string exponent, string expectedDisplay)
     {
         // Magnitudes through long.MaxValue take the bounded by-squaring path;
-        // long.MinValue's magnitude is one larger and delegates to Decimal128.Pow.
+        // long.MinValue's magnitude is one larger and takes DelegatedPower
+        // (the near-one magnitude path when eligible, otherwise Decimal128.Pow).
         // Both public spellings must agree across that exact routing boundary.
         var viaOperator = Assert.IsType<RunResult.Success>(
             KatLangEngine.Run($"{baseExpression} ^ {exponent}")).ToDisplayString();
@@ -1034,7 +1035,7 @@ public class Decimal128NumericsTests
 
     // ── Integral exponents beyond long: delegated, IEEE-exact special bases ──
     // The exact-by-squaring guarantee covers |exponent| <= long.MaxValue; larger
-    // integral exponents delegate to Decimal128.Pow. IEEE 754 fully specifies
+    // integral exponents take DelegatedPower. IEEE 754 fully specifies
     // pow for the special bases, and these cases pin that behavior — by sign and
     // parity — through BOTH public spellings, which must agree exactly because
     // they share one implementation.

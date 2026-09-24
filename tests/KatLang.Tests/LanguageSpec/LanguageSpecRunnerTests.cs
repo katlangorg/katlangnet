@@ -306,6 +306,10 @@ public class LanguageSpecRunnerTests
             "order-is-stable",
             "display-decimals-rounds-ties-away-from-zero",
             "logarithm-near-one-is-accurate",
+            // Numeric audit #6 (September 2026): the correctly rounded exact mean and the
+            // sign-symmetric delegated power are Decimal128 accuracy properties.
+            "avg-is-the-correctly-rounded-exact-mean",
+            "negative-near-one-base-power-is-sign-symmetric",
         ];
 
         Assert.Equal(
@@ -333,7 +337,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 170;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 15;
+        const int MaximumCSharpOnlyCases = 17;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

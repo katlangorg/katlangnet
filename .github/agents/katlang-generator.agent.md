@@ -315,7 +315,7 @@ Before emitting code, verify silently:
 - `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`).
 - Range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`): the chain compares each adjacent pair, evaluates every operand once, and is the idiomatic spelling; `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - `/` vs `div` is chosen intentionally — `/` keeps fractions, `div` truncates toward zero.
-- `avg` returns the decimal arithmetic mean (equivalent to `sum(...) / count(...)` for numeric values) and is used freely for fractional means.
+- `avg` returns the decimal arithmetic mean (the exact total divided by the count, rounded once) and is used freely for fractional means.
 - Display-precision requests use a top-level `DisplayDecimals = n`.
 - Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(value, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for `Math.Log`, `Math.Pow`, `Math.Atan2`, `Math.Round`, `Math.Random`, and `Math.RandomInt`).
 - Numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators.
@@ -1004,7 +1004,7 @@ Opened sequence-value accumulator (the pattern `(*history)` opens the accumulato
 
 - The collection must be non-empty
 - Each top-level element must be exactly one atomic numeric value
-- `avg` returns the decimal arithmetic mean (the total divided by the count), so `avg((1, 2))` is `1.5`, `avg((-1, -2))` is `-1.5`, and `avg((1, 2, 3))` is `2`. For numeric values it is equivalent to `sum(collection) / count(collection)` (apart from `avg`'s empty/non-numeric validation), so use `avg` freely for fractional means. Ordinary `/` is decimal division (`7 / 2` is `3.5`)
+- `avg` returns the decimal arithmetic mean (the exact total divided by the count, rounded once to 34 significant digits), so `avg((1, 2))` is `1.5`, `avg((-1, -2))` is `-1.5`, and `avg((1, 2, 3))` is `2`. It equals `sum(collection) / count(collection)` whenever that left-to-right `sum` is exact, and stays correct when the sum would round (`avg((1, 1e34, -1e34))` is one third, while `sum((1, 1e34, -1e34)) / 3` is `0`), so use `avg` freely for fractional means. Ordinary `/` is decimal division (`7 / 2` is `3.5`)
 - The one collection argument is opened one level; sequence values inside it are not recursively flattened
 - Strings are invalid
 - A grouped wrapper output such as `Values = (1, 2, 3)` is opened as the one bound collection (a lone exact list opens the same way), so `avg(Values)` and `Values.avg` both average its immediate numeric items
@@ -1309,7 +1309,7 @@ BETTER — specific branch first:
 - Random values are nondeterministic by default and KatLang has NO seeding syntax: never generate `seed(...)`, `setSeed(...)`, `randomSeed(...)`, a `RandomSeed = ...` property (it would be an ordinary property that seeds nothing), or similar. Reproducible random values are a host/CLI option outside the program (`RunOptions.RandomSeed` in the .NET library, `katlang run|eval ... --random-seed <integer>` on the CLI); when a user asks for reproducibility, say so instead of inventing syntax.
 - Multi-argument Math members — always supply every argument:
     - `log(value, base)` / `Math.Log(value, base)` is the logarithm of `value` in the given `base`, not a one-argument natural log.
-    - `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents use the near-one fixed-point approximation when the base is within [0.99, 1.01]. Outside that band, and for non-finite exponents or negative integer powers whose previous positive-power computation overflows, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted.
+    - `pow(x, y)` / `Math.Pow(x, y)` raises `x` to the power `y` and is identical to `^` (they share one implementation): for finite nonzero bases and integer exponents with magnitude at most 9223372036854775807, the certified path rounds the exact power once to Decimal128, ties to even (`2 ^ 10` is exactly `1024`; `0.9999999 ^ 10000000` is correct in every digit). Failure to certify within 4096 working digits reports a structured evaluation error. Fractional and larger finite exponents, and negative integer exponents whose positive power overflows, use the near-one fixed-point approximation when the base's magnitude is within [0.99, 1.01] (a negative base with an integer exponent keeps the exponent's sign parity, so `(-b) ^ n` is exactly `(-1) ^ n · b ^ n`). Outside that band, and for non-finite exponents, the existing Decimal128.Pow delegation is retained without a correct-rounding guarantee. Prefer `^` for ordinary powers; use `pow`/`Math.Pow` when a Math-member style is specifically wanted.
     - `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 - Single-argument logarithms: `ln(x)` / `Math.Ln(x)` is the natural logarithm (base e); `lg(x)` / `Math.Lg(x)` is the base-10 logarithm.
 
@@ -1550,7 +1550,7 @@ Repeated parameter names use one order-independent compatibility rule: all suppl
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (103 of the 298-case canonical language specification,
+Verified reference examples (103 of the 300-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

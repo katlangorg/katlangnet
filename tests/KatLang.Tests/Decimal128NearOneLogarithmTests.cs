@@ -214,4 +214,113 @@ public class Decimal128NearOneLogarithmTests
             [Decimal128.PositiveInfinity, Decimal128.Zero, Decimal128.Zero],
             success.Atoms);
     }
+
+    // ── Negative bases and overflowing reciprocals (numeric audit #6) ──────
+
+    /// <summary>
+    /// The near-one band is a band of base MAGNITUDES (numeric audit #6, September 2026). It
+    /// once admitted only positive bases, so a negative base near -1 with an integral
+    /// exponent beyond <c>long</c> took the runtime power and its near-1 cancellation:
+    /// <c>(-0.9999999999999999999999999999999999) ^ 1e34</c> kept four correct digits while
+    /// its positive twin kept all 34. The law: for an integral exponent, <c>(-b) ^ n</c> is
+    /// exactly <c>(-1) ^ n · b ^ n</c> — value, quantum, and zero sign — on both sides of
+    /// every routing boundary (the certified path inside <c>long</c>, the delegated path
+    /// beyond it, and a negative exponent whose positive power overflows), in and outside
+    /// the band.
+    /// </summary>
+    [Theory]
+    [InlineData("0.9999999999999999999999999999999999", "10000000000000000000000000000000000")]
+    [InlineData("1.0000000000000000001", "9223372036854775807")] // certified
+    [InlineData("1.0000000000000000001", "9223372036854775808")] // just beyond long, even
+    [InlineData("1.0000000000000000001", "10000000000000000001")] // beyond long, odd
+    [InlineData("1.0000000000000000001", "-9223372036854775809")] // negative, beyond long, odd
+    [InlineData("1.000000000000000000000000000000001", "9223372036854775808")]
+    [InlineData("0.99", "123456789012345678901")]
+    [InlineData("1.01", "-123456789012345678902")]
+    [InlineData("1.000000000000002", "-7080000000000000001")] // the positive power overflows
+    [InlineData("1.1", "10000000000000000001")] // outside the band
+    [InlineData("0.5", "10000000000000000001")]
+    public void IntegralPowerOfANegativeBase_IsTheSignedPowerOfItsMagnitude(string magnitude, string exponent)
+    {
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
+            $"B = {magnitude}\nN = {exponent}\n(-B) ^ N\nB ^ N"));
+        var ofNegativeBase = success.Atoms[0];
+        var ofMagnitude = success.Atoms[1];
+        var expected = Decimal128.IsOddInteger(Decimal128.Parse(exponent, CultureInfo.InvariantCulture))
+            ? -ofMagnitude
+            : ofMagnitude;
+        Assert.Equal(expected, ofNegativeBase);
+        Assert.True(Decimal128.HaveSameQuantum(expected, ofNegativeBase), $"{ofNegativeBase} vs {expected}");
+        Assert.Equal(Decimal128.IsNegative(expected), Decimal128.IsNegative(ofNegativeBase));
+    }
+
+    [Fact]
+    public void Pow_NegativeNearOneBase_BeyondLongExponent_IsCorrectToTheLastDigit()
+    {
+        // (1 - 1e-34) ^ 1e34 = e^(-1 - 5e-35 - …), an even power.
+        var even = ToDecimal128(BinomialPowerScaled(-1, BigInteger.Pow(10, 34), BigInteger.Pow(10, 34), 1));
+        AssertWithinOneUlp("(-0.9999999999999999999999999999999999) ^ 1e34", even);
+
+        // (1 + 1e-19) ^ (1e19 + 1), an odd power: the magnitude, negated.
+        var odd = ToDecimal128(BinomialPowerScaled(1, BigInteger.Pow(10, 19), BigInteger.Pow(10, 19) + 1, 1));
+        AssertWithinOneUlp("(-1.0000000000000000001) ^ 10000000000000000001", -odd);
+        AssertWithinOneUlp("Math.Pow(-1.0000000000000000001, 10000000000000000001)", -odd);
+        AssertWithinOneUlp("pow(-1.0000000000000000001, 10000000000000000001)", -odd);
+    }
+
+    /// <summary>
+    /// A negative integral exponent whose POSITIVE power overflows keeps its pre-B4
+    /// delegation (the reciprocal can be a representable subnormal); a near-one base there
+    /// now takes the near-one power, where the runtime power lost seven of the result's 27
+    /// digits for <c>1.000000000000002 ^ -7080000000000000000</c>. The oracle is the
+    /// certified exact integer power — an independent algorithm (exact BigInteger powering
+    /// with a certified, once-rounded reciprocal) that the evaluator does not use for this
+    /// shape — compared at the subnormal quantum.
+    /// </summary>
+    [Theory]
+    [InlineData("1.000000000000002", -7080000000000000000L)]
+    [InlineData("1.000000000000002", -7080000000000000001L)]
+    [InlineData("-1.000000000000002", -7080000000000000001L)]
+    [InlineData("1.00000000001", -1415000000000000L)]
+    [InlineData("1.0000000001", -141550000000000L)]
+    public void Pow_NearOneBase_OverflowingPositivePower_MatchesTheCertifiedIntegerPower(string basis, long exponent)
+    {
+        var b = Decimal128.Parse(basis, CultureInfo.InvariantCulture);
+        Assert.True(Decimal128Numerics.TryIntegerPower(b, exponent, out var certified));
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"({basis}) ^ {exponent}"));
+        var actual = Assert.Single(success.Atoms);
+        var ulp = Decimal128.Max(UlpOf(certified), Decimal128.Epsilon);
+        Assert.True(
+            Decimal128.Abs(actual - certified) <= ulp,
+            $"({basis}) ^ {exponent}: expected {certified:E33} ± {ulp:E0}, got {actual:E33}");
+    }
+
+    [Theory]
+    // An exponent one unit away from an integer is fractional: never rounded into parity.
+    [InlineData("(-2) ^ 2.000000000000000000000000000000001")]
+    [InlineData("(-2) ^ 2.999999999999999999999999999999999")]
+    [InlineData("(-0.995) ^ 12345.5")]
+    [InlineData("(-1.0000000000000000001) ^ 10000000000000000000.5")]
+    [InlineData("Math.Pow(-1.005, 0.5)")]
+    public void FractionalPowerOfANegativeBase_IsNaN_EvenBesideAnInteger(string source)
+        => Assert.Equal("NaN", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
+    [Fact]
+    public async Task NegativeNearOneBasePower_AgreesAcrossExecutionStrategies()
+    {
+        // A loop step raising its own (negative) state takes the planned numeric arm.
+        const string source = "Step(x) = x ^ 10000000000000000001\nrepeat(Step, 1, -1.0000000000000000001)";
+        var generic = EvaluatorTestSupport.Eval(source, enableLoopOptimization: false);
+        var planned = EvaluatorTestSupport.Eval(source, enableLoopOptimization: true);
+        Assert.False(generic.IsError);
+        Assert.False(planned.IsError);
+        Assert.Equal(generic.Value, planned.Value);
+
+        var magnitude = Assert.Single(Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("1.0000000000000000001 ^ 10000000000000000001")).Atoms);
+        Assert.Equal(-magnitude, Assert.Single(generic.Value));
+
+        var asynchronous = await NumericSemanticLawReviewTests.RunSuspending(source);
+        Assert.Equal(-magnitude, Assert.Single(asynchronous.Atoms));
+    }
 }

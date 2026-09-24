@@ -4265,7 +4265,7 @@ def evalSumCounted (numbers : List Int) : EvalM CountedResult := do
     accumulates their numeric total, and divides by the element count.
     The integer core truncates the quotient toward zero (Int.tdiv), matching
     the truncating division convention of `div`/`mod`; the decimal runtime
-    keeps the exact fractional average.
+    rounds the exact fractional average once to Decimal128.
 
     The collection must be non-empty. Each top-level collection element must
     be exactly one atomic numeric value. Sequence values are not flattened or

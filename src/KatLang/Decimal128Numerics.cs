@@ -4,8 +4,9 @@ namespace KatLang;
 
 /// <summary>
 /// Exact scaled-integer arithmetic over Decimal128 representations, shared by the
-/// numeric paths that a chain of Decimal128 operations cannot deliver: the
-/// overflow-recovering <c>avg</c> mean and the integer-exponent power (both correctly
+/// numeric paths that a chain of Decimal128 operations cannot deliver: the exact
+/// <c>avg</c> mean (taken whenever the left-to-right sum was not exact, see
+/// <see cref="TryExactDecimal128"/>) and the integer-exponent power (both correctly
 /// rounded) and the truncating integer division <c>div</c>
 /// (<see cref="IntegerDivide"/>, exact wherever the truncated quotient is representable).
 /// It also hosts the inverse-trigonometric endpoint reformulation
@@ -145,6 +146,75 @@ internal static class Decimal128Numerics
         var quantum = Decimal128.GetQuantum(finiteMagnitude);
         quantumExponent = Decimal128.ILogB(quantum);
         return BigInteger.CreateChecked((Int128)(finiteMagnitude / quantum));
+    }
+
+    /// <summary>
+    /// The quantum exponent <c>q</c> of a finite Decimal128 (its value is an integer
+    /// coefficient times <c>10^q</c>), zeros included.
+    /// </summary>
+    internal static int QuantumExponent(Decimal128 finiteValue)
+        => Decimal128.ILogB(Decimal128.GetQuantum(finiteValue));
+
+    /// <summary>
+    /// The exact value <c>scaledValue × 10^exponent</c> as a Decimal128 at the IEEE
+    /// preferred quantum — <paramref name="preferredExponent"/> when the value fits there,
+    /// else the nearest quantum at which it does (the quantum an exact IEEE sum carries) —
+    /// or false when no Decimal128 represents the value exactly (more than
+    /// <see cref="Precision"/> significant digits, or beyond the finite range). A zero is
+    /// positive zero at the preferred quantum (clamped to the exponent range).
+    /// </summary>
+    internal static bool TryExactDecimal128(BigInteger scaledValue, int exponent, int preferredExponent, out Decimal128 value)
+    {
+        if (scaledValue.IsZero)
+        {
+            value = Decimal128.ScaleB(Decimal128.Zero, preferredExponent);
+            return true;
+        }
+
+        var negative = scaledValue.Sign < 0;
+        var coefficient = BigInteger.Abs(scaledValue);
+        var coarsestExponent = exponent;
+        var excessDigits = DigitCount(coefficient) - Precision;
+        if (excessDigits > 0)
+        {
+            // Only trailing zeros may move into the exponent (one division, however long
+            // the value): any other digit beyond Precision makes it unrepresentable.
+            coefficient = BigInteger.DivRem(coefficient, BigInteger.Pow(10, excessDigits), out var dropped);
+            if (!dropped.IsZero)
+            {
+                value = default;
+                return false;
+            }
+
+            coarsestExponent += excessDigits;
+        }
+
+        while (true)
+        {
+            var shorter = BigInteger.DivRem(coefficient, 10, out var lastDigit);
+            if (!lastDigit.IsZero)
+                break;
+            coefficient = shorter;
+            coarsestExponent++;
+        }
+
+        // coefficient (no trailing zero, at most Precision digits) × 10^coarsestExponent:
+        // every in-range quantum from the coefficient padded to Precision digits up to
+        // coarsestExponent carries the value exactly, and the one nearest the preferred
+        // quantum wins.
+        var finest = Math.Max(coarsestExponent - (Precision - DigitCount(coefficient)), MinQuantumExponent);
+        var coarsest = Math.Min(coarsestExponent, MaxQuantumExponent);
+        if (finest > coarsest)
+        {
+            value = default;
+            return false;
+        }
+
+        var quantum = Math.Clamp(preferredExponent, finest, coarsest);
+        var coefficientAtQuantum = coefficient * BigInteger.Pow(10, coarsestExponent - quantum);
+        var magnitude = Decimal128.ScaleB((Decimal128)(Int128)coefficientAtQuantum, quantum);
+        value = negative ? -magnitude : magnitude;
+        return true;
     }
 
     /// <summary>
@@ -797,15 +867,18 @@ internal static class Decimal128Numerics
     private static readonly Decimal128 LogOnePlusWindowHigh = Decimal128.Parse("1.5", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// The band of bases around 1 (<c>0.99 &lt;= b &lt;= 1.01</c>) in which the DELEGATED
-    /// power paths — a fractional exponent, or an integral one beyond <see cref="long"/> —
-    /// stop using the platform <see cref="Decimal128.Pow"/> and compute
+    /// The band of base MAGNITUDES around 1 (<c>0.99 &lt;= |b| &lt;= 1.01</c>; the caller
+    /// passes the magnitude) in which the DELEGATED power paths — a fractional exponent, an
+    /// integral one beyond <see cref="long"/>, or a negative integral exponent whose positive
+    /// power overflows — stop using the platform <see cref="Decimal128.Pow"/> and compute
     /// <c>exp(exponent · ln(base))</c> with the exponent product carried in EXACT
     /// arithmetic (<see cref="NearOnePower"/>). The platform power inherits the
     /// logarithm's near-1 cancellation, so <c>(1 + 1e-33) ^ 9223372036854775808</c> lost
     /// fourteen digits and came out SMALLER than the same base to the power
-    /// <c>9223372036854775807</c> (the certified integer path); away from 1 the platform
-    /// power is at least as accurate and is kept unchanged.
+    /// <c>9223372036854775807</c> (the certified integer path), and its negative twin
+    /// <c>(-0.9999999999999999999999999999999999) ^ 1e34</c> kept four digits until the band
+    /// was applied to the magnitude (numeric audit #6, September 2026); away from 1 the
+    /// platform power is at least as accurate and is kept unchanged.
     /// </summary>
     internal static bool IsInNearOnePowerBand(Decimal128 b)
         => b >= NearOnePowerBandLow && b <= NearOnePowerBandHigh;
