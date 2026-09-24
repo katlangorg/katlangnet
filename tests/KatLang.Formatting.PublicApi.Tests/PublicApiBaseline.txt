@@ -88,7 +88,6 @@ public sealed record KatLang.ArgumentEvaluationContext : KatLang.ErrorContext, S
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.ArgumentEvaluationContext? left, KatLang.ArgumentEvaluationContext? right)
   operator public static bool op_Inequality(KatLang.ArgumentEvaluationContext? left, KatLang.ArgumentEvaluationContext? right)
 
@@ -160,159 +159,8 @@ public sealed record KatLang.CallContext : KatLang.ErrorContext, System.IEquatab
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.CallContext? left, KatLang.CallContext? right)
   operator public static bool op_Inequality(KatLang.CallContext? left, KatLang.CallContext? right)
-
-public sealed record KatLang.CallableArityFacts : System.IEquatable<KatLang.CallableArityFacts>
-  ctor     public CallableArityFacts(int MinTopLevelArgumentCount, int? MaxTopLevelArgumentCount, bool HasTopLevelCollecting, int TopLevelCollectingCount)
-  property public bool HasMultipleTopLevelCollectingCaptures { get; }
-  property public bool HasTopLevelCollecting { get; init; }
-  property public int? MaxTopLevelArgumentCount { get; init; }
-  property public int MinTopLevelArgumentCount { get; init; }
-  property public int TopLevelCollectingCount { get; init; }
-  method   public KatLang.CallableArityFacts <Clone>$()
-  method   public bool AcceptsArgumentCount(int argumentCount)
-  method   public void Deconstruct(out int MinTopLevelArgumentCount, out int? MaxTopLevelArgumentCount, out bool HasTopLevelCollecting, out int TopLevelCollectingCount)
-  method   public bool Equals(KatLang.CallableArityFacts? other)
-  method   public override bool Equals(object? obj)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CallableArityFacts? left, KatLang.CallableArityFacts? right)
-  operator public static bool op_Inequality(KatLang.CallableArityFacts? left, KatLang.CallableArityFacts? right)
-
-public sealed record KatLang.CallableBindingCapture : System.IEquatable<KatLang.CallableBindingCapture>
-  ctor     public CallableBindingCapture(string Name, KatLang.ParameterKind Kind, KatLang.CallableParameterSource Source)
-  property public string DisplayName { get; }
-  property public KatLang.ParameterKind Kind { get; init; }
-  property public string Name { get; init; }
-  property public KatLang.CallableParameterSource Source { get; init; }
-  method   public KatLang.CallableBindingCapture <Clone>$()
-  method   public void Deconstruct(out string Name, out KatLang.ParameterKind Kind, out KatLang.CallableParameterSource Source)
-  method   public bool Equals(KatLang.CallableBindingCapture? other)
-  method   public override bool Equals(object? obj)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CallableBindingCapture? left, KatLang.CallableBindingCapture? right)
-  operator public static bool op_Inequality(KatLang.CallableBindingCapture? left, KatLang.CallableBindingCapture? right)
-
-public closed record KatLang.CallableBindingNode : System.IEquatable<KatLang.CallableBindingNode>
-  ctor     protected CallableBindingNode(KatLang.CallableBindingNode original)
-  property public abstract System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property protected virtual System.Type EqualityContract { get; }
-  method   public abstract KatLang.CallableBindingNode <Clone>$()
-  method   public override bool Equals(object? obj)
-  method   public virtual bool Equals(KatLang.CallableBindingNode? other)
-  method   public override int GetHashCode()
-  method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CallableBindingNode? left, KatLang.CallableBindingNode? right)
-  operator public static bool op_Inequality(KatLang.CallableBindingNode? left, KatLang.CallableBindingNode? right)
-
-public sealed record KatLang.CallableBindingPlan : System.IEquatable<KatLang.CallableBindingPlan>
-  property public KatLang.CallableArityFacts ArityFacts { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property public string DisplayText { get; }
-  property public bool HasNestedCollecting { get; }
-  property public bool HasOnlyFlatFixedTopLevelCaptures { get; }
-  property public bool HasOnlyFlatTopLevelCaptures { get; }
-  property public bool HasRepeatedCaptureNames { get; }
-  property public bool HasTopLevelCollecting { get; }
-  property public bool RequiresPatternedBinding { get; }
-  property public KatLang.CallableSignature Signature { get; }
-  property public KatLang.CollectingCaptureBindingNode? TopLevelCollectingCapture { get; }
-  property public KatLang.PatternListBindingPlan TopLevelPatternList { get; }
-  method   public KatLang.CallableBindingPlan <Clone>$()
-  method   public bool Equals(KatLang.CallableBindingPlan? other)
-  method   public override bool Equals(object? obj)
-  method   public static KatLang.CallableBindingPlan FromSignature(KatLang.CallableSignature signature)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  method   public bool TryGetFlatCollectingLayout(out System.Collections.Generic.IReadOnlyList<KatLang.CaptureBindingNode> prefix, out KatLang.CollectingCaptureBindingNode collecting, out System.Collections.Generic.IReadOnlyList<KatLang.CaptureBindingNode> suffix)
-  method   public bool TryGetFlatFixedLayout(out System.Collections.Generic.IReadOnlyList<KatLang.CaptureBindingNode> captures)
-  operator public static bool op_Equality(KatLang.CallableBindingPlan? left, KatLang.CallableBindingPlan? right)
-  operator public static bool op_Inequality(KatLang.CallableBindingPlan? left, KatLang.CallableBindingPlan? right)
-
-public sealed record KatLang.CallableParameter : System.IEquatable<KatLang.CallableParameter>
-  ctor     public CallableParameter(string Name, KatLang.ParameterKind Kind = KatLang.ParameterKind.Normal, KatLang.CallableParameterSource Source = KatLang.CallableParameterSource.Explicit, KatLang.ParameterPattern? DeclaringPattern = null)
-  property public KatLang.ParameterPattern? DeclaringPattern { get; init; }
-  property public string DisplayName { get; }
-  property public KatLang.ParameterKind Kind { get; init; }
-  property public string Name { get; init; }
-  property public KatLang.CallableParameterSource Source { get; init; }
-  method   public KatLang.CallableParameter <Clone>$()
-  method   public void Deconstruct(out string Name, out KatLang.ParameterKind Kind, out KatLang.CallableParameterSource Source, out KatLang.ParameterPattern? DeclaringPattern)
-  method   public bool Equals(KatLang.CallableParameter? other)
-  method   public override bool Equals(object? obj)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CallableParameter? left, KatLang.CallableParameter? right)
-  operator public static bool op_Inequality(KatLang.CallableParameter? left, KatLang.CallableParameter? right)
-
-public enum KatLang.CallableParameterSource : int
-  Explicit = 0
-  Implicit = 1
-  Builtin = 2
-  Synthetic = 3
-
-public sealed record KatLang.CallableSignature : System.IEquatable<KatLang.CallableSignature>
-  ctor     public CallableSignature(string name, System.Collections.Generic.IReadOnlyList<KatLang.CallableParameter> parameters)
-  property public KatLang.CallableArityFacts ArityFacts { get; }
-  property public int CollectingParameterCount { get; }
-  property public int CollectingParameterIndex { get; }
-  property public string DisplayText { get; }
-  property public int FlattenedParameterCount { get; }
-  property public bool HasAtMostOneCollectingParameter { get; }
-  property public bool HasCollectingParameter { get; }
-  property public bool HasExplicitParameterList { get; }
-  property public bool HasSequenceValueParameterPattern { get; }
-  property public string Name { get; }
-  property public System.Collections.Generic.IReadOnlyList<string> ParameterNames { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> ParameterPatterns { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableParameter> Parameters { get; }
-  property [Obsolete("Use TopLevelParameterCount for structural shape or ArityFacts.MinTopLevelArgumentCount for callable minimum arity.")] public int RequiredNormalParameterCount { get; }
-  property public int TopLevelParameterCount { get; }
-  method   public KatLang.CallableSignature <Clone>$()
-  method   public bool AcceptsItemCount(int itemCount)
-  method   public bool Equals(KatLang.CallableSignature? other)
-  method   public override bool Equals(object? obj)
-  method   public static string FormatDisplayText(string name, System.Collections.Generic.IEnumerable<string> parameterDisplayNames)
-  method   public static KatLang.CallableSignature FromAlgorithm(string name, KatLang.Algorithm algorithm)
-  method   public static KatLang.CallableSignature FromBuiltin(KatLang.BuiltinId builtin)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  method   public KatLang.EvalError? Validate()
-  method   public string? ValidateMessage()
-  method   public void ValidateOrThrow()
-  operator public static bool op_Equality(KatLang.CallableSignature? left, KatLang.CallableSignature? right)
-  operator public static bool op_Inequality(KatLang.CallableSignature? left, KatLang.CallableSignature? right)
-
-public static class KatLang.CallableSignatureDiagnostics
-  method   public static string FormatBadArity(KatLang.CallableSignature signature, int actualArgumentCount)
-  method   public static string FormatExpectedArgumentCount(KatLang.CallableArityFacts facts)
-  method   public static string FormatExpectedSignature(KatLang.CallableSignature signature)
-  method   public static string FormatMultipleTopLevelCollectingCaptures(KatLang.CallableSignature signature)
-  method   public static KatLang.CallableArityFacts GetArityFacts(KatLang.CallableSignature signature)
-  method   public static int TopLevelCollectingIndex(KatLang.CallableSignature signature)
-
-public sealed record KatLang.CaptureBindingNode : KatLang.CallableBindingNode, System.IEquatable<KatLang.CaptureBindingNode>
-  ctor     public CaptureBindingNode(KatLang.CallableBindingCapture Capture)
-  property public KatLang.CallableBindingCapture Capture { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property protected override System.Type EqualityContract { get; }
-  property public KatLang.ParameterKind Kind { get; }
-  property public string Name { get; }
-  property public KatLang.CallableParameterSource Source { get; }
-  method   public virtual KatLang.CaptureBindingNode <Clone>$()
-  method   public void Deconstruct(out KatLang.CallableBindingCapture Capture)
-  method   public bool Equals(KatLang.CaptureBindingNode? other)
-  method   public override bool Equals(object? obj)
-  method   public sealed override bool Equals(KatLang.CallableBindingNode? other)
-  method   public override int GetHashCode()
-  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CaptureBindingNode? left, KatLang.CaptureBindingNode? right)
-  operator public static bool op_Inequality(KatLang.CaptureBindingNode? left, KatLang.CaptureBindingNode? right)
 
 public sealed record KatLang.CaptureParameterPattern : KatLang.ParameterPattern, System.IEquatable<KatLang.CaptureParameterPattern>
   ctor     public CaptureParameterPattern(KatLang.ParameterDeclaration Parameter)
@@ -335,26 +183,6 @@ public sealed record KatLang.CaptureParameterPattern : KatLang.ParameterPattern,
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.CaptureParameterPattern? left, KatLang.CaptureParameterPattern? right)
   operator public static bool op_Inequality(KatLang.CaptureParameterPattern? left, KatLang.CaptureParameterPattern? right)
-
-public sealed record KatLang.CollectingCaptureBindingNode : KatLang.CallableBindingNode, System.IEquatable<KatLang.CollectingCaptureBindingNode>
-  ctor     public CollectingCaptureBindingNode(KatLang.CallableBindingCapture Capture, bool IsTopLevel)
-  property public KatLang.CallableBindingCapture Capture { get; init; }
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property protected override System.Type EqualityContract { get; }
-  property public bool IsTopLevel { get; init; }
-  property public KatLang.ParameterKind Kind { get; }
-  property public string Name { get; }
-  property public KatLang.CallableParameterSource Source { get; }
-  method   public virtual KatLang.CollectingCaptureBindingNode <Clone>$()
-  method   public void Deconstruct(out KatLang.CallableBindingCapture Capture, out bool IsTopLevel)
-  method   public bool Equals(KatLang.CollectingCaptureBindingNode? other)
-  method   public override bool Equals(object? obj)
-  method   public sealed override bool Equals(KatLang.CallableBindingNode? other)
-  method   public override int GetHashCode()
-  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.CollectingCaptureBindingNode? left, KatLang.CollectingCaptureBindingNode? right)
-  operator public static bool op_Inequality(KatLang.CollectingCaptureBindingNode? left, KatLang.CollectingCaptureBindingNode? right)
 
 public sealed record KatLang.ComparisonLink : System.IEquatable<KatLang.ComparisonLink>
   ctor     public ComparisonLink(KatLang.ComparisonOp Op, KatLang.Expr Operand)
@@ -403,7 +231,6 @@ public sealed record KatLang.DeconstructionBindingContext : KatLang.ErrorContext
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.DeconstructionBindingContext? left, KatLang.DeconstructionBindingContext? right)
   operator public static bool op_Inequality(KatLang.DeconstructionBindingContext? left, KatLang.DeconstructionBindingContext? right)
 
@@ -493,7 +320,6 @@ public sealed record KatLang.DotCallContext : KatLang.ErrorContext, System.IEqua
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.DotCallContext? left, KatLang.DotCallContext? right)
   operator public static bool op_Inequality(KatLang.DotCallContext? left, KatLang.DotCallContext? right)
 
@@ -506,7 +332,6 @@ public closed record KatLang.ErrorContext : System.IEquatable<KatLang.ErrorConte
   method   public virtual bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
-  method   public abstract string ToLegacyString()
   method   public sealed override string ToString()
   operator public static bool op_Equality(KatLang.ErrorContext? left, KatLang.ErrorContext? right)
   operator public static bool op_Inequality(KatLang.ErrorContext? left, KatLang.ErrorContext? right)
@@ -547,7 +372,6 @@ public sealed record KatLang.EvalError.ArityMismatch : KatLang.EvalError, System
   property public int Actual { get; init; }
   property protected override System.Type EqualityContract { get; }
   property public int Expected { get; init; }
-  property public KatLang.CallableSignature? Signature { get; init; }
   method   public virtual KatLang.EvalError.ArityMismatch <Clone>$()
   method   public void Deconstruct(out int Expected, out int Actual)
   method   public bool Equals(KatLang.EvalError.ArityMismatch? other)
@@ -1023,7 +847,6 @@ public sealed record KatLang.EvalError.VariadicArityMismatch : KatLang.EvalError
   property public string CalleeName { get; init; }
   property protected override System.Type EqualityContract { get; }
   property public int ExpectedMinimum { get; init; }
-  property public KatLang.CallableSignature? Signature { get; init; }
   method   public virtual KatLang.EvalError.VariadicArityMismatch <Clone>$()
   method   public void Deconstruct(out string CalleeName, out int ExpectedMinimum, out int Actual)
   method   public bool Equals(KatLang.EvalError.VariadicArityMismatch? other)
@@ -1091,22 +914,22 @@ public static class KatLang.Evaluator
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
-  method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<KatLang.Result> Run(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
-  method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<KatLang.Result>> RunAsync(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
+  method   public static KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> RunFlat(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, System.Threading.CancellationToken cancellationToken)
   method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
+  method   public static System.Threading.Tasks.Task<KatLang.EvalResult<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>>> RunFlatAsync(KatLang.Expr expr, KatLang.HostOperations hostOperations, KatLang.EvaluationLimits? limits, long? randomSeed, System.Threading.CancellationToken cancellationToken)
 
 public closed record KatLang.Expr : System.IEquatable<KatLang.Expr>
   ctor     protected Expr(KatLang.Expr original)
@@ -1492,15 +1315,12 @@ public sealed record KatLang.ImplicitParameterContext : KatLang.ErrorContext, Sy
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.ImplicitParameterContext? left, KatLang.ImplicitParameterContext? right)
   operator public static bool op_Inequality(KatLang.ImplicitParameterContext? left, KatLang.ImplicitParameterContext? right)
 
 public static class KatLang.KatLangEngine
   method   public static System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> EvaluateToAtoms(string source, KatLang.RunOptions? options = null)
   method   public static System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> EvaluateToAtomsAsync(string source, KatLang.RunOptions? options = null)
-  method   public static string EvaluateToString(string source, KatLang.RunOptions? options = null)
-  method   public static System.Threading.Tasks.Task<string> EvaluateToStringAsync(string source, KatLang.RunOptions? options = null)
   method   public static KatLang.RunResult Run(string source, KatLang.RunOptions? options = null)
   method   public static System.Threading.Tasks.Task<KatLang.RunResult> RunAsync(string source, KatLang.RunOptions? options = null)
 
@@ -1606,7 +1426,6 @@ public sealed record KatLang.LoopStateBindingContext : KatLang.ErrorContext, Sys
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.LoopStateBindingContext? left, KatLang.LoopStateBindingContext? right)
   operator public static bool op_Inequality(KatLang.LoopStateBindingContext? left, KatLang.LoopStateBindingContext? right)
 
@@ -1621,7 +1440,6 @@ public sealed record KatLang.OpenResolutionContext : KatLang.ErrorContext, Syste
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.OpenResolutionContext? left, KatLang.OpenResolutionContext? right)
   operator public static bool op_Inequality(KatLang.OpenResolutionContext? left, KatLang.OpenResolutionContext? right)
 
@@ -1664,7 +1482,6 @@ public sealed record KatLang.ParameterEvaluationContext : KatLang.ErrorContext, 
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.ParameterEvaluationContext? left, KatLang.ParameterEvaluationContext? right)
   operator public static bool op_Inequality(KatLang.ParameterEvaluationContext? left, KatLang.ParameterEvaluationContext? right)
 
@@ -1694,10 +1511,9 @@ public closed record KatLang.ParameterPattern : System.IEquatable<KatLang.Parame
   operator public static bool op_Inequality(KatLang.ParameterPattern? left, KatLang.ParameterPattern? right)
 
 public sealed record KatLang.ParseResult : System.IEquatable<KatLang.ParseResult>
-  ctor     public ParseResult(KatLang.Algorithm.User Root, System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
-  property public System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics { get; }
   property public bool HasErrors { get; }
-  property public KatLang.Algorithm.User Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; }
   method   public KatLang.ParseResult <Clone>$()
   method   public void Deconstruct(out KatLang.Algorithm.User Root, out System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics)
   method   public bool Equals(KatLang.ParseResult? other)
@@ -1806,25 +1622,6 @@ public sealed record KatLang.Pattern.SequenceValue : KatLang.Pattern, System.IEq
   operator public static bool op_Equality(KatLang.Pattern.SequenceValue? left, KatLang.Pattern.SequenceValue? right)
   operator public static bool op_Inequality(KatLang.Pattern.SequenceValue? left, KatLang.Pattern.SequenceValue? right)
 
-public sealed record KatLang.PatternListBindingPlan : System.IEquatable<KatLang.PatternListBindingPlan>
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property public KatLang.CollectingCaptureBindingNode? CollectingCapture { get; }
-  property public int CollectingCountAtThisLevel { get; }
-  property public bool HasCollectingAtThisLevel { get; }
-  property public bool HasCollectingInDescendants { get; }
-  property public int? MaxSlotCount { get; }
-  property public int MinSlotCount { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingNode> Nodes { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingNode> Prefix { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingNode> Suffix { get; }
-  method   public KatLang.PatternListBindingPlan <Clone>$()
-  method   public bool Equals(KatLang.PatternListBindingPlan? other)
-  method   public override bool Equals(object? obj)
-  method   public override int GetHashCode()
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.PatternListBindingPlan? left, KatLang.PatternListBindingPlan? right)
-  operator public static bool op_Inequality(KatLang.PatternListBindingPlan? left, KatLang.PatternListBindingPlan? right)
-
 public sealed record KatLang.ProgramEvaluationContext : KatLang.ErrorContext, System.IEquatable<KatLang.ProgramEvaluationContext>
   ctor     public ProgramEvaluationContext()
   property protected override System.Type EqualityContract { get; }
@@ -1834,7 +1631,6 @@ public sealed record KatLang.ProgramEvaluationContext : KatLang.ErrorContext, Sy
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.ProgramEvaluationContext? left, KatLang.ProgramEvaluationContext? right)
   operator public static bool op_Inequality(KatLang.ProgramEvaluationContext? left, KatLang.ProgramEvaluationContext? right)
 
@@ -1866,7 +1662,6 @@ public sealed record KatLang.PropertyEvaluationContext : KatLang.ErrorContext, S
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.PropertyEvaluationContext? left, KatLang.PropertyEvaluationContext? right)
   operator public static bool op_Inequality(KatLang.PropertyEvaluationContext? left, KatLang.PropertyEvaluationContext? right)
 
@@ -1886,7 +1681,6 @@ public sealed record KatLang.ReduceInitialAccumulatorContext : KatLang.ErrorCont
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.ReduceInitialAccumulatorContext? left, KatLang.ReduceInitialAccumulatorContext? right)
   operator public static bool op_Inequality(KatLang.ReduceInitialAccumulatorContext? left, KatLang.ReduceInitialAccumulatorContext? right)
 
@@ -1896,23 +1690,12 @@ public closed record KatLang.Result : System.IEquatable<KatLang.Result>
   property public static System.Collections.Generic.IEqualityComparer<KatLang.Result> ValueComparer { get; }
   method   public abstract KatLang.Result <Clone>$()
   method   public bool? AsBool()
-  method   public int? AsIndex()
   method   public System.Numerics.Decimal128? AsNum()
   method   public override bool Equals(object? obj)
   method   public virtual bool Equals(KatLang.Result? other)
-  method   public static KatLang.Result FromItems(System.Collections.Generic.IEnumerable<KatLang.Result> items)
   method   public override int GetHashCode()
-  method   public KatLang.Result? Index(int i)
-  method   public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> LanguageAtoms()
-  method   public KatLang.Result Normalize()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
-  method   public System.Numerics.Decimal128? SingleAtomicNumber()
-  method   public System.Collections.Generic.IReadOnlyList<KatLang.Result> SpreadItems()
-  method   public System.Collections.Generic.IReadOnlyList<KatLang.Result>? StructureItems()
-  method   public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> ToHostAtoms()
-  method   public System.Collections.Generic.IReadOnlyList<KatLang.Result> ToItems()
   method   public override string ToString()
-  method   public int ValueCount()
   operator public static bool op_Equality(KatLang.Result? left, KatLang.Result? right)
   operator public static bool op_Inequality(KatLang.Result? left, KatLang.Result? right)
 
@@ -2022,10 +1805,9 @@ public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   operator public static bool op_Inequality(KatLang.RunResult? left, KatLang.RunResult? right)
 
 public sealed record KatLang.RunResult.EvalFailure : KatLang.RunResult, System.IEquatable<KatLang.RunResult.EvalFailure>
-  ctor     public EvalFailure(KatLang.Algorithm.User Root, System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   property protected override System.Type EqualityContract { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors { get; init; }
-  property public KatLang.Algorithm.User Root { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors { get; }
+  property public KatLang.Algorithm.User Root { get; }
   method   public virtual KatLang.RunResult.EvalFailure <Clone>$()
   method   public void Deconstruct(out KatLang.Algorithm.User Root, out System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   method   public bool Equals(KatLang.RunResult.EvalFailure? other)
@@ -2038,12 +1820,10 @@ public sealed record KatLang.RunResult.EvalFailure : KatLang.RunResult, System.I
   operator public static bool op_Inequality(KatLang.RunResult.EvalFailure? left, KatLang.RunResult.EvalFailure? right)
 
 public sealed record KatLang.RunResult.NoProgramOutput : KatLang.RunResult, System.IEquatable<KatLang.RunResult.NoProgramOutput>
-  const    public const string DefaultMessage = "No output defined.\nThis program defines properties, but does not specify what to return.\nAdd an output expression, or use `()` if the empty sequence value was intended."
-  ctor     public NoProgramOutput(KatLang.Algorithm.User Root, KatLang.KatLangError Diagnostic)
-  property public KatLang.KatLangError Diagnostic { get; init; }
+  property public KatLang.KatLangError Diagnostic { get; }
   property protected override System.Type EqualityContract { get; }
   property public string Message { get; }
-  property public KatLang.Algorithm.User Root { get; init; }
+  property public KatLang.Algorithm.User Root { get; }
   method   public virtual KatLang.RunResult.NoProgramOutput <Clone>$()
   method   public void Deconstruct(out KatLang.Algorithm.User Root, out KatLang.KatLangError Diagnostic)
   method   public bool Equals(KatLang.RunResult.NoProgramOutput? other)
@@ -2056,9 +1836,8 @@ public sealed record KatLang.RunResult.NoProgramOutput : KatLang.RunResult, Syst
   operator public static bool op_Inequality(KatLang.RunResult.NoProgramOutput? left, KatLang.RunResult.NoProgramOutput? right)
 
 public sealed record KatLang.RunResult.ParseFailure : KatLang.RunResult, System.IEquatable<KatLang.RunResult.ParseFailure>
-  ctor     public ParseFailure(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   property protected override System.Type EqualityContract { get; }
-  property public System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors { get; }
   method   public virtual KatLang.RunResult.ParseFailure <Clone>$()
   method   public void Deconstruct(out System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> Errors)
   method   public bool Equals(KatLang.RunResult.ParseFailure? other)
@@ -2071,12 +1850,11 @@ public sealed record KatLang.RunResult.ParseFailure : KatLang.RunResult, System.
   operator public static bool op_Inequality(KatLang.RunResult.ParseFailure? left, KatLang.RunResult.ParseFailure? right)
 
 public sealed record KatLang.RunResult.Success : KatLang.RunResult, System.IEquatable<KatLang.RunResult.Success>
-  ctor     public Success(KatLang.Algorithm.User Root, KatLang.Result Value, System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
-  property public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms { get; }
   property protected override System.Type EqualityContract { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Result> OutputRows { get; }
-  property public KatLang.Algorithm.User Root { get; init; }
-  property public KatLang.Result Value { get; init; }
+  property public KatLang.Algorithm.User Root { get; }
+  property public KatLang.Result Value { get; }
   method   public virtual KatLang.RunResult.Success <Clone>$()
   method   public void Deconstruct(out KatLang.Algorithm.User Root, out KatLang.Result Value, out System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms)
   method   public bool Equals(KatLang.RunResult.Success? other)
@@ -2096,7 +1874,6 @@ public sealed record KatLang.ScopeCtx : System.IEquatable<KatLang.ScopeCtx>
   property public KatLang.ScopeCtx? Parent { get; init; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
   method   public KatLang.ScopeCtx <Clone>$()
-  method   public void Deconstruct(out KatLang.ScopeCtx? Parent, out System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, out System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties)
   method   public void Deconstruct(out KatLang.ScopeCtx? Parent, out System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, out System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, out System.Collections.Generic.IReadOnlyList<string> Parameters)
   method   public bool Equals(KatLang.ScopeCtx? other)
   method   public override bool Equals(object? obj)
@@ -2141,7 +1918,6 @@ public enum KatLang.Semantics.IdentifierClassification : int
   ConditionalBinderDefinition = 5
   ConditionalBinderReference = 6
   Builtin = 7
-  LoadedExternalMemberReference = 8
   OpenTarget = 9
   Unresolved = 10
   DeferredModuleReference = 11
@@ -2291,7 +2067,6 @@ public sealed record KatLang.Semantics.ScopeVisibility : System.IEquatable<KatLa
   operator public static bool op_Inequality(KatLang.Semantics.ScopeVisibility? left, KatLang.Semantics.ScopeVisibility? right)
 
 public sealed class KatLang.Semantics.SemanticModel
-  ctor     public SemanticModel(KatLang.Algorithm root, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierOccurrence> identifierOccurrences, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.DeclarationOccurrence> declarations, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierResolution> identifierResolutions, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.PropertyInfo> propertyInfos, System.Collections.Generic.IReadOnlyDictionary<KatLang.Semantics.DeclarationOccurrence, KatLang.Semantics.PropertyInfo> propertiesByDeclaration, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.ScopeVisibility>? scopeVisibilities = null)
   property public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.DeclarationOccurrence> Declarations { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierOccurrence> IdentifierOccurrences { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierResolution> IdentifierResolutions { get; }
@@ -2310,12 +2085,6 @@ public sealed class KatLang.Semantics.SemanticModel
 public static class KatLang.Semantics.SemanticModelBuilder
   method   public static KatLang.Semantics.SemanticModel Build(KatLang.Algorithm root)
   method   public static KatLang.Semantics.SemanticModel Build(KatLang.ParseResult parseResult)
-  method   public static System.Collections.Generic.IReadOnlyList<KatLang.Semantics.DeclarationOccurrence> EnumerateDeclarationOccurrences(KatLang.Algorithm root)
-  method   public static System.Collections.Generic.IReadOnlyList<KatLang.Semantics.IdentifierOccurrence> EnumerateIdentifierOccurrences(KatLang.Algorithm root)
-  method   public static System.Collections.Generic.IReadOnlyList<KatLang.Semantics.PropertyInfo> EnumeratePropertyInfos(KatLang.Algorithm root)
-
-public abstract class KatLang.Semantics.SyntaxWalker : KatLang.AstWalker
-  ctor     protected SyntaxWalker()
 
 public sealed record KatLang.Semantics.VisibleSymbol : System.IEquatable<KatLang.Semantics.VisibleSymbol>
   ctor     public VisibleSymbol(string Name, KatLang.Semantics.IdentifierClassification Classification, KatLang.Semantics.DeclarationOccurrence? Declaration, KatLang.Semantics.PropertyInfo? Property, System.Collections.Generic.IReadOnlyList<KatLang.Semantics.VisibleSymbol>? Members = null)
@@ -2332,22 +2101,6 @@ public sealed record KatLang.Semantics.VisibleSymbol : System.IEquatable<KatLang
   operator public static bool op_Equality(KatLang.Semantics.VisibleSymbol? left, KatLang.Semantics.VisibleSymbol? right)
   operator public static bool op_Inequality(KatLang.Semantics.VisibleSymbol? left, KatLang.Semantics.VisibleSymbol? right)
 
-public sealed record KatLang.SequenceValueBindingNode : KatLang.CallableBindingNode, System.IEquatable<KatLang.SequenceValueBindingNode>
-  ctor     public SequenceValueBindingNode(KatLang.PatternListBindingPlan Children)
-  property public override System.Collections.Generic.IReadOnlyList<KatLang.CallableBindingCapture> Captures { get; }
-  property public KatLang.PatternListBindingPlan Children { get; init; }
-  property protected override System.Type EqualityContract { get; }
-  method   public virtual KatLang.SequenceValueBindingNode <Clone>$()
-  method   public void Deconstruct(out KatLang.PatternListBindingPlan Children)
-  method   public bool Equals(KatLang.SequenceValueBindingNode? other)
-  method   public override bool Equals(object? obj)
-  method   public sealed override bool Equals(KatLang.CallableBindingNode? other)
-  method   public override int GetHashCode()
-  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToString()
-  operator public static bool op_Equality(KatLang.SequenceValueBindingNode? left, KatLang.SequenceValueBindingNode? right)
-  operator public static bool op_Inequality(KatLang.SequenceValueBindingNode? left, KatLang.SequenceValueBindingNode? right)
-
 public sealed record KatLang.SequenceValueParameterBindingContext : KatLang.ErrorContext, System.IEquatable<KatLang.SequenceValueParameterBindingContext>
   ctor     public SequenceValueParameterBindingContext(string PatternDisplayName, bool HasCollectingItem)
   property protected override System.Type EqualityContract { get; }
@@ -2360,7 +2113,6 @@ public sealed record KatLang.SequenceValueParameterBindingContext : KatLang.Erro
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.SequenceValueParameterBindingContext? left, KatLang.SequenceValueParameterBindingContext? right)
   operator public static bool op_Inequality(KatLang.SequenceValueParameterBindingContext? left, KatLang.SequenceValueParameterBindingContext? right)
 
@@ -2446,7 +2198,6 @@ public sealed record KatLang.TextErrorContext : KatLang.ErrorContext, System.IEq
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.TextErrorContext? left, KatLang.TextErrorContext? right)
   operator public static bool op_Inequality(KatLang.TextErrorContext? left, KatLang.TextErrorContext? right)
 
@@ -2526,6 +2277,5 @@ public sealed record KatLang.VariadicLoopStateBindingContext : KatLang.ErrorCont
   method   public sealed override bool Equals(KatLang.ErrorContext? other)
   method   public override int GetHashCode()
   method   protected override bool PrintMembers(System.Text.StringBuilder builder)
-  method   public override string ToLegacyString()
   operator public static bool op_Equality(KatLang.VariadicLoopStateBindingContext? left, KatLang.VariadicLoopStateBindingContext? right)
   operator public static bool op_Inequality(KatLang.VariadicLoopStateBindingContext? left, KatLang.VariadicLoopStateBindingContext? right)

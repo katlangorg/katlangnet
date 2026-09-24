@@ -91,6 +91,10 @@ internal sealed class BoundedDisplayWriter(int limit) : IDisplaySink
 /// variants, no other assembly can derive from it, and a switch EXPRESSION
 /// naming all four is compiler-exhaustive with no catch-all arm (a switch
 /// statement receives no such guarantee).
+/// Instances are produced only by the engine. Their payloads are read-only: hosts cannot
+/// manufacture or rewrite a result whose value, numeric projection, output rows, and display
+/// configuration describe different runs. The exposed AST is an advanced representation,
+/// not a deeply immutable syntax snapshot.
 /// </summary>
 public closed record RunResult
 {
@@ -108,15 +112,34 @@ public closed record RunResult
     public bool IsFailure => this is ParseFailure or EvalFailure;
 
     /// <summary>Parse and evaluation succeeded.</summary>
-    /// <param name="Root">The elaborated program.</param>
-    /// <param name="Value">The complete structured result, including Booleans and strings.</param>
-    /// <param name="Atoms">Lossy numeric projection through sequences and lists; Booleans and strings are omitted.</param>
-    public sealed record Success(
-        Algorithm.User Root,
-        Result Value,
-        IReadOnlyList<Decimal128> Atoms) : RunResult
+    public sealed record Success : RunResult
     {
-        internal int EmittedCount { get; init; } = Value.ValueCount();
+        internal Success(Algorithm.User Root, Result Value, IReadOnlyList<Decimal128> Atoms)
+        {
+            this.Root = Root;
+            this.Value = Value;
+            this.Atoms = Atoms;
+            EmittedCount = Value.ValueCount();
+        }
+
+        /// <summary>The elaborated program.</summary>
+        public Algorithm.User Root { get; }
+
+        /// <summary>The complete structured result, including Booleans and strings.</summary>
+        public Result Value { get; }
+
+        /// <summary>
+        /// Eager, read-only numeric projection through sequences and lists; Booleans and
+        /// strings are omitted. Its size is bounded by the run's effective
+        /// <see cref="EvaluationLimits.MaxCollectionItems"/>; exceeding that bound produces
+        /// an evaluation failure instead of a success. Display uses <see cref="OutputRows"/>.
+        /// </summary>
+        public IReadOnlyList<Decimal128> Atoms { get; }
+
+        public void Deconstruct(out Algorithm.User Root, out Result Value, out IReadOnlyList<Decimal128> Atoms)
+            => (Root, Value, Atoms) = (this.Root, this.Value, this.Atoms);
+
+        internal int EmittedCount { get; init; }
 
         /// <summary>
         /// The separately produced top-level output rows, exactly as canonical
@@ -155,26 +178,52 @@ public closed record RunResult
     }
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
-    public sealed record NoProgramOutput(
-        Algorithm.User Root,
-        KatLangError Diagnostic) : RunResult
+    public sealed record NoProgramOutput : RunResult
     {
-        public const string DefaultMessage =
+        internal NoProgramOutput(Algorithm.User Root, KatLangError Diagnostic)
+            => (this.Root, this.Diagnostic) = (Root, Diagnostic);
+
+        public Algorithm.User Root { get; }
+        public KatLangError Diagnostic { get; }
+
+        public void Deconstruct(out Algorithm.User Root, out KatLangError Diagnostic)
+            => (Root, Diagnostic) = (this.Root, this.Diagnostic);
+
+        internal const string DefaultMessage =
             "No output defined.\n" +
             "This program defines properties, but does not specify what to return.\n" +
             "Add an output expression, or use `()` if the empty sequence value was intended.";
 
+        /// <summary>
+        /// The human-readable explanation, <see cref="KatLangError.Message"/> of
+        /// <see cref="Diagnostic"/>. Presentation text only: classify through
+        /// <see cref="KatLangError.Code"/>, never by comparing this string.
+        /// </summary>
         public string Message => Diagnostic.Message;
     }
 
     /// <summary>Parsing failed — no executable root was produced.</summary>
-    public sealed record ParseFailure(
-        IReadOnlyList<KatLangError> Errors) : RunResult;
+    public sealed record ParseFailure : RunResult
+    {
+        internal ParseFailure(IReadOnlyList<KatLangError> Errors) => this.Errors = Errors;
+
+        public IReadOnlyList<KatLangError> Errors { get; }
+
+        public void Deconstruct(out IReadOnlyList<KatLangError> Errors) => Errors = this.Errors;
+    }
 
     /// <summary>Evaluation failed after a successful parse.</summary>
-    public sealed record EvalFailure(
-        Algorithm.User Root,
-        IReadOnlyList<KatLangError> Errors) : RunResult;
+    public sealed record EvalFailure : RunResult
+    {
+        internal EvalFailure(Algorithm.User Root, IReadOnlyList<KatLangError> Errors)
+            => (this.Root, this.Errors) = (Root, Errors);
+
+        public Algorithm.User Root { get; }
+        public IReadOnlyList<KatLangError> Errors { get; }
+
+        public void Deconstruct(out Algorithm.User Root, out IReadOnlyList<KatLangError> Errors)
+            => (Root, Errors) = (this.Root, this.Errors);
+    }
 
     /// <summary>
     /// Returns a human-readable display string.
@@ -304,9 +353,23 @@ public closed record RunResult
 }
 
 /// <summary>
-/// Public façade for KatLang: parse and evaluate in one step.
-/// Hides internal details such as <see cref="Expr.AlgorithmExpr"/> wrapping.
-/// For advanced/internal use, <see cref="Parser"/> and <see cref="Evaluator"/> remain available.
+/// The primary entry point for embedding KatLang: parse, elaborate, and evaluate source text
+/// in one call and receive a structured <see cref="RunResult"/>.
+/// <code>
+/// var result = KatLangEngine.Run("1 + 2");
+/// if (result is RunResult.Success success)
+///     Console.WriteLine(success.ToDisplayString()); // 3
+/// </code>
+/// <para>Everything a run can be configured with — resource limits, cancellation, host
+/// operations, module loading, a random seed, and a default display precision — is supplied
+/// per run through one <see cref="RunOptions"/> object. <see cref="RunAsync"/> is the
+/// asynchronous counterpart and the entry point for module loading and asynchronous host
+/// operations; <see cref="EvaluateToAtoms"/> is a numeric-only convenience.</para>
+/// <para>Two lower layers are public for advanced hosts: <see cref="Parser"/> runs the same
+/// complete front end without evaluating (validation and editor tooling), and
+/// <see cref="Evaluator"/> evaluates a host-built <see cref="Expr"/> exactly as supplied —
+/// without parsing, module loading, front-end elaboration, or the program's
+/// <c>DisplayDecimals</c> setting — so it is not a source runner.</para>
 /// </summary>
 public static class KatLangEngine
 {
@@ -329,14 +392,30 @@ public static class KatLangEngine
     /// or the configured evaluation token was cancelled before or during evaluation.
     /// Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation, or
     /// <see cref="RunOptions.DownloadCode"/> is configured — either way this synchronous
     /// entry point would have to suspend, which it cannot do; use
     /// <see cref="RunAsync"/>. Thrown before any parsing or evaluation.
     /// </exception>
+    /// <remarks>
+    /// A KatLang program's own failures — syntax and elaboration errors, failed
+    /// <c>load</c>s (a faulting or cancelled downloader included), evaluation errors, and
+    /// resource limits — are never thrown: they are structured <see cref="RunResult"/>
+    /// variants. Only host misuse (the arguments and configuration above), host
+    /// cancellation, and exceptions thrown by <see cref="HostOperation"/> delegates escape
+    /// as CLR exceptions. The engine keeps no state between calls, so it may be called
+    /// concurrently, also with one shared <see cref="RunOptions"/> instance; host-supplied
+    /// delegates (<see cref="RunOptions.DownloadCode"/>, host operations) must then tolerate
+    /// concurrent invocation themselves.
+    /// </remarks>
     public static RunResult Run(string source, RunOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(source);
         var hostOperations = options?.HostOperations;
         // Fail fast on a configuration this synchronous entry point can never honor:
         // an asynchronous host operation completes only by suspending evaluation.
@@ -374,8 +453,8 @@ public static class KatLangEngine
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
-            evaluationCancellationToken,
-            options?.RandomSeed);
+            options?.RandomSeed,
+            evaluationCancellationToken);
 
         return ProjectEvaluationOutcome(
             frontEndResult,
@@ -418,14 +497,24 @@ public static class KatLangEngine
     /// resource-limit failures, never a process crash.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>; as with any
-    /// async API, the exception is delivered through the returned task.
+    /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>.
     /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// </exception>
+    /// <remarks>
+    /// Program failures are structured <see cref="RunResult"/> variants exactly as for
+    /// <see cref="Run(string, RunOptions?)"/>. Every exception of this method — argument
+    /// and configuration validation, cancellation, and host-operation exceptions alike — is
+    /// delivered through the returned task, never thrown by the call itself.
+    /// </remarks>
     public static async Task<RunResult> RunAsync(string source, RunOptions? options = null)
     {
         // MIRROR OF Run(string, RunOptions?) — keep in lock-step; only front-end module
         // acquisition and the evaluation calls are awaited, through the async front-end
         // pipeline and the evaluator's async entry points.
+        ArgumentNullException.ThrowIfNull(source);
         var hostOperations = options?.HostOperations;
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
@@ -452,8 +541,8 @@ public static class KatLangEngine
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
-            evaluationCancellationToken,
-            options?.RandomSeed).ConfigureAwait(false);
+            options?.RandomSeed,
+            evaluationCancellationToken).ConfigureAwait(false);
 
         return ProjectEvaluationOutcome(
             frontEndResult,
@@ -477,9 +566,10 @@ public static class KatLangEngine
         var parseErrors = frontEndResult.Diagnostics
             .Where(d => d.Severity == DiagnosticSeverity.Error)
             .Select(KatLangError.FromDiagnostic)
-            .ToList();
+            .ToArray();
 
-        return new RunResult.ParseFailure(parseErrors)
+        // Published results are read-only views, so a consumer cannot change one through a cast.
+        return new RunResult.ParseFailure(Array.AsReadOnly(parseErrors))
         {
             DisplayOptions = diagnosticDisplayOptions,
         };
@@ -508,7 +598,7 @@ public static class KatLangEngine
                     DisplayOptions = diagnosticDisplayOptions,
                 };
 
-            var evalErrors = new[] { evalError };
+            var evalErrors = Array.AsReadOnly(new[] { evalError });
             return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors)
             {
                 DisplayOptions = diagnosticDisplayOptions,
@@ -561,15 +651,30 @@ public static class KatLangEngine
     }
 
     /// <summary>
-    /// Parse and evaluate, returning the flat list of numeric atoms on success.
-    /// This is a lossy projection: strings, Booleans, and structure boundaries are omitted.
-    /// Use <see cref="Run(string, RunOptions?)"/> to retain the complete value.
-    /// Throws <see cref="KatLangException"/> on parse or evaluation failure.
+    /// Parse and evaluate, returning the flat list of numeric atoms on success: the
+    /// <see cref="RunResult.Success.Atoms"/> of <see cref="Run(string, RunOptions?)"/>.
+    /// This is a lossy projection for numeric hosts: strings, Booleans, and structure
+    /// boundaries are omitted, so it is not a display or serialization of the result. Use
+    /// <see cref="Run(string, RunOptions?)"/> to retain the complete value and render it
+    /// (<see cref="RunResult.ToDisplayString"/>, <see cref="RunResult.RenderDisplay"/>, or an
+    /// <see cref="Formatting.OutputFormatter"/>).
     /// </summary>
+    /// <exception cref="KatLangException">
+    /// The program did not succeed — a parse or elaboration failure, an evaluation failure,
+    /// or a program without output. <see cref="KatLangException.Errors"/> carries the same
+    /// structured errors the corresponding <see cref="RunResult"/> variant would.
+    /// </exception>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
     /// or the configured evaluation token was cancelled before or during evaluation —
     /// cancellation propagates and is never wrapped in a <see cref="KatLangException"/>.
+    /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The options require the asynchronous entry point (see <see cref="Run(string, RunOptions?)"/>).
     /// </exception>
     public static IReadOnlyList<Decimal128> EvaluateToAtoms(string source, RunOptions? options = null)
     {
@@ -589,10 +694,13 @@ public static class KatLangEngine
     /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
     /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
     /// </summary>
+    /// <exception cref="KatLangException">The program did not succeed (see <see cref="EvaluateToAtoms"/>).</exception>
     /// <exception cref="OperationCanceledException">
-    /// Same cancellation contract as <see cref="EvaluateToAtoms"/>; delivered through
-    /// the returned task.
+    /// Same cancellation contract as <see cref="EvaluateToAtoms"/>.
     /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <remarks>Like <see cref="RunAsync"/>, every exception — including argument validation —
+    /// is delivered through the returned task.</remarks>
     public static async Task<IReadOnlyList<Decimal128>> EvaluateToAtomsAsync(string source, RunOptions? options = null)
     {
         // MIRROR OF EvaluateToAtoms — keep in lock-step.
@@ -603,69 +711,6 @@ public static class KatLangEngine
             RunResult.ParseFailure p => throw new KatLangException(p.Errors),
             RunResult.EvalFailure e => throw new KatLangException(e.Errors),
         };
-    }
-
-    /// <summary>
-    /// Parse and evaluate, returning atoms joined by spaces as a display string.
-    /// Returns error text on failure instead of throwing.
-    /// <para>This is a lossy convenience: success drops strings, Booleans, and structure boundaries,
-    /// and the returned text does not distinguish display overflow from ordinary output.
-    /// It is not the canonical <see cref="RunResult.RenderDisplay"/> text projection and
-    /// its atom-only rendering may fit where canonical display overflows.
-    /// To retain values and distinguish evaluation from rendering failure, use
-    /// <see cref="Run(string, RunOptions?)"/> followed by <see cref="RunResult.RenderDisplay"/>
-    /// or <see cref="Formatting.OutputFormatter.RenderDisplay"/> for the desired layout.</para>
-    /// </summary>
-    /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled during front-end processing,
-    /// or the configured evaluation token was cancelled before or during evaluation —
-    /// cancellation propagates and is never rendered into the error string.
-    /// </exception>
-    public static string EvaluateToString(string source, RunOptions? options = null)
-        => Run(source, options) switch
-        {
-            RunResult.Success s => FormatAtomsJoined(s),
-            var r => r.ToDisplayString(),
-        };
-
-    /// <summary>
-    /// Asynchronous counterpart of <see cref="EvaluateToString"/>: a thin projection
-    /// over <see cref="RunAsync"/> with identical rendering and failure semantics.
-    /// It has the same lossy atom-only output and no structured display-overflow signal;
-    /// use <see cref="RunAsync"/> followed by <see cref="RunResult.RenderDisplay"/> or
-    /// <see cref="Formatting.OutputFormatter.RenderDisplay"/> when those distinctions matter.
-    /// Like <see cref="RunAsync"/>, it completes synchronously unless an incomplete
-    /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
-    /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
-    /// </summary>
-    /// <exception cref="OperationCanceledException">
-    /// Same cancellation contract as <see cref="EvaluateToString"/>; delivered through
-    /// the returned task.
-    /// </exception>
-    public static async Task<string> EvaluateToStringAsync(string source, RunOptions? options = null)
-        // MIRROR OF EvaluateToString — keep in lock-step.
-        => await RunAsync(source, options).ConfigureAwait(false) switch
-        {
-            RunResult.Success s => FormatAtomsJoined(s),
-            var r => r.ToDisplayString(),
-        };
-
-    /// <summary>
-    /// Space-joined host atoms, bounded by the same rendered-output limit as structured
-    /// display. Atom count is already bounded by the collection limits, but atom TEXT is
-    /// not, so the join is written incrementally rather than materialized and measured.
-    /// </summary>
-    private static string FormatAtomsJoined(RunResult.Success success)
-    {
-        var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
-
-        for (var i = 0; i < success.Atoms.Count; i++)
-        {
-            if (i > 0 && !writer.Append(" ")) break;
-            if (!writer.Append(ValueTextRenderer.FormatAtom(success.Atoms[i], success.DisplayOptions))) break;
-        }
-
-        return RunResult.Finish(writer, success.DisplayOptions.MaxDisplayLength).Text;
     }
 
     private static SourceSpan? FindTopLevelPropertyDeclarationSpan(Algorithm root, string name)

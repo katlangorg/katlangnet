@@ -106,7 +106,7 @@ public static partial class Evaluator
     /// this method never schedules evaluation onto another thread and never yields
     /// artificially — host scheduling (thread placement, offloading) remains the host's
     /// responsibility. Genuinely asynchronous host operations are configured through
-    /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// (or <see cref="RunOptions.HostOperations"/> at the engine level), where an
     /// incomplete host awaitable suspends and resumes the run.</para>
     ///
@@ -137,9 +137,15 @@ public static partial class Evaluator
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// The exception is delivered through the returned task and carries that token.
     /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="expr"/> is null. Like every exception of the asynchronous entry
+    /// points, delivered through the returned task.
+    /// </exception>
     public static async Task<EvalResult<Result>> RunAsync(
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
-        => await RunAsync(
+    {
+        ArgumentNullException.ThrowIfNull(expr);
+        return await RunAsync(
             expr,
             CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations: null),
             limits,
@@ -147,12 +153,14 @@ public static partial class Evaluator
             sequenceDiagnostics: null,
             observations: null,
             hostOperations: null,
-            cancellationToken,
-            randomSeed).ConfigureAwait(false);
+            randomSeed,
+            cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
-    /// Run evaluation with host operations ambiently in scope — the asynchronous
-    /// counterpart of <see cref="Run(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// Run evaluation with host operations ambiently in scope and an optional random seed
+    /// (<c>null</c> for an unseeded run) — the asynchronous counterpart of
+    /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// and the entry point that accepts ASYNCHRONOUS operations.
     ///
     /// <para>With only synchronous operations configured the run keeps the synchronous
@@ -164,9 +172,15 @@ public static partial class Evaluator
     /// resuming at the same point when the operation completes. Each operation receives
     /// <paramref name="cancellationToken"/>; host exceptions and faulted awaitables
     /// propagate through the returned task unchanged (see <see cref="HostOperation"/>
-    /// for the full contract). With the seeded overload present,
-    /// <c>RunAsync(expr, null, null, token)</c> is ambiguous: use named arguments or an
-    /// explicitly typed second argument to select the intended overload.</para>
+    /// for the full contract). A run suspended by an incomplete host awaitable resumes with
+    /// its random stream exactly where it left off: nothing is reseeded or replayed, so a
+    /// seeded run produces the same KatLang random values whether or not it suspends.
+    /// Host-operation results themselves are outside the seeded stream.</para>
+    ///
+    /// <para>Every arity of the <c>RunAsync</c> family has exactly one overload, so
+    /// positional arguments — <c>null</c> literals included — always select exactly one of
+    /// them: <c>RunAsync(expr, null, null, token)</c> is the four-argument limits-and-seed
+    /// overload.</para>
     ///
     /// <para><b>Recursion depth on the async twin path.</b> The twin path's per-level
     /// frames are larger than the calibrated synchronous frames, so a deeply recursive
@@ -178,28 +192,11 @@ public static partial class Evaluator
     /// and platform-dependent and is not a language guarantee (see
     /// <see cref="EvaluationLimits.MaxDepth"/>).</para>
     /// </summary>
-    /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation
-    /// (including while suspended in a host operation, observed when evaluation
-    /// resumes). The exception is delivered through the returned task and carries that
-    /// token.
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="expr"/> is null, or <paramref name="hostOperations"/> is null — a run
+    /// without host operations uses an overload that does not take them. Delivered through
+    /// the returned task.
     /// </exception>
-    public static Task<EvalResult<Result>> RunAsync(
-        Expr expr,
-        HostOperations hostOperations,
-        EvaluationLimits? limits,
-        CancellationToken cancellationToken)
-        => RunAsync(expr, hostOperations, limits, randomSeed: null, cancellationToken);
-
-    /// <summary>
-    /// Asynchronous counterpart of
-    /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
-    /// — host operations (synchronous or asynchronous) ambiently in scope plus an optional
-    /// random seed. A run suspended by an incomplete host awaitable resumes with its
-    /// random stream exactly where it left off: nothing is reseeded or replayed, so a
-    /// seeded run produces the same KatLang random values whether or not it suspends.
-    /// Host-operation results themselves are outside the seeded stream.
-    /// </summary>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation
     /// (including while suspended in a host operation, observed when evaluation
@@ -213,6 +210,7 @@ public static partial class Evaluator
         long? randomSeed,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(expr);
         ArgumentNullException.ThrowIfNull(hostOperations);
         return await RunAsync(
             expr,
@@ -222,8 +220,8 @@ public static partial class Evaluator
             sequenceDiagnostics: null,
             observations: null,
             hostOperations,
-            cancellationToken,
-            randomSeed).ConfigureAwait(false);
+            randomSeed,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -272,6 +270,21 @@ public static partial class Evaluator
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
         => ProjectFlatHostAtoms(
             await RunAsync(expr, limits, randomSeed, cancellationToken).ConfigureAwait(false),
+            limits,
+            cancellationToken);
+
+    /// <summary>
+    /// Asynchronous counterpart of
+    /// <see cref="RunFlat(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>.
+    /// Incomplete host awaitables suspend evaluation. The numeric projection is bounded by
+    /// the effective collection limit, and every exception is delivered through the task.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> or <paramref name="hostOperations"/> is null.</exception>
+    /// <exception cref="OperationCanceledException">Evaluation or projection was cancelled.</exception>
+    public static async Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
+        Expr expr, HostOperations hostOperations, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
+        => ProjectFlatHostAtoms(
+            await RunAsync(expr, hostOperations, limits, randomSeed, cancellationToken).ConfigureAwait(false),
             limits,
             cancellationToken);
 
@@ -374,8 +387,8 @@ public static partial class Evaluator
         EvaluationLimits? limits,
         EvaluationObservations? observations,
         HostOperations? hostOperations,
-        CancellationToken cancellationToken,
-        long? randomSeed)
+        long? randomSeed,
+        CancellationToken cancellationToken)
     {
         ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(expr, zeroArgPropertyResultCache, hostOperations);
         cancellationToken.ThrowIfCancellationRequested();
@@ -390,15 +403,15 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
     }
 
     /// <summary>
     /// Internal async run: routes to the synchronous pipeline (fast path) or the async
     /// twin family, per <see cref="RequiresAsyncEvaluationPath"/>. The twin path shares
     /// the internal synchronous
-    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, CancellationToken)"/>
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, CancellationToken)"/>
     /// overload's run preparation (through <see cref="PrepareAsyncTwinRun"/>, which pins
     /// the generic strategies — see the class doc) and differs only in its twin dispatch.
     /// </summary>
@@ -410,8 +423,8 @@ public static partial class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
@@ -431,14 +444,14 @@ public static partial class Evaluator
                 limits,
                 observations,
                 hostOperations,
-                cancellationToken,
-                randomSeed);
+                randomSeed,
+                cancellationToken);
         }
 
         // Twin path: the same shared preparation as the internal synchronous Run(...);
         // only the dispatch below is twin-specific.
         var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, cancellationToken, randomSeed);
+            expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -461,24 +474,24 @@ public static partial class Evaluator
         return result;
     }
 
-    /// <summary>Async twin of the internal <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, CancellationToken)"/>.</summary>
+    /// <summary>Async twin of the internal <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, CancellationToken)"/>.</summary>
     internal static async ValueTask<EvalResult<CountedResult>> RunCountedAsync(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
         if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
-            return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken, randomSeed);
+            return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, randomSeed, cancellationToken);
 
         // Twin path: the same shared preparation as RunCounted; only the dispatch
         // below is twin-specific.
         var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken, randomSeed);
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -498,19 +511,19 @@ public static partial class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
 
         if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
-            return RunCountedWithTopLevelProperty(expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, cancellationToken, randomSeed);
+            return RunCountedWithTopLevelProperty(expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, randomSeed, cancellationToken);
 
         // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
         // only the dispatch below is twin-specific.
         var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, cancellationToken, randomSeed);
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -547,8 +560,8 @@ public static partial class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         var cache = zeroArgPropertyResultCache
             ?? CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations);
@@ -563,14 +576,14 @@ public static partial class Evaluator
                 sequenceDiagnostics,
                 observations,
                 hostOperations,
-                cancellationToken,
-                randomSeed);
+                randomSeed,
+                cancellationToken);
         }
 
         // Twin path: the same shared preparation as RunCountedObserved; only the
         // dispatch below is twin-specific.
         var preparation = PrepareAsyncTwinRun(
-            expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, cancellationToken, randomSeed);
+            expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
 

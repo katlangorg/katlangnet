@@ -400,7 +400,7 @@ public class BuiltinCallableIdentityTests
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
         var result = Evaluator.Run(
-            new Expr.AlgorithmExpr(parsed.Root), operations, limits: null, CancellationToken.None);
+            new Expr.AlgorithmExpr(parsed.Root), operations, limits: null, randomSeed: null, CancellationToken.None);
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
         Assert.Equal([(Decimal128)expected], result.Value.ToHostAtoms());
         return ticks;

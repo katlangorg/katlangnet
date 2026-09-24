@@ -118,11 +118,10 @@ public class OutputFormatterRegistryTests
     }
 
     [Fact]
-    public void EvaluateToString_RemainsTheSeparateAtomProjection()
+    public void AtomProjection_IsNotAFormattingMode()
     {
-        // EvaluateToString is not a formatting mode: it stays the space-joined
-        // host-atom projection, distinct from every formatter's output shape.
-        Assert.Equal("1 2 3", KatLangEngine.EvaluateToString("1, (2, 3)").ReplaceLineEndings("\n"));
+        // The numeric atom projection drops structure; every formatter keeps it.
+        Assert.Equal([1, 2, 3], KatLangEngine.EvaluateToAtoms("1, (2, 3)").Select(static atom => (int)atom));
         Assert.Equal(
             $"1{Environment.NewLine}(2, 3)",
             OutputFormatters.Exact.Format(KatLangEngine.Run("1, (2, 3)")));

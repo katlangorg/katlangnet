@@ -43,8 +43,8 @@ public class EmptyHostOperationsTests
         Assert.Equal(baseline.GetType(), configured.GetType());
         Assert.Equal(baseline.ToDisplayString(), configured.ToDisplayString());
         Assert.Equal(
-            KatLangEngine.EvaluateToString(MixedSource),
-            KatLangEngine.EvaluateToString(MixedSource, EmptyOptions()));
+            KatLangEngine.EvaluateToAtoms(MixedSource),
+            KatLangEngine.EvaluateToAtoms(MixedSource, EmptyOptions()));
     }
 
     [Fact]
@@ -61,9 +61,9 @@ public class EmptyHostOperationsTests
         Assert.Equal(baseline.GetType(), asyncResult.GetType());
         Assert.Equal(baseline.ToDisplayString(), asyncResult.ToDisplayString());
 
-        var stringTask = KatLangEngine.EvaluateToStringAsync(MixedSource, EmptyOptions());
-        Assert.True(stringTask.IsCompletedSuccessfully);
-        Assert.Equal(KatLangEngine.EvaluateToString(MixedSource), await stringTask);
+        var atomsTask = KatLangEngine.EvaluateToAtomsAsync(MixedSource, EmptyOptions());
+        Assert.True(atomsTask.IsCompletedSuccessfully);
+        Assert.Equal(KatLangEngine.EvaluateToAtoms(MixedSource), await atomsTask);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class EmptyHostOperationsTests
 
         var plain = Evaluator.Run(new Expr.AlgorithmExpr(root));
         var viaEmpty = Evaluator.Run(
-            new Expr.AlgorithmExpr(root), empty, limits: null, CancellationToken.None);
+            new Expr.AlgorithmExpr(root), empty, limits: null, randomSeed: null, CancellationToken.None);
 
         Assert.False(plain.IsError);
         Assert.False(viaEmpty.IsError);
@@ -83,7 +83,7 @@ public class EmptyHostOperationsTests
         // The async host-operation overload with the empty set keeps the synchronous
         // fast path — routing never selects the async twin — and matches too.
         var asyncTask = Evaluator.RunAsync(
-            new Expr.AlgorithmExpr(root), empty, limits: null, CancellationToken.None);
+            new Expr.AlgorithmExpr(root), empty, limits: null, randomSeed: null, CancellationToken.None);
         Assert.True(asyncTask.IsCompletedSuccessfully);
         var viaEmptyAsync = await asyncTask;
         Assert.False(viaEmptyAsync.IsError);
@@ -109,11 +109,11 @@ public class EmptyHostOperationsTests
     public void OneEmptyInstance_IsSafeAcrossConcurrentRuns()
     {
         var empty = HostOperations.Create();
-        var baseline = KatLangEngine.EvaluateToString(MixedSource);
+        var baseline = KatLangEngine.Run(MixedSource).ToDisplayString();
 
         var results = new string[8];
         Parallel.For(0, results.Length, i =>
-            results[i] = KatLangEngine.EvaluateToString(MixedSource, new RunOptions { HostOperations = empty }));
+            results[i] = KatLangEngine.Run(MixedSource, new RunOptions { HostOperations = empty }).ToDisplayString());
 
         Assert.All(results, r => Assert.Equal(baseline, r));
     }

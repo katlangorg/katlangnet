@@ -1,17 +1,21 @@
 namespace KatLang;
 
 /// <summary>
-/// Recursive-descent parser with precedence climbing for KatLang 0.7.
-/// <see cref="ParseSyntax(string)"/> produces a raw AST where all identifiers are
-/// <see cref="Expr.Resolve"/> nodes.
-/// Public <see cref="Parse(string)"/> overloads are compatibility wrappers that
-/// delegate to <see cref="FrontEndPipeline"/> for post-parse elaboration.
-/// Clause definitions <c>Name(pattern) = body</c> are collected by same-name
-/// family during parsing and classified only after the whole family is known.
-/// A family elaborates to ordinary <see cref="Algorithm.User"/> only when it
+/// The KatLang front end without evaluation. <see cref="Parse(string)"/>,
+/// <see cref="Parse(string, RunOptions?)"/>, and <see cref="ParseAsync"/> run the complete
+/// front end <see cref="KatLangEngine"/> uses — parsing, <c>load</c> elaboration, parameter
+/// detection, implicit-argument resolution, and property-exposure resolution — and return
+/// the elaborated program with its diagnostics as a <see cref="ParseResult"/>. Only those
+/// complete entry points are public; the individual passes are not, because a partially
+/// elaborated tree would evaluate differently from the same source run through the engine.
+/// <para>Implementation: a recursive-descent parser with precedence climbing
+/// (<see cref="ParseSyntax(string)"/> produces the raw AST, where every identifier is an
+/// <see cref="Expr.Resolve"/> node). Clause definitions <c>Name(pattern) = body</c> are
+/// collected by same-name family during parsing and classified only after the whole family
+/// is known: a family elaborates to ordinary <see cref="Algorithm.User"/> only when it
 /// contains exactly one clause and that sole head is a recursive capture/sequence-value
-/// parameter pattern. Multi-clause families and literal/mixed heads elaborate to
-/// <see cref="Algorithm.Conditional"/>.
+/// parameter pattern; multi-clause families and literal/mixed heads elaborate to
+/// <see cref="Algorithm.Conditional"/>.</para>
 /// </summary>
 public sealed class Parser
 {
@@ -549,29 +553,47 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Compatibility wrapper for the default public front-end without module elaboration support.
-    /// Delegates to <see cref="FrontEndPipeline"/>.
+    /// Runs the complete KatLang front end over <paramref name="source"/> WITHOUT evaluating
+    /// it, with default configuration: the same parsing and elaboration
+    /// <see cref="KatLangEngine.Run(string, RunOptions?)"/> performs, for validation,
+    /// editor tooling (<see cref="Semantics.SemanticModelBuilder.Build(ParseResult)"/>), and
+    /// AST inspection. Malformed source never throws: it yields a recovery tree with
+    /// <see cref="ParseResult.HasErrors"/> set. Module loading needs a downloader, which only
+    /// <see cref="ParseAsync"/> accepts, so source using <c>load</c> reports a diagnostic here.
     /// <para><b>Recursion safety contract:</b> parsing is protected by one cumulative
-    /// weighted recursion budget (<see cref="MaxNestingDepth"/>) shared by every
-    /// grammar mechanism, calibrated so any accepted source parses on the documented
-    /// minimum supported environment — a thread stack of at least 1 MiB — with at
-    /// least a 2x margin. Source nested beyond the budget returns one structured,
-    /// source-positioned "nesting is too deep" diagnostic instead of risking process
-    /// termination; this also covers module sources parsed during load elaboration,
-    /// whose parses begin with the module loader's live stack pre-charged.</para>
+    /// weighted recursion budget shared by every grammar mechanism, calibrated so any
+    /// accepted source parses on the documented minimum supported environment — a thread
+    /// stack of at least 1 MiB — with at least a 2x margin. Source nested beyond the budget
+    /// returns one structured, source-positioned "nesting is too deep" diagnostic
+    /// (<see cref="DiagnosticCode.NestingTooDeep"/>) instead of risking process termination;
+    /// this also covers module sources parsed during load elaboration.</para>
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     public static ParseResult Parse(string source)
-        => FrontEndPipeline.Process(source).ToParseResult();
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FrontEndPipeline.Process(source).ToParseResult();
+    }
 
     /// <summary>
-    /// Synchronous full pipeline with optional configuration via <see cref="RunOptions"/>.
-    /// Module loading is ASYNC-ONLY, so this entry point requires a downloader-less
-    /// configuration: when <paramref name="options"/> is null or
-    /// <see cref="RunOptions.DownloadCode"/> is null, module elaboration is unavailable and
-    /// <c>load</c> syntax is rejected with a diagnostic. The configured
-    /// <see cref="RunOptions.SourceProcessingCancellationToken"/> applies only to parsing and
-    /// front-end source processing, not evaluator computation.
+    /// Runs the complete KatLang front end without evaluating, configured by
+    /// <paramref name="options"/> exactly as <see cref="KatLangEngine.Run(string, RunOptions?)"/>
+    /// would be. The source-processing members apply
+    /// (<see cref="RunOptions.SourceProcessingLimits"/>,
+    /// <see cref="RunOptions.SourceProcessingCancellationToken"/>, and
+    /// <see cref="RunOptions.AllowedHosts"/>), and <see cref="RunOptions.HostOperations"/>
+    /// makes operation names resolve as they will during evaluation; the evaluation-only
+    /// members (<see cref="RunOptions.EvaluationLimits"/>,
+    /// <see cref="RunOptions.EvaluationCancellationToken"/>, <see cref="RunOptions.RandomSeed"/>,
+    /// <see cref="RunOptions.DefaultDisplayDecimals"/>) are ignored. Module loading is
+    /// ASYNC-ONLY, so this entry point requires a downloader-less configuration: when
+    /// <paramref name="options"/> is null or <see cref="RunOptions.DownloadCode"/> is null,
+    /// <c>load</c> syntax is rejected with a diagnostic.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// </exception>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled.
     /// </exception>
@@ -581,7 +603,10 @@ public sealed class Parser
     /// parsing.
     /// </exception>
     public static ParseResult Parse(string source, RunOptions? options)
-        => FrontEndPipeline.Process(source, options).ToParseResult(options?.HostOperations);
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FrontEndPipeline.Process(source, options).ToParseResult(options?.HostOperations);
+    }
 
     /// <summary>
     /// Asynchronous full pipeline with load elaboration — the canonical parse entry point when
@@ -592,11 +617,22 @@ public sealed class Parser
     /// source processing and resumes it at the same point when the download completes.
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled; as with any async API, delivered
-    /// through the returned task.
+    /// The configured source-processing token was cancelled.
     /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// </exception>
+    /// <remarks>
+    /// Options apply exactly as for <see cref="Parse(string, RunOptions?)"/>, plus
+    /// <see cref="RunOptions.DownloadCode"/>. Every exception — argument validation included —
+    /// is delivered through the returned task.
+    /// </remarks>
     public static async Task<ParseResult> ParseAsync(string source, RunOptions? options = null)
-        => (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult(options?.HostOperations);
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult(options?.HostOperations);
+    }
 
     // ── Token access helpers ────────────────────────────────────────────────
 

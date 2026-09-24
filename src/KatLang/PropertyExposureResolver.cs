@@ -132,11 +132,11 @@ internal static class PropertyExposureResolver
     public static Algorithm Resolve(Algorithm root)
         => Resolve(root, observations: null);
 
-    /// <param name="hostOperations">The run configuration's host operations, whose ambient
-    /// prelude members the chain must see exactly as parameter detection and the evaluator do
-    /// (the prelude is the outermost owner level, reached before any <c>open</c>): a host
-    /// operation named like an opened member is what a bare reference selects, so charging the
-    /// opened member instead would classify a self-contained property local-only.</param>
+    /// <remarks><paramref name="hostOperations"/> are the run configuration's host operations,
+    /// whose ambient prelude members the chain must see exactly as parameter detection and the
+    /// evaluator do (the prelude is the outermost owner level, reached before any <c>open</c>): a
+    /// host operation named like an opened member is what a bare reference selects, so charging
+    /// the opened member instead would classify a self-contained property local-only.</remarks>
     internal static Algorithm Resolve(
         Algorithm root,
         FrontEndTraversalObservations? observations,

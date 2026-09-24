@@ -127,7 +127,7 @@ internal enum AstConsumerProfile
 /// reference-identity color/height table is linear in visited nodes. Under the supported
 /// assumption that caller-owned collections remain stable during a check, overall time
 /// and storage are <c>O(nodes + edges)</c> and <c>O(nodes)</c>, respectively. The
-/// preflight charges nothing to any <see cref="EvaluationBudget"/>: it runs before
+/// preflight charges nothing to any <see cref="Evaluation.EvaluationBudget"/>: it runs before
 /// evaluation begins and consumes no steps, materialization, or string budget. It holds
 /// no static state, so concurrent checks are independent.</para>
 /// </summary>

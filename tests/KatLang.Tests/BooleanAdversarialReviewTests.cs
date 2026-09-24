@@ -157,8 +157,8 @@ public class BooleanAdversarialReviewTests
             Assert.Empty(success.Atoms);
             Assert.Equal(2, calls);
         }
-        Assert.Equal("", KatLangEngine.EvaluateToString("true"));
-        Assert.Equal("", await KatLangEngine.EvaluateToStringAsync("false"));
+        Assert.Empty(KatLangEngine.EvaluateToAtoms("true"));
+        Assert.Empty(await KatLangEngine.EvaluateToAtomsAsync("false"));
         Assert.Empty(await KatLangEngine.EvaluateToAtomsAsync("[true, false]"));
     }
 

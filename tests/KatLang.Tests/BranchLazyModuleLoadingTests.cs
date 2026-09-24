@@ -1319,13 +1319,19 @@ public class BranchLazyModuleLoadingTests
     /// token — installed and restored by one scope (<c>ModuleLoader.WalkContextScope</c>)
     /// rather than three hand-restored fields. Whatever way the materialization ends — a
     /// spliced body, a failed download, a cancelled one — the loader is back at the
-    /// elaboration's own context: the parse result's diagnostics list, base zero, and the
-    /// configured source-processing token (never the disposed linked one).
+    /// elaboration's own context: the elaboration's own diagnostics list (the very instance
+    /// captured before any materialization), base zero, and the configured source-processing
+    /// token (never the disposed linked one). The published parse result is a read-only
+    /// SNAPSHOT of that list — equal in content, never the live instance — so nothing the
+    /// loader does later can reach a result a host already holds.
     /// </summary>
-    private static void AssertWalkContextAtElaborationDefaults(ParseResult parsed, DeferredModuleRegion region)
+    private static void AssertWalkContextAtElaborationDefaults(
+        ParseResult parsed, DeferredModuleRegion region, object elaborationSink)
     {
         var (sink, nestedTraversalBase, cancellationToken, importSite) = region.Loader.WalkContext;
-        Assert.Same(parsed.Diagnostics, sink);
+        Assert.Same(elaborationSink, sink);
+        Assert.NotSame(parsed.Diagnostics, sink);
+        Assert.Equal(parsed.Diagnostics, Assert.IsAssignableFrom<IReadOnlyList<Diagnostic>>(sink));
         Assert.Equal(0, nestedTraversalBase);
         Assert.Equal(region.Loader.SourceProcessingCancellationToken, cancellationToken);
         Assert.Null(importSite);
@@ -1341,14 +1347,15 @@ public class BranchLazyModuleLoadingTests
         var parsed = await Parser.ParseAsync(TwoAlternatives + "F(0)", modules.Options);
         Assert.False(parsed.HasErrors);
         var region = Region(parsed.Root, "F", 0);
-        AssertWalkContextAtElaborationDefaults(parsed, region);
+        var elaborationSink = region.Loader.WalkContext.Sink;
+        AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
 
         var result = await RunFlat(parsed.Root);
 
         Assert.Equal([4m], result.Value);
         Assert.True(region.IsMaterialized);
         Assert.Equal(2, region.Loader.CachedModuleCount);
-        AssertWalkContextAtElaborationDefaults(parsed, region);
+        AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
         Assert.Empty(parsed.Diagnostics);
     }
 
@@ -1359,11 +1366,12 @@ public class BranchLazyModuleLoadingTests
         var parsed = await Parser.ParseAsync($"F(0) = 42\nF(1) = {{\n    open '{Missing}'\n    X\n}}\nF(1)", modules.Options);
         Assert.False(parsed.HasErrors);
         var region = Region(parsed.Root, "F", 1);
+        var elaborationSink = region.Loader.WalkContext.Sink;
 
         var result = await RunFlat(parsed.Root);
 
         Assert.Equal(KatLangErrorCode.LoadFetchFailed, result.Error.Code);
-        AssertWalkContextAtElaborationDefaults(parsed, region);
+        AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
         // The failure was reported into the materialization's own sink, never the published parse result.
         Assert.Empty(parsed.Diagnostics);
     }
@@ -1375,6 +1383,7 @@ public class BranchLazyModuleLoadingTests
         var parsed = await Parser.ParseAsync(TwoAlternatives + "F(0)", downloader.Options);
         Assert.False(parsed.HasErrors);
         var region = Region(parsed.Root, "F", 0);
+        var elaborationSink = region.Loader.WalkContext.Sink;
         using var cancellation = new CancellationTokenSource();
 
         var run = RunFlat(parsed.Root, cancellation.Token);
@@ -1392,10 +1401,10 @@ public class BranchLazyModuleLoadingTests
             await region.Loader.MaterializationGate.WaitAsync(gateTimeout.Token);
             region.Loader.MaterializationGate.Release();
 
-            AssertWalkContextAtElaborationDefaults(parsed, region);
+            AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
             downloader.Release(ModuleA, "public A = 1");
             Assert.Equal([1m], (await RunFlat(parsed.Root).WaitAsync(TimeSpan.FromSeconds(10))).Value);
-            AssertWalkContextAtElaborationDefaults(parsed, region);
+            AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
         }
         finally
         {

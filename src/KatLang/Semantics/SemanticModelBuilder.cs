@@ -9,16 +9,25 @@ namespace KatLang.Semantics;
 public static class SemanticModelBuilder
 {
     /// <summary>
-    /// Builds a semantic model from an elaborated KatLang root algorithm.
-    /// Throws if unresolved <c>load</c> syntax reaches semantic modeling, and throws
-    /// <see cref="ArgumentException"/> for a structurally unsafe preconstructed root
-    /// (structural AST depth beyond the front-end structural gate, or a cyclic node
-    /// graph) — checked non-recursively before any recursive walk, so an unsafe
+    /// Builds a semantic model from an elaborated KatLang root algorithm — typically a
+    /// host-built root, since a <see cref="ParseResult"/> is modeled through
+    /// <see cref="Build(ParseResult)"/>, which also carries the host operations the parse
+    /// resolved names against. Throws if unresolved <c>load</c> syntax reaches semantic
+    /// modeling, and throws <see cref="ArgumentException"/> for a structurally unsafe
+    /// preconstructed root (structural AST depth beyond the front-end structural gate, or a
+    /// cyclic node graph) — checked non-recursively before any recursive walk, so an unsafe
     /// host-built tree cannot overflow the CLR stack. Roots from
     /// <see cref="Parser.Parse(string)"/> always pass.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="root"/> is null.</exception>
+    /// <exception cref="ArgumentException">The root is structurally unsafe.</exception>
+    /// <exception cref="InvalidOperationException">The root still contains an unresolved
+    /// <c>load</c> directive.</exception>
     public static SemanticModel Build(Algorithm root)
-        => BuildElaborated(root);
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        return BuildElaborated(root, argumentName: nameof(root));
+    }
 
     /// <summary>
     /// Observed build for the shared-AST-graph (DAG) complexity regressions: the builder
@@ -28,12 +37,14 @@ public static class SemanticModelBuilder
         => BuildElaborated(root, observations);
 
     /// <summary>
-    /// Builds a semantic model from a parse result returned by the public
-    /// front-end compatibility wrapper. A result of the SYNCHRONOUS <see cref="Parser.Parse(string)"/>
+    /// Builds a semantic model from a result of the public <see cref="Parser"/> entry points —
+    /// the supported editor-tooling path. A result of the SYNCHRONOUS <see cref="Parser.Parse(string)"/>
     /// over source that uses <c>load</c> still holds the unresolved directive (source loading
     /// is async-only, through <see cref="Parser.ParseAsync(string, RunOptions)"/>), and
-    /// modeling it is a host error rather than a partial model.
+    /// modeling it is a host error rather than a partial model. A result with
+    /// <see cref="ParseResult.HasErrors"/> set is modeled from its recovery tree.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="parseResult"/> is null.</exception>
     /// <exception cref="InvalidOperationException">The parse result still contains an
     /// unresolved <c>load</c> directive.</exception>
     /// <exception cref="ArgumentException">The elaborated root is structurally unsafe
@@ -43,7 +54,10 @@ public static class SemanticModelBuilder
     /// references classify as prelude members (and complete as visible names) exactly where
     /// parameter detection and the evaluator select them.</remarks>
     public static SemanticModel Build(ParseResult parseResult)
-        => BuildElaborated(parseResult.Root, observations: null, parseResult.HostOperations);
+    {
+        ArgumentNullException.ThrowIfNull(parseResult);
+        return BuildElaborated(parseResult.Root, observations: null, parseResult.HostOperations, nameof(parseResult));
+    }
 
     internal static SemanticModel Build(SyntaxParseResult syntaxParseResult)
         => BuildElaborated(syntaxParseResult.Root);
@@ -54,7 +68,8 @@ public static class SemanticModelBuilder
     private static SemanticModel BuildElaborated(
         Algorithm elaboratedRoot,
         FrontEndTraversalObservations? observations = null,
-        HostOperations? hostOperations = null)
+        HostOperations? hostOperations = null,
+        string argumentName = "elaboratedRoot")
     {
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
@@ -76,30 +91,12 @@ public static class SemanticModelBuilder
                     ? "Semantic model building requires an acyclic AST: the supplied root reaches itself again through its own children."
                     : "Semantic model building requires a structurally safe AST: the supplied root exceeds the structural AST depth limit of "
                         + $"{EvaluationLimits.MaxSupportedAstDepth} nodes, which protects the host process from stack overflow.",
-                nameof(elaboratedRoot));
+                argumentName);
         }
 
         LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
         return new Builder(observations, hostOperations).Build(elaboratedRoot);
     }
-
-    /// <summary>
-    /// Enumerates source-backed identifier references and member occurrences.
-    /// </summary>
-    public static IReadOnlyList<IdentifierOccurrence> EnumerateIdentifierOccurrences(Algorithm root)
-        => Build(root).IdentifierOccurrences;
-
-    /// <summary>
-    /// Enumerates source-backed declaration sites.
-    /// </summary>
-    public static IReadOnlyList<DeclarationOccurrence> EnumerateDeclarationOccurrences(Algorithm root)
-        => Build(root).Declarations;
-
-    /// <summary>
-    /// Enumerates property-centered semantic objects.
-    /// </summary>
-    public static IReadOnlyList<PropertyInfo> EnumeratePropertyInfos(Algorithm root)
-        => Build(root).PropertyInfos;
 
     /// <summary>
     /// Builds <see cref="PreludeCatalog.Symbols"/> from the same signature-only

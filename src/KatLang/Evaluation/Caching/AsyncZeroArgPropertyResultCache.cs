@@ -19,8 +19,8 @@ namespace KatLang.Evaluation.Caching;
 /// <para><b>Contract</b> — identical to <see cref="IZeroArgPropertyResultCache.GetOrEvaluate"/>
 /// except for asynchrony:</para>
 /// <list type="bullet">
-///   <item>On a hit, return the stored result without invoking <paramref name="evaluateAsync"/>.</item>
-///   <item>On a miss, invoke <paramref name="evaluateAsync"/> at most once and store only
+///   <item>On a hit, return the stored result without invoking <c>evaluateAsync</c>.</item>
+///   <item>On a miss, invoke <c>evaluateAsync</c> at most once and store only
 ///   successful results (errors are never stored — a deterministic failure recurs
 ///   identically, and a transient resource-limit failure must be free to recur under the
 ///   live budget).</item>

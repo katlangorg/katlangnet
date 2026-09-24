@@ -376,7 +376,7 @@ public class StringAndDisplayLimitsTests
     }
 
     [Fact]
-    public void EveryRunResultVariant_AndEvaluateToString_ObeyTheSameStrictLimit()
+    public void EveryRunResultVariant_ObeysTheSameStrictLimit()
     {
         var cases = new (string Source, Type ExpectedType)[]
         {
@@ -400,9 +400,6 @@ public class StringAndDisplayLimitsTests
                 var second = result.ToDisplayString();
                 Assert.Equal(first, second);
                 Assert.True(first.Length <= limit, $"{result.GetType().Name}, limit {limit}, length {first.Length}");
-
-                var evaluated = KatLangEngine.EvaluateToString(source, options);
-                Assert.True(evaluated.Length <= limit, $"EvaluateToString, limit {limit}, length {evaluated.Length}");
             }
         }
     }
@@ -600,43 +597,6 @@ public class StringAndDisplayLimitsTests
     }
 
     // ── API surfaces ─────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task EvaluateToString_KeepsItsSeparateLossyRendering_SynchronouslyAndAsynchronously()
-    {
-        const string source = "[1, 'text', 2]";
-        var options = new RunOptions { EvaluationLimits = Display(3) };
-        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source, options));
-        AssertReportsOverflow(success.RenderDisplay(), 3);
-
-        // Dropping strings and structure makes the atom-only text fit exactly.
-        // The canonical rendering verdict cannot be reused for this convenience.
-        Assert.Equal("1 2", KatLangEngine.EvaluateToString(source, options));
-        Assert.Equal("1 2", await KatLangEngine.EvaluateToStringAsync(source, options));
-    }
-
-    [Fact]
-    public void EvaluateToString_IsBounded()
-    {
-        Assert.Equal("1 2 3", KatLangEngine.EvaluateToString("1, 2, 3"));
-        Assert.Equal(
-            "…",
-            KatLangEngine.EvaluateToString(
-                "1, 2, 3",
-                new RunOptions { EvaluationLimits = Display(4) }));
-        var longOutput = string.Join(", ", Enumerable.Range(1, 100));
-        Assert.StartsWith(
-            LimitPrefix,
-            KatLangEngine.EvaluateToString(
-                longOutput,
-                new RunOptions { EvaluationLimits = Display(100) }));
-    }
-
-    [Fact]
-    public void EvaluateToString_ExactBoundary()
-        => Assert.Equal(
-            "1 2 3",
-            KatLangEngine.EvaluateToString("1, 2, 3", new RunOptions { EvaluationLimits = Display(5) }));
 
     [Fact]
     public void ErrorRendering_StillReportsEveryDiagnostic()

@@ -338,7 +338,7 @@ public static partial class Evaluator
     /// runtime.</para>
     ///
     /// The selected branch is a value boundary, so its public result re-counts
-    /// the emitted arity with <see cref="ReCountValueBoundary"/>
+    /// the emitted arity with <see cref="ReCountValueBoundary(CountedResult)"/>
     /// (<c>Result.ValueCount</c>) — a multi-output branch becomes one sequence
     /// value (count 1), matching <c>if</c> and plain calls.
     /// Lean: <c>evalConditionalCallCounted</c>.
@@ -425,7 +425,7 @@ public static partial class Evaluator
     ///
     /// A user/property call is a value boundary: the public result preserves
     /// the structural value while re-counting the emitted arity with
-    /// <see cref="ReCountValueBoundary"/> (<c>Result.ValueCount</c>). A
+    /// <see cref="ReCountValueBoundary(CountedResult)"/> (<c>Result.ValueCount</c>). A
     /// multi-output body therefore becomes one sequence value (count 1); only
     /// caller-site <c>spread</c> re-spreads it.
     /// Lean: <c>evalUserCallCounted</c>.

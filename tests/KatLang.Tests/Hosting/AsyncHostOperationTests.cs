@@ -122,7 +122,7 @@ public class AsyncHostOperationTests
         var parsed = Parser.Parse("Data * 2", new RunOptions { HostOperations = operations });
         Assert.False(parsed.HasErrors);
 
-        var task = Evaluator.RunAsync(new Expr.AlgorithmExpr(parsed.Root), operations, null, CancellationToken.None);
+        var task = Evaluator.RunAsync(new Expr.AlgorithmExpr(parsed.Root), operations, null, null, CancellationToken.None);
         Assert.True(task.IsCompletedSuccessfully);
         var result = await task;
         Assert.True(result.IsOk);
@@ -727,13 +727,13 @@ public class AsyncHostOperationTests
         var asyncOperations = HostOperations.Create(HostOperation.CreateAsync("Data", held.InvokeAsync));
         var syncOperations = HostOperations.Create(HostOperation.Create("Data", (_, _) => Atom(700)));
 
-        var suspended = Evaluator.RunAsync(ast, asyncOperations, null, CancellationToken.None);
+        var suspended = Evaluator.RunAsync(ast, asyncOperations, null, null, CancellationToken.None);
         await Reached(held.ReachedTask);
         Assert.False(suspended.IsCompleted);
 
         // A synchronous run over the very same parsed tree completes while the async
         // run is suspended — no leakage of host state, caches, or configuration.
-        var syncResult = Evaluator.Run(ast, syncOperations, null, CancellationToken.None);
+        var syncResult = Evaluator.Run(ast, syncOperations, null, null, CancellationToken.None);
         Assert.True(syncResult.IsOk);
         Assert.Equal(701m, ((Result.Atom)syncResult.Value).Value);
 
@@ -788,7 +788,6 @@ public class AsyncHostOperationTests
         };
 
         Assert.Equal(new Decimal128[] { 1m, 2m, 3m }, await Complete(KatLangEngine.EvaluateToAtomsAsync("Data*, 3", options)));
-        Assert.Equal("1 2 3", await Complete(KatLangEngine.EvaluateToStringAsync("Data*, 3", options)));
 
         await Assert.ThrowsAsync<KatLangException>(
             () => Complete(KatLangEngine.EvaluateToAtomsAsync("Data +", options)));

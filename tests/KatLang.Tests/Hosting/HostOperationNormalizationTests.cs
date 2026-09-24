@@ -194,7 +194,7 @@ public class HostOperationNormalizationTests
         var operations = HostOperations.Create(
             HostOperation.Create("Data", (_, _) => SingletonSequenceAround(Atom(1))));
 
-        var result = Evaluator.Run(ParsedAst("Data", operations), operations, limits: null, CancellationToken.None);
+        var result = Evaluator.Run(ParsedAst("Data", operations), operations, limits: null, randomSeed: null, CancellationToken.None);
 
         Assert.True(result.IsOk);
         AssertAtomRepresentation(result.Value, 1m);
@@ -328,7 +328,7 @@ public class HostOperationNormalizationTests
         var cache = new RecordingAsyncZeroArgPropertyResultCache();
 
         var task = Evaluator.RunCountedAsync(
-            ParsedAst("Data", operations), cache, limits: null, operations, CancellationToken.None).AsTask();
+            ParsedAst("Data", operations), cache, limits: null, operations, cancellationToken: CancellationToken.None).AsTask();
         await Reached(held.ReachedTask);
         Assert.False(task.IsCompleted);
         held.Release(NoncanonicalNestedEmpty());
@@ -366,7 +366,7 @@ public class HostOperationNormalizationTests
             new RecordingAsyncZeroArgPropertyResultCache(),
             limits: null,
             operations,
-            CancellationToken.None).AsTask();
+            cancellationToken: CancellationToken.None).AsTask();
         await Reached(held.ReachedTask);
         held.Release(NoncanonicalNestedEmpty());
 
@@ -393,7 +393,7 @@ public class HostOperationNormalizationTests
 
         // Two property-style rows: miss + hit under the existing cache contract.
         var result = Evaluator.RunCounted(
-            ParsedAst("Data\nData", operations), cache, limits: null, operations, CancellationToken.None);
+            ParsedAst("Data\nData", operations), cache, limits: null, operations, cancellationToken: CancellationToken.None);
 
         Assert.True(result.IsOk);
         Assert.Equal(1, invocations);
@@ -423,7 +423,7 @@ public class HostOperationNormalizationTests
         var cache = new RecordingAsyncZeroArgPropertyResultCache();
 
         var task = Evaluator.RunCountedAsync(
-            ParsedAst("Data\nData", operations), cache, limits: null, operations, CancellationToken.None).AsTask();
+            ParsedAst("Data\nData", operations), cache, limits: null, operations, cancellationToken: CancellationToken.None).AsTask();
         await Reached(held.ReachedTask);
         Assert.False(task.IsCompleted);
         held.Release(SingletonSequenceAround(Atom(7)));

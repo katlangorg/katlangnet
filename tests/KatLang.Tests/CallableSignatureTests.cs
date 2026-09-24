@@ -48,13 +48,11 @@ public class CallableSignatureTests
     }
 
     [Fact]
-    public void RequiredNormalParameterCount_CompatibilityShim_PreservesStructuralCount()
+    public void TopLevelParameterCount_IsStructural_WhileMinimumArityFollowsTheBinder()
     {
         var signature = SignatureFor("F(head, *middle, tail) = head", "F");
 
-#pragma warning disable CS0618 // Compatibility member is the subject of this test.
-        Assert.Equal(3, signature.RequiredNormalParameterCount);
-#pragma warning restore CS0618
+        Assert.Equal(3, signature.TopLevelParameterCount);
         Assert.Equal(2, signature.ArityFacts.MinTopLevelArgumentCount);
     }
 

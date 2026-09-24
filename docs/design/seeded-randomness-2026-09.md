@@ -132,7 +132,7 @@ KatLangEngine / Evaluator entry point
         ↓
 run-entry funnels (Run, RunCounted*, RunObserved, the *Async twins, PrepareSynchronousRun / PrepareAsyncTwinRun)
         ↓
-PrepareAdmittedRun → EvaluationBudget.Create(limits, hostOperations, cancellationToken, randomSeed)
+PrepareAdmittedRun → EvaluationBudget.Create(limits, hostOperations, randomSeed, cancellationToken)
         ↓
 EvaluationBudget.RandomSource   (RandomSourceFactory.Create(seed, entropyProvider))
         ↓

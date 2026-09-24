@@ -96,7 +96,7 @@ public static partial class Evaluator
     /// Ordinary direct conditional calls preserve explicit argument slots at
     /// the top level: a non-sequence-value head expects exactly one explicit argument,
     /// while a sequence-value head expects one explicit argument per sequence element. Nested
-    /// sequence-value structure is still matched through <see cref="MatchPattern"/>.
+    /// sequence-value structure is still matched through <see cref="MatchPattern(Pattern, Result)"/>.
     /// </summary>
     private static ValEnv? MatchCallPattern(
         Pattern pattern,

@@ -1,6 +1,6 @@
 namespace KatLang;
 
-public enum CallableParameterSource
+internal enum CallableParameterSource
 {
     Explicit,
     Implicit,
@@ -8,7 +8,7 @@ public enum CallableParameterSource
     Synthetic,
 }
 
-public sealed record CallableParameter(
+internal sealed record CallableParameter(
     string Name,
     ParameterKind Kind = ParameterKind.Normal,
     CallableParameterSource Source = CallableParameterSource.Explicit,
@@ -21,7 +21,7 @@ public sealed record CallableParameter(
     };
 }
 
-public sealed record CallableSignature
+internal sealed record CallableSignature
 {
     public CallableSignature(string name, IReadOnlyList<CallableParameter> parameters)
         : this(
@@ -67,14 +67,6 @@ public sealed record CallableSignature
     public bool HasSequenceValueParameterPattern => ParameterPatterns.Any(ContainsSequenceValuePattern);
 
     public CallableArityFacts ArityFacts => CallableSignatureDiagnostics.GetArityFacts(this);
-
-    /// <summary>
-    /// Gets the structural count of top-level parameter patterns.
-    /// Retained for source and binary compatibility; callable minimum arity is
-    /// exposed by <see cref="CallableArityFacts.MinTopLevelArgumentCount"/>.
-    /// </summary>
-    [Obsolete("Use TopLevelParameterCount for structural shape or ArityFacts.MinTopLevelArgumentCount for callable minimum arity.")]
-    public int RequiredNormalParameterCount => ParameterPatterns.Count;
 
     public int CollectingParameterCount => ArityFacts.TopLevelCollectingCount;
 

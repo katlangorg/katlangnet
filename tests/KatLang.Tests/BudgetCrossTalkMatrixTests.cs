@@ -286,20 +286,16 @@ public class BudgetCrossTalkMatrixTests
                     $"|{r.Value.Output.EmittedCount}|{(r.Value.TopLevelProperty is { } p ? RenderValue(p.Value) : "<none>")}");
         }),
         new("KatLangEngine.Run", true, static (c, l) => EngineVerdict(c, l)),
-        new("KatLangEngine.EvaluateToString", true, static (c, l) =>
-            Ok(KatLangEngine.EvaluateToString(c.Source!, new RunOptions { EvaluationLimits = l }))),
     ];
 
     /// <summary>
     /// The entry points that perform exactly the SAME evaluation work, and therefore must
-    /// classify every configuration identically. Three public surfaces are deliberately
+    /// classify every configuration identically. Two public surfaces are deliberately
     /// outside this set — they are still individually checked for cross-talk:
     /// <list type="bullet">
     ///   <item><c>RunCountedWithTopLevelProperty</c> additionally evaluates a named
     ///   top-level property, so it legitimately charges more and may stop at a budget the
     ///   others clear.</item>
-    ///   <item><c>KatLangEngine.EvaluateToString</c> RENDERS failures as text, so it has
-    ///   no failure classification to compare.</item>
     ///   <item><c>KatLangEngine.Run</c> reports failures as formatted messages rather than
     ///   structured kinds; it is compared on success/failure only
     ///   (<see cref="EngineAgreesOnSuccessWithTheStructuredSurfaces"/>).</item>

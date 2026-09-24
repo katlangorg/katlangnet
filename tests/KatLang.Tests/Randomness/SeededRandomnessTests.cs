@@ -303,12 +303,10 @@ public class SeededRandomnessTests
         AssertSameAtoms(expected, KatLangEngine.EvaluateToAtoms(MixedSpellings, options));
         AssertSameAtoms(expected, await KatLangEngine.EvaluateToAtomsAsync(MixedSpellings, options));
 
-        var expectedText = string.Join(" ", expected.Select(static atom => atom.ToString(CultureInfo.InvariantCulture)));
-        var syncText = KatLangEngine.EvaluateToString(MixedSpellings, options);
-        var asyncText = await KatLangEngine.EvaluateToStringAsync(MixedSpellings, options);
-        Assert.Equal(syncText, asyncText);
-        Assert.Equal(expectedText.Split(' ').Length, syncText.Split(' ').Length);
-        AssertSameAtoms(expected, syncText.Split(' ').Select(D).ToArray());
+        // The rendered text is the same run's display: sync and async agree on it too.
+        Assert.Equal(
+            KatLangEngine.Run(MixedSpellings, options).ToDisplayString(),
+            (await KatLangEngine.RunAsync(MixedSpellings, options)).ToDisplayString());
     }
 
     [Fact]

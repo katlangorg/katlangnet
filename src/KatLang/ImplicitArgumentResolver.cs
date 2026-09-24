@@ -1263,11 +1263,12 @@ internal static class ImplicitArgumentResolver
     /// reference whose missing captures cannot be named yields no diagnostic and the
     /// program keeps its ordinary runtime checking.</para>
     /// </summary>
-    /// <param name="referenceDisplayName">
-    /// The written callable the program can act on (<c>A</c>, the alias <c>abs</c>, the
-    /// canonical <c>Math.Abs</c>) — never the consuming native's own declared argument
-    /// name, which belongs to the consumer and not to this failure.
-    /// </param>
+    /// <remarks>
+    /// <paramref name="referenceDisplayName"/> is the written callable the program can act on
+    /// (<c>A</c>, the alias <c>abs</c>, the canonical <c>Math.Abs</c>) — never the consuming
+    /// native's own declared argument name, which belongs to the consumer and not to this
+    /// failure.
+    /// </remarks>
     private static void ReportBlockedStrictValueForwarding(
         Expr reference,
         string referenceDisplayName,
@@ -1669,9 +1670,9 @@ internal static class ImplicitArgumentResolver
     /// Rewrites bare <see cref="Expr.Resolve"/> nodes into <see cref="Expr.Call"/> nodes
     /// with lifted parameters. Also recursively processes nested algorithms.
     /// </summary>
-    /// <param name="inStrictValueDemand">
-    /// True while this position's produced value is required by a registry-proven
-    /// value-demanding consumer — set by
+    /// <remarks>
+    /// <paramref name="inStrictValueDemand"/> is true while this position's produced value is
+    /// required by a registry-proven value-demanding consumer — set by
     /// <see cref="ProcessValueDemandingArgumentBundle"/> and carried down only through
     /// positions that compute that same value (operands, index parts, sequence/list
     /// elements, a nested value-demanding bundle). It is DROPPED wherever the walk leaves
@@ -1681,7 +1682,7 @@ internal static class ImplicitArgumentResolver
     /// <see cref="ReportBlockedStrictValueForwarding"/>), so it is not part of the rewrite
     /// memo key. A separate strict-visit set makes that reporting side effect independent of
     /// whether a neutral reach populated the rewrite memo first.
-    /// </param>
+    /// </remarks>
     private static Expr RewriteImplicitCalls(
         Expr expr,
         Dictionary<string, CallableSignature> paramMap,

@@ -684,7 +684,7 @@ public class ChainedDotStructuralPrecedenceTests
         var options = ModuleOptions("public Sub = {\n    public Q = 1\n}");
         var source = $"Lib = load('{ModuleUrl}')\nQ(x) = 99\n\nLib.Sub.Q";
 
-        Assert.Equal("1", await KatLangEngine.EvaluateToStringAsync(source, options));
+        Assert.Equal("1", (await KatLangEngine.RunAsync(source, options)).ToDisplayString());
 
         var parsed = await Parser.ParseAsync(source, options);
         Assert.False(parsed.HasErrors);
@@ -702,6 +702,6 @@ public class ChainedDotStructuralPrecedenceTests
         var options = ModuleOptions("public Sub = {\n    5\n}");
         var source = $"Lib = load('{ModuleUrl}')\nQ(x) = x * 10\n\nLib.Sub.Q";
 
-        Assert.Equal("50", await KatLangEngine.EvaluateToStringAsync(source, options));
+        Assert.Equal("50", (await KatLangEngine.RunAsync(source, options)).ToDisplayString());
     }
 }

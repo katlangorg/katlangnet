@@ -42,8 +42,8 @@ internal sealed class EvaluationBudget
     internal EvaluationBudget(
         EvaluationLimits limits,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(limits);
         _maxDepth = limits.EffectiveMaxDepth;
@@ -73,9 +73,9 @@ internal sealed class EvaluationBudget
     internal static EvaluationBudget Create(
         EvaluationLimits? limits,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
-        => new(limits ?? EvaluationLimits.Default, hostOperations, cancellationToken, randomSeed);
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
+        => new(limits ?? EvaluationLimits.Default, hostOperations, randomSeed, cancellationToken);
 
     /// <summary>
     /// The run's random stream — run-scoped MUTABLE state exactly like the counters,

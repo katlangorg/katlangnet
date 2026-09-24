@@ -1989,7 +1989,7 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void SyntaxWalker_VisitsSemanticDeclarationAndIdentifierSites()
+    public void AstWalker_VisitsSemanticDeclarationAndIdentifierSites()
     {
         var parseResult = Parser.Parse(
             """
@@ -2015,7 +2015,7 @@ public class SemanticModelTests
         Assert.Equal(["string"], walker.DotMembers);
     }
 
-    private sealed class CollectingWalker : SyntaxWalker
+    private sealed class CollectingWalker : AstWalker
     {
         public List<string> PropertyDeclarations { get; } = [];
 
@@ -2315,8 +2315,8 @@ public class SemanticModelTests
 
     // The in-memory downloader completes synchronously, so the async engine run does too.
     private static string Evaluate(string source, Func<string, CancellationToken, ValueTask<string>> downloader)
-        => KatLangEngine.EvaluateToStringAsync(source, new RunOptions { DownloadCode = downloader })
-            .GetAwaiter().GetResult();
+        => KatLangEngine.RunAsync(source, new RunOptions { DownloadCode = downloader })
+            .GetAwaiter().GetResult().ToDisplayString();
 
     private static string[] Lines(string source) => source.Replace("\r", "").Split('\n');
 
@@ -2610,7 +2610,7 @@ public class SemanticModelTests
 
         AssertIdentifierSitesSliceToTheirSpelling(model, source);
         AssertPositionalQueriesReturnOnlyDocumentSites(model, source);
-        Assert.Equal("26", KatLangEngine.EvaluateToString(source));
+        Assert.Equal("26", KatLangEngine.Run(source).ToDisplayString());
     }
 
     [Fact]

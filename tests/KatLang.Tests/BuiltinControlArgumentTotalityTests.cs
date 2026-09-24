@@ -250,8 +250,7 @@ public class BuiltinControlArgumentTotalityTests
         var limits = new EvaluationLimits { MaxSteps = 10_000 };
         var options = new RunOptions { EvaluationLimits = limits };
 
-        Assert.NotNull(KatLangEngine.Run(source, options));
-        Assert.NotNull(KatLangEngine.EvaluateToString(source, options));
+        Assert.NotNull(KatLangEngine.Run(source, options).ToDisplayString());
         try
         {
             _ = KatLangEngine.EvaluateToAtoms(source, options);

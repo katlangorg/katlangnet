@@ -46,7 +46,7 @@ public class BoundedDiagnosticSourceIntegrationTests
         var parts = new List<string>();
         while (error is EvalError.WithContext(var context, var inner))
         {
-            parts.Add(context.ToLegacyString());
+            parts.Add(context.ToString());
             error = inner;
         }
 

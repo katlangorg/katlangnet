@@ -101,7 +101,6 @@ public class ModuleLoaderCancellationTests
 
         Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run(Source, options));
         Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToAtoms(Source, options));
-        Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToString(Source, options));
         Assert.Throws<InvalidOperationException>(() => Parser.Parse(Source, options));
 
         // The rejection is configuration-driven, so load-free source is rejected too —

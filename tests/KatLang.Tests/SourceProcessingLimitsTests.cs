@@ -438,7 +438,7 @@ public class SourceProcessingLimitsTests
 
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source, options));
         Assert.Throws<KatLangException>(() => KatLangEngine.EvaluateToAtoms(source, options));
-        Assert.Contains("UTF-16 code units", KatLangEngine.EvaluateToString(source, options));
+        Assert.Contains("UTF-16 code units", KatLangEngine.Run(source, options).ToDisplayString());
     }
 
     [Fact]

@@ -34,8 +34,8 @@ internal enum MetamorphicSurface
     /// <summary><c>KatLangEngine.EvaluateToAtoms</c> — host atoms, throwing on failure.</summary>
     EngineEvaluateToAtoms,
 
-    /// <summary><c>KatLangEngine.EvaluateToString</c> — rendered text.</summary>
-    EngineEvaluateToString,
+    /// <summary><c>OutputFormatters.Exact.Format(KatLangEngine.Run(...))</c> — the canonical rendered text.</summary>
+    EngineExactFormatter,
 }
 
 /// <summary>Everything the harness knows about one entry point, declared rather than inferred.</summary>
@@ -112,7 +112,7 @@ internal static class MetamorphicSurfaces
             MetamorphicFacets.Outcome | MetamorphicFacets.HostAtoms,
             RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true),
 
-        new(MetamorphicSurface.EngineEvaluateToString, "engine-evaluate-to-string",
+        new(MetamorphicSurface.EngineExactFormatter, "engine-exact-formatter",
             MetamorphicFacets.Outcome | MetamorphicFacets.Structure | MetamorphicFacets.EmittedCount
             | MetamorphicFacets.HostAtoms | MetamorphicFacets.RenderedText,
             RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true),
@@ -185,8 +185,8 @@ internal static class MetamorphicSurfaces
                 ObserveEngineRun(source, profile, definition, options, ref observation),
             MetamorphicSurface.EngineEvaluateToAtoms =>
                 ObserveEngineEvaluateToAtoms(source, profile, definition, options, ref observation),
-            MetamorphicSurface.EngineEvaluateToString =>
-                ObserveEngineEvaluateToString(source, profile, definition, options, ref observation),
+            MetamorphicSurface.EngineExactFormatter =>
+                ObserveEngineExactFormatter(source, profile, definition, options, ref observation),
             _ => throw new MetamorphicHarnessException($"No adapter is implemented for surface {definition.Surface}."),
         };
     }
@@ -380,36 +380,26 @@ internal static class MetamorphicSurfaces
     }
 
     /// <summary>
-    /// <c>KatLangEngine.EvaluateToString</c>.
+    /// The canonical <c>exact</c> output formatter over an engine run.
     ///
     /// <para>This adapter performs TWO independent invocations of the engine with the same
-    /// shared immutable <see cref="RunOptions"/>: <c>EvaluateToString</c> for the text it
-    /// returns, and <c>Run</c> for the structured outcome the text surface does not expose. That
-    /// is deliberate rather than incidental — the second invocation is exactly the
-    /// "independent runs reusing one options object agree" property, and without it the
-    /// rendered text could not be attributed to a projection at all.</para>
-    ///
-    /// <para><b>The projection matters.</b> <c>EvaluateToString</c> returns SPACE-JOINED HOST
-    /// ATOMS on success and the structured diagnostic rendering otherwise, so it is NOT equal to
-    /// <c>Run(...).ToDisplayString()</c> for a successful program. Recording which projection
-    /// produced the text lets the comparator require exact text equality precisely where the two
-    /// surfaces really do render the same thing, instead of asserting a false relation.</para>
+    /// shared immutable <see cref="RunOptions"/>: the first run is rendered by the formatter for
+    /// the text, and the second supplies the structured outcome recorded beside it. That is
+    /// deliberate rather than incidental — the second invocation is exactly the "independent
+    /// runs reusing one options object agree" property, so a formatter text that disagreed with
+    /// <c>Run(...).ToDisplayString()</c> of an equal run is reported rather than hidden.</para>
     /// </summary>
-    private static bool ObserveEngineEvaluateToString(
+    private static bool ObserveEngineExactFormatter(
         string source,
         MetamorphicExecutionProfile profile,
         MetamorphicSurfaceDefinition definition,
         RunOptions options,
         ref MetamorphicOperationalObservation observation)
     {
-        var text = KatLangEngine.EvaluateToString(source, options);
+        var text = KatLang.Formatting.OutputFormatters.Exact.Format(KatLangEngine.Run(source, options));
         var run = KatLangEngine.Run(source, options);
 
-        var projection = run is RunResult.Success
-            ? MetamorphicSurfaceProjection.JoinedAtoms
-            : MetamorphicSurfaceProjection.StructuredDisplay;
-
-        observation = FromEngineRun(run, text, projection, profile, definition);
+        observation = FromEngineRun(run, text, MetamorphicSurfaceProjection.StructuredDisplay, profile, definition);
         return true;
     }
 

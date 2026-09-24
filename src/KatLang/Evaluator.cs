@@ -8,7 +8,19 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang;
 
 /// <summary>
-/// KatLang 0.75 evaluator matching the Lean specification.
+/// The LOW-LEVEL evaluator: evaluates a host-built <see cref="Expr"/> exactly as supplied —
+/// without parsing, module loading, front-end elaboration, or the program's
+/// <c>DisplayDecimals</c> setting — and returns the structured value or error as an
+/// <see cref="EvalResult{T}"/>. It is not a source runner: source text goes through
+/// <see cref="KatLangEngine"/> (or <see cref="Parser"/> to elaborate without evaluating), and
+/// an elaborated <see cref="ParseResult.Root"/> may be evaluated here only when it has no
+/// errors. The evaluator matches the Lean specification.
+/// Host-built nodes must satisfy their declared payload types and semantic invariants;
+/// they are not deeply immutable DTOs. Structural preflight rejects cycles and excessive
+/// depth, but is not a general validator for null children or every malformed payload.
+/// Do not mutate an AST or its caller-owned collections while a consumer is using it.
+///
+/// <para>Implementation notes.</para>
 /// Uses <see cref="EvalResult{T}"/> for structured errors instead of nullable returns;
 /// Lean's <c>EvalM</c> also carries the per-run cache and binding-context state.
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
@@ -2321,9 +2333,7 @@ public static partial class Evaluator
     /// <see cref="EvalError.AstDepthLimitExceeded"/>, and a cyclic node graph with
     /// <see cref="EvalError.AstCycleDetected"/>, before any recursive validation,
     /// optimization, or evaluation can overflow the CLR stack. Programs accepted by
-    /// the elaborating public parser stay within the hard ceiling; a raw syntax tree
-    /// from <c>Parser.ParseSyntax</c> may validly fall between that API's larger raw
-    /// gate and this evaluation gate and is rejected here.</para>
+    /// the public <see cref="Parser"/> always stay within the hard ceiling.</para>
     /// <para><b>Pre-evaluation validation:</b> after the structural preflight, the
     /// validation pass Lean's <c>runResultM</c> runs before evaluation is applied to
     /// the whole tree: an algorithm with explicit parameters but no output is rejected
@@ -2340,7 +2350,14 @@ public static partial class Evaluator
     /// default). Embedders running evaluation on smaller custom stacks are outside
     /// the documented envelope and should lower
     /// <see cref="EvaluationLimits.MaxAstDepth"/> accordingly.</para>
+    /// <para><b>Failures:</b> every failure of the program itself is returned as the
+    /// structured <see cref="EvalResult{T}.Error"/> (render it with
+    /// <see cref="KatLangError.FromEvalError"/>); only host misuse, host cancellation, and
+    /// exceptions thrown by host code escape as CLR exceptions. The evaluator keeps no
+    /// state between calls, so concurrent runs — also over one shared, immutable AST — are
+    /// independent.</para>
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
     public static EvalResult<Result> Run(Expr expr)
         => Run(expr, limits: null);
 
@@ -2352,8 +2369,12 @@ public static partial class Evaluator
     /// <see cref="KatLangEngine"/>. Step and cumulative materialization budgets are opt-in;
     /// display is a host-rendering policy applied by <see cref="RunResult"/>.</para>
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
-        => Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
+    {
+        ArgumentNullException.ThrowIfNull(expr);
+        return Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
+    }
 
     /// <summary>
     /// Run evaluation under explicit resource limits and cooperative host cancellation.
@@ -2389,12 +2410,15 @@ public static partial class Evaluator
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
     public static EvalResult<Result> Run(
         Expr expr,
         EvaluationLimits? limits,
         long? randomSeed,
         CancellationToken cancellationToken)
-        => Run(
+    {
+        ArgumentNullException.ThrowIfNull(expr);
+        return Run(
             expr,
             new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: true,
@@ -2404,13 +2428,16 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations: null,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
+    }
 
     /// <summary>
     /// Run evaluation with SYNCHRONOUS host operations ambiently in scope, under the
     /// ordinary limits and cancellation contracts of
-    /// <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/>.
+    /// <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/> and the seed contract of
+    /// <see cref="Run(Expr, EvaluationLimits?, long?, CancellationToken)"/> (pass <c>null</c>
+    /// for an unseeded run).
     ///
     /// <para>Each operation resolves like a prelude member (see
     /// <see cref="HostOperations"/>), so a preparsed program that references host
@@ -2419,39 +2446,25 @@ public static partial class Evaluator
     /// configured on <see cref="RunOptions.HostOperations"/> — evaluates them at the
     /// referencing sites. Host-operation delegates run inline on the calling thread;
     /// exceptions they throw propagate to the caller unchanged (see
-    /// <see cref="HostOperation"/> for the full contract).</para>
+    /// <see cref="HostOperation"/> for the full contract). Host operations are outside the
+    /// seeded stream — what they return remains the host's responsibility — while every
+    /// KatLang random call of the run draws from the one seeded stream in evaluation
+    /// order.</para>
     ///
     /// <para>This synchronous entry point accepts synchronous operations only: a set
     /// containing an asynchronous operation is rejected with
     /// <see cref="InvalidOperationException"/> before anything is evaluated — use
-    /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
-    /// for asynchronous operations. With the seeded overload present,
-    /// <c>Run(expr, null, null, token)</c> is ambiguous: use named arguments or an
-    /// explicitly typed second argument to select the intended overload.</para>
+    /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
+    /// for asynchronous operations.</para>
+    ///
+    /// <para>Every arity of the <c>Run</c> family has exactly one overload, so positional
+    /// arguments — <c>null</c> literals included — always select exactly one of them:
+    /// <c>Run(expr, null, null, token)</c> is the four-argument limits-and-seed overload.</para>
     /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// <paramref name="hostOperations"/> contains an asynchronous operation.
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="expr"/> is null, or <paramref name="hostOperations"/> is null — a run
+    /// without host operations uses an overload that does not take them.
     /// </exception>
-    /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
-    /// </exception>
-    public static EvalResult<Result> Run(
-        Expr expr,
-        HostOperations hostOperations,
-        EvaluationLimits? limits,
-        CancellationToken cancellationToken)
-        => Run(expr, hostOperations, limits, randomSeed: null, cancellationToken);
-
-    /// <summary>
-    /// Run evaluation with SYNCHRONOUS host operations ambiently in scope and an
-    /// optional random seed: the host-operation contract of
-    /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
-    /// combined with the seed contract of
-    /// <see cref="Run(Expr, EvaluationLimits?, long?, CancellationToken)"/>. Host
-    /// operations are outside the seeded stream — what they return remains the host's
-    /// responsibility — while every KatLang random call of the run draws from the one
-    /// seeded stream in evaluation order.
-    /// </summary>
     /// <exception cref="InvalidOperationException">
     /// <paramref name="hostOperations"/> contains an asynchronous operation.
     /// </exception>
@@ -2465,6 +2478,7 @@ public static partial class Evaluator
         long? randomSeed,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(expr);
         ArgumentNullException.ThrowIfNull(hostOperations);
         return Run(
             expr,
@@ -2476,8 +2490,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
     }
 
     internal static EvalResult<Result> Run(
@@ -2712,8 +2726,8 @@ public static partial class Evaluator
         EvaluationLimits? limits,
         EvaluationObservations? observations,
         HostOperations? hostOperations,
-        CancellationToken cancellationToken,
-        long? randomSeed)
+        long? randomSeed,
+        CancellationToken cancellationToken)
     {
         // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
         // token stops the run before the structural preflight spends O(tree) work.
@@ -2731,8 +2745,8 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
     }
 
     /// <summary>
@@ -2759,13 +2773,13 @@ public static partial class Evaluator
         EvaluationLimits? limits,
         EvaluationObservations? observations,
         HostOperations? hostOperations,
-        CancellationToken cancellationToken,
-        long? randomSeed)
+        long? randomSeed,
+        CancellationToken cancellationToken)
     {
         // Creating the budget is field initialization plus the run's random-stream
         // construction (unseeded entropy is acquired here, once) — the structural
         // preflight still runs before any budget COUNTER can move and charges nothing.
-        var budget = EvaluationBudget.Create(limits, hostOperations, cancellationToken, randomSeed);
+        var budget = EvaluationBudget.Create(limits, hostOperations, randomSeed, cancellationToken);
 
         if (StructuralPreflight(expr, limits) is { } structuralError)
         {
@@ -2801,8 +2815,8 @@ public static partial class Evaluator
         EvaluationLimits? limits = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2814,8 +2828,8 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -2858,7 +2872,7 @@ public static partial class Evaluator
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
 
     /// <summary>
-    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, CancellationToken)"/>
+    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, CancellationToken)"/>
     /// and additionally hands back the run's <see cref="EvaluationBudget"/> so a test can
     /// read the OPERATIONAL counters this run actually charged (steps, materialized item
     /// slots and string units, peak dynamic depth).
@@ -2871,7 +2885,7 @@ public static partial class Evaluator
     ///
     /// <para>The optional <paramref name="loopDiagnostics"/> and
     /// <paramref name="sequenceDiagnostics"/> collectors are the SAME channel the internal
-    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, CancellationToken)"/>
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, CancellationToken)"/>
     /// overload already exposes, so an observed run can additionally record which execution
     /// path the optimizers actually took (planned, fused, fallen back, or generic). They are
     /// write-only counters the evaluator increments through a null-conditional call: supplying
@@ -2886,8 +2900,8 @@ public static partial class Evaluator
         SequencePipelineDiagnostics? sequenceDiagnostics = null,
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2899,8 +2913,8 @@ public static partial class Evaluator
             limits,
             observations,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
 
@@ -2918,8 +2932,8 @@ public static partial class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2931,8 +2945,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -2951,8 +2965,8 @@ public static partial class Evaluator
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        long? randomSeed = null)
+        long? randomSeed = null,
+        CancellationToken cancellationToken = default)
     {
         var preparation = PrepareSynchronousRun(
             expr,
@@ -2964,8 +2978,8 @@ public static partial class Evaluator
             limits,
             observations: null,
             hostOperations,
-            cancellationToken,
-            randomSeed);
+            randomSeed,
+            cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -3104,12 +3118,16 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Run evaluation and flatten to atoms at the host boundary: exact list
-    /// boundaries are opened (<see cref="Result.ToHostAtoms"/>) so
-    /// collection-builtin results surface their numeric contents.
-    /// Booleans and strings are omitted; use <see cref="Run(Expr)"/> for the complete value.
+    /// Run evaluation and flatten to atoms at the host boundary: the numeric atoms reachable
+    /// through sequence AND exact list boundaries, depth-first and left to right, so
+    /// collection-builtin results surface their numeric contents. Booleans and strings are
+    /// omitted; use <see cref="Run(Expr)"/> for the complete value. The projection is bounded
+    /// like the engine's <see cref="RunResult.Success.Atoms"/>: more atoms than the effective
+    /// <see cref="EvaluationLimits.MaxCollectionItems"/> is
+    /// <see cref="EvalError.CollectionSizeLimitExceeded"/>, never an unbounded allocation.
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr)
         => RunFlat(expr, limits: null);
 
@@ -3144,6 +3162,19 @@ public static partial class Evaluator
         => ProjectFlatHostAtoms(Run(expr, limits, randomSeed, cancellationToken), limits, cancellationToken);
 
     /// <summary>
+    /// Evaluates a host-built AST with synchronous host operations and returns its bounded,
+    /// lossy numeric projection. Uses the same invocation and limit rules as
+    /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>;
+    /// strings and Booleans are omitted and both list and sequence boundaries are opened.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="expr"/> or <paramref name="hostOperations"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">The operations require asynchronous evaluation.</exception>
+    /// <exception cref="OperationCanceledException">Evaluation or projection was cancelled.</exception>
+    public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
+        Expr expr, HostOperations hostOperations, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
+        => ProjectFlatHostAtoms(Run(expr, hostOperations, limits, randomSeed, cancellationToken), limits, cancellationToken);
+
+    /// <summary>
     /// The flat entry family's host-boundary projection, shared by <see cref="RunFlat(Expr, EvaluationLimits?, CancellationToken)"/>
     /// and <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> (it
     /// awaits nothing). Same rule as the engine: the host projection is bounded, so a
@@ -3172,7 +3203,7 @@ public static partial class Evaluator
     /// <summary>
     /// Shared exponentiation for <c>^</c>, <c>Math.Pow</c>, and <c>pow</c>.
     /// Finite nonzero bases with integral |exponent| &lt;= long.MaxValue use
-    /// <see cref="Decimal128Numerics.TryIntegerPower"/> except for the existing
+    /// <see cref="Decimal128Numerics.TryIntegerPower(Decimal128, long, out Decimal128)"/> except for the existing
     /// negative-exponent overflow delegation described below. Successful certified
     /// results round the exact input power once to Decimal128, ties to even;
     /// negative exponents certify the reciprocal before target rounding.

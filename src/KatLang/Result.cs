@@ -4,8 +4,19 @@ using System.Runtime.CompilerServices;
 namespace KatLang;
 
 /// <summary>
-/// Structured evaluation result.
+/// Structured evaluation result — the KatLang value model hosts read and build.
 /// Corresponds to <c>Result</c> in the Lean specification.
+///
+/// <para><b>For hosts.</b> Values arrive as <see cref="RunResult.Success.Value"/>, as
+/// direct <see cref="Evaluator"/> results, and as host-operation arguments; a host operation
+/// returns one built with the variant constructors. Read a value by switching over its five
+/// variants (<see cref="Atom"/>, <see cref="Str"/>, <see cref="Bool"/>,
+/// <see cref="SequenceValue"/>, <see cref="ListValue"/>) or through the views
+/// <see cref="AsNum"/> and <see cref="AsBool"/>; compare values with
+/// <see cref="ValueComparer"/>, KatLang's structural equality — C# record equality compares
+/// the item lists of sequence and list values by reference. <see cref="object.ToString"/> is
+/// debug output, not a display or serialization format: render with
+/// <see cref="RunResult.ToDisplayString"/> or a <see cref="Formatting.OutputFormatter"/>.</para>
 ///
 /// <para>Value NESTING DEPTH is unbounded: evaluation limits bound only
 /// per-collection breadth, an in-budget loop builds a depth-n value in n
@@ -94,7 +105,19 @@ public closed record Result
     public sealed record Atom(Decimal128 Value) : Result;
 
     /// <summary>A first-class string value. Lean: Result.str.</summary>
-    public sealed record Str(string Value) : Result;
+    /// <exception cref="ArgumentNullException"><paramref name="Value"/> is null.</exception>
+    public sealed record Str(string Value) : Result
+    {
+        private readonly string _value = Value ?? throw new ArgumentNullException(nameof(Value));
+
+        /// <summary>The string's UTF-16 content, never null.</summary>
+        /// <exception cref="ArgumentNullException">Initialized with null.</exception>
+        public string Value
+        {
+            get => _value;
+            init => _value = value ?? throw new ArgumentNullException(nameof(Value));
+        }
+    }
 
     /// <summary>
     /// A first-class Boolean value, <c>true</c> or <c>false</c>. It is a scalar value kind
@@ -133,8 +156,10 @@ public closed record Result
         /// <paramref name="items"/>, so the caller retains no alias through
         /// which this value could later be mutated.
         /// </summary>
+        /// <exception cref="ArgumentNullException"><paramref name="items"/> is null.</exception>
+        /// <exception cref="ArgumentException"><paramref name="items"/> contains a null element.</exception>
         public SequenceValue(IEnumerable<Result> items)
-            : this(items.ToArray())
+            : this(SnapshotHostItems(items))
         {
         }
 
@@ -189,8 +214,10 @@ public closed record Result
         /// <paramref name="items"/>, so the caller retains no alias through
         /// which this value could later be mutated.
         /// </summary>
+        /// <exception cref="ArgumentNullException"><paramref name="items"/> is null.</exception>
+        /// <exception cref="ArgumentException"><paramref name="items"/> contains a null element.</exception>
         public ListValue(IEnumerable<Result> items)
-            : this(items.ToArray())
+            : this(SnapshotHostItems(items))
         {
         }
 
@@ -219,12 +246,31 @@ public closed record Result
     }
 
     /// <summary>
+    /// The snapshot behind the public collection constructors: one copy of the caller's items,
+    /// rejecting a null collection or a null element at the construction site — a value that
+    /// held one would otherwise fail far from the host code that built it, inside evaluation
+    /// or rendering.
+    /// </summary>
+    private static Result[] SnapshotHostItems(IEnumerable<Result> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        var snapshot = items.ToArray();
+        foreach (var item in snapshot)
+        {
+            if (item is null)
+                throw new ArgumentException("A KatLang value cannot contain a null item.", nameof(items));
+        }
+
+        return snapshot;
+    }
+
+    /// <summary>
     /// Normalize: unwrap single-element sequence values recursively. Lists are
     /// exact: their elements normalize (redundant SEQUENCE structure inside a
     /// list still normalizes) but the list boundary itself never collapses.
     /// Lean: Result.normalize
     /// </summary>
-    public Result Normalize() => NormalizeCore(observations: null);
+    internal Result Normalize() => NormalizeCore(observations: null);
 
     /// <summary>
     /// <see cref="Normalize"/> with a passive observer recording the structural work the walk
@@ -382,7 +428,7 @@ public closed record Result
     /// a condition.
     /// Lean: <c>Result.languageAtoms</c>.
     /// </summary>
-    public IReadOnlyList<Decimal128> LanguageAtoms()
+    internal IReadOnlyList<Decimal128> LanguageAtoms()
     {
         _ = TryLanguageAtoms(long.MaxValue, out var collected);
         return collected;
@@ -516,7 +562,7 @@ public closed record Result
     /// and Boolean values have no numeric projection and are omitted.
     /// Lean: <c>Result.hostAtoms</c>.
     /// </summary>
-    public IReadOnlyList<Decimal128> ToHostAtoms()
+    internal IReadOnlyList<Decimal128> ToHostAtoms()
     {
         _ = TryToHostAtoms(long.MaxValue, out var atoms);
         return atoms;
@@ -549,8 +595,10 @@ public closed record Result
     private bool TryToHostAtomsCore(
         long maxItems, ValueTraversalObservations? observations, out IReadOnlyList<Decimal128> atoms)
     {
+        // The host projection is PUBLISHED (RunResult.Success.Atoms, Evaluator.RunFlat): hand out
+        // a read-only view of the list being filled, so no consumer can change it through a cast.
         var collected = new List<Decimal128>();
-        atoms = collected;
+        atoms = collected.AsReadOnly();
 
         IReadOnlyList<Result> items;
         switch (this)
@@ -650,7 +698,7 @@ public closed record Result
     /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> and <c>map</c>
     /// so sequence-value accumulator / mapped values count as one value.
     /// </summary>
-    public int ValueCount()
+    internal int ValueCount()
     {
         return this switch
         {
@@ -690,7 +738,7 @@ public closed record Result
     /// Accepts exactly one numeric atom and rejects all other value kinds.
     /// Lean: <c>Result.singleAtomicNumber?</c>.
     /// </summary>
-    public Decimal128? SingleAtomicNumber()
+    internal Decimal128? SingleAtomicNumber()
     {
         return this switch
         {
@@ -735,7 +783,7 @@ public closed record Result
     /// binding); each opens a sequence and a list alike.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>
-    public IReadOnlyList<Result> ToItems()
+    internal IReadOnlyList<Result> ToItems()
     {
         return this switch
         {
@@ -752,7 +800,7 @@ public closed record Result
     /// numbers, Booleans, and strings supply themselves as one item.
     /// Lean: <c>Result.spreadItems</c>.
     /// </summary>
-    public IReadOnlyList<Result> SpreadItems()
+    internal IReadOnlyList<Result> SpreadItems()
     {
         return this switch
         {
@@ -771,7 +819,7 @@ public closed record Result
     /// spread opens it.
     /// Lean: <c>Result.structureItems?</c>.
     /// </summary>
-    public IReadOnlyList<Result>? StructureItems()
+    internal IReadOnlyList<Result>? StructureItems()
     {
         return this switch
         {
@@ -814,7 +862,7 @@ public closed record Result
     /// position of the target.
     /// Lean: <c>Result.select?</c>.
     /// </summary>
-    public Result? Index(int i)
+    internal Result? Index(int i)
     {
         var positions = ProjectionItems();
         return i >= 0 && i < positions.Count ? positions[i] : null;
@@ -824,7 +872,7 @@ public closed record Result
     /// Try to get as integer (for indexing). A value beyond the host int
     /// range can never be a valid position, so it is not an index.
     /// </summary>
-    public int? AsIndex()
+    internal int? AsIndex()
     {
         var num = AsNum();
         if (num is null || !Decimal128.IsInteger(num.Value) || num < 0 || num > int.MaxValue)
@@ -835,7 +883,7 @@ public closed record Result
     /// <summary>
     /// Create a sequence value from items and normalize.
     /// </summary>
-    public static Result FromItems(IEnumerable<Result> items)
+    internal static Result FromItems(IEnumerable<Result> items)
     {
         return SequenceValue.TakeOwnership(items.ToArray()).Normalize();
     }

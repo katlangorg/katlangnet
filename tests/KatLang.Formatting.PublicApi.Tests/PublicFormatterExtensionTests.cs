@@ -153,10 +153,11 @@ public class PublicFormatterExtensionTests
         for (var i = 0; i < items.Length; i++)
             items[i] = new Result.Atom(i % 10);
 
-        var run = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.SequenceValue(items),
-            []);
+        var value = new Result.SequenceValue(items);
+        var run = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Wide()", new RunOptions
+        {
+            HostOperations = HostOperations.Create(HostOperation.Create("Wide", (_, _) => value)),
+        }));
         var formatter = new ShapeFormatter();
         var options = new OutputFormattingOptions { MaxDisplayLength = 16 };
 

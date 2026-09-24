@@ -92,8 +92,12 @@ public static class Lexer
     /// keyword. Kept on the lexer so host-facing signature validation cannot drift from
     /// the language's identifier and keyword rules.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="text"/> is null.</exception>
     public static bool IsValidIdentifier(string text)
-        => IsIdentifierShaped(text) && ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return IsIdentifierShaped(text) && ClassifyIdentifierOrKeyword(text) == TokenKind.Identifier;
+    }
 
     /// <summary>
     /// The reserved keyword spellings, exactly the words
@@ -144,8 +148,10 @@ public static class Lexer
     /// tokens are in source order and every code unit outside whitespace belongs to
     /// exactly one token, whatever the input.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
+        ArgumentNullException.ThrowIfNull(source);
         var tokens = new List<Token>();
         var diagnostics = new List<Diagnostic>();
         var i = 0;
@@ -392,7 +398,7 @@ public static class Lexer
         }
 
         tokens.Add(Token.EndOfFile(i, line, col));
-        return (tokens, diagnostics);
+        return (tokens.AsReadOnly(), diagnostics.AsReadOnly());
     }
 
     /// <summary>

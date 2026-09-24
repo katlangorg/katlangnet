@@ -6,6 +6,11 @@ namespace KatLang;
 /// specification (<c>structure EvalM (α : Type) where runState : ExceptT Error (StateM EvalState) α</c>);
 /// the <c>StateM EvalState</c> layer (the per-run zero-parameter property cache, which
 /// Lean retains across failures) is threaded separately by the C# evaluator, not by this type.
+/// <para>Hosts receive it from the <see cref="Evaluator"/> entry points: test <see cref="IsOk"/>
+/// or <see cref="IsError"/>, then read <see cref="Value"/> or <see cref="Error"/> (render an error
+/// with <see cref="KatLangError.FromEvalError"/>). A program's failure is always an error result,
+/// never an exception. <c>default(EvalResult&lt;T&gt;)</c> is not a result of any evaluation — it
+/// reads as a success holding <c>default(T)</c> — so only use values the evaluator returned.</para>
 /// </summary>
 public readonly struct EvalResult<T>
 {
@@ -39,8 +44,18 @@ public readonly struct EvalResult<T>
     public EvalError Error => _error
         ?? throw new InvalidOperationException("EvalResult contains a value, not an error.");
 
+    /// <summary>Creates a successful result holding <paramref name="value"/>.</summary>
     public static EvalResult<T> Ok(T value) => new(value);
-    public static EvalResult<T> Err(EvalError error) => new(error);
+
+    /// <summary>Creates a failed result holding <paramref name="error"/>.</summary>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="error"/> is null — which would otherwise read as a success.
+    /// </exception>
+    public static EvalResult<T> Err(EvalError error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        return new(error);
+    }
 
     /// <summary>Implicit conversion from <see cref="EvalError"/> for ergonomic error returns.</summary>
     public static implicit operator EvalResult<T>(EvalError error) => Err(error);

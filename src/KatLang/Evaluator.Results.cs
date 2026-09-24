@@ -167,7 +167,7 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Reifies the values <see cref="ResultToExpr"/> does not descend into;
+    /// Reifies the values <see cref="ResultToExpr(Result, EvaluationObservations?)"/> does not descend into;
     /// returns null for the two structure shapes that convert child by child.
     /// </summary>
     private static Expr? ResultToExprLeaf(Result result) => result switch
@@ -183,7 +183,7 @@ public static partial class Evaluator
         Result.ListValue => null,
     };
 
-    /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr"/> walk.</summary>
+    /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr(Result, EvaluationObservations?)"/> walk.</summary>
     private sealed class ResultToExprFrame
     {
         public readonly Result Node;

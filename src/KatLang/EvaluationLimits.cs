@@ -30,8 +30,8 @@ namespace KatLang;
 ///   <see cref="MaxMaterializedStringChars"/>) bound one string and cumulative UTF-16
 ///   units constructed.</item>
 ///   <item><b>Display</b> (<see cref="MaxDisplayLength"/>) strictly bounds every string
-///   returned by <see cref="RunResult.ToDisplayString"/> and
-///   <see cref="KatLangEngine.EvaluateToString(string, RunOptions)"/>.</item>
+///   returned by <see cref="RunResult.ToDisplayString"/>, <see cref="RunResult.RenderDisplay"/>,
+///   and the output formatters.</item>
 /// </list>
 ///
 /// <para>Host cancellation and wall-clock timeouts are a third, different concept.
@@ -87,7 +87,7 @@ public sealed record EvaluationLimits
     /// ceiling is calibrated for the synchronous evaluator. A run that actually takes
     /// the asynchronous twin path — one configured with an asynchronous
     /// <see cref="HostOperation"/> through
-    /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, CancellationToken)"/>
+    /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
     /// — executes larger per-level frames, so its host-stack backstop can stop a
     /// recursive program with the structured <see cref="EvalError.EvaluationStackExhausted"/>
@@ -409,8 +409,9 @@ public sealed record EvaluationLimits
 
     /// <summary>
     /// Maximum UTF-16 code units returned by one call to
-    /// <see cref="RunResult.ToDisplayString"/> or
-    /// <see cref="KatLangEngine.EvaluateToString(string, RunOptions)"/>, or <c>null</c>
+    /// <see cref="RunResult.ToDisplayString"/>, <see cref="RunResult.RenderDisplay"/>, or an
+    /// output formatter (which may lower it further through
+    /// <see cref="Formatting.OutputFormattingOptions.MaxDisplayLength"/>), or <c>null</c>
     /// to use <see cref="MaxSupportedDisplayLength"/>. This applies to success, parse
     /// failure, evaluation failure, no-output text, and the overflow replacement itself.
     /// Values above the supported maximum are clamped down to it. Whether a rendering

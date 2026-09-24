@@ -565,12 +565,6 @@ public class EvaluationLimitsTests
     }
 
     [Fact]
-    public void EvaluateToString_AppliesConfiguredDepthLimit()
-        => Assert.Contains(
-            "recursion limit of 8",
-            KatLangEngine.EvaluateToString($"{CountDown}f(40)", new RunOptions { EvaluationLimits = Depth(8) }));
-
-    [Fact]
     public void PlainAndCountedEvaluators_AgreeOnLimitOutcome()
     {
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"{CountDown}f(40)").Root);
@@ -626,7 +620,6 @@ public class EvaluationLimitsTests
                 !Evaluator.RunCountedWithTopLevelProperty(expr, "DisplayDecimals", UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
             ("KatLangEngine.Run", KatLangEngine.Run(source, options) is RunResult.Success),
             ("KatLangEngine.EvaluateToAtoms", atomsCompleted),
-            ("KatLangEngine.EvaluateToString", !KatLangEngine.EvaluateToString(source, options).Contains("limit")),
         ];
     }
 

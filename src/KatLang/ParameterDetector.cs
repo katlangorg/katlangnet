@@ -509,7 +509,7 @@ internal static class ParameterDetector
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
-    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, HashSet{string}, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?)"/>
+    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// first promotes the unresolved name: its first semantic source
     /// occurrence span (the same occurrence order the inference itself uses)
     /// and a conservative near-miss suggestion computed against the SAME
@@ -808,7 +808,7 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Reference-identity memo state for ONE <see cref="RewriteParams"/> region:
+    /// Reference-identity memo state for ONE <see cref="RewriteParams(Expr, ElaboratedPropertyScope, ParameterOwnership, RewriteWalkMemo)"/> region:
     /// an algorithm's output rows or a conditional branch body. Both use the same
     /// owner-aware rewrite. The rewrite context (parameter ownership, scope) is constant
     /// for the region, so an original node reference maps to exactly one rewritten node: shared
@@ -862,7 +862,7 @@ internal static class ParameterDetector
     /// Whether a rewrite region reports a Grace marker that cannot reorder anything
     /// (F10): Grace is meaningful ONLY on a bare-name occurrence that implicit-signature
     /// collection promoted to a parameter of the enclosing algorithm — that is the one
-    /// place its weight is consumed (<see cref="CollectFreeParams"/>, then
+    /// place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
     /// <see cref="ApplyGraceReordering"/>). Every other occurrence is silently inert
     /// without this report: a name already bound before collection (an explicit or
     /// captured parameter, a visible property, a builtin, an opened name), a dot member

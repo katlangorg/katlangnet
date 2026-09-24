@@ -16,7 +16,7 @@ namespace KatLang;
 /// so an exact rational value can be rounded ONCE, under IEEE round-to-nearest with
 /// ties-to-even, into a Decimal128 through <see cref="RoundRational"/>.
 ///
-/// <para><b>Integer powers.</b> <see cref="TryIntegerPower"/> raises a finite
+/// <para><b>Integer powers.</b> <see cref="TryIntegerPower(Decimal128, long, out Decimal128)"/> raises a finite
 /// nonzero Decimal128 to an integral exponent whose magnitude fits a
 /// <see cref="long"/> and returns a correctly rounded Decimal128 result or reports
 /// that the precision cap prevented certification. The
@@ -802,13 +802,13 @@ internal static class Decimal128Numerics
 
     /// <summary>
     /// Natural logarithm with the accuracy of <c>ln(1 + ε)</c> near 1. The platform
-    /// <see cref="Decimal128.Log"/> loses roughly one significant digit per decade of
+    /// <see cref="Decimal128.Log(Decimal128)"/> loses roughly one significant digit per decade of
     /// closeness to 1 (cancellation: <c>Log(1 + 1e-33)</c> kept five correct digits of
     /// 34 in the tested runtime), which the tutorial's stated accuracy of the logarithm
     /// family does not allow. For <c>0.5 &lt;= x &lt;= 1.5</c> the difference <c>x - 1</c>
     /// is EXACT in Decimal128 (the two operands are within a factor of two of each other),
     /// so <see cref="Decimal128.LogP1"/> of that exact difference is the logarithm without
-    /// the cancellation; it agrees with <see cref="Decimal128.Log"/> to the last digit
+    /// the cancellation; it agrees with <see cref="Decimal128.Log(Decimal128)"/> to the last digit
     /// away from 1 and at the window's edges. Outside the window, and for every
     /// non-finite, zero, or negative input, the platform function's verdict is kept
     /// bit-for-bit. Like the inverse-trigonometric reformulation this is an accurate
@@ -850,7 +850,7 @@ internal static class Decimal128Numerics
         => Decimal128.IsFinite(x) && x > Decimal128.Zero;
 
     /// <summary>
-    /// <see cref="Decimal128.Log"/> of 10, computed once from the platform function
+    /// <see cref="Decimal128.Log(Decimal128)"/> of 10, computed once from the platform function
     /// (10 is far from 1, where that function is accurate to the last digit).
     /// </summary>
     private static readonly Decimal128 NaturalLogOfTen = Decimal128.Log((Decimal128)10);

@@ -1,6 +1,6 @@
 namespace KatLang;
 
-public sealed record CallableArityFacts(
+internal sealed record CallableArityFacts(
     int MinTopLevelArgumentCount,
     int? MaxTopLevelArgumentCount,
     bool HasTopLevelCollecting,
@@ -13,7 +13,7 @@ public sealed record CallableArityFacts(
             && (MaxTopLevelArgumentCount is null || argumentCount <= MaxTopLevelArgumentCount.Value);
 }
 
-public static class CallableSignatureDiagnostics
+internal static class CallableSignatureDiagnostics
 {
     /// <summary>
     /// The arity the BINDER accepts for this signature's top-level parameter list,

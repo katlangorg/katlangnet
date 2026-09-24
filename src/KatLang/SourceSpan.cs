@@ -109,8 +109,17 @@ public readonly record struct SourceSpan
     /// up to but not including <paramref name="endLine"/>:<paramref name="endColumn"/>.
     /// </summary>
     public SourceSpan(int startLine, int startColumn, int endLine, int endColumn)
-        : this(new SourcePosition(startLine, startColumn), new SourcePosition(endLine, endColumn))
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(startLine, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(startColumn, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(endLine, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(endColumn, 1);
+        if (endLine < startLine)
+            throw new ArgumentOutOfRangeException(nameof(endLine), endLine, "A source span's end must not precede its start.");
+        if (endLine == startLine && endColumn < startColumn)
+            throw new ArgumentOutOfRangeException(nameof(endColumn), endColumn, "A source span's end must not precede its start.");
+        Start = new SourcePosition(startLine, startColumn);
+        End = new SourcePosition(endLine, endColumn);
     }
 
     /// <summary>The first covered coordinate.</summary>

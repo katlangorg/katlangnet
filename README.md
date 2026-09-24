@@ -7,6 +7,17 @@ The authoritative KatLang specification is defined in [`KatLang.lean`](https://g
 If you have ideas for improving or extending the KatLang language — new constructs, better semantics, or clearer language rules — you are warmly welcome to open a discussion or reach out directly. Good ideas are always worth a conversation.
 
 ## Use of KatLang .NET parsing and evaluation library
+The simplest embedding call returns a structured result; render it explicitly:
+
+```c#
+using KatLang;
+
+var result = await KatLangEngine.RunAsync("1 + 2");
+Console.WriteLine(result.ToDisplayString());
+```
+
+For explicit success and failure handling:
+
 ```c#
 using KatLang;
 
@@ -32,7 +43,35 @@ var text = KatLangEngine.Run(source) switch
 Console.WriteLine(text);
 ```
 
-`RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, `ErrorContext`, and the parameter-pattern and binding-node hierarchies are closed the same way. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
+`RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, `ErrorContext`, and the parameter-pattern hierarchy are closed the same way. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
+
+Everything a run can be configured with is one `RunOptions` object — resource limits, cancellation, host operations, module loading, a random seed, and a default display precision. Its configuration is fixed once initialized and safe to reuse across sequential and concurrent runs; the engine keeps no state between calls. Delegate closures and cancellation sources remain host-owned; shared delegates must tolerate concurrent calls. A program's own failures never throw: they are `RunResult` variants carrying structured `KatLangError`s (classify by `Code`, locate by `Span`; `Message` is presentation text). Only host misuse (`ArgumentException` and its subclasses, or `InvalidOperationException` for a configuration that needs `RunAsync`), cancellation (`OperationCanceledException`), and exceptions thrown by your own host operations escape, and `RunAsync` delivers each of them through its task.
+
+```c#
+using KatLang;
+
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+var options = new RunOptions
+{
+    // One stop signal for the whole run: source processing and evaluation.
+    SourceProcessingCancellationToken = timeout.Token,
+    EvaluationCancellationToken = timeout.Token,
+    EvaluationLimits = new EvaluationLimits { MaxSteps = 1_000_000 },
+    // A host operation is an ambient callable the program references by name.
+    HostOperations = HostOperations.Create(
+        HostOperation.Create("TaxRate", (_, _) => new Result.Atom(0.255m))),
+};
+
+var result = await KatLangEngine.RunAsync("Net(gross) = gross * (1 - TaxRate)\nNet(1600)", options);
+if (result is RunResult.Success { Value: var value } && value.AsNum() is { } net)
+    Console.WriteLine(net);                       // the structured value
+else
+    Console.WriteLine(result.ToDisplayString());  // the diagnostics as text
+```
+
+`Parser.Parse`/`ParseAsync` run the same complete front end without evaluating — for validation and for editor tooling through `Semantics.SemanticModelBuilder.Build(parseResult)`. `Evaluator.Run`/`RunAsync`/`RunFlat`/`RunFlatAsync` are a lower layer: they evaluate a host-built `Expr` exactly as given, without parsing, module loading, front-end elaboration, or the program's `DisplayDecimals` setting, so they are not source runners. The package ships its XML documentation and is marked trimmable and NativeAOT-compatible, with the trim and AOT analyzers run over it on every build.
+
+`RunResult` and `ParseResult` are library-produced snapshots with readable payloads and deconstruction, not publicly constructible result containers. Use `Result` variant constructors to return values from host operations. The advanced AST is an elaborated semantic representation, not a deeply immutable syntax DTO: `ScopeCtx` describes lexical parent declarations, while runtime activation state stays internal. Host-built AST collections must not be mutated during evaluation or analysis. All four evaluator families support host operations; the `RunFlat` families apply a bounded numeric projection and intentionally discard strings, Booleans, and structure.
 
 ## Plain-text output formatting
 
@@ -98,7 +137,7 @@ else
     Console.WriteLine(rendering.Text);
 ```
 
-`ToDisplayString()` and `OutputFormatter.Format(...)` discard the structured rendering status. `EvaluateToString` and `EvaluateToStringAsync` are separate, lossy conveniences: they join numeric host atoms with spaces, dropping strings and structure boundaries, and return error or overflow text without a status. Their atom-only rendering can reach a different display-limit verdict from canonical display. Use `Run`/`RunAsync` followed by `RenderDisplay` when evaluation and rendering status matter.
+`ToDisplayString()` and `OutputFormatter.Format(...)` discard the structured rendering status; use `Run`/`RunAsync` followed by `RenderDisplay` when evaluation and rendering status matter. `EvaluateToAtoms`/`EvaluateToAtomsAsync` are the only lossy conveniences: they return the numeric atoms of a successful run (strings, Booleans, and structure are dropped) and throw `KatLangException` otherwise — never use them for display.
 
 The CLI's `run` and `eval` commands render before writing program output. Display overflow returns exit code 1, writes the complete limit notice once to stderr, and leaves stdout empty. Genuine notice-shaped output remains successful stdout output with exit code 0. Ordinary output keeps its terminating newline; programs with no output rows succeed silently. `check` validates source without executing or rendering it, so valid source that would overflow on execution still passes silently.
 
@@ -130,7 +169,7 @@ katlang run <file> --random-seed <integer>
 katlang eval <source> --random-seed <integer>
 ```
 
-Source compatibility: `Evaluator.Run(expr, null, null, token)` and the corresponding `RunAsync` call are ambiguous between the host-operation and seeded overloads. Use named arguments such as `limits: null, randomSeed: null, cancellationToken: token`, or explicitly type the second argument to select the intended overload. A null `HostOperations` argument is still rejected by the host-operation overload.
+Each of those evaluator families has exactly one overload per argument count, so positional `null` arguments always select one overload: `Evaluator.Run(expr, null, null, token)` is the limits-and-seed overload, and the host-operation form takes the seed explicitly, `Evaluator.Run(expr, operations, limits, randomSeed, token)` (pass `null` for an unseeded run; a null `HostOperations` argument is rejected).
 
 `--random-seed` takes any signed 64-bit integer as the next token (`--random-seed -5` and `--random-seed +5` are different seeds; `--random-seed=5` is not accepted) and is refused by `check`, which does not evaluate. The seed is host configuration only: KatLang source has no seeding syntax, and a program property named `RandomSeed` is an ordinary property that seeds nothing. A bare `--` ends the options, so a file or source argument that itself begins with two dashes is written after it (`katlang eval -- "--1"`). For a given KatLang version, the same program (loaded module contents and a `DisplayDecimals` property included), the same seed, and the same evaluated KatLang path produce the same random values on every supported platform, through synchronous and asynchronous entry points alike and regardless of internal optimizer strategy. Both random operations, in every spelling, consume one run-scoped stream in evaluation order, so a seed reproduces a stream — it does not memoize calls, and the ordinary rules (left-to-right arguments, lazy `if` branches, the zero-argument property cache for value reads, explicit `A()` re-evaluation and the builtin value slots that demand a property's algorithm directly — `sum(A)`, `if(true, A, 0)`, `A.string` — see the tutorial's caching section) decide which calls draw. The seed is immutable configuration: reusing one `RunOptions` object replays the stream from its beginning for every run, and concurrent runs sharing it get independent streams. The exact stream may change between KatLang versions when the generator, a sampling algorithm, or evaluation semantics deliberately change; KatLang randomness is not cryptographically secure. The internal generator contract (a SplitMix64 stream with exact bounded-rejection sampling) is documented in `docs/design/seeded-randomness-2026-09.md`.
 
@@ -151,7 +190,7 @@ katlang eval --display-decimals 3 "1 / 7"
 katlang run --display-decimals 6 program.kat
 ```
 
-A run's effective setting is the program's own `DisplayDecimals` property when it declares one, otherwise the host default, otherwise canonical full-precision display. A declared property always decides: an invalid one (`DisplayDecimals = -1`) still fails the run with its own diagnostic instead of falling back to the default. The default is display-only host configuration, not a KatLang property — nothing is added to the program, so name resolution, diagnostics, and editor tooling see the source as written — and it is never evaluated: it consumes no evaluation budget, draws no random value, invokes no host operation, and changes no value, atom, comparison, or control flow. Every rendering surface of the result uses the same effective setting with the same rounding (midpoints away from zero), special-value spellings, and display-length bound: `ToDisplayString`, `RenderDisplay`, the `exact`/`readable`/`concise` and custom formatters, and `EvaluateToString`. `RunOptions.MaxDisplayDecimals` is the shared upper bound; a default outside 0 through 99 throws `ArgumentOutOfRangeException` when the options object is initialized, and the CLI reports it as a usage error — values are rejected, never clamped. Like `--random-seed`, `--display-decimals` takes its value as the next token (`--display-decimals=2` is not accepted, and a leading sign or zeros such as `+2` or `02` spell the same integer) and is refused by `check`, which does not evaluate.
+A run's effective setting is the program's own `DisplayDecimals` property when it declares one, otherwise the host default, otherwise canonical full-precision display. A declared property always decides: an invalid one (`DisplayDecimals = -1`) still fails the run with its own diagnostic instead of falling back to the default. The default is display-only host configuration, not a KatLang property — nothing is added to the program, so name resolution, diagnostics, and editor tooling see the source as written — and it is never evaluated: it consumes no evaluation budget, draws no random value, invokes no host operation, and changes no value, atom, comparison, or control flow. Every rendering surface of the result uses the same effective setting with the same rounding (midpoints away from zero), special-value spellings, and display-length bound: `ToDisplayString`, `RenderDisplay`, and the `exact`/`readable`/`concise` and custom formatters. `RunOptions.MaxDisplayDecimals` is the shared upper bound; a default outside 0 through 99 throws `ArgumentOutOfRangeException` when the options object is initialized, and the CLI reports it as a usage error — values are rejected, never clamped. Like `--random-seed`, `--display-decimals` takes its value as the next token (`--display-decimals=2` is not accepted, and a leading sign or zeros such as `+2` or `02` spell the same integer) and is refused by `check`, which does not evaluate.
 
 ## Nuget package
 https://www.nuget.org/packages/KatLang

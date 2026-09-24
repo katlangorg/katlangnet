@@ -92,7 +92,7 @@ public class CollectionMaterializationLimitsTests
         const string source = "range(1, 10000000).count";
         Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         Assert.Throws<KatLangException>(() => KatLangEngine.EvaluateToAtoms(source));
-        Assert.Contains("Collection size limit", KatLangEngine.EvaluateToString(source));
+        Assert.Contains("Collection size limit", KatLangEngine.Run(source).ToDisplayString());
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(
             Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Error);
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(

@@ -52,7 +52,7 @@ public class FilterCountFusionSpanParityTests
         var chain = new List<string>();
         while (error is EvalError.WithContext context)
         {
-            chain.Add(context.ErrorContext.ToLegacyString());
+            chain.Add(context.ErrorContext.ToString());
             error = context.Inner;
         }
 

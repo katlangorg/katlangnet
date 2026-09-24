@@ -9,7 +9,7 @@ namespace KatLang.ParserFuzz;
 /// <c>Evaluator.RunCountedObserved</c> hands back. Phase 3 compares different entry points
 /// against each other, and those genuinely differ in what they can report: <c>Evaluator.Run</c>
 /// returns a value with no emitted count, <c>RunFlat</c> returns host atoms with no structural
-/// value, <c>KatLangEngine.EvaluateToString</c> returns rendered text and nothing else, and only
+/// value, a formatter returns rendered text and nothing else, and only
 /// <c>RunCountedObserved</c> hands back the run's budget.</para>
 ///
 /// <para>A pair is compared on the INTERSECTION of what both sides project. That is what keeps
@@ -88,12 +88,10 @@ internal sealed record MetamorphicSemanticObservation(
 /// holding on to evaluator values.
 /// </summary>
 /// <param name="RenderedProjection">
-/// Which rendering the surface returned. This matters because
-/// <c>KatLangEngine.EvaluateToString</c> is documented to return SPACE-JOINED HOST ATOMS on
-/// success and the structured diagnostic rendering otherwise, so it does not equal
-/// <c>Run(...).ToDisplayString()</c> for a successful program. Rendered text is therefore
-/// compared exactly where the two surfaces produced the SAME projection, and the length bound
-/// is checked on every side regardless.
+/// Which rendering the surface returned — the canonical structured display, or none. Rendered
+/// text is compared exactly where the two surfaces produced the SAME projection, so a surface
+/// that renders a different projection can never be held to another's text; the length bound is
+/// checked on every side regardless.
 /// </param>
 internal sealed record MetamorphicSurfaceProjection(
     string? HostAtoms,
@@ -103,7 +101,6 @@ internal sealed record MetamorphicSurfaceProjection(
     string? TopLevelProperty)
 {
     internal const string StructuredDisplay = "structured-display";
-    internal const string JoinedAtoms = "joined-atoms";
     internal const string NoRendering = "none";
 
     /// <summary>UTF-16 units the surface actually returned, or -1 when it rendered nothing.</summary>

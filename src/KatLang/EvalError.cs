@@ -215,7 +215,7 @@ public closed record EvalError
     {
         private readonly RuntimeStateSlot<IReadOnlyList<ImplicitParameterProvenance>?> _inferredImplicitParameters;
 
-        public CallableSignature? Signature { get; init; }
+        internal CallableSignature? Signature { get; init; }
 
         /// <summary>
         /// Diagnostic-only provenance of the callee's implicit parameters that
@@ -239,7 +239,7 @@ public closed record EvalError
     /// <summary>A variadic callable did not receive enough items for its fixed parameters.</summary>
     public sealed record VariadicArityMismatch(string CalleeName, int ExpectedMinimum, int Actual) : EvalError
     {
-        public CallableSignature? Signature { get; init; }
+        internal CallableSignature? Signature { get; init; }
     }
 
     /// <summary>Shape / unpacking failure.</summary>
@@ -448,7 +448,7 @@ public closed record EvalError
 
         public EvalError Inner { get; }
 
-        public string Context => ErrorContext.ToLegacyString();
+        public string Context => ErrorContext.ToString();
 
         public WithContext(ErrorContext errorContext, EvalError inner)
         {

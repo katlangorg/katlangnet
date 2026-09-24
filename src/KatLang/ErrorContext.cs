@@ -13,26 +13,26 @@ namespace KatLang;
 /// <see cref="EvalError.WithContext"/>, which wraps one), the variant that
 /// carries arbitrary text.</para>
 ///
-/// <para><see cref="ToLegacyString"/> is each variant's textual projection — the
+/// <para><see cref="FormatMessage"/> is each variant's textual projection — the
 /// prose <see cref="EvalError.WithContext.Context"/> reports and the message
 /// formatter falls back to when it has no message tailored to the
 /// (context, inner error) shape.</para>
 /// </summary>
 public closed record ErrorContext
 {
-    public abstract string ToLegacyString();
+    internal abstract string FormatMessage();
 
-    public sealed override string ToString() => ToLegacyString();
+    public sealed override string ToString() => FormatMessage();
 }
 
 public sealed record TextErrorContext(string Message) : ErrorContext
 {
-    public override string ToLegacyString() => Message;
+    internal override string FormatMessage() => Message;
 }
 
 public sealed record PropertyEvaluationContext(string PropertyName) : ErrorContext
 {
-    public override string ToLegacyString() => $"while evaluating property {PropertyName}";
+    internal override string FormatMessage() => $"while evaluating property {PropertyName}";
 }
 
 /// <summary>
@@ -42,7 +42,7 @@ public sealed record PropertyEvaluationContext(string PropertyName) : ErrorConte
 /// </summary>
 public sealed record ParameterEvaluationContext(string ParameterName) : ErrorContext
 {
-    public override string ToLegacyString() => $"while evaluating parameter {ParameterName}";
+    internal override string FormatMessage() => $"while evaluating parameter {ParameterName}";
 }
 
 /// <summary>
@@ -67,27 +67,27 @@ public sealed record ParameterEvaluationContext(string ParameterName) : ErrorCon
 /// </summary>
 public sealed record ArgumentEvaluationContext(string ArgumentDescription) : ErrorContext
 {
-    public override string ToLegacyString() => $"while evaluating argument {ArgumentDescription}";
+    internal override string FormatMessage() => $"while evaluating argument {ArgumentDescription}";
 }
 
 public sealed record ProgramEvaluationContext() : ErrorContext
 {
-    public override string ToLegacyString() => "while evaluating program output";
+    internal override string FormatMessage() => "while evaluating program output";
 }
 
 public sealed record DotCallContext(string ReceiverDescription, string PropertyName) : ErrorContext
 {
-    public override string ToLegacyString() => $"while evaluating dotCall .{PropertyName} of {ReceiverDescription}";
+    internal override string FormatMessage() => $"while evaluating dotCall .{PropertyName} of {ReceiverDescription}";
 }
 
 public sealed record CallContext(string CalleeDescription) : ErrorContext
 {
-    public override string ToLegacyString() => $"while evaluating call to {CalleeDescription}";
+    internal override string FormatMessage() => $"while evaluating call to {CalleeDescription}";
 }
 
 public sealed record ReduceInitialAccumulatorContext(IReadOnlyList<string> RequiredParameterNames) : ErrorContext
 {
-    public override string ToLegacyString() => "while preparing reduce initial accumulator";
+    internal override string FormatMessage() => "while preparing reduce initial accumulator";
 }
 
 /// <summary>
@@ -99,7 +99,7 @@ public sealed record ReduceInitialAccumulatorContext(IReadOnlyList<string> Requi
 /// </summary>
 public sealed record LoopStateBindingContext(string LoopName, IReadOnlyList<string> StepParameterNames, int ActualStateValueCount) : ErrorContext
 {
-    public override string ToLegacyString() => $"while binding {LoopName} step state";
+    internal override string FormatMessage() => $"while binding {LoopName} step state";
 }
 
 public sealed record VariadicLoopStateBindingContext(
@@ -108,7 +108,7 @@ public sealed record VariadicLoopStateBindingContext(
     int ExpectedMinimumStateValueCount,
     int ActualStateValueCount) : ErrorContext
 {
-    public override string ToLegacyString() => $"while binding {LoopName} step state";
+    internal override string FormatMessage() => $"while binding {LoopName} step state";
 }
 
 /// <summary>
@@ -121,7 +121,7 @@ public sealed record DeconstructionBindingContext(
     IReadOnlyList<string> TargetDisplayNames,
     bool HasCollectingTarget) : ErrorContext
 {
-    public override string ToLegacyString()
+    internal override string FormatMessage()
         => $"while binding assignment pattern {string.Join(", ", TargetDisplayNames)}";
 }
 
@@ -139,18 +139,18 @@ public sealed record SequenceValueParameterBindingContext(
     string PatternDisplayName,
     bool HasCollectingItem) : ErrorContext
 {
-    public override string ToLegacyString()
+    internal override string FormatMessage()
         => $"while binding sequence-value parameter pattern {PatternDisplayName}";
 }
 
 public sealed record OpenResolutionContext(string OpenDescription) : ErrorContext
 {
-    public override string ToLegacyString() => $"while resolving open: {OpenDescription}";
+    internal override string FormatMessage() => $"while resolving open: {OpenDescription}";
 }
 
 public sealed record ImplicitParameterContext(IReadOnlyList<string> ParamNames, int ProvidedArgumentCount) : ErrorContext
 {
-    public override string ToLegacyString()
+    internal override string FormatMessage()
     {
         var subject = ParamNames.Count == 1 ? "implicit parameter" : "implicit parameters";
         var names = ParamNames.Count switch

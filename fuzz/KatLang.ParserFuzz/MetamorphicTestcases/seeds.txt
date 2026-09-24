@@ -136,7 +136,7 @@ family=entry-point-parity bytes=07 00 00 01 01 00 00 00 00 desc=scalar success: 
 family=entry-point-parity bytes=07 00 00 01 01 00 02 05 00 desc=exact-list success: counted evaluator against the engine facade
 family=entry-point-parity bytes=07 00 00 01 01 00 04 05 00 desc=multiple emitted rows through the engine facade
 family=entry-point-parity bytes=07 00 00 01 01 00 01 03 00 desc=atom projection: RunFlat against EvaluateToAtoms
-family=entry-point-parity bytes=07 00 00 01 01 00 08 06 00 desc=display rendering: engine Run against EvaluateToString
+family=entry-point-parity bytes=07 00 00 01 01 00 08 06 00 desc=display rendering: engine Run against the exact formatter
 family=entry-point-parity bytes=07 00 00 01 01 00 09 02 00 desc=top-level property channel through both counted surfaces
 family=entry-point-parity bytes=07 00 00 01 01 00 0a 00 00 desc=evaluator failure reported identically by both surfaces
 family=entry-point-parity bytes=07 00 00 01 01 00 0c 05 00 desc=resource failure: the collection ceiling stops both surfaces

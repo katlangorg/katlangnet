@@ -238,16 +238,16 @@ internal static class FrontEndPipeline
             loadElaboratedRoot,
             diagnostics,
             hostOperations: hostOperations,
-            cancellationToken: cancellationToken,
-            hasDeferredModuleRegions: loader.DeferredRegionCount > 0);
+            hasDeferredModuleRegions: loader.DeferredRegionCount > 0,
+            cancellationToken: cancellationToken);
     }
 
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
         List<Diagnostic> diagnostics,
         HostOperations? hostOperations = null,
-        CancellationToken cancellationToken = default,
-        bool hasDeferredModuleRegions = false)
+        bool hasDeferredModuleRegions = false,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -365,7 +365,11 @@ internal sealed record FrontEndResult(
 {
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 
-    /// <summary>The public parse result, carrying the host operations the elaboration resolved names against.</summary>
+    /// <summary>
+    /// The public parse result, carrying the host operations the elaboration resolved names
+    /// against. Its diagnostics are a read-only snapshot: the pipeline's working list never
+    /// escapes, so no consumer can change a published result through a cast.
+    /// </summary>
     public ParseResult ToParseResult(HostOperations? hostOperations = null)
-        => new(ElaboratedRoot, Diagnostics) { HostOperations = hostOperations };
+        => new(ElaboratedRoot, Array.AsReadOnly(Diagnostics.ToArray())) { HostOperations = hostOperations };
 }

@@ -1,6 +1,6 @@
 namespace KatLang;
 
-public sealed record CallableBindingPlan
+internal sealed record CallableBindingPlan
 {
     private CallableBindingPlan(
         CallableSignature signature,
@@ -124,7 +124,7 @@ public sealed record CallableBindingPlan
     }
 }
 
-public sealed record PatternListBindingPlan
+internal sealed record PatternListBindingPlan
 {
     private PatternListBindingPlan(
         IReadOnlyList<CallableBindingNode> nodes,
@@ -289,7 +289,7 @@ public sealed record PatternListBindingPlan
     }
 }
 
-public sealed record CallableBindingCapture(
+internal sealed record CallableBindingCapture(
     string Name,
     ParameterKind Kind,
     CallableParameterSource Source)
@@ -304,14 +304,14 @@ public sealed record CallableBindingCapture(
 /// only variants, no other assembly can derive from it, and a switch EXPRESSION naming
 /// all three is compiler-exhaustive with no catch-all arm.
 /// </summary>
-public closed record CallableBindingNode
+internal closed record CallableBindingNode
 {
     private protected CallableBindingNode() { }
 
     public abstract IReadOnlyList<CallableBindingCapture> Captures { get; }
 }
 
-public sealed record CaptureBindingNode(CallableBindingCapture Capture) : CallableBindingNode
+internal sealed record CaptureBindingNode(CallableBindingCapture Capture) : CallableBindingNode
 {
     public string Name => Capture.Name;
 
@@ -322,7 +322,7 @@ public sealed record CaptureBindingNode(CallableBindingCapture Capture) : Callab
     public override IReadOnlyList<CallableBindingCapture> Captures { get; } = [Capture];
 }
 
-public sealed record CollectingCaptureBindingNode(CallableBindingCapture Capture, bool IsTopLevel) : CallableBindingNode
+internal sealed record CollectingCaptureBindingNode(CallableBindingCapture Capture, bool IsTopLevel) : CallableBindingNode
 {
     public string Name => Capture.Name;
 
@@ -333,7 +333,7 @@ public sealed record CollectingCaptureBindingNode(CallableBindingCapture Capture
     public override IReadOnlyList<CallableBindingCapture> Captures { get; } = [Capture];
 }
 
-public sealed record SequenceValueBindingNode(PatternListBindingPlan Children) : CallableBindingNode
+internal sealed record SequenceValueBindingNode(PatternListBindingPlan Children) : CallableBindingNode
 {
     public override IReadOnlyList<CallableBindingCapture> Captures => Children.Captures;
 }

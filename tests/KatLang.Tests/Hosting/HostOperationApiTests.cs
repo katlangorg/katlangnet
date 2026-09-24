@@ -561,6 +561,7 @@ public class HostOperationApiTests
             new Expr.NativeCall("host:Echo", []),
             operations,
             limits: null,
+            randomSeed: null,
             CancellationToken.None);
 
         Assert.True(result.IsError);
@@ -621,7 +622,6 @@ public class HostOperationApiTests
 
         Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run("Data", options));
         Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToAtoms("Data", options));
-        Assert.Throws<InvalidOperationException>(() => KatLangEngine.EvaluateToString("Data", options));
         Assert.Equal(0, counter.Count);
     }
 
@@ -633,7 +633,7 @@ public class HostOperationApiTests
         Assert.False(parsed.HasErrors);
 
         var result = Evaluator.Run(
-            new Expr.AlgorithmExpr(parsed.Root), operations, null, CancellationToken.None);
+            new Expr.AlgorithmExpr(parsed.Root), operations, null, null, CancellationToken.None);
         Assert.True(result.IsOk);
         Assert.Equal(42m, ((Result.Atom)result.Value).Value);
 
@@ -641,12 +641,12 @@ public class HostOperationApiTests
         // Run(Expr, EvaluationLimits?, long?, CancellationToken) overload, two literal
         // nulls would otherwise be ambiguous.
         Assert.Throws<ArgumentNullException>(() => Evaluator.Run(
-            new Expr.AlgorithmExpr(parsed.Root), (HostOperations)null!, null, CancellationToken.None));
+            new Expr.AlgorithmExpr(parsed.Root), (HostOperations)null!, null, null, CancellationToken.None));
 
         var asyncOperations = HostOperations.Create(
             HostOperation.CreateAsync("Data", (_, _) => ValueTask.FromResult(Atom(1))));
         Assert.Throws<InvalidOperationException>(() => Evaluator.Run(
-            new Expr.AlgorithmExpr(parsed.Root), asyncOperations, null, CancellationToken.None));
+            new Expr.AlgorithmExpr(parsed.Root), asyncOperations, null, null, CancellationToken.None));
     }
 
     // ── Corpus differential: an unused configuration changes nothing ────────

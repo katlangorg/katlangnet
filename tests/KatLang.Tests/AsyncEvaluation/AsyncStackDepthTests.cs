@@ -210,7 +210,7 @@ public class AsyncStackDepthTests
         {
             // Nothing suspends (the operation is never invoked), so the twin path completes
             // synchronously on this thread's 1 MiB stack — the minimum supported stack.
-            var pending = Evaluator.RunAsync(ast, operations, limits: null, CancellationToken.None);
+            var pending = Evaluator.RunAsync(ast, operations, limits: null, randomSeed: null, CancellationToken.None);
             Assert.True(pending.IsCompleted);
             asyncOutcome = pending.GetAwaiter().GetResult();
         });
@@ -231,6 +231,7 @@ public class AsyncStackDepthTests
                 ast,
                 HostOperations.Create(HostOperation.Create("Ping", (_, _) => new Result.Atom(1))),
                 limits: null,
+                randomSeed: null,
                 CancellationToken.None);
         });
         Assert.True(syncOutcome!.Value.IsError);

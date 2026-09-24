@@ -21,6 +21,29 @@
 		-->
 		<WarningsAsErrors>$(WarningsAsErrors);CS8509;CS8655</WarningsAsErrors>
 
+		<!--
+		  The package ships its XML documentation beside the assembly, so NuGet consumers
+		  get the public API's contract text (units, null/default meaning, exceptions,
+		  sync/async and cancellation rules) in IntelliSense. CS1591 (a public member
+		  without a comment) is not enforced: the repository documents contract-bearing
+		  members, not every positional record component or enum member. Every
+		  documentation diagnostic that means a comment is WRONG is an error instead —
+		  malformed XML, an unresolvable or ambiguous cref, a param/paramref naming no
+		  parameter, or a partially documented parameter list — so the shipped docs can
+		  never point at a removed or renamed API.
+		-->
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<WarningsAsErrors>$(WarningsAsErrors);CS0419;CS1570;CS1571;CS1572;CS1573;CS1574;CS1580;CS1581;CS1584;CS1658;CS1734;CS1735</WarningsAsErrors>
+
+		<!--
+		  NativeAOT and trimming are a supported consumer scenario (the katlang CLI itself
+		  ships NativeAOT). Declaring the library AOT-compatible runs the trim, AOT, and
+		  single-file analyzers over it on every build and marks the assembly trimmable,
+		  so that support is a checked property of the package rather than an accident.
+		-->
+		<IsAotCompatible>true</IsAotCompatible>
+
 		<PackageId>KatLang</PackageId>
 		<Version>$(KatLangVersion)</Version>
 		<Authors>katlangorg</Authors>
@@ -43,7 +66,7 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes>Internal architecture repair of the evaluator's plain/counted implementation pairs; no intended KatLang language-semantics change and no public API change. The authoritative Lean model and the C# runtime now share one ownership direction: wherever a plain/counted evaluator pair is semantically equivalent, the counted implementation is canonical and the plain implementation is its value projection, so plain/counted equivalence holds by construction instead of depending on two hand-maintained bodies staying in sync. In Lean, the counted expression dispatch now matches every AST variant explicitly (the numeric/string leaves and the unary/binary operator semantics moved into counted-owned arms), the former default arm that delegated counted evaluation back to the plain evaluator is gone, plain eval is a one-line total projection of counted eval, the user/conditional/resolved/expression-position call families project their counted twins exactly as the builtin and dot-call families already did, and the ownership-first lexical lookup chain exists once (the property-carrying chain is canonical; the algorithm-returning spelling is its projection, and the formerly duplicated algorithm-returning open-lookup chain is deleted). C# mirrors that structure: the independent plain implementations of resolved-builtin dispatch (including the duplicated if/while/repeat/atoms/range switch), dot-call dispatch, the lexical receiver-injection helpers, and the user/conditional/resolved/expression-position call family are deleted in favor of one shared value-projection helper over their counted twins; the evaluator's resolve-only lexical-lookup fast path is now the projection of the canonical binding-carrying lookup; and several already-dead plain wrappers were removed. The zero-argument property cache is unaffected in behavior — its key always collapsed the plain/counted access kinds to one access shape, so entries were shared across both spellings before and after; only internal per-kind instrumentation attribution moved onto the counted kinds. The async twin architecture, run-entry preparation, budgets and accounting chokepoints, diagnostics, spans, and all public entry points are unchanged. New Lean CoreTests guard families pin projection parity for the call, total-eval, and lookup families alongside the existing builtin and dot-call guards, and the exhaustive counted match makes a future AST variant a compile-time error until it is given a counted arm.</PackageReleaseNotes>
+		<PackageReleaseNotes>Pre-release public .NET API cleanup: implementation-only planners and unbounded value projections are internal; source execution uses KatLangEngine.Run/RunAsync. Engine and parser results have read-only payloads and are produced by the library. XML documentation is included and NativeAOT compatibility is enabled. This release includes breaking API changes; see README.md for supported entry points.</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>

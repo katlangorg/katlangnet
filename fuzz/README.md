@@ -433,7 +433,7 @@ One source through two of eight registered surfaces:
 | `evaluator-run-counted-with-top-level-property` | the above, plus the `DisplayDecimals` channel |
 | `engine-run` | outcome, value, emitted count, host atoms, rendered text |
 | `engine-evaluate-to-atoms` | outcome, host atoms |
-| `engine-evaluate-to-string` | outcome, value, emitted count, host atoms, rendered text |
+| `engine-exact-formatter` | outcome, value, emitted count, host atoms, rendered text |
 
 A pair is compared on the **intersection** of what both surfaces project, so "these two entry points
 agree" can never quietly mean "neither could tell", and the registry refuses a pair whose intersection
@@ -443,15 +443,15 @@ formatted message and a span rather than the structured `EvalError`, so **no eng
 structured-error facet**. Only the observed evaluator entry point hands back a budget, so every other
 pair declares `NotCompared` rather than comparing two zeroes.
 
-**Rendering.** `KatLangEngine.EvaluateToString` is **not** `Run(...).ToDisplayString()` for a successful
-program — it is documented to return space-joined host atoms on success and the structured diagnostic
-rendering otherwise. Asserting blanket string equality would assert something the runtime never
-promised. Each observation therefore records which **projection** produced its text, and rendered text
-must be exactly equal wherever the two projections coincide (every failure, and every same-surface
-repeat) while the strict length bound is checked on both sides always. The `engine-evaluate-to-string`
-adapter performs two independent engine invocations sharing one immutable `RunOptions` — one for the
-text, one for the structured outcome the text surface does not expose — which is itself the "independent
-runs reusing one configuration agree" property.
+**Rendering.** Each observation records which **projection** produced its text, and rendered text must
+be exactly equal wherever the two projections coincide, while the strict length bound is checked on both
+sides always. `Run(...).ToDisplayString()` and the canonical `exact` formatter render the same projection,
+so the `engine-run` / `engine-exact-formatter` pair compares their text exactly, success and failure
+alike. The `engine-exact-formatter` adapter performs two independent engine invocations sharing one
+immutable `RunOptions` — one rendered by the formatter, one supplying the structured outcome — which is
+itself the "independent runs reusing one configuration agree" property. (Until the September 2026 public
+API audit this surface was `KatLangEngine.EvaluateToString`, a lossy atom-join convenience that was
+removed; its enum position is unchanged, so recorded seeds decode to the same cases.)
 
 **Limits** are held at the default or comfortably generous. Resource-failure coverage comes from source
 templates that exceed the always-on ceilings on their own, because the engine surfaces additionally bound
@@ -811,7 +811,7 @@ fingerprint both name:
 | `Semantic` | The two members disagree about what the program MEANS. | Is the equivalence argument actually true? Check the family's template, then compare each minimized member against Lean. |
 | `ResourceBoundary` | Host budget policy: one side stopped for a limit the other cleared, or a boundary law's below/at/above shape broke. | Did exactly one dimension vary? Was the boundary derived under the same policy the sweep ran? |
 | `Operational` | Same meaning, different amount of work. | Is the declared relation stronger than the runtime's contract — and is the direction right? |
-| `Rendering` | A display surface returned different text, or more units than its limit allows. | Did both sides render the same PROJECTION? `EvaluateToString` is not `ToDisplayString()` on success. |
+| `Rendering` | A display surface returned different text, or more units than its limit allows. | Did both sides render the same PROJECTION? A surface that renders nothing is never held to another's text. |
 | `StateIsolation` | Two independent executions were distinguishable. | Something outlived a run: a counter, a cache, an optimizer decision, a diagnostic. |
 
 Semantic findings are language findings and belong in Lean's world; the other four are host-policy,
@@ -857,10 +857,9 @@ shown invalid independently.
   operational counters — every pair but observed-versus-observed — the case makes no operational
   claim at all. Engine surfaces cannot contribute a structured error kind, because the public
   `KatLangError` does not carry one.
-* `EvaluateToString` and `Run(...).ToDisplayString()` are compared exactly only where they render the
-  same **projection**, which on current behaviour means every non-success. On success the two return
-  different projections by documented contract, and only the strict length bound and per-surface
-  determinism are claimed.
+* Rendered text is compared exactly only where two surfaces render the same **projection**; the
+  engine's `ToDisplayString()` and the `exact` formatter always do, while the strict length bound and
+  per-surface determinism are claimed for every rendering surface.
 * Group D never claims an exact **stack-sufficiency** boundary: that backstop is machine-dependent, so
   a run that hits it is rejected and classified rather than compared.
 * The two per-object ceilings (`per-collection-items`, `per-string-length`) use a bounded search that

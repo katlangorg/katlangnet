@@ -1,7 +1,25 @@
 namespace KatLang;
 
 /// <summary>
-/// Optional configuration for KatLang parsing and evaluation.
+/// Per-run configuration for <see cref="KatLangEngine"/> and <see cref="Parser"/>: resource
+/// limits, cancellation, host operations, module loading, a random seed, and a default display
+/// precision — every option a run has, in one place.
+/// <para><b>Defaults.</b> <c>new RunOptions()</c> — and a <c>null</c> options argument, which
+/// means the same — runs with <see cref="KatLang.EvaluationLimits.Default"/> and
+/// <see cref="KatLang.SourceProcessingLimits.Default"/>, no cancellation, no host operations,
+/// no module loading (a program using <c>load</c> gets a diagnostic and nothing is fetched),
+/// fresh entropy for random operations, and canonical full-precision display unless the
+/// program declares <c>DisplayDecimals</c>.</para>
+/// <para><b>Lifetime.</b> Every member is init-only; collection inputs are snapshotted when the
+/// object is initialized. Configuration is safe to share across sequential and
+/// concurrent runs: each run creates its own budgets, caches, and random stream, and no run
+/// changes the options. Allowed-host entries are validated at parse/run entry; display precision
+/// and limit settings are validated during initialization. Delegate closures and cancellation
+/// sources remain host-owned mutable state, so shared delegates must support concurrent calls.
+/// A host that
+/// cancels runs individually creates one options object per run and shares the heavier parts
+/// (one <see cref="KatLang.EvaluationLimits"/>, one <see cref="KatLang.HostOperations"/>
+/// set) between them.</para>
 /// </summary>
 public sealed class RunOptions
 {
@@ -19,6 +37,7 @@ public sealed class RunOptions
     public const int MaxDisplayDecimals = 99;
 
     private readonly int? _defaultDisplayDecimals;
+    private readonly IReadOnlyList<string>? _allowedHosts;
 
     /// <summary>
     /// Injected asynchronous code fetcher — the ONE source-loading contract: URL and the
@@ -95,8 +114,17 @@ public sealed class RunOptions
     /// under <c>ex.com</c>; <c>ex.com.evil.net</c> is not), entries are trimmed, and a null, empty,
     /// or whitespace-only entry is rejected with <see cref="ArgumentException"/> at the parse/run
     /// entry point before anything is processed. Defaults to katlang.org only.
+    /// <para>The sequence is enumerated ONCE, when the options object is initialized, into a
+    /// snapshot this property then returns: later changes to the caller's collection do not
+    /// reach the options, so one options object shared by concurrent runs can never be
+    /// observed mid-change. Enumeration exceptions escape the initializer. The snapshot keeps
+    /// the original strings; entry-point validation trims them and matching ignores case.</para>
     /// </summary>
-    public IEnumerable<string>? AllowedHosts { get; init; }
+    public IEnumerable<string>? AllowedHosts
+    {
+        get => _allowedHosts;
+        init => _allowedHosts = value is null ? null : Array.AsReadOnly(value.ToArray());
+    }
 
     /// <summary>
     /// Optional host operations exposed to the program as ambient callables (resolved
@@ -181,10 +209,9 @@ public sealed class RunOptions
     /// <see cref="RunResult.Success.Value"/>, <see cref="RunResult.Success.Atoms"/>, and
     /// diagnostics are unchanged. The run's result carries its effective setting, so every
     /// rendering surface of that result agrees under the same display-length bound:
-    /// <see cref="RunResult.ToDisplayString"/> and <see cref="RunResult.RenderDisplay"/>, every
+    /// <see cref="RunResult.ToDisplayString"/> and <see cref="RunResult.RenderDisplay"/>, and every
     /// <see cref="Formatting.OutputFormatter"/> — built-in or custom, through
-    /// <see cref="Formatting.BoundedOutputWriter.AppendAtom"/> — and
-    /// <see cref="KatLangEngine.EvaluateToString(string, RunOptions?)"/>.</para>
+    /// <see cref="Formatting.BoundedOutputWriter.AppendAtom"/>.</para>
     /// <para><b>Host configuration, not a property.</b> Nothing is injected into the program.
     /// The default is not a KatLang declaration, so name resolution, shadowing, collisions,
     /// source spans, diagnostics, and editor tooling see the program exactly as written

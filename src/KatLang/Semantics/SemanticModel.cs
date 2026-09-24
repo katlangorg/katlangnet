@@ -28,14 +28,8 @@ public enum IdentifierClassification
     ConditionalBinderDefinition,
     ConditionalBinderReference,
     Builtin,
-    /// <summary>
-    /// Legacy classification retained for API compatibility.
-    /// The default public front-end should not produce this because successful
-    /// parse/elaboration removes unresolved <c>load</c> outside deferred regions, which use
-    /// <see cref="DeferredModuleReference"/> instead.
-    /// </summary>
-    LoadedExternalMemberReference,
-    OpenTarget,
+    // Value 8 was the retired, never-produced LoadedExternalMemberReference.
+    OpenTarget = 9,
     Unresolved,
     /// <summary>
     /// The identifier's meaning cannot be determined without materializing a DEFERRED module
@@ -89,9 +83,11 @@ public sealed record IdentifierResolution(
 public sealed class SemanticModel
 {
     /// <summary>
-    /// Creates a semantic model.
+    /// Creates a semantic model from parts the builder has already made mutually consistent.
+    /// Internal: every public model comes from <see cref="SemanticModelBuilder"/>, so its
+    /// occurrences, resolutions, property index, and scopes all describe the same root.
     /// </summary>
-    public SemanticModel(
+    internal SemanticModel(
         Algorithm root,
         IReadOnlyList<IdentifierOccurrence> identifierOccurrences,
         IReadOnlyList<DeclarationOccurrence> declarations,
@@ -259,13 +255,19 @@ public sealed class SemanticModel
     /// Finds all identifier resolutions with the supplied name.
     /// </summary>
     public IReadOnlyList<IdentifierResolution> FindResolutions(string name)
-        => IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToList();
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return Array.AsReadOnly(IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToArray());
+    }
 
     /// <summary>
     /// Finds all declaration occurrences with the supplied name.
     /// </summary>
     public IReadOnlyList<DeclarationOccurrence> FindDeclarations(string name)
-        => Declarations.Where(declaration => declaration.Name == name).ToList();
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return Array.AsReadOnly(Declarations.Where(declaration => declaration.Name == name).ToArray());
+    }
 
     /// <summary>
     /// Finds the first property-centered semantic object whose identifier site
@@ -281,15 +283,21 @@ public sealed class SemanticModel
     /// not a declaration identity.
     /// </summary>
     public PropertyInfo? FindPropertyByDeclaration(DeclarationOccurrence declaration)
-        => _propertiesByDeclaration.TryGetValue(declaration, out var property)
+    {
+        ArgumentNullException.ThrowIfNull(declaration);
+        return _propertiesByDeclaration.TryGetValue(declaration, out var property)
             ? property
             : null;
+    }
 
     /// <summary>
     /// Finds all known property-centered semantic objects with the supplied name.
     /// </summary>
     public IReadOnlyList<PropertyInfo> FindProperties(string name)
-        => _propertiesByName.TryGetValue(name, out var properties)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return _propertiesByName.TryGetValue(name, out var properties)
             ? properties
             : [];
+    }
 }

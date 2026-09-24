@@ -228,14 +228,10 @@ public class EvaluationCancellationTests
         var fromRun = Assert.Throws<OperationCanceledException>(() => KatLangEngine.Run("1 + 1", options));
         Assert.Equal(cts.Token, fromRun.CancellationToken);
 
-        // Cancellation must escape, never become a KatLangException or an error string.
+        // Cancellation must escape, never become a KatLangException or a RunResult.
         var fromAtoms = Assert.Throws<OperationCanceledException>(
             () => KatLangEngine.EvaluateToAtoms("1 + 1", options));
         Assert.Equal(cts.Token, fromAtoms.CancellationToken);
-
-        var fromString = Assert.Throws<OperationCanceledException>(
-            () => KatLangEngine.EvaluateToString("1 + 1", options));
-        Assert.Equal(cts.Token, fromString.CancellationToken);
     }
 
     [Fact]

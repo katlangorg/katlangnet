@@ -1,5 +1,6 @@
 using System.Globalization;
 using KatLang.Evaluation.Caching;
+using KatLang.Formatting;
 using KatLang.ParserFuzz;
 using KatLang.Tests.LanguageSpec;
 
@@ -695,28 +696,20 @@ public class MetamorphicPhase3FamilyTests
     }
 
     /// <summary>
-    /// The rendering surfaces are bounded and honest about their PROJECTION.
-    ///
-    /// <para><c>EvaluateToString</c> returns space-joined host atoms on success and the structured
-    /// diagnostic rendering otherwise, so it equals <c>Run(...).ToDisplayString()</c> on failures
-    /// and deliberately differs on successes. Both are always within the configured display limit.</para>
+    /// The rendering surfaces are bounded and agree: <c>Run(...).ToDisplayString()</c> and the
+    /// canonical <c>exact</c> formatter render every outcome — success and failure alike — to the
+    /// same text, always within the configured display limit.
     /// </summary>
     [Fact]
-    public void EngineRenderingSurfaces_AreBoundedAndDeclareTheirProjection()
+    public void EngineRenderingSurfaces_AreBoundedAndAgree()
     {
         foreach (var source in MetamorphicEntryPointTemplate.Sources)
         {
             var run = KatLangEngine.Run(source.Source);
             var display = run.ToDisplayString();
-            var joined = KatLangEngine.EvaluateToString(source.Source);
 
             Assert.True(display.Length <= EvaluationLimits.MaxSupportedDisplayLength);
-            Assert.True(joined.Length <= EvaluationLimits.MaxSupportedDisplayLength);
-
-            if (run is RunResult.Success) continue;
-
-            // Every non-success renders identically through both surfaces.
-            Assert.Equal(display, joined);
+            Assert.Equal(display, OutputFormatters.Exact.Format(run));
         }
     }
 
@@ -767,11 +760,6 @@ public class MetamorphicPhase3FamilyTests
             _ = KatLangEngine.Run(MetamorphicExecutor.IsolationProbeSource, options).ToDisplayString();
             var secondRun = KatLangEngine.Run(source.Source, options).ToDisplayString();
             Assert.Equal(firstRun, secondRun);
-
-            var firstString = KatLangEngine.EvaluateToString(source.Source, options);
-            _ = KatLangEngine.EvaluateToString(MetamorphicExecutor.IsolationProbeSource, options);
-            var secondString = KatLangEngine.EvaluateToString(source.Source, options);
-            Assert.Equal(firstString, secondString);
         }
     }
 

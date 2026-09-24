@@ -537,43 +537,42 @@ public class KatLangEngineTests
         Assert.Equal(RunResult.NoProgramOutput.DefaultMessage, error.Message);
     }
 
-    // ── EvaluateToString ─────────────────────────────────────────────────────
+    // ── Text output comes from the structured result ─────────────────────────
+    // The former `EvaluateToString` convenience (atoms joined by spaces, error text on
+    // failure) was removed before release: it returned failure text through the same
+    // string channel as program output and silently dropped strings and Booleans. Text is
+    // rendered from the RunResult, whose variant keeps failure distinguishable.
 
     [Fact]
-    public void EvaluateToString_SimpleExpression_ReturnsDisplayString()
+    public void DisplayText_ComesFromTheStructuredResult_SoFailureStaysDistinguishable()
     {
-        var text = KatLangEngine.EvaluateToString("5 + 5");
-        Assert.Equal("10", text);
+        var success = KatLangEngine.Run("5 + 5");
+        Assert.True(success.IsSuccess);
+        Assert.Equal("10", success.ToDisplayString());
+
+        var rows = KatLangEngine.Run("1, 2, 3");
+        Assert.True(rows.IsSuccess);
+        Assert.Equal(["1", "2", "3"], rows.ToDisplayString().Split(Environment.NewLine));
+
+        var parseFailure = KatLangEngine.Run("2 +");
+        Assert.IsType<RunResult.ParseFailure>(parseFailure);
+        Assert.NotEmpty(parseFailure.ToDisplayString());
+
+        var evalFailure = KatLangEngine.Run("1 / 0");
+        Assert.IsType<RunResult.EvalFailure>(evalFailure);
+        Assert.Contains("zero", evalFailure.ToDisplayString(), StringComparison.OrdinalIgnoreCase);
+
+        var noOutput = KatLangEngine.Run("T = 4");
+        Assert.True(noOutput.IsNoProgramOutput);
+        Assert.Equal(RunResult.NoProgramOutput.DefaultMessage, noOutput.ToDisplayString());
     }
 
     [Fact]
-    public void EvaluateToString_MultipleOutputs_SpaceSeparated()
+    public void DisplayText_KeepsStringsAndBooleans_ThatAnAtomOnlyProjectionDrops()
     {
-        var text = KatLangEngine.EvaluateToString("1, 2, 3");
-        Assert.Equal("1 2 3", text);
-    }
-
-    [Fact]
-    public void EvaluateToString_ParseError_ReturnsErrorText()
-    {
-        var text = KatLangEngine.EvaluateToString("2 +");
-        Assert.NotEmpty(text);
-    }
-
-    [Fact]
-    public void EvaluateToString_EvalError_ReturnsErrorText()
-    {
-        var text = KatLangEngine.EvaluateToString("1 / 0");
-        Assert.NotEmpty(text);
-        Assert.Contains("zero", text, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void EvaluateToString_NoProgramOutput_ReturnsNoOutputMessage()
-    {
-        var text = KatLangEngine.EvaluateToString("T = 4");
-
-        Assert.Equal(RunResult.NoProgramOutput.DefaultMessage, text);
+        Assert.Equal("hello", KatLangEngine.Run("'hello'").ToDisplayString());
+        Assert.Equal("true", KatLangEngine.Run("true").ToDisplayString());
+        Assert.Empty(KatLangEngine.EvaluateToAtoms("'hello', true"));
     }
 
     // ── Parser.Parse with RunOptions ─────────────────────────────────────────
@@ -1050,20 +1049,6 @@ public class KatLangEngineTests
         Assert.Equal("3.141592653589793238462643383279503", result.ToDisplayString());
     }
 
-    [Fact]
-    public void EvaluateToString_DisplayDecimals_FormatsFlatAtoms()
-    {
-        var text = KatLangEngine.EvaluateToString(
-            """
-            DisplayDecimals = 2
-
-            Math.Pi
-            Math.Exp(1)
-            """);
-
-        Assert.Equal("3.14 2.72", text);
-    }
-
     private static void RunUnderCulture(string cultureName, Action assertions)
     {
         var previous = System.Globalization.CultureInfo.CurrentCulture;
@@ -1103,9 +1088,6 @@ public class KatLangEngineTests
             Assert.Equal(
                 "3.14",
                 KatLangEngine.Run("DisplayDecimals = 2\nMath.Pi").ToDisplayString());
-
-            // Flat-atom string output.
-            Assert.Equal("2.5 3.5", KatLangEngine.EvaluateToString("2.5\n3.5"));
 
             // Diagnostics that render values keep the invariant form.
             var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("[1.5] + 1"));
@@ -1154,7 +1136,6 @@ public class KatLangEngineTests
         // fixed-point formatting of special values.
         var source = $"DisplayDecimals = 2\n\n{expression}";
         Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
-        Assert.Equal(expectedDisplay, KatLangEngine.EvaluateToString(source));
 
         // Nested inside a sequence value and a list, the same owner applies.
         Assert.Equal(

@@ -5,7 +5,7 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang.Tests;
 
 /// <summary>
-/// The INTERNAL finite variant hierarchies are C# <c>closed</c> like the nine public roots
+/// The INTERNAL finite variant hierarchies are C# <c>closed</c> like the eight public roots
 /// (<c>ClosedHierarchyContractTests</c> in the public-API test project pins those; this
 /// assembly is a friend, so it can see these). Closing them lets the compiler prove the
 /// expression-shaped dispatches over them exhaustive with no catch-all arm
@@ -16,7 +16,9 @@ namespace KatLang.Tests;
 /// else. The two roots whose consumers are switch STATEMENTS or kind predicates
 /// (<c>OpenCandidate</c>, <c>PreparedSequenceBuiltinSuffixArg</c>) gain the closed
 /// contract itself. The former is a class; the latter is a record whose synthesized
-/// copy constructor can no longer admit foreign derivations.
+/// copy constructor can no longer admit foreign derivations. <c>CallableBindingNode</c>, the
+/// evaluator's binding-plan node, was a public root until the September 2026 public API audit
+/// made the signature and binding-plan planners internal; it keeps its closed contract here.
 /// </summary>
 public class InternalClosedHierarchyTests
 {
@@ -32,6 +34,7 @@ public class InternalClosedHierarchyTests
             ["ExplicitParametersWithoutOutput", "ConditionalBranchArityMismatch", "ConditionalBranchOutputArityMismatch"]),
         (PreparedSequenceBuiltinSuffixArgType, ["AlgorithmArg", "ValueArg", "WholeNumberArg"]),
         (typeof(OpenCandidate), ["ResolvedOpenCandidate", "UnresolvedOpenCandidate"]),
+        (typeof(CallableBindingNode), ["CaptureBindingNode", "CollectingCaptureBindingNode", "SequenceValueBindingNode"]),
     ];
 
     public static TheoryData<Type, string[]> ClosedRoots

@@ -8,6 +8,11 @@ namespace KatLang;
 /// </summary>
 public sealed class KatLangError
 {
+    /// <summary>
+    /// The human-readable, English error text. Presentation only: its wording may improve
+    /// between KatLang versions, so classify errors through <see cref="Code"/> and locate
+    /// them through <see cref="Span"/>, never by parsing this text.
+    /// </summary>
     public string Message { get; }
 
     /// <summary>
@@ -68,11 +73,34 @@ public sealed class KatLangError
         Source = source;
     }
 
+    /// <summary>
+    /// Projects a front-end <see cref="Diagnostic"/> (for example one of
+    /// <see cref="ParseResult.Diagnostics"/>) onto the unified error facade: the same message
+    /// and span, <see cref="Code"/> mirroring <see cref="Diagnostic.Code"/>, and
+    /// <see cref="Source"/> <see langword="null"/>. This is how <see cref="RunResult.ParseFailure"/>
+    /// errors are produced, so a host that parses with <see cref="Parser"/> can render its
+    /// diagnostics exactly as a run would.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="diag"/> is null.</exception>
     public static KatLangError FromDiagnostic(Diagnostic diag)
-        => new(diag.Message, diag.Span, MapDiagnosticCode(diag.Code), source: null);
+    {
+        ArgumentNullException.ThrowIfNull(diag);
+        return new(diag.Message, diag.Span, MapDiagnosticCode(diag.Code), source: null);
+    }
 
+    /// <summary>
+    /// Projects a structured evaluation error (for example the <see cref="EvalResult{T}.Error"/>
+    /// of a direct <see cref="Evaluator"/> run) onto the unified error facade: the rendered
+    /// message a run would report, its <see cref="EvalError.Span"/>, <see cref="Code"/> from
+    /// <see cref="EvalError.Code"/>, and <see cref="Source"/> referencing
+    /// <paramref name="error"/> itself.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="error"/> is null.</exception>
     public static KatLangError FromEvalError(EvalError error)
-        => new(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error.Span, error.Code, error);
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        return new(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error.Span, error.Code, error);
+    }
 
     /// <summary>
     /// Total mapping from front-end <see cref="DiagnosticCode"/> families to the
@@ -983,15 +1011,47 @@ public sealed class KatLangError
 }
 
 /// <summary>
-/// Exception thrown by convenience methods when parse or evaluation fails.
+/// Exception thrown by the numeric convenience entry points
+/// (<see cref="KatLangEngine.EvaluateToAtoms"/> and <see cref="KatLangEngine.EvaluateToAtomsAsync"/>)
+/// when the program does not succeed. The primary entry points never throw it: they return the
+/// same errors as a <see cref="RunResult"/> variant.
 /// </summary>
 public sealed class KatLangException : Exception
 {
+    /// <summary>
+    /// The structured errors of the failed program, in reporting order; never empty for an
+    /// exception thrown by KatLang. <see cref="Exception.Message"/> is their newline-joined
+    /// <see cref="KatLangError.ToString"/> rendering.
+    /// </summary>
     public IReadOnlyList<KatLangError> Errors { get; }
 
+    /// <summary>
+    /// Creates the exception over a snapshot of <paramref name="errors"/>, so later changes
+    /// to the caller's collection change neither <see cref="Errors"/> nor the message.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="errors"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="errors"/> contains a null element.</exception>
     public KatLangException(IReadOnlyList<KatLangError> errors)
+        : this(Snapshot(errors))
+    {
+    }
+
+    private KatLangException(KatLangError[] errors)
         : base(string.Join(Environment.NewLine, errors.Select(e => e.ToString())))
     {
-        Errors = errors;
+        Errors = Array.AsReadOnly(errors);
+    }
+
+    private static KatLangError[] Snapshot(IReadOnlyList<KatLangError> errors)
+    {
+        ArgumentNullException.ThrowIfNull(errors);
+        var snapshot = errors.ToArray();
+        foreach (var error in snapshot)
+        {
+            if (error is null)
+                throw new ArgumentException("The error list contains a null element.", nameof(errors));
+        }
+
+        return snapshot;
     }
 }

@@ -916,8 +916,8 @@ public class OutputLessArgumentBlameTests
         Assert.Equal(left.Span, right.Span);
         Assert.Equal(KatLangError.FromEvalError(left).Message, KatLangError.FromEvalError(right).Message);
         Assert.Equal(
-            Contexts(left).Select(c => c.ToLegacyString()),
-            Contexts(right).Select(c => c.ToLegacyString()));
+            Contexts(left).Select(c => c.ToString()),
+            Contexts(right).Select(c => c.ToString()));
         Assert.Equal(LoopDiagnosticParityAssertions.DescribeErrorTree(left),
             LoopDiagnosticParityAssertions.DescribeErrorTree(right));
     }

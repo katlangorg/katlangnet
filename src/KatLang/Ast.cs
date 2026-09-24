@@ -156,13 +156,23 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     /// Snapshots the ordered slot membership of <paramref name="items"/> at
     /// construction. Mutating the source collection afterwards never changes
     /// this bundle; the <see cref="Expr"/> instances themselves are shared,
-    /// not deep-cloned (they are immutable records). An existing
+    /// not deep-cloned (nested AST collections may be caller-owned). An existing
     /// <see cref="OutputBundle"/> input shares its already-stable storage
     /// without copying. Membership is materialized eagerly, so a virtual
     /// collection is fully enumerated here, once.
     /// </summary>
     public OutputBundle(IReadOnlyList<Expr> items)
-        => _items = items is OutputBundle bundle ? bundle._items : [.. items];
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        _items = items is OutputBundle bundle ? bundle._items : ValidateItems([.. items]);
+    }
+
+    private static Expr[] ValidateItems(Expr[] items)
+    {
+        if (Array.Exists(items, static item => item is null))
+            throw new ArgumentException("An output bundle cannot contain a null slot.", nameof(items));
+        return items;
+    }
 
     private OutputBundle(Expr[] items, bool ownedStorage)
     {
@@ -172,7 +182,7 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
 
     /// <summary>Collection-expression builder (<c>[a, b]</c> literals); copies the span.</summary>
     public static OutputBundle Create(ReadOnlySpan<Expr> items)
-        => items.Length == 0 ? Empty : new(items.ToArray(), ownedStorage: true);
+        => items.Length == 0 ? Empty : new(ValidateItems(items.ToArray()), ownedStorage: true);
 
     /// <summary>
     /// Returns <paramref name="items"/> itself when it already is a bundle
@@ -180,7 +190,10 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     /// like the constructor.
     /// </summary>
     public static OutputBundle From(IReadOnlyList<Expr> items)
-        => items as OutputBundle ?? (items.Count == 0 ? Empty : new(items));
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        return items as OutputBundle ?? (items.Count == 0 ? Empty : new(items));
+    }
 
     /// <summary>
     /// TRUSTED zero-copy construction over a freshly built array whose
@@ -195,7 +208,7 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     public static implicit operator OutputBundle(List<Expr> items) => From(items);
 
     public static implicit operator OutputBundle(Expr[] items)
-        => items.Length == 0 ? Empty : new(items.AsSpan().ToArray(), ownedStorage: true);
+        => From(items);
 
     public int Count => _items.Length;
 
@@ -1861,7 +1874,7 @@ public closed record Algorithm
         /// (<c>F(a, (b, c), *rest) = …</c>, or an assignment deconstruction's target helper):
         /// a CLOSED direct-call interface — the front end lifts no implicit parameter into
         /// it, reports an unresolved name inside the body as undeclared instead, and
-        /// classifies every capture as an explicit parameter (<see cref="CallableParameterSource.Explicit"/>).
+        /// classifies every capture as an explicit parameter.
         /// False for an inferred (implicit) signature, whose captures were promoted from the
         /// body's unresolved names or lifted from a callee. A lifted declaration can retain
         /// the callee's source span; explicitness belongs to this owner, not the capture. Set by
@@ -2369,6 +2382,11 @@ internal static class AlgorithmValidation
 /// <summary>
 /// Scope context used during evaluation for name resolution.
 /// Populated by the evaluator, not the parser.
+/// This belongs to the advanced Lean-shaped semantic AST, not to source syntax.
+/// Its public components describe a lexical environment; evaluation wires algorithm
+/// expressions to their actual caller, so this is not a host closure-injection API.
+/// Runtime activations and declaration identities remain internal. Collections may be caller-owned, like other
+/// host-built AST components, and must not be mutated during evaluation or analysis.
 /// <para><see cref="Parameters"/> are the parameter names the scope's algorithm binds — its
 /// explicit and inferred parameters, or, on the family scope a conditional call wires the
 /// selected branch body under, the matched pattern binders. They take no part in property
@@ -2434,14 +2452,4 @@ public sealed record ScopeCtx(
     public override int GetHashCode()
         => HashCode.Combine(Parent, Opens, Properties, Parameters);
 
-    /// <summary>Preserves the original three-component deconstruction contract.</summary>
-    public void Deconstruct(
-        out ScopeCtx? Parent,
-        out IReadOnlyList<Expr> Opens,
-        out IReadOnlyList<Property> Properties)
-    {
-        Parent = this.Parent;
-        Opens = this.Opens;
-        Properties = this.Properties;
-    }
 }

@@ -47,15 +47,12 @@ public class ClosedHierarchyContractTests
     private static readonly IReadOnlyList<ClosedHierarchy> ClosedHierarchies =
     [
         new(typeof(Expr), "new KatLang.Expr.Param(\"x\")"),
-        new(typeof(RunResult), "new KatLang.RunResult.ParseFailure([])"),
+        new(typeof(RunResult), "KatLang.KatLangEngine.Run(\"1 +\")"),
         new(typeof(EvalError), "new KatLang.EvalError.DivByZero()"),
         new(typeof(Result), "new KatLang.Result.Str(\"s\")"),
         new(typeof(Algorithm), "new KatLang.Algorithm.Conditional(null, [], [])"),
         new(typeof(Pattern), "new KatLang.Pattern.Bind(\"x\")"),
         new(typeof(ParameterPattern), "new KatLang.CaptureParameterPattern(\"x\")"),
-        new(
-            typeof(CallableBindingNode),
-            "new KatLang.CaptureBindingNode(new KatLang.CallableBindingCapture(\"x\", KatLang.ParameterKind.Normal, KatLang.CallableParameterSource.Explicit))"),
         // The one root whose variants are structured evaluation-context FRAMES rather
         // than values: hosts still construct every built-in context, and attach
         // free-form text through TextErrorContext / EvalError.WithContext(string, inner).
@@ -251,9 +248,10 @@ public class ClosedHierarchyContractTests
     /// derived record could reach: the synthesized protected copy constructor —
     /// the route that stayed open under a private ordinary constructor — and, for a
     /// root whose ordinary parameterless constructor is itself derivable (declared
-    /// or synthesized as protected/public), that ordinary route too. Each implements
-    /// every abstract member so that, were the root open, nothing else could stop
-    /// the derivation from compiling.
+    /// or synthesized as protected/public), that ordinary route too. The probes are
+    /// abstract records, so an assembly-private abstract implementation hook does
+    /// not independently prevent derivation. Externally reachable abstract members
+    /// are implemented; only the closed contract must reject the derivation.
     /// </summary>
     private static IReadOnlyList<(string Name, string Source)> RogueDerivations(Type root)
     {
@@ -261,42 +259,48 @@ public class ClosedHierarchyContractTests
         var overrides = AbstractMemberOverrides(root);
         var probes = new List<(string, string)>
         {
-            (RogueName(root), $"public sealed record {RogueName(root)}({rootName} original) : {rootName}(original)\n{{\n{overrides}}}\n"),
+            (RogueName(root), $"public abstract record {RogueName(root)}({rootName} original) : {rootName}(original)\n{{\n{overrides}}}\n"),
         };
 
         var ordinaryDerivable = root.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Any(constructor => constructor.GetParameters().Length == 0
                 && (constructor.IsPublic || constructor.IsFamily || constructor.IsFamilyOrAssembly));
         if (ordinaryDerivable)
-            probes.Add((RogueOrdinaryName(root), $"public sealed record {RogueOrdinaryName(root)}() : {rootName}\n{{\n{overrides}}}\n"));
+            probes.Add((RogueOrdinaryName(root), $"public abstract record {RogueOrdinaryName(root)}() : {rootName}\n{{\n{overrides}}}\n"));
 
         return probes;
     }
 
     /// <summary>
-    /// Overrides for every abstract property and method of <paramref name="root"/>
-    /// a derived record must implement (the record's own synthesized members, such
-    /// as the clone method, are excluded), so a probe fails only for the reason
-    /// under test.
+    /// Overrides for every externally reachable abstract property and method of
+    /// <paramref name="root"/> (the record's own synthesized members, such as the
+    /// clone method, are excluded), so a probe fails only for the reason under test.
     /// </summary>
     private static string AbstractMemberOverrides(Type root)
     {
         const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var properties = root.GetProperties(declared)
-            .Where(property => property.GetGetMethod(nonPublic: true) is { IsAbstract: true, IsPrivate: false })
-            .Select(property => $"    public override {FullName(property.PropertyType)} {property.Name} => default!;\n");
+            .Where(property => property.GetGetMethod(nonPublic: true) is { IsAbstract: true } getter
+                && IsExternallyReachable(getter))
+            .Select(property => $"    {OverrideAccess(property.GetGetMethod(nonPublic: true)!)} override {FullName(property.PropertyType)} {property.Name} => default!;\n");
         var methods = root.GetMethods(declared)
-            .Where(method => method is { IsAbstract: true, IsPrivate: false, IsSpecialName: false }
+            .Where(method => method is { IsAbstract: true, IsSpecialName: false }
+                && IsExternallyReachable(method)
                 && !method.Name.Contains('<', StringComparison.Ordinal))
             .Select(method =>
             {
                 var parameters = string.Join(", ", method.GetParameters().Select(parameter => $"{FullName(parameter.ParameterType)} {parameter.Name}"));
                 var returnsVoid = method.ReturnType == typeof(void);
-                return $"    public override {(returnsVoid ? "void" : FullName(method.ReturnType))} {method.Name}({parameters}) {(returnsVoid ? "{ }" : "=> default!;")}\n";
+                return $"    {OverrideAccess(method)} override {(returnsVoid ? "void" : FullName(method.ReturnType))} {method.Name}({parameters}) {(returnsVoid ? "{ }" : "=> default!;")}\n";
             });
 
         return string.Concat(properties) + string.Concat(methods);
     }
+
+    private static bool IsExternallyReachable(MethodInfo method)
+        => method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly;
+
+    private static string OverrideAccess(MethodInfo method) => method.IsPublic ? "public" : "protected";
 
     /// <summary>
     /// A switch expression over every direct variant of <paramref name="root"/>

@@ -153,7 +153,7 @@ internal sealed class ElaboratedPropertyScope
 /// One resolved <c>open</c> provider of a scope level, caching the exact target
 /// algorithm the level's open declaration resolved to. Member lookup is served
 /// from a lazy name→first-QUALIFYING-index map replicating
-/// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty"/> exactly: the
+/// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty(Algorithm, string)"/> exactly: the
 /// first list entry that matches the name AND is public wins (a private
 /// same-name entry earlier in the list is skipped, never an answer). Exposure
 /// takes no part in SELECTION — a public local-only member is provided by its

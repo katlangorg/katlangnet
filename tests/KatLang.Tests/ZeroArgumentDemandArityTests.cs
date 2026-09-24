@@ -261,7 +261,7 @@ public class ZeroArgumentDemandArityTests
         var ast = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("F", family)],
             [new Expr.Call(new Expr.Resolve("map"), [new Expr.ListLiteral([]),
                 inlineBlock ? new Expr.AlgorithmExpr(family) : new Expr.Resolve("F")])]));
-        AssertEmptyList(Evaluator.Run(ast, host, limits: null, cancellationToken: default));
+        AssertEmptyList(Evaluator.Run(ast, host, limits: null, randomSeed: null, cancellationToken: default));
         AssertEmptyList(await AsyncEvaluationHarness.Complete(
             Evaluator.RunAsync(ast, new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: host)));
         Assert.Equal(0, invocations);

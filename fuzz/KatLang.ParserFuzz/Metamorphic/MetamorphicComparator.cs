@@ -300,14 +300,9 @@ internal static class MetamorphicComparator
 
     /// <summary>
     /// Rendered text is required to be EXACTLY equal only where the two surfaces produced the
-    /// same rendering PROJECTION.
-    ///
-    /// <para>That qualification is a documented API fact, not a weakening:
-    /// <c>KatLangEngine.EvaluateToString</c> returns space-joined host atoms on success and the
-    /// structured diagnostic rendering otherwise, so it is equal to
-    /// <c>Run(...).ToDisplayString()</c> on every failure and deliberately different on success.
-    /// Requiring equality across different projections would assert something the runtime never
-    /// promised; the strict length bound is checked on both sides regardless.</para>
+    /// same rendering PROJECTION: requiring equality across different projections would assert
+    /// something the runtime never promised, while the strict length bound is checked on both
+    /// sides regardless.
     /// </summary>
     private static MetamorphicMismatch? CompareRenderedText(
         MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)

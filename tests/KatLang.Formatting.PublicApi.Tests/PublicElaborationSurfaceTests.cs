@@ -287,14 +287,10 @@ public class PublicElaborationSurfaceTests
         Func<string, RunOptions?, Task<RunResult>> runAsync = KatLangEngine.RunAsync;
         Func<string, RunOptions?, IReadOnlyList<Decimal128>> evaluateToAtoms = KatLangEngine.EvaluateToAtoms;
         Func<string, RunOptions?, Task<IReadOnlyList<Decimal128>>> evaluateToAtomsAsync = KatLangEngine.EvaluateToAtomsAsync;
-        Func<string, RunOptions?, string> evaluateToString = KatLangEngine.EvaluateToString;
-        Func<string, RunOptions?, Task<string>> evaluateToStringAsync = KatLangEngine.EvaluateToStringAsync;
         Assert.NotNull(run);
         Assert.NotNull(runAsync);
         Assert.NotNull(evaluateToAtoms);
         Assert.NotNull(evaluateToAtomsAsync);
-        Assert.NotNull(evaluateToString);
-        Assert.NotNull(evaluateToStringAsync);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(run(LocalOnlyWitnessProgram, null));
         Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);

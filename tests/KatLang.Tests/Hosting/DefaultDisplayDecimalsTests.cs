@@ -397,9 +397,6 @@ public class DefaultDisplayDecimalsTests
         var hosted = KatLangEngine.Run(program, Default(decimals));
 
         Assert.Equal(Renderings(declared), Renderings(hosted));
-        Assert.Equal(
-            KatLangEngine.EvaluateToString($"DisplayDecimals = {decimals.ToString(CultureInfo.InvariantCulture)}\n{program}"),
-            KatLangEngine.EvaluateToString(program, Default(decimals)));
     }
 
     /// <summary>The override law: with a declared property, a host default changes no rendering at all.</summary>
@@ -415,7 +412,6 @@ public class DefaultDisplayDecimalsTests
             var hosted = Success(source, Default(hostDefault));
             Assert.Equal(absent.DisplayOptions, hosted.DisplayOptions);
             Assert.Equal(Renderings(absent), Renderings(hosted));
-            Assert.Equal(KatLangEngine.EvaluateToString(source), KatLangEngine.EvaluateToString(source, Default(hostDefault)));
         }
     }
 
@@ -457,15 +453,6 @@ public class DefaultDisplayDecimalsTests
             Assert.Equal(KatLangErrorCode.DisplayLengthLimitExceeded, rendering.LimitError!.Code);
             Assert.True(rendering.Text.Length <= 40);
         }
-
-        Assert.True(KatLangEngine.EvaluateToString("1 / 3", options).Length <= 40);
-    }
-
-    [Fact]
-    public void EvaluateToString_UsesTheSameEffectiveSetting()
-    {
-        Assert.Equal("0.14 0.67", KatLangEngine.EvaluateToString("1 / 7, 2 / 3", Default(2)));
-        Assert.Equal("0.142857 0.666667", KatLangEngine.EvaluateToString("DisplayDecimals = 6\n1 / 7, 2 / 3", Default(2)));
     }
 
     // ── Sync / async parity ──────────────────────────────────────────────────
@@ -491,9 +478,6 @@ public class DefaultDisplayDecimalsTests
         Assert.Equal(sync.GetType(), asynchronous.GetType());
         Assert.Equal(sync.DisplayOptions, asynchronous.DisplayOptions);
         Assert.Equal(Renderings(sync), Renderings(asynchronous));
-        Assert.Equal(
-            KatLangEngine.EvaluateToString(source, Default(decimals)),
-            await KatLangEngine.EvaluateToStringAsync(source, Default(decimals)));
     }
 
     [Fact]

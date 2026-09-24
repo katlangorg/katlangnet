@@ -840,7 +840,7 @@ Commas and permitted newline boundaries create expression lists. Root output con
 (1, 2, 3)    # (1, 2, 3)
 ```
 
-Comma creates multiple top-level output slots; parentheses create one sequence-valued slot. The result window may show comma slots on separate rows, while sequence values display as sequence values. `EvaluateToString()` is a separate convenience stringification path that extracts atoms and joins them with spaces. See [Spread with the Postfix Star](#spread-with-the-postfix-star).
+Comma creates multiple top-level output slots; parentheses create one sequence-valued slot. The result window may show comma slots on separate rows, while sequence values display as sequence values. See [Spread with the Postfix Star](#spread-with-the-postfix-star).
 
 A spread expression `x*` is the spread of `x` followed by nothing: the star is the spread marker only when no right operand can follow it, and it is then written directly attached to `x` (a detached `x *` with nothing to multiply is an error, not a spread). When a valid right operand does follow — spaced or not, on the same line or on the next — the star is multiplication: `x*y`, `x* y`, `x *y`, `x * y`, and `x*` newline `y` are all the product `x * y`. To spread and then supply another item, the comma is required: `x*, y`, or `x*,` at the end of the line with `y` on the next. Use parentheses, such as `(x*, y)`, when the spread value and the following expression should form one sequence value.
 

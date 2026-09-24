@@ -46,11 +46,9 @@ internal sealed record MetamorphicSurfacePair(string Id, MetamorphicSurface Left
 /// sides. The execution-order dimension runs the pair both ways round, so a surface that only
 /// agrees when it goes first would be reported rather than hidden.</para>
 ///
-/// <para><b>Rendering.</b> <c>EvaluateToString</c> is NOT <c>Run(...).ToDisplayString()</c> for a
-/// successful program — it returns space-joined host atoms — so rendered text is compared exactly
-/// where the two surfaces produced the same projection (every failure, and every same-surface
-/// repeat) and the strict length bound is checked on both sides always. Asserting blanket string
-/// equality would assert something the runtime never promised.</para>
+/// <para><b>Rendering.</b> The engine's <c>ToDisplayString</c> and the canonical <c>exact</c>
+/// formatter render the SAME projection, so their text is compared exactly — success and failure
+/// alike — and the strict length bound is checked on both sides always.</para>
 ///
 /// <para><b>Limits are held at the default or comfortably generous.</b> Resource FAILURE coverage
 /// comes from source templates that exceed the always-on ceilings on their own, not from tightening
@@ -112,8 +110,8 @@ internal static class MetamorphicEntryPointTemplate
             MetamorphicSurface.EvaluatorRunFlat, MetamorphicSurface.EngineRun),
         new("counted-vs-engine-run",
             MetamorphicSurface.EvaluatorRunCounted, MetamorphicSurface.EngineRun),
-        new("engine-run-vs-engine-string",
-            MetamorphicSurface.EngineRun, MetamorphicSurface.EngineEvaluateToString),
+        new("engine-run-vs-exact-formatter",
+            MetamorphicSurface.EngineRun, MetamorphicSurface.EngineExactFormatter),
         new("engine-atoms-vs-engine-run",
             MetamorphicSurface.EngineEvaluateToAtoms, MetamorphicSurface.EngineRun),
     ];

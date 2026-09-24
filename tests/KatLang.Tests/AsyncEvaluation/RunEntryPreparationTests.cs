@@ -126,7 +126,7 @@ public class RunEntryPreparationTests
 
         // Both rejections apply; the synchronous family's contract is token first.
         var thrown = Assert.Throws<OperationCanceledException>(() =>
-            Evaluator.Run(program, AsynchronousOperations(), limits: null, cts.Token));
+            Evaluator.Run(program, AsynchronousOperations(), limits: null, randomSeed: null, cts.Token));
         Assert.Equal(cts.Token, thrown.CancellationToken);
     }
 
@@ -147,7 +147,7 @@ public class RunEntryPreparationTests
         var program = new Expr.AlgorithmExpr(parsed.Root);
 
         Assert.Throws<InvalidOperationException>(() =>
-            Evaluator.Run(program, operations, limits: null, CancellationToken.None));
+            Evaluator.Run(program, operations, limits: null, randomSeed: null, CancellationToken.None));
         Assert.Equal(0, invoked);
     }
 
