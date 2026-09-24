@@ -1050,7 +1050,7 @@ theorem callback_two_fixed_rejects_structured_element (x y : String) (a b : Val)
     ∧ bindArgs [Pat.name x, Pat.name y] (items (Val.list [a, b])) = some [(x, a), (y, b)] := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;>
     simp [bindCallback, bindArgs, bindPats, bindFixed, items, Pat.isCollecting, Pat.key,
-      List.filter_cons, List.filter_nil]
+      List.filter_nil]
 
 /-- Grouped/spread DISTINCTION for a lone SEQUENCE argument at a single
 collecting parameter: `F(A)` with a stored sequence binds `rest = [A]` (one
