@@ -152,9 +152,9 @@ Examples:
     B == ()              # error: no defined output
 
     IsEven = x mod 2 == 0
-    filter((1, 3, 5), IsEven) == ()       # 0: filter returns the empty LIST [], and [] != ()
+    filter((1, 3, 5), IsEven) == ()       # false: filter returns the empty LIST [], and [] != ()
     filter((1, 3, 5), IsEven) == []       # true
-    filter((1, 3, 5), IsEven).count == 0  # 1: test collection-builtin emptiness with count(...) == 0 or == [], never == ()
+    filter((1, 3, 5), IsEven).count == 0  # true: test collection-builtin emptiness with count(...) == 0 or == [], never == ()
 
 Algorithm-level explicit parameters are valid only when the algorithm defines output. If an algorithm is only a container, put callable formulas on its child properties:
     Algo = {
@@ -403,7 +403,7 @@ Examples:
     Values:1              # 20
 
     Pairs = (1, 2), (3, 4)
-    Pairs:0               # 1, 2
+    Pairs:0               # (1, 2)
     Pairs:0:1             # 2
 
     Rows = [[1, 2], [3, 4]]
@@ -759,8 +759,8 @@ Use `reduce` for custom accumulators. Use `repeat`/`while` only for genuine stat
 `while(step, *init)` or `Step.while(*init)` performs condition-based iteration. The step returns:
     new_state*, continue_flag
 
-The continue flag is the last output. When it becomes `0`, `while` returns the state from before the final step.
-Do not put a meaningful state update only in a step whose continue flag is `0`, because that update will be discarded. For search loops, make the step that records a found value continue once, then let the following step stop.
+The continue flag is the last output and must be a Boolean (`true` or `false`; a numeric flag is a type error). When it becomes `false`, `while` returns the state from before the final step.
+Do not put a meaningful state update only in a step whose continue flag is `false`, because that update will be discarded. For search loops, make the step that records a found value continue once, then let the following step stop.
 
 Initial state slots preserve explicit argument boundaries:
     Step.while(x, 0)
@@ -941,7 +941,7 @@ Do not put `public` on `open`. Use `public` only when the task requires exported
     open load('https://katlang.org/lib.kat')        # open list
     open 'https://katlang.org/lib.kat'              # shorthand for open load(...)
 Rules:
-- `load` requires exactly one literal single-quoted HTTPS URL.
+- `load` requires exactly one literal single-quoted HTTPS URL, without user information (never `user@` or `user:password@` before the host).
 - No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output).
 - Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (the default allowlist is `katlang.org`).
 - Do not invent local file loading, double-quoted URLs, or runtime URL construction.
@@ -1069,7 +1069,7 @@ Idiomatic structure:
 - dot-call is not used as ordinary multi-output spreading;
 - postfix spread stars appear only where spreading is intended, with a comma before any following item on the same line OR the next (`A*, B` and `A*,` newline `B` — `A* B` and `A*` newline `B` would multiply), and a spread-ending definition body followed by an output row is closed with capture parentheses (`y = (A*)`); prefix collecting stars appear only in binding patterns, directly attached to their name;
 - `repeat` / `while` state arity and parameter order are correct;
-- a `while` result does not depend on state changes produced only by the terminating step where `continue_flag = 0` — required updates are committed on an earlier continuing step;
+- a `while` result does not depend on state changes produced only by the terminating step whose `continue_flag` is `false` — required updates are committed on an earlier continuing step;
 - conditional branches have consistent top-level input and output arity;
 - strings remain strings;
 - Math style is consistent;
@@ -1377,7 +1377,7 @@ Regenerate this block from the repo root with:
     [1, 2]
     [[1, 2]]
 
-[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items — `spread(collect(S)) = S`).
+[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply).
 
     Target(*items) = items
     Use(items) = Target
@@ -1417,7 +1417,7 @@ Regenerate this block from the repo root with:
     2
     2
 
-[values-stay-values] VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding is `spread(collect(S)) = S`.
+[values-stay-values] VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding therefore round-trips: collecting a supply and then spreading it re-supplies exactly the same items.
 
     Coll(*xs) = xs
     Cnt(*xs) = xs.count

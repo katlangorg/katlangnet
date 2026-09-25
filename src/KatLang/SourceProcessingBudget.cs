@@ -2,14 +2,18 @@ namespace KatLang;
 
 /// <summary>
 /// Run-scoped, mutable accounting for <see cref="SourceProcessingLimits"/>: the aggregate source
-/// consumed, the number of distinct modules loaded, and the current/peak import depth. One budget
-/// belongs to exactly one run; the immutable <see cref="SourceProcessingLimits"/> may be shared by
-/// any number of concurrent runs because the counters live here, never on the limits.
+/// accepted for parsing, the number of module downloads requested, and the current/peak import
+/// depth. One budget belongs to exactly one run; the immutable <see cref="SourceProcessingLimits"/>
+/// may be shared by any number of concurrent runs because the counters live here, never on the
+/// limits.
 ///
 /// <para>Reservations use checked arithmetic and are all-or-nothing: a reservation that would
-/// exceed its ceiling returns <c>false</c> and leaves every counter unchanged, so a rejected load
-/// never advances the aggregate or module-count totals. A module frame that is aborted by observed
-/// host cancellation rolls its successful reservation back before unwinding.</para>
+/// exceed its ceiling returns <c>false</c> and leaves its counter unchanged. The loader reserves
+/// one module slot immediately before every downloader invocation and keeps it whatever the
+/// download returns — a failed, oversized, or aggregate-rejected download still happened — and
+/// reserves aggregate source only for text accepted for parsing. A module frame that is aborted
+/// by observed host cancellation rolls its aggregate reservation back before unwinding;
+/// downloader invocations remain charged, including cancelled ones.</para>
 /// </summary>
 internal sealed class SourceProcessingBudget
 {
@@ -26,10 +30,10 @@ internal sealed class SourceProcessingBudget
     internal long MaxAggregateSourceLength => _limits.EffectiveMaxAggregateSourceLength;
     internal int MaxModuleCount => _limits.EffectiveMaxModuleCount;
 
-    /// <summary>Total source (main plus every distinct module) reserved so far this run.</summary>
+    /// <summary>Total source (main plus every module accepted for parsing) reserved so far this run.</summary>
     internal long AggregateSource => _aggregateSource;
 
-    /// <summary>Distinct modules reserved so far this run.</summary>
+    /// <summary>Module downloads requested so far this run.</summary>
     internal int ModuleCount => _moduleCount;
 
     /// <summary>Current import nesting (for invariant checks and diagnostic reporting).</summary>
@@ -56,7 +60,7 @@ internal sealed class SourceProcessingBudget
         return projected <= _limits.EffectiveMaxAggregateSourceLength;
     }
 
-    /// <summary>True when one more distinct module would still fit, without reserving anything.</summary>
+    /// <summary>True when one more module download would still fit, without reserving anything.</summary>
     internal bool CanReserveModule() => _moduleCount < _limits.EffectiveMaxModuleCount;
 
     /// <summary>
@@ -72,9 +76,10 @@ internal sealed class SourceProcessingBudget
     }
 
     /// <summary>
-    /// Reserves one distinct-module slot. Returns <c>false</c> without mutating the count when the
-    /// module-count ceiling is already reached. Repeated loads of an already-cached module must not
-    /// call this — only a distinct, newly fetched module consumes a slot.
+    /// Reserves one module-download slot. Returns <c>false</c> without mutating the count when the
+    /// module-count ceiling is already reached. The loader calls this immediately before every
+    /// downloader invocation — a load served from the run's module cache must not call it — and
+    /// the slot stays consumed whatever the download returns.
     /// </summary>
     internal bool TryReserveModule()
     {
@@ -85,30 +90,16 @@ internal sealed class SourceProcessingBudget
     }
 
     /// <summary>
-    /// Atomically reserves one distinct module and its source length. If either ceiling would be
-    /// exceeded, neither counter changes.
+    /// Rolls back one previously successful <see cref="TryReserveAggregate"/> call of
+    /// <paramref name="length"/> code units when host cancellation aborts that module frame
+    /// before its module is accepted into the loader cache.
     /// </summary>
-    internal bool TryReserveModuleSource(int length)
+    internal void RollbackAggregate(int length)
     {
-        if (!CanReserveModule() || !CanReserveAggregate(length)) return false;
-
-        _aggregateSource += length;
-        _moduleCount++;
-        return true;
-    }
-
-    /// <summary>
-    /// Rolls back one previously successful <see cref="TryReserveModuleSource"/> call when host
-    /// cancellation aborts that module before it is accepted into the loader cache. Nested module
-    /// cancellation unwinds one reservation per active loader frame.
-    /// </summary>
-    internal void RollbackModuleSource(int length)
-    {
-        if (length < 0 || _moduleCount <= 0 || _aggregateSource < length)
-            throw new InvalidOperationException("Cannot roll back a module source reservation that is not active.");
+        if (length < 0 || _aggregateSource < length)
+            throw new InvalidOperationException("Cannot roll back an aggregate source reservation that is not active.");
 
         _aggregateSource -= length;
-        _moduleCount--;
     }
 
     /// <summary>
@@ -188,7 +179,7 @@ internal static class SourceProcessingDiagnostics
     internal static Diagnostic ModuleCountExceeded(string url, int requestedCount, int limit, SourceSpan? span)
         => Error(
             DiagnosticCode.ModuleCountExceeded,
-            $"load: loading '{url}' would request distinct module {requestedCount}, over the maximum of {Quantity(limit, "module")}.",
+            $"load: loading '{url}' would be module download {requestedCount}, over the maximum of {Quantity(limit, "module download")}.",
             span);
 
     internal static Diagnostic ModuleNestingTooDeep(string url, int limit, SourceSpan? span)

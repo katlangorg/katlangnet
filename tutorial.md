@@ -4892,6 +4892,8 @@ F(999)
 
 Algorithms can be loaded from URLs using `load`. The loaded algorithm becomes a property whose public sub-properties you access with dot syntax.
 
+Loading needs the host's permission: it is off unless the host application supplies a downloader (the `katlang` command-line tool's `--allow-loading`), and a program that uses `load` or `open 'url'` without one is rejected with a diagnostic. A module URL is an absolute `https` address without user information (`user@`), on a host the application allows — by default `katlang.org` and its subdomains; a `#fragment` is ignored. The same rules apply to the loads a loaded module makes, and loaded code runs as part of your program.
+
 Scoping: a module bound with `Name = load('url')` is elaborated and evaluated exactly as if its text were written inline as `Name = { ... }` at that place — its free names resolve through the importing algorithm's owner walk before the prelude (an importer property or parameter with the same name, the import name `Name` included, is what the module's occurrence means; only a name nothing provides becomes an implicit parameter of the module member), and the same URL loaded at two different places elaborates once per place. An `open 'url'` target, by contrast, is elaborated in isolation like an inline `open { ... }` block (its free names see only the prelude), so the two spellings differ for a module that mentions a name it does not define; a module that declares everything it uses means the same thing everywhere.
 
 <!-- spec:skip module loading needs a host-configured network downloader; the URL and its outputs are illustrative -->

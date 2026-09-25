@@ -29,6 +29,9 @@ public sealed class CliApplicationTests
         Assert.Contains("katlang check <file> [--allow-loading]", result.TrimmedOutput);
         Assert.Contains("--allow-loading", result.TrimmedOutput);
         Assert.Contains("Disabled by default.", result.TrimmedOutput);
+        // The help names the hosts KatLang's default allow-list actually admits (the CLI
+        // configures none of its own).
+        Assert.Contains("katlang.org and its subdomains only", result.TrimmedOutput);
         // The transport bounds the help quotes must be the ones actually enforced.
         Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0} seconds", result.TrimmedOutput);
         Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content", result.TrimmedOutput);
@@ -667,6 +670,9 @@ public sealed class CliApplicationTests
     [InlineData("http://katlang.org/x.kat", "only HTTPS URLs are allowed")]
     [InlineData("https://127.0.0.1/x.kat", "domain not allowed")]
     [InlineData("https://katlang.org.example.net/x.kat", "domain not allowed")]
+    [InlineData("https://katlang.org:8443@example.net/x.kat", "must not contain user information")]
+    [InlineData("https://alice:s3cret@katlang.org/x.kat", "must not contain user information")]
+    [InlineData("https://example.net\uFF0F.katlang.org/x.kat", "its host is not a valid DNS name or IP address")]
     public async Task AllowLoading_RefusesForbiddenSchemesAndHosts_BeforeAnyRequest(string url, string expected)
     {
         // KatLang's scheme and allowed-host checks run before the CLI transport is ever

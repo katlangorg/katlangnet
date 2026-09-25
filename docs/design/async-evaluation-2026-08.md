@@ -558,7 +558,7 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   the configured source-processing token into the active token every walk check and the
   downloader observe for the duration of the load (the linked source is disposed on the way
   out), so an in-flight download is aborted with the evaluation, nothing partial reaches the
-  module cache, budget reservations roll back as for host cancellation, and the region
+  module cache, aggregate-source reservations roll back as for host cancellation (download attempts stay charged), and the region
   publishes no region body — the next selection starts a fresh run. Completed dependency
   modules remain reusable. Publication and abandonment share a lock, and run cancellation
   sources are disposed after completion and any concurrent cancellation finish.
@@ -581,7 +581,9 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   Caching is unchanged: each distinct successful URL is fetched once per elaboration
   scope (fresh `ModuleLoader` per front-end run), failed URLs are re-fetched per load
   site and never cached, including parents whose recursive dependency elaboration failed;
-  cycles/domains/budgets behave identically. Deferred diagnostics use the materialization's
+  cycles/domains/budgets behave identically. (Since the #13 audit, September 2026, every
+  such re-fetch is a downloader invocation charged against `MaxModuleCount`, and the
+  downloader receives the canonical module URL — see `language-rules/evaluator-and-hosting.md`.) Deferred diagnostics use the materialization's
   sink, never an already-published parse result's diagnostic list.
 - For eager loads, the source-processing token is passed unchanged to the downloader and observed
   before AND after each fetch; the post-fetch observation also catches cancellation

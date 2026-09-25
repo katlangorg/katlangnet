@@ -230,7 +230,7 @@ public class SourceProcessingLimitsTests
         Assert.Contains("over the maximum of 64 nested module levels", FirstError(result));
     }
 
-    // ── distinct module count ──────────────────────────────────────────────────
+    // ── module download count ──────────────────────────────────────────────────
 
     [Fact]
     public void ModuleCount_AtLimit_Succeeds()
@@ -248,7 +248,7 @@ public class SourceProcessingLimitsTests
         var (download, _) = LeafDownloader();
         var source = $"public A = load('{Host}leaf/0')\npublic B = load('{Host}leaf/1')\npublic C = load('{Host}leaf/2')\nA.V0";
         var result = Run(source, new SourceProcessingLimits { MaxModuleCount = 2 }, download);
-        Assert.Contains("would request distinct module 3, over the maximum of 2 modules", FirstError(result));
+        Assert.Contains("would be module download 3, over the maximum of 2 module downloads", FirstError(result));
     }
 
     [Fact]
@@ -563,8 +563,8 @@ public class SourceProcessingLimitsTests
             return "public V = 1";
         });
         var error = Assert.Single(over.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        Assert.Contains("distinct module 257", error.Message);
-        Assert.Contains("maximum of 256 modules", error.Message);
+        Assert.Contains("module download 257", error.Message);
+        Assert.Contains("maximum of 256 module downloads", error.Message);
         Assert.Equal(256, overFetches);
     }
 
@@ -652,26 +652,32 @@ public class SourceProcessingLimitsTests
     }
 
     [Fact]
-    public void Budget_ModuleSourceReservation_IsAtomicInBothFailureDirections()
+    public void Budget_ModuleSlotIsCumulative_OnlyAggregateCanRollBack()
     {
-        var aggregateFirst = new SourceProcessingBudget(new SourceProcessingLimits
+        // #13: a download consumes its module slot before the fetch; aggregate source is reserved
+        // only for text accepted afterwards. A refused aggregate leaves the slot consumed, and a
+        // cancelled frame rolls back only its aggregate reservation.
+        var budget = new SourceProcessingBudget(new SourceProcessingLimits
         {
             MaxAggregateSourceLength = 10,
             MaxModuleCount = 1,
         });
-        Assert.False(aggregateFirst.TryReserveModuleSource(11));
-        Assert.Equal(0, aggregateFirst.AggregateSource);
-        Assert.Equal(0, aggregateFirst.ModuleCount);
+        Assert.True(budget.TryReserveModule());
+        Assert.False(budget.TryReserveAggregate(11));
+        Assert.Equal(0, budget.AggregateSource);
+        Assert.Equal(1, budget.ModuleCount);
+        Assert.False(budget.TryReserveModule());
+        Assert.Equal(1, budget.ModuleCount);
 
-        var countFirst = new SourceProcessingBudget(new SourceProcessingLimits
-        {
-            MaxAggregateSourceLength = 10,
-            MaxModuleCount = 1,
-        });
-        Assert.True(countFirst.TryReserveModule());
-        Assert.False(countFirst.TryReserveModuleSource(5));
-        Assert.Equal(0, countFirst.AggregateSource);
-        Assert.Equal(1, countFirst.ModuleCount);
+        Assert.True(budget.TryReserveAggregate(10));
+        budget.RollbackAggregate(10);
+        Assert.Equal(0, budget.AggregateSource);
+        Assert.Equal(1, budget.ModuleCount);
+        Assert.False(budget.TryReserveModule());
+        Assert.Throws<InvalidOperationException>(() => budget.RollbackAggregate(1));
+        Assert.Throws<InvalidOperationException>(() => budget.RollbackAggregate(-1));
+        Assert.Equal(0, budget.AggregateSource);
+        Assert.Equal(1, budget.ModuleCount);
     }
 
     [Fact]
@@ -687,64 +693,97 @@ public class SourceProcessingLimitsTests
     }
 
     [Fact]
-    public void AggregateRejection_DoesNotConsumeTheModuleSlotNeededByALaterModule()
+    public void AggregateRejectedDownload_ConsumesItsModuleSlot_ButNoAggregate()
     {
+        // #13: the rejected download happened, so it consumes a module slot; its text was never
+        // accepted, so it consumes no aggregate — the later module still fits the aggregate that
+        // is exactly main + small, and needs a second slot.
         var largeUrl = $"{Host}rollback/large";
         var smallUrl = $"{Host}rollback/small";
         var source = $"public Large = load('{largeUrl}')\npublic Small = load('{smallUrl}')\n1";
         var small = "public V = 1";
         var large = PadToLength("public V = 1", 100);
-        var fetches = 0;
 
-        var parsed = Parse(
-            source,
-            new SourceProcessingLimits
-            {
-                MaxSourceLength = 200,
-                MaxAggregateSourceLength = source.Length + small.Length,
-                MaxModuleCount = 1,
-            },
-            url =>
-            {
-                fetches++;
-                return url == largeUrl ? large : small;
-            });
+        ParseResult ParseWithModuleCount(int moduleCount, out List<string> fetched)
+        {
+            var requests = new List<string>();
+            var parsed = Parse(
+                source,
+                new SourceProcessingLimits
+                {
+                    MaxSourceLength = 200,
+                    MaxAggregateSourceLength = source.Length + small.Length,
+                    MaxModuleCount = moduleCount,
+                },
+                url =>
+                {
+                    requests.Add(url);
+                    return url == largeUrl ? large : small;
+                });
+            fetched = requests;
+            return parsed;
+        }
 
-        Assert.Equal(2, fetches);
-        Assert.Single(parsed.Diagnostics, d => d.Message.Contains("would bring total source", StringComparison.Ordinal));
-        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("distinct module", StringComparison.Ordinal));
+        var twoSlots = ParseWithModuleCount(2, out var twoSlotFetches);
+        Assert.Equal([largeUrl, smallUrl], twoSlotFetches);
+        var aggregateError = Assert.Single(twoSlots.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.AggregateSourceLengthExceeded, aggregateError.Code);
+
+        var oneSlot = ParseWithModuleCount(1, out var oneSlotFetches);
+        Assert.Equal([largeUrl], oneSlotFetches);
+        Assert.Equal(
+            [DiagnosticCode.AggregateSourceLengthExceeded, DiagnosticCode.ModuleCountExceeded],
+            oneSlot.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code));
     }
 
     [Fact]
-    public void FailedDownloads_AreRefetchedAndDoNotConsumeAModuleSlot()
+    public void FailedDownloads_AreRefetchedPerSite_AndEachConsumesAModuleSlot()
     {
+        // #13: a failed download is never negatively cached (another load site may retry it),
+        // but every attempt is a downloader invocation and consumes a module slot, so retries are
+        // bounded by the module ceiling instead of by how many sites the source can write.
         var missing = $"{Host}missing/same";
         var ok = $"{Host}missing/ok";
         var source =
             $"public A = load('{missing}')\n" +
             $"public B = load('{missing}')\n" +
             $"public C = load('{ok}')\n1";
-        var missingFetches = 0;
-        var okFetches = 0;
 
-        var parsed = Parse(
-            source,
-            new SourceProcessingLimits { MaxModuleCount = 1 },
-            url =>
-            {
-                if (url == missing)
+        ParseResult ParseWithModuleCount(int moduleCount, out int missingFetches, out int okFetches)
+        {
+            var missingCount = 0;
+            var okCount = 0;
+            var parsed = Parse(
+                source,
+                new SourceProcessingLimits { MaxModuleCount = moduleCount },
+                url =>
                 {
-                    missingFetches++;
-                    throw new InvalidOperationException("expected test failure");
-                }
+                    if (url == missing)
+                    {
+                        missingCount++;
+                        throw new InvalidOperationException("expected test failure");
+                    }
 
-                okFetches++;
-                return "public V = 1";
-            });
+                    okCount++;
+                    return "public V = 1";
+                });
+            missingFetches = missingCount;
+            okFetches = okCount;
+            return parsed;
+        }
 
-        Assert.Equal(2, missingFetches);
-        Assert.Equal(1, okFetches);
-        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("distinct module", StringComparison.Ordinal));
+        var enough = ParseWithModuleCount(3, out var missingAtThree, out var okAtThree);
+        Assert.Equal(2, missingAtThree);
+        Assert.Equal(1, okAtThree);
+        Assert.Equal(2, enough.Diagnostics.Count(d => d.Code == DiagnosticCode.LoadFetchFailed));
+        Assert.DoesNotContain(enough.Diagnostics, d => d.Code == DiagnosticCode.ModuleCountExceeded);
+
+        var one = ParseWithModuleCount(1, out var missingAtOne, out var okAtOne);
+        Assert.Equal(1, missingAtOne);
+        Assert.Equal(0, okAtOne);
+        Assert.Equal(
+            [DiagnosticCode.LoadFetchFailed, DiagnosticCode.ModuleCountExceeded, DiagnosticCode.ModuleCountExceeded],
+            one.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code));
     }
 
     [Fact]
@@ -831,38 +870,55 @@ public class SourceProcessingLimitsTests
     }
 
     [Fact]
-    public void OversizedModule_DoesNotConsumeAggregateOrModuleCount()
+    public void OversizedDownload_ConsumesItsModuleSlot_ButNoAggregate()
     {
+        // #13: the oversized text was downloaded (one module slot) but never accepted for parsing
+        // (no aggregate): the small module still fits an aggregate of exactly main + small.
         var oversizedUrl = $"{Host}rollback/oversized";
         var smallUrl = $"{Host}rollback/after-oversized";
         var source = $"public Oversized = load('{oversizedUrl}')\npublic Small = load('{smallUrl}')\n1";
         var sourceLimit = Math.Max(source.Length, 120);
         var small = "public V = 1";
-        var fetches = 0;
 
-        var parsed = Parse(
-            source,
-            new SourceProcessingLimits
-            {
-                MaxSourceLength = sourceLimit,
-                MaxAggregateSourceLength = source.Length + small.Length,
-                MaxModuleCount = 1,
-            },
-            url =>
-            {
-                fetches++;
-                return url == oversizedUrl ? new string('x', sourceLimit + 1) : small;
-            });
+        ParseResult ParseWithModuleCount(int moduleCount, out int fetches)
+        {
+            var count = 0;
+            var parsed = Parse(
+                source,
+                new SourceProcessingLimits
+                {
+                    MaxSourceLength = sourceLimit,
+                    MaxAggregateSourceLength = source.Length + small.Length,
+                    MaxModuleCount = moduleCount,
+                },
+                url =>
+                {
+                    count++;
+                    return url == oversizedUrl ? new string('x', sourceLimit + 1) : small;
+                });
+            fetches = count;
+            return parsed;
+        }
 
-        Assert.Equal(2, fetches);
-        Assert.Single(parsed.Diagnostics, d => d.Message.Contains("source from", StringComparison.Ordinal));
-        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("total source", StringComparison.Ordinal));
-        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("distinct module", StringComparison.Ordinal));
+        var twoSlots = ParseWithModuleCount(2, out var twoSlotFetches);
+        Assert.Equal(2, twoSlotFetches);
+        var error = Assert.Single(twoSlots.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.SourceLengthExceeded, error.Code);
+        Assert.Contains("source from", error.Message);
+
+        var oneSlot = ParseWithModuleCount(1, out var oneSlotFetches);
+        Assert.Equal(1, oneSlotFetches);
+        Assert.Equal(
+            [DiagnosticCode.SourceLengthExceeded, DiagnosticCode.ModuleCountExceeded],
+            oneSlot.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code));
     }
 
     [Fact]
-    public void RepeatedAggregateRejection_IsRefetchedWithoutMutatingCounters()
+    public void RepeatedAggregateRejection_IsRefetchedPerSite_WithoutConsumingAggregate()
     {
+        // #13: the aggregate-rejected module is re-downloaded at its second site (it was never
+        // cached), each download consuming a module slot but no aggregate, so the small module
+        // still fits an aggregate of exactly main + small once a third slot remains.
         var rejectedUrl = $"{Host}rollback/repeated-aggregate";
         var smallUrl = $"{Host}rollback/after-repeated-aggregate";
         var source =
@@ -880,7 +936,7 @@ public class SourceProcessingLimitsTests
             {
                 MaxSourceLength = 1_000,
                 MaxAggregateSourceLength = source.Length + small.Length,
-                MaxModuleCount = 1,
+                MaxModuleCount = 3,
             },
             url =>
             {
@@ -896,9 +952,11 @@ public class SourceProcessingLimitsTests
 
         Assert.Equal(2, rejectedFetches);
         Assert.Equal(1, smallFetches);
-        Assert.Equal(2, parsed.Diagnostics.Count(d => d.Message.Contains("would bring total source", StringComparison.Ordinal)));
-        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("distinct module", StringComparison.Ordinal));
+        Assert.Equal(
+            [DiagnosticCode.AggregateSourceLengthExceeded, DiagnosticCode.AggregateSourceLengthExceeded],
+            parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code));
     }
+
     [Fact]
     public void ResourceDiagnostics_PluralizeSingularUnits()
     {
@@ -915,7 +973,7 @@ public class SourceProcessingLimitsTests
         Assert.Contains("maximum of 1 UTF-16 code unit.", aggregate);
         Assert.Contains("maximum total source of 1 UTF-16 code unit.",
             SourceProcessingDiagnostics.AggregateSourceLengthExceededByProgram(2, 1).Message);
-        Assert.Contains("maximum of 1 module.",
+        Assert.Contains("maximum of 1 module download.",
             SourceProcessingDiagnostics.ModuleCountExceeded("https://katlang.org/m", 2, 1, null).Message);
     }
 

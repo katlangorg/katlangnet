@@ -1,16 +1,29 @@
 using System.Globalization;
+using System.Net;
 
 namespace KatLang.CLI;
 
 /// <summary>
 /// Transport for <see cref="RunOptions.DownloadCode"/> when <c>--allow-loading</c>
-/// is supplied. KatLang validates every requested URL (HTTPS only, an allowed
-/// host) before calling this transport; everything after that is the shipped
+/// is supplied. KatLang validates every requested URL (HTTPS only, no user
+/// information, an allowed host — the CLI configures no allow-list, so KatLang's
+/// default applies: <c>katlang.org</c> and its subdomains) before calling this
+/// transport, and hands it the canonical URL; everything after that is the shipped
 /// CLI's own host policy — owned here, and imposed on no other KatLang host:
 ///
 /// <list type="bullet">
 ///   <item>Redirects are refused so the HTTP layer cannot silently fetch a
 ///   second URL whose host KatLang never validated.</item>
+///   <item>Only <c>200 OK</c> is a module. Every other status — a redirect, an error,
+///   and every other 2xx such as <c>204 No Content</c> or <c>206 Partial Content</c> —
+///   is a failed download, reported with the CLI's own wording (never the server's
+///   reason phrase) and without reading the body.</item>
+///   <item>No ambient state travels with a request: cookies are disabled (a response
+///   cannot plant state that a later module request would carry), no credentials are
+///   configured, and no decompression is negotiated. The system proxy settings apply
+///   as for any other HTTPS client; TLS certificate validation is the platform's
+///   default. Host names are resolved by the platform: the CLI makes no claim about
+///   the IP addresses an allowed name resolves to.</item>
 ///   <item>A response body is buffered only up to <see cref="MaxResponseBodyBytes"/>
 ///   — content bytes exposed by HttpContent, excluding headers and chunk framing;
 ///   no decompression is negotiated or performed. A larger declared Content-Length
@@ -96,10 +109,18 @@ internal sealed class HttpSourceDownloader : IDisposable
 
     /// <summary>
     /// Redirects are never followed, so the HTTP layer cannot silently fetch a second URL
-    /// whose host KatLang never validated. Nothing else is configured: no decompression, no
-    /// credentials, default certificate validation.
+    /// whose host KatLang never validated. Cookies are disabled: the handler's default
+    /// cookie container would otherwise keep what one response sets and send it with every
+    /// later request of this process-wide client, so a module server could plant state that
+    /// reaches another module request. No decompression and no credentials; default
+    /// certificate validation.
     /// </summary>
-    private static SocketsHttpHandler CreateHandler() => new() { AllowAutoRedirect = false };
+    private static SocketsHttpHandler CreateHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        AutomaticDecompression = DecompressionMethods.None,
+    };
 
     public async ValueTask<string> DownloadAsync(string url, CancellationToken cancellationToken)
     {
@@ -125,7 +146,15 @@ internal sealed class HttpSourceDownloader : IDisposable
                     response.StatusCode);
             }
 
-            response.EnsureSuccessStatusCode();
+            // Only 200 OK carries a module. The refusal is worded here, never with the
+            // server's reason phrase, and the body is not read.
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw new HttpRequestException(
+                    $"The server responded with HTTP status {(int)response.StatusCode}; only 200 (OK) is accepted for a KatLang module.",
+                    inner: null,
+                    response.StatusCode);
+            }
 
             // Refuse an excessive declared length before requesting body buffering or
             // allowing the runtime to size a content buffer from that length.

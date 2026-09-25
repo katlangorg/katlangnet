@@ -141,11 +141,48 @@ else
 
 The CLI's `run` and `eval` commands render before writing program output. Display overflow returns exit code 1, writes the complete limit notice once to stderr, and leaves stdout empty. Genuine notice-shaped output remains successful stdout output with exit code 0. Ordinary output keeps its terminating newline; programs with no output rows succeed silently. `check` validates source without executing or rendering it, so valid source that would overflow on execution still passes silently.
 
+## Loading modules safely
+
+KatLang source can import other KatLang source with `Lib = load('https://…')` or `open 'https://…'`. Loading is **off by default**: `RunOptions.DownloadCode` is `null`, the library contains no network transport, and a program that loads anything gets a diagnostic while nothing is fetched. A host opts in by supplying the downloader, and with it takes on the security of the transport:
+
+- **KatLang checks every load target before calling your downloader.** The target must be an absolute `https` URL without user information (`user:password@`), whose host is a valid DNS name or an IP literal, and whose host is allowed. `RunOptions.AllowedHosts` (default: `katlang.org`) admits a DNS name and its subdomains by whole labels — `sub.ex.com` under `ex.com`, never `notex.com` or `ex.com.evil.net` — and an IP literal only exactly. Names are compared in their ASCII (IDNA) form, so letter case and Unicode or punycode spellings of one name match; a trailing-dot spelling does not; any port of an allowed host is admitted. A refused target never reaches the downloader.
+- **Your downloader receives one canonical URL per module** — `https`, the ASCII host, a non-default port, the escaped path and query, no fragment. It is also the module's identity: equivalent spellings share one download, load cycles are detected on it, and diagnostics name it — query string included, so a module URL is no place for a secret.
+- **KatLang cannot see what that URL fetches.** Redirects, DNS answers, and the address a name resolves to happen inside your downloader, so `AllowedHosts` restricts the host name written in source and is not an SSRF defense by itself. Refuse redirects (or re-validate them), apply any address policy you need, and bound time and response size in the downloader. An exception it throws becomes a `load: failed to fetch` diagnostic; `SourceProcessingCancellationToken` is passed to it and stays authoritative.
+- **The same rules apply at every depth.** A module's own loads — nested modules, and modules a conditional branch loads only when evaluation selects it — pass the same checks against the same allow-list, observe the same cancellation, and draw on the same run budget.
+- **Work is bounded.** `SourceProcessingLimits` bounds each source text, the total source, the import depth, and the number of module downloads per run. Every downloader invocation counts, including cancellation after it starts, so a program cannot re-request unreachable or oversized modules without limit. Re-evaluations of one parsed tree share its remaining loading budget.
+- **Loaded code runs with the run's capabilities.** A module is elaborated and evaluated as part of the program: it can call every host operation the run registers, and a module bound with `Name = load('…')` resolves free names through its importer's scope. Allow only hosts whose code you would run yourself. Any front-end error, including invalid downloaded source, stops the run before evaluation starts, so no host operation runs.
+
+```c#
+using System.Net;
+using System.Net.Http;
+using KatLang;
+
+using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
+{
+    Timeout = TimeSpan.FromSeconds(15),
+    MaxResponseContentBufferSize = 1024 * 1024,
+};
+var options = new RunOptions
+{
+    AllowedHosts = ["modules.example.com"],
+    DownloadCode = async (url, token) =>
+    {
+        using var response = await http.GetAsync(url, token);
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new HttpRequestException($"HTTP status {(int)response.StatusCode}");
+        return await response.Content.ReadAsStringAsync(token);
+    },
+};
+var result = await KatLangEngine.RunAsync(source, options);
+```
+
 ## Command-line module loading
 
-The `katlang` CLI's `--allow-loading` flag is off by default: without it, source that uses `load` or `open 'url'` is rejected with a diagnostic and nothing is fetched. With it, KatLang hands a load target to the CLI's HTTP transport only after its own checks pass — an HTTPS URL on an allowed host (`katlang.org` and its subdomains); anything else is refused before any request is made. The transport policies below belong to the shipped CLI, not to the KatLang package, whose host-supplied downloader contract is unchanged:
+The `katlang` CLI's `--allow-loading` flag is off by default: without it, source that uses `load` or `open 'url'` is rejected with a diagnostic and nothing is fetched. With it, KatLang hands a load target to the CLI's HTTP transport only after its own checks pass — an HTTPS URL without user information on an allowed host (`katlang.org` and its subdomains); anything else is refused before any request is made. The CLI registers no host operations, so a loaded module can compute but reach nothing outside the program. The transport policies below belong to the shipped CLI, not to the KatLang package, whose host-supplied downloader contract is unchanged:
 
 - HTTP redirects are refused rather than followed.
+- Only a `200 OK` response is a module; every other status, including `204 No Content` and `206 Partial Content`, is a failed download reported in the CLI's own words.
+- No cookies, credentials, or other ambient state are sent, and no decompression is negotiated. The system proxy settings apply as for any HTTPS client, and host names are resolved by the platform: the CLI makes no claim about the addresses `katlang.org` names resolve to.
 - Each downloaded module is limited to **1 MiB (1,048,576 content bytes)**. This is a fixed CLI transport policy, independent of and intentionally stricter than the library's decoded-source limit: valid source that fits the library limit can still be refused by the CLI. Non-ASCII and non-UTF-8 sources consume the content bytes their encoding requires, including any byte-order mark. An excessive declared `Content-Length` is refused before buffering; a chunked or unknown-length body is refused when a buffer write would exceed the ceiling. The ceiling counts content bytes exposed by `HttpContent`, excluding HTTP headers and chunk framing. No decompression is negotiated or performed. Network read-ahead and the HTTP client's bounded disposal drain are separate from accepted buffer contents.
 - Each complete module download has one absolute **15-second cancellation deadline** starting before the request and remaining active through headers and body acquisition. Incoming bytes do not restart it, so both stalled and trickling responses are cancelled. Cancellation is cooperative; bounded synchronous text decoding is not preemptible.
 

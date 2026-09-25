@@ -25,12 +25,21 @@ namespace KatLang;
 ///   overflows the host stack — an uncatchable process crash — which this converts into a
 ///   structured diagnostic.</item>
 ///   <item><b>Aggregate source</b> (<see cref="MaxAggregateSourceLength"/>) bounds the TOTAL
-///   source across one run (main program plus every distinct module), because a per-module
-///   ceiling alone does not bound a wide graph of many individually-legal modules.</item>
-///   <item><b>Module count</b> (<see cref="MaxModuleCount"/>) bounds the number of DISTINCT
-///   modules one run loads, because many tiny modules each pass the per-module and aggregate
-///   ceilings yet together build an arbitrarily large tree.</item>
+///   source across one run (main program plus every module accepted for parsing), because a
+///   per-module ceiling alone does not bound a wide graph of many individually-legal
+///   modules.</item>
+///   <item><b>Module count</b> (<see cref="MaxModuleCount"/>) bounds the number of module
+///   DOWNLOADS one run requests from <see cref="RunOptions.DownloadCode"/>: every downloader
+///   invocation consumes one, whatever it returns, while a load of a module the run has already
+///   loaded is served from the run's module cache and consumes none. It bounds the transport
+///   requests a source can cause as well as the tree many tiny modules could build.</item>
 /// </list>
+///
+/// <para>The ceilings are RUN-scoped and INHERITED: the main program and every module it
+/// loads — nested modules, and modules a deferred conditional branch loads when evaluation
+/// selects it — draw on the same budget, so a descendant never starts from a fresh one. A
+/// program may still cause work no ceiling charges for: every rejected <c>load</c> target is
+/// one diagnostic, bounded by the source length that wrote it.</para>
 ///
 /// <para>Every ceiling is always active: the supported maximum applies to a run that configures
 /// nothing, and a configured value may only request a LOWER limit — there is no "unlimited"
@@ -38,8 +47,8 @@ namespace KatLang;
 /// raising a request can never weaken host safety; non-positive values are rejected.</para>
 ///
 /// <para>Limits are immutable configuration and safe to share across concurrent runs: the
-/// mutable counters (aggregate source consumed, distinct modules loaded, current import depth)
-/// live in run-scoped processing state, never here.</para>
+/// mutable counters (aggregate source consumed, module downloads requested, current import
+/// depth) live in run-scoped processing state, never here.</para>
 /// </summary>
 public sealed record SourceProcessingLimits
 {
@@ -78,7 +87,7 @@ public sealed record SourceProcessingLimits
 
     /// <summary>
     /// Internal hard ceiling on the TOTAL source length across one run — the main program plus
-    /// every distinct module loaded — in UTF-16 code units. <see cref="MaxAggregateSourceLength"/>
+    /// every module accepted for parsing — in UTF-16 code units. <see cref="MaxAggregateSourceLength"/>
     /// can only request a lower limit.
     ///
     /// <para>A per-module ceiling does not bound a wide graph: one module may reference thousands
@@ -90,14 +99,19 @@ public sealed record SourceProcessingLimits
     public const long MaxSupportedAggregateSourceLength = 8L * 1024 * 1024;
 
     /// <summary>
-    /// Internal hard ceiling on the number of DISTINCT modules one run may load, applied whenever
-    /// module elaboration runs. <see cref="MaxModuleCount"/> can only request a lower limit.
+    /// Internal hard ceiling on the number of module DOWNLOADS one run may request, applied
+    /// whenever module elaboration runs. <see cref="MaxModuleCount"/> can only request a lower
+    /// limit.
     ///
     /// <para>Many tiny modules each pass the per-module and aggregate ceilings yet together build
     /// an arbitrarily large syntax tree: the probes accepted 5000 distinct modules (about 283k
     /// nodes) with no limit. 256 bounds that node/time growth while staying far above real usage
-    /// (programs import a handful of libraries). A repeated <c>load</c> of an already-cached URL
-    /// does not consume a new slot — only a distinct module accepted for parsing does.</para>
+    /// (programs import a handful of libraries). A repeated <c>load</c> of an already-loaded URL
+    /// is served from the run's module cache and consumes no slot. Every downloader invocation
+    /// consumes one whatever it returns — a failed download, a text over the per-source limit,
+    /// and a text that does not fit the aggregate still happened — so a program that names
+    /// thousands of unreachable or oversized modules cannot re-request them without limit:
+    /// this ceiling is also the per-run bound on requests to <see cref="RunOptions.DownloadCode"/>.</para>
     /// </summary>
     public const int MaxSupportedModuleCount = 256;
 
@@ -170,7 +184,8 @@ public sealed record SourceProcessingLimits
     }
 
     /// <summary>
-    /// Maximum number of distinct modules one run may load, or <c>null</c> to use
+    /// Maximum number of module downloads one run may request (every downloader invocation
+    /// counts; a load served from the run's module cache does not), or <c>null</c> to use
     /// <see cref="MaxSupportedModuleCount"/>. Values above the supported maximum are clamped
     /// down to it.
     /// </summary>

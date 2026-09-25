@@ -71,7 +71,10 @@ internal sealed partial class ModuleLoader
     // token, and the configured token keeps its IDENTITY whenever it is the cancelled one
     // (see ThrowIfCancellationRequested).
     private CancellationToken _cancellationToken;
-    private readonly HashSet<string> _allowedHosts;
+    private readonly ModuleLoadTarget.AllowedHosts _allowedHosts;
+
+    // Keyed by the CANONICAL module URL (ModuleLoadTarget), as are _inProgress and every
+    // downloader request: identity, cycle detection, and transport name one resource.
     private readonly Dictionary<string, Algorithm> _cache = new();
     private readonly HashSet<string> _inProgress = new();
     private readonly List<Diagnostic> _diagnostics;
@@ -373,10 +376,11 @@ internal sealed partial class ModuleLoader
     /// policy, belongs to this delegate.
     /// </param>
     /// <param name="allowedHosts">
-    /// Set of allowed hostnames (exact match or subdomain). Defaults to katlang.org only. The
-    /// public options boundary (<see cref="FrontEndPipeline.NormalizeAllowedHosts"/>) trims
-    /// entries and rejects blank ones before a loader exists; a blank entry that reaches a
-    /// directly constructed loader admits nothing (<see cref="IsAllowedUrl"/>).
+    /// Set of allowed hosts (exact match or subdomain, compared in canonical IDNA form — see
+    /// <see cref="ModuleLoadTarget"/>). Defaults to katlang.org only. The public options
+    /// boundary (<see cref="FrontEndPipeline.NormalizeAllowedHosts"/>) trims entries and rejects
+    /// blank ones before a loader exists; a blank or otherwise unusable entry that reaches a
+    /// directly constructed loader admits nothing (<see cref="ModuleLoadTarget.AllowedHosts"/>).
     /// </param>
     /// <param name="sourceProcessingCancellationToken">
     /// Host cancellation for module fetching, parsing, and recursive module elaboration. The token
@@ -431,9 +435,7 @@ internal sealed partial class ModuleLoader
         _downloadCode = downloadCode;
         _sourceProcessingCancellationToken = sourceProcessingCancellationToken;
         _cancellationToken = sourceProcessingCancellationToken;
-        _allowedHosts = allowedHosts is not null
-            ? new HashSet<string>(allowedHosts, StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "katlang.org" };
+        _allowedHosts = ModuleLoadTarget.AllowedHosts.From(allowedHosts);
         _budget = budget ?? new SourceProcessingBudget(null);
     }
 
@@ -963,8 +965,8 @@ internal sealed partial class ModuleLoader
     /// see <see cref="DeferredModuleRegion.MaterializeAsync"/>). For the duration of this
     /// load it is LINKED with the configured source-processing token into the active token
     /// every walk check and the downloader observe, so an in-flight download is cancelled
-    /// with the evaluation, nothing partial reaches the module cache, and budget
-    /// reservations roll back; the linked source is disposed on the way out, so no
+    /// with the evaluation, nothing partial reaches the module cache, and aggregate-source
+    /// reservations roll back (download attempts stay charged); the linked source is disposed on the way out, so no
     /// registration outlives the load. Cancellation identity: the configured
     /// source-processing token whenever it is the cancelled one, otherwise the linked token
     /// (the region maps that to the requesting evaluation's own token).</para>
@@ -1412,15 +1414,18 @@ internal sealed partial class ModuleLoader
         if (url is null)
             return new Expr.Num(0) { Span = span };
 
-        // 3. Domain check
-        if (!IsAllowedUrl(url, site))
+        // 3. Target policy — the ONE admission point (ModuleLoadTarget): an HTTPS URL without
+        // user information whose canonical host is allowed. From here on the target is its
+        // canonical module URL — the identity the cycle check, the cache, the downloader, and
+        // every diagnostic below share. Nothing above this line can invoke the downloader.
+        var moduleUrl = AdmitLoadTarget(url, site);
+        if (moduleUrl is null)
             return new Expr.Num(0) { Span = span };
 
         // 4. Cycle detection
-        var normalized = NormalizeUrl(url);
-        if (_inProgress.Contains(normalized))
+        if (_inProgress.Contains(moduleUrl))
         {
-            ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {normalized}", site);
+            ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {moduleUrl}", site);
             return new Expr.Num(0) { Span = span };
         }
 
@@ -1428,11 +1433,11 @@ internal sealed partial class ModuleLoader
         // or re-download, so it charges no cumulative traversal depth and never
         // suspends. The cached instance is ONE caller-independent import view: the
         // splice stamps only the wrapper node with this site's span.
-        if (_cache.TryGetValue(normalized, out var cached))
+        if (_cache.TryGetValue(moduleUrl, out var cached))
             return new Expr.AlgorithmExpr(cached) { Span = span };
 
         // 6. Fetch + parse + splice — the loader's one awaiting path.
-        return await FetchAndSpliceAsync(normalized, span, site, depth).ConfigureAwait(false);
+        return await FetchAndSpliceAsync(moduleUrl, span, site, depth).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1460,53 +1465,18 @@ internal sealed partial class ModuleLoader
     }
 
     /// <summary>
-    /// Validates that the source-written URL is well-formed and its host is in the allowlist.
-    /// Transport-level redirects happen, if at all, inside the host downloader and are not
-    /// recursively visible to this policy check.
+    /// Applies the load-target policy (<see cref="ModuleLoadTarget.TryAdmit"/>) to a written
+    /// target: its canonical module URL, or null after reporting the refusal at
+    /// <paramref name="site"/>. A synchronous leaf, so the verdict's temporaries never join
+    /// <see cref="ProcessLoadAsync"/>'s state machine on the nested-load spine.
     /// </summary>
-    private bool IsAllowedUrl(string url, SourceSpan? site)
+    private string? AdmitLoadTarget(string url, SourceSpan? site)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: invalid URL '{url}'.", site);
-            return false;
-        }
+        if (ModuleLoadTarget.TryAdmit(url, _allowedHosts, out var moduleUrl, out var rejection))
+            return moduleUrl;
 
-        if (uri.Scheme != "https")
-        {
-            ReportError(DiagnosticCode.InvalidLoadUrl, $"load: only HTTPS URLs are allowed (got '{uri.Scheme}').", site);
-            return false;
-        }
-
-        var host = uri.Host;
-
-        // Check exact match or subdomain match
-        foreach (var allowed in _allowedHosts)
-        {
-            // Fail closed on a blank entry (bug-hunt B5a). The exact arm can never match
-            // one — an absolute https URI always has a non-empty host — but the suffix
-            // arm would collapse to "." and admit every root-anchored host name
-            // ("evil.example." ends with "."). The options boundary rejects blank
-            // entries before a loader exists (FrontEndPipeline.NormalizeAllowedHosts);
-            // this guard keeps a directly constructed loader closed as well.
-            if (string.IsNullOrWhiteSpace(allowed))
-                continue;
-            if (string.Equals(host, allowed, StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (host.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        ReportError(DiagnosticCode.InvalidLoadUrl, $"load: domain not allowed: '{host}'.", site);
-        return false;
-    }
-
-    /// <summary>Normalizes a URL for caching and cycle detection.</summary>
-    private static string NormalizeUrl(string url)
-    {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return uri.AbsoluteUri;
-        return url;
+        ReportError(rejection.Code, rejection.Message, site);
+        return null;
     }
 
     /// <summary>
@@ -1521,9 +1491,20 @@ internal sealed partial class ModuleLoader
     /// <paramref name="span"/> is the load call's own span (the spliced node's span);
     /// <paramref name="site"/> is where every diagnostic is positioned (see
     /// <see cref="ProcessLoadAsync"/>) and the import site of everything inside the
-    /// fetched module.
+    /// fetched module. <paramref name="moduleUrl"/> is the admitted target's canonical
+    /// module URL (<see cref="ModuleLoadTarget"/>).
+    ///
+    /// <para><b>Accounting.</b> Every downloader INVOCATION consumes one module slot
+    /// (<see cref="SourceProcessingLimits.MaxModuleCount"/>), committed immediately before the
+    /// call and kept whatever the call returns: a failed, null, oversized, or
+    /// aggregate-rejected download still happened, and re-fetching it for free at every load
+    /// site let a source bound only by its own length drive an unbounded number of transport
+    /// requests. Aggregate source is reserved only for text accepted for parsing. Host
+    /// cancellation rolls back this frame's aggregate reservation, never its invocation. Every check
+    /// that can refuse a load without its content — depth, module count, cumulative nesting,
+    /// and cancellation — runs BEFORE the slot is committed and the downloader invoked.</para>
     /// </summary>
-    private async ValueTask<Expr> FetchAndSpliceAsync(string normalizedUrl, SourceSpan? span, SourceSpan? site, int depth)
+    private async ValueTask<Expr> FetchAndSpliceAsync(string moduleUrl, SourceSpan? span, SourceSpan? site, int depth)
     {
         // Import-depth ceiling: descend one level, or turn a would-be host stack overflow into a
         // structured diagnostic. Only reached on a cache MISS, so it bounds the true chain depth.
@@ -1531,23 +1512,21 @@ internal sealed partial class ModuleLoader
         if (!_budget.TryEnterModule())
         {
             ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleImportDepthExceeded(
-                normalizedUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, site));
+                moduleUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, site));
             return new Expr.Num(0) { Span = span };
         }
 
-        _inProgress.Add(normalizedUrl);
-        var hasModuleSourceReservation = false;
+        _inProgress.Add(moduleUrl);
+        var hasAggregateReservation = false;
         var reservedSourceLength = 0;
         try
         {
-            // Distinct-module ceiling, checked BEFORE downloading a new module (this is a cache
-            // miss). Checking capacity before the fetch means a run past the module-count ceiling
-            // never pays for extra downloads. The reservation is committed below only once the
-            // aggregate also fits, so a later-rejected load leaves the count unchanged.
+            // Module-count ceiling, checked BEFORE downloading (this is a cache miss), so a run
+            // past the ceiling never pays for another download.
             if (!_budget.CanReserveModule())
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleCountExceeded(
-                    normalizedUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, site));
+                    moduleUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1564,7 +1543,7 @@ internal sealed partial class ModuleLoader
             if (nestedAllowance < 1 || parseStackDebt > Parser.MaxNestingDepth - MinNestedParseBudget)
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
-                    normalizedUrl, MaxTraversalDepth, site));
+                    moduleUrl, MaxTraversalDepth, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1574,10 +1553,17 @@ internal sealed partial class ModuleLoader
             // uniformly covers a synchronously-throwing downloader and a faulted
             // awaitable.
             string source;
+            ThrowIfCancellationRequested();
+
+            // The download is about to happen: it consumes its module slot now and keeps it
+            // whatever the downloader returns (see Accounting above). The capacity check above
+            // guarantees the reservation; the loader is sequential, so nothing ran in between.
+            if (!_budget.TryReserveModule())
+                throw new InvalidOperationException("Internal error: the module-count reservation checked before the fetch was lost.");
+
             try
             {
-                ThrowIfCancellationRequested();
-                source = await _downloadCode(normalizedUrl, _cancellationToken).ConfigureAwait(false);
+                source = await _downloadCode(moduleUrl, _cancellationToken).ConfigureAwait(false);
                 ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (IsCancellationRequested)
@@ -1596,14 +1582,19 @@ internal sealed partial class ModuleLoader
                 // Cancellation is authoritative even if the downloader surfaced a different
                 // exception while reacting to it. Only a still-active token permits a fetch
                 // diagnostic (including downloader-owned cancellation/timeout exceptions).
+                // The host's message can carry remote-controlled text (a status reason, a
+                // response excerpt), so it is echoed bounded and with control characters escaped.
                 ThrowIfCancellationRequested();
-                ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{normalizedUrl}': {ex.Message}", site);
+                ReportError(
+                    DiagnosticCode.LoadFetchFailed,
+                    $"load: failed to fetch '{moduleUrl}': {ModuleLoadTarget.EchoHostMessage(ex.Message)}",
+                    site);
                 return new Expr.Num(0) { Span = span };
             }
 
             if (source is null)
             {
-                ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{normalizedUrl}' returned no source text.", site);
+                ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{moduleUrl}' returned no source text.", site);
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1612,19 +1603,19 @@ internal sealed partial class ModuleLoader
             if (!_budget.SourceLengthWithinLimit(source.Length))
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleSourceLengthExceeded(
-                    normalizedUrl, source.Length, _budget.MaxSourceLength, site));
+                    moduleUrl, source.Length, _budget.MaxSourceLength, site));
                 return new Expr.Num(0) { Span = span };
             }
 
-            // Aggregate-source ceiling. Commit the aggregate and distinct-module reservations
-            // together only once both fit — a rejected load leaves both counters unchanged. An
-            // observed host cancellation rolls this active frame's reservation back while
-            // unwinding, before the partial module can reach the cache.
+            // Aggregate-source ceiling: reserved only for text accepted for parsing; a rejected
+            // reservation leaves the aggregate unchanged (the module slot stays consumed — the
+            // download happened). An observed host cancellation rolls this active frame's
+            // aggregate reservation back while unwinding, before the partial module can reach the cache.
             var requestedTotal = checked(_budget.AggregateSource + source.Length);
-            if (!_budget.TryReserveModuleSource(source.Length))
+            if (!_budget.TryReserveAggregate(source.Length))
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.AggregateSourceLengthExceeded(
-                    normalizedUrl,
+                    moduleUrl,
                     source.Length,
                     requestedTotal,
                     _budget.MaxAggregateSourceLength,
@@ -1632,7 +1623,7 @@ internal sealed partial class ModuleLoader
                 return new Expr.Num(0) { Span = span };
             }
 
-            hasModuleSourceReservation = true;
+            hasAggregateReservation = true;
             reservedSourceLength = source.Length;
 
             // Parse the fetched source as raw syntax, then elaborate nested loads
@@ -1652,14 +1643,14 @@ internal sealed partial class ModuleLoader
                 {
                     ReportError(
                         DiagnosticCode.ModuleNestingTooDeep,
-                        BuildLoadedSourceNestingErrorMessage(normalizedUrl),
+                        BuildLoadedSourceNestingErrorMessage(moduleUrl),
                         site);
                 }
                 else
                 {
                     ReportError(
                         DiagnosticCode.InvalidLoadedSource,
-                        BuildLoadedSourceParseErrorMessage(normalizedUrl, source),
+                        BuildLoadedSourceParseErrorMessage(moduleUrl, source),
                         site);
                 }
 
@@ -1677,7 +1668,7 @@ internal sealed partial class ModuleLoader
             foreach (var diag in syntaxResult.Diagnostics)
             {
                 _sink.Add(new Diagnostic(
-                    $"[while loading {normalizedUrl}] {diag.Message}",
+                    $"[while loading {moduleUrl}] {diag.Message}",
                     diag.Severity,
                     site)
                 {
@@ -1701,7 +1692,7 @@ internal sealed partial class ModuleLoader
                     AstConsumerProfile.FullyRecursive) is not null)
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
-                    normalizedUrl, MaxTraversalDepth, site));
+                    moduleUrl, MaxTraversalDepth, site));
                 return new Expr.Num(0) { Span = span };
             }
 
@@ -1736,20 +1727,23 @@ internal sealed partial class ModuleLoader
             if (elaborated is Algorithm.User moduleRoot)
                 elaborated = moduleRoot with { IsModuleElaborated = true };
             if (!_sink.Skip(nestedDiagnosticStart).Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
-                _cache[normalizedUrl] = elaborated;
+                _cache[moduleUrl] = elaborated;
 
             return new Expr.AlgorithmExpr(elaborated) { Span = span };
         }
         catch (OperationCanceledException) when (IsCancellationRequested)
         {
-            if (hasModuleSourceReservation)
-                _budget.RollbackModuleSource(reservedSourceLength);
+            // Abandoned source is not cached. Its aggregate reservation can be released, but
+            // the downloader invocation already occurred and must stay charged: another
+            // evaluation of this parsed tree can retry the cancelled deferred region.
+            if (hasAggregateReservation)
+                _budget.RollbackAggregate(reservedSourceLength);
 
             throw;
         }
         finally
         {
-            _inProgress.Remove(normalizedUrl);
+            _inProgress.Remove(moduleUrl);
             _budget.ExitModule();
         }
     }
@@ -1778,13 +1772,13 @@ internal sealed partial class ModuleLoader
 
     // ── Error reporting ──────────────────────────────────────────────────────
 
-    private static string BuildLoadedSourceParseErrorMessage(string normalizedUrl, string source)
+    private static string BuildLoadedSourceParseErrorMessage(string moduleUrl, string source)
     {
         var sourceDescription = LooksLikeHtml(source)
             ? "the URL returned HTML instead of KatLang source"
             : "the downloaded content is not valid KatLang source";
 
-        return $"load: cannot load '{normalizedUrl}': {sourceDescription}. " +
+        return $"load: cannot load '{moduleUrl}': {sourceDescription}. " +
             "Check that the URL is correct and points directly to a KatLang .kat file.";
     }
 
@@ -1801,8 +1795,8 @@ internal sealed partial class ModuleLoader
         => syntaxResult.Diagnostics.Any(
             d => d.Code is DiagnosticCode.NestingTooDeep or DiagnosticCode.AstDepthLimitExceeded);
 
-    private static string BuildLoadedSourceNestingErrorMessage(string normalizedUrl)
-        => $"load: loading '{normalizedUrl}' at this position would nest module source too deeply to parse safely "
+    private static string BuildLoadedSourceNestingErrorMessage(string moduleUrl)
+        => $"load: loading '{moduleUrl}' at this position would nest module source too deeply to parse safely "
             + "(cumulative structural budget across the module chain). "
             + "Move the load closer to the top level of its module, or split the module chain into smaller modules.";
 

@@ -18,11 +18,13 @@ internal static class HelpText
           katlang check <file> [--allow-loading]
 
         Options:
-          --allow-loading    Allow KatLang algorithms to be loaded.
+          --allow-loading    Allow the program to download and run KatLang
+                             modules (load and open '<url>').
                              Disabled by default. Modules are fetched over
-                             HTTPS from allowed hosts only; redirects are
-                             refused. Each download has an absolute deadline of
-                             15 seconds for request and body acquisition.
+                             HTTPS from katlang.org and its subdomains only;
+                             redirects are refused. Each download has an
+                             absolute deadline of 15 seconds for request and
+                             body acquisition.
                              Each module is limited to 1 MiB (1,048,576 content
                              bytes), excluding HTTP headers and chunk framing.
                              These stricter CLI limits can refuse valid source.

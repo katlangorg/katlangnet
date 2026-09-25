@@ -174,7 +174,7 @@ public class ModuleLoaderCancellationTests
         Assert.Equal(0, loader.CachedModuleCount);
         Assert.Equal(0, loader.InProgressModuleCount);
         Assert.Equal(0, budget.CurrentDepth);
-        Assert.Equal(0, budget.ModuleCount);
+        Assert.Equal(1, budget.ModuleCount);
         Assert.Equal(0, budget.AggregateSource);
     }
 
@@ -300,7 +300,7 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public async Task NestedModuleCancellation_RestoresDepthInProgressCacheAndReservations()
+    public async Task NestedModuleCancellation_RestoresDepthAndAggregate_ButKeepsDownloadCharges()
     {
         using var cancellation = new CancellationTokenSource();
         var diagnostics = new List<Diagnostic>();
@@ -329,7 +329,7 @@ public class ModuleLoaderCancellationTests
         Assert.Equal(0, budget.CurrentDepth);
         Assert.Equal(0, loader.InProgressModuleCount);
         Assert.Equal(0, loader.CachedModuleCount);
-        Assert.Equal(0, budget.ModuleCount);
+        Assert.Equal(2, budget.ModuleCount);
         Assert.Equal(0, budget.AggregateSource);
         Assert.DoesNotContain(diagnostics, IsFetchFailure);
     }
@@ -379,12 +379,12 @@ public class ModuleLoaderCancellationTests
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         // The completed sibling module stays cached and charged exactly once (its repeated load
-        // was a cache hit), only the aborted outer/nested frames rolled back, and the fetch that
+        // was a cache hit), only the aborted frames' aggregate rolled back, and the fetch that
         // would have followed the cancelled one never ran.
         Assert.Equal(1, siblingFetches);
         Assert.Equal(0, remainingFetches);
         Assert.Equal(1, loader.CachedModuleCount);
-        Assert.Equal(1, budget.ModuleCount);
+        Assert.Equal(3, budget.ModuleCount);
         Assert.Equal(SiblingSource.Length, budget.AggregateSource);
         Assert.Equal(0, loader.InProgressModuleCount);
         Assert.Equal(0, budget.CurrentDepth);
@@ -393,7 +393,7 @@ public class ModuleLoaderCancellationTests
     }
 
     [Fact]
-    public async Task RollbackAfterCancellation_FreesBudgetCapacityForANewLoaderOnTheSameBudget()
+    public async Task Cancellation_KeepsAttemptsCharged_WhenTheBudgetIsReused()
     {
         const string OuterUrl = "https://katlang.org/cancellation/reuse-outer.kat";
         const string InnerUrl = "https://katlang.org/cancellation/reuse-inner.kat";
@@ -401,8 +401,8 @@ public class ModuleLoaderCancellationTests
         var outerSource = $"public Inner = load('{InnerUrl}')";
         var root = ParseSyntaxRoot($"public Module = load('{OuterUrl}')");
 
-        // Ceilings sized so both modules exactly fit: a reservation leaked by the cancelled first
-        // attempt would push the second attempt over the module-count and aggregate ceilings.
+        // Both downloader calls happened, so cancellation exhausts this attempt budget even
+        // though the abandoned source's aggregate reservation is released.
         var budget = new SourceProcessingBudget(new SourceProcessingLimits
         {
             MaxModuleCount = 2,
@@ -428,24 +428,24 @@ public class ModuleLoaderCancellationTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             async () => await firstLoader.ElaborateAsync(root));
-        Assert.Equal(0, budget.ModuleCount);
+        Assert.Equal(2, budget.ModuleCount);
         Assert.Equal(0, budget.AggregateSource);
 
         using var secondCancellation = new CancellationTokenSource();
         var secondDiagnostics = new List<Diagnostic>();
         var secondLoader = new ModuleLoader(
             secondDiagnostics,
-            (url, _) => ValueTask.FromResult(url == OuterUrl ? outerSource : InnerSource),
+            (_, _) => throw new InvalidOperationException("Exhausted budget must prevent another download"),
             allowedHosts: null,
             budget,
             secondCancellation.Token);
 
         _ = await secondLoader.ElaborateAsync(root);
 
-        Assert.Empty(secondDiagnostics);
+        Assert.Equal(DiagnosticCode.ModuleCountExceeded, Assert.Single(secondDiagnostics).Code);
         Assert.Equal(2, budget.ModuleCount);
-        Assert.Equal(outerSource.Length + InnerSource.Length, budget.AggregateSource);
-        Assert.Equal(2, secondLoader.CachedModuleCount);
+        Assert.Equal(0, budget.AggregateSource);
+        Assert.Equal(0, secondLoader.CachedModuleCount);
     }
 
     [Fact]
@@ -480,7 +480,7 @@ public class ModuleLoaderCancellationTests
         await Assert.ThrowsAsync<OperationCanceledException>(async () => await loader.ElaborateAsync(root));
         Assert.Equal(2, fetches);
         Assert.Equal(1, loader.CachedModuleCount);
-        Assert.Equal(1, budget.ModuleCount);
+        Assert.Equal(2, budget.ModuleCount);
         Assert.Equal(CompletedSource.Length, budget.AggregateSource);
 
         // Reuse of the cancelled loader is deterministic: its fixed token is still cancelled, so
@@ -489,7 +489,7 @@ public class ModuleLoaderCancellationTests
         await Assert.ThrowsAsync<OperationCanceledException>(async () => await loader.ElaborateAsync(root));
         Assert.Equal(2, fetches);
         Assert.Equal(1, loader.CachedModuleCount);
-        Assert.Equal(1, budget.ModuleCount);
+        Assert.Equal(2, budget.ModuleCount);
         Assert.Equal(CompletedSource.Length, budget.AggregateSource);
         Assert.Equal(0, loader.InProgressModuleCount);
         Assert.Equal(0, budget.CurrentDepth);

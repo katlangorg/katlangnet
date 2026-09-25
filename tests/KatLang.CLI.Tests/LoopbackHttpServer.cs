@@ -21,6 +21,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
     private readonly TaskCompletionSource _clientDisconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _requestCount;
     private long _bytesWritten;
+    private string? _requestHead;
 
     public LoopbackHttpServer(Func<string> response)
         : this(connection => connection.WriteAsync(Encoding.UTF8.GetBytes(response())))
@@ -39,6 +40,12 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
 
     /// <summary>Bytes the script handed to the socket successfully.</summary>
     public long BytesWritten => Volatile.Read(ref _bytesWritten);
+
+    /// <summary>
+    /// The accepted request's line and headers exactly as received (null until a request's
+    /// head has been read), so a test can assert what the client did — and did not — send.
+    /// </summary>
+    public string? RequestHead => Volatile.Read(ref _requestHead);
 
     /// <summary>Completes once the script observed the client closing the connection.</summary>
     public Task ClientDisconnected => _clientDisconnected.Task;
@@ -128,6 +135,8 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
                 throw new InvalidOperationException("Loopback test request headers were unexpectedly large.");
         }
 
+        var text = request.ToString();
+        Volatile.Write(ref _requestHead, text[..(text.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)]);
         await _respond(new Connection(this, stream));
     }
 

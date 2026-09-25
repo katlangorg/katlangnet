@@ -60,6 +60,30 @@ public sealed class RunOptions
     /// delegate. <see cref="AllowedHosts"/> governs which source-written load targets KatLang
     /// hands to the delegate; transport behavior after that — connections, timeouts, and any
     /// redirect policy — is owned entirely by the host implementation.</para>
+    /// <para><b>What the delegate receives.</b> Only a target KatLang admitted (an absolute
+    /// <c>https</c> URL without user information whose host is allowed — see
+    /// <see cref="AllowedHosts"/>), in ONE canonical form: <c>https://</c>, the host in its
+    /// lower-case ASCII (IDNA) form or as a canonical IP literal, the port when it is not 443,
+    /// and the escaped path and query as <see cref="Uri"/> normalizes them — never a fragment.
+    /// That URL is also the module's identity: equivalent spellings in the program share one
+    /// download, load cycles are detected on it, and diagnostics name it — its query string
+    /// included, so a module URL must not carry a secret. Every load a module
+    /// makes — nested modules, and modules a conditional branch loads only when evaluation
+    /// selects it — reaches the delegate through the same checks, with the same token rules.</para>
+    /// <para><b>What the delegate must enforce itself.</b> KatLang never sees what the URL
+    /// resolves to: the delegate must refuse (or re-validate) redirects, apply any DNS or
+    /// IP-address policy (a DNS name can resolve to a private or loopback address), and bound
+    /// time and response size. Each invocation counts against
+    /// <see cref="KatLang.SourceProcessingLimits.MaxModuleCount"/> whatever it returns, including
+    /// cancellation after invocation (re-evaluations of a parsed tree share its loading budget); a
+    /// thrown exception or faulted task becomes a <c>load: failed to fetch</c> diagnostic
+    /// quoting a bounded, escaped excerpt of its message, and a <c>null</c> result is a failed
+    /// fetch as well. The delegate may be invoked from any thread and, for runs sharing this
+    /// options object, concurrently.</para>
+    /// <para><b>Capabilities.</b> Downloaded source is part of the program: it is elaborated
+    /// and evaluated with every <see cref="HostOperations"/> member the run registers, and a
+    /// module bound with <c>Name = load('…')</c> resolves free names through its importer's
+    /// scope. Admit only hosts whose code you would run yourself.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
@@ -106,19 +130,36 @@ public sealed class RunOptions
     public CancellationToken EvaluationCancellationToken { get; init; }
 
     /// <summary>
-    /// Optional set of allowed hostnames for source-written load targets. KatLang validates
-    /// the original HTTPS URL against this set before passing it to <see cref="DownloadCode"/>;
-    /// it does not observe or recursively validate transport-level redirect destinations.
-    /// Redirect handling and every other transport policy belong to the host-supplied downloader.
-    /// A URL's host is admitted when it equals an entry or is a subdomain of one (<c>sub.ex.com</c>
-    /// under <c>ex.com</c>; <c>ex.com.evil.net</c> is not), entries are trimmed, and a null, empty,
-    /// or whitespace-only entry is rejected with <see cref="ArgumentException"/> at the parse/run
-    /// entry point before anything is processed. Defaults to katlang.org only.
+    /// Optional set of allowed hosts for source-written load targets. KatLang validates
+    /// every load target — in the program, in loaded modules at any depth, and in modules a
+    /// conditional branch loads when selected — against this set BEFORE passing it to
+    /// <see cref="DownloadCode"/>; a refused target never reaches the delegate. Defaults to
+    /// <c>katlang.org</c> only.
+    /// <para><b>Matching.</b> An entry is a bare host: a DNS name or an IP literal (IPv6 with
+    /// or without brackets). A DNS entry admits that name and every subdomain of it, by whole
+    /// labels (<c>sub.ex.com</c> under <c>ex.com</c>; never <c>notex.com</c> or
+    /// <c>ex.com.evil.net</c>); an IP entry admits exactly that address. Both sides are compared
+    /// in canonical form: DNS names in their lower-case ASCII (IDNA) form, so letter case and
+    /// the Unicode and punycode spellings of one name match, and a name with no valid IDNA form
+    /// is refused as an invalid URL; IP literals in canonical text (<c>127.1</c> is
+    /// <c>127.0.0.1</c>). A trailing dot is significant (<c>ex.com.</c> is admitted only by an
+    /// entry spelled with it). The PORT is not part of the match: any port of an allowed host
+    /// is admitted. Targets must also use <c>https</c> and carry no user information.</para>
+    /// <para><b>Not a network-access policy.</b> The set restricts the host name written in
+    /// source. KatLang does not observe what the downloader does with the URL — redirects, DNS
+    /// answers (a name can resolve to a loopback or private address), proxies — so it is not an
+    /// SSRF defense on its own: redirect, address, and every other transport policy belong to
+    /// the host-supplied downloader.</para>
+    /// <para><b>Entries.</b> Entries are trimmed; a null, empty, or whitespace-only entry is
+    /// rejected with <see cref="ArgumentException"/> at the parse/run entry point before
+    /// anything is processed. An entry that is not a bare host (a URL, <c>host:port</c>, a
+    /// wildcard) admits nothing.</para>
     /// <para>The sequence is enumerated ONCE, when the options object is initialized, into a
     /// snapshot this property then returns: later changes to the caller's collection do not
     /// reach the options, so one options object shared by concurrent runs can never be
-    /// observed mid-change. Enumeration exceptions escape the initializer. The snapshot keeps
-    /// the original strings; entry-point validation trims them and matching ignores case.</para>
+    /// observed mid-change — and nothing a program or its modules do can change it. Enumeration
+    /// exceptions escape the initializer. The snapshot keeps the original strings; entry-point
+    /// validation trims them and matching compares canonical forms.</para>
     /// </summary>
     public IEnumerable<string>? AllowedHosts
     {
@@ -261,10 +302,12 @@ public sealed class RunOptions
     /// <summary>
     /// Optional host-runtime limits on the source text and module graph consumed BEFORE
     /// evaluation. When null, <see cref="KatLang.SourceProcessingLimits.Default"/> applies:
-    /// always-active per-source length, import depth, aggregate source, and module-count
-    /// ceilings are enforced. These bound parsing and module loading, never evaluation
-    /// (<see cref="EvaluationLimits"/> owns that), and are immutable configuration safe to
-    /// share across concurrent runs — the counters live in run-scoped processing state.
+    /// always-active per-source length, import depth, aggregate source, and module-download
+    /// ceilings are enforced. These bound parsing and module loading — including a deferred
+    /// branch's modules loaded when evaluation selects it, which draw on the same budget —
+    /// never evaluation (<see cref="EvaluationLimits"/> owns that), and are immutable
+    /// configuration safe to share across concurrent runs — the counters live in run-scoped
+    /// processing state.
     /// </summary>
     public SourceProcessingLimits? SourceProcessingLimits { get; init; }
 }

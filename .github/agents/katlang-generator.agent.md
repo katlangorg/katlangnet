@@ -304,7 +304,7 @@ Before emitting code, verify silently:
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step's state is validated against its parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list): fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded), and captured enclosing names are not state slots.
-- A `while` result does not depend on state changes produced only by the terminating step where `continue_flag = 0`; required updates are committed on an earlier continuing step.
+- A `while` result does not depend on state changes produced only by the terminating step whose `continue_flag` is `false`; required updates are committed on an earlier continuing step.
 - Constants captured from an enclosing algorithm are not state slots. Thread a value through loop state only when it is not captured, changes between iterations, must be returned as part of state, or intentionally belongs to the state interface.
 - Boolean truth: `true`/`false` values; numbers are never truth values.
 - Ordinary formulas use the lowercase Math aliases (`sin`, `pi`, `sqrt`, ...); `Math.X` appears as the deliberate qualified/disambiguation form; `open Math` appears only when the canonical PascalCase names are specifically wanted.
@@ -417,7 +417,7 @@ If ANY checklist item fails, fix the output before emitting it.
       open load('https://katlang.org/lib.kat')       # open list
       open 'https://katlang.org/lib.kat'             # shorthand for open load(...)
 
-  `load` requires exactly one literal single-quoted HTTPS URL. No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
+  `load` requires exactly one literal single-quoted HTTPS URL, without user information (never `user@` or `user:password@` before the host). No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
 
       Url = 'https://katlang.org/lib.kat'
       Lib = load(Url)                                # invalid: URL must be a literal, not a variable
@@ -677,16 +677,16 @@ Fix by naming the threaded state slot distinctly and initializing it from the ou
 
 Implicit parameter order is determined by first appearance in the step body (left-to-right, depth-first). The init arguments bind values to parameters positionally, so the parameter order must match the init argument order. When the step body naturally mentions identifiers in a different order than the init arguments provide them, use grace `~` to fix the mismatch.
 
-    # WRONG: first-appearance order is [b, a, sum, limit], but init is (a=1, b=2, sum=0, limit)
+    # WRONG: first-appearance order is [b, a, total, limit], but init is (a=1, b=2, total=0, limit)
     #        so b receives 1 and a receives 2 — swapped!
-    Step = b, a + b, sum + if(b mod 2 == 0, b, 0), limit, b <= limit
+    Step = b, a + b, total + if(b mod 2 == 0, b, 0), limit, b <= limit
     Step.while(1, 2, 0, limit):2
 
-    # CORRECT: b~ shifts b one position right → parameter order [a, b, sum, limit]
-    Step = b~, a + b, sum + if(b mod 2 == 0, b, 0), limit, b <= limit
+    # CORRECT: b~ shifts b one position right → parameter order [a, b, total, limit]
+    Step = b~, a + b, total + if(b mod 2 == 0, b, 0), limit, b <= limit
     Step.while(1, 2, 0, limit):2
 
-The step outputs `(new_a, new_b, new_sum, limit, continue_flag)`. The init provides `(a=1, b=2, sum=0, limit)`. Since `b` appears before `a` in the body, without grace the parameter binding would be `b=1, a=2` — the opposite of what the init arguments intend. Adding `b~` shifts `b` after `a`, producing parameter order `[a, b, sum, limit]` which matches the init arguments.
+The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init provides `(a=1, b=2, total=0, limit)`. (The accumulator is named `total`, not `sum`: `sum` is a builtin, and a free name that resolves to a builtin is never inferred as an implicit parameter.) Since `b` appears before `a` in the body, without grace the parameter binding would be `b=1, a=2` — the opposite of what the init arguments intend. Adding `b~` shifts `b` after `a`, producing parameter order `[a, b, total, limit]` which matches the init arguments.
 
 **Rule of thumb**: after writing a step body, trace the first-appearance order of all free identifiers. Compare this order against the init arguments. If they differ, apply grace `~` to the identifiers that appear too early (postfix `x~`) or too late (prefix `~x`).
 
@@ -820,9 +820,9 @@ Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The c
 
 ### `while`
 
-`while(step, *init)` or dot-call `Step.while(*init)` — condition-based loop. Step returns `(new_state*, continue_flag)`. Flag is the last item; when `0`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step.while(x, 0)` and `while(Step, x, 0)` start with two slots, while `Step.while((x, 0))` starts with one sequence-value slot.
+`while(step, *init)` or dot-call `Step.while(*init)` — condition-based loop. Step returns `(new_state*, continue_flag)`. Flag is the last item and must be a Boolean (`true` or `false`; a numeric flag is a type error); when it is `false`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step.while(x, 0)` and `while(Step, x, 0)` start with two slots, while `Step.while((x, 0))` starts with one sequence-value slot.
 
-Because the final `continue_flag = 0` step is discarded, do not place the only meaningful update in that final step. For trial division and other searches, let the step that records `found = 1` continue once, then stop on the following step so the returned previous state contains the recorded value.
+Because the final step, whose `continue_flag` is `false`, is discarded, do not place the only meaningful update in that final step. For trial division and other searches, let the step that records `found = true` continue once, then stop on the following step so the returned previous state contains the recorded value.
 
 `repeat` and `while` are the lower-level iteration tools. Keep them available for advanced stateful algorithms, but prefer the collection builtins below whenever the task is naturally about generating, selecting, transforming, or aggregating collection elements.
 
@@ -1848,7 +1848,7 @@ Regenerate this block from the repo root with:
     [1, 2]
     [[1, 2]]
 
-[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items — `spread(collect(S)) = S`).
+[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply).
 
     Target(*items) = items
     Use(items) = Target
@@ -1888,7 +1888,7 @@ Regenerate this block from the repo root with:
     2
     2
 
-[values-stay-values] VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding is `spread(collect(S)) = S`.
+[values-stay-values] VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding therefore round-trips: collecting a supply and then spreading it re-supplies exactly the same items.
 
     Coll(*xs) = xs
     Cnt(*xs) = xs.count

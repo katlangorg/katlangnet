@@ -1189,7 +1189,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(*a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items — `spread(collect(S)) = S`).",
+            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply).",
         },
         new()
         {
@@ -1286,7 +1286,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(*xs) = xs\nForward(*xs) = Target(xs*)\nForward((), [], (1, 2), [()]*)", "ok raw=L[S[], L[], S[1, 2], S[]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding is `spread(collect(S)) = S`.",
+            Explanation = "VALUES STAY VALUES. A non-spread argument supplies exactly ONE item — its value, whatever it is: a scalar, a sequence, a list, `()`, or `[]`. A collecting parameter collects exactly the items supplied to it as one list (`Coll((1, 2))` is `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`), a fixed parameter binds its item unchanged (`Id((1, 2))` is the pair, `Add((1, 2))` is an arity error), and ONLY the explicit spread `v*` turns a value into several items, one level, a sequence and a list alike (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`; spread-produced items are never reopened, so `Coll([(1, 2)]*)` is `[(1, 2)]`). So `*xs` counts the arguments supplied (`Cnt((10, 7))` is 1) while `x.count` counts one collection value's elements (`CntValue((10, 7))` is 2). Forwarding therefore round-trips: collecting a supply and then spreading it re-supplies exactly the same items.",
         },
         new()
         {

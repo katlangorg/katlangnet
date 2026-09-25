@@ -764,12 +764,18 @@ public sealed class HttpSourceDownloaderTests
         Assert.Contains($"over the maximum of {SourceProcessingLimits.MaxSupportedSourceLength} UTF-16 code units", result.TrimmedError);
     }
 
-    [Fact]
-    public async Task Download_RefusesRedirects_OnAnInstanceBuiltThroughTheTestSeam()
+    [Theory]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task Download_RefusesRedirects_OnAnInstanceBuiltThroughTheTestSeam(int status)
     {
         // Omitting the handler uses the same redirect-disabled handler factory as Shared.
         await using var destination = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public Value = 42"));
-        await using var origin = new LoopbackHttpServer(() => LoopbackHttpServer.Redirect(destination.Url("localhost")));
+        await using var origin = new LoopbackHttpServer(() =>
+            $"HTTP/1.1 {status} Redirect\r\nLocation: {destination.Url("localhost")}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         using var transport = Transport(64 * 1024, ShortDeadline);
 
         var exception = await Assert.ThrowsAsync<HttpRequestException>(
@@ -794,6 +800,89 @@ public sealed class HttpSourceDownloaderTests
         Assert.NotEqual(HttpRequestError.ConfigurationLimitExceeded, error.HttpRequestError);
         Assert.Equal(0, content.SerializeCalls);
         Assert.True(content.Disposed);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Created)]
+    [InlineData(HttpStatusCode.Accepted)]
+    [InlineData(HttpStatusCode.NonAuthoritativeInformation)]
+    [InlineData(HttpStatusCode.NoContent)]
+    [InlineData(HttpStatusCode.PartialContent)]
+    public async Task Download_SuccessStatusOtherThan200_IsNotAModule_AndItsBodyIsNotRead(HttpStatusCode status)
+    {
+        // #13: only 200 OK carries a module; a 204 used to become an empty module and a 206 a
+        // partial one. The refusal is the CLI's own wording.
+        var content = ScriptedContent.Endless(8, declaredLength: long.MaxValue);
+        using var transport = Transport(64, handler: ScriptedHandler.Serving(content, status));
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
+
+        Assert.Equal(status, error.StatusCode);
+        Assert.Equal(
+            $"The server responded with HTTP status {(int)status}; only 200 (OK) is accepted for a KatLang module.",
+            error.Message);
+        Assert.Equal(0, content.SerializeCalls);
+        Assert.True(content.Disposed);
+    }
+
+    [Theory]
+    [InlineData(201)]
+    [InlineData(202)]
+    [InlineData(204)]
+    [InlineData(206)]
+    [InlineData(400)]
+    [InlineData(404)]
+    [InlineData(500)]
+    public async Task Download_Refusal_NeverEchoesTheServersReasonPhrase_OverRealTransport(int status)
+    {
+        const string planted = "PLANTED-REASON-PHRASE";
+        await using var server = new LoopbackHttpServer(
+            () => $"HTTP/1.1 {status} {planted}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        using var transport = Transport(64 * 1024, ShortDeadline);
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
+
+        Assert.Equal((HttpStatusCode)status, error.StatusCode);
+        Assert.DoesNotContain(planted, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Download_DoesNotReplayACookie_ThatAnEarlierModuleResponseSet_OverRealTransport()
+    {
+        // #13: one process-wide client downloads every module; with the handler's default
+        // cookie container, a cookie set by one response would ride along on every later
+        // request to that host (cookies ignore the port). The production handler disables them.
+        await using var first = new LoopbackHttpServer(
+            () => "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                + "Set-Cookie: katlang-probe=planted; Path=/\r\nContent-Length: 12\r\nConnection: close\r\n\r\npublic V = 1");
+        await using var second = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public V = 2"));
+        using var transport = Transport(64 * 1024, ShortDeadline);
+
+        Assert.Equal("public V = 1", await Guarded(transport.DownloadAsync(first.Url("127.0.0.1"), CancellationToken.None).AsTask()));
+        Assert.Equal("public V = 2", await Guarded(transport.DownloadAsync(second.Url("127.0.0.1"), CancellationToken.None).AsTask()));
+
+        var head = Assert.IsType<string>(second.RequestHead);
+        Assert.StartsWith("GET /module.kat HTTP/1.1\r\n", head, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie", head, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Download_SendsNoCredentials_EvenForAUrlCarryingUserInformation_OverRealTransport()
+    {
+        // KatLang refuses user information before any transport is called; independently, the
+        // transport configures no credentials and never turns URL user information into an
+        // Authorization header.
+        await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public V = 1"));
+        using var transport = Transport(64 * 1024, ShortDeadline);
+        var url = server.Url("127.0.0.1").Replace("http://", "http://alice:s3cret@", StringComparison.Ordinal);
+
+        Assert.Equal("public V = 1", await Guarded(transport.DownloadAsync(url, CancellationToken.None).AsTask()));
+
+        var head = Assert.IsType<string>(server.RequestHead);
+        Assert.DoesNotContain("Authorization", head, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("s3cret", head, StringComparison.Ordinal);
     }
 
     [Fact]

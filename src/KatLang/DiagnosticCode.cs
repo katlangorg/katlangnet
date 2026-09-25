@@ -202,7 +202,10 @@ public enum DiagnosticCode
     /// <summary>A module import chain exceeds the nested module-import depth limit.</summary>
     ModuleImportDepthExceeded = 28,
 
-    /// <summary>Loading another distinct module would exceed the module-count limit.</summary>
+    /// <summary>
+    /// Another module download would exceed the module-count limit (every downloader
+    /// invocation counts, whatever it returns; a load served from the run's module cache does not).
+    /// </summary>
     ModuleCountExceeded = 29,
 
     /// <summary>
@@ -228,7 +231,8 @@ public enum DiagnosticCode
 
     /// <summary>
     /// A <c>load</c> URL is rejected by URL validation policy: not a valid
-    /// absolute URL, not HTTPS, or not on the configured domain allowlist.
+    /// absolute URL, not HTTPS, carrying user information, a host that is not a
+    /// valid DNS name or IP address, or a host not on the configured allowlist.
     /// </summary>
     InvalidLoadUrl = 33,
 
