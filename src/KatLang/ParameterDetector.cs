@@ -212,7 +212,7 @@ internal static class ParameterDetector
         // inherited ones plus this algorithm's written parameters, all owned by THIS level.
         // Ordinary nested algorithms close over already-known outer params: those rewrite to
         // Expr.Param but must not become new local params.
-        var boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot);
+        var boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
 
         // Static-open ownership (F2): the head name of every open target is classified by the
         // SAME owner walk as every other bare-name occurrence, against the bindings established
@@ -228,7 +228,7 @@ internal static class ParameterDetector
             newOpens = ownedOpens;
             algWithProcessedOpens = alg with { Opens = newOpens };
             scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
-            boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot);
+            boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
         }
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
@@ -243,7 +243,7 @@ internal static class ParameterDetector
         }
         else if (run.ImplicitCallOrigins is null)
         {
-            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters);
+            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
             CollectFreeParams(
                 writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
                 FreeNameCollection.ImplicitSignature,
@@ -262,7 +262,7 @@ internal static class ParameterDetector
         // Reuse the established map when no names were inferred, including completion runs.
         var bodyParameters = paramOrder.Count == parameterNames.Count
             ? boundParameters
-            : capturedParameters.Extend(scope, paramOrder, isProgramRoot);
+            : capturedParameters.Extend(scope, paramOrder, isProgramRoot, observations);
 
         // Static-open ownership (F2), inferred bindings: a head this body's own rows just
         // promoted to an implicit parameter (`open Lib` beside `Lib.X` with no visible `Lib`)
@@ -423,7 +423,7 @@ internal static class ParameterDetector
         var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
         foreach (var branch in condAlg.Branches)
         {
-            var binderNames = new HashSet<string>(branch.Pattern.BoundNames());
+            var binderNames = run.BranchContexts.NamesOf(branch.Pattern).Names;
             if (branch.Body.DeferredRegion is { } region)
             {
                 // Even a body with no provisional reference to the lifted name must carry
@@ -455,7 +455,7 @@ internal static class ParameterDetector
                     {
                         DeferredRegion = region.WithDetection(new DeferredBranchContext(
                             branchParentScope,
-                            new HashSet<string>(binderNames),
+                            binderNames,
                             propertyName,
                             capturedParameters)),
                     },
@@ -507,7 +507,7 @@ internal static class ParameterDetector
         => ProcessConditionalBranchBody(
             loadedBody,
             context.ParentScope,
-            new HashSet<string>(context.BinderNames),
+            context.BinderNames,
             context.BranchName,
             context.CapturedParameters,
             diagnostics,
@@ -519,9 +519,11 @@ internal static class ParameterDetector
     /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// first promotes the unresolved name: its first semantic source
     /// occurrence span (the same occurrence order the inference itself uses)
-    /// and a conservative near-miss suggestion computed against the SAME
-    /// elaborated scope the promotion decision consulted. Purely observational:
-    /// it changes nothing about which names are promoted or their order.
+    /// and the context of a conservative near-miss suggestion, captured against
+    /// the SAME elaborated scope the promotion decision consulted and evaluated
+    /// only when a diagnostic renders it (<see cref="SuggestionContexts"/>).
+    /// Purely observational: it changes nothing about which names are promoted
+    /// or their order.
     /// </summary>
     private sealed class ImplicitParameterOccurrenceRecorder
     {
@@ -532,6 +534,7 @@ internal static class ParameterDetector
 
         private readonly ElaboratedPropertyScope _scope;
         private readonly ParameterOwnership _parameters;
+        private readonly SuggestionContexts _suggestions;
         private Dictionary<string, ImplicitParameterProvenance>? _provenance;
         private int _suggestionAttempts;
 
@@ -546,10 +549,11 @@ internal static class ParameterDetector
         /// </summary>
         private KnownReceiverMember? _dotMember;
 
-        public ImplicitParameterOccurrenceRecorder(ElaboratedPropertyScope scope, ParameterOwnership parameters)
+        public ImplicitParameterOccurrenceRecorder(ElaboratedPropertyScope scope, ParameterOwnership parameters, SuggestionContexts suggestions)
         {
             _scope = scope;
             _parameters = parameters;
+            _suggestions = suggestions;
         }
 
         public IReadOnlyDictionary<string, ImplicitParameterProvenance>? Provenance => _provenance;
@@ -590,8 +594,10 @@ internal static class ParameterDetector
                 origin = new DotMemberFallbackOrigin(description);
             }
 
+            // Only the candidate context is captured here; the suggestion is computed when a
+            // diagnostic renders it (see NameSuggestions).
             var suggestion = _suggestionAttempts++ < MaxSuggestionAttempts
-                ? NameSuggestions.SuggestVisibleName(
+                ? _suggestions.Capture(
                     name,
                     _scope,
                     _parameters,
@@ -681,6 +687,52 @@ internal static class ParameterDetector
         /// </summary>
         public Dictionary<BranchBodyRegionKey, BranchBodyRegion>? BranchBodyRegions;
 
+        private NameSetInterner? _capturedNameSets;
+        private Dictionary<ParameterOwnership, CanonicalNameSet>? _canonicalCapturedNames;
+        private SuggestionContexts? _suggestionContexts;
+        public readonly BranchContextInterner BranchContexts = new();
+
+        /// <summary>
+        /// This run's near-miss suggestion contexts (FE-1): every promotion of the run captures its
+        /// candidate context through the one instance, so the scope levels and parameter maps the
+        /// promotions share are derived once.
+        /// </summary>
+        public SuggestionContexts SuggestionContexts(FrontEndTraversalObservations? observations)
+            => _suggestionContexts ??= new SuggestionContexts(observations);
+
+        /// <summary>
+        /// The CONTENT identity of <paramref name="captured"/>'s name set within this run (FE-1): a
+        /// canonical name set, so maps with equal names share one id whatever their derivation,
+        /// derived from the canonical set of the map it EXTENDED plus the names that extension
+        /// added. A branch body's region key therefore costs the names each ownership map adds —
+        /// never a sort, join, and hash of every captured name per branch body.
+        /// </summary>
+        public int CapturedNamesId(ParameterOwnership captured, FrontEndTraversalObservations? observations)
+        {
+            var interner = _capturedNameSets ??= new NameSetInterner(observations);
+            var canonical = _canonicalCapturedNames ??= new(ReferenceEqualityComparer.Instance);
+            if (canonical.TryGetValue(captured, out var known))
+                return known.Id;
+
+            // The maps between this one and its nearest canonicalized ancestor, outermost last.
+            var pending = new Stack<ParameterOwnership>();
+            var set = NameSetInterner.Empty;
+            for (ParameterOwnership? current = captured; current is not null; current = current.Parent)
+            {
+                if (canonical.TryGetValue(current, out set))
+                    break;
+                pending.Push(current);
+            }
+
+            while (pending.TryPop(out var map))
+            {
+                set = interner.With(set, map.AddedNames);
+                canonical.Add(map, set);
+            }
+
+            return set.Id;
+        }
+
         /// <summary>
         /// The import site of the module content the walk is currently inside (see
         /// <see cref="KatLang.ImportSite"/>): where a diagnostic raised against imported content —
@@ -712,15 +764,16 @@ internal static class ParameterDetector
 
     /// <summary>
     /// The minimal complete semantic context of one conditional branch-body elaboration:
-    /// body and parent scope by REFERENCE, binder and captured names by CONTENT, plus the
-    /// reporting mode (a provisional, diagnostic-free elaboration of a deferred module region
-    /// never stands in for a reporting one).
+    /// body and parent scope by REFERENCE, binder and captured names by CONTENT (the captured
+    /// names as their canonical id within the run — <see cref="DetectionRun.CapturedNamesId"/>),
+    /// plus the reporting mode (a provisional, diagnostic-free elaboration of a deferred module
+    /// region never stands in for a reporting one).
     /// </summary>
     private sealed record BranchBodyRegionKey(
         Algorithm Body,
         ElaboratedPropertyScope ParentScope,
-        string BinderNames,
-        string CapturedNames,
+        int BinderNames,
+        int CapturedNamesId,
         bool ReportsDiagnostics)
     {
         public bool Equals(BranchBodyRegionKey? other)
@@ -728,7 +781,7 @@ internal static class ParameterDetector
                 && ReferenceEquals(Body, other.Body)
                 && ReferenceEquals(ParentScope, other.ParentScope)
                 && BinderNames == other.BinderNames
-                && CapturedNames == other.CapturedNames
+                && CapturedNamesId == other.CapturedNamesId
                 && ReportsDiagnostics == other.ReportsDiagnostics;
 
         public override int GetHashCode()
@@ -736,7 +789,7 @@ internal static class ParameterDetector
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Body),
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(ParentScope),
                 BinderNames,
-                CapturedNames,
+                CapturedNamesId,
                 ReportsDiagnostics);
     }
 
@@ -1328,7 +1381,7 @@ internal static class ParameterDetector
     private static Algorithm ProcessConditionalBranchBody(
         Algorithm branchBody,
         ElaboratedPropertyScope parentScope,
-        HashSet<string> binderNames,
+        IReadOnlySet<string> binderNames,
         string branchName,
         ParameterOwnership capturedParameters,
         DiagnosticBag? diagnostics,
@@ -1354,8 +1407,8 @@ internal static class ParameterDetector
         var regionKey = new BranchBodyRegionKey(
             branchBody,
             parentScope,
-            FrontEndRegionKeys.NameSet(binderNames),
-            FrontEndRegionKeys.NameSet(capturedParameters.Names),
+            run.BranchContexts.NamesId(binderNames),
+            run.CapturedNamesId(capturedParameters, observations),
             ReportsDiagnostics: diagnostics is not null);
         var regions = run.BranchBodyRegions ??= new();
         if (regions.TryGetValue(regionKey, out var completedRegion))
@@ -1383,7 +1436,7 @@ internal static class ParameterDetector
         // ordinary algorithm's parameters are owned by its own level. In invalid same-owner
         // collisions, recovery selects the binder for direct and nested references alike;
         // declaration validity is checked after signature completion.
-        var bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
+        var bodyParameters = capturedParameters.Extend(bodyScope, binderNames, observations: observations);
 
         // Static-open ownership (F2): a branch body's own open heads are classified against
         // its binders and captured ancestor parameters exactly like an ordinary body's (see
@@ -1400,7 +1453,7 @@ internal static class ParameterDetector
                 Algorithm.Builtin => bodyWithProcessedOpens,
             };
             bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
-            bodyParameters = capturedParameters.Extend(bodyScope, binderNames);
+            bodyParameters = capturedParameters.Extend(bodyScope, binderNames, observations: observations);
         }
 
         // A Conditional used as the body is still a family value, not a user body.

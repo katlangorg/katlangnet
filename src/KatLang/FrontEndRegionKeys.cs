@@ -1,6 +1,58 @@
 namespace KatLang;
 
 /// <summary>
+/// One pass's immutable branch-context metadata. Pattern references cache the derivation only;
+/// region identity is exact name-set or closed-specification CONTENT. A shared wide pattern is
+/// read and canonicalized once, before any of its many branch-body region lookups. No cache is
+/// retained by deferred contexts, which keep only the captured binder set.
+/// </summary>
+internal sealed class BranchContextInterner
+{
+    internal sealed record NamesContext(IReadOnlySet<string> Names, int Id);
+    private readonly NameSetInterner _names = new();
+    private readonly Dictionary<Pattern, NamesContext> _patterns = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<IReadOnlySet<string>, int> _sets = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Pattern, int> _patternsToSpecifications = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, int> _specifications = new(StringComparer.Ordinal);
+
+    internal NamesContext NamesOf(Pattern pattern)
+    {
+        if (!_patterns.TryGetValue(pattern, out var context))
+        {
+            IReadOnlySet<string> names = new HashSet<string>(pattern.BoundNames(), StringComparer.Ordinal);
+            context = new(names, NamesId(names));
+            _patterns.Add(pattern, context);
+        }
+        return context;
+    }
+
+    internal int NamesId(IReadOnlySet<string> names)
+    {
+        if (!_sets.TryGetValue(names, out var id))
+        {
+            id = _names.With(NameSetInterner.Empty, names).Id;
+            _sets.Add(names, id);
+        }
+        return id;
+    }
+
+    internal int ClosedSpecificationId(Pattern pattern)
+    {
+        if (!_patternsToSpecifications.TryGetValue(pattern, out var id))
+        {
+            var specification = FrontEndRegionKeys.ClosedBranchSpecification(pattern);
+            if (!_specifications.TryGetValue(specification, out id))
+            {
+                id = _specifications.Count + 1;
+                _specifications.Add(specification, id);
+            }
+            _patternsToSpecifications.Add(pattern, id);
+        }
+        return id;
+    }
+}
+
+/// <summary>
 /// Canonical key fragments for the front-end passes' SEMANTIC-REGION memos (M4). A shared
 /// acyclic host AST is processed once per distinct node and semantic region: a node reached
 /// again through another path — a second family sharing one branch body, a second parent of

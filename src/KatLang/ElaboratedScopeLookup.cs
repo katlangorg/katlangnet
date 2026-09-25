@@ -316,12 +316,6 @@ internal interface IOwnedParameterBindings
     bool DeclaresParameter(ElaboratedPropertyScope level, string name);
 }
 
-/// <summary>
-/// One spelling that authoritative lexical lookup resolves uniquely (a direct
-/// property, or a name exactly one open provides).
-/// </summary>
-internal readonly record struct VisibleLexicalName(string Name);
-
 internal static class ElaboratedScopeLookup
 {
     public static ElaboratedPropertyScope CreateScope(
@@ -534,75 +528,6 @@ internal static class ElaboratedScopeLookup
             return [directHit];
 
         return LookupOpenPropertyMatches(scope, name);
-    }
-
-    /// <summary>
-    /// Enumerates a bounded set of names that the authoritative
-    /// <see cref="LookupLexicalPropertyMatches"/> resolves uniquely from
-    /// <paramref name="scope"/>. Potential spellings are gathered once, then
-    /// validated through that per-name lookup; ambiguous open providers are
-    /// therefore never presented as a resolvable candidate. Returning
-    /// <c>false</c> means the distinct-candidate budget was exceeded and the
-    /// caller should conservatively offer no suggestion.
-    /// </summary>
-    internal static bool TryCollectVisibleLexicalNames(
-        ElaboratedPropertyScope scope,
-        ISet<string> names,
-        int maxCount,
-        int maxNameLength,
-        out IReadOnlyList<VisibleLexicalName> visibleNames)
-    {
-        bool AddPotential(string name)
-        {
-            if (name.Length == 0 || name.Length > maxNameLength || names.Contains(name))
-                return true;
-            if (names.Count >= maxCount)
-                return false;
-            names.Add(name);
-            return true;
-        }
-
-        for (var current = scope; current is not null; current = current.Parent)
-        {
-            foreach (var hit in current.Properties)
-            {
-                if (!AddPotential(hit.Property.Name))
-                {
-                    visibleNames = [];
-                    return false;
-                }
-            }
-
-            foreach (var provider in current.GetResolvedOpenProviders())
-            {
-                foreach (var property in provider.Target.Properties)
-                {
-                    if (property.IsPublic
-                        && !AddPotential(property.Name))
-                    {
-                        visibleNames = [];
-                        return false;
-                    }
-                }
-            }
-        }
-
-        var resolved = new List<VisibleLexicalName>(names.Count);
-        foreach (var name in names)
-        {
-            if (TryLookupDirectLexicalProperty(scope, name) is not null)
-            {
-                resolved.Add(new VisibleLexicalName(name));
-                continue;
-            }
-
-            var openHits = LookupOpenPropertyMatches(scope, name);
-            if (openHits.Count == 1)
-                resolved.Add(new VisibleLexicalName(name));
-        }
-
-        visibleNames = resolved;
-        return true;
     }
 
     private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent)

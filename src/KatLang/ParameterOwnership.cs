@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace KatLang;
 
 /// <summary>
@@ -19,7 +21,7 @@ namespace KatLang;
 /// inherited entry, so an inner algorithm's parameter shadows a same-named outer
 /// one before any walk begins and exactly one level ever answers
 /// <see cref="DeclaresParameter"/> for a name. Instances are immutable and
-/// shared freely down a descent; extending allocates a new map only when there
+/// shared freely down a descent; extending creates a new map only when there
 /// is something to add.</para>
 ///
 /// <para>THE NEVER-CALLED OWNER: the program root is never called, so its
@@ -37,37 +39,57 @@ namespace KatLang;
 /// level records itself through <see cref="Extend"/>'s
 /// <c>ownerIsNeverCalled</c> argument and every map derived from it inherits
 /// the mark, so deferred branch contexts carry the same exemption.</para>
+///
+/// <para>PERSISTENT (FE-1): the map is an immutable dictionary, so extending a scope that
+/// already sees W bindings by a nested algorithm's few parameters shares the W inherited
+/// entries and writes only the new ones — K sibling blocks under a wide owner cost O(K) small
+/// extensions, never K copies of the owner's map. Each map also records the map it extended
+/// and the names that extension added (<see cref="Parent"/>, <see cref="AddedNames"/>): a map's
+/// name set is its parent's plus those, which is what lets a semantic-region key canonicalize
+/// the captured names incrementally instead of re-sorting every name in scope.</para>
 /// </summary>
 internal sealed class ParameterOwnership : IOwnedParameterBindings
 {
     /// <summary>No parameter binding is in scope (the root body and open-target regions).</summary>
-    public static readonly ParameterOwnership Empty = new(owners: null, neverCalledOwner: null);
+    public static readonly ParameterOwnership Empty = new(
+        ImmutableDictionary.Create<string, ElaboratedPropertyScope>(StringComparer.Ordinal),
+        neverCalledOwner: null,
+        parent: null,
+        addedNames: []);
 
-    private static readonly string[] NoNames = [];
-
-    private readonly Dictionary<string, ElaboratedPropertyScope>? _owners;
+    private readonly ImmutableDictionary<string, ElaboratedPropertyScope> _owners;
     private readonly ElaboratedPropertyScope? _neverCalledOwner;
 
     private ParameterOwnership(
-        Dictionary<string, ElaboratedPropertyScope>? owners,
-        ElaboratedPropertyScope? neverCalledOwner)
+        ImmutableDictionary<string, ElaboratedPropertyScope> owners,
+        ElaboratedPropertyScope? neverCalledOwner,
+        ParameterOwnership? parent,
+        IReadOnlyList<string> addedNames)
     {
         _owners = owners;
         _neverCalledOwner = neverCalledOwner;
+        Parent = parent;
+        AddedNames = addedNames;
     }
 
-    /// <summary>
-    /// Every parameter name currently in scope, innermost binding per name.
-    /// Order-independent: callers use it for bound-name membership, region keys,
-    /// and diagnostic candidate enumeration, never for signature order.
-    /// </summary>
-    public IReadOnlyCollection<string> Names => (IReadOnlyCollection<string>?)_owners?.Keys ?? NoNames;
+    /// <summary>The map this one extended; null only for <see cref="Empty"/>.</summary>
+    internal ParameterOwnership? Parent { get; }
 
-    public bool Contains(string name) => _owners is not null && _owners.ContainsKey(name);
+    /// <summary>The names the extension that built this map added (its name set is its <see cref="Parent"/>'s plus these).</summary>
+    internal IReadOnlyList<string> AddedNames { get; }
+
+    /// <summary>
+    /// Every parameter name currently in scope, innermost binding per name, in no
+    /// particular order (never a signature order). Front-end passes do not enumerate
+    /// it per nested scope: a name set is derived incrementally from
+    /// <see cref="Parent"/> and <see cref="AddedNames"/> (FE-1).
+    /// </summary>
+    public IEnumerable<string> Names => _owners.Keys;
+
+    public bool Contains(string name) => _owners.ContainsKey(name);
 
     public bool DeclaresParameter(ElaboratedPropertyScope level, string name)
-        => _owners is not null
-            && _owners.TryGetValue(name, out var owner)
+        => _owners.TryGetValue(name, out var owner)
             && ReferenceEquals(owner, level);
 
     /// <summary>
@@ -95,21 +117,27 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
     public ParameterOwnership Extend(
         ElaboratedPropertyScope owner,
         IEnumerable<string> names,
-        bool ownerIsNeverCalled = false)
+        bool ownerIsNeverCalled = false,
+        FrontEndTraversalObservations? observations = null)
     {
-        Dictionary<string, ElaboratedPropertyScope>? extended = null;
+        ImmutableDictionary<string, ElaboratedPropertyScope>.Builder? extended = null;
+        List<string>? added = null;
         foreach (var name in names)
         {
-            extended ??= _owners is null
-                ? new Dictionary<string, ElaboratedPropertyScope>(StringComparer.Ordinal)
-                : new Dictionary<string, ElaboratedPropertyScope>(_owners, StringComparer.Ordinal);
+            extended ??= _owners.ToBuilder();
             extended[name] = owner;
+            (added ??= []).Add(name);
+            observations?.RecordContextEntryWritten();
         }
 
         if (extended is null)
             return this;
 
-        return new ParameterOwnership(extended, ownerIsNeverCalled ? owner : _neverCalledOwner);
+        return new ParameterOwnership(
+            extended.ToImmutable(),
+            ownerIsNeverCalled ? owner : _neverCalledOwner,
+            this,
+            added!);
     }
 
     /// <summary>

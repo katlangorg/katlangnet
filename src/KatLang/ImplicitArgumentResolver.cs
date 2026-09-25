@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace KatLang;
 
 /// <summary>
@@ -76,7 +78,7 @@ internal static class ImplicitArgumentResolver
     {
         return ProcessAlgorithm(
             root,
-            parentParamMap: new Dictionary<string, CallableSignature>(),
+            parentParamMap: SignatureMap.Empty(observations),
             isRoot: true,
             observations,
             diagnostics,
@@ -154,12 +156,15 @@ internal static class ImplicitArgumentResolver
         /// The free reference names of every algorithm node computed so far (a pure function
         /// of the node — see <see cref="FreeReferenceNames"/>), by node reference.
         /// </summary>
-        public Dictionary<Algorithm, IReadOnlySet<string>>? FreeReferenceNames;
+        public Dictionary<Algorithm, CanonicalNameSet>? FreeReferenceNames;
+        public readonly NameSetInterner ReferenceNameSets = new();
+        public readonly SignatureFootprints Footprints = new();
+        public readonly BranchContextInterner BranchContexts = new();
     }
 
     /// <summary>
     /// The minimal complete semantic context of one nested-algorithm rewrite: the node by
-    /// REFERENCE; the <see cref="SignatureSnapshot"/> of the signatures its FREE reference
+    /// REFERENCE; the <see cref="SignatureFootprints"/> projection of the signatures its FREE reference
     /// names see in the visible map (every signature the rewrite can read — the subtree's own
     /// bindings shadow the map, open targets use fresh maps, stored dot-edge fallbacks are
     /// never rewritten); for a conditional branch body the closed binder specification the
@@ -169,8 +174,8 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private sealed record AlgorithmRegionKey(
         Algorithm Node,
-        SignatureSnapshot Snapshot,
-        string? ClosedSpecification,
+        CanonicalNameSet Snapshot,
+        int? ClosedSpecification,
         bool ReportsDiagnostics)
     {
         public bool Equals(AlgorithmRegionKey? other)
@@ -189,58 +194,147 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The signature-map footprint of one algorithm: for each of its free reference names
-    /// (sorted), the signature object the visible map holds for it — by REFERENCE, since the
-    /// property loop replaces a rewritten sibling's signature object — or null when the map
-    /// has no entry (a prelude name, an open-provided name, or an unresolved one).
+    /// The visible signature map of one rewrite: the signature of every property the algorithm
+    /// can see, nearest declaration winning. PERSISTENT (FE-1): a nested algorithm that declares
+    /// properties EXTENDS its parent's map with just those names, and a deferred branch keeps an
+    /// O(1) snapshot, so a scope seeing W signatures with K such nested algorithms costs O(K)
+    /// small extensions — never K copies of the W-entry map. A map is written only by the property
+    /// loop of the algorithm that created it (its own local names, after each is processed); a
+    /// child reads it, extends it, or snapshots it, and an extension or snapshot is independent of
+    /// every later write to the map it came from — exactly the copy-on-entry semantics the former
+    /// dictionary copy had.
     /// </summary>
-    private sealed class SignatureSnapshot : IEquatable<SignatureSnapshot>
+    private sealed class SignatureMap
     {
-        private readonly string[] _names;
-        private readonly CallableSignature?[] _signatures;
-        private readonly int _hash;
+        private ImmutableDictionary<string, CallableSignature> _entries;
+        public SignatureVersion Version { get; private set; }
+        private readonly FrontEndTraversalObservations? _observations;
 
-        private SignatureSnapshot(string[] names, CallableSignature?[] signatures)
+        private SignatureMap(ImmutableDictionary<string, CallableSignature> entries, FrontEndTraversalObservations? observations)
         {
-            _names = names;
-            _signatures = signatures;
-            var hash = new HashCode();
-            for (var i = 0; i < names.Length; i++)
+            _entries = entries;
+            Version = new(entries, null, []);
+            _observations = observations;
+        }
+
+        /// <summary>A fresh map with no visible signature (a root, an open-target region).</summary>
+        public static SignatureMap Empty(FrontEndTraversalObservations? observations)
+            => new(ImmutableDictionary.Create<string, CallableSignature>(StringComparer.Ordinal), observations);
+
+        /// <summary>A map over a recorded <see cref="Snapshot"/> (a deferred branch's demand-time run).</summary>
+        public static SignatureMap FromSnapshot(ImmutableDictionary<string, CallableSignature> snapshot, FrontEndTraversalObservations? observations)
+            => new(snapshot, observations);
+
+        /// <summary>The current entries, frozen: later writes to this map never reach the snapshot.</summary>
+        public ImmutableDictionary<string, CallableSignature> Snapshot => _entries;
+
+        public bool TryGetValue(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out CallableSignature signature)
+            => _entries.TryGetValue(name, out signature);
+
+        public bool ContainsKey(string name) => _entries.ContainsKey(name);
+
+        /// <summary>A NEW map: these entries overlaid with <paramref name="locals"/> (local wins).</summary>
+        public SignatureMap Extend(IReadOnlyDictionary<string, CallableSignature> locals)
+        {
+            var extended = _entries.ToBuilder();
+            foreach (var (name, signature) in locals)
             {
-                hash.Add(names[i], StringComparer.Ordinal);
-                hash.Add(signatures[i] is { } signature ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(signature) : 0);
+                extended[name] = signature;
+                _observations?.RecordContextEntryWritten();
             }
 
-            _hash = hash.ToHashCode();
+            var result = new SignatureMap(extended.ToImmutable(), _observations);
+            result.Version = new(result._entries, Version, locals.Keys.ToArray());
+            return result;
         }
 
-        public static SignatureSnapshot Capture(IReadOnlySet<string> freeNames, Dictionary<string, CallableSignature> visibleParamMap)
+        /// <summary>Records a processed property's signature in THIS map (its creator's property loop only).</summary>
+        public void Set(string name, CallableSignature signature)
         {
-            var names = freeNames.Order(StringComparer.Ordinal).ToArray();
-            var signatures = new CallableSignature?[names.Length];
-            for (var i = 0; i < names.Length; i++)
-                signatures[i] = visibleParamMap.TryGetValue(names[i], out var signature) ? signature : null;
-            return new SignatureSnapshot(names, signatures);
+            _entries = _entries.SetItem(name, signature);
+            Version = new(_entries, Version, [name]);
+            _observations?.RecordContextEntryWritten();
+        }
+    }
+
+    /// <summary>
+    /// One immutable map version and the names changed since its parent. Retained only by the
+    /// resolution run; deferred regions retain the immutable dictionary alone.
+    /// </summary>
+    private sealed record SignatureVersion(
+        ImmutableDictionary<string, CallableSignature> Entries,
+        SignatureVersion? Parent,
+        IReadOnlyList<string> ChangedNames);
+
+    /// <summary>
+    /// Exact canonical projections of visible signatures onto a body's free names. Version
+    /// identity is only a cache over immutable inputs; REGION identity is the canonical set of
+    /// (name, signature-reference) tokens. Equal projections reached through different map
+    /// histories therefore compare in O(1). A small map delta updates only affected free names.
+    /// A first query or a large delta probes the free names directly, never scans a wide map for
+    /// a narrow query. Walking back at most that many changes also seeds shared ancestor caches.
+    /// </summary>
+    private sealed class SignatureFootprints
+    {
+        private readonly NameSetInterner _tokens = new();
+        private readonly Dictionary<string, Dictionary<CallableSignature, CanonicalNameSet>> _bindings = new(StringComparer.Ordinal);
+        private readonly Dictionary<int, Dictionary<SignatureVersion, CanonicalNameSet>> _projections = [];
+        private int _nextToken;
+
+        private CanonicalNameSet Binding(string name, CallableSignature signature)
+        {
+            if (!_bindings.TryGetValue(name, out var signatures))
+                _bindings.Add(name, signatures = new(ReferenceEqualityComparer.Instance));
+            if (!signatures.TryGetValue(signature, out var token))
+                signatures.Add(signature, token = _tokens.With(NameSetInterner.Empty,
+                    [(++_nextToken).ToString(System.Globalization.CultureInfo.InvariantCulture)]));
+            return token;
         }
 
-        public bool Equals(SignatureSnapshot? other)
+        public CanonicalNameSet Capture(CanonicalNameSet freeNames, NameSetInterner names,
+            SignatureVersion version, FrontEndTraversalObservations? observations)
         {
-            if (other is null || other._names.Length != _names.Length)
-                return false;
-
-            for (var i = 0; i < _names.Length; i++)
+            if (freeNames.Count == 0)
+                return NameSetInterner.Empty;
+            if (!_projections.TryGetValue(freeNames.Id, out var cache))
+                _projections.Add(freeNames.Id, cache = new(ReferenceEqualityComparer.Instance));
+            var pending = new Stack<SignatureVersion>();
+            var current = version;
+            var work = 0;
+            CanonicalNameSet result;
+            while (!cache.TryGetValue(current, out result))
             {
-                if (!string.Equals(_names[i], other._names[i], StringComparison.Ordinal)
-                    || !ReferenceEquals(_signatures[i], other._signatures[i]))
-                    return false;
+                if (current.Parent is null || current.ChangedNames.Count > freeNames.Count - work)
+                {
+                    result = NameSetInterner.Empty;
+                    foreach (var name in freeNames.Names)
+                    {
+                        observations?.RecordResolverSnapshotBindingProbe();
+                        if (current.Entries.TryGetValue(name, out var signature))
+                            result = _tokens.Union(result, Binding(name, signature));
+                    }
+                    cache.Add(current, result);
+                    break;
+                }
+                work += current.ChangedNames.Count;
+                pending.Push(current);
+                current = current.Parent;
             }
-
-            return true;
+            while (pending.TryPop(out current))
+            {
+                foreach (var name in current.ChangedNames)
+                {
+                    observations?.RecordResolverSnapshotBindingProbe();
+                    if (!names.Contains(freeNames, name))
+                        continue;
+                    if (current.Parent!.Entries.TryGetValue(name, out var previous))
+                        result = _tokens.Except(result, Binding(name, previous));
+                    result = _tokens.Union(result, Binding(name, current.Entries[name]));
+                }
+                cache.Add(current, result);
+            }
+            return result;
         }
-
-        public override bool Equals(object? obj) => obj is SignatureSnapshot other && Equals(other);
-
-        public override int GetHashCode() => _hash;
     }
 
     /// <summary>
@@ -268,13 +362,21 @@ internal static class ImplicitArgumentResolver
     /// nothing. A pure function of the node: memoized per run, and reference-visited per
     /// subtree so a shared expression contributes its names once.
     /// </summary>
-    private static IReadOnlySet<string> FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
+    private sealed class ReferenceNames(NameSetInterner interner)
+    {
+        public CanonicalNameSet Set { get; private set; }
+        public void Add(string name) => Set = interner.With(Set, [name]);
+        public void Remove(string name) => Set = interner.Except(Set, interner.With(NameSetInterner.Empty, [name]));
+        public void UnionWith(CanonicalNameSet other) => Set = interner.Union(Set, other);
+    }
+
+    private static CanonicalNameSet FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
     {
         var memo = run.FreeReferenceNames ??= new(ReferenceEqualityComparer.Instance);
         if (memo.TryGetValue(algorithm, out var cached))
             return cached;
 
-        var names = new HashSet<string>(StringComparer.Ordinal);
+        var names = new ReferenceNames(run.ReferenceNameSets);
         switch (algorithm)
         {
             case Algorithm.User user:
@@ -302,11 +404,11 @@ internal static class ImplicitArgumentResolver
                     $"Unhandled Algorithm variant in {nameof(ImplicitArgumentResolver)}.{nameof(FreeReferenceNames)}: {algorithm.GetType().Name}.");
         }
 
-        memo[algorithm] = names;
-        return names;
+        memo[algorithm] = names.Set;
+        return names.Set;
     }
 
-    private static void CollectReferenceNames(Expr expr, HashSet<string> names, HashSet<Expr> visited, ResolutionRun run)
+    private static void CollectReferenceNames(Expr expr, ReferenceNames names, HashSet<Expr> visited, ResolutionRun run)
     {
         if (AstTraversalDagSafety.HasTraversableExprChildren(expr) && !visited.Add(expr))
             return;
@@ -637,7 +739,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
-        Dictionary<string, CallableSignature> parentParamMap,
+        SignatureMap parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -667,7 +769,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Algorithm.User ProcessUserAlgorithmRegion(
         Algorithm.User alg,
-        Dictionary<string, CallableSignature> parentParamMap,
+        SignatureMap parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -680,8 +782,8 @@ internal static class ImplicitArgumentResolver
 
         var regionKey = new AlgorithmRegionKey(
             alg,
-            SignatureSnapshot.Capture(FreeReferenceNames(alg, run), parentParamMap),
-            branchContext is null ? null : FrontEndRegionKeys.ClosedBranchSpecification(branchContext.Pattern),
+            run.Footprints.Capture(FreeReferenceNames(alg, run), run.ReferenceNameSets, parentParamMap.Version, observations),
+            branchContext is null ? null : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
             ReportsDiagnostics: diagnostics is not null);
         var regions = run.AlgorithmRegions ??= new();
         if (regions.TryGetValue(regionKey, out var completedRegion))
@@ -707,7 +809,7 @@ internal static class ImplicitArgumentResolver
 
     private static Algorithm.User ProcessUserAlgorithm(
         Algorithm.User alg,
-        Dictionary<string, CallableSignature> parentParamMap,
+        SignatureMap parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -736,17 +838,7 @@ internal static class ImplicitArgumentResolver
         // the parent map and the per-property loop below (the only writer of visibleParamMap) is
         // empty, so the parent map is shared instead of copied. Cloning this O(P) parent map once
         // per leaf property is what made this pass O(P^2) in the property count.
-        Dictionary<string, CallableSignature> visibleParamMap;
-        if (localParamMap.Count == 0)
-        {
-            visibleParamMap = parentParamMap;
-        }
-        else
-        {
-            visibleParamMap = new Dictionary<string, CallableSignature>(parentParamMap);
-            foreach (var (k, v) in localParamMap)
-                visibleParamMap[k] = v;
-        }
+        var visibleParamMap = localParamMap.Count == 0 ? parentParamMap : parentParamMap.Extend(localParamMap);
 
         // Topological sort of properties
         var topoOrder = dependencyGraph.TopologicalOrder;
@@ -788,8 +880,7 @@ internal static class ImplicitArgumentResolver
 
                 // Update param maps with the processed, potentially augmented signature.
                 var processedSignature = CallableSignature.FromAlgorithm(prop.Name, processedBody);
-                localParamMap[prop.Name] = processedSignature;
-                visibleParamMap[prop.Name] = processedSignature;
+                visibleParamMap.Set(prop.Name, processedSignature);
 
                 processedProperties[idx] = prop.WithValue(processedBody);
             }
@@ -945,7 +1036,7 @@ internal static class ImplicitArgumentResolver
     private static Algorithm.Conditional ProcessConditionalProperty(
         Algorithm.Conditional conditional,
         string propertyName,
-        Dictionary<string, CallableSignature> parentParamMap,
+        SignatureMap parentParamMap,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
         ResolutionRun run)
@@ -967,7 +1058,7 @@ internal static class ImplicitArgumentResolver
                     Body = branch.Body with
                     {
                         DeferredRegion = region.WithResolution(new DeferredBranchContext(
-                            new Dictionary<string, CallableSignature>(parentParamMap),
+                            parentParamMap.Snapshot,
                             propertyName,
                             branch.Pattern)),
                     },
@@ -1019,7 +1110,7 @@ internal static class ImplicitArgumentResolver
     /// forwarding rules.
     /// </summary>
     internal sealed record DeferredBranchContext(
-        IReadOnlyDictionary<string, CallableSignature> ParentParamMap,
+        ImmutableDictionary<string, CallableSignature> ParentParamMap,
         string BranchName,
         Pattern Pattern);
 
@@ -1037,7 +1128,7 @@ internal static class ImplicitArgumentResolver
         SourceSpan? importSite = null)
         => ProcessAlgorithm(
             detectedBody,
-            new Dictionary<string, CallableSignature>(context.ParentParamMap),
+            SignatureMap.FromSnapshot(context.ParentParamMap, observations),
             isRoot: false,
             observations,
             diagnostics,
@@ -1067,7 +1158,7 @@ internal static class ImplicitArgumentResolver
         {
             Expr.AlgorithmExpr block => block with
             {
-                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), new Dictionary<string, CallableSignature>(), memos),
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations), memos),
             },
 
             // Capture targets own no scope; rows recurse without lifting,
@@ -1076,7 +1167,7 @@ internal static class ImplicitArgumentResolver
             {
                 Body = new OutputBundle(
                     capture.Body
-                        .Select(row => ProcessExprNested(row, new Dictionary<string, CallableSignature>(), memos))
+                        .Select(row => ProcessExprNested(row, SignatureMap.Empty(memos.Observations), memos))
                         .ToList()),
             },
 
@@ -1086,7 +1177,7 @@ internal static class ImplicitArgumentResolver
             {
                 Target = ProcessOpenExpr(dotCall.Target, memos),
                 Args = dotCall.Args is { } dotArgs
-                    ? ProcessArgumentBundle(dotArgs, new Dictionary<string, CallableSignature>(), memos)
+                    ? ProcessArgumentBundle(dotArgs, SignatureMap.Empty(memos.Observations), memos)
                     : null,
             },
 
@@ -1103,7 +1194,7 @@ internal static class ImplicitArgumentResolver
             Expr.Call call => call with
             {
                 Function = ProcessOpenExpr(call.Function, memos),
-                Args = ProcessArgumentBundle(call.Args, new Dictionary<string, CallableSignature>(), memos),
+                Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations), memos),
             },
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
@@ -1120,7 +1211,7 @@ internal static class ImplicitArgumentResolver
 
     private static bool ShouldPreserveBareRootResolve(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         bool isRoot)
         => isRoot
             && expr is Expr.Resolve(var name)
@@ -1532,7 +1623,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static void CollectImplicitDeps(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         HashSet<string> seen,
         List<(string Name, CallableSignature Signature)> deps,
         bool inCallPosition,
@@ -1561,7 +1652,7 @@ internal static class ImplicitArgumentResolver
 
     private static void CollectImplicitDepsCore(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         HashSet<string> seen,
         List<(string Name, CallableSignature Signature)> deps,
         bool inCallPosition,
@@ -1697,7 +1788,7 @@ internal static class ImplicitArgumentResolver
 
     private static void CollectArgumentImplicitDeps(
         OutputBundle args,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         HashSet<string> seen,
         List<(string Name, CallableSignature Signature)> deps,
         DepsWalkMemo memo)
@@ -1725,7 +1816,7 @@ internal static class ImplicitArgumentResolver
     /// </remarks>
     private static Expr RewriteImplicitCalls(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         bool inCallPosition,
         ResolverWalkMemos memos,
@@ -1766,7 +1857,7 @@ internal static class ImplicitArgumentResolver
 
     private static Expr RewriteImplicitCallsCore(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         bool inCallPosition,
         ResolverWalkMemos memos,
@@ -1864,7 +1955,7 @@ internal static class ImplicitArgumentResolver
     private static Expr RewriteBareReference(
         Expr expr,
         string name,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         bool inCallPosition,
         ResolverWalkMemos memos,
@@ -1923,7 +2014,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Expr RewriteCall(
         Expr.Call call,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
@@ -1947,7 +2038,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Expr RewriteDotCall(
         Expr.DotCall dotCall,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
@@ -1974,7 +2065,7 @@ internal static class ImplicitArgumentResolver
         Expr.DotCall bareDotCall,
         string bareBuiltinKey,
         CallableSignature builtinSignature,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
@@ -2008,7 +2099,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static OutputBundle ProcessArgumentBundle(
         OutputBundle args,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ResolverWalkMemos memos)
         => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap, memos)).ToList());
 
@@ -2020,7 +2111,7 @@ internal static class ImplicitArgumentResolver
     private static Algorithm ProcessSharedNestedAlgorithm(
         Algorithm alg,
         SourceSpan? importSite,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ResolverWalkMemos memos)
     {
         memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
@@ -2074,7 +2165,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static OutputBundle ProcessValueDemandingArgumentBundle(
         OutputBundle args,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
@@ -2088,7 +2179,7 @@ internal static class ImplicitArgumentResolver
 
     private static bool TryGetBareBuiltinCallableSignature(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? callableKey,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
     {
@@ -2121,7 +2212,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static Expr ProcessExprNested(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ResolverWalkMemos memos)
     {
         // DAG-safety: one rewrite per shared node reference per region's transparent
@@ -2141,7 +2232,7 @@ internal static class ImplicitArgumentResolver
 
     private static Expr ProcessExprNestedCore(
         Expr expr,
-        Dictionary<string, CallableSignature> paramMap,
+        SignatureMap paramMap,
         ResolverWalkMemos memos)
     {
         return expr switch

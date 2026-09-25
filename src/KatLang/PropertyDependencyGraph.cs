@@ -69,8 +69,8 @@ internal sealed class PendingReference : IEquatable<PendingReference>
     public PendingReference WithCandidates(IReadOnlyList<OpenCandidate> candidates)
         => new(Head, Members, candidates, BoundOwners);
 
-    public PendingReference BoundBy(Algorithm owner)
-        => owner.ParameterCount == 0 || BoundOwners.Any(a => ReferenceEquals(a, owner))
+    public PendingReference BoundBy(Algorithm owner, bool ownerHasParameters)
+        => !ownerHasParameters || BoundOwners.Any(a => ReferenceEquals(a, owner))
             ? this : new(Head, Members, Candidates, [.. BoundOwners, owner]);
 
     public bool Equals(PendingReference? other) => other is not null && ContentKey == other.ContentKey;
@@ -336,11 +336,24 @@ internal static class PropertyDependencyGraphBuilder
             return this;
         }
 
-        public void QualifyParameters(Algorithm owner)
+        /// <summary>
+        /// Moves every requirement <paramref name="owner"/> binds into an owner-qualified one —
+        /// in this seed and in the resolved open candidates riding along. Only the intersection
+        /// with the owner's parameter names matters, so the SMALLER side is scanned (FE-1): a
+        /// narrow seed under a wide owner costs its own size, never the owner's width, and
+        /// <paramref name="ownerParameterNames"/> is the owner's set built once per resolution
+        /// (<see cref="SummaryMemo.ParameterNamesOf"/>), never a live projection per property.
+        /// </summary>
+        public void QualifyParameters(
+            Algorithm owner,
+            IReadOnlySet<string> ownerParameterNames,
+            FrontEndTraversalObservations? observations)
         {
-            foreach (var name in owner.Params)
-                if (RequiredAncestorOwnedParameterNames.Remove(name))
-                    OwnerQualifiedParameters.Add(new(name, owner));
+            foreach (var name in SharedNames(RequiredAncestorOwnedParameterNames, ownerParameterNames, observations))
+            {
+                RequiredAncestorOwnedParameterNames.Remove(name);
+                OwnerQualifiedParameters.Add(new(name, owner));
+            }
 
             var pending = PendingReferences.ToArray();
             PendingReferences.Clear();
@@ -349,7 +362,7 @@ internal static class PropertyDependencyGraphBuilder
                 {
                     if (candidate is not ResolvedOpenCandidate resolved) return candidate;
                     var seed = resolved.Seed.Clone();
-                    seed.QualifyParameters(owner);
+                    seed.QualifyParameters(owner, ownerParameterNames, observations);
                     return (OpenCandidate)resolved.WithSeed(seed);
                 }).ToArray()));
         }
@@ -357,23 +370,29 @@ internal static class PropertyDependencyGraphBuilder
         /// <summary>
         /// Strips the names a level itself binds from every requirement the seed carries —
         /// its own and those of the resolved open candidates riding along, which are seeds
-        /// relative to the same level.
+        /// relative to the same level. <paramref name="ownerHasParameters"/> is whether
+        /// <paramref name="owner"/> declares any parameter, decided once by the caller. Every
+        /// intersection scans its smaller side (FE-1).
         /// </summary>
-        public void RemoveRequiredAncestorOwnedParameterNames(IEnumerable<string> names, Algorithm owner)
+        public void RemoveRequiredAncestorOwnedParameterNames(
+            IReadOnlySet<string> names,
+            Algorithm owner,
+            bool ownerHasParameters,
+            FrontEndTraversalObservations? observations)
         {
-            RequiredAncestorOwnedParameterNames.ExceptWith(names);
+            foreach (var name in SharedNames(RequiredAncestorOwnedParameterNames, names, observations))
+                RequiredAncestorOwnedParameterNames.Remove(name);
             OwnerQualifiedParameters.RemoveWhere(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name));
             if (PendingReferences.Count == 0)
                 return;
 
-            var stripped = new List<string>(names);
             var rewritten = new List<PendingReference>(PendingReferences.Count);
-            var changed = owner.ParameterCount > 0;
+            var changed = ownerHasParameters;
             foreach (var pending in PendingReferences)
             {
                 if (pending.Candidates.Count == 0)
                 {
-                    rewritten.Add(pending.BoundBy(owner));
+                    rewritten.Add(pending.BoundBy(owner, ownerHasParameters));
                     continue;
                 }
 
@@ -381,10 +400,10 @@ internal static class PropertyDependencyGraphBuilder
                 foreach (var candidate in pending.Candidates)
                 {
                     if (candidate is ResolvedOpenCandidate resolved
-                        && resolved.Seed.RequiresAny(stripped, owner))
+                        && resolved.Seed.RequiresAny(names, owner, observations))
                     {
                         var seed = resolved.Seed.Clone();
-                        seed.RemoveRequiredAncestorOwnedParameterNames(stripped, owner);
+                        seed.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, observations);
                         candidates.Add(resolved.WithSeed(seed));
                         changed = true;
                     }
@@ -394,7 +413,7 @@ internal static class PropertyDependencyGraphBuilder
                     }
                 }
 
-                rewritten.Add(pending.WithCandidates(candidates).BoundBy(owner));
+                rewritten.Add(pending.WithCandidates(candidates).BoundBy(owner, ownerHasParameters));
             }
 
             if (!changed)
@@ -404,26 +423,56 @@ internal static class PropertyDependencyGraphBuilder
             PendingReferences.UnionWith(rewritten);
         }
 
-        private bool RequiresAny(IReadOnlyList<string> names, Algorithm owner)
+        private bool RequiresAny(IReadOnlySet<string> names, Algorithm owner, FrontEndTraversalObservations? observations)
         {
             if (OwnerQualifiedParameters.Any(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name)))
                 return true;
-            foreach (var name in names)
-            {
-                if (RequiredAncestorOwnedParameterNames.Contains(name))
-                    return true;
-            }
+            if (SharedNames(RequiredAncestorOwnedParameterNames, names, observations).Count > 0)
+                return true;
 
             foreach (var pending in PendingReferences)
             {
                 foreach (var candidate in pending.Candidates)
                 {
-                    if (candidate is ResolvedOpenCandidate resolved && resolved.Seed.RequiresAny(names, owner))
+                    if (candidate is ResolvedOpenCandidate resolved && resolved.Seed.RequiresAny(names, owner, observations))
                         return true;
                 }
             }
 
             return false;
+        }
+
+        // The names in both sets, found by scanning the SMALLER one (each examined name is one
+        // qualification probe): the one intersection every requirement strip and qualification uses.
+        private static List<string> SharedNames(
+            HashSet<string> requirements,
+            IReadOnlySet<string> names,
+            FrontEndTraversalObservations? observations)
+        {
+            var shared = new List<string>();
+            if (requirements.Count == 0 || names.Count == 0)
+                return shared;
+
+            if (requirements.Count <= names.Count)
+            {
+                foreach (var name in requirements)
+                {
+                    observations?.RecordSummaryQualificationProbe();
+                    if (names.Contains(name))
+                        shared.Add(name);
+                }
+            }
+            else
+            {
+                foreach (var name in names)
+                {
+                    observations?.RecordSummaryQualificationProbe();
+                    if (requirements.Contains(name))
+                        shared.Add(name);
+                }
+            }
+
+            return shared;
         }
 
         public bool SetEquals(SummarySeed other)
@@ -488,6 +537,7 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal sealed class SummaryMemo
     {
+        internal readonly BranchContextInterner BranchContexts = new();
         internal Dictionary<Algorithm, AlgorithmSummary>? CompletedAlgorithmSummaries;
 
         /// <summary>
@@ -501,10 +551,39 @@ internal static class PropertyDependencyGraphBuilder
         /// Same admission and clone discipline as the node-keyed memo.
         /// </summary>
         internal Dictionary<BranchBodySummaryKey, SummarySeed>? CompletedBranchBodySummaries;
+
+        private Dictionary<Algorithm, IReadOnlySet<string>>? _ownerParameterNames;
+
+        private static readonly IReadOnlySet<string> NoParameterNames = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// <paramref name="owner"/>'s parameter NAMES, materialized once per memo lifetime (FE-1):
+        /// every property summary, fixed-point iteration, and requirement strip at that owner
+        /// shares this one set instead of re-reading the owner's live <c>Params</c> projection —
+        /// W names allocated and scanned per property made an owner of W parameters and K
+        /// properties cost K × W. Keyed by node reference: the pass never rewrites a node's
+        /// parameter list while summarizing it, and a host AST is not mutated during analysis.
+        /// </summary>
+        internal IReadOnlySet<string> ParameterNamesOf(Algorithm owner, FrontEndTraversalObservations? observations)
+        {
+            if (owner is not Algorithm.User { ParameterPatterns.Count: > 0 })
+                return NoParameterNames;
+
+            _ownerParameterNames ??= new(ReferenceEqualityComparer.Instance);
+            if (!_ownerParameterNames.TryGetValue(owner, out var names))
+            {
+                var parameters = owner.Params;
+                observations?.RecordOwnerParameterNamesMaterialized(parameters.Count);
+                names = new HashSet<string>(parameters, StringComparer.Ordinal);
+                _ownerParameterNames.Add(owner, names);
+            }
+
+            return names;
+        }
     }
 
     /// <summary>Key of <see cref="SummaryMemo.CompletedBranchBodySummaries"/>: body by reference, binders by content.</summary>
-    internal sealed record BranchBodySummaryKey(Algorithm Body, string BinderNames)
+    internal sealed record BranchBodySummaryKey(Algorithm Body, int BinderNames)
     {
         public bool Equals(BranchBodySummaryKey? other)
             => other is not null && ReferenceEquals(Body, other.Body) && BinderNames == other.BinderNames;
@@ -559,6 +638,9 @@ internal static class PropertyDependencyGraphBuilder
         public SummaryWalkMemos Memos { get; } = memos;
 
         public bool HasOpens => Algorithm.Opens.Count > 0;
+
+        /// <summary>The level algorithm's parameter names, shared through the resolution's memo.</summary>
+        public IReadOnlySet<string> ParameterNames => Memos.SharedMemo.ParameterNamesOf(Algorithm, Memos.Observations);
     }
 
     /// <summary>
@@ -570,20 +652,30 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     private sealed class SiblingWalkMemo(FrontEndTraversalObservations? observations)
     {
-        private readonly Dictionary<(string Shadow, SiblingWalkPosition Position), HashSet<Expr>> _visited = new();
+        internal readonly Dictionary<Algorithm, CanonicalNameSet> OwnShadowNames = new(ReferenceEqualityComparer.Instance);
+        internal readonly Dictionary<(int Context, Algorithm Body), ShadowScope> EnteredShadows = new(new ShadowEntryComparer());
 
-        private readonly Dictionary<string, HashSet<Algorithm>> _algorithms = new(StringComparer.Ordinal);
+        private sealed class ShadowEntryComparer : IEqualityComparer<(int Context, Algorithm Body)>
+        {
+            public bool Equals((int Context, Algorithm Body) x, (int Context, Algorithm Body) y)
+                => x.Context == y.Context && ReferenceEquals(x.Body, y.Body);
+            public int GetHashCode((int Context, Algorithm Body) value)
+                => HashCode.Combine(value.Context, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Body));
+        }
+        private readonly Dictionary<(int Shadow, SiblingWalkPosition Position), HashSet<Expr>> _visited = new();
+
+        private readonly Dictionary<int, HashSet<Algorithm>> _algorithms = new();
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
-        public HashSet<Expr> Visited(string shadowKey, SiblingWalkPosition position)
+        public HashSet<Expr> Visited(int shadowKey, SiblingWalkPosition position)
         {
             if (!_visited.TryGetValue((shadowKey, position), out var visited))
                 _visited[(shadowKey, position)] = visited = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
             return visited;
         }
 
-        public HashSet<Algorithm> Algorithms(string shadowKey)
+        public HashSet<Algorithm> Algorithms(int shadowKey)
         {
             if (!_algorithms.TryGetValue(shadowKey, out var visited))
                 _algorithms[shadowKey] = visited = new HashSet<Algorithm>(ReferenceEqualityComparer.Instance);
@@ -623,6 +715,8 @@ internal static class PropertyDependencyGraphBuilder
                 || ownedHere.Contains(name)
                 || (preludeNameShadowedByCaller?.Invoke(name) ?? false);
 
+        // One interner for every property walk of this build: shadow keys are canonical ids (FE-1).
+        var shadowNames = new NameSetInterner(observations);
         var nodes = new PropertyDependencyNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
@@ -634,7 +728,7 @@ internal static class PropertyDependencyGraphBuilder
             CollectAlgorithmSiblingDependencyIndices(
                 algorithm.Properties[i].Value,
                 new SiblingWalkContext(siblingNames, propertyNameToIndex, dependencyIndices, i, new SiblingWalkMemo(observations)),
-                ShadowScope.Level(PreludeNameShadowed));
+                ShadowScope.Level(shadowNames, PreludeNameShadowed));
             nodes[i] = new PropertyDependencyNode(i, dependencyIndices.OrderBy(static idx => idx).ToArray());
         }
 
@@ -760,8 +854,9 @@ internal static class PropertyDependencyGraphBuilder
         if (algorithm.AssignmentDeconstructionTarget is not null)
             return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
 
+        var ownerParameterNames = sharedMemo.ParameterNamesOf(algorithm, observations);
         var ownedHere = CreateNameSet(locallyOwnedNames);
-        ownedHere.UnionWith(algorithm.Params);
+        ownedHere.UnionWith(ownerParameterNames);
 
         // Ownership attribution follows the same transparency model as
         // ParameterDetector: transparent OutputBundle content (call/dot-call
@@ -831,12 +926,12 @@ internal static class PropertyDependencyGraphBuilder
         // declarations may provide into a pending reference carrying those providers.
         var finalLevel = new LevelContext(algorithm, currentPropertySummaries, memos);
         seed = ExpandAtLevel(seed, finalLevel);
-        seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm);
+        seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm, ownerHasParameters: ownerParameterNames.Count > 0, observations);
 
         // Navigating a member does not call its owner. Retain the exact declaration
         // that binds each parameter instead of reinterpreting its name at the consumer.
         foreach (var member in currentPropertySummaries.Values)
-            member.QualifyParameters(algorithm);
+            member.QualifyParameters(algorithm, ownerParameterNames, observations);
 
         // The member seeds a consumer navigates into (`Inner.X`, an opened `X`) are the
         // level's final local summaries, which are relative to this level's PARENT: they keep
@@ -900,7 +995,7 @@ internal static class PropertyDependencyGraphBuilder
             AddEscaping(expanded, pending, level);
         }
 
-        expanded.QualifyParameters(level.Algorithm);
+        expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
         return expanded;
     }
 
@@ -1256,6 +1351,7 @@ internal static class PropertyDependencyGraphBuilder
             ownedHere,
             memos);
 
+        var contributed = new HashSet<BranchBodySummaryKey>();
         foreach (var branch in algorithm.Branches)
         {
             // Branch bodies deliberately bypass the node-keyed completed-summary memo: their
@@ -1263,7 +1359,18 @@ internal static class PropertyDependencyGraphBuilder
             // functions of the body node (see SummaryMemo). They are pure functions of
             // (body, binder names), which the branch-body memo keys on — so a body shared by
             // several families under the same binders is summarized once (M4).
-            seed.UnionWith(CollectBranchBodySummarySeed(branch, sharedMemo, observations));
+            var context = sharedMemo.BranchContexts.NamesOf(branch.Pattern);
+            var binderNames = context.Names;
+            var key = new BranchBodySummaryKey(branch.Body, context.Id);
+            // Union is idempotent. One family's repeated reach of the same region contributes
+            // nothing new, so skip BEFORE cloning or merging its potentially wide summary.
+            if (!contributed.Add(key))
+                continue;
+            var contribution = CollectBranchBodySummarySeed(branch, binderNames, key, sharedMemo, observations);
+            observations?.RecordBranchSummaryContribution(contribution.RequiredAncestorOwnedParameterNames.Count
+                + contribution.VisiblePropertyDependencyNames.Count + contribution.PendingReferences.Count
+                + contribution.OwnerQualifiedParameters.Count);
+            seed.UnionWith(contribution);
         }
 
         // Host-built families can own opens. They are a static lookup level above
@@ -1280,11 +1387,11 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     private static SummarySeed CollectBranchBodySummarySeed(
         CondBranch branch,
+        IReadOnlySet<string> binderNames,
+        BranchBodySummaryKey key,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
-        var binderNames = branch.Pattern.BoundNames();
-        var key = new BranchBodySummaryKey(branch.Body, FrontEndRegionKeys.NameSet(binderNames));
         var completedSummaries = sharedMemo.CompletedBranchBodySummaries ??= new();
         if (completedSummaries.TryGetValue(key, out var stored))
             return stored.Clone();
@@ -1498,38 +1605,52 @@ internal static class PropertyDependencyGraphBuilder
     /// already <see cref="Expr.Param"/>s and never match a sibling name. The scope composes
     /// the level's prelude-shadow predicate with those names, so a nested <c>abs</c> property
     /// shadows the alias inside that body exactly as a sibling <c>abs</c> does at the level.
-    /// <see cref="Key"/> is the content identity the walk memo splits on.
+    /// <see cref="Key"/> is the content identity the walk memo splits on: a canonical name set of
+    /// the walk's <see cref="NameSetInterner"/> (FE-1), so entering a body EXTENDS the outer set by
+    /// the body's own names — never re-copying and re-sorting every name the enclosing bodies
+    /// already shadow — and equal shadow contents share one key whatever bodies built them.
     /// </summary>
     private sealed class ShadowScope
     {
-        private readonly HashSet<string> _names;
+        private readonly NameSetInterner _interner;
+        private readonly CanonicalNameSet _names;
+        private readonly Func<string, bool> _levelShadowed;
 
-        private ShadowScope(HashSet<string> names, string key, Func<string, bool> preludeNameShadowed)
+        private ShadowScope(NameSetInterner interner, CanonicalNameSet names, Func<string, bool> levelShadowed)
         {
+            _interner = interner;
             _names = names;
-            Key = key;
-            PreludeNameShadowed = preludeNameShadowed;
+            _levelShadowed = levelShadowed;
+            // The names are cumulative (every enclosing body's included), so ONE predicate over
+            // them plus the level's own reproduces the former chain of per-body closures.
+            PreludeNameShadowed = name => interner.Contains(names, name) || levelShadowed(name);
         }
 
-        public static ShadowScope Level(Func<string, bool> preludeNameShadowed)
-            => new(CreateNameSet(), "", preludeNameShadowed);
+        public static ShadowScope Level(NameSetInterner interner, Func<string, bool> preludeNameShadowed)
+            => new(interner, NameSetInterner.Empty, preludeNameShadowed);
 
-        public string Key { get; }
+        public int Key => _names.Id;
 
         public Func<string, bool> PreludeNameShadowed { get; }
 
-        public bool Shadows(string name) => _names.Contains(name);
+        public bool Shadows(string name) => _interner.Contains(_names, name);
 
-        public ShadowScope Enter(Algorithm body)
+        public ShadowScope Enter(Algorithm body, SiblingWalkMemo memo)
         {
             if (body.Properties.Count == 0)
                 return this;
 
-            var names = new HashSet<string>(_names, StringComparer.Ordinal);
-            foreach (var property in body.Properties)
-                names.Add(property.Name);
-            var outer = PreludeNameShadowed;
-            return new ShadowScope(names, FrontEndRegionKeys.NameSet(names), name => names.Contains(name) || outer(name));
+            if (memo.EnteredShadows.TryGetValue((Key, body), out var entered))
+                return entered;
+            if (!memo.OwnShadowNames.TryGetValue(body, out var own))
+            {
+                own = _interner.With(NameSetInterner.Empty, body.Properties.Select(static property => property.Name));
+                memo.OwnShadowNames.Add(body, own);
+            }
+            var names = _interner.Union(_names, own);
+            entered = names.Equals(_names) ? this : new ShadowScope(_interner, names, _levelShadowed);
+            memo.EnteredShadows.Add((Key, body), entered);
+            return entered;
         }
     }
 
@@ -1568,7 +1689,7 @@ internal static class PropertyDependencyGraphBuilder
         {
             case Algorithm.User user:
             {
-                var inner = shadow.Enter(user);
+                var inner = shadow.Enter(user, context.Memo);
                 if (!context.Memo.Algorithms(inner.Key).Add(user))
                     return;
 

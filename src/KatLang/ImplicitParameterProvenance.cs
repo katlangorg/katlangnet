@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace KatLang;
 
 /// <summary>
@@ -35,18 +37,36 @@ namespace KatLang;
 /// end, or inside a deferred region's gated materialization over notes that
 /// materialization itself minted — and evaluation only reads, so no note is
 /// ever mutated concurrently.</para>
+///
+/// <para><b>Deferred suggestion (FE-1).</b> A promotion captures only the
+/// suggestion's candidate context (<see cref="SuggestionQuery"/>, immutable and
+/// free of scope chains); the suggestion itself is computed on the first read of
+/// <see cref="SuggestedName"/> — when a diagnostic renders it — as the captured
+/// query's result with the finalizer's receiver confirmations applied in the
+/// order they were made, exactly the value eager computation followed by those
+/// in-place operations produced. The first read publishes that pure result
+/// atomically, so concurrent first readers compute the same value and the note
+/// stays observationally immutable after publication.</para>
 /// </summary>
 internal sealed class ImplicitParameterProvenance
 {
+    // The sentinel published when evaluation yields no suggestion.
+    private static readonly object NoSuggestion = new();
+
+    private readonly SuggestionQuery? _suggestionQuery;
+    private List<FrozenSet<string>>? _confirmedReceivers;
+    private bool _suggestionDropped;
+    private object? _suggestion;
+
     internal ImplicitParameterProvenance(
         string name,
         SourceSpan? span,
-        NameSuggestion? suggestion,
+        SuggestionQuery? suggestion,
         DotMemberFallbackOrigin? dotMemberOrigin = null)
     {
         Name = name;
         Span = span;
-        Suggestion = suggestion;
+        _suggestionQuery = suggestion;
         DotMemberOrigin = dotMemberOrigin;
     }
 
@@ -70,6 +90,12 @@ internal sealed class ImplicitParameterProvenance
     internal string? SuggestedName => Suggestion?.EligibleName;
 
     /// <summary>
+    /// Whether the suggestion has been computed — false until its first read (see the class
+    /// documentation), so a front end that renders no diagnostic compares no candidate.
+    /// </summary>
+    internal bool IsSuggestionEvaluated => Volatile.Read(ref _suggestion) is not null;
+
+    /// <summary>
     /// Present when the promoted name was the member of a dot edge whose
     /// receiver is statically known and provably lacks that member, so the
     /// edge's lexical fallback was the selected resolution and its unresolved
@@ -81,7 +107,29 @@ internal sealed class ImplicitParameterProvenance
     /// </summary>
     internal DotMemberFallbackOrigin? DotMemberOrigin { get; private set; }
 
-    private NameSuggestion? Suggestion { get; set; }
+    private NameSuggestion? Suggestion
+    {
+        get
+        {
+            if (Volatile.Read(ref _suggestion) is { } published)
+                return published as NameSuggestion;
+
+            NameSuggestion? suggestion = null;
+            if (!_suggestionDropped)
+            {
+                suggestion = _suggestionQuery?.Evaluate();
+                if (_confirmedReceivers is not null)
+                {
+                    foreach (var receiver in _confirmedReceivers)
+                        suggestion = suggestion?.RestrictToReceiver(receiver);
+                }
+            }
+
+            return Interlocked.CompareExchange(ref _suggestion, (object?)suggestion ?? NoSuggestion, null) is { } raced
+                ? raced as NameSuggestion
+                : suggestion;
+        }
+    }
 
     /// <summary>
     /// Ownership completion can replace an opened receiver with a captured
@@ -91,11 +139,15 @@ internal sealed class ImplicitParameterProvenance
     internal void ForgetDotMemberOrigin()
     {
         DotMemberOrigin = null;
-        Suggestion = null;
+        _suggestionDropped = true;
+        _suggestion = null;
     }
 
-    internal void ConfirmDotMemberReceiver(Algorithm receiver)
-        => Suggestion = Suggestion?.RestrictToReceiver(receiver);
+    internal void ConfirmDotMemberReceiver(FrozenSet<string> receiverMembers)
+    {
+        (_confirmedReceivers ??= []).Add(receiverMembers);
+        _suggestion = null;
+    }
 
     internal static IReadOnlyList<ImplicitParameterProvenance>? CollectFrom(
         IReadOnlyList<ParameterDeclaration> parameters)
@@ -148,12 +200,12 @@ internal sealed class NameSuggestion
     // was recorded against. A spelling from that former receiver must also be a
     // declared member of the finally selected one (declared, not exported: the
     // structural surface selects by declaration).
-    internal NameSuggestion? RestrictToReceiver(Algorithm receiver)
+    internal NameSuggestion? RestrictToReceiver(FrozenSet<string> receiverMembers)
     {
         if (!IsReceiverMember)
-            return receiver.Properties.Count == 0 ? this : null;
+            return receiverMembers.Count == 0 ? this : null;
 
-        return ElaboratedScopeLookup.TryLookupProperty(receiver, Name) is not null
+        return receiverMembers.Contains(Name)
             ? new NameSuggestion(Name, ReceiverQualifier, isReceiverMember: true)
             : null;
     }
@@ -176,6 +228,19 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
 {
     private ElaboratedPropertyScope _scope = parentScope;
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new(ReferenceEqualityComparer.Instance);
+    // A note outlives this walk. Keep only immutable member spellings, never a receiver AST or
+    // its caller-owned lists; share the snapshot across all confirmations of one receiver.
+    private readonly Dictionary<Algorithm, FrozenSet<string>> _receiverMembers = new(ReferenceEqualityComparer.Instance);
+
+    internal FrozenSet<string> ReceiverMembers(Algorithm receiver)
+    {
+        if (!_receiverMembers.TryGetValue(receiver, out var members))
+        {
+            members = receiver.Properties.Select(static property => property.Name).ToFrozenSet(StringComparer.Ordinal);
+            _receiverMembers.Add(receiver, members);
+        }
+        return members;
+    }
 
     protected override bool VisitsExplicitParameterDeclarations => false;
 
@@ -228,7 +293,7 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
                 || edge.GetLexicalFallbackSelection(receiver) != LexicalFallbackSelection.Always)
                 note.ForgetDotMemberOrigin();
             else
-                note.ConfirmDotMemberReceiver(receiver.Algorithm!);
+                note.ConfirmDotMemberReceiver(ReceiverMembers(receiver.Algorithm!));
         }
         base.VisitExpr(expr);
     }

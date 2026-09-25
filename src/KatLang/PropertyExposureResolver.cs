@@ -30,18 +30,25 @@ internal static class PropertyExposureResolver
             SummaryScope? parent,
             ElaboratedPropertyScope propertyScope,
             IReadOnlyDictionary<string, AnalysisSummary> summaries,
-            IReadOnlyList<string>? parameters = null,
+            IReadOnlySet<string>? parameters = null,
             Algorithm? algorithm = null)
         {
             Algorithm = algorithm;
-            Parameters = parameters ?? [];
+            Parameters = parameters ?? NoParameters;
             Parent = parent;
             PropertyScope = propertyScope;
             Summaries = summaries;
             Root = parent is null ? this : parent.Root;
         }
 
-        public IReadOnlyList<string> Parameters { get; }
+        private static readonly IReadOnlySet<string> NoParameters = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The names this level binds, as a SET (FE-1): a requirement is attributed to its owner by
+        /// membership, so a level of W parameters answers in O(1) — the former list scan cost W per
+        /// required name per level, for every property summary at a wide owner.
+        /// </summary>
+        public IReadOnlySet<string> Parameters { get; }
         public Algorithm? Algorithm { get; }
 
         public IEnumerable<Requirement> ResolveRequirements(IEnumerable<OwnerQualifiedParameter> requirements,
@@ -68,7 +75,7 @@ internal static class PropertyExposureResolver
             foreach (var name in names)
             {
                 var owner = this;
-                while (owner is not null && !owner.Parameters.Contains(name, StringComparer.Ordinal))
+                while (owner is not null && !owner.Parameters.Contains(name))
                     owner = owner.Parent;
                 yield return new Requirement(name, owner?.PropertyScope);
             }
@@ -221,9 +228,9 @@ internal static class PropertyExposureResolver
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
-        private Dictionary<IReadOnlyList<Expr>, Dictionary<string, ExposureWalkMemos>>? _branchRegions;
+        private Dictionary<IReadOnlyList<Expr>, Dictionary<int, ExposureWalkMemos>>? _branchRegions;
 
-        public ExposureWalkMemos ForBranch(Algorithm.Conditional family, IReadOnlyList<string> binders)
+        public ExposureWalkMemos ForBranch(Algorithm.Conditional family, Pattern pattern)
         {
             // These are relative capture positions, not runtime family identities.
             // Equal binder sets and opens under one parent produce the same metadata;
@@ -231,13 +238,14 @@ internal static class PropertyExposureResolver
             var opens = family.Opens.Count == 0 ? Array.Empty<Expr>() : family.Opens;
             _branchRegions ??= new(ReferenceEqualityComparer.Instance);
             if (!_branchRegions.TryGetValue(opens, out var byBinders))
-                _branchRegions[opens] = byBinders = new(StringComparer.Ordinal);
-            var key = FrontEndRegionKeys.NameSet(binders);
+                _branchRegions[opens] = byBinders = new();
+            var context = SummaryMemo.BranchContexts.NamesOf(pattern);
+            var key = context.Id;
             if (!byBinders.TryGetValue(key, out var region))
             {
                 var familyScope = ElaboratedScopeLookup.CreateScope(family, Scope.PropertyScope);
                 region = new ExposureWalkMemos(SummaryMemo, Observations,
-                    new SummaryScope(Scope, familyScope, NoSummaries, binders, family), Run);
+                    new SummaryScope(Scope, familyScope, NoSummaries, context.Names, family), Run);
                 byBinders[key] = region;
             }
             return region;
@@ -294,6 +302,9 @@ internal static class PropertyExposureResolver
             observations);
 
         var levelScope = ElaboratedScopeLookup.CreateScope(algorithm, parent.PropertyScope);
+        // This level's parameter names, materialized once per resolution and shared by every
+        // fixed-point iteration's scope and the final one (FE-1).
+        var parameterNames = summaryMemo.ParameterNamesOf(algorithm, observations);
         var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations);
         var currentPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
         foreach (var property in algorithm.Properties)
@@ -308,7 +319,7 @@ internal static class PropertyExposureResolver
         // least fixed point before rewriting children with the final summaries.
         while (true)
         {
-            var level = new SummaryScope(parent, levelScope, currentPropertySummaries, algorithm.Params, algorithm);
+            var level = new SummaryScope(parent, levelScope, currentPropertySummaries, parameterNames, algorithm);
             var resolution = new PendingResolution(walkMemos);
             var nextPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
             for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
@@ -330,7 +341,7 @@ internal static class PropertyExposureResolver
             currentPropertySummaries = nextPropertySummaries;
         }
 
-        var finalLevel = new SummaryScope(parent, levelScope, currentPropertySummaries, algorithm.Params, algorithm);
+        var finalLevel = new SummaryScope(parent, levelScope, currentPropertySummaries, parameterNames, algorithm);
         // Properties and output share one lexical scope and summary context. Inline
         // open providers below have their own memo because they resolve at the prelude.
         var memos = new ExposureWalkMemos(summaryMemo, observations, finalLevel, run);
@@ -684,7 +695,7 @@ internal static class PropertyExposureResolver
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
         foreach (var branch in algorithm.Branches)
         {
-            var branchMemos = memos.ForBranch(algorithm, branch.Pattern.BoundNames());
+            var branchMemos = memos.ForBranch(algorithm, branch.Pattern);
 
             if (branch.Body.DeferredRegion is { } region)
             {

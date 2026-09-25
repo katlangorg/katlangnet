@@ -383,44 +383,37 @@ public class ImplicitParameterDiagnosticsTests
     }
 
     // ── Mutation-campaign 2026-08-22: candidate-collection budget/dedup gaps ──
-    // These pin TryCollectVisibleLexicalNames' CONSERVATIVE contract, which the
+    // These pin the candidate collection's CONSERVATIVE contract, which the
     // pre-campaign suite left unobserved: three surviving mutants (Stryker
     // 978/991/1009) changed candidate-collection outcomes without failing a test.
     // (Since the receiver-aware member policy, a receiver that declares members
     // never runs the lexical sweep, so the direct contract is pinned on the
-    // collector itself and the source-level budget pins use a MEMBERLESS receiver.)
+    // capture itself and the source-level budget pins use a MEMBERLESS receiver.)
 
     /// <summary>
-    /// Budget exhaustion is a hard collection FAILURE, never an empty success: a
-    /// mutant that reports the overflow as success with an empty name list would
-    /// let a caller holding earlier candidates (bound parameter names) keep
-    /// suggesting from them past the work bound.
+    /// Budget exhaustion is a hard capture FAILURE, never an empty success: a
+    /// capture that reported the overflow as a context without the scope's names
+    /// would let the bound parameter names it already holds keep suggesting past
+    /// the work bound — so an over-budget scope captures NO context even when a
+    /// bound name is the closest match.
     /// </summary>
     [Fact]
-    public void VisibleLexicalNameCollection_ReportsBudgetExhaustionAsFailure()
+    public void LexicalCandidateCapture_ReportsBudgetExhaustionAsNoContext()
     {
         var definitions = string.Join(
             '\n',
             Enumerable.Range(0, 513).Select(static index => $"Candidate{index} = {index}"));
         var scope = ElaboratedScopeLookup.CreateScope(SourceProvenance.ParseValid($"{definitions}\n1").Root);
+        var bound = ParameterOwnership.Empty.Extend(scope, ["Alpha"]);
 
-        Assert.False(ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
-            scope,
-            new HashSet<string>(StringComparer.Ordinal),
-            maxCount: 512,
-            maxNameLength: 64,
-            out var visibleNames));
-        Assert.Empty(visibleNames);
+        Assert.Null(new SuggestionContexts().Capture("Alpah", scope, bound, receiver: null));
 
         var smallScope = ElaboratedScopeLookup.CreateScope(SourceProvenance.ParseValid("Alpha = 1\nBeta = 2\n1").Root);
-        Assert.True(ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
-            smallScope,
-            new HashSet<string>(StringComparer.Ordinal),
-            maxCount: 512,
-            maxNameLength: 64,
-            out var smallNames));
-        Assert.Contains(smallNames, static name => name.Name == "Alpha");
-        Assert.Contains(smallNames, static name => name.Name == "Beta");
+        var query = Assert.IsType<LexicalSuggestionQuery>(
+            new SuggestionContexts().Capture("Alpah", smallScope, ParameterOwnership.Empty, receiver: null));
+        Assert.Contains("Alpha", query.Candidates.Names);
+        Assert.Contains("Beta", query.Candidates.Names);
+        Assert.Equal("Alpha", query.Evaluate()?.EligibleName);
     }
 
     /// <summary>

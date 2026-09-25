@@ -48,14 +48,28 @@ internal readonly record struct DotMemberReceiver(Algorithm Algorithm, string? Q
 /// <c>Sin</c>); long names may differ at the initial by just one edit.
 /// Under either policy, equally close distinct
 /// candidates produce NO suggestion rather than an arbitrary pick.</para>
+///
+/// <para>TWO PHASES (FE-1). A promotion only CAPTURES its candidate context
+/// (<see cref="SuggestionContexts.Capture"/>): the exact candidate set as a
+/// canonical, immutable name set derived incrementally per scope and per
+/// parameter map, or the fact that the work bound was exceeded. The SELECTION —
+/// comparing every candidate against the unresolved name — runs only when a
+/// diagnostic renders the suggestion (<see cref="SuggestionQuery.Evaluate"/>).
+/// A body nested K times under a scope that sees W names therefore costs O(1)
+/// amortized per promotion instead of re-collecting, re-resolving, and
+/// re-comparing the same W names K times, and a valid program that never
+/// renders a suggestion never compares a candidate. The selection is a pure
+/// function of the captured set — the unique closest candidate, or none — so
+/// deferring it and enumerating the set in the interner's order change no
+/// suggestion.</para>
 /// </summary>
 internal static class NameSuggestions
 {
     /// <summary>Names longer than this never participate (typos in very long names are not usefully suggestable, and the bound keeps diagnostic work linear).</summary>
-    private const int MaxNameLength = 64;
+    internal const int MaxNameLength = 64;
 
     /// <summary>Above this many distinct visible candidates no suggestion is attempted (diagnostic-only work bound; realistic scopes stay far below it).</summary>
-    private const int MaxCandidates = 512;
+    internal const int MaxCandidates = 512;
 
     /// <summary>
     /// Suggests one visible name the unresolved <paramref name="name"/> is a
@@ -64,147 +78,29 @@ internal static class NameSuggestions
     /// the statically known receiver when the occurrence is a dot edge's
     /// member/fallback name and that receiver provably lacks the member;
     /// <c>null</c> for bare-name occurrences and runtime-valued receivers.
+    /// Both phases at once, over a fresh context: the detector captures through
+    /// its run's <see cref="SuggestionContexts"/> and evaluates on rendering.
     /// </summary>
     internal static NameSuggestion? SuggestVisibleName(
         string name,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters,
         DotMemberReceiver? dotMemberReceiver)
-    {
-        if (name.Length == 0 || name.Length > MaxNameLength)
-            return null;
+        => new SuggestionContexts().Capture(name, scope, parameters, dotMemberReceiver)?.Evaluate();
 
-        if (dotMemberReceiver is { } receiver && TrySuggestReceiverMember(name, receiver, out var memberSuggestion))
-            return memberSuggestion;
-
-        return SuggestLexicalName(name, scope, parameters);
-    }
+    /// <summary>Whether a name may be suggested for, or offered as a candidate: non-empty and within <see cref="MaxNameLength"/>.</summary>
+    internal static bool IsSuggestible(string name) => name.Length is > 0 and <= MaxNameLength;
 
     /// <summary>
-    /// The member-surface policy. Returns true when the receiver declares
-    /// members reachable by structural access — the apparent member access is
-    /// then answered from that surface alone, with <paramref name="suggestion"/>
-    /// the best unambiguous member typo or <c>null</c> — and false for a
-    /// memberless receiver, whose dotted name falls to the lexical policy.
+    /// The ordinary lexical policy over a captured candidate set: bound
+    /// parameter names plus every name the elaborated scope can resolve, under
+    /// the strict length-scaled threshold.
     /// </summary>
-    private static bool TrySuggestReceiverMember(
+    internal static NameSuggestion? SelectLexicalName(
         string name,
-        DotMemberReceiver receiver,
-        out NameSuggestion? suggestion)
+        IEnumerable<string> candidates,
+        FrontEndTraversalObservations? observations)
     {
-        suggestion = null;
-        var candidates = new Dictionary<string, Property>(StringComparer.Ordinal);
-
-        // Structural dot access selects any declared property regardless of
-        // publicness or exposure (the evaluator's LookupPropBinding; a local-only
-        // member the site may not use is refused at the access, never hidden).
-        foreach (var property in receiver.Algorithm.Properties)
-        {
-            if (property.Name.Length == 0
-                || property.Name.Length > MaxNameLength)
-            {
-                continue;
-            }
-
-            if (candidates.Count >= MaxCandidates)
-            {
-                // Beyond the work bound the surface is not searched at all: the
-                // receiver still declares members, so no lexical name is offered.
-                return true;
-            }
-
-            candidates.TryAdd(property.Name, property);
-        }
-
-        if (candidates.Count == 0)
-            // Filtering affects the hint, not whether this is a library surface.
-            // Inaccessible or over-length declarations must not revive lexical hints.
-            return receiver.Algorithm.Properties.Count > 0;
-
-        var maxDistance = MaxAllowedMemberDistance(name);
-        string? best = null;
-        var bestDistance = int.MaxValue;
-        var bestIsAmbiguous = false;
-        Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
-        Span<int> previous = stackalloc int[MaxNameLength + 1];
-        Span<int> current = stackalloc int[MaxNameLength + 1];
-
-        foreach (var (candidateName, _) in candidates)
-        {
-            var distance = EffectiveMemberDistance(
-                name,
-                candidateName,
-                maxDistance,
-                previousPrevious,
-                previous,
-                current);
-            if (distance is null)
-                continue;
-
-            if (distance.Value < bestDistance)
-            {
-                best = candidateName;
-                bestDistance = distance.Value;
-                bestIsAmbiguous = false;
-            }
-            else if (distance.Value == bestDistance
-                && !string.Equals(candidateName, best, StringComparison.Ordinal))
-            {
-                bestIsAmbiguous = true;
-            }
-        }
-
-        if (!bestIsAmbiguous && best is not null)
-            suggestion = new NameSuggestion(best, receiver.Qualifier, isReceiverMember: true);
-
-        return true;
-    }
-
-    /// <summary>
-    /// The ordinary lexical policy: bound parameter names plus every name the
-    /// elaborated scope can resolve, under the strict length-scaled threshold.
-    /// </summary>
-    private static NameSuggestion? SuggestLexicalName(
-        string name,
-        ElaboratedPropertyScope scope,
-        ParameterOwnership parameters)
-    {
-        var candidates = new HashSet<string>(StringComparer.Ordinal);
-
-        // Every parameter binding in scope is a safe suggestion, because the
-        // owner walk always resolves such a name uniquely: the walk reaches the
-        // level that binds it unless a nearer level owns a PROPERTY of that name,
-        // and a direct property hit is a single declaration by construction. So
-        // the corrected spelling reads either the runtime binding or that one
-        // shadowing declaration — never an AmbiguousOpen, which only an unowned
-        // name can be (opens are consulted after the whole owner walk). The
-        // suggestion machinery deliberately does not need to distinguish the two.
-        foreach (var boundName in parameters.Names)
-        {
-            if (!TryAddCandidate(candidates, boundName))
-                return null;
-        }
-
-        var potentialNames = new HashSet<string>(candidates, StringComparer.Ordinal);
-        if (!ElaboratedScopeLookup.TryCollectVisibleLexicalNames(
-                scope,
-                potentialNames,
-                MaxCandidates,
-                MaxNameLength,
-                out var visibleNames))
-        {
-            return null;
-        }
-
-        foreach (var visibleName in visibleNames)
-        {
-            if (!TryAddCandidate(candidates, visibleName.Name))
-                return null;
-        }
-
-        if (candidates.Count == 0)
-            return null;
-
         var maxDistance = MaxAllowedDistance(name);
         string? best = null;
         var bestDistance = int.MaxValue;
@@ -215,6 +111,7 @@ internal static class NameSuggestions
 
         foreach (var candidateName in candidates)
         {
+            observations?.RecordSuggestionCandidateExamined();
             var distance = EffectiveDistance(
                 name,
                 candidateName,
@@ -243,21 +140,55 @@ internal static class NameSuggestions
             : new NameSuggestion(best);
     }
 
-    private static bool TryAddCandidate(
-        HashSet<string> candidates,
-        string candidate)
+    /// <summary>
+    /// The member-surface policy over a receiver's captured members: the best
+    /// unambiguous member typo, spelled with the receiver's qualifier, or
+    /// <c>null</c>. The apparent member access is answered from that surface
+    /// alone — no lexical name is offered in its place.
+    /// </summary>
+    internal static NameSuggestion? SelectReceiverMember(
+        string name,
+        IReadOnlyList<string> members,
+        string? qualifier,
+        FrontEndTraversalObservations? observations)
     {
-        if (candidate.Length == 0 || candidate.Length > MaxNameLength)
-            return true;
+        var maxDistance = MaxAllowedMemberDistance(name);
+        string? best = null;
+        var bestDistance = int.MaxValue;
+        var bestIsAmbiguous = false;
+        Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
+        Span<int> previous = stackalloc int[MaxNameLength + 1];
+        Span<int> current = stackalloc int[MaxNameLength + 1];
 
-        if (candidates.Contains(candidate))
-            return true;
+        foreach (var candidateName in members)
+        {
+            observations?.RecordSuggestionCandidateExamined();
+            var distance = EffectiveMemberDistance(
+                name,
+                candidateName,
+                maxDistance,
+                previousPrevious,
+                previous,
+                current);
+            if (distance is null)
+                continue;
 
-        if (candidates.Count >= MaxCandidates)
-            return false;
+            if (distance.Value < bestDistance)
+            {
+                best = candidateName;
+                bestDistance = distance.Value;
+                bestIsAmbiguous = false;
+            }
+            else if (distance.Value == bestDistance
+                && !string.Equals(candidateName, best, StringComparison.Ordinal))
+            {
+                bestIsAmbiguous = true;
+            }
+        }
 
-        candidates.Add(candidate);
-        return true;
+        return bestIsAmbiguous || best is null
+            ? null
+            : new NameSuggestion(best, qualifier, isReceiverMember: true);
     }
 
     /// <summary>
@@ -417,5 +348,326 @@ internal static class NameSuggestions
         }
 
         return previous[b.Length];
+    }
+}
+
+/// <summary>
+/// One promotion's captured suggestion context (see <see cref="NameSuggestions"/>): the
+/// unresolved name and the exact candidates it will be compared against. IMMUTABLE and
+/// self-contained — it holds canonical name sets and name arrays, never a scope chain, a
+/// parameter map, or a syntax tree, because a scope chain is confined to the single-threaded
+/// front-end operation that built it while a suggestion is evaluated whenever, and on whichever
+/// thread, a diagnostic is rendered.
+/// </summary>
+internal abstract class SuggestionQuery
+{
+    /// <summary>The suggestion; a pure function of the captured context, so every evaluation agrees.</summary>
+    public abstract NameSuggestion? Evaluate();
+}
+
+/// <summary>The lexical policy over the bound and resolvable names a promotion's scope sees.</summary>
+internal sealed class LexicalSuggestionQuery(
+    string name,
+    CanonicalNameSet candidates,
+    FrontEndTraversalObservations? observations) : SuggestionQuery
+{
+    /// <summary>The captured candidates: every bound parameter name and every name the scope resolves.</summary>
+    internal CanonicalNameSet Candidates => candidates;
+
+    public override NameSuggestion? Evaluate()
+        => NameSuggestions.SelectLexicalName(name, candidates.Names, observations);
+}
+
+/// <summary>The member policy over a statically known receiver's declared members.</summary>
+internal sealed class ReceiverMemberSuggestionQuery(
+    string name,
+    string[] members,
+    string? qualifier,
+    FrontEndTraversalObservations? observations) : SuggestionQuery
+{
+    /// <summary>The captured candidates: the receiver's suggestible members, first occurrence each.</summary>
+    internal IReadOnlyList<string> Members => members;
+
+    public override NameSuggestion? Evaluate()
+        => NameSuggestions.SelectReceiverMember(name, members, qualifier, observations);
+}
+
+/// <summary>
+/// One detection run's suggestion contexts (FE-1): captures, per promotion, the exact candidate
+/// set the near-miss policies will search — in O(1) amortized, however wide the scope.
+///
+/// <para>The lexical candidates of a promotion are its bound parameter names plus the names its
+/// scope RESOLVES (<see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/>: a direct
+/// property anywhere up the chain, or else exactly one open provider at the innermost level whose
+/// providers supply the name), limited to suggestible spellings; the work bound refuses a
+/// suggestion when the bound names alone, or the bound names together with every POTENTIAL
+/// spelling of the scope (each level's own properties and its providers' public members), exceed
+/// <see cref="NameSuggestions.MaxCandidates"/>. Every one of those sets is a canonical
+/// <see cref="CanonicalNameSet"/> DERIVED incrementally, memoized per immutable input:</para>
+/// <list type="bullet">
+/// <item>bound names per parameter map — its parent map's plus the names that map added
+/// (<see cref="ParameterOwnership.AddedNames"/>);</item>
+/// <item>per scope level, from the enclosing level: potential = enclosing ∪ provided ∪ own;
+/// direct = enclosing direct ∪ own; open-resolved = the names exactly one of this level's providers
+/// supplies ∪ (the enclosing open-resolved names this level's providers do not supply) — a level
+/// without providers keeps the enclosing open-resolved set; resolved = direct ∪ open-resolved;</item>
+/// <item>provided and uniquely provided names per provider-target list, and public members per
+/// target algorithm.</item>
+/// </list>
+/// <para>Scope levels, parameter maps, and algorithms are immutable, so each memo is a cache of a
+/// pure function (reference-keyed only as a cache, never as semantic identity), and the interner's
+/// memoized union/difference makes a level that adds a few names cost those names. The derivation
+/// mirrors the per-name lookup exactly — owner walk first and direct-anywhere before any open,
+/// then opens level by level with same-level ambiguity — and the set is only ever read through
+/// <see cref="SuggestionQuery.Evaluate"/>, whose unique-closest selection is independent of
+/// enumeration order.</para>
+/// </summary>
+internal sealed class SuggestionContexts(FrontEndTraversalObservations? observations = null)
+{
+    private readonly NameSetInterner _names = new(observations);
+    private readonly Dictionary<ParameterOwnership, CanonicalNameSet> _boundNames = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ElaboratedPropertyScope, ScopeNames> _scopeNames = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Algorithm, CanonicalNameSet> _publicMembers = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ProviderTargets, (CanonicalNameSet Provided, CanonicalNameSet Unique)> _providedNames = [];
+    private readonly Dictionary<Algorithm, string[]?> _receiverMembers = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The suggestion context of promoting <paramref name="name"/> in <paramref name="scope"/> under
+    /// <paramref name="parameters"/>, or <c>null</c> when no suggestion is possible: the name is not
+    /// suggestible, the work bound is exceeded, or there is no candidate. A statically known
+    /// <paramref name="receiver"/> that declares members answers from its members alone.
+    /// </summary>
+    public SuggestionQuery? Capture(
+        string name,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        DotMemberReceiver? receiver)
+    {
+        if (!NameSuggestions.IsSuggestible(name))
+            return null;
+
+        if (receiver is { } member && member.Algorithm.Properties.Count > 0)
+        {
+            // Beyond the work bound, or with only unsuggestible declarations, the receiver still
+            // declares members: the apparent member access is not answered lexically.
+            return ReceiverMembers(member.Algorithm) is { Length: > 0 } members
+                ? new ReceiverMemberSuggestionQuery(name, members, member.Qualifier, observations)
+                : null;
+        }
+
+        var bound = BoundNames(parameters);
+        if (bound.Count > NameSuggestions.MaxCandidates)
+            return null;
+
+        var visible = ScopeNamesOf(scope);
+        if (_names.Union(bound, visible.Potential).Count > NameSuggestions.MaxCandidates)
+            return null;
+
+        var candidates = _names.Union(bound, visible.Resolved);
+        return candidates.Count == 0 ? null : new LexicalSuggestionQuery(name, candidates, observations);
+    }
+
+    /// <summary>
+    /// A receiver's suggestible members in declaration order, first occurrence each, or <c>null</c>
+    /// when a suggestible declaration remains once <see cref="NameSuggestions.MaxCandidates"/>
+    /// distinct members are collected (the work bound: the surface is then not searched at all).
+    /// </summary>
+    private string[]? ReceiverMembers(Algorithm receiver)
+    {
+        if (_receiverMembers.TryGetValue(receiver, out var known))
+            return known;
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var members = new List<string>();
+        var bounded = true;
+        foreach (var property in receiver.Properties)
+        {
+            if (!NameSuggestions.IsSuggestible(property.Name))
+                continue;
+
+            if (seen.Count >= NameSuggestions.MaxCandidates)
+            {
+                bounded = false;
+                break;
+            }
+
+            if (seen.Add(property.Name))
+                members.Add(property.Name);
+        }
+
+        known = bounded ? [.. members] : null;
+        _receiverMembers.Add(receiver, known);
+        return known;
+    }
+
+    private CanonicalNameSet BoundNames(ParameterOwnership parameters)
+    {
+        if (_boundNames.TryGetValue(parameters, out var known))
+            return known;
+
+        // The maps between this one and its nearest derived ancestor, outermost last.
+        var pending = new Stack<ParameterOwnership>();
+        var set = NameSetInterner.Empty;
+        for (ParameterOwnership? current = parameters; current is not null; current = current.Parent)
+        {
+            if (_boundNames.TryGetValue(current, out set))
+                break;
+            pending.Push(current);
+        }
+
+        while (pending.TryPop(out var map))
+        {
+            set = _names.With(set, map.AddedNames.Where(NameSuggestions.IsSuggestible));
+            _boundNames.Add(map, set);
+        }
+
+        return set;
+    }
+
+    private ScopeNames ScopeNamesOf(ElaboratedPropertyScope scope)
+    {
+        if (_scopeNames.TryGetValue(scope, out var known))
+            return known;
+
+        // The levels between this one and its nearest derived ancestor, outermost last.
+        var pending = new Stack<ElaboratedPropertyScope>();
+        var names = default(ScopeNames);
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            if (_scopeNames.TryGetValue(current, out names))
+                break;
+            pending.Push(current);
+        }
+
+        while (pending.TryPop(out var level))
+        {
+            names = Derive(level, names);
+            _scopeNames.Add(level, names);
+        }
+
+        return names;
+    }
+
+    private ScopeNames Derive(ElaboratedPropertyScope level, ScopeNames enclosing)
+    {
+        var own = _names.With(NameSetInterner.Empty, OwnNames(level));
+        var providers = level.GetResolvedOpenProviders();
+        if (providers.Count == 0)
+        {
+            return new ScopeNames(
+                Potential: _names.Union(enclosing.Potential, own),
+                Direct: _names.Union(enclosing.Direct, own),
+                OpenResolved: enclosing.OpenResolved,
+                Resolved: _names.Union(enclosing.Resolved, own));
+        }
+
+        // The innermost level whose providers supply a name decides it: resolvable only when
+        // exactly one provider there supplies it; a name no provider here supplies is decided
+        // farther out, exactly as it was for the enclosing level.
+        var (provided, unique) = ProvidedNames(providers);
+        var direct = _names.Union(enclosing.Direct, own);
+        var openResolved = _names.Union(unique, _names.Except(enclosing.OpenResolved, provided));
+        return new ScopeNames(
+            Potential: _names.Union(_names.Union(enclosing.Potential, provided), own),
+            Direct: direct,
+            OpenResolved: openResolved,
+            Resolved: _names.Union(direct, openResolved));
+    }
+
+    private static IEnumerable<string> OwnNames(ElaboratedPropertyScope level)
+    {
+        foreach (var hit in level.Properties)
+        {
+            if (NameSuggestions.IsSuggestible(hit.Property.Name))
+                yield return hit.Property.Name;
+        }
+    }
+
+    private (CanonicalNameSet Provided, CanonicalNameSet Unique) ProvidedNames(IReadOnlyList<ResolvedOpenProvider> providers)
+    {
+        if (providers.Count == 1)
+        {
+            var members = PublicMembers(providers[0].Target);
+            return (members, members);
+        }
+
+        var targets = new ProviderTargets(providers);
+        if (_providedNames.TryGetValue(targets, out var known))
+            return known;
+
+        // Each provider supplies each of its public names once; a name two providers supply is
+        // ambiguous at this level, even when both resolved to one target.
+        var provided = NameSetInterner.Empty;
+        var unique = NameSetInterner.Empty;
+        foreach (var provider in providers)
+        {
+            var members = PublicMembers(provider.Target);
+            // A previous unique name survives only if absent here; a new name is unique only
+            // if no earlier provider supplied it. This also keeps a third occurrence ambiguous.
+            // Set algebra shares the wide provider across distinct lists with tiny local deltas.
+            unique = _names.Union(_names.Except(unique, members), _names.Except(members, provided));
+            provided = _names.Union(provided, members);
+        }
+
+        known = (provided, unique);
+        _providedNames.Add(targets, known);
+        return known;
+    }
+
+    private CanonicalNameSet PublicMembers(Algorithm target)
+    {
+        if (_publicMembers.TryGetValue(target, out var known))
+            return known;
+
+        known = _names.With(
+            NameSetInterner.Empty,
+            target.Properties.Where(static property => property.IsPublic && NameSuggestions.IsSuggestible(property.Name)).Select(static property => property.Name));
+        _publicMembers.Add(target, known);
+        return known;
+    }
+
+    /// <summary>A level's suggestible names: potential spellings and the resolvable ones by kind.</summary>
+    private readonly record struct ScopeNames(
+        CanonicalNameSet Potential,
+        CanonicalNameSet Direct,
+        CanonicalNameSet OpenResolved,
+        CanonicalNameSet Resolved);
+
+    /// <summary>A level's resolved provider targets, in order, compared by reference (a cache key over immutable algorithms).</summary>
+    private sealed class ProviderTargets : IEquatable<ProviderTargets>
+    {
+        private readonly Algorithm[] _targets;
+        private readonly int _hash;
+
+        public ProviderTargets(IReadOnlyList<ResolvedOpenProvider> providers)
+        {
+            _targets = new Algorithm[providers.Count];
+            var hash = new HashCode();
+            for (var index = 0; index < providers.Count; index++)
+            {
+                _targets[index] = providers[index].Target;
+                hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_targets[index]));
+            }
+
+            _hash = hash.ToHashCode();
+        }
+
+        public bool Equals(ProviderTargets? other)
+        {
+            if (other is null || other._targets.Length != _targets.Length)
+                return false;
+
+            for (var index = 0; index < _targets.Length; index++)
+            {
+                if (!ReferenceEquals(_targets[index], other._targets[index]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is ProviderTargets other && Equals(other);
+
+        public override int GetHashCode() => _hash;
     }
 }

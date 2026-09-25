@@ -38,6 +38,18 @@ namespace KatLang;
 /// </summary>
 internal sealed class FrontEndTraversalObservations
 {
+    /// <summary>Visible bindings probed while building or updating resolver region footprints.</summary>
+    public long ResolverSnapshotBindingProbes { get; private set; }
+
+    internal void RecordResolverSnapshotBindingProbe()
+        => ResolverSnapshotBindingProbes = checked(ResolverSnapshotBindingProbes + 1);
+
+    /// <summary>Summary entries contributed by branch regions to their family's accumulator.</summary>
+    public long BranchSummaryContributionEntries { get; private set; }
+
+    internal void RecordBranchSummaryContribution(int entries)
+        => BranchSummaryContributionEntries = checked(BranchSummaryContributionEntries + entries);
+
     /// <summary>Free-name collection expansions (<c>ParameterDetector.CollectFreeParams</c>).</summary>
     public long DetectorCollectExpansions { get; private set; }
 
@@ -132,6 +144,80 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordCollisionContextIntern()
         => CollisionContextInterns = checked(CollisionContextInterns + 1);
+
+    // ── Semantic-context work (FE-1) ──────────────────────────────────────────
+    //
+    // A scope that sees W names and contains K nested scopes must not cost K × W: each context is
+    // built once and EXTENDED by what it adds. These counters measure the W-sized work itself, so
+    // a regression that copies, re-sorts, or re-materializes a wide context per child multiplies
+    // them by the children while the expansion counters above stay unchanged.
+
+    /// <summary>
+    /// Names fed into canonical name-set construction (<see cref="NameSetInterner.With"/>): the
+    /// content identity of a semantic-region context — a detector branch body's captured names, a
+    /// collision validator's visible parameter names, a sibling walk's shadow names — is extended by
+    /// the names a context introduces, so the count is bounded by those introductions, never by
+    /// nested scopes × names in scope.
+    /// </summary>
+    public long ContextNamesCanonicalized { get; private set; }
+
+    internal void RecordContextNameCanonicalized()
+        => ContextNamesCanonicalized = checked(ContextNamesCanonicalized + 1);
+
+    /// <summary>
+    /// Entries written into PERSISTENT context maps — the resolver's visible signature map, the
+    /// detector's parameter-ownership map, the collision validator's declaration bindings — when a
+    /// context is extended or updated. An inherited entry is shared, never copied, so the count is
+    /// bounded by the declarations each context adds, never by nested scopes × visible names.
+    /// </summary>
+    public long ContextEntriesWritten { get; private set; }
+
+    internal void RecordContextEntryWritten()
+        => ContextEntriesWritten = checked(ContextEntriesWritten + 1);
+
+    /// <summary>
+    /// Owner parameter names materialized by the summary and exposure passes: one owner's
+    /// parameter-name set is built once per resolution and shared by every property summary,
+    /// fixed-point iteration, and requirement lookup at that owner — never once per property.
+    /// </summary>
+    public long OwnerParameterNamesMaterialized { get; private set; }
+
+    internal void RecordOwnerParameterNamesMaterialized(int count)
+        => OwnerParameterNamesMaterialized = checked(OwnerParameterNamesMaterialized + count);
+
+    /// <summary>
+    /// Names examined while qualifying or stripping a summary seed's required ancestor parameters
+    /// against one owner's names: the SMALLER of the seed's requirements and the owner's name set is
+    /// scanned, so a narrow seed under a wide owner costs its own size, never the owner's width.
+    /// </summary>
+    public long SummaryQualificationProbes { get; private set; }
+
+    internal void RecordSummaryQualificationProbe()
+        => SummaryQualificationProbes = checked(SummaryQualificationProbes + 1);
+
+    /// <summary>
+    /// Branch-pair steps a canonical name-set union or difference actually computed
+    /// (<see cref="NameSetInterner.Union(CanonicalNameSet, CanonicalNameSet)"/>,
+    /// <see cref="NameSetInterner.Except(CanonicalNameSet, CanonicalNameSet)"/>); a pair already
+    /// combined is answered from the interner's memo. Combining a context with another that differs
+    /// from an already combined one by a few names therefore costs the paths those names touch,
+    /// never the width of the sets.
+    /// </summary>
+    public long NameSetOperationSteps { get; private set; }
+
+    internal void RecordNameSetOperationStep()
+        => NameSetOperationSteps = checked(NameSetOperationSteps + 1);
+
+    /// <summary>
+    /// Candidate names a near-miss suggestion query compared against its unresolved name
+    /// (<see cref="SuggestionQuery.Evaluate"/>). A promotion captures only the canonical candidate
+    /// context; the comparison runs when a diagnostic actually renders the suggestion, so a valid
+    /// program that never renders one records none, however many names it promotes.
+    /// </summary>
+    public long SuggestionCandidatesExamined { get; private set; }
+
+    internal void RecordSuggestionCandidateExamined()
+        => SuggestionCandidatesExamined = checked(SuggestionCandidatesExamined + 1);
 
     /// <summary>Exposure rewrite expansions (<c>PropertyExposureResolver.RewriteExpr</c>).</summary>
     public long ExposureRewriteExpansions { get; private set; }
