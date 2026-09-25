@@ -276,6 +276,14 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
         _scope = previous;
     }
 
+    // A call argument bundle shared by several call nodes (FE-2) is walked once per scope, like a
+    // shared node.
+    private protected override void VisitCallArguments(OutputBundle arguments)
+    {
+        if (Enter(arguments))
+            base.VisitCallArguments(arguments);
+    }
+
     public override void VisitExpr(Expr expr)
     {
         if (!Enter(expr))

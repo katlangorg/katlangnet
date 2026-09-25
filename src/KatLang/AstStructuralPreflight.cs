@@ -115,6 +115,10 @@ internal enum AstConsumerProfile
 /// identity, keeping the walk <c>O(nodes + edges)</c> instead of exponential), while
 /// depth is still judged over the longest PATH, so a shared subtree reached again
 /// through a longer route is re-judged at that deeper position without being re-walked.
+/// A call's argument bundle is enumerated as ONE weightless grouping child, so a bundle
+/// shared by several calls — implicit lifting's synthesized arguments (FE-2) — is walked
+/// once too; a rejection met at a shared bundle is positioned at the slot the slot-by-slot
+/// walk would report.
 /// Cycles are detected iteratively (a node reached again while still on the traversal
 /// path) and rejected deterministically. The preflight never uses record structural
 /// equality, recursive hashing, or <c>ToString()</c> — any of those would recurse over
@@ -167,7 +171,11 @@ internal static class AstStructuralPreflight
     /// because its resolution machinery consumes several frames per link; every other
     /// node counts one level.
     /// </summary>
-    internal static AstStructuralRejection? Check(object root, int maxDepth, AstConsumerProfile profile)
+    internal static AstStructuralRejection? Check(
+        object root,
+        int maxDepth,
+        AstConsumerProfile profile,
+        FrontEndTraversalObservations? observations = null)
     {
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
         // no caller — present or future — can hand in a raised limit and re-open the
@@ -198,7 +206,7 @@ internal static class AstStructuralPreflight
         // height of a completed node (black). Reference identity is essential: record
         // structural equality would recursively walk the tree this guard exists to
         // reject.
-        const int OnStack = -1;
+        const int OnStack = OnStackHeight;
         var heights = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
 
         var rootWeight = NodeWeight(root, profile);
@@ -232,10 +240,17 @@ internal static class AstStructuralPreflight
             }
 
             frame.NextChildIndex++;
+            observations?.RecordStructuralPreflightEdge();
             var transitionWeight = TransitionWeight(frame.Node, child, profile);
 
             if (heights.TryGetValue(child, out var childHeight))
             {
+                // A shared argument bundle is a grouping node of this walk only: a rejection met
+                // AT it is positioned at the slot the slot-by-slot walk reports.
+                if (child is OutputBundle arguments
+                    && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
+                    return RejectWithinArgumentBundle(arguments, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount);
+
                 if (childHeight == OnStack)
                     return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount));
 
@@ -265,6 +280,37 @@ internal static class AstStructuralPreflight
         return null;
     }
 
+    /// <summary>The height-table marker of a node still on the traversal path.</summary>
+    private const int OnStackHeight = -1;
+
+    /// <summary>
+    /// The rejection the slot-by-slot walk reports when it reaches a SHARED argument bundle again
+    /// (see <see cref="PickArgumentBundle"/>): the first slot, in order, that is still on the path
+    /// (a cycle) or whose memoized height crosses the limit from <paramref name="pathWeight"/>.
+    /// Every slot before the first one still on the path is complete, and the bundle's own height
+    /// is its slots' maximum, so one such slot exists.
+    /// </summary>
+    private static AstStructuralRejection RejectWithinArgumentBundle(
+        OutputBundle arguments,
+        Dictionary<object, int> heights,
+        int pathWeight,
+        int maxDepth,
+        Frame[] frames,
+        int frameCount)
+    {
+        foreach (var slot in arguments)
+        {
+            var slotHeight = heights[slot];
+            if (slotHeight == OnStackHeight)
+                return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(slot, frames, frameCount));
+            if (pathWeight + slotHeight > maxDepth)
+                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(slot, frames, frameCount));
+        }
+
+        throw new InvalidOperationException(
+            "AstStructuralPreflight invariant violation: a shared argument bundle was rejected, but none of its slots is.");
+    }
+
     /// <summary>
     /// Base structural-depth cost of one node under the gate's consumer profile. On the
     /// evaluator gates the internal sequence-join nodes are zero-weight because their
@@ -289,6 +335,11 @@ internal static class AstStructuralPreflight
         // measured per-shape stack capacity unchanged, while the recursive
         // consumers now spend the same or fewer frames per level (no wrapper is
         // constructed or wired at runtime).
+        // A call's argument bundle is a grouping node of the walk only (PickArgumentBundle): it
+        // stands for no frame of any consumer, so it contributes no depth on any profile.
+        if (node is OutputBundle)
+            return 0;
+
         if (node is Expr.Capture or Expr.Call)
             return 2;
 
@@ -581,6 +632,10 @@ internal static class AstStructuralPreflight
                 return false;
             }
 
+            // A call or dot-call argument bundle (see PickArgumentBundle): its slots.
+            case OutputBundle arguments:
+                return PickFromList(index, arguments, out child);
+
             case Pattern.SequenceValue sequenceValue:
                 return PickFromList(index, sequenceValue.Items, out child);
             case Pattern.Bind or Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
@@ -685,7 +740,25 @@ internal static class AstStructuralPreflight
             return true;
         }
 
-        return PickFromList(index - 1, call.Args, out child);
+        return PickArgumentBundle(index - 1, call.Args, out child);
+    }
+
+    /// <summary>
+    /// A call's argument bundle is ONE child — a weightless grouping node whose children are its
+    /// slots — rather than one child per slot: implicit lifting shares one synthesized bundle
+    /// between every lifted reference to a callee in a rewrite region (FE-2), so a walk that
+    /// memoizes nodes visits the shared bundle once, not once per call edge. An empty bundle adds
+    /// no child.
+    /// </summary>
+    private static bool PickArgumentBundle(int index, OutputBundle arguments, out object child)
+    {
+        if (index == 0 && arguments.Count > 0)
+        {
+            child = arguments;
+            return true;
+        }
+
+        return PickNone(out child);
     }
 
     private static bool PickDotCallChild(int index, Expr.DotCall dotCall, out object child)
@@ -714,7 +787,7 @@ internal static class AstStructuralPreflight
         }
 
         if (dotCall.Args is { } dotArgs)
-            return PickFromList(index, dotArgs, out child);
+            return PickArgumentBundle(index, dotArgs, out child);
 
         return PickNone(out child);
     }

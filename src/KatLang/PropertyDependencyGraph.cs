@@ -294,39 +294,91 @@ internal static class PropertyDependencyGraphBuilder
     /// instance directly would let one reader's accumulation corrupt every later reader. For
     /// the same reason there is deliberately NO shared <c>Empty</c> singleton: every empty
     /// seed is a fresh mutable instance.
+    ///
+    /// <para>SHARED ARGUMENT BUNDLES (FE-2): implicit lifting gives every lifted reference to one
+    /// callable in a region the SAME synthesized argument bundle, so K call edges contribute one
+    /// bundle's seed — L names. A call edge therefore takes a large completed bundle seed BY
+    /// REFERENCE (<see cref="AbsorbCompleted"/>) instead of copying its names, clones and unions
+    /// carry such references along, and the seed folds every distinct absorbed seed in exactly
+    /// once — transitively, in absorption order — the first time any of its sets is read. The
+    /// content of every set is the union it always was; only when the copying happens moved.
+    /// A small completed seed is still copied (at most <see cref="CopiedCompletedEntries"/>
+    /// entries per edge), so written calls keep their exact eager behavior.</para>
     /// </summary>
     internal sealed class SummarySeed
     {
+        /// <summary>
+        /// The largest completed seed an edge copies rather than references: copying it costs a
+        /// constant per edge, and it keeps small written argument bundles out of the absorbed
+        /// lists (a long operator chain of distinct small calls would otherwise carry one
+        /// reference per call at every node of the chain).
+        /// </summary>
+        internal const int CopiedCompletedEntries = 8;
+
+        private readonly HashSet<string> _requiredAncestorOwnedParameterNames;
+        private readonly HashSet<string> _visiblePropertyDependencyNames;
+        private readonly PendingReferenceSet _pendingReferences;
+        private readonly HashSet<OwnerQualifiedParameter> _ownerQualifiedParameters;
+
+        // Completed seeds absorbed by reference, in absorption order, deduplicated by reference;
+        // null once folded (or when nothing was absorbed). An absorbed seed is never mutated.
+        private List<SummarySeed>? _absorbed;
+        private HashSet<SummarySeed>? _absorbedSet;
+
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
             IEnumerable<string>? visiblePropertyDependencyNames = null,
             IEnumerable<PendingReference>? pendingReferences = null,
             IEnumerable<OwnerQualifiedParameter>? ownerQualifiedParameters = null)
         {
-            RequiredAncestorOwnedParameterNames = CreateNameSet(requiredAncestorOwnedParameterNames);
-            VisiblePropertyDependencyNames = CreateNameSet(visiblePropertyDependencyNames);
-            PendingReferences = pendingReferences is null ? new() : new(pendingReferences);
-            OwnerQualifiedParameters = ownerQualifiedParameters is null ? [] : new(ownerQualifiedParameters);
+            _requiredAncestorOwnedParameterNames = CreateNameSet(requiredAncestorOwnedParameterNames);
+            _visiblePropertyDependencyNames = CreateNameSet(visiblePropertyDependencyNames);
+            _pendingReferences = pendingReferences is null ? new() : new(pendingReferences);
+            _ownerQualifiedParameters = ownerQualifiedParameters is null ? [] : new(ownerQualifiedParameters);
         }
 
-        public HashSet<string> RequiredAncestorOwnedParameterNames { get; }
-        public HashSet<OwnerQualifiedParameter> OwnerQualifiedParameters { get; }
+        public HashSet<string> RequiredAncestorOwnedParameterNames
+        {
+            get { Fold(); return _requiredAncestorOwnedParameterNames; }
+        }
+
+        public HashSet<OwnerQualifiedParameter> OwnerQualifiedParameters
+        {
+            get { Fold(); return _ownerQualifiedParameters; }
+        }
 
         /// <summary>Bare names no level between the reference and the consumer resolved, with no open providers on the way.</summary>
-        public HashSet<string> VisiblePropertyDependencyNames { get; }
+        public HashSet<string> VisiblePropertyDependencyNames
+        {
+            get { Fold(); return _visiblePropertyDependencyNames; }
+        }
 
         /// <summary>Member paths and open-shadowed names (see <see cref="PendingReference"/>).</summary>
-        public PendingReferenceSet PendingReferences { get; }
+        public PendingReferenceSet PendingReferences
+        {
+            get { Fold(); return _pendingReferences; }
+        }
+
+        // Entries a copy of this seed would transfer, without folding it.
+        private int EntryCount
+            => _requiredAncestorOwnedParameterNames.Count + _visiblePropertyDependencyNames.Count
+                + _pendingReferences.Count + _ownerQualifiedParameters.Count + (_absorbed?.Count ?? 0);
 
         public SummarySeed Clone()
-            => new(RequiredAncestorOwnedParameterNames, VisiblePropertyDependencyNames, PendingReferences, OwnerQualifiedParameters);
+        {
+            var clone = new SummarySeed(
+                _requiredAncestorOwnedParameterNames, _visiblePropertyDependencyNames, _pendingReferences, _ownerQualifiedParameters);
+            clone.AbsorbAll(_absorbed);
+            return clone;
+        }
 
         public void UnionWith(SummarySeed other)
         {
-            RequiredAncestorOwnedParameterNames.UnionWith(other.RequiredAncestorOwnedParameterNames);
-            VisiblePropertyDependencyNames.UnionWith(other.VisiblePropertyDependencyNames);
-            PendingReferences.UnionWith(other.PendingReferences);
-            OwnerQualifiedParameters.UnionWith(other.OwnerQualifiedParameters);
+            _requiredAncestorOwnedParameterNames.UnionWith(other._requiredAncestorOwnedParameterNames);
+            _visiblePropertyDependencyNames.UnionWith(other._visiblePropertyDependencyNames);
+            _pendingReferences.UnionWith(other._pendingReferences);
+            _ownerQualifiedParameters.UnionWith(other._ownerQualifiedParameters);
+            AbsorbAll(other._absorbed);
         }
 
         /// <summary><see cref="UnionWith"/> returning this seed, for expression-shaped folds.</summary>
@@ -334,6 +386,63 @@ internal static class PropertyDependencyGraphBuilder
         {
             UnionWith(other);
             return this;
+        }
+
+        /// <summary>
+        /// Adds a COMPLETED seed — one a memo stores and nothing mutates afterwards: a large one
+        /// by reference (a shared argument bundle's seed, FE-2), a small one by copying.
+        /// </summary>
+        public SummarySeed AbsorbCompleted(SummarySeed completed)
+        {
+            if (completed.EntryCount <= CopiedCompletedEntries)
+                UnionWith(completed);
+            else
+                AbsorbReference(completed);
+            return this;
+        }
+
+        private void AbsorbAll(List<SummarySeed>? parts)
+        {
+            if (parts is null)
+                return;
+            foreach (var part in parts)
+                AbsorbReference(part);
+        }
+
+        private void AbsorbReference(SummarySeed part)
+        {
+            if ((_absorbedSet ??= new(ReferenceEqualityComparer.Instance)).Add(part))
+                (_absorbed ??= []).Add(part);
+        }
+
+        // Folds every distinct absorbed seed into this seed's own sets — each once, depth-first in
+        // absorption order, so the resulting content and insertion order are deterministic.
+        private void Fold()
+        {
+            if (_absorbed is not { } absorbed)
+                return;
+
+            _absorbed = null;
+            _absorbedSet = null;
+            var folded = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance);
+            var pending = new Stack<SummarySeed>();
+            for (var i = absorbed.Count - 1; i >= 0; i--)
+                pending.Push(absorbed[i]);
+            while (pending.TryPop(out var part))
+            {
+                if (!folded.Add(part))
+                    continue;
+
+                _requiredAncestorOwnedParameterNames.UnionWith(part._requiredAncestorOwnedParameterNames);
+                _visiblePropertyDependencyNames.UnionWith(part._visiblePropertyDependencyNames);
+                _pendingReferences.UnionWith(part._pendingReferences);
+                _ownerQualifiedParameters.UnionWith(part._ownerQualifiedParameters);
+                if (part._absorbed is { } nested)
+                {
+                    for (var i = nested.Count - 1; i >= 0; i--)
+                        pending.Push(nested[i]);
+                }
+            }
         }
 
         /// <summary>
@@ -613,6 +722,9 @@ internal static class PropertyDependencyGraphBuilder
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
 
         public Dictionary<Expr, SummarySeed>? TransparentSeeds;
+
+        /// <summary>Completed call and dot-call argument-bundle seeds, by bundle reference (FE-2).</summary>
+        public Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
 
         public readonly SummaryMemo SharedMemo = sharedMemo;
 
@@ -1488,8 +1600,11 @@ internal static class PropertyDependencyGraphBuilder
             // An argument bundle owns no names: slots walk with an empty
             // owned-here set and an empty local-summary map — the same
             // attribution as capture rows (and as the pre-Track-B empty
-            // transparent args wrapper).
-            Expr.Call(var function, var args) => Seed(function).Absorb(CollectTransparentBundleSummarySeed(args, memos)),
+            // transparent args wrapper). Its seed is a pure function of the
+            // bundle, completed once per region and absorbed by reference when
+            // large: a synthesized bundle shared by K call edges (FE-2) is
+            // summarized once, not once per edge.
+            Expr.Call(var function, var args) => Seed(function).AbsorbCompleted(CompletedArgumentBundleSeed(args, memos)),
 
             Expr.DotCall dotCall => CollectDotCallSummarySeed(
                 dotCall, localPropertySummaries, ownedHere, memos, inTransparentContext),
@@ -1512,6 +1627,26 @@ internal static class PropertyDependencyGraphBuilder
             CreateNameSet(),
             memos,
             inTransparentContext: true);
+
+    /// <summary>
+    /// The COMPLETED seed of a call or dot-call argument bundle, computed once per bundle per
+    /// region (the transparent walk's context is constant, so the seed is a pure function of the
+    /// bundle) and never mutated afterwards — callers take it with
+    /// <see cref="SummarySeed.AbsorbCompleted"/>. Implicit lifting shares one synthesized bundle
+    /// between every lifted reference to a callee in a resolver region (FE-2).
+    /// </summary>
+    private static SummarySeed CompletedArgumentBundleSeed(OutputBundle bundle, SummaryWalkMemos memos)
+    {
+        memos.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
+        if (!memos.ArgumentBundleSeeds.TryGetValue(bundle, out var seed))
+        {
+            memos.Observations?.RecordDependencyArgumentBundleSummary();
+            seed = CollectTransparentBundleSummarySeed(bundle, memos);
+            memos.ArgumentBundleSeeds.Add(bundle, seed);
+        }
+
+        return seed;
+    }
 
     /// <summary>
     /// The DotCall arm of <see cref="CollectSummarySeedCore"/>. A static member path
@@ -1563,7 +1698,7 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         if (dotCall.Args is { } argsOpt)
-            seed.UnionWith(CollectTransparentBundleSummarySeed(argsOpt, memos));
+            seed.AbsorbCompleted(CompletedArgumentBundleSeed(argsOpt, memos));
 
         return seed;
     }

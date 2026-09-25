@@ -117,6 +117,14 @@ internal sealed class ParameterPropertyCollisionValidator(
         finally { _importSite = saved; }
     }
 
+    // A call argument bundle shared by several call nodes (FE-2) is visited once per context,
+    // like a shared node.
+    private protected override void VisitCallArguments(OutputBundle arguments)
+    {
+        if (FirstVisit(arguments))
+            base.VisitCallArguments(arguments);
+    }
+
     protected override void VisitProperty(Property property)
     {
         var saved = _importSite;

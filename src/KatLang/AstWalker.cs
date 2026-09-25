@@ -212,10 +212,7 @@ public abstract class AstWalker
                         VisitDotCallLexicalFallback(dotCall, lexicalFallback);
                 }
                 if (args is not null)
-                {
-                    foreach (var argExpr in args)
-                        VisitExpr(argExpr);
-                }
+                    VisitCallArguments(args);
                 break;
             case Expr.Grace(var inner, _):
                 VisitExpr(inner);
@@ -229,8 +226,7 @@ public abstract class AstWalker
                 break;
             case Expr.Call(var function, var args):
                 VisitExpr(function);
-                foreach (var argExpr in args)
-                    VisitExpr(argExpr);
+                VisitCallArguments(args);
                 break;
             // Childless leaves: nothing to recurse into.
             case Expr.NativeCall:
@@ -254,6 +250,21 @@ public abstract class AstWalker
                     $"Unhandled Expr variant in {nameof(AstWalker)}.{nameof(VisitExpr)}: {expr.GetType().Name}. " +
                     "Add the new variant to the switch so its children are walked.");
         }
+    }
+
+    /// <summary>
+    /// Visits the argument bundle of a call or dot-call, slot by slot. An argument bundle may be
+    /// SHARED by several call nodes — implicit lifting gives every lifted reference to one callable
+    /// in a rewrite region the same synthesized bundle (FE-2) — so a library walker that memoizes
+    /// nodes per context overrides this to memoize the bundle under the same context: a shared
+    /// bundle is then walked once, not once per call edge. Assembly-internal on purpose: external
+    /// walkers keep the plain slot-by-slot traversal.
+    /// </summary>
+    private protected virtual void VisitCallArguments(OutputBundle arguments)
+    {
+        TraversalObservations?.RecordWalkerCallArgumentSlots(arguments.Count);
+        foreach (var argument in arguments)
+            VisitExpr(argument);
     }
 
     /// <summary>

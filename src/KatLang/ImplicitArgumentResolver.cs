@@ -687,6 +687,49 @@ internal static class ImplicitArgumentResolver
             return missing;
         }
 
+        // FE-2: the synthesized implicit-argument bundle per callee pattern list, under the one context
+        // it was built for. A bundle is a pure function of the callee's parameter patterns and the
+        // caller configuration (BuildImplicitCallArguments reads nothing else), and the region pins that
+        // configuration, so every lifted reference to one callable in the region forwards the SAME
+        // arguments: K references share ONE immutable bundle of L synthesized slots instead of K copies.
+        // The bundle is syntax, not activation state — spanless reads of the caller's own bindings that
+        // every call evaluates afresh in its own activation — and each reference keeps its own call node,
+        // which carries its span and its origin entry. Region-local, so it never outlives the run.
+        private Dictionary<IReadOnlyList<ParameterPattern>, OutputBundle>? _implicitArguments;
+        private ImplicitRewriteContext? _implicitArgumentsContext;
+
+        public OutputBundle ImplicitArguments(IReadOnlyList<ParameterPattern> calleePatterns, ImplicitRewriteContext context)
+        {
+            // Any other context instance is answered without the memo, exactly like the forwarding verdict.
+            _implicitArgumentsContext ??= context;
+            if (!ReferenceEquals(_implicitArgumentsContext, context))
+                return BuildImplicitArgumentBundle(calleePatterns, context);
+
+            _implicitArguments ??= new(ReferenceEqualityComparer.Instance);
+            if (!_implicitArguments.TryGetValue(calleePatterns, out var arguments))
+            {
+                arguments = BuildImplicitArgumentBundle(calleePatterns, context);
+                _implicitArguments.Add(calleePatterns, arguments);
+            }
+
+            return arguments;
+        }
+
+        private OutputBundle BuildImplicitArgumentBundle(IReadOnlyList<ParameterPattern> calleePatterns, ImplicitRewriteContext context)
+        {
+            var arguments = OutputBundle.From(BuildImplicitCallArguments(
+                calleePatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
+            Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
+            return arguments;
+        }
+
+        /// <summary>One lifted reference's own call edge: its origin entry, observed once per reference.</summary>
+        public Expr SynthesizedImplicitCall(Expr call, Expr original)
+        {
+            Observations?.RecordImplicitCallSynthesized();
+            return Run.RecordImplicitCall(call, original);
+        }
+
         public Dictionary<Expr, Expr> RewriteMapFor(bool inCallPosition)
             => inCallPosition
                 ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
@@ -1550,6 +1593,14 @@ internal static class ImplicitArgumentResolver
         }
     }
 
+    /// <summary>
+    /// The synthesized forwarding arguments of a lifted call: one slot per callee parameter pattern,
+    /// in the callee's declaration order. A PURE function of its three inputs — the region memo
+    /// <see cref="ResolverWalkMemos.ImplicitArguments"/> shares one result between every lifted
+    /// reference to the callee in a rewrite region (FE-2) — so it reads nothing about the reference
+    /// site: its nodes are spanless, name only the caller's own bindings, and carry no occurrence
+    /// identity.
+    /// </summary>
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(
         IReadOnlyList<ParameterPattern> calleePatterns,
         IReadOnlyList<ParameterPattern> callerPatterns,
@@ -1972,9 +2023,10 @@ internal static class ImplicitArgumentResolver
                 return expr;
             }
 
-            var implicitArgs = OutputBundle.From(BuildImplicitCallArguments(
-                ps.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-            return memos.Run.RecordImplicitCall(
+            // The arguments are the region's one shared bundle for this callee (FE-2); the call node
+            // and its callee name are this reference's own.
+            var implicitArgs = memos.ImplicitArguments(ps.ParameterPatterns, context);
+            return memos.SynthesizedImplicitCall(
                 new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span }, expr);
         }
 
@@ -1995,9 +2047,8 @@ internal static class ImplicitArgumentResolver
                 return expr;
             }
 
-            var aliasArgs = OutputBundle.From(BuildImplicitCallArguments(
-                bareAliasFacts.Signature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-            return memos.Run.RecordImplicitCall(
+            var aliasArgs = memos.ImplicitArguments(bareAliasFacts.Signature.ParameterPatterns, context);
+            return memos.SynthesizedImplicitCall(
                 new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span }, expr);
         }
 
@@ -2081,9 +2132,8 @@ internal static class ImplicitArgumentResolver
             return bareDotCall;
         }
 
-        var liftedDotArgs = OutputBundle.From(BuildImplicitCallArguments(
-            builtinSignature.ParameterPatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
-        return memos.Run.RecordImplicitCall(bareDotCall with
+        var liftedDotArgs = memos.ImplicitArguments(builtinSignature.ParameterPatterns, context);
+        return memos.SynthesizedImplicitCall(bareDotCall with
         {
             Target = RewriteImplicitCalls(bareDotCall.Target, paramMap, context, inCallPosition: true, memos),
             Args = liftedDotArgs,

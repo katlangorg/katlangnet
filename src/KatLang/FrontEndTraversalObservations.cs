@@ -111,6 +111,34 @@ internal sealed class FrontEndTraversalObservations
         => ResolverForwardingVerdicts = checked(ResolverForwardingVerdicts + 1);
 
     /// <summary>
+    /// Lifted references the resolver rewrote into synthesized implicit calls — one count per call
+    /// EDGE (<c>ImplicitArgumentResolver.RewriteBareReference</c> and <c>LiftBareBuiltinDotCall</c>):
+    /// every lifted reference keeps its own call node, which carries its source span and its
+    /// origin entry (FE-2).
+    /// </summary>
+    public long ImplicitCallsSynthesized { get; private set; }
+
+    internal void RecordImplicitCallSynthesized()
+        => ImplicitCallsSynthesized = checked(ImplicitCallsSynthesized + 1);
+
+    /// <summary>
+    /// Synthesized implicit-argument BUNDLES the resolver built (<c>ResolverWalkMemos.ImplicitArguments</c>):
+    /// one per callee parameter-pattern list per rewrite region, however many lifted references to that
+    /// callee the region rewrites — they all share the one bundle (FE-2). Before the sharing, every
+    /// reference built its own, so K references to a callable of L parameters built K bundles of L slots.
+    /// </summary>
+    public long ImplicitArgumentBundlesBuilt { get; private set; }
+
+    /// <summary>Top-level argument slots of the bundles counted by <see cref="ImplicitArgumentBundlesBuilt"/>.</summary>
+    public long ImplicitArgumentSlotsBuilt { get; private set; }
+
+    internal void RecordImplicitArgumentBundleBuilt(int slots)
+    {
+        ImplicitArgumentBundlesBuilt = checked(ImplicitArgumentBundlesBuilt + 1);
+        ImplicitArgumentSlotsBuilt = checked(ImplicitArgumentSlotsBuilt + slots);
+    }
+
+    /// <summary>
     /// Conditional branch-body REGIONS the resolver processed (<c>ImplicitArgumentResolver.ProcessAlgorithm</c>
     /// misses of the run's algorithm region memo for bodies rewritten under a closed branch pattern): one
     /// count per branch body rewritten under one semantic region — the signature snapshot of its free
@@ -226,6 +254,16 @@ internal sealed class FrontEndTraversalObservations
         => ExposureRewriteExpansions = checked(ExposureRewriteExpansions + 1);
 
     /// <summary>
+    /// Call and dot-call argument BUNDLES the exposure pass rewrote (<c>PropertyExposureResolver.RewriteArgumentBundle</c>):
+    /// one count per distinct bundle per region. A bundle shared by several call edges — implicit lifting's
+    /// synthesized arguments (FE-2) — rewrites once and stays shared.
+    /// </summary>
+    public long ExposureArgumentBundleRewrites { get; private set; }
+
+    internal void RecordExposureArgumentBundleRewrite()
+        => ExposureArgumentBundleRewrites = checked(ExposureArgumentBundleRewrites + 1);
+
+    /// <summary>
     /// User-algorithm regions the exposure pass processed (<c>PropertyExposureResolver.ProcessUserAlgorithm</c>
     /// entries): one count per distinct algorithm body classified under one visible-summary context —
     /// property values, block literals, and conditional branch bodies alike (M4).
@@ -240,6 +278,17 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordDependencySeedExpansion()
         => DependencySeedExpansions = checked(DependencySeedExpansions + 1);
+
+    /// <summary>
+    /// Call and dot-call argument-bundle summaries the summary channel COMPUTED
+    /// (<c>PropertyDependencyGraphBuilder.CompletedArgumentBundleSeed</c> memo misses): one per distinct
+    /// bundle per summary region. A synthesized bundle shared by K lifted call edges (FE-2) is summarized
+    /// once, and its completed seed is absorbed by reference rather than copied into each edge's seed.
+    /// </summary>
+    public long DependencyArgumentBundleSummaries { get; private set; }
+
+    internal void RecordDependencyArgumentBundleSummary()
+        => DependencyArgumentBundleSummaries = checked(DependencyArgumentBundleSummaries + 1);
 
     /// <summary>
     /// Completed algorithm-level summary computations in the builder's summary channel
@@ -307,6 +356,27 @@ internal sealed class FrontEndTraversalObservations
     /// <summary>Expression nodes the base walker dispatched (<c>AstWalker.VisitExpr</c> entries).</summary>
     public long WalkerExpressionExpansions { get; private set; }
 
+    /// <summary>
+    /// Call and dot-call argument SLOTS the base walker dispatched (<c>AstWalker.VisitCallArguments</c>),
+    /// memo hits included. A library walker visits a bundle shared by several call nodes — implicit
+    /// lifting's synthesized arguments (FE-2) — once per context, so K lifted references to a callable of
+    /// L parameters dispatch L slots, never K × L.
+    /// </summary>
+    public long WalkerCallArgumentSlots { get; private set; }
+
+    internal void RecordWalkerCallArgumentSlots(int slots)
+        => WalkerCallArgumentSlots = checked(WalkerCallArgumentSlots + slots);
+
+    /// <summary>
+    /// Child edges the structural preflight enumerated (<c>AstStructuralPreflight.Check</c>), memoized
+    /// revisits included. A call's argument bundle is ONE child, so a bundle shared by K calls (FE-2)
+    /// costs K edges plus its own slots once.
+    /// </summary>
+    public long StructuralPreflightEdges { get; private set; }
+
+    internal void RecordStructuralPreflightEdge()
+        => StructuralPreflightEdges = checked(StructuralPreflightEdges + 1);
+
     internal void RecordWalkerExpressionExpansion()
         => WalkerExpressionExpansions = checked(WalkerExpressionExpansions + 1);
 
@@ -342,6 +412,16 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordSemanticModelExpressionVisit()
         => SemanticModelExpressionVisits = checked(SemanticModelExpressionVisits + 1);
+
+    /// <summary>
+    /// Call and dot-call argument SLOTS the semantic model builder dispatched, memo hits included: one
+    /// analysis per (argument bundle, frame, region), so a bundle shared by K lifted call nodes (FE-2)
+    /// dispatches its slots once, never K times.
+    /// </summary>
+    public long SemanticModelCallArgumentSlots { get; private set; }
+
+    internal void RecordSemanticModelCallArgumentSlots(int slots)
+        => SemanticModelCallArgumentSlots = checked(SemanticModelCallArgumentSlots + slots);
 
     /// <summary>
     /// Algorithm visits of the semantic model builder: one count per algorithm node analyzed under one

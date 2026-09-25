@@ -168,7 +168,7 @@ internal static class PropertyExposureResolver
         var run = new ExposureRun();
         root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(), observations, run);
         if (run.HasDotMemberOrigins)
-            new DotMemberProvenanceFinalizer(parent.PropertyScope).VisitAlgorithm(root);
+            new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
         return root;
     }
 
@@ -225,6 +225,14 @@ internal static class PropertyExposureResolver
         ExposureRun run)
     {
         public Dictionary<Expr, Expr>? Rewrites;
+
+        /// <summary>
+        /// Call and dot-call argument bundles rewritten in this region, by bundle reference: implicit
+        /// lifting gives every lifted reference to one callable in a resolver region the SAME
+        /// synthesized bundle (FE-2), and it must stay one bundle here rather than being copied once
+        /// per call edge (see <see cref="RewriteArgumentBundle"/>).
+        /// </summary>
+        public Dictionary<OutputBundle, OutputBundle>? ArgumentBundles;
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
@@ -754,6 +762,24 @@ internal static class PropertyExposureResolver
         FrontEndTraversalObservations? observations = null)
         => ResolveInScope(resolvedBody, context.Scope, observations);
 
+    /// <summary>
+    /// A call's argument bundle may be shared by several call edges — implicit lifting gives every
+    /// lifted reference to one callable in a resolver region the same synthesized bundle (FE-2) —
+    /// so it rewrites once per region and stays shared, exactly like a shared expression node:
+    /// copying it per edge would rebuild the K × L representation the sharing removed.
+    /// </summary>
+    private static OutputBundle RewriteArgumentBundle(OutputBundle arguments, ExposureWalkMemos memos)
+    {
+        memos.ArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
+        if (memos.ArgumentBundles.TryGetValue(arguments, out var rewritten))
+            return rewritten;
+
+        memos.Observations?.RecordExposureArgumentBundleRewrite();
+        rewritten = OutputBundle.From(RewriteExprList(arguments, memos));
+        memos.ArgumentBundles[arguments] = rewritten;
+        return rewritten;
+    }
+
     private static List<Expr> RewriteExprList(IReadOnlyList<Expr> expressions, ExposureWalkMemos memos)
     {
         var rewritten = new List<Expr>(expressions.Count);
@@ -835,7 +861,7 @@ internal static class PropertyExposureResolver
             Expr.Call call => call with
             {
                 Function = RewriteExpr(call.Function, memos),
-                Args = RewriteExprList(call.Args, memos),
+                Args = RewriteArgumentBundle(call.Args, memos),
             },
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, memos),
@@ -854,7 +880,7 @@ internal static class PropertyExposureResolver
         memos.Run.HasDotMemberOrigins |= dotCall.InferredFallbackProvenance is not null;
 
         var rewrittenTarget = RewriteExpr(dotCall.Target, memos);
-        var rewrittenArgs = dotCall.Args is { } args ? OutputBundle.From(RewriteExprList(args, memos)) : null;
+        var rewrittenArgs = dotCall.Args is { } args ? RewriteArgumentBundle(args, memos) : null;
 
         // `with` keeps the stored dot-edge facts (member span, lexical fallback, the
         // detector's elaborated fallback selection) intact: exposure never changes

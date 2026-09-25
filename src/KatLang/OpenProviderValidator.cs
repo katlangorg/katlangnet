@@ -29,18 +29,24 @@ internal sealed class OpenProviderValidator : AstWalker
     // Each open TARGET node is reported once, however many regions reach it (by node
     // identity, never by span identity: an imported target has no span).
     private readonly HashSet<Expr> _reported = new(ReferenceEqualityComparer.Instance);
-    private readonly OpenPresence _openPresence = new();
+    private readonly OpenPresence _openPresence;
     private ElaboratedPropertyScope _scope;
     // The import site of the module content the walk is inside (see ImportSite): where a
     // refused imported open target — which has no span of its own — is reported. Starts at
     // the site a deferred region recorded for its body.
     private SourceSpan? _importSite;
 
-    private OpenProviderValidator(DiagnosticBag diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite)
+    private OpenProviderValidator(
+        DiagnosticBag diagnostics,
+        ElaboratedPropertyScope parentScope,
+        SourceSpan? importSite,
+        FrontEndTraversalObservations? observations)
     {
         _diagnostics = diagnostics;
         _scope = parentScope;
         _importSite = importSite;
+        _openPresence = new() { TraversalObservations = observations };
+        TraversalObservations = observations;
     }
 
     protected override bool VisitsExplicitParameterDeclarations => false;
@@ -53,18 +59,27 @@ internal sealed class OpenProviderValidator : AstWalker
     }
 
     /// <summary>Validates every open target of a completed program tree against the prelude-rooted chain.</summary>
-    internal static void Validate(Algorithm root, DiagnosticBag diagnostics, HostOperations? hostOperations)
+    internal static void Validate(
+        Algorithm root,
+        DiagnosticBag diagnostics,
+        HostOperations? hostOperations,
+        FrontEndTraversalObservations? observations = null)
     {
         var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude), importSite: null);
+        Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude), importSite: null, observations);
     }
 
     /// <summary>
     /// Validates a materialized deferred branch body under the chain recorded at its branch,
     /// starting from the import site the region recorded for the body.
     /// </summary>
-    internal static void Validate(Algorithm root, DiagnosticBag diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite = null)
-        => new OpenProviderValidator(diagnostics, parentScope, importSite).VisitAlgorithm(root);
+    internal static void Validate(
+        Algorithm root,
+        DiagnosticBag diagnostics,
+        ElaboratedPropertyScope parentScope,
+        SourceSpan? importSite = null,
+        FrontEndTraversalObservations? observations = null)
+        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations).VisitAlgorithm(root);
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
@@ -152,6 +167,17 @@ internal sealed class OpenProviderValidator : AstWalker
             _memo[expression] = _found;
             _found |= outer;
         }
+
+        // A call argument bundle shared by several call nodes (FE-2) is scanned once, like a shared node.
+        private protected override void VisitCallArguments(OutputBundle arguments)
+        {
+            if (_memo.TryGetValue(arguments, out var known)) { _found |= known; return; }
+            var outer = _found;
+            _found = false;
+            base.VisitCallArguments(arguments);
+            _memo[arguments] = _found;
+            _found |= outer;
+        }
     }
 
     protected override void VisitOpenExpression(Expr expression)
@@ -174,6 +200,14 @@ internal sealed class OpenProviderValidator : AstWalker
             _importSite = site;
         try { base.VisitExpr(expr); }
         finally { _importSite = saved; }
+    }
+
+    // A call argument bundle shared by several call nodes (FE-2) is visited once per scope region,
+    // like a shared node.
+    private protected override void VisitCallArguments(OutputBundle arguments)
+    {
+        if (FirstVisit(arguments))
+            base.VisitCallArguments(arguments);
     }
 
     private void ValidateOpens(IReadOnlyList<Expr> opens)

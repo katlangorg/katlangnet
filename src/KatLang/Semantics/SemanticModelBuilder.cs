@@ -229,6 +229,15 @@ public static class SemanticModelBuilder
         {
             public HashSet<Expr>? ValueExpressions;
 
+            /// <summary>
+            /// Call and dot-call argument bundles analyzed under this frame, per enclosing scope
+            /// region: a bundle shared by several call nodes (implicit lifting's synthesized
+            /// arguments, FE-2) is one analysis, exactly like a shared node. The region is part of
+            /// the key because a slot visit also extends the CURRENT region, and one frame (the
+            /// prelude's, for open targets) can be entered from several regions.
+            /// </summary>
+            public HashSet<(OutputBundle Bundle, ScopeRegionBuilder? Region)>? CallArguments;
+
             public HashSet<Expr>? OpenExpressions;
 
             public HashSet<AlgorithmVisitKey>? Algorithms;
@@ -262,7 +271,7 @@ public static class SemanticModelBuilder
 
         public SemanticModel Build(Algorithm root)
         {
-            ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms);
+            ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms, _observations);
             VisitAlgorithm(root, _preludeScope, extraParameters: null);
 
             var sortedIdentifierOccurrences = _identifierOccurrences
@@ -1015,8 +1024,7 @@ public static class SemanticModelBuilder
                     {
                         // Argument bundles own no scope: slots classify in the
                         // enclosing scope, exactly like capture rows.
-                        foreach (var argExpr in dotCallArgs)
-                            VisitExpr(argExpr, scope);
+                        VisitCallArguments(dotCallArgs, scope, visits);
                     }
                     break;
 
@@ -1037,8 +1045,7 @@ public static class SemanticModelBuilder
 
                 case Expr.Call(var function, var args):
                     VisitExpr(function, scope);
-                    foreach (var argExpr in args)
-                        VisitExpr(argExpr, scope);
+                    VisitCallArguments(args, scope, visits);
                     break;
 
                 case Expr.NativeCall:
@@ -1053,6 +1060,34 @@ public static class SemanticModelBuilder
                     throw new InvalidOperationException(
                         $"Unhandled Expr variant in {nameof(SemanticModelBuilder)}.{nameof(VisitExpr)}: {expr.GetType().Name}.");
             }
+        }
+
+        // One analysis per (argument bundle, frame, region): a bundle shared by several call nodes
+        // (FE-2) is classified once. Revisiting it would only re-extend the same region with spans
+        // it already covers and hit every slot's own per-frame memo.
+        private void VisitCallArguments(OutputBundle arguments, ScopeFrame scope, FrameVisits visits)
+        {
+            visits.CallArguments ??= new(CallArgumentsVisitComparer.Instance);
+            if (!visits.CallArguments.Add((arguments, _regionStack.Count > 0 ? _regionStack[^1] : null)))
+                return;
+
+            _observations?.RecordSemanticModelCallArgumentSlots(arguments.Count);
+            foreach (var argument in arguments)
+                VisitExpr(argument, scope);
+        }
+
+        /// <summary>A bundle plus the region it was analyzed in, both by reference.</summary>
+        private sealed class CallArgumentsVisitComparer : IEqualityComparer<(OutputBundle Bundle, ScopeRegionBuilder? Region)>
+        {
+            public static readonly CallArgumentsVisitComparer Instance = new();
+
+            public bool Equals((OutputBundle Bundle, ScopeRegionBuilder? Region) x, (OutputBundle Bundle, ScopeRegionBuilder? Region) y)
+                => ReferenceEquals(x.Bundle, y.Bundle) && ReferenceEquals(x.Region, y.Region);
+
+            public int GetHashCode((OutputBundle Bundle, ScopeRegionBuilder? Region) visit)
+                => HashCode.Combine(
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(visit.Bundle),
+                    visit.Region is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(visit.Region));
         }
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
@@ -2241,8 +2276,8 @@ public static class SemanticModelBuilder
             _moduleProvided = moduleProvided;
         }
 
-        public static void Collect(Algorithm root, HashSet<Algorithm> moduleProvided)
-            => new ModuleProvidedAlgorithmCollector(root, moduleProvided).VisitAlgorithm(root);
+        public static void Collect(Algorithm root, HashSet<Algorithm> moduleProvided, FrontEndTraversalObservations? observations)
+            => new ModuleProvidedAlgorithmCollector(root, moduleProvided) { TraversalObservations = observations }.VisitAlgorithm(root);
 
         // Parameter metadata carries no provenance of its own (declarations inside a module
         // have no spans), so the per-declaration loop is skipped.
@@ -2272,6 +2307,14 @@ public static class SemanticModelBuilder
                 return;
 
             base.VisitExpr(expr);
+        }
+
+        // A call argument bundle shared by several call nodes (FE-2) is expanded once per
+        // provenance context, like a shared node.
+        private protected override void VisitCallArguments(OutputBundle arguments)
+        {
+            if ((_moduleDepth > 0 ? _visitedInside : _visitedOutside).Add(arguments))
+                base.VisitCallArguments(arguments);
         }
 
         protected override void VisitProperty(Property property)

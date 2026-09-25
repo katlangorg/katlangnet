@@ -2199,8 +2199,18 @@ internal static class AlgorithmValidation
     /// <c>null</c> for a valid tree.
     /// </summary>
     public static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(Expr expr)
+        => FindFirstPreEvaluationViolation(expr, observations: null);
+
+    /// <summary>
+    /// Observation overload of <see cref="FindFirstPreEvaluationViolation(Expr)"/>: the base walker's
+    /// passive counters record the walk (scaling regressions only); the verdict is identical.
+    /// </summary>
+    internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(Expr expr, FrontEndTraversalObservations? observations)
     {
-        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true);
+        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true)
+        {
+            TraversalObservations = observations,
+        };
         walker.VisitExpr(expr);
         return walker.Violations.Count > 0 ? walker.Violations[0] : null;
     }
@@ -2277,6 +2287,17 @@ internal static class AlgorithmValidation
 
             _enclosingPropertyName = enclosingName;
             _enclosingPropertySpan = enclosingSpan;
+        }
+
+        // A call argument bundle shared by several call nodes (implicit lifting's synthesized
+        // arguments, FE-2) is validated once, like a shared node.
+        private protected override void VisitCallArguments(OutputBundle arguments)
+        {
+            if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            if (_visited.Add(arguments))
+                base.VisitCallArguments(arguments);
         }
 
         private void VisitFlatOutputExpr(Expr expr)

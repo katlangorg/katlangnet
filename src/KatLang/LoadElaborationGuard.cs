@@ -148,6 +148,14 @@ internal static class LoadElaborationGuard
             base.VisitConditionalBranch(branch);
         }
 
+        // A call argument bundle shared by several call nodes (implicit lifting's synthesized
+        // arguments, FE-2) is walked once, like a shared node.
+        private protected override void VisitCallArguments(OutputBundle arguments)
+        {
+            if (_visited.Add(arguments))
+                base.VisitCallArguments(arguments);
+        }
+
         public override void VisitExpr(Expr expr)
         {
             if (!_visited.Add(expr))
