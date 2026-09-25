@@ -52,7 +52,7 @@ public class ConditionalBranchElaborationTests
         };
         var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
         Assert.Empty(detectorDiagnostics);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
 
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
 
@@ -548,7 +548,7 @@ public class ConditionalBranchElaborationTests
         };
         var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
         Assert.Empty(detectorDiagnostics);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
 
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
 

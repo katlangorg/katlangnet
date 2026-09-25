@@ -49,17 +49,17 @@ internal static class ParameterDetector
     /// per-visit weight effects. The one deliberate per-NODE (rather than per-path) behavior is diagnostic
     /// multiplicity: an erroneous shared node is diagnosed once, not once per path.</para>
     /// </summary>
-    public static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) Detect(Algorithm root)
+    public static (Algorithm Root, DiagnosticBag Diagnostics) Detect(Algorithm root)
     {
         if (AstStructuralPreflight.Check(
                 root,
                 EvaluationLimits.MaxSupportedAstDepth,
                 AstConsumerProfile.FullyRecursive) is { } structuralRejection)
         {
-            return (
-                new Algorithm.User(null, [], [], [], []),
-                [AstStructuralPreflight.ToParseDiagnostic(
-                    structuralRejection, EvaluationLimits.MaxSupportedAstDepth)]);
+            var rejection = new DiagnosticBag();
+            rejection.Add(AstStructuralPreflight.ToParseDiagnostic(
+                structuralRejection, EvaluationLimits.MaxSupportedAstDepth));
+            return (new Algorithm.User(null, [], [], [], []), rejection);
         }
 
         var detected = DetectPrevalidated(root);
@@ -81,14 +81,19 @@ internal static class ParameterDetector
     /// referenced host operation name resolves like <c>Math</c> instead of becoming an
     /// implicit parameter — the front-end half of the runtime prelude's name-level
     /// agreement.</para>
+    ///
+    /// <para>Diagnostics go to <paramref name="diagnostics"/> — the pipeline passes a STAGE of the
+    /// operation's bag (<see cref="DiagnosticBag.CreateStage"/>), committed only once ownership
+    /// completion has decided whether these reports stand — or to a fresh bag.</para>
     /// </summary>
-    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics) DetectPrevalidated(
+    internal static (Algorithm Root, DiagnosticBag Diagnostics) DetectPrevalidated(
         Algorithm root,
         HostOperations? hostOperations = null,
         FrontEndTraversalObservations? observations = null,
-        GraceOrigins? graceOrigins = null)
+        GraceOrigins? graceOrigins = null,
+        DiagnosticBag? diagnostics = null)
     {
-        var diagnostics = new List<Diagnostic>();
+        diagnostics ??= new DiagnosticBag();
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
             ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
         var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm, observations: observations);
@@ -108,17 +113,19 @@ internal static class ParameterDetector
     /// this is selection of established bindings, not another inference pass. Restoring
     /// synthesized calls lets the resolver rebuild forwarding under the selected bindings.
     /// Uses the ordinary region memos and owner construction, including deferred branches.
-    /// The caller has already applied the pipeline's structural preflight.
+    /// The caller has already applied the pipeline's structural preflight. Diagnostics go to
+    /// <paramref name="diagnostics"/> (a stage of the operation's bag) or to a fresh bag.
     /// </summary>
-    internal static (Algorithm Root, IReadOnlyList<Diagnostic> Diagnostics, bool Changed) CompleteOwnership(
+    internal static (Algorithm Root, DiagnosticBag Diagnostics, bool Changed) CompleteOwnership(
         Algorithm root,
         ImplicitArgumentResolver.ResolutionOrigins origins,
         HostOperations? hostOperations = null,
         DeferredBranchContext? branchContext = null,
         FrontEndTraversalObservations? observations = null,
-        SourceSpan? importSite = null)
+        SourceSpan? importSite = null,
+        DiagnosticBag? diagnostics = null)
     {
-        var diagnostics = new List<Diagnostic>();
+        diagnostics ??= new DiagnosticBag();
         var run = new DetectionRun
         {
             ImplicitCallOrigins = origins.ImplicitCalls,
@@ -148,7 +155,7 @@ internal static class ParameterDetector
         Algorithm alg,
         ElaboratedPropertyScope parentScope,
         ParameterOwnership capturedParameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run) => alg switch
         {
@@ -180,7 +187,7 @@ internal static class ParameterDetector
         Algorithm.User alg,
         ElaboratedPropertyScope parentScope,
         ParameterOwnership capturedParameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
@@ -384,7 +391,7 @@ internal static class ParameterDetector
         string propertyName,
         ElaboratedPropertyScope scope,
         ParameterOwnership capturedParameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
@@ -493,7 +500,7 @@ internal static class ParameterDetector
     internal static Algorithm ElaborateDeferredBranch(
         Algorithm loadedBody,
         DeferredBranchContext context,
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
         GraceOrigins? graceOrigins = null,
         SourceSpan? importSite = null)
@@ -824,7 +831,7 @@ internal static class ParameterDetector
     private sealed class RewriteWalkMemo(
         DetectionRun run,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         GraceEffectPolicy gracePolicy = GraceEffectPolicy.NotReported,
         IReadOnlySet<string>? ownParameterNames = null,
         ElaboratedPropertyScope? level = null,
@@ -841,7 +848,7 @@ internal static class ParameterDetector
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
-        public readonly List<Diagnostic>? Diagnostics = diagnostics;
+        public readonly DiagnosticBag? Diagnostics = diagnostics;
 
         /// <summary>How this region reports Grace markers that cannot reorder anything.</summary>
         public readonly GraceEffectPolicy GracePolicy = gracePolicy;
@@ -887,7 +894,7 @@ internal static class ParameterDetector
     /// <summary>
     /// Reference-identity memo state for ONE open-target region
     /// (<see cref="ProcessOpenExprs"/> over one algorithm's open list). The region runs two
-    /// distinct walks over the same nodes — <see cref="ProcessOpenExpr(Expr, ElaboratedPropertyScope, List{Diagnostic}?, OpenWalkMemo)"/>
+    /// distinct walks over the same nodes — <see cref="ProcessOpenExpr(Expr, ElaboratedPropertyScope, DiagnosticBag?, OpenWalkMemo)"/>
     /// (open-form rewriting) and <see cref="ProcessExpr"/>
     /// (transparent argument/capture rewriting) — with different results for the same node, so
     /// each keeps its own map; both contexts are constant for the region (the open-parent
@@ -906,19 +913,6 @@ internal static class ParameterDetector
         public Dictionary<Algorithm, Algorithm>? TransparentAlgorithms;
 
         public readonly DetectionRun Run = run;
-
-        public readonly FrontEndTraversalObservations? Observations = observations;
-    }
-
-    /// <summary>
-    /// Reference-identity memo for ONE <see cref="FindResolveSpan(IReadOnlyList{Expr}, string, ResolveSpanSearchMemo)"/>
-    /// search (one free name): subtrees proven to contain no occurrence of THAT name are never
-    /// re-searched through a second shared reference. A found span short-circuits the whole
-    /// search, so only no-hit subtrees are recorded.
-    /// </summary>
-    private sealed class ResolveSpanSearchMemo(FrontEndTraversalObservations? observations)
-    {
-        public readonly HashSet<Expr> NoHit = new(ReferenceEqualityComparer.Instance);
 
         public readonly FrontEndTraversalObservations? Observations = observations;
     }
@@ -987,7 +981,7 @@ internal static class ParameterDetector
     private static IReadOnlyList<Expr> ProcessOpenExprs(
         IReadOnlyList<Expr> opens,
         ElaboratedPropertyScope parentScope,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
@@ -1049,7 +1043,7 @@ internal static class ParameterDetector
         IReadOnlyList<Expr> opens,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         DetectionRun run,
         bool reclassifyParameterHeads)
     {
@@ -1203,7 +1197,7 @@ internal static class ParameterDetector
     private static Expr ProcessOpenExpr(
         Expr expr,
         ElaboratedPropertyScope openParentScope,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
         // DAG-safety: a shared node reference rewrites once per open-target region;
@@ -1225,7 +1219,7 @@ internal static class ParameterDetector
     private static Expr ProcessOpenExprCore(
         Expr expr,
         ElaboratedPropertyScope openParentScope,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
         return expr switch
@@ -1301,7 +1295,7 @@ internal static class ParameterDetector
         Algorithm algorithm,
         SourceSpan? importSite,
         ElaboratedPropertyScope openParentScope,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
         memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance);
@@ -1337,7 +1331,7 @@ internal static class ParameterDetector
         HashSet<string> binderNames,
         string branchName,
         ParameterOwnership capturedParameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
@@ -1439,12 +1433,12 @@ internal static class ParameterDetector
                 FreeNameCollection.DeclaredNameCheck,
                 recorder: null,
                 new FreeNameWalkMemo(observations));
+            // The first occurrence of every free identifier, found in one walk; an occurrence
+            // inside imported content has none and is reported at the import site.
+            var firstSpans = FindFirstResolveSpans(writtenRows, freeOrder, observations);
             foreach (var freeName in freeOrder)
             {
-                // Find the span for the first occurrence of this free identifier; an occurrence
-                // inside imported content has none and is reported at the import site.
-                var span = FindResolveSpan(writtenRows, freeName, new ResolveSpanSearchMemo(observations))
-                    ?? run.ImportSite;
+                SourceSpan? span = firstSpans.TryGetValue(freeName, out var written) ? written : run.ImportSite;
                 (undeclaredNames ??= []).Add((freeName, span));
                 diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
             }
@@ -1529,7 +1523,7 @@ internal static class ParameterDetector
     /// diagnostic multiplicity per family is exactly what elaborating the body again would
     /// produce, without re-walking it, and independent of which family was reached first.
     /// </summary>
-    private static void ReplayUndeclaredNames(BranchBodyRegion region, string branchName, List<Diagnostic>? diagnostics)
+    private static void ReplayUndeclaredNames(BranchBodyRegion region, string branchName, DiagnosticBag? diagnostics)
     {
         if (diagnostics is null || region.UndeclaredNames is null)
             return;
@@ -1547,10 +1541,12 @@ internal static class ParameterDetector
             Code = DiagnosticCode.UndeclaredIdentifier,
         };
 
+    // The family's name is echoed once per undeclared reference in its branches, so it is
+    // bounded like every name a diagnostic repeats (ExprNameRenderer.BoundName).
     private static string FormatConditionalBranchUndeclaredIdentifier(string identifierName, string branchName)
         => string.Join(
             Environment.NewLine,
-            $"Identifier '{identifierName}' is used in conditional branch '{branchName}', but it is not declared in the branch pattern.",
+            $"Identifier '{ExprNameRenderer.BoundName(identifierName)}' is used in conditional branch '{ExprNameRenderer.BoundName(branchName)}', but it is not declared in the branch pattern.",
             "If you want to use a parameter, declare it in the pattern, for example: `A(y) = y`.");
 
     private static string FormatExplicitParameterUndeclaredIdentifier(string identifierName)
@@ -1563,7 +1559,7 @@ internal static class ParameterDetector
         IReadOnlyList<Expr> output,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         DetectionRun run,
         FrontEndTraversalObservations? observations = null)
     {
@@ -1579,11 +1575,12 @@ internal static class ParameterDetector
             recorder: null,
             new FreeNameWalkMemo(observations));
 
+        // An occurrence the document wrote is reported at its span (every name's first one found
+        // in one walk); one inside imported content at the import site.
+        var firstSpans = FindFirstResolveSpans(output, freeOrder, observations);
         foreach (var freeName in freeOrder)
         {
-            // An occurrence the document wrote is reported at its span; one inside imported
-            // content at the import site.
-            var span = FindResolveSpan(output, freeName, new ResolveSpanSearchMemo(observations)) ?? run.ImportSite;
+            SourceSpan? span = firstSpans.TryGetValue(freeName, out var written) ? written : run.ImportSite;
             diagnostics.Add(new Diagnostic(
                 FormatExplicitParameterUndeclaredIdentifier(freeName),
                 DiagnosticSeverity.Error,
@@ -2494,76 +2491,77 @@ internal static class ParameterDetector
         => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;
 
     /// <summary>
-    /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Resolve"/> with the given name
-    /// in a list of expressions. Used for error reporting on free identifiers in conditional branches.
+    /// The span of the FIRST written <see cref="Expr.Resolve"/> of each of <paramref name="names"/>
+    /// in <paramref name="exprs"/> — left to right, depth first — found in ONE walk. Reporting the
+    /// undeclared names of one body used to search the whole body once per name, so a body of K
+    /// undeclared names cost K full walks: time quadratic in the body (a 200 KB list of distinct
+    /// names took 11 s). An occurrence without a span (imported content) is skipped, exactly as
+    /// the per-name search skipped it; a name found nowhere is simply absent, and its diagnostic
+    /// is positioned at the import site.
+    /// <para>DAG-safe: a shared subtree is expanded once — a later reach can only find an
+    /// occurrence the first reach already recorded — and the walk stops once every name is
+    /// found. Iterative, so it adds no recursion to the calibrated detector frames.</para>
     /// </summary>
-    private static SourceSpan? FindResolveSpan(IReadOnlyList<Expr> exprs, string name, ResolveSpanSearchMemo memo)
+    private static Dictionary<string, SourceSpan> FindFirstResolveSpans(
+        IReadOnlyList<Expr> exprs,
+        IReadOnlyCollection<string> names,
+        FrontEndTraversalObservations? observations)
     {
-        foreach (var expr in exprs)
+        var found = new Dictionary<string, SourceSpan>(StringComparer.Ordinal);
+        var wanted = new HashSet<string>(names, StringComparer.Ordinal);
+        if (wanted.Count == 0)
+            return found;
+
+        var expanded = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<Expr>();
+        for (var index = exprs.Count - 1; index >= 0; index--)
+            pending.Push(exprs[index]);
+
+        while (found.Count < wanted.Count && pending.TryPop(out var expr))
         {
-            var span = FindResolveSpan(expr, name, memo);
-            if (span is not null) return span;
+            if (expr is Expr.Resolve resolve)
+            {
+                if (resolve.Span is { } span && wanted.Contains(resolve.Name))
+                    found.TryAdd(resolve.Name, span);
+                continue;
+            }
+
+            if (!AstTraversalDagSafety.HasTraversableExprChildren(expr) || !expanded.Add(expr))
+                continue;
+
+            observations?.RecordDetectorSpanSearchExpansion();
+            var children = SpanSearchChildren(expr);
+            for (var index = children.Count - 1; index >= 0; index--)
+                pending.Push(children[index]);
         }
-        return null;
+
+        return found;
     }
 
-    private static SourceSpan? FindResolveSpan(IReadOnlyList<ComparisonLink> links, string name, ResolveSpanSearchMemo memo)
+    /// <summary>
+    /// The children <see cref="FindFirstResolveSpans"/> searches, in written order. Compiler-
+    /// exhaustive over the closed <see cref="Expr"/> hierarchy.
+    /// </summary>
+    private static IReadOnlyList<Expr> SpanSearchChildren(Expr expr) => expr switch
     {
-        foreach (var link in links)
-        {
-            var span = FindResolveSpan(link.Operand, name, memo);
-            if (span is not null)
-                return span;
-        }
-
-        return null;
-    }
-
-    private static SourceSpan? FindResolveSpan(Expr expr, string name, ResolveSpanSearchMemo memo)
-    {
-        // DAG-safety: a shared subtree proven free of the searched name is skipped through
-        // every later reference (a hit ends the whole search, so only no-hit subtrees are
-        // recorded). Childless leaves are decided in place.
-        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
-            return FindResolveSpanCore(expr, name, memo);
-
-        if (memo.NoHit.Contains(expr))
-            return null;
-
-        memo.Observations?.RecordDetectorSpanSearchExpansion();
-        var span = FindResolveSpanCore(expr, name, memo);
-        if (span is null)
-            memo.NoHit.Add(expr);
-        return span;
-    }
-
-    private static SourceSpan? FindResolveSpanCore(Expr expr, string name, ResolveSpanSearchMemo memo)
-    {
-        return expr switch
-        {
-            Expr.Resolve(var n) when n == name => expr.Span,
-            Expr.Grace(var inner, _) => FindResolveSpan(inner, name, memo),
-            Expr.Binary(_, var l, var r) => FindResolveSpan(l, name, memo) ?? FindResolveSpan(r, name, memo),
-            Expr.Comparison(var first, var links) => FindResolveSpan(first, name, memo) ?? FindResolveSpan(links, name, memo),
-            Expr.Unary(_, var operand) => FindResolveSpan(operand, name, memo),
-            Expr.Index(var t, var s) => FindResolveSpan(t, name, memo) ?? FindResolveSpan(s, name, memo),
-            Expr.SequenceConstruct(var l, var r) => FindResolveSpan(l, name, memo) ?? FindResolveSpan(r, name, memo),
-            Expr.SequenceSpread(var operand) => FindResolveSpan(operand, name, memo),
-            Expr.ListLiteral(var items) => FindResolveSpan(items, name, memo),
-            Expr.DotCall d => FindResolveSpan(d.Target, name, memo)
-                ?? (d.Args is not null ? FindResolveSpan(d.Args, name, memo) : null),
-            // A scope-owning block owns its names (CollectFreeParams never enters it): an
-            // occurrence inside it is bound there — by its own property, parameter, or open —
-            // or reported by its own elaboration, never the free occurrence of THIS level.
-            // Descending here positioned `F(n) = { X = 1  X } + X` at the block's bound `X`.
-            Expr.AlgorithmExpr => null,
-            Expr.Capture(var captureBody) => FindResolveSpan(captureBody, name, memo),
-            Expr.Call(var f, var args) => FindResolveSpan(f, name, memo) ?? FindResolveSpan(args, name, memo),
-            // Intentional misses: a Resolve spelling a different name (the
-            // guarded arm above is the hit case) and leaves that contain no
-            // written Resolve occurrence.
-            Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
-                or Expr.EmptySequence or Expr.NativeCall => null,
-        };
-    }
+        Expr.Grace grace => [grace.Inner],
+        Expr.Binary binary => [binary.Left, binary.Right],
+        Expr.Comparison comparison => [comparison.First, .. comparison.Links.Select(static link => link.Operand)],
+        Expr.Unary unary => [unary.Operand],
+        Expr.Index index => [index.Target, index.Selector],
+        Expr.SequenceConstruct construct => [construct.Left, construct.Right],
+        Expr.SequenceSpread spread => [spread.Operand],
+        Expr.ListLiteral list => list.Items,
+        Expr.DotCall dotCall => dotCall.Args is { } args ? [dotCall.Target, .. args] : [dotCall.Target],
+        // A scope-owning block owns its names (CollectFreeParams never enters it): an
+        // occurrence inside it is bound there — by its own property, parameter, or open —
+        // or reported by its own elaboration, never the free occurrence of THIS level.
+        // Descending here positioned `F(n) = { X = 1  X } + X` at the block's bound `X`.
+        Expr.AlgorithmExpr => [],
+        Expr.Capture capture => capture.Body,
+        Expr.Call call => [call.Function, .. call.Args],
+        // Leaves: a Resolve is decided by the walk itself; the others hold no written name.
+        Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
+            or Expr.EmptySequence or Expr.NativeCall => [],
+    };
 }

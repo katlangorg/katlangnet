@@ -20,20 +20,29 @@ internal static class LoadElaborationGuard
         Algorithm root,
         FrontEndTraversalObservations? observations)
     {
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
+        ReportUnavailable(root, diagnostics, observations);
+        return diagnostics;
+    }
 
+    /// <summary>
+    /// Reports one <see cref="DiagnosticCode.LoadElaborationUnavailable"/> diagnostic per load
+    /// directive into the operation's bag (so a program writing thousands of them costs one
+    /// bounded list) and returns whether there was any.
+    /// </summary>
+    internal static bool ReportUnavailable(
+        Algorithm root,
+        DiagnosticBag diagnostics,
+        FrontEndTraversalObservations? observations = null)
+    {
+        var found = false;
         VisitLoads(root, observations, span =>
         {
-            diagnostics.Add(new Diagnostic(
-                ModuleElaborationUnavailableDiagnostic,
-                DiagnosticSeverity.Error,
-                span)
-            {
-                Code = DiagnosticCode.LoadElaborationUnavailable,
-            });
+            found = true;
+            diagnostics.Report(DiagnosticCode.LoadElaborationUnavailable, ModuleElaborationUnavailableDiagnostic, span);
         });
 
-        return diagnostics;
+        return found;
     }
 
     /// <summary>

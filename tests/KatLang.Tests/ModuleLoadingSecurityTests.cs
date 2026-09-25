@@ -779,8 +779,10 @@ public sealed class ModuleLoadingSecurityTests
     }
 
     [Fact]
-    public async Task ManyRefusedTargets_NeverReachTheDownloader_AndCostOneDiagnosticEach()
+    public async Task ManyRefusedTargets_NeverReachTheDownloader_AndReportIntoOneBoundedList()
     {
+        // Every refused target is one diagnostic and no download; the operation's one list keeps
+        // the first MaxSupportedDiagnosticCount of them, in site order, and ends with the marker.
         const int sites = 5_000;
         var source = string.Concat(Enumerable.Range(0, sites).Select(i => i % 2 == 0
             ? $"A{i} = load('https://evil.test/{i}.kat')\n"
@@ -789,8 +791,15 @@ public sealed class ModuleLoadingSecurityTests
         var (parsed, downloader) = await ParseLoading(source);
 
         Assert.Empty(downloader.Requests);
-        Assert.Equal(sites, parsed.Diagnostics.Count);
-        Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.InvalidLoadUrl, d.Code));
+        const int limit = SourceProcessingLimits.MaxSupportedDiagnosticCount;
+        Assert.Equal(limit + 1, parsed.Diagnostics.Count);
+        Assert.All(parsed.Diagnostics.Take(limit), d => Assert.Equal(DiagnosticCode.InvalidLoadUrl, d.Code));
+        Assert.Equal(
+            Enumerable.Range(1, limit),
+            parsed.Diagnostics.Take(limit).Select(d => d.Span!.Value.Start.Line));
+        var marker = parsed.Diagnostics[^1];
+        Assert.Equal(DiagnosticCode.DiagnosticCountExceeded, marker.Code);
+        Assert.Null(marker.Span);
     }
 
     [Fact]

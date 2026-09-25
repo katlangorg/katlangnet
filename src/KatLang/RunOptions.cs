@@ -302,8 +302,8 @@ public sealed class RunOptions
     /// <summary>
     /// Optional host-runtime limits on the source text and module graph consumed BEFORE
     /// evaluation. When null, <see cref="KatLang.SourceProcessingLimits.Default"/> applies:
-    /// always-active per-source length, import depth, aggregate source, and module-download
-    /// ceilings are enforced. These bound parsing and module loading — including a deferred
+    /// always-active per-source length, import depth, aggregate source, module-download, and
+    /// diagnostic-count ceilings are enforced. These bound parsing and module loading — including a deferred
     /// branch's modules loaded when evaluation selects it, which draw on the same budget —
     /// never evaluation (<see cref="EvaluationLimits"/> owns that), and are immutable
     /// configuration safe to share across concurrent runs — the counters live in run-scoped

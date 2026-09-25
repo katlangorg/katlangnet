@@ -84,7 +84,12 @@ public sealed record ParseResult
     /// <summary>The elaborated or recovery root produced by the parser.</summary>
     public Algorithm.User Root { get; }
 
-    /// <summary>The read-only diagnostic snapshot taken when parsing completed.</summary>
+    /// <summary>
+    /// The read-only diagnostic snapshot taken when parsing completed, in reporting order. It holds
+    /// at most <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> diagnostics; when the parse
+    /// reported more, it holds exactly the first ones and ends with one unpositioned
+    /// <see cref="DiagnosticCode.DiagnosticCountExceeded"/> diagnostic marking the list incomplete.
+    /// </summary>
     public IReadOnlyList<Diagnostic> Diagnostics { get; }
 
     public void Deconstruct(out Algorithm.User Root, out IReadOnlyList<Diagnostic> Diagnostics)

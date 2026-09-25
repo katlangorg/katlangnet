@@ -128,6 +128,13 @@ public static class Lexer
     internal static string DescribeUnexpectedCharacter(char c)
         => DescribeUnexpectedCharacter(c, char.GetUnicodeCategory(c));
 
+    // A well-formed surrogate pair at `index` is one scalar: described by its code point and
+    // category, so a supplementary format character reads like a BMP one.
+    private static string DescribeUnexpectedPair(string source, int index)
+        => DescribeUnexpectedCharacter(
+            char.ConvertToUtf32(source, index),
+            System.Globalization.CharUnicodeInfo.GetUnicodeCategory(source, index));
+
     private static string DescribeUnexpectedCharacter(int codePoint, System.Globalization.UnicodeCategory category)
     {
         if (category == System.Globalization.UnicodeCategory.Control)
@@ -147,13 +154,32 @@ public static class Lexer
     /// character becomes a <see cref="TokenKind.Bad"/> token beside its diagnostic, so the
     /// tokens are in source order and every code unit outside whitespace belongs to
     /// exactly one token, whatever the input.
+    /// <para>The token list is always complete. The diagnostic list is bounded like every
+    /// diagnostic list KatLang produces
+    /// (<see cref="SourceProcessingLimits.MaxSupportedDiagnosticCount"/>): past that many lexical
+    /// errors it keeps the first ones and ends with one
+    /// <see cref="DiagnosticCode.DiagnosticCountExceeded"/> diagnostic, while every unrecognized
+    /// character is still its own <see cref="TokenKind.Bad"/> token.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        var diagnostics = new DiagnosticBag();
+        var tokens = Tokenize(source, diagnostics, lexicalErrorStarts: null);
+        return (tokens, Array.AsReadOnly(diagnostics.ToArray()));
+    }
+
+    /// <summary>
+    /// Tokenizes <paramref name="source"/>, reporting lexical diagnostics into the operation's
+    /// bag. <paramref name="lexicalErrorStarts"/>, when supplied, receives the start of EVERY
+    /// lexical error in source order — whether or not the bag stores its diagnostic — because
+    /// the parser's clause-head recovery asks where lexical errors are, and that answer must not
+    /// depend on the diagnostic budget.
+    /// </summary>
+    internal static IReadOnlyList<Token> Tokenize(string source, DiagnosticBag diagnostics, List<SourcePosition>? lexicalErrorStarts)
+    {
         var tokens = new List<Token>();
-        var diagnostics = new List<Diagnostic>();
         var i = 0;
         var line = 1;
         var col = 1;
@@ -242,13 +268,8 @@ public static class Lexer
                     var (message, code) = parsed
                         ? ("Number literal is too large.", DiagnosticCode.NumberLiteralTooLarge)
                         : ("Number literal is not a valid KatLang number: only the ASCII digits 0-9 are recognized (with an optional fraction and a lowercase 'e' exponent).", DiagnosticCode.InvalidNumberLiteral);
-                    diagnostics.Add(new Diagnostic(
-                        message,
-                        DiagnosticSeverity.Error,
-                        placeholder.Span)
-                    {
-                        Code = code,
-                    });
+                    diagnostics.Report(code, message, placeholder.Span);
+                    lexicalErrorStarts?.Add(placeholder.Span.Start);
                     tokens.Add(placeholder);
                 }
                 continue;
@@ -275,13 +296,8 @@ public static class Lexer
                     // whose exclusive end is the lexer's live cursor column (at least the
                     // opening quote was consumed; the literal ends before the line break
                     // or the end of input, so it never crosses a line).
-                    diagnostics.Add(new Diagnostic(
-                        "Unterminated string literal.",
-                        DiagnosticSeverity.Error,
-                        literal.Span)
-                    {
-                        Code = DiagnosticCode.UnterminatedStringLiteral,
-                    });
+                    diagnostics.Report(DiagnosticCode.UnterminatedStringLiteral, "Unterminated string literal.", literal.Span);
+                    lexicalErrorStarts?.Add(literal.Span.Start);
                 }
                 tokens.Add(literal);
                 continue;
@@ -342,13 +358,11 @@ public static class Lexer
                     {
                         var bang = Token.Bad(singleStart, 1, singleLine, singleCol);
                         tokens.Add(bang);
-                        diagnostics.Add(new Diagnostic(
+                        diagnostics.Report(
+                            DiagnosticCode.UnexpectedCharacter,
                             "Unexpected character: '!'. Use 'not' for logical negation.",
-                            DiagnosticSeverity.Error,
-                            bang.Span)
-                        {
-                            Code = DiagnosticCode.UnexpectedCharacter,
-                        });
+                            bang.Span);
+                        lexicalErrorStarts?.Add(bang.Span.Start);
                     }
                     break;
                 case '(': tokens.Add(Token.Create(TokenKind.LParen,     singleStart, 1, singleLine, singleCol)); break;
@@ -371,34 +385,29 @@ public static class Lexer
                         i++; col++;
                         var pair = Token.Bad(singleStart, 2, singleLine, singleCol);
                         tokens.Add(pair);
-                        var description = DescribeUnexpectedCharacter(
-                            char.ConvertToUtf32(source, singleStart),
-                            System.Globalization.CharUnicodeInfo.GetUnicodeCategory(source, singleStart));
-                        diagnostics.Add(new Diagnostic(
-                            $"Unexpected character: {description}.",
-                            DiagnosticSeverity.Error,
-                            pair.Span)
-                        {
-                            Code = DiagnosticCode.UnexpectedCharacter,
-                        });
+                        diagnostics.Report(
+                            DiagnosticCode.UnexpectedCharacter,
+                            pair.Span,
+                            (source, singleStart),
+                            static pairAt => $"Unexpected character: {DescribeUnexpectedPair(pairAt.source, pairAt.singleStart)}.");
+                        lexicalErrorStarts?.Add(pair.Span.Start);
                         break;
                     }
 
                     var unexpected = Token.Bad(singleStart, 1, singleLine, singleCol);
                     tokens.Add(unexpected);
-                    diagnostics.Add(new Diagnostic(
-                        $"Unexpected character: {DescribeUnexpectedCharacter(c)}.",
-                        DiagnosticSeverity.Error,
-                        unexpected.Span)
-                    {
-                        Code = DiagnosticCode.UnexpectedCharacter,
-                    });
+                    diagnostics.Report(
+                        DiagnosticCode.UnexpectedCharacter,
+                        unexpected.Span,
+                        c,
+                        static character => $"Unexpected character: {DescribeUnexpectedCharacter(character)}.");
+                    lexicalErrorStarts?.Add(unexpected.Span.Start);
                     break;
             }
         }
 
         tokens.Add(Token.EndOfFile(i, line, col));
-        return (tokens.AsReadOnly(), diagnostics.AsReadOnly());
+        return tokens.AsReadOnly();
     }
 
     /// <summary>

@@ -13,7 +13,8 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        return ProcessWithoutModuleElaboration(Parser.ParseSyntax(source), hostOperations: null, CancellationToken.None);
+        return ProcessWithoutModuleElaboration(
+            Parser.ParseSyntax(source, budget.CreateDiagnosticBag()), hostOperations: null, CancellationToken.None);
     }
 
     /// <summary>
@@ -44,7 +45,9 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        var syntaxResult = Parser.ParseSyntax(source);
+        // The operation's ONE bounded diagnostic list: the parse opens it and every later
+        // stage reports into it (see DiagnosticBag).
+        var syntaxResult = Parser.ParseSyntax(source, budget.CreateDiagnosticBag());
         cancellationToken.ThrowIfCancellationRequested();
 
         return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
@@ -72,7 +75,9 @@ internal static class FrontEndPipeline
         if (TryRejectMainSource(source, budget, out var rejected))
             return rejected;
 
-        var syntaxResult = Parser.ParseSyntax(source);
+        // The operation's ONE bounded diagnostic list: the parse, the module loader (every
+        // module and nested module), and every elaboration pass report into it.
+        var syntaxResult = Parser.ParseSyntax(source, budget.CreateDiagnosticBag());
         cancellationToken.ThrowIfCancellationRequested();
 
         if (options?.DownloadCode is not null)
@@ -180,14 +185,9 @@ internal static class FrontEndPipeline
         HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
-        var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
-        var loadDiagnostics = LoadElaborationGuard.CreateUnavailableDiagnostics(syntaxResult.SyntaxRoot);
-
-        if (loadDiagnostics.Count > 0)
-        {
-            diagnostics.AddRange(loadDiagnostics);
+        var diagnostics = syntaxResult.Diagnostics;
+        if (LoadElaborationGuard.ReportUnavailable(syntaxResult.SyntaxRoot, diagnostics))
             return new FrontEndResult(syntaxResult.SyntaxRoot, diagnostics);
-        }
 
         return FinalizeElaboration(
             syntaxResult.SyntaxRoot, diagnostics, hostOperations: hostOperations, cancellationToken: cancellationToken);
@@ -201,7 +201,7 @@ internal static class FrontEndPipeline
         HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
-        var diagnostics = new List<Diagnostic>(syntaxResult.Diagnostics);
+        var diagnostics = syntaxResult.Diagnostics;
 
         var loader = new ModuleLoader(
             diagnostics,
@@ -245,7 +245,7 @@ internal static class FrontEndPipeline
 
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         HostOperations? hostOperations = null,
         bool hasDeferredModuleRegions = false,
         CancellationToken cancellationToken = default)
@@ -278,9 +278,11 @@ internal static class FrontEndPipeline
         // configuration's extended semantic prelude), so referencing one never turns
         // it into an implicit parameter — the front-end half of the same name-level
         // agreement the built-in Math module relies on.
+        // Detection and resolution report into STAGES of the operation's bag: ownership
+        // completion may replace both, so they are committed only once they stand.
         var origins = new ImplicitArgumentResolver.ResolutionOrigins();
         var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(
-            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace);
+            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace, diagnostics: diagnostics.CreateStage());
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -290,19 +292,20 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        var implicitDiagnostics = new List<Diagnostic>();
+        var implicitDiagnostics = diagnostics.CreateStage();
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
             parameterizedRoot, observations: null, implicitDiagnostics, origins);
         if (origins.HasLiftedParameters)
         {
-            var completed = ParameterDetector.CompleteOwnership(implicitResolvedRoot, origins, hostOperations);
+            var completed = ParameterDetector.CompleteOwnership(
+                implicitResolvedRoot, origins, hostOperations, diagnostics: diagnostics.CreateStage());
             if (completed.Changed)
             {
                 // A completed enclosing signature can change an earlier nested binding.
                 // Rebuild forwarding and its diagnostics from written expressions with
                 // those signatures fixed; inference and Grace ordering are not replayed.
                 parameterDiagnostics = completed.Diagnostics;
-                implicitDiagnostics.Clear();
+                implicitDiagnostics = diagnostics.CreateStage();
                 implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
                     completed.Root, diagnostics: implicitDiagnostics, preserveSignatures: true);
             }
@@ -346,13 +349,15 @@ internal static class FrontEndPipeline
 
 /// <summary>
 /// Raw syntax result produced directly by the recursive-descent parser.
-/// No front-end elaboration passes have run yet.
+/// No front-end elaboration passes have run yet. <see cref="Diagnostics"/> is the operation's
+/// bag the parse reported into; the front end keeps reporting into the same bag.
 /// </summary>
-internal sealed record SyntaxParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
+internal sealed record SyntaxParseResult(Algorithm.User Root, DiagnosticBag Diagnostics)
 {
     public Algorithm.User SyntaxRoot => Root;
 
-    public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+    /// <summary>Whether the parse REPORTED an error — stored or dropped by the diagnostic budget.</summary>
+    public bool HasErrors => Diagnostics.HasReportedErrors;
 }
 
 /// <summary>

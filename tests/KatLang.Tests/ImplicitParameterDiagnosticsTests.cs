@@ -909,9 +909,10 @@ public class ImplicitParameterDiagnosticsTests
         => Assert.Equal(expected, NameSuggestions.OptimalStringAlignmentDistance(a, b));
 // Pins first-occurrence provenance when ONE inferred name occurs TWICE inside a single
 // node -- a shape no pre-campaign test had. NOTE: the span these assert comes from the
-// detector's RecordFirstOccurrence recorder, NOT from FindResolveSpan; the `??` chains
-// there (mutants 1117/1127) are a FALLBACK used only when no recorder ran, and remain
-// UNPINNED by these tests.
+// detector's RecordFirstOccurrence recorder, NOT from the undeclared-name diagnostic span
+// search (ParameterDetector.FindFirstResolveSpans, which replaced the per-name search whose
+// `??` chains mutants 1117/1127 targeted); that search is pinned by
+// FrontEndDagComplexityTests.Detector_UndeclaredNameSpans_AreFoundInOneWalk.
 
     [Fact]
     public void ImplicitParameterProvenance_TakesFirstOccurrenceAcrossBinaryOperands()

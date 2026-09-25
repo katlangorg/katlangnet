@@ -70,7 +70,7 @@ internal static class ImplicitArgumentResolver
     internal static Algorithm ResolvePrevalidated(
         Algorithm root,
         FrontEndTraversalObservations? observations = null,
-        List<Diagnostic>? diagnostics = null,
+        DiagnosticBag? diagnostics = null,
         ResolutionOrigins? origins = null,
         bool preserveSignatures = false)
     {
@@ -483,7 +483,7 @@ internal static class ImplicitArgumentResolver
     private sealed class ResolverWalkMemos(
         ResolutionRun run,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics)
+        DiagnosticBag? diagnostics)
     {
         private ImplicitRewriteContext? _pinnedRewriteContext;
 
@@ -531,7 +531,7 @@ internal static class ImplicitArgumentResolver
         /// reference either way, so rewrite maps never depend on this field; the separate
         /// strict-visit set above tracks the reporting side effect.
         /// </summary>
-        public readonly List<Diagnostic>? Diagnostics = diagnostics;
+        public readonly DiagnosticBag? Diagnostics = diagnostics;
 
         /// <summary>
         /// Fail-loud guard for the memo soundness invariant above. One reference comparison,
@@ -550,6 +550,39 @@ internal static class ImplicitArgumentResolver
 
             if (!ReferenceEquals(_pinnedRewriteContext, context))
                 throw new InvalidOperationException(RewriteContextViolationMessage);
+        }
+
+        // The closed-list forwarding verdict per callee pattern list, under the one context it was
+        // computed for: every reference to one callable in the region asks the same question —
+        // the closed-list gate for each, the blocked-forwarding report for each blocked one — so
+        // it is answered once. Answering it per reference cost O(K × L) for K references to a
+        // callable of L parameters (and the former list-scan dedup made each answer O(L²)).
+        private Dictionary<IReadOnlyList<ParameterPattern>, IReadOnlyList<string>>? _missingForwardingNames;
+        private ImplicitRewriteContext? _missingForwardingNamesContext;
+
+        public IReadOnlyList<string> MissingForwardingNames(
+            IReadOnlyList<ParameterPattern> calleePatterns,
+            ImplicitRewriteContext context,
+            IReadOnlySet<string> closedParameterNames)
+        {
+            // The verdict depends on the caller's patterns and closed list, which the region's
+            // pinned context fixes; any other context instance is answered without the memo.
+            _missingForwardingNamesContext ??= context;
+            if (!ReferenceEquals(_missingForwardingNamesContext, context))
+            {
+                Observations?.RecordResolverForwardingVerdict();
+                return MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames);
+            }
+
+            _missingForwardingNames ??= new(ReferenceEqualityComparer.Instance);
+            if (!_missingForwardingNames.TryGetValue(calleePatterns, out var missing))
+            {
+                Observations?.RecordResolverForwardingVerdict();
+                missing = MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames);
+                _missingForwardingNames.Add(calleePatterns, missing);
+            }
+
+            return missing;
         }
 
         public Dictionary<Expr, Expr> RewriteMapFor(bool inCallPosition)
@@ -607,7 +640,7 @@ internal static class ImplicitArgumentResolver
         Dictionary<string, CallableSignature> parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         ConditionalBranchContext? branchContext,
         ResolutionRun run) => alg switch
         {
@@ -637,7 +670,7 @@ internal static class ImplicitArgumentResolver
         Dictionary<string, CallableSignature> parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         ConditionalBranchContext? branchContext,
         ResolutionRun run)
     {
@@ -677,7 +710,7 @@ internal static class ImplicitArgumentResolver
         Dictionary<string, CallableSignature> parentParamMap,
         bool isRoot,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         ConditionalBranchContext? branchContext,
         ResolutionRun run,
         List<BlockedForwardingTemplate>? diagnosticTemplates)
@@ -914,7 +947,7 @@ internal static class ImplicitArgumentResolver
         string propertyName,
         Dictionary<string, CallableSignature> parentParamMap,
         FrontEndTraversalObservations? observations,
-        List<Diagnostic>? diagnostics,
+        DiagnosticBag? diagnostics,
         ResolutionRun run)
     {
         var newOpens = ProcessOpenExprs(conditional.Opens, observations, run);
@@ -962,7 +995,7 @@ internal static class ImplicitArgumentResolver
     /// family's name — so per-family diagnostic multiplicity matches a fresh rewrite without
     /// performing one, independent of which family was reached first.
     /// </summary>
-    private static void ReplayBranchDiagnostics(AlgorithmRegion region, string branchName, List<Diagnostic>? diagnostics)
+    private static void ReplayBranchDiagnostics(AlgorithmRegion region, string branchName, DiagnosticBag? diagnostics)
     {
         if (diagnostics is null || region.DiagnosticTemplates is null)
             return;
@@ -997,7 +1030,7 @@ internal static class ImplicitArgumentResolver
     internal static Algorithm ElaborateDeferredBranch(
         Algorithm detectedBody,
         DeferredBranchContext context,
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
         ResolutionOrigins? origins = null,
         bool preserveSignatures = false,
@@ -1178,19 +1211,15 @@ internal static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> calleePatterns)
         => TryGetSingleCollectingForwarding(callerPatterns, calleePatterns, out _, out _);
 
-    private static bool CanBuildImplicitCallArgumentsFromExistingParameters(
-        IReadOnlyList<ParameterPattern> calleePatterns,
-        IReadOnlyList<ParameterPattern> callerPatterns,
-        IReadOnlySet<string> existingParameterNames)
-        => MissingClosedListForwardingNames(calleePatterns, callerPatterns, existingParameterNames).Count == 0;
-
     /// <summary>
-    /// The callee capture names a CLOSED explicit parameter list cannot supply — the
-    /// witness form of <see cref="CanBuildImplicitCallArgumentsFromExistingParameters"/>,
-    /// which is now that predicate's only implementation. Forwarding availability and the
-    /// names blamed for its absence therefore cannot drift apart: the caller's own
-    /// forwarded collecting stream satisfies EVERY capture (so it yields no names at all),
-    /// and otherwise a capture is missing exactly when the closed list does not declare it.
+    /// The callee capture names a CLOSED explicit parameter list cannot supply — the ONE
+    /// implementation of the closed-list forwarding verdict: <see cref="ClosedListBlocksLifting"/>
+    /// blocks exactly when it is non-empty, and <see cref="ReportBlockedStrictValueForwarding"/>
+    /// names exactly these (both read it through the region's
+    /// <see cref="ResolverWalkMemos.MissingForwardingNames"/>). Forwarding availability and the
+    /// names blamed for its absence therefore cannot drift apart: the caller's own forwarded
+    /// collecting stream satisfies EVERY capture (so it yields no names at all), and otherwise a
+    /// capture is missing exactly when the closed list does not declare it.
     /// <para>Order is <see cref="ParameterPattern.FlattenCaptures"/> order — the callee's
     /// own declaration order — deduplicated first-occurrence-wins, so a diagnostic built
     /// from it is stable and never hash-ordered.</para>
@@ -1208,14 +1237,15 @@ internal static class ImplicitArgumentResolver
             return [];
 
         List<string>? missing = null;
+        HashSet<string>? seen = null;
         foreach (var capture in ParameterPattern.FlattenCaptures(calleePatterns))
         {
             if (existingParameterNames.Contains(capture.Name))
                 continue;
 
-            missing ??= [];
-            if (!missing.Contains(capture.Name, StringComparer.Ordinal))
-                missing.Add(capture.Name);
+            seen ??= new(StringComparer.Ordinal);
+            if (seen.Add(capture.Name))
+                (missing ??= []).Add(capture.Name);
         }
 
         return missing ?? (IReadOnlyList<string>)[];
@@ -1235,12 +1265,10 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static bool ClosedListBlocksLifting(
         ImplicitRewriteContext context,
-        IReadOnlyList<ParameterPattern> calleePatterns)
+        IReadOnlyList<ParameterPattern> calleePatterns,
+        ResolverWalkMemos memos)
         => context.ClosedParameterNames is { } closedParameterNames
-            && !CanBuildImplicitCallArgumentsFromExistingParameters(
-                calleePatterns,
-                context.CallerParameterPatterns,
-                closedParameterNames);
+            && memos.MissingForwardingNames(calleePatterns, context, closedParameterNames).Count > 0;
 
     /// <summary>
     /// Reports a STATICALLY IMPOSSIBLE strict value demand: a registry-proven
@@ -1279,8 +1307,7 @@ internal static class ImplicitArgumentResolver
         if (memos.Diagnostics is not { } diagnostics || context.ClosedParameterNames is not { } closedParameterNames)
             return;
 
-        var missing = MissingClosedListForwardingNames(
-            calleePatterns, context.CallerParameterPatterns, closedParameterNames);
+        var missing = memos.MissingForwardingNames(calleePatterns, context, closedParameterNames);
         if (missing.Count == 0)
             return;
 
@@ -1312,6 +1339,10 @@ internal static class ImplicitArgumentResolver
         IReadOnlyList<string> missingParameterNames,
         string? conditionalBranchName)
     {
+        // Reported once per blocked reference, so everything the referenced callable or the
+        // family contributes is echoed bounded (ExprNameRenderer's name bound and marker).
+        referenceDisplayName = ExprNameRenderer.BoundName(referenceDisplayName);
+        conditionalBranchName = conditionalBranchName is null ? null : ExprNameRenderer.BoundName(conditionalBranchName);
         var names = FormatQuotedNameList(missingParameterNames);
         var noun = missingParameterNames.Count == 1 ? "parameter" : "parameters";
         if (conditionalBranchName is not null)
@@ -1332,14 +1363,23 @@ internal static class ImplicitArgumentResolver
                 + $"call '{referenceDisplayName}' with explicit arguments, or remove the explicit parameter list.");
     }
 
+    // `'a'`, `'a' and 'b'`, `'a', 'b', and 'c'` — rendered within the rendered-name bound, reading
+    // only the names it shows; text that fits is exactly the unbounded spelling.
     private static string FormatQuotedNameList(IReadOnlyList<string> values)
-        => values.Count switch
+    {
+        var sink = new Rendering.BoundedDiagnosticSink(ExprNameRenderer.MaxRenderedNameLength);
+        for (var index = 0; index < values.Count; index++)
         {
-            0 => string.Empty,
-            1 => $"'{values[0]}'",
-            2 => $"'{values[0]}' and '{values[1]}'",
-            _ => string.Join(", ", values.Take(values.Count - 1).Select(value => $"'{value}'")) + $", and '{values[^1]}'",
-        };
+            var separator = index == 0 ? ""
+                : values.Count == 2 ? " and "
+                : index == values.Count - 1 ? ", and "
+                : ", ";
+            if (!sink.Append(separator) || !sink.Append("'") || !sink.Append(values[index]) || !sink.Append("'"))
+                break;
+        }
+
+        return sink.Finish();
+    }
 
     /// <summary>
     /// Maps every caller-side capture name (top-level and nested) to its
@@ -1834,7 +1874,7 @@ internal static class ImplicitArgumentResolver
             && paramMap.TryGetValue(name, out var ps)
             && ps.Parameters.Count > 0)
         {
-            if (ClosedListBlocksLifting(context, ps.ParameterPatterns))
+            if (ClosedListBlocksLifting(context, ps.ParameterPatterns, memos))
             {
                 if (inStrictValueDemand)
                     ReportBlockedStrictValueForwarding(expr, name, ps.ParameterPatterns, context, memos);
@@ -1853,7 +1893,7 @@ internal static class ImplicitArgumentResolver
         if (!inCallPosition
             && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
         {
-            if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns))
+            if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns, memos))
             {
                 if (inStrictValueDemand)
                 {
@@ -1939,7 +1979,7 @@ internal static class ImplicitArgumentResolver
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
     {
-        if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns))
+        if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns, memos))
         {
             if (inStrictValueDemand)
             {

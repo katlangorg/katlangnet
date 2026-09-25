@@ -2,18 +2,22 @@ namespace KatLang;
 
 /// <summary>
 /// Run-scoped, mutable accounting for <see cref="SourceProcessingLimits"/>: the aggregate source
-/// accepted for parsing, the number of module downloads requested, and the current/peak import
-/// depth. One budget belongs to exactly one run; the immutable <see cref="SourceProcessingLimits"/>
-/// may be shared by any number of concurrent runs because the counters live here, never on the
-/// limits.
+/// elaborated (text accepted for parsing plus every splice of an already-loaded module), the
+/// number of module downloads requested, and the current/peak import depth. One budget belongs to
+/// exactly one run; the immutable <see cref="SourceProcessingLimits"/> may be shared by any number
+/// of concurrent runs because the counters live here, never on the limits.
 ///
 /// <para>Reservations use checked arithmetic and are all-or-nothing: a reservation that would
 /// exceed its ceiling returns <c>false</c> and leaves its counter unchanged. The loader reserves
 /// one module slot immediately before every downloader invocation and keeps it whatever the
 /// download returns — a failed, oversized, or aggregate-rejected download still happened — and
-/// reserves aggregate source only for text accepted for parsing. A module frame that is aborted
-/// by observed host cancellation rolls its aggregate reservation back before unwinding;
-/// downloader invocations remain charged, including cancelled ones.</para>
+/// reserves aggregate source for text accepted for parsing and for every splice of a cached
+/// module. A module frame that is aborted by observed host cancellation rolls its own aggregate
+/// reservations (its source and the splices its walk made) back before unwinding; downloader
+/// invocations remain charged, including cancelled ones.</para>
+///
+/// <para>The diagnostic count is not a counter here: it bounds each diagnostic LIST, so the
+/// budget only hands every operation its own bounded <see cref="DiagnosticBag"/>.</para>
 /// </summary>
 internal sealed class SourceProcessingBudget
 {
@@ -29,6 +33,15 @@ internal sealed class SourceProcessingBudget
     internal int MaxModuleDepth => _limits.EffectiveMaxModuleDepth;
     internal long MaxAggregateSourceLength => _limits.EffectiveMaxAggregateSourceLength;
     internal int MaxModuleCount => _limits.EffectiveMaxModuleCount;
+    internal int MaxDiagnosticCount => _limits.EffectiveMaxDiagnosticCount;
+
+    /// <summary>
+    /// A fresh diagnostic list for one operation of this run — the parse, or one demand-time
+    /// materialization of a deferred branch — bounded by the configured diagnostic count. The
+    /// count bounds each LIST, so every operation gets its own bag; nothing here accumulates
+    /// diagnostics across operations.
+    /// </summary>
+    internal DiagnosticBag CreateDiagnosticBag() => new(MaxDiagnosticCount);
 
     /// <summary>Total source (main plus every module accepted for parsing) reserved so far this run.</summary>
     internal long AggregateSource => _aggregateSource;
@@ -90,11 +103,11 @@ internal sealed class SourceProcessingBudget
     }
 
     /// <summary>
-    /// Rolls back one previously successful <see cref="TryReserveAggregate"/> call of
-    /// <paramref name="length"/> code units when host cancellation aborts that module frame
-    /// before its module is accepted into the loader cache.
+    /// Rolls back previously successful <see cref="TryReserveAggregate"/> calls totalling
+    /// <paramref name="length"/> code units — a frame's own source and the splices its walk
+    /// charged — when host cancellation aborts that frame before its result is kept.
     /// </summary>
-    internal void RollbackAggregate(int length)
+    internal void RollbackAggregate(long length)
     {
         if (length < 0 || _aggregateSource < length)
             throw new InvalidOperationException("Cannot roll back an aggregate source reservation that is not active.");
@@ -175,6 +188,35 @@ internal static class SourceProcessingDiagnostics
             DiagnosticCode.AggregateSourceLengthExceeded,
             $"Program source ({Quantity(requestedLength, "UTF-16 code unit")}) exceeds the maximum total source of {Quantity(limit, "UTF-16 code unit")}.",
             span: null);
+
+    /// <summary>
+    /// A further splice of an already-loaded module does not fit the aggregate: the front end
+    /// elaborates every splice, so it charges the source it adds to the program.
+    /// </summary>
+    internal static Diagnostic AggregateSourceLengthExceededBySplice(
+        string url,
+        int spliceWeight,
+        long requestedTotal,
+        long limit,
+        SourceSpan? span)
+        => Error(
+            DiagnosticCode.AggregateSourceLengthExceeded,
+            $"load: splicing the already loaded '{url}' again ({Quantity(spliceWeight, "UTF-16 code unit")} of elaborated module source) would bring total source to {Quantity(requestedTotal, "UTF-16 code unit")}, over the maximum of {Quantity(limit, "UTF-16 code unit")}.",
+            span);
+
+    /// <summary>
+    /// The marker that ends a truncated diagnostic list (see <see cref="DiagnosticBag"/>): a fact
+    /// about the list, never about a place in the source, so it has no position. Its severity is
+    /// the most severe one the list dropped — an error for every diagnostic KatLang reports.
+    /// </summary>
+    internal static Diagnostic DiagnosticCountExceeded(int limit, DiagnosticSeverity severity)
+        => new(
+            $"Diagnostic limit of {Quantity(limit, "diagnostic")} reached: later diagnostics were omitted.",
+            severity,
+            null)
+        {
+            Code = DiagnosticCode.DiagnosticCountExceeded,
+        };
 
     internal static Diagnostic ModuleCountExceeded(string url, int requestedCount, int limit, SourceSpan? span)
         => Error(

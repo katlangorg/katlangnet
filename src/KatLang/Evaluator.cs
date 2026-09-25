@@ -699,31 +699,37 @@ public static partial class Evaluator
         if (provider is Algorithm.Conditional)
             return $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call.";
 
-        var names = NamedParameters(provider, sourceBacked).ToArray();
-        var parameterList = names.Length == 0 ? "" : $" ({string.Join(", ", names)})";
+        // The front end reports this once per written target, so the provider's parameter list
+        // is echoed bounded, reading only the names it shows (see ExprNameRenderer.BoundedJoin).
+        var names = ExprNameRenderer.BoundedJoin(NamedParameters(provider, sourceBacked), ", ");
+        var parameterList = names.Length == 0 ? "" : $" ({names})";
         return $"'{targetDescription}' cannot be opened because it requires arguments{parameterList}; open imports only an algorithm that needs no call.";
     }
 
     /// <summary>
-    /// The parameter names a diagnostic may quote: every parameter except the parser's
-    /// spanless recovery binder for a malformed pattern item (`F(a, *) = …`), which is not
-    /// source-backed and must never be named to the user. Only the front-end validator
-    /// identifies recovery binders this way: a host-built algorithm keeps every name,
-    /// regardless of which parameters the host supplied spans for.
+    /// The parameter names a diagnostic may quote, lazily in declaration order: every parameter
+    /// except the parser's spanless recovery binder for a malformed pattern item
+    /// (`F(a, *) = …`), which is not source-backed and must never be named to the user. Only the
+    /// front-end validator identifies recovery binders this way: a host-built algorithm keeps
+    /// every name, regardless of which parameters the host supplied spans for. At most
+    /// <see cref="ExprNameRenderer.MaxRenderedNameLength"/> declarations are examined — more
+    /// names than a bounded list can show — so quoting a huge list costs a constant whatever
+    /// the filter skips.
     /// </summary>
     private static IEnumerable<string> NamedParameters(Algorithm provider, bool sourceBacked)
     {
-        // Only a WRITTEN (explicit) list can contain the recovery binder: an inferred
-        // signature's captures are promoted names, every one of them nameable.
-        if (!sourceBacked || provider is not Algorithm.User { HasExplicitParameterList: true } written)
-            return provider.Params;
+        if (provider is not Algorithm.User user)
+            return [];
 
-        var parameters = written.Parameters;
-        var placeholders = parameters
-            .Where(static parameter => parameter.Span is null)
-            .Select(static parameter => parameter.Name)
-            .ToHashSet(StringComparer.Ordinal);
-        return parameters.Select(static parameter => parameter.Name).Where(name => !placeholders.Contains(name));
+        var parameters = ParameterPattern.EnumerateCaptures(user.ParameterPatterns)
+            .Take(ExprNameRenderer.MaxRenderedNameLength);
+
+        // Only a WRITTEN (explicit) list can contain the recovery binder: an inferred
+        // signature's captures are promoted names, every one of them nameable. The binder is
+        // the list's one spanless declaration, under a unique name no source can write.
+        return sourceBacked && user.HasExplicitParameterList
+            ? parameters.Where(static parameter => parameter.Span is not null).Select(static parameter => parameter.Name)
+            : parameters.Select(static parameter => parameter.Name);
     }
 
     /// <summary>

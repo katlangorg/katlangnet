@@ -623,7 +623,7 @@ public class LocalMemberAccessTests
         var parameterized = new Algorithm.User(null, [new CaptureParameterPattern("n")], [], [], [new Expr.Param("n")]);
         var root = new Algorithm.User(null, [], [],
             [new Property("A", Owner(zero)), new Property("B", Owner(parameterized))], [new Expr.Num(0)]);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         OpenProviderValidator.Validate(root, diagnostics, (HostOperations?)null);
         var diagnostic = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticCode.IllegalInOpen, diagnostic.Code);

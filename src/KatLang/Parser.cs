@@ -20,8 +20,11 @@ namespace KatLang;
 public sealed class Parser
 {
     private readonly IReadOnlyList<Token> _tokens;
-    private readonly List<Diagnostic> _diagnostics;
-    private readonly int _lexicalDiagnosticCount;
+    private readonly DiagnosticBag _diagnostics;
+
+    // Where every lexical error starts, in source order — recorded by the lexer whether or not
+    // the bag stored its diagnostic, so clause-head recovery never depends on the budget.
+    private readonly IReadOnlyList<SourcePosition> _lexicalErrorStarts;
 
     // Optional, parse-scoped observer of exact clause-family pattern comparisons. Null for every
     // production parse (no observation requested); a test measuring the indexed duplicate-detection
@@ -65,12 +68,13 @@ public sealed class Parser
 
     private Parser(
         IReadOnlyList<Token> tokens,
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
+        IReadOnlyList<SourcePosition> lexicalErrorStarts,
         PatternComparisonObservations? comparisonObservations = null)
     {
         _tokens = tokens;
         _diagnostics = diagnostics;
-        _lexicalDiagnosticCount = diagnostics.Count;
+        _lexicalErrorStarts = lexicalErrorStarts;
         _comparisonObservations = comparisonObservations;
     }
 
@@ -424,6 +428,14 @@ public sealed class Parser
         => ParseSyntax(source, comparisonObservations: null);
 
     /// <summary>
+    /// Raw parse that reports into an operation's diagnostic bag — the front end's parse of the
+    /// main program, whose lexical and syntax diagnostics open the operation's one bounded list
+    /// (<see cref="DiagnosticBag"/>).
+    /// </summary>
+    internal static SyntaxParseResult ParseSyntax(string source, DiagnosticBag diagnostics)
+        => ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt: 0, traversalObservations: null, diagnostics);
+
+    /// <summary>
     /// Raw parse that begins with part of the parser recursion budget already spent.
     /// The module loader uses this when parsing a DOWNLOADED module: that parse runs
     /// while the loader's own traversal frames are still live on the stack, so the
@@ -436,6 +448,14 @@ public sealed class Parser
         => ParseSyntax(source, comparisonObservations: null, initialNestingDebt);
 
     /// <summary>
+    /// The loader's module parse (see <see cref="ParseSyntax(string, int)"/>) into a bag of the
+    /// run's diagnostic capacity, so even a module whose own diagnostics are summarized at its
+    /// load site never holds more than one list's worth while it is classified.
+    /// </summary>
+    internal static SyntaxParseResult ParseSyntax(string source, int initialNestingDebt, DiagnosticBag diagnostics)
+        => ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt, traversalObservations: null, diagnostics);
+
+    /// <summary>
     /// Raw parse that additionally records exact clause-family pattern comparisons into
     /// <paramref name="comparisonObservations"/>. Test/measurement-only entry: the observed and
     /// unobserved paths share this one implementation, so the AST, diagnostics, and spans are
@@ -445,7 +465,7 @@ public sealed class Parser
         string source,
         PatternComparisonObservations? comparisonObservations,
         int initialNestingDebt = 0)
-        => ParseSyntaxCore(source, comparisonObservations, initialNestingDebt, traversalObservations: null);
+        => ParseSyntaxCore(source, comparisonObservations, initialNestingDebt, traversalObservations: null, new DiagnosticBag());
 
     /// <summary>
     /// Raw parse that additionally records the parser's token-traversal work into
@@ -459,34 +479,38 @@ public sealed class Parser
         ParserTraversalObservations traversalObservations)
     {
         ArgumentNullException.ThrowIfNull(traversalObservations);
-        return ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt: 0, traversalObservations);
+        return ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt: 0, traversalObservations, new DiagnosticBag());
     }
 
     private static SyntaxParseResult ParseSyntaxCore(
         string source,
         PatternComparisonObservations? comparisonObservations,
         int initialNestingDebt,
-        ParserTraversalObservations? traversalObservations)
+        ParserTraversalObservations? traversalObservations,
+        DiagnosticBag diagnostics)
     {
         // Always-active host-runtime backstop: reject an oversized source before allocating any
         // tokens or nodes. The configured (possibly lower) per-source limit is applied earlier by
         // the front-end and module loader with richer, context-carrying diagnostics; this hard
         // ceiling protects every direct caller of the raw syntax boundary, including source above
-        // the supported maximum. Measured token, ordinary node, and diagnostic counts scale with
-        // source length, so this one bound caps those counts. The formerly quadratic per-construct
+        // the supported maximum. Measured token and ordinary node counts scale with source length,
+        // so this one bound caps those counts; the diagnostics they cause are bounded further by
+        // the operation's bag (DiagnosticBag), which stores at most one list. The formerly quadratic per-construct
         // paths (wide assignment deconstruction and large clause families) are now linear in the
         // number of targets/clauses; this remains a resource ceiling, not a blanket linear-time
         // claim for every possible construct.
         if (source.Length > SourceProcessingLimits.MaxSupportedSourceLength)
         {
-            return new SyntaxParseResult(
-                new Algorithm.User(null, [], [], [], []),
-                [SourceProcessingDiagnostics.SourceLengthExceeded(source.Length, SourceProcessingLimits.MaxSupportedSourceLength)]);
+            diagnostics.Add(SourceProcessingDiagnostics.SourceLengthExceeded(source.Length, SourceProcessingLimits.MaxSupportedSourceLength));
+            return new SyntaxParseResult(new Algorithm.User(null, [], [], [], []), diagnostics);
         }
 
-        var (tokens, lexDiags) = Lexer.Tokenize(source);
-        var diagnostics = new List<Diagnostic>(lexDiags);
-        var parser = new Parser(tokens, diagnostics, comparisonObservations);
+        // Lexical diagnostics open the operation's list, in source order, ahead of every
+        // parser diagnostic; the lexer also hands over where each lexical error starts, which
+        // clause-head recovery reads whether or not the bag stored its diagnostic.
+        var lexicalErrorStarts = new List<SourcePosition>();
+        var tokens = Lexer.Tokenize(source, diagnostics, lexicalErrorStarts);
+        var parser = new Parser(tokens, diagnostics, lexicalErrorStarts, comparisonObservations);
         // Pre-charge the caller's live stack debt (nested-module parses under active
         // module-loader frames). Every recursive charge is released by its scope's
         // Dispose, so the counter's floor stays at the debt for the whole parse.
@@ -539,13 +563,10 @@ public sealed class Parser
 
         foreach (var violation in AlgorithmValidation.FindExplicitParameterOutputViolations(root))
         {
-            diagnostics.Add(new Diagnostic(
+            diagnostics.Report(
+                DiagnosticCode.ExplicitParametersRequireOutput,
                 AlgorithmValidation.ExplicitParametersRequireOutputMessage,
-                DiagnosticSeverity.Error,
-                violation.Span)
-            {
-                Code = DiagnosticCode.ExplicitParametersRequireOutput,
-            });
+                violation.Span);
         }
 
         traversalObservations?.RecordTokenSteps(parser._tokenSteps);
@@ -775,15 +796,7 @@ public sealed class Parser
 
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private void ReportError(DiagnosticCode code, string message, SourceSpan span)
-    {
-        _diagnostics.Add(new Diagnostic(
-            message,
-            DiagnosticSeverity.Error,
-            span)
-        {
-            Code = code,
-        });
-    }
+        => _diagnostics.Report(code, message, span);
 
     private Token Previous
     {
@@ -1164,16 +1177,15 @@ public sealed class Parser
     /// </summary>
     private void ReportStrayRootCloser(Token closer)
     {
-        var (written, opener) = closer.Kind switch
+        // One constant message per closer kind: a run of stray closers is one report per
+        // token, so nothing is formatted per report (see DiagnosticBag on dropped reports).
+        var message = closer.Kind switch
         {
-            TokenKind.RParen => (")", "("),
-            TokenKind.RBracket => ("]", "["),
-            _ => ("}", "{"),
+            TokenKind.RParen => "Unexpected ')' at the top level. There is no open '(' for it to close.",
+            TokenKind.RBracket => "Unexpected ']' at the top level. There is no open '[' for it to close.",
+            _ => "Unexpected '}' at the top level. There is no open '{' for it to close.",
         };
-        ReportErrorAt(
-            DiagnosticCode.UnexpectedToken,
-            $"Unexpected '{written}' at the top level. There is no open '{opener}' for it to close.",
-            closer);
+        ReportErrorAt(DiagnosticCode.UnexpectedToken, message, closer);
     }
 
     /// <summary>
@@ -1286,7 +1298,8 @@ public sealed class Parser
             }
 
             Advance(); // consume identifier
-            var headDiagnosticsStart = _diagnostics.Count;
+            // Counted reports, never stored ones: recovery must not depend on the budget.
+            var headDiagnosticsStart = _diagnostics.ReportedCount;
             Expect(TokenKind.LParen);
             var pattern = ParsePattern();
             SynchronizeToClauseHeadClose(headCloseIndex, headDiagnosticsStart);
@@ -1299,7 +1312,7 @@ public sealed class Parser
             // the family, but its recovered pattern is not evidence about the family's
             // other clauses: it takes part in no cross-clause check (duplicate pattern,
             // pattern arity, output arity), so a malformed clause never poisons a valid one.
-            var headRecovered = _diagnostics.Count != headDiagnosticsStart
+            var headRecovered = _diagnostics.ReportedCount != headDiagnosticsStart
                 || HasLexicalErrorInHead(nameToken, _tokens[headCloseIndex]);
             var body = ParseOutputLine();
 
@@ -2785,25 +2798,25 @@ public sealed class Parser
 
     // ── Pattern parsing (for clause definitions) ────────────────────────────
 
-    // Lexical diagnostics precede all parser diagnostics and are in source order.
-    // A recovered number/string token is no more trustworthy for family comparison
-    // than a parser placeholder. Binary search avoids rescanning all lexical errors
-    // for every clause in a long malformed file.
+    // Lexical error starts are recorded in source order (every one, whether or not its
+    // diagnostic was stored). A recovered number/string token is no more trustworthy for
+    // family comparison than a parser placeholder. Binary search avoids rescanning all
+    // lexical errors for every clause in a long malformed file.
     private bool HasLexicalErrorInHead(Token first, Token last)
     {
         var low = 0;
-        var high = _lexicalDiagnosticCount;
+        var high = _lexicalErrorStarts.Count;
         while (low < high)
         {
             var middle = low + (high - low) / 2;
-            if (_diagnostics[middle].Span!.Value.Start.CompareTo(first.Span.Start) < 0)
+            if (_lexicalErrorStarts[middle].CompareTo(first.Span.Start) < 0)
                 low = middle + 1;
             else
                 high = middle;
         }
 
-        return low < _lexicalDiagnosticCount
-            && _diagnostics[low].Span!.Value.Start.CompareTo(last.Span.End) < 0;
+        return low < _lexicalErrorStarts.Count
+            && _lexicalErrorStarts[low].CompareTo(last.Span.End) < 0;
     }
 
     // Like $deconstruct$ names, these are unique per parse and impossible to write
@@ -2937,12 +2950,12 @@ public sealed class Parser
     /// the skip never crosses a closer an enclosing construct is waiting for.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private void SynchronizeToClauseHeadClose(int closeIndex, int headDiagnosticsStart)
+    private void SynchronizeToClauseHeadClose(int closeIndex, long headDiagnosticsStart)
     {
         if (NextSignificantIndex(_pos) >= closeIndex)
             return;
 
-        if (_diagnostics.Count == headDiagnosticsStart)
+        if (_diagnostics.ReportedCount == headDiagnosticsStart)
         {
             ReportError(
                 DiagnosticCode.UnexpectedToken,

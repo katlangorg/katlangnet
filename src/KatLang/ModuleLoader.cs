@@ -75,15 +75,39 @@ internal sealed partial class ModuleLoader
 
     // Keyed by the CANONICAL module URL (ModuleLoadTarget), as are _inProgress and every
     // downloader request: identity, cycle detection, and transport name one resource.
-    private readonly Dictionary<string, Algorithm> _cache = new();
+    private readonly Dictionary<string, CachedModule> _cache = new();
     private readonly HashSet<string> _inProgress = new();
-    private readonly List<Diagnostic> _diagnostics;
+    private readonly DiagnosticBag _diagnostics;
 
-    // The diagnostics sink the walks report into: the elaboration's own list during
-    // ElaborateAsync, and a per-materialization list while a deferred region is being
+    /// <summary>
+    /// One module-cache entry: the caller-independent import view every splice shares, and the
+    /// aggregate source its elaboration charged — its own source plus everything its own loads
+    /// charged (nested downloads and nested splices). A later splice of the view adds exactly
+    /// that much content to the elaborated program, which the front end elaborates once more in
+    /// the splice's scope, so a cache hit charges <see cref="Weight"/> (see
+    /// <see cref="ProcessLoadAsync"/>).
+    /// </summary>
+    private readonly record struct CachedModule(Algorithm View, int Weight);
+
+    /// <summary>
+    /// The aggregate source charged by the cache-hit splices of ONE walk frame — the root
+    /// elaboration, a fetched module's nested elaboration, or a deferred materialization.
+    /// Observed host cancellation rolls a frame's ledger back with the frame's own source
+    /// reservation, so an abandoned walk leaves only the charges of frames that completed.
+    /// </summary>
+    private sealed class SpliceLedger
+    {
+        internal long Charged;
+    }
+
+    // The diagnostics bag the walks report into: the elaboration's own bag during
+    // ElaborateAsync, and a per-materialization bag while a deferred region is being
     // materialized (LoadDeferredRegionAsync swaps it under the materialization gate), so a
     // demand-time load never appends to a parse result that has already been published.
-    private List<Diagnostic> _sink;
+    private DiagnosticBag _sink;
+
+    // The splice ledger of the walk frame currently running (part of the walk context).
+    private SpliceLedger _spliceLedger = new();
 
     // B2c: materializations are serialized per loader exactly as initial elaboration is one
     // logical sequence — the walk memos, the in-progress module set, and the traversal base
@@ -268,26 +292,28 @@ internal sealed partial class ModuleLoader
     private StateScopeStack _walkContextScopes;
 
     /// <summary>
-    /// The loader's swappable WALK CONTEXT: the four fields a nested walk temporarily
-    /// changes — the diagnostics sink (<see cref="_sink"/>), the live traversal base
+    /// The loader's swappable WALK CONTEXT: the five fields a nested walk temporarily
+    /// changes — the diagnostics bag (<see cref="_sink"/>), the live traversal base
     /// (<see cref="_nestedTraversalBase"/>), the active cancellation token
-    /// (<see cref="_cancellationToken"/>), and the import site (<see cref="_importSite"/>).
+    /// (<see cref="_cancellationToken"/>), the import site (<see cref="_importSite"/>), and the
+    /// frame's splice ledger (<see cref="_spliceLedger"/>).
     /// Constructing the scope captures the current values; the entry helper then installs
     /// the temporary ones; <see cref="Dispose"/>
     /// restores exactly the captured values — always from a <c>using</c>, so restoration
     /// runs on the ordinary return, on a structured rejection, on cancellation, and on a
     /// downloader exception alike, and no field can be left pointing at a finished walk's
-    /// sink, base, or token. Scopes nest (a nested module load inside a deferred
+    /// sink, base, token, or ledger. Scopes nest (a nested module load inside a deferred
     /// materialization): each restores what it displaced, in reverse order of entry. The
     /// default value installed nothing and restores nothing.
     /// </summary>
     private readonly struct WalkContextScope : IDisposable
     {
         private readonly ModuleLoader? _loader;
-        private readonly List<Diagnostic> _sink;
+        private readonly DiagnosticBag _sink;
         private readonly int _nestedTraversalBase;
         private readonly CancellationToken _cancellationToken;
         private readonly SourceSpan? _importSite;
+        private readonly SpliceLedger _spliceLedger;
         private readonly StateScopeStack.Ticket _ticket;
 
         /// <summary>Captures <paramref name="loader"/>'s current walk context.</summary>
@@ -298,6 +324,7 @@ internal sealed partial class ModuleLoader
             _nestedTraversalBase = loader._nestedTraversalBase;
             _cancellationToken = loader._cancellationToken;
             _importSite = loader._importSite;
+            _spliceLedger = loader._spliceLedger;
             _ticket = loader._walkContextScopes.Enter();
         }
 
@@ -307,6 +334,7 @@ internal sealed partial class ModuleLoader
                 return;
 
             _loader._walkContextScopes.Exit(_ticket);
+            _loader._spliceLedger = _spliceLedger;
             _loader._importSite = _importSite;
             _loader._cancellationToken = _cancellationToken;
             _loader._nestedTraversalBase = _nestedTraversalBase;
@@ -317,14 +345,16 @@ internal sealed partial class ModuleLoader
     /// <summary>
     /// Enters the walk context of a deferred-region materialization
     /// (<see cref="LoadDeferredRegionAsync"/>): diagnostics go to the materialization's own
-    /// list, traversal depth is judged from the base the eager walk recorded for the
+    /// bag, traversal depth is judged from the base the eager walk recorded for the
     /// region, loads inside the body are positioned at the import site the eager walk
-    /// recorded for it, and every walk check and the downloader observe the linked token.
+    /// recorded for it, every walk check and the downloader observe the linked token, and the
+    /// body's cache-hit splices charge the materialization's own ledger.
     /// </summary>
     private WalkContextScope EnterMaterializationContext(
-        List<Diagnostic> sink,
+        DiagnosticBag sink,
         int nestedTraversalBase,
         SourceSpan? importSite,
+        SpliceLedger spliceLedger,
         CancellationToken cancellationToken)
     {
         var scope = new WalkContextScope(this);
@@ -332,20 +362,23 @@ internal sealed partial class ModuleLoader
         _nestedTraversalBase = nestedTraversalBase;
         _importSite = importSite;
         _cancellationToken = cancellationToken;
+        _spliceLedger = spliceLedger;
         return scope;
     }
 
     /// <summary>
     /// Enters the walk context of a fetched nested module's elaboration: the live
     /// traversal base and the import site change (every load written inside the module is
-    /// positioned at the site the current document wrote for it); the sink and the token
-    /// stay those of the enclosing walk.
+    /// positioned at the site the current document wrote for it), and the module's own
+    /// cache-hit splices charge its own ledger; the bag and the token stay those of the
+    /// enclosing walk.
     /// </summary>
-    private WalkContextScope EnterNestedTraversal(int nestedTraversalBase, SourceSpan? importSite)
+    private WalkContextScope EnterNestedTraversal(int nestedTraversalBase, SourceSpan? importSite, SpliceLedger spliceLedger)
     {
         var scope = new WalkContextScope(this);
         _nestedTraversalBase = nestedTraversalBase;
         _importSite = importSite;
+        _spliceLedger = spliceLedger;
         return scope;
     }
 
@@ -357,16 +390,23 @@ internal sealed partial class ModuleLoader
 
     /// <summary>
     /// The walk context (<see cref="WalkContextScope"/>) exposed internally for scope-restoration
-    /// regression tests: the sink by identity, the live traversal base, the active token, and
-    /// the import site.
+    /// regression tests: the sink by identity, the live traversal base, the active token, the
+    /// import site, and the splice ledger by identity.
     /// </summary>
-    internal (object Sink, int NestedTraversalBase, CancellationToken CancellationToken, SourceSpan? ImportSite) WalkContext
-        => (_sink, _nestedTraversalBase, _cancellationToken, _importSite);
+    internal (object Sink, int NestedTraversalBase, CancellationToken CancellationToken, SourceSpan? ImportSite, object SpliceLedger) WalkContext
+        => (_sink, _nestedTraversalBase, _cancellationToken, _importSite, _spliceLedger);
+
+    /// <summary>
+    /// A fresh diagnostic bag for one demand-time materialization of a region this loader
+    /// deferred, bounded by the run's configured diagnostic count: each materialization is its
+    /// own operation with its own list (see <see cref="SourceProcessingBudget.CreateDiagnosticBag"/>).
+    /// </summary>
+    internal DiagnosticBag CreateDiagnosticBag() => _budget.CreateDiagnosticBag();
 
     /// <summary>
     /// Creates a new ModuleLoader.
     /// </summary>
-    /// <param name="diagnostics">Mutable diagnostics list shared with the parser.</param>
+    /// <param name="diagnostics">The operation's diagnostic bag, shared with the parser.</param>
     /// <param name="downloadCode">
     /// Required host-supplied asynchronous code fetcher: URL and the configured
     /// <paramref name="sourceProcessingCancellationToken"/> → source text. A host with the
@@ -400,7 +440,7 @@ internal sealed partial class ModuleLoader
     /// <c>load: failed to fetch</c> diagnostic.</para>
     /// </remarks>
     public ModuleLoader(
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts = null,
         CancellationToken sourceProcessingCancellationToken = default)
@@ -420,7 +460,7 @@ internal sealed partial class ModuleLoader
     /// directly-constructed loader still enforces the always-active ceilings.
     /// </summary>
     internal ModuleLoader(
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget? budget,
@@ -483,6 +523,11 @@ internal sealed partial class ModuleLoader
     public async ValueTask<Algorithm> ElaborateAsync(Algorithm root)
     {
         ThrowIfCancellationRequested();
+        // The root walk is one frame: its cache-hit splices charge this ledger, released if
+        // observed cancellation abandons the walk (see SpliceLedger).
+        var rootLedger = new SpliceLedger();
+        var enclosingLedger = _spliceLedger;
+        _spliceLedger = rootLedger;
         try
         {
             // Structural safety boundary for this recursive consumer: checked iteratively
@@ -537,8 +582,15 @@ internal sealed partial class ModuleLoader
 
             return elaborated;
         }
+        catch (OperationCanceledException) when (IsCancellationRequested)
+        {
+            // The abandoned walk keeps no splice: release what its own splices charged.
+            _budget.RollbackAggregate(rootLedger.Charged);
+            throw;
+        }
         finally
         {
+            _spliceLedger = enclosingLedger;
             _loadBearing.Clear();
             Array.Clear(_exprWalkMemos);
             Array.Clear(_algorithmWalkMemos);
@@ -973,7 +1025,7 @@ internal sealed partial class ModuleLoader
     /// </summary>
     internal async ValueTask<Algorithm> LoadDeferredRegionAsync(
         DeferredModuleRegion region,
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         CancellationToken materializationCancellationToken)
     {
         ThrowIfCancellationRequested();
@@ -982,12 +1034,16 @@ internal sealed partial class ModuleLoader
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _sourceProcessingCancellationToken,
             materializationCancellationToken);
+        // The materialization's cache-hit splices charge its own ledger, released if observed
+        // cancellation abandons it, so a cancelled selection can be retried without draining
+        // the aggregate (download attempts stay charged).
+        var materializationLedger = new SpliceLedger();
         try
         {
             // Restore the walk context before clearing the walk memos, and before disposing
             // the linked source, preserving the original unwind order.
             using var materialization = EnterMaterializationContext(
-                diagnostics, region.NestedTraversalBase, region.ImportSite, linkedCancellation.Token);
+                diagnostics, region.NestedTraversalBase, region.ImportSite, materializationLedger, linkedCancellation.Token);
             Algorithm loaded;
             try
             {
@@ -1027,6 +1083,11 @@ internal sealed partial class ModuleLoader
                 _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded, _importSite));
 
             return loaded;
+        }
+        catch (OperationCanceledException) when (IsCancellationRequested || linkedCancellation.IsCancellationRequested)
+        {
+            _budget.RollbackAggregate(materializationLedger.Charged);
+            throw;
         }
         finally
         {
@@ -1430,11 +1491,30 @@ internal sealed partial class ModuleLoader
         }
 
         // 5. Cache check — an already-elaborated module splices without re-traversal
-        // or re-download, so it charges no cumulative traversal depth and never
-        // suspends. The cached instance is ONE caller-independent import view: the
-        // splice stamps only the wrapper node with this site's span.
+        // or re-download, so it charges no cumulative traversal depth, no module slot, and
+        // never suspends. The cached instance is ONE caller-independent import view: the
+        // splice stamps only the wrapper node with this site's span. The front end still
+        // elaborates the view once more in THIS site's scope (module content resolves against
+        // the scope it is spliced into), so the splice charges the module's elaborated weight
+        // against the aggregate: without it, K splices of one module in K distinct scopes cost
+        // K times the module's elaboration — a product of two source sizes no per-source
+        // ceiling bounds.
         if (_cache.TryGetValue(moduleUrl, out var cached))
-            return new Expr.AlgorithmExpr(cached) { Span = span };
+        {
+            if (!_budget.TryReserveAggregate(cached.Weight))
+            {
+                ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.AggregateSourceLengthExceededBySplice(
+                    moduleUrl,
+                    cached.Weight,
+                    checked(_budget.AggregateSource + cached.Weight),
+                    _budget.MaxAggregateSourceLength,
+                    site));
+                return new Expr.Num(0) { Span = span };
+            }
+
+            _spliceLedger.Charged += cached.Weight;
+            return new Expr.AlgorithmExpr(cached.View) { Span = span };
+        }
 
         // 6. Fetch + parse + splice — the loader's one awaiting path.
         return await FetchAndSpliceAsync(moduleUrl, span, site, depth).ConfigureAwait(false);
@@ -1519,6 +1599,7 @@ internal sealed partial class ModuleLoader
         _inProgress.Add(moduleUrl);
         var hasAggregateReservation = false;
         var reservedSourceLength = 0;
+        SpliceLedger? moduleLedger = null;
         try
         {
             // Module-count ceiling, checked BEFORE downloading (this is a cache miss), so a run
@@ -1611,6 +1692,9 @@ internal sealed partial class ModuleLoader
             // reservation leaves the aggregate unchanged (the module slot stays consumed — the
             // download happened). An observed host cancellation rolls this active frame's
             // aggregate reservation back while unwinding, before the partial module can reach the cache.
+            // Everything charged from here to the cache commit is this module's elaborated
+            // weight: what a later splice of the cached view adds to the program.
+            var aggregateBeforeModule = _budget.AggregateSource;
             var requestedTotal = checked(_budget.AggregateSource + source.Length);
             if (!_budget.TryReserveAggregate(source.Length))
             {
@@ -1635,7 +1719,11 @@ internal sealed partial class ModuleLoader
             // budget is rejected by the parser at the crossing token, and reported
             // here on the established load channel at the load site.
             ThrowIfCancellationRequested();
-            var syntaxResult = Parser.ParseSyntax(source, parseStackDebt);
+            // The module's own lexical and syntax diagnostics are summarized at the load site
+            // below, never spliced into this document's list, so they go to a bag of their own —
+            // of the run's capacity, so a malformed module never holds more than one list's
+            // worth while it is classified (classification reads reported codes, not stored ones).
+            var syntaxResult = Parser.ParseSyntax(source, parseStackDebt, _budget.CreateDiagnosticBag());
 
             if (syntaxResult.HasErrors)
             {
@@ -1676,6 +1764,10 @@ internal sealed partial class ModuleLoader
                 });
             }
 
+            // The nested walk's errors decide whether the module may be cached, by COUNT: the
+            // run's bag may already be full, and a full bag must not make a failing module cacheable.
+            var nestedErrorsBefore = _sink.ReportedErrorCount;
+
             // Cumulative structural budget, post-parse half: the parent modules' live
             // traversal levels, this load site's own path depth, and the fixed splice
             // allowance all count against the one measured ceiling the loader's
@@ -1708,10 +1800,10 @@ internal sealed partial class ModuleLoader
             // tree gets its own load-bearing pre-scan so its load-free subtrees take
             // the synchronous walk too. Loads written inside the module have no span of
             // their own: their diagnostics are positioned at THIS load's site.
-            var nestedDiagnosticStart = _sink.Count;
             MarkLoadBearing(importView);
             Algorithm elaborated;
-            using (EnterNestedTraversal(traversalBase, site))
+            moduleLedger = new SpliceLedger();
+            using (EnterNestedTraversal(traversalBase, site, moduleLedger))
             {
                 elaborated = await RouteAlgorithmAsync(importView, LoadContext.TopLevel, depth: 1)
                     .ConfigureAwait(false);
@@ -1726,18 +1818,18 @@ internal sealed partial class ModuleLoader
             // an import view (its own content carries no source locations).
             if (elaborated is Algorithm.User moduleRoot)
                 elaborated = moduleRoot with { IsModuleElaborated = true };
-            if (!_sink.Skip(nestedDiagnosticStart).Any(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
-                _cache[moduleUrl] = elaborated;
+            if (_sink.ReportedErrorCount == nestedErrorsBefore)
+                _cache[moduleUrl] = new CachedModule(elaborated, checked((int)(_budget.AggregateSource - aggregateBeforeModule)));
 
             return new Expr.AlgorithmExpr(elaborated) { Span = span };
         }
         catch (OperationCanceledException) when (IsCancellationRequested)
         {
-            // Abandoned source is not cached. Its aggregate reservation can be released, but
-            // the downloader invocation already occurred and must stay charged: another
-            // evaluation of this parsed tree can retry the cancelled deferred region.
-            if (hasAggregateReservation)
-                _budget.RollbackAggregate(reservedSourceLength);
+            // Abandoned source is not cached. Its aggregate reservations — its own source and
+            // the splices its walk made — can be released, but the downloader invocation
+            // already occurred and must stay charged: another evaluation of this parsed tree
+            // can retry the cancelled deferred region. Nested modules that completed keep theirs.
+            _budget.RollbackAggregate((hasAggregateReservation ? reservedSourceLength : 0) + (moduleLedger?.Charged ?? 0));
 
             throw;
         }
@@ -1789,11 +1881,14 @@ internal sealed partial class ModuleLoader
     /// rejection rather than invalid module content. Classified by the diagnostics'
     /// structured <see cref="DiagnosticCode"/> families, never by message text; the
     /// per-chain <see cref="DiagnosticCode.ExpressionChainTooDeep"/> budget carries no
-    /// loader stack debt and deliberately stays invalid-content, exactly as before.
+    /// loader stack debt and deliberately stays invalid-content, exactly as before. Read from
+    /// the codes the parse REPORTED — a module with more lexical errors than one list keeps
+    /// reports its nesting failure after its bag is full, and the classification must not
+    /// change with the diagnostic budget.
     /// </summary>
     private static bool HasStructuralBudgetDiagnostic(SyntaxParseResult syntaxResult)
-        => syntaxResult.Diagnostics.Any(
-            d => d.Code is DiagnosticCode.NestingTooDeep or DiagnosticCode.AstDepthLimitExceeded);
+        => syntaxResult.Diagnostics.HasReported(DiagnosticCode.NestingTooDeep)
+            || syntaxResult.Diagnostics.HasReported(DiagnosticCode.AstDepthLimitExceeded);
 
     private static string BuildLoadedSourceNestingErrorMessage(string moduleUrl)
         => $"load: loading '{moduleUrl}' at this position would nest module source too deeply to parse safely "
@@ -1810,18 +1905,8 @@ internal sealed partial class ModuleLoader
     }
 
     private void ReportError(DiagnosticCode code, string message, SourceSpan? span)
-    {
-        _sink.Add(new Diagnostic(
-            message,
-            DiagnosticSeverity.Error,
-            span)
-        {
-            Code = code,
-        });
-    }
+        => _sink.Report(code, message, span);
 
     private void ReportSourceProcessingDiagnostic(Diagnostic diagnostic)
-    {
-        _sink.Add(diagnostic);
-    }
+        => _sink.Add(diagnostic);
 }

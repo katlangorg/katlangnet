@@ -376,6 +376,36 @@ public closed record ParameterPattern
         return count;
     }
 
+    /// <summary>
+    /// The capture declarations of a pattern list in <see cref="FlattenCaptures"/> order, produced
+    /// LAZILY: a caller that stops early — a diagnostic quoting a bounded prefix of a parameter
+    /// list — reads only the captures it consumed, however wide the list or its groups are. Walked
+    /// with index cursors on an explicit stack, never recursing on the caller's stack.
+    /// </summary>
+    internal static IEnumerable<ParameterDeclaration> EnumerateCaptures(IReadOnlyList<ParameterPattern> patterns)
+    {
+        var cursors = new Stack<(IReadOnlyList<ParameterPattern> Items, int Index)>();
+        cursors.Push((patterns, 0));
+        while (cursors.TryPop(out var cursor))
+        {
+            if (cursor.Index >= cursor.Items.Count)
+                continue;
+
+            cursors.Push((cursor.Items, cursor.Index + 1));
+            switch (cursor.Items[cursor.Index])
+            {
+                case CaptureParameterPattern capture:
+                    yield return capture.Parameter;
+                    break;
+                case SequenceValueParameterPattern group:
+                    cursors.Push((group.Items, 0));
+                    break;
+                case var unhandled:
+                    throw UnhandledPattern(unhandled);
+            }
+        }
+    }
+
     private static void AppendCaptures(
         ParameterPattern pattern,
         List<ParameterDeclaration> captures,

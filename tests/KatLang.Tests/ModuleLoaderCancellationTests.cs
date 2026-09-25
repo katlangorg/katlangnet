@@ -119,7 +119,7 @@ public class ModuleLoaderCancellationTests
     public async Task StandaloneModuleLoader_ConstructorConfiguresDownloaderAndToken()
     {
         var root = ParseSyntaxRoot(Source);
-        var defaultTokenDiagnostics = new List<Diagnostic>();
+        var defaultTokenDiagnostics = new DiagnosticBag();
         var defaultTokenLoader = new ModuleLoader(
             defaultTokenDiagnostics,
             (_, _) => ValueTask.FromResult("public Value = 3"));
@@ -127,7 +127,7 @@ public class ModuleLoaderCancellationTests
         _ = await defaultTokenLoader.ElaborateAsync(root);
 
         using var cancellation = new CancellationTokenSource();
-        var tokenDiagnostics = new List<Diagnostic>();
+        var tokenDiagnostics = new DiagnosticBag();
         CancellationToken received = default;
         var tokenLoader = new ModuleLoader(
             tokenDiagnostics,
@@ -150,7 +150,7 @@ public class ModuleLoaderCancellationTests
     public async Task CancellationRequestedDuringDownload_PropagatesWithoutFetchDiagnosticOrCommit()
     {
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var budget = new SourceProcessingBudget(SourceProcessingLimits.Default);
         var loader = new ModuleLoader(
             diagnostics,
@@ -182,7 +182,7 @@ public class ModuleLoaderCancellationTests
     public async Task HostCancellationWins_WhenDownloaderThrowsDifferentException()
     {
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (_, _) =>
@@ -206,7 +206,7 @@ public class ModuleLoaderCancellationTests
     public async Task HostCancellationWins_WhenDownloaderTaskFaultsWithDifferentException()
     {
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (_, _) =>
@@ -303,7 +303,7 @@ public class ModuleLoaderCancellationTests
     public async Task NestedModuleCancellation_RestoresDepthAndAggregate_ButKeepsDownloadCharges()
     {
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var budget = new SourceProcessingBudget(SourceProcessingLimits.Default);
         var outerSource = $"public Nested = load('{NestedUrl}')";
         var loader = new ModuleLoader(
@@ -347,7 +347,7 @@ public class ModuleLoaderCancellationTests
             $"public Remaining = load('{RemainingUrl}')";
 
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var budget = new SourceProcessingBudget(SourceProcessingLimits.Default);
         var siblingFetches = 0;
         var remainingFetches = 0;
@@ -410,7 +410,7 @@ public class ModuleLoaderCancellationTests
         });
 
         using var firstCancellation = new CancellationTokenSource();
-        var firstDiagnostics = new List<Diagnostic>();
+        var firstDiagnostics = new DiagnosticBag();
         var firstLoader = new ModuleLoader(
             firstDiagnostics,
             (url, _) =>
@@ -432,7 +432,7 @@ public class ModuleLoaderCancellationTests
         Assert.Equal(0, budget.AggregateSource);
 
         using var secondCancellation = new CancellationTokenSource();
-        var secondDiagnostics = new List<Diagnostic>();
+        var secondDiagnostics = new DiagnosticBag();
         var secondLoader = new ModuleLoader(
             secondDiagnostics,
             (_, _) => throw new InvalidOperationException("Exhausted budget must prevent another download"),
@@ -458,7 +458,7 @@ public class ModuleLoaderCancellationTests
             $"public Second = load('{ModuleUrl}')");
 
         using var cancellation = new CancellationTokenSource();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var budget = new SourceProcessingBudget(SourceProcessingLimits.Default);
         var fetches = 0;
         var loader = new ModuleLoader(

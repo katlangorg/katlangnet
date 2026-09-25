@@ -25,7 +25,7 @@ public class ParserScopedStateTests
     // the public parse result deliberately discards the parser instance on those paths.
     private static Parser NewParser()
         => (Parser)typeof(Parser).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
-            .Invoke([Lexer.Tokenize("1").Tokens, new List<Diagnostic>(), null]);
+            .Invoke([Lexer.Tokenize("1").Tokens, new DiagnosticBag(), Array.Empty<SourcePosition>(), null]);
 
     private static IDisposable Enter(Parser parser, bool delimited)
         => (IDisposable)typeof(Parser).GetMethod(

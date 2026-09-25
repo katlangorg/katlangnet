@@ -200,7 +200,7 @@ public class ModuleLoaderAsyncTests
     {
         using var cancellation = new CancellationTokenSource();
         var gate = NewGate();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (_, _) => new ValueTask<string>(gate.Task),
@@ -409,7 +409,7 @@ public class ModuleLoaderAsyncTests
 
         var root = new Algorithm.User(null, [], [], [new Property("Deep", new Algorithm.User(null, [], [], [], [spine]))], [new Expr.Num(1)]);
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (_, _) => ValueTask.FromResult("public Value = 1"));

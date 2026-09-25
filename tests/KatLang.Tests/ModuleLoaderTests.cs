@@ -374,7 +374,7 @@ public class ModuleLoaderTests
     public async Task Load_BlankAllowedHostEntry_InternalLoaderStaysClosed(string? blankEntry)
     {
         var fetches = 0;
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (_, _) =>
@@ -1037,7 +1037,7 @@ public class ModuleLoaderTests
                 new CondBranch(new Pattern.Bind("n"), new Algorithm.User(null, [], [], [], [new Expr.Resolve("n")])),
             ]);
         var root = new Algorithm.User(null, [], [], [new Property("F", conditional)], OutputBundle.Empty);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, counting);
 
         var elaborated = await loader.ElaborateAsync(root);

@@ -296,6 +296,7 @@ public enum KatLang.DiagnosticCode : int
   InvalidNumberLiteral = 43
   IllegalInOpen = 44
   UnresolvedOpenTarget = 45
+  DiagnosticCountExceeded = 46
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1403,6 +1404,7 @@ public enum KatLang.KatLangErrorCode : int
   OpenTargetIsParameter = 65
   InvalidNumberLiteral = 66
   UnresolvedOpenTarget = 67
+  DiagnosticCountExceeded = 68
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -2154,12 +2156,14 @@ public readonly record struct KatLang.SourcePosition : System.IComparable<KatLan
 
 public sealed record KatLang.SourceProcessingLimits : System.IEquatable<KatLang.SourceProcessingLimits>
   const    public const long MaxSupportedAggregateSourceLength = 8388608
+  const    public const int MaxSupportedDiagnosticCount = 1000
   const    public const int MaxSupportedModuleCount = 256
   const    public const int MaxSupportedModuleDepth = 64
   const    public const int MaxSupportedSourceLength = 2097152
   ctor     public SourceProcessingLimits()
   property public static KatLang.SourceProcessingLimits Default { get; }
   property public long? MaxAggregateSourceLength { get; init; }
+  property public int? MaxDiagnosticCount { get; init; }
   property public int? MaxModuleCount { get; init; }
   property public int? MaxModuleDepth { get; init; }
   property public int? MaxSourceLength { get; init; }

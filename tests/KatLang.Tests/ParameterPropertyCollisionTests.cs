@@ -102,7 +102,7 @@ public class ParameterPropertyCollisionTests
             [new CondBranch(new Pattern.Bind("v"), body), new CondBranch(new Pattern.Bind("q"), body), new CondBranch(new Pattern.Bind("v"), body)]);
         for (var run = 0; run < 2; run++)
         {
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(family);
             Assert.Equal([vSpan, qSpan], diagnostics.Select(d => d.Span));
             Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, d.Code));
@@ -124,7 +124,7 @@ public class ParameterPropertyCollisionTests
                 ? [new Pattern.Bind("p0"), new Pattern.Bind("p1")]
                 : [new Pattern.Bind("p1"), new Pattern.Bind("p0")]), body)).ToList();
         branches.Add(new CondBranch(new Pattern.Bind("p2"), body));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(new Algorithm.Conditional(null, [], branches));
 
         Assert.Equal([1, 2, 3], diagnostics.Select(d => Assert.NotNull(d.Span).Start.Line));
@@ -144,14 +144,14 @@ public class ParameterPropertyCollisionTests
         var withV = new Algorithm.User(null, [new CaptureParameterPattern("v", parameterSpan)], [], [], [shared]);
         foreach (var owners in new[] { new[] { withoutV, withV }, new[] { withV, withoutV } })
         {
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var root = new Algorithm.User(null, [], [], [], new OutputBundle(owners.Select(a => (Expr)new Expr.AlgorithmExpr(a)).ToArray()));
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(root);
             var diagnostic = Assert.Single(diagnostics);
             Assert.Equal(span, diagnostic.Span);
             Assert.Contains("line 1, column 7", diagnostic.Message);
         }
-        var isolated = new List<Diagnostic>();
+        var isolated = new DiagnosticBag();
         new ParameterPropertyCollisionValidator(isolated).VisitAlgorithm(withoutV);
         Assert.Empty(isolated);
     }
@@ -166,10 +166,40 @@ public class ParameterPropertyCollisionTests
         var children = Enumerable.Range(0, width).Select(_ => (Expr)new Expr.AlgorithmExpr(
             new Algorithm.User(null, parameters, [], [], [new Expr.Num(0)]))).ToArray();
         parameters.Reads = 0; // Ignore AST construction; observe the validator itself.
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(new Algorithm.User(null, [], [], [], new OutputBundle(children)));
         Assert.Empty(diagnostics);
         Assert.InRange(parameters.Reads, width, 2 * width);
+    }
+
+    /// <summary>
+    /// A node's visited contexts are compared by an interned CONTEXT ID: the content key of every
+    /// name in scope is hashed once per bindings instance, never per visited node. Hashing it at
+    /// each node made one algorithm of P parameters quadratic — 524 KB of the valid program
+    /// <c>G = v0, v1, …</c> took 6.8 s to parse, almost all of it in this validator (0.48 s after).
+    /// </summary>
+    [Fact]
+    public void WideSignature_ContextKeyIsHashedOncePerContext_NotPerVisitedNode()
+    {
+        const int parameters = 2000;
+        var source = "G = " + string.Join(", ", Enumerable.Range(0, parameters).Select(i => $"v{i}")) + "\n1";
+        var syntax = Parser.ParseSyntax(source);
+        Assert.False(syntax.HasErrors);
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
+        Assert.Empty(detectorDiagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var g = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved).Properties, p => p.Name == "G").Value);
+        Assert.Equal(parameters, g.Params.Count);
+        var observations = new FrontEndTraversalObservations();
+        var diagnostics = new DiagnosticBag();
+
+        new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved) { TraversalObservations = observations }
+            .VisitAlgorithm(resolved);
+
+        Assert.Empty(diagnostics);
+        Assert.InRange(observations.WalkerExpressionExpansions, parameters, long.MaxValue);
+        // The root's empty context and G's context of P names: two keys, whatever the body's size.
+        Assert.Equal(2, observations.CollisionContextInterns);
     }
 
     private sealed class ObservedParameters(IReadOnlyList<ParameterPattern> parameters) : IReadOnlyList<ParameterPattern>

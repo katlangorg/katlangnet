@@ -535,7 +535,7 @@ public class ModuleCoordinateSpaceTests
             [],
             [new Property("v", value) { DeclarationSpans = [span] }, new Property("v", value with { }) { DeclarationSpans = [span] }],
             [new Expr.Num(0)]);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(owner);
         Assert.Equal(2, diagnostics.Count);
         Assert.All(diagnostics, d => Assert.Equal(span, d.Span));
@@ -552,7 +552,7 @@ public class ModuleCoordinateSpaceTests
             [new Expr.Resolve("count") { Span = span }, new Expr.Resolve("sum") { Span = span }],
             [],
             [new Expr.Num(0)]);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         OpenProviderValidator.Validate(root, diagnostics, hostOperations: null);
         Assert.Equal(2, diagnostics.Count);
         Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.IllegalInOpen, d.Code));

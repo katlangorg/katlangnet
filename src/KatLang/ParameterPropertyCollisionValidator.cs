@@ -20,7 +20,7 @@ namespace KatLang;
 /// are bound by its calls, so a deeper property of the same name really would hide them.</para>
 /// </summary>
 internal sealed class ParameterPropertyCollisionValidator(
-    List<Diagnostic> diagnostics,
+    DiagnosticBag diagnostics,
     ParameterPropertyCollisionValidator.ParameterBindings? enclosingParameters = null,
     Algorithm? programRoot = null,
     SourceSpan? importSite = null) : AstWalker
@@ -29,7 +29,12 @@ internal sealed class ParameterPropertyCollisionValidator(
     // first conflicting source reach supplies diagnostic metadata for a shared declaration,
     // which is reported once by its declaration NODE (never by span identity: an imported
     // declaration has no span, and a value-type span could not carry identity).
-    private readonly Dictionary<object, HashSet<string>> _visited = new(ReferenceEqualityComparer.Instance);
+    // A node's visited contexts are CONTEXT IDS: the name set's content key interned once per
+    // bindings instance (ContextId), so a visit hashes an int, never the key text — hashing
+    // the key (every name in scope) at each node made a P-parameter body O(P²).
+    private readonly Dictionary<object, HashSet<int>> _visited = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, int> _contextIdsByKey = new(StringComparer.Ordinal);
+    private readonly Dictionary<ParameterBindings, int> _contextIds = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Property> _reported = new(ReferenceEqualityComparer.Instance);
     // The import site of the module content the walk is inside (see ImportSite): where a
     // conflicting imported declaration — which has no span of its own — is reported. Starts
@@ -59,8 +64,20 @@ internal sealed class ParameterPropertyCollisionValidator(
     private bool FirstVisit(object node)
     {
         if (!_visited.TryGetValue(node, out var contexts))
-            _visited.Add(node, contexts = new(StringComparer.Ordinal));
-        return contexts.Add(_parameters.Key);
+            _visited.Add(node, contexts = []);
+        return contexts.Add(ContextId(_parameters));
+    }
+
+    // Equal keys share one id, so the memo's equivalence is exactly key equality.
+    private int ContextId(ParameterBindings bindings)
+    {
+        if (_contextIds.TryGetValue(bindings, out var id))
+            return id;
+        TraversalObservations?.RecordCollisionContextIntern();
+        if (!_contextIdsByKey.TryGetValue(bindings.Key, out id))
+            _contextIdsByKey.Add(bindings.Key, id = _contextIdsByKey.Count);
+        _contextIds.Add(bindings, id);
+        return id;
     }
 
     public override void VisitAlgorithm(Algorithm algorithm)

@@ -217,7 +217,7 @@ public class LifetimeDifferentialTests
     // plus the internal counters exposed for exactly this kind of test.
 
     private static (Algorithm Elaborated, IReadOnlyList<Diagnostic> CallDiagnostics) ElaborateWith(
-        ModuleLoader loader, List<Diagnostic> diagnostics, string source)
+        ModuleLoader loader, DiagnosticBag diagnostics, string source)
     {
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors,
@@ -261,7 +261,7 @@ public class LifetimeDifferentialTests
     public void LoaderInstance_FailedModuleIsNotCached_CorrectedSameIdentitySucceeds()
     {
         var host = new LifetimeModuleHost((LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMBroken));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, host.Downloader);
 
         var (_, firstDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.TargetModule);
@@ -276,7 +276,7 @@ public class LifetimeDifferentialTests
         Assert.Equal(2, host.DownloadLog.Count);
 
         var freshHost = new LifetimeModuleHost((LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMv1));
-        var freshDiagnostics = new List<Diagnostic>();
+        var freshDiagnostics = new DiagnosticBag();
         var freshLoader = new ModuleLoader(freshDiagnostics, freshHost.Downloader);
         var (fresh, freshCallDiagnostics) = ElaborateWith(freshLoader, freshDiagnostics, LifetimeDifferentialCorpus.TargetModule);
         Assert.DoesNotContain(freshCallDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
@@ -296,7 +296,7 @@ public class LifetimeDifferentialTests
     public void LoaderInstance_CachePinsContentPerScope_ByDesign()
     {
         var host = new LifetimeModuleHost((LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMv1));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, host.Downloader);
 
         var (first, firstDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.TargetModule);
@@ -311,7 +311,7 @@ public class LifetimeDifferentialTests
         Assert.Equal(FinishPipelineNeutral(first), FinishPipelineNeutral(second));
 
         // A FRESH loader (the per-run production boundary) sees the new content.
-        var freshDiagnostics = new List<Diagnostic>();
+        var freshDiagnostics = new DiagnosticBag();
         var freshLoader = new ModuleLoader(freshDiagnostics, host.Downloader);
         var (fresh, _) = ElaborateWith(freshLoader, freshDiagnostics, LifetimeDifferentialCorpus.TargetModule);
         Assert.NotEqual(FinishPipelineNeutral(first), FinishPipelineNeutral(fresh));
@@ -325,7 +325,7 @@ public class LifetimeDifferentialTests
             (LifetimeDifferentialCorpus.UrlDb, LifetimeDifferentialCorpus.ModuleDb),
             (LifetimeDifferentialCorpus.UrlDc, LifetimeDifferentialCorpus.ModuleDc),
             (LifetimeDifferentialCorpus.UrlDd, LifetimeDifferentialCorpus.ModuleDd));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, host.Downloader);
 
         var (_, callDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.TargetDiamondBFirst);
@@ -342,7 +342,7 @@ public class LifetimeDifferentialTests
     public void LoaderInstance_RepeatedImportInOneProgram_SingleFetch()
     {
         var host = new LifetimeModuleHost((LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMv1));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, host.Downloader);
 
         var (_, callDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.TargetRepeatedImport);
@@ -359,7 +359,7 @@ public class LifetimeDifferentialTests
     {
         var aliasHost = new LifetimeModuleHost(
             (LifetimeDifferentialCorpus.UrlI1, LifetimeDifferentialCorpus.ModuleI));
-        var aliasDiagnostics = new List<Diagnostic>();
+        var aliasDiagnostics = new DiagnosticBag();
         var aliasLoader = new ModuleLoader(aliasDiagnostics, aliasHost.Downloader);
         var (_, aliasCallDiagnostics) = ElaborateWith(
             aliasLoader, aliasDiagnostics, LifetimeDifferentialCorpus.TargetDotSegmentAlias);
@@ -369,7 +369,7 @@ public class LifetimeDifferentialTests
 
         var hostCaseHost = new LifetimeModuleHost(
             (LifetimeDifferentialCorpus.UrlI1, LifetimeDifferentialCorpus.ModuleI));
-        var hostCaseDiagnostics = new List<Diagnostic>();
+        var hostCaseDiagnostics = new DiagnosticBag();
         var hostCaseLoader = new ModuleLoader(hostCaseDiagnostics, hostCaseHost.Downloader);
         var (_, hostCaseCallDiagnostics) = ElaborateWith(
             hostCaseLoader, hostCaseDiagnostics, LifetimeDifferentialCorpus.TargetHostCaseAlias);
@@ -379,7 +379,7 @@ public class LifetimeDifferentialTests
         var pathCaseHost = new LifetimeModuleHost(
             (LifetimeDifferentialCorpus.UrlI3Upper, LifetimeDifferentialCorpus.ModuleI3Upper),
             (LifetimeDifferentialCorpus.UrlI3Lower, LifetimeDifferentialCorpus.ModuleI3Lower));
-        var pathCaseDiagnostics = new List<Diagnostic>();
+        var pathCaseDiagnostics = new DiagnosticBag();
         var pathCaseLoader = new ModuleLoader(pathCaseDiagnostics, pathCaseHost.Downloader);
         var (_, pathCaseCallDiagnostics) = ElaborateWith(
             pathCaseLoader, pathCaseDiagnostics, LifetimeDifferentialCorpus.TargetPathCaseDistinct);
@@ -399,7 +399,7 @@ public class LifetimeDifferentialTests
             (LifetimeDifferentialCorpus.UrlC1, LifetimeDifferentialCorpus.ModuleC1),
             (LifetimeDifferentialCorpus.UrlC2, LifetimeDifferentialCorpus.ModuleC2),
             (LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMv1));
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, host.Downloader);
 
         var (_, cycleDiagnostics) = ElaborateWith(loader, diagnostics, LifetimeDifferentialCorpus.HistLoadCycle);
@@ -410,7 +410,7 @@ public class LifetimeDifferentialTests
         Assert.DoesNotContain(goodDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
 
         var freshHost = new LifetimeModuleHost((LifetimeDifferentialCorpus.UrlM, LifetimeDifferentialCorpus.ModuleMv1));
-        var freshDiagnostics = new List<Diagnostic>();
+        var freshDiagnostics = new DiagnosticBag();
         var freshLoader = new ModuleLoader(freshDiagnostics, freshHost.Downloader);
         var (fresh, _) = ElaborateWith(freshLoader, freshDiagnostics, LifetimeDifferentialCorpus.TargetModule);
 

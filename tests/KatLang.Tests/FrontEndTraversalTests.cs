@@ -88,7 +88,7 @@ public class FrontEndTraversalTests
         // recursive arms; recursive load behavior remains covered through the
         // loader's ElaborateAsync boundary by
         // ModuleLoader_AsyncWalkNeverSkipsALoadInsideARecursiveChild.
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (url, cancellationToken) => ValueTask.FromResult("public X = 1"));
@@ -204,7 +204,7 @@ public class FrontEndTraversalTests
     public async Task ModuleLoader_PreservesLeafOutputRowsByReference(string variant)
     {
         var sample = VariantSamples[variant];
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (url, cancellationToken) => ValueTask.FromResult("public X = 1"));
@@ -665,7 +665,7 @@ public class FrontEndTraversalTests
     [MemberData(nameof(LoadBearingPositions))]
     public async Task ModuleLoader_AsyncWalkNeverSkipsALoadInsideARecursiveChild(string position, bool expectsRuntimePositionError)
     {
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (url, cancellationToken) => ValueTask.FromResult("public X = 1"));
@@ -749,7 +749,7 @@ public class FrontEndTraversalTests
     public async Task ModuleLoader_DefersEveryClauseFamilyBranchPosition(string position, bool deferred)
     {
         var downloads = 0;
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(
             diagnostics,
             (url, cancellationToken) =>

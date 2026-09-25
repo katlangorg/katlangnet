@@ -341,4 +341,14 @@ public enum DiagnosticCode
     /// provider rule.
     /// </summary>
     UnresolvedOpenTarget = 45,
+
+    /// <summary>
+    /// The diagnostic list is INCOMPLETE: the operation reported more diagnostics than
+    /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> allows one list to keep. The list
+    /// holds exactly the first diagnostics an unbounded list would hold, in order, and this one
+    /// diagnostic (error severity, no position) is always its last entry; later diagnostics were
+    /// neither stored nor formatted. It is the host's structured signal that a list was
+    /// truncated — never a fact about any one place in the source.
+    /// </summary>
+    DiagnosticCountExceeded = 46,
 }

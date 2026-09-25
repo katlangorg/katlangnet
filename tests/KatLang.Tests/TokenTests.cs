@@ -166,8 +166,8 @@ public class TokenTests
     {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
         var tokens = Lexer.Tokenize(source).Tokens;
-        var diagnostics = new List<Diagnostic>();
-        var parser = (Parser)Assert.Single(typeof(Parser).GetConstructors(flags)).Invoke([tokens, diagnostics, null]);
+        var diagnostics = new DiagnosticBag();
+        var parser = (Parser)Assert.Single(typeof(Parser).GetConstructors(flags)).Invoke([tokens, diagnostics, Array.Empty<SourcePosition>(), null]);
         var marker = Assert.IsType<Token>(typeof(Parser).GetMethod("Expect", flags)!.Invoke(parser, [TokenKind.RParen]));
         Assert.Equal(Token.Bad(0, 0, 1, 1), marker);
         Assert.Same(tokens[0], typeof(Parser).GetProperty("Current", flags)!.GetValue(parser));

@@ -24,7 +24,7 @@ namespace KatLang;
 /// </summary>
 internal sealed class OpenProviderValidator : AstWalker
 {
-    private readonly List<Diagnostic> _diagnostics;
+    private readonly DiagnosticBag _diagnostics;
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new();
     // Each open TARGET node is reported once, however many regions reach it (by node
     // identity, never by span identity: an imported target has no span).
@@ -36,7 +36,7 @@ internal sealed class OpenProviderValidator : AstWalker
     // the site a deferred region recorded for its body.
     private SourceSpan? _importSite;
 
-    private OpenProviderValidator(List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite)
+    private OpenProviderValidator(DiagnosticBag diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite)
     {
         _diagnostics = diagnostics;
         _scope = parentScope;
@@ -53,7 +53,7 @@ internal sealed class OpenProviderValidator : AstWalker
     }
 
     /// <summary>Validates every open target of a completed program tree against the prelude-rooted chain.</summary>
-    internal static void Validate(Algorithm root, List<Diagnostic> diagnostics, HostOperations? hostOperations)
+    internal static void Validate(Algorithm root, DiagnosticBag diagnostics, HostOperations? hostOperations)
     {
         var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
         Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude), importSite: null);
@@ -63,7 +63,7 @@ internal sealed class OpenProviderValidator : AstWalker
     /// Validates a materialized deferred branch body under the chain recorded at its branch,
     /// starting from the import site the region recorded for the body.
     /// </summary>
-    internal static void Validate(Algorithm root, List<Diagnostic> diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite = null)
+    internal static void Validate(Algorithm root, DiagnosticBag diagnostics, ElaboratedPropertyScope parentScope, SourceSpan? importSite = null)
         => new OpenProviderValidator(diagnostics, parentScope, importSite).VisitAlgorithm(root);
 
     public override void VisitAlgorithm(Algorithm algorithm)

@@ -457,6 +457,28 @@ public sealed class CliApplicationTests
             result.TrimmedError);
     }
 
+    [Theory]
+    [InlineData("check")]
+    [InlineData("run")]
+    public async Task DiagnosticFlood_PrintsOneBoundedList(string command)
+    {
+        // Five thousand stray closers are five thousand diagnostics; the one list keeps the
+        // first MaxSupportedDiagnosticCount and ends with the limit marker, so neither command
+        // prints more than that however much of the file is malformed.
+        using var file = new TempSourceFile(new string(')', 5000));
+
+        var result = await Cli.InvokeAsync(command, file.Path);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        var lines = result.TrimmedError.Split('\n');
+        Assert.Equal(SourceProcessingLimits.MaxSupportedDiagnosticCount + 1, lines.Length);
+        Assert.Equal("[1:1] Unexpected ')' at the top level. There is no open '(' for it to close.", lines[0]);
+        Assert.Equal(
+            $"Diagnostic limit of {SourceProcessingLimits.MaxSupportedDiagnosticCount} diagnostics reached: later diagnostics were omitted.",
+            lines[^1]);
+    }
+
     // ── File handling ───────────────────────────────────────────────────────
 
     [Theory]

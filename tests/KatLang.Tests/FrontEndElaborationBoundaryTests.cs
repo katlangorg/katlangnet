@@ -308,7 +308,7 @@ public class FrontEndElaborationBoundaryTests
     {
         var syntaxRoot = SourceProvenance.ParseSyntaxValidRoot(IncrementLoadingProgram);
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, DownloadModule);
         var loadedOnly = await loader.ElaborateAsync(syntaxRoot);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
@@ -353,7 +353,7 @@ public class FrontEndElaborationBoundaryTests
     public async Task PartialLoadElaboration_LeavesImplicitAlgorithmReferencesUnresolved()
     {
         var syntaxRoot = SourceProvenance.ParseSyntaxValidRoot(ImplicitLoadingProgram);
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, DownloadModule);
         var loadedOnly = await loader.ElaborateAsync(syntaxRoot);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
@@ -382,7 +382,7 @@ public class FrontEndElaborationBoundaryTests
     {
         var syntaxRoot = SourceProvenance.ParseSyntaxValidRoot(LoadingProgram);
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = new ModuleLoader(diagnostics, DownloadModule);
         var loadedOnly = await loader.ElaborateAsync(syntaxRoot);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);

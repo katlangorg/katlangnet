@@ -379,6 +379,37 @@ internal static class ExprNameRenderer
         return name[..prefixLength] + TruncationMarker;
     }
 
+    /// <summary>
+    /// Bounds ONE source-derived name a front-end diagnostic echoes to the rendered-name bound,
+    /// with the same marker as a rendered name. A declaration's name echoed by every diagnostic
+    /// about its references (a clause family's name, say) would otherwise repeat the whole
+    /// identifier per reference — text quadratic in the source.
+    /// </summary>
+    internal static string BoundName(string name) => CapLeafName(name);
+
+    /// <summary>
+    /// Joins source-derived names for a front-end diagnostic within the rendered-name bound,
+    /// reading only the names it shows — so a parameter list echoed once per reference costs a
+    /// bounded amount per diagnostic, however long the list. Output that fits is byte-identical to
+    /// <c>string.Join(separator, names)</c>; longer output keeps its surrogate-safe prefix and the
+    /// marker.
+    /// </summary>
+    internal static string BoundedJoin(IEnumerable<string> names, string separator)
+    {
+        var sink = new Rendering.BoundedDiagnosticSink(MaxRenderedNameLength);
+        var first = true;
+        foreach (var name in names)
+        {
+            if (!first && !sink.Append(separator))
+                break;
+            first = false;
+            if (!sink.Append(name))
+                break;
+        }
+
+        return sink.Finish();
+    }
+
     private static string Drain(Stack<Piece> pending)
     {
         var builder = new System.Text.StringBuilder();

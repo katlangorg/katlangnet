@@ -53,7 +53,7 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordDetectorRewriteExpansion()
         => DetectorRewriteExpansions = checked(DetectorRewriteExpansions + 1);
 
-    /// <summary>Diagnostic-span search expansions (<c>ParameterDetector.FindResolveSpan</c>).</summary>
+    /// <summary>Diagnostic-span search expansions (<c>ParameterDetector.FindFirstResolveSpans</c>).</summary>
     public long DetectorSpanSearchExpansions { get; private set; }
 
     internal void RecordDetectorSpanSearchExpansion()
@@ -87,6 +87,18 @@ internal sealed class FrontEndTraversalObservations
         => ResolverRewriteExpansions = checked(ResolverRewriteExpansions + 1);
 
     /// <summary>
+    /// Closed-list forwarding verdicts the resolver COMPUTED (<c>ImplicitArgumentResolver.MissingClosedListForwardingNames</c>
+    /// behind the region memo <c>ResolverWalkMemos.MissingForwardingNames</c>): one count per callee pattern
+    /// list judged under one region's rewrite context. The gate and the blocked-forwarding report of every
+    /// further reference to that callee in the region are served from the memo and record nothing, so the
+    /// count is bounded by distinct (callee, region) pairs, never by the number of references.
+    /// </summary>
+    public long ResolverForwardingVerdicts { get; private set; }
+
+    internal void RecordResolverForwardingVerdict()
+        => ResolverForwardingVerdicts = checked(ResolverForwardingVerdicts + 1);
+
+    /// <summary>
     /// Conditional branch-body REGIONS the resolver processed (<c>ImplicitArgumentResolver.ProcessAlgorithm</c>
     /// misses of the run's algorithm region memo for bodies rewritten under a closed branch pattern): one
     /// count per branch body rewritten under one semantic region — the signature snapshot of its free
@@ -108,6 +120,18 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordResolverAlgorithmRegionExpansion()
         => ResolverAlgorithmRegionExpansions = checked(ResolverAlgorithmRegionExpansions + 1);
+
+    /// <summary>
+    /// Visible-parameter contexts the collision validator interned by their name-set CONTENT key
+    /// (<c>ParameterPropertyCollisionValidator.ContextId</c>): one count per bindings instance, whose key
+    /// text is hashed exactly once. Every node visit under that instance compares an integer context id,
+    /// so the count is bounded by the contexts the walk extends, never by the nodes it visits (hashing the
+    /// key — every name in scope — at each node made a P-parameter body quadratic).
+    /// </summary>
+    public long CollisionContextInterns { get; private set; }
+
+    internal void RecordCollisionContextIntern()
+        => CollisionContextInterns = checked(CollisionContextInterns + 1);
 
     /// <summary>Exposure rewrite expansions (<c>PropertyExposureResolver.RewriteExpr</c>).</summary>
     public long ExposureRewriteExpansions { get; private set; }

@@ -777,7 +777,9 @@ public class RootStrayCloserRecoveryTests
         var closers = string.Concat(Enumerable.Range(0, count).Select(i => i % 2 == 0 ? ")" : "}"));
         var source = $"Before = 1\n{closers}\nAfter = 2\nAfter";
 
-        var parsed = Parser.ParseSyntax(source);
+        // The recovery law — one diagnostic per stray token — observed on a bag large enough to
+        // store every report.
+        var parsed = Parser.ParseSyntax(source, new DiagnosticBag(count));
 
         Assert.Equal(count, parsed.Diagnostics.Count);
         for (var i = 0; i < count; i++)
@@ -786,6 +788,16 @@ public class RootStrayCloserRecoveryTests
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         Assert.Equal(new[] { "Before", "After" }, root.Properties.Select(p => p.Name));
         Assert.Equal("After", Assert.IsType<Expr.Resolve>(Assert.Single(root.Output)).Name);
+
+        // Under the default budget every token is still REPORTED, the list keeps exactly the
+        // first MaxSupportedDiagnosticCount of those diagnostics, then one marker — and the
+        // recovery tree is the same.
+        var bounded = Parser.ParseSyntax(source);
+        Assert.Equal(count, bounded.Diagnostics.ReportedCount);
+        Assert.Equal(SourceProcessingLimits.MaxSupportedDiagnosticCount + 1, bounded.Diagnostics.Count);
+        Assert.Equal(parsed.Diagnostics.Take(SourceProcessingLimits.MaxSupportedDiagnosticCount), bounded.Diagnostics.Take(SourceProcessingLimits.MaxSupportedDiagnosticCount));
+        Assert.Equal(DiagnosticCode.DiagnosticCountExceeded, bounded.Diagnostics[^1].Code);
+        Assert.Equal(root.Properties.Select(p => p.Name), bounded.Root.Properties.Select(p => p.Name));
     }
 
     [Fact]
@@ -799,7 +811,8 @@ public class RootStrayCloserRecoveryTests
             var observations = new ParserTraversalObservations();
             var closers = string.Concat(Enumerable.Repeat(")}", k / 2));
             var result = Parser.ParseSyntaxObserved($"Before = 1\n{closers}\nAfter = 2\nAfter", observations);
-            Assert.Equal(k, result.Diagnostics.Count);
+            // Every closer is reported; the bounded list stores only the first ones.
+            Assert.Equal(k, result.Diagnostics.ReportedCount);
             Assert.True(observations.TokenSteps >= k, "The observer must count consumed tokens; zero steps cannot prove linearity.");
             return observations.TokenSteps;
         }

@@ -162,6 +162,7 @@ public sealed class KatLangError
             DiagnosticCode.InvalidNumberLiteral => KatLangErrorCode.InvalidNumberLiteral,
             DiagnosticCode.IllegalInOpen => KatLangErrorCode.IllegalInOpen,
             DiagnosticCode.UnresolvedOpenTarget => KatLangErrorCode.UnresolvedOpenTarget,
+            DiagnosticCode.DiagnosticCountExceeded => KatLangErrorCode.DiagnosticCountExceeded,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

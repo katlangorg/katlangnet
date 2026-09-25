@@ -89,7 +89,7 @@ public class DeferredRegionAttachmentTests
 
     private static Algorithm.User Resolve(Algorithm tree)
     {
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(tree, diagnostics: diagnostics);
         Assert.Empty(diagnostics);
         return Assert.IsType<Algorithm.User>(resolved);
@@ -97,7 +97,7 @@ public class DeferredRegionAttachmentTests
 
     private static Algorithm.User Validate(Algorithm.User tree)
     {
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: tree).VisitAlgorithm(tree);
         Assert.Empty(diagnostics);
         return tree;
@@ -107,7 +107,7 @@ public class DeferredRegionAttachmentTests
 
     private static async Task<Algorithm.User> LoadAsync(Algorithm root, CountingModules modules)
     {
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loaded = await new ModuleLoader(diagnostics, modules.Download).ElaborateAsync(root);
         Assert.Empty(diagnostics);
         return Assert.IsType<Algorithm.User>(loaded);
@@ -537,7 +537,7 @@ public class DeferredRegionAttachmentTests
         var firstPlaceholder = Placeholder(first);
         var firstRegion = RegionOf(firstPlaceholder);
 
-        var secondDiagnostics = new List<Diagnostic>();
+        var secondDiagnostics = new DiagnosticBag();
         var secondLoader = new ModuleLoader(secondDiagnostics, modules.Download);
         var second = await secondLoader.ElaborateAsync(first);
         Assert.Empty(secondDiagnostics);

@@ -317,41 +317,49 @@ internal sealed class DeferredModuleRegion
                     return EvalResult<Algorithm>.Ok(ready);
 
                 Interlocked.Increment(ref _materializationAttempts);
-                var diagnostics = new List<Diagnostic>();
+                // One materialization is one operation with its own bounded diagnostic list —
+                // the one this evaluation's error reports; nothing accumulates across attempts.
+                var diagnostics = Loader.CreateDiagnosticBag();
                 var loaded = await Loader.LoadDeferredRegionAsync(this, diagnostics, cancellationToken).ConfigureAwait(false);
-                if (!HasErrors(diagnostics))
+                if (!diagnostics.HasReportedErrors)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var observations = Loader.TraversalObservations;
-                    var parameterDiagnosticStart = diagnostics.Count;
                     var origins = new ImplicitArgumentResolver.ResolutionOrigins();
+                    // Detection and resolution report into STAGES committed once ownership
+                    // completion has decided they stand, exactly as the eager pipeline does.
                     // Every demand-time pass starts from the import site the region recorded:
                     // a diagnostic raised against module content — which carries no source
                     // location — is positioned at the site the current document wrote.
+                    var parameterDiagnostics = diagnostics.CreateStage();
                     var detected = ParameterDetector.ElaborateDeferredBranch(
-                        loaded, Detection!, diagnostics, observations, origins.Grace, ImportSite);
+                        loaded, Detection!, parameterDiagnostics, observations, origins.Grace, ImportSite);
                     cancellationToken.ThrowIfCancellationRequested();
+                    var implicitDiagnostics = diagnostics.CreateStage();
                     var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                        detected, Resolution!, diagnostics, observations, origins, importSite: ImportSite);
+                        detected, Resolution!, implicitDiagnostics, observations, origins, importSite: ImportSite);
                     if (origins.HasLiftedParameters)
                     {
                         var completed = ParameterDetector.CompleteOwnership(
-                            resolved, origins, branchContext: Detection!, observations: observations, importSite: ImportSite);
+                            resolved, origins, branchContext: Detection!, observations: observations, importSite: ImportSite,
+                            diagnostics: diagnostics.CreateStage());
                         if (completed.Changed)
                         {
-                            diagnostics.RemoveRange(parameterDiagnosticStart, diagnostics.Count - parameterDiagnosticStart);
-                            diagnostics.AddRange(completed.Diagnostics);
+                            parameterDiagnostics = completed.Diagnostics;
+                            implicitDiagnostics = diagnostics.CreateStage();
                             resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                                completed.Root, Resolution!, diagnostics, observations, preserveSignatures: true, importSite: ImportSite);
+                                completed.Root, Resolution!, implicitDiagnostics, observations, preserveSignatures: true, importSite: ImportSite);
                         }
                     }
+                    diagnostics.AddRange(parameterDiagnostics);
+                    diagnostics.AddRange(implicitDiagnostics);
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!HasErrors(diagnostics))
+                    if (!diagnostics.HasReportedErrors)
                     {
                         new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
                         OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);
                     }
-                    if (!HasErrors(diagnostics))
+                    if (!diagnostics.HasReportedErrors)
                     {
                         var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations);
                         lock (_runLock)
@@ -367,7 +375,8 @@ internal sealed class DeferredModuleRegion
                     }
                 }
 
-                return EvalError.ModuleRegionMaterializationFailed.From(diagnostics);
+                // The evaluation's error keeps a read-only snapshot of the bounded list.
+                return EvalError.ModuleRegionMaterializationFailed.From(Array.AsReadOnly(diagnostics.ToArray()));
             }
             finally
             {
@@ -385,17 +394,6 @@ internal sealed class DeferredModuleRegion
                     run.Cancellation.Dispose();
             }
         }
-    }
-
-    private static bool HasErrors(List<Diagnostic> diagnostics)
-    {
-        foreach (var diagnostic in diagnostics)
-        {
-            if (diagnostic.Severity == DiagnosticSeverity.Error)
-                return true;
-        }
-
-        return false;
     }
 
     // ── Routing helpers (stateless) ─────────────────────────────────────────

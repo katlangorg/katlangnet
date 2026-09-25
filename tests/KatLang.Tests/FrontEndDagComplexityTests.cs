@@ -66,7 +66,7 @@ public class FrontEndDagComplexityTests
                     Properties = [new Property("Left", EmptyAlgorithm(new Expr.AlgorithmExpr(shared))),
                         new Property("Right", EmptyAlgorithm(new Expr.AlgorithmExpr(shared)))],
                 };
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             OpenProviderValidator.Validate(shared, diagnostics, (HostOperations?)null);
             Assert.Empty(diagnostics);
         });
@@ -488,9 +488,10 @@ public class FrontEndDagComplexityTests
         });
 
     /// <summary>
-    /// A diagnostic-span search for `target` must prove the preceding shared diamond contains
-    /// no such name without expanding its 2^depth paths. The first diagnostic searches for the
-    /// diamond's own `other` name; the second is the discriminating no-hit traversal.
+    /// The diagnostic-span search must prove the preceding shared diamond holds no `target`
+    /// without expanding its 2^depth paths. One walk finds the first span of EVERY undeclared
+    /// name (`other` inside the diamond, `target` after it), expanding each distinct node once —
+    /// searching once per name was quadratic in a body of many undeclared names.
     /// </summary>
     [Fact]
     public Task Detector_ExplicitDiagnosticSpanSearch_IsBoundedAcrossSharedNoHitSubtree()
@@ -515,8 +516,71 @@ public class FrontEndDagComplexityTests
             Assert.Equal(2, diagnostics.Count);
             Assert.Contains(diagnostics, d => d.Message.Contains("other"));
             Assert.Contains(diagnostics, d => d.Message.Contains("target"));
-            Assert.Equal(2 * depth, observations.DetectorSpanSearchExpansions);
+            Assert.Equal(depth, observations.DetectorSpanSearchExpansions);
         });
+
+    /// <summary>
+    /// Reporting the undeclared names of one closed body finds every first span in ONE walk: a
+    /// body of K rows, each naming its own undeclared name inside an operator, expands each row
+    /// once. Searching once per name expanded every row before that name's own (K²/2 in all), so
+    /// a large body of undeclared names cost time quadratic in its size.
+    /// </summary>
+    [Fact]
+    public void Detector_UndeclaredNameSpans_AreFoundInOneWalk()
+    {
+        const int names = 400;
+        var source = "F(x) = " + string.Join(", ", Enumerable.Range(0, names).Select(i => $"u{i} + 1")) + "\n1";
+        var syntax = Parser.ParseSyntax(source);
+        Assert.False(syntax.HasErrors);
+        var observations = new FrontEndTraversalObservations();
+
+        var (_, diagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root, null, observations);
+
+        var undeclared = diagnostics.Where(d => d.Code == DiagnosticCode.UndeclaredIdentifier).ToArray();
+        Assert.Equal(names, undeclared.Length);
+        for (var i = 0; i < names; i++)
+        {
+            Assert.Contains($"'u{i}'", undeclared[i].Message);
+            var start = undeclared[i].Span!.Value.Start;
+            Assert.Equal(1, start.Line);
+            Assert.Equal($"u{i}", source.Substring(start.Column - 1, $"u{i}".Length));
+        }
+
+        Assert.Equal(names, observations.DetectorSpanSearchExpansions);
+    }
+
+    /// <summary>
+    /// Every blocked reference to one callable under one closed list asks the same forwarding
+    /// question, and the region answers it once: K references to a callable of L implicit
+    /// parameters cost ONE verdict. Answering per reference scanned all L captures twice per
+    /// reference (gate and report) and deduplicated the blamed names by list scan — cubic in a
+    /// body of many references to a wide callable (64 KB of source took 215 s).
+    /// </summary>
+    [Fact]
+    public void Resolver_BlockedForwardingVerdict_IsComputedOncePerCalleeAndRegion()
+    {
+        const int parameters = 300;
+        const int references = 200;
+        var source =
+            "G = " + string.Join(", ", Enumerable.Range(0, parameters).Select(i => $"v{i}")) + "\n" +
+            "H(q) = " + string.Join(", ", Enumerable.Repeat("abs(G)", references)) + "\n1";
+        var syntax = Parser.ParseSyntax(source);
+        Assert.False(syntax.HasErrors);
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
+        Assert.Empty(detectorDiagnostics);
+        var observations = new FrontEndTraversalObservations();
+        var diagnostics = new DiagnosticBag();
+
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+
+        Assert.Equal(references, diagnostics.Count);
+        Assert.All(diagnostics, d =>
+        {
+            Assert.Equal(DiagnosticCode.UndeclaredIdentifier, d.Code);
+            Assert.Contains("'G' is required as a value here, but producing that value needs the implicit parameters 'v0', 'v1', ", d.Message);
+        });
+        Assert.Equal(1, observations.ResolverForwardingVerdicts);
+    }
 
     [Fact]
     public Task DetectorAndResolver_OpenDiamond_RewriteEachDistinctNodeOnceAndPreserveSharing()
@@ -1219,7 +1283,7 @@ public class FrontEndDagComplexityTests
     // ── 5. ModuleLoader ─────────────────────────────────────────────────────
 
     private static ModuleLoader CreateLoader(
-        List<Diagnostic> diagnostics,
+        DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
         Func<string, CancellationToken, ValueTask<string>>? downloader = null)
         => new(diagnostics, downloader ?? ((url, ct) => ValueTask.FromResult("public X = 1")))
@@ -1234,7 +1298,7 @@ public class FrontEndDagComplexityTests
         => AssertCompletesUnderWallClockGuard(async () =>
         {
             var observations = new FrontEndTraversalObservations();
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics, observations);
 
             var elaborated = await loader.ElaborateAsync(EmptyAlgorithm(BinaryDiamond(depth, new Expr.Num(1))));
@@ -1251,7 +1315,7 @@ public class FrontEndDagComplexityTests
     public Task Loader_NearCeilingDiamond_Completes()
         => AssertCompletesUnderWallClockGuard(async () =>
         {
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics);
 
             var elaborated = await loader.ElaborateAsync(
@@ -1276,7 +1340,7 @@ public class FrontEndDagComplexityTests
         {
             var downloads = 0;
             var observations = new FrontEndTraversalObservations();
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics, observations, (url, ct) =>
             {
                 downloads++;
@@ -1310,7 +1374,7 @@ public class FrontEndDagComplexityTests
         => AssertCompletesUnderWallClockGuard(async () =>
         {
             var downloads = 0;
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics, observations: null, (url, ct) =>
             {
                 downloads++;
@@ -1437,7 +1501,7 @@ public class FrontEndDagComplexityTests
             AssertFamilyDiamondSharingPreserved(detected, depth);
 
             var resolverObservations = new FrontEndTraversalObservations();
-            var resolverDiagnostics = new List<Diagnostic>();
+            var resolverDiagnostics = new DiagnosticBag();
             var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations, resolverDiagnostics);
             Assert.Empty(resolverDiagnostics);
             Assert.Equal(depth, resolverObservations.ResolverBranchBodyRegionExpansions);
@@ -1572,7 +1636,7 @@ public class FrontEndDagComplexityTests
         var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
         Assert.Empty(detectorDiagnostics);
         var observations = new FrontEndTraversalObservations();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
 
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
 
@@ -1608,7 +1672,7 @@ public class FrontEndDagComplexityTests
         var root = new Algorithm.User(null, [], [], reversed ? [p, right, left] : [p, left, right], OutputBundle.Empty);
         var (detected, _) = ParameterDetector.DetectPrevalidated(root);
         var observations = new FrontEndTraversalObservations();
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
 
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
 
@@ -1699,7 +1763,7 @@ public class FrontEndDagComplexityTests
             Assert.Empty(detectorDiagnostics);
             var observations = new FrontEndTraversalObservations();
 
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new List<Diagnostic>());
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new DiagnosticBag());
 
             // Leaf's value and the depth + 1 diamond values, each once.
             Assert.Equal(depth + 2, observations.ResolverAlgorithmRegionExpansions);
@@ -1738,7 +1802,7 @@ public class FrontEndDagComplexityTests
             var (detected, _) = ParameterDetector.DetectPrevalidated(root);
             var observations = new FrontEndTraversalObservations();
 
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new List<Diagnostic>());
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new DiagnosticBag());
 
             // Two blocks, two leaf values, and the depth + 1 diamond values once per observation.
             Assert.Equal(2 * (depth + 1) + 4, observations.ResolverAlgorithmRegionExpansions);
@@ -1934,7 +1998,7 @@ public class FrontEndDagComplexityTests
         => AssertCompletesUnderWallClockGuard(async () =>
         {
             var observations = new FrontEndTraversalObservations();
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics, observations);
             var root = new Algorithm.User(
                 null,
@@ -1975,7 +2039,7 @@ public class FrontEndDagComplexityTests
         var captureDiamond = (Expr)sharedLoad;
         for (var i = 0; i < ShallowDepth; i++)
             captureDiamond = new Expr.Capture(new OutputBundle([captureDiamond, captureDiamond]));
-        var sharedDiagnostics = new List<Diagnostic>();
+        var sharedDiagnostics = new DiagnosticBag();
         var sharedLoader = CreateLoader(sharedDiagnostics, downloader: countingDownloader);
         var sharedRoot = new Algorithm.User(
             null, [], [], [new Property("Mod", EmptyAlgorithm(captureDiamond))], OutputBundle.Empty);
@@ -1991,7 +2055,7 @@ public class FrontEndDagComplexityTests
         // Two DISTINCT load nodes with the same URL: still one download (URL cache), but two
         // independent splice sites producing two wrappers over the one cached module.
         downloads = 0;
-        var distinctDiagnostics = new List<Diagnostic>();
+        var distinctDiagnostics = new DiagnosticBag();
         var distinctLoader = CreateLoader(distinctDiagnostics, downloader: countingDownloader);
         var distinctRoot = new Algorithm.User(
             null,
@@ -2034,7 +2098,7 @@ public class FrontEndDagComplexityTests
         for (var i = 0; i < deepCaptureCount; i++)
             deepOccurrence = new Expr.Capture(new OutputBundle([deepOccurrence]));
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loader = CreateLoader(diagnostics, downloader: downloader);
         var propertyValue = EmptyAlgorithm(deepOccurrence, sharedLoad);
         var root = new Algorithm.User(
@@ -2077,9 +2141,9 @@ public class FrontEndDagComplexityTests
         for (var i = 0; i < depth; i++)
             dagPayload = new Expr.Capture(new OutputBundle([dagPayload, dagPayload]));
 
-        static async Task<(Algorithm Elaborated, List<Diagnostic> Diagnostics)> Elaborate(Expr payload)
+        static async Task<(Algorithm Elaborated, DiagnosticBag Diagnostics)> Elaborate(Expr payload)
         {
-            var diagnostics = new List<Diagnostic>();
+            var diagnostics = new DiagnosticBag();
             var loader = CreateLoader(diagnostics);
             var root = new Algorithm.User(
                 null, [], [], [new Property("Mod", EmptyAlgorithm(payload))], OutputBundle.Empty);

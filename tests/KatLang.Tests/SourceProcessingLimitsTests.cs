@@ -108,6 +108,13 @@ public class SourceProcessingLimitsTests
     public void MaxModuleCount_ZeroOrNegative_Throws(int value)
         => Assert.Throws<ArgumentOutOfRangeException>(() => new SourceProcessingLimits { MaxModuleCount = value });
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void MaxDiagnosticCount_ZeroOrNegative_Throws(int value)
+        => Assert.Throws<ArgumentOutOfRangeException>(() => new SourceProcessingLimits { MaxDiagnosticCount = value });
+
     [Fact]
     public void ValuesAboveCeiling_AreClampedToCeiling()
     {
@@ -117,21 +124,30 @@ public class SourceProcessingLimitsTests
             MaxModuleDepth = int.MaxValue,
             MaxAggregateSourceLength = long.MaxValue,
             MaxModuleCount = int.MaxValue,
+            MaxDiagnosticCount = int.MaxValue,
         };
         Assert.Equal(SourceProcessingLimits.MaxSupportedSourceLength, limits.EffectiveMaxSourceLength);
         Assert.Equal(SourceProcessingLimits.MaxSupportedModuleDepth, limits.EffectiveMaxModuleDepth);
         Assert.Equal(SourceProcessingLimits.MaxSupportedAggregateSourceLength, limits.EffectiveMaxAggregateSourceLength);
         Assert.Equal(SourceProcessingLimits.MaxSupportedModuleCount, limits.EffectiveMaxModuleCount);
+        Assert.Equal(SourceProcessingLimits.MaxSupportedDiagnosticCount, limits.EffectiveMaxDiagnosticCount);
+
+        // An above-ceiling request cannot enlarge the list either.
+        var flood = Parser.Parse(new string('@', 3000), new RunOptions { SourceProcessingLimits = limits });
+        Assert.Equal(SourceProcessingLimits.MaxSupportedDiagnosticCount + 1, flood.Diagnostics.Count);
     }
 
     [Fact]
     public void Defaults_AreTheSupportedCeilings()
     {
         Assert.Null(SourceProcessingLimits.Default.MaxSourceLength);
+        Assert.Null(SourceProcessingLimits.Default.MaxDiagnosticCount);
         Assert.Equal(SourceProcessingLimits.MaxSupportedSourceLength, SourceProcessingLimits.Default.EffectiveMaxSourceLength);
         Assert.Equal(SourceProcessingLimits.MaxSupportedModuleDepth, SourceProcessingLimits.Default.EffectiveMaxModuleDepth);
         Assert.Equal(SourceProcessingLimits.MaxSupportedAggregateSourceLength, SourceProcessingLimits.Default.EffectiveMaxAggregateSourceLength);
         Assert.Equal(SourceProcessingLimits.MaxSupportedModuleCount, SourceProcessingLimits.Default.EffectiveMaxModuleCount);
+        Assert.Equal(SourceProcessingLimits.MaxSupportedDiagnosticCount, SourceProcessingLimits.Default.EffectiveMaxDiagnosticCount);
+        Assert.Equal(1000, SourceProcessingLimits.MaxSupportedDiagnosticCount);
     }
 
     [Fact]
@@ -143,11 +159,13 @@ public class SourceProcessingLimitsTests
             MaxModuleDepth = 3,
             MaxAggregateSourceLength = 20,
             MaxModuleCount = 2,
+            MaxDiagnosticCount = 4,
         };
         Assert.Equal(10, limits.EffectiveMaxSourceLength);
         Assert.Equal(3, limits.EffectiveMaxModuleDepth);
         Assert.Equal(20L, limits.EffectiveMaxAggregateSourceLength);
         Assert.Equal(2, limits.EffectiveMaxModuleCount);
+        Assert.Equal(4, limits.EffectiveMaxDiagnosticCount);
     }
 
     // ── main source length: below / at / above ─────────────────────────────────
@@ -502,19 +520,35 @@ public class SourceProcessingLimitsTests
     }
 
     [Fact]
-    public void CachedRepeatedModule_IsChargedOnceAtAggregateBoundary()
+    public void CachedRepeatedModule_IsDownloadedOnce_ButEverySpliceChargesTheAggregate()
     {
+        // A cached module downloads once, but the front end elaborates every splice of it again
+        // (module content resolves against the scope it is spliced into), so each further splice
+        // charges the module's elaborated weight — here its own source — against the aggregate.
         var url = $"{Host}cached-aggregate";
         var source = $"public A = load('{url}')\npublic B = load('{url}')\n1";
         const string module = "public V = 1";
         var fetches = 0;
 
-        var parsed = Parse(
+        var atLimit = Parse(
             source,
-            new SourceProcessingLimits { MaxAggregateSourceLength = source.Length + module.Length },
+            new SourceProcessingLimits { MaxAggregateSourceLength = source.Length + 2 * module.Length },
             _ => { fetches++; return module; });
 
-        Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
+        Assert.False(atLimit.HasErrors, string.Join(Environment.NewLine, atLimit.Diagnostics.Select(d => d.Message)));
+        Assert.Equal(1, fetches);
+
+        fetches = 0;
+        var overLimit = Parse(
+            source,
+            new SourceProcessingLimits { MaxAggregateSourceLength = source.Length + 2 * module.Length - 1 },
+            _ => { fetches++; return module; });
+
+        var error = Assert.Single(overLimit.Diagnostics);
+        Assert.Equal(DiagnosticCode.AggregateSourceLengthExceeded, error.Code);
+        Assert.Contains($"splicing the already loaded '{url}' again ({module.Length} UTF-16 code units of elaborated module source)", error.Message);
+        Assert.Contains($"total source to {source.Length + 2 * module.Length} UTF-16 code units", error.Message);
+        Assert.Equal(2, error.Span!.Value.Start.Line);
         Assert.Equal(1, fetches);
     }
 

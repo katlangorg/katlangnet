@@ -789,8 +789,8 @@ public class SameLineSeparatorTests
             var sampleTokens = Lexer.Tokenize(sample).Tokens;
             Assert.Equal(kind, sampleTokens[0].Kind);
             Assert.Equal(startsPattern, Assert.IsType<bool>(classify.Invoke(null, [kind])));
-            var atomDiagnostics = new List<Diagnostic>();
-            var parser = constructor.Invoke([sampleTokens, atomDiagnostics, null]);
+            var atomDiagnostics = new DiagnosticBag();
+            var parser = constructor.Invoke([sampleTokens, atomDiagnostics, Array.Empty<SourcePosition>(), null]);
             Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
             // Comments are transparent to Current, so a comment-only stream
             // reaches the ordinary EOF recovery arm. A bad token is skipped the same

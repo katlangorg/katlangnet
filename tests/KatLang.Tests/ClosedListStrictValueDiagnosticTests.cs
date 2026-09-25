@@ -570,7 +570,7 @@ public class ClosedListStrictValueDiagnosticTests
             [new Property("A", parameterized), new Property("F", closedCaller)],
             []);
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root, observations: null, diagnostics);
 
         Assert.Single(diagnostics);
@@ -617,7 +617,7 @@ public class ClosedListStrictValueDiagnosticTests
             [new Property("A", parameterized), new Property("F", closedCaller)],
             []);
 
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root, observations: null, diagnostics);
 
         Assert.Single(diagnostics);

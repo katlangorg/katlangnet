@@ -1096,7 +1096,7 @@ public class BranchLazyModuleLoadingTests
         {
             Properties = [property, new Property("Box", new Algorithm.User(null, [], [], [property], OutputBundle.Empty))],
         };
-        var diagnostics = new List<Diagnostic>();
+        var diagnostics = new DiagnosticBag();
         var loaded = await new ModuleLoader(diagnostics, modules.Download).ElaborateAsync(root);
         var (detected, detectionDiagnostics) = ParameterDetector.Detect(loaded);
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
@@ -1287,15 +1287,24 @@ public class BranchLazyModuleLoadingTests
         IDisposable Enter(string name, params object[] args)
             => (IDisposable)typeof(ModuleLoader).GetMethod(name,
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(loader, args)!;
+        // A walk frame's splice ledger is part of the context each scope installs and restores.
+        object NewLedger()
+            => Activator.CreateInstance(
+                typeof(ModuleLoader).GetNestedType("SpliceLedger", System.Reflection.BindingFlags.NonPublic)!,
+                nonPublic: true)!;
 
         using var tokenSource = new CancellationTokenSource();
-        var outer = Enter("EnterMaterializationContext", new List<Diagnostic>(), 7, null!, tokenSource.Token);
+        var outerLedger = NewLedger();
+        var outer = Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, outerLedger, tokenSource.Token);
         var outerContext = loader.WalkContext;
+        Assert.Same(outerLedger, outerContext.SpliceLedger);
         var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
         Assert.Throws<OperationCanceledException>((Action)(() =>
         {
-            using var inner = Enter("EnterNestedTraversal", 19, new SourceSpan(3, 1, 3, 5));
+            var innerLedger = NewLedger();
+            using var inner = Enter("EnterNestedTraversal", 19, new SourceSpan(3, 1, 3, 5), innerLedger);
             var innerContext = loader.WalkContext;
+            Assert.Same(innerLedger, innerContext.SpliceLedger);
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(innerContext, loader.WalkContext);
             throw new OperationCanceledException();
@@ -1303,7 +1312,7 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(outerContext, loader.WalkContext);
         outer.Dispose();
         Assert.Equal(original, loader.WalkContext);
-        using (Enter("EnterMaterializationContext", new List<Diagnostic>(), 23, new SourceSpan(5, 1, 5, 3), tokenSource.Token))
+        using (Enter("EnterMaterializationContext", new DiagnosticBag(), 23, new SourceSpan(5, 1, 5, 3), NewLedger(), tokenSource.Token))
         {
             var later = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
@@ -1328,7 +1337,7 @@ public class BranchLazyModuleLoadingTests
     private static void AssertWalkContextAtElaborationDefaults(
         ParseResult parsed, DeferredModuleRegion region, object elaborationSink)
     {
-        var (sink, nestedTraversalBase, cancellationToken, importSite) = region.Loader.WalkContext;
+        var (sink, nestedTraversalBase, cancellationToken, importSite, _) = region.Loader.WalkContext;
         Assert.Same(elaborationSink, sink);
         Assert.NotSame(parsed.Diagnostics, sink);
         Assert.Equal(parsed.Diagnostics, Assert.IsAssignableFrom<IReadOnlyList<Diagnostic>>(sink));

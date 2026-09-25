@@ -281,4 +281,11 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnresolvedOpenTarget"/>.</summary>
     UnresolvedOpenTarget = 67,
+
+    /// <summary>
+    /// Front-end <see cref="DiagnosticCode.DiagnosticCountExceeded"/>: the error list is
+    /// incomplete because the operation reported more diagnostics than
+    /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> allows one list to keep.
+    /// </summary>
+    DiagnosticCountExceeded = 68,
 }
