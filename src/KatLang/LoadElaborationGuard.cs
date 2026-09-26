@@ -46,14 +46,18 @@ internal static class LoadElaborationGuard
     }
 
     /// <summary>
-    /// The invariant-violation diagnostic, positioned at the offending load call when it has
-    /// a span of its own, otherwise at <paramref name="importSite"/> — the site, in the
-    /// current document, of the module content the call lies in (module content carries no
-    /// locations) — and otherwise unpositioned.
+    /// The invariant-violation diagnostic, positioned at the offending load call — the first
+    /// unresolved one that is not among <paramref name="refusedLoads"/> — when it has a span of
+    /// its own, otherwise at <paramref name="importSite"/> — the site, in the current document,
+    /// of the module content the call lies in (module content carries no locations) — and
+    /// otherwise unpositioned.
     /// </summary>
-    internal static Diagnostic CreatePostElaborationInvariantDiagnostic(Algorithm root, SourceSpan? importSite = null)
+    internal static Diagnostic CreatePostElaborationInvariantDiagnostic(
+        Algorithm root,
+        IReadOnlySet<Expr>? refusedLoads = null,
+        SourceSpan? importSite = null)
     {
-        TryFindFirstUnresolvedLoad(root, out var span);
+        FindFirstUnresolvedLoad(root, refusedLoads, out var span);
         return new Diagnostic(
             PostElaborationInvariantDiagnostic,
             DiagnosticSeverity.Error,
@@ -63,21 +67,26 @@ internal static class LoadElaborationGuard
         };
     }
 
-    internal static void ThrowIfUnresolvedLoad(Algorithm root, string phaseName)
-    {
-        if (!TryFindFirstUnresolvedLoad(root, out _))
-            return;
-
-        throw new InvalidOperationException(
-            $"{phaseName} requires module-elaborated AST. Unresolved load syntax should not reach this phase after a successful public parse.");
-    }
-
     internal static bool TryFindFirstUnresolvedLoad(Algorithm root, out SourceSpan? span)
+        => FindFirstUnresolvedLoad(root, refusedLoads: null, out span);
+
+    /// <summary>
+    /// Whether the tree carries an unresolved load directive, outside deferred regions, that
+    /// module elaboration did NOT refuse — a load its traversal never reached, the
+    /// post-elaboration invariant violation. A refused directive (see
+    /// <c>ModuleLoader.RefusedLoads</c>) was reported at its site and deliberately left in
+    /// place as written; it is opaque here, its arguments included, because the loader refused
+    /// the whole written construct.
+    /// </summary>
+    internal static bool TryFindFirstUnresolvedLoad(Algorithm root, IReadOnlySet<Expr> refusedLoads, out SourceSpan? span)
+        => FindFirstUnresolvedLoad(root, refusedLoads, out span);
+
+    private static bool FindFirstUnresolvedLoad(Algorithm root, IReadOnlySet<Expr>? refusedLoads, out SourceSpan? span)
     {
         var found = false;
         SourceSpan? firstSpan = null;
 
-        VisitLoads(root, candidateSpan =>
+        VisitLoads(root, observations: null, refusedLoads, candidateSpan =>
         {
             if (found)
                 return;
@@ -90,18 +99,22 @@ internal static class LoadElaborationGuard
         return found;
     }
 
-    private static void VisitLoads(Algorithm root, Action<SourceSpan?> onLoad)
-        => VisitLoads(root, observations: null, onLoad);
-
     private static void VisitLoads(
         Algorithm root,
         FrontEndTraversalObservations? observations,
         Action<SourceSpan?> onLoad)
+        => VisitLoads(root, observations, refusedLoads: null, onLoad);
+
+    private static void VisitLoads(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        IReadOnlySet<Expr>? refusedLoads,
+        Action<SourceSpan?> onLoad)
     {
-        new LoadWalker(onLoad) { TraversalObservations = observations }.VisitAlgorithm(root);
+        new LoadWalker(onLoad, refusedLoads) { TraversalObservations = observations }.VisitAlgorithm(root);
     }
 
-    private sealed class LoadWalker(Action<SourceSpan?> onLoad) : AstWalker
+    private sealed class LoadWalker(Action<SourceSpan?> onLoad, IReadOnlySet<Expr>? refusedLoads) : AstWalker
     {
         // A load directive is an EXPRESSION (a `load('url')` call, or the `open 'url'` sugar
         // that lowers to one), so this walk inspects expression nodes only: a parameter
@@ -110,8 +123,8 @@ internal static class LoadElaborationGuard
         // behavior-preserving — and it is what keeps the guard LINEAR on a wide assignment
         // deconstruction: the N synthetic helpers share ONE N-declaration list, so iterating it
         // once per helper was N² no-op visits. The same walker serves the sync/no-downloader
-        // pipeline, the async post-elaboration invariant, deferred-branch materialization,
-        // and semantic-model building. Pinned by the walker-step
+        // pipeline, the async post-elaboration invariant, and deferred-branch
+        // materialization. Pinned by the walker-step
         // observations in `WideDeconstructionScalabilityTests` and, for every library walker,
         // by `AstWalkerDeclarationVisitPolicyTests`.
         protected override bool VisitsExplicitParameterDeclarations => false;
@@ -163,6 +176,11 @@ internal static class LoadElaborationGuard
 
             if (expr.TryGetUnresolvedLoadArguments(out var args))
             {
+                // A directive module elaboration refused stays in place as written; its
+                // failure is already reported, so it is neither a violation nor searched.
+                if (refusedLoads?.Contains(expr) == true)
+                    return;
+
                 onLoad(expr.Span);
                 foreach (var argExpr in args)
                     VisitExpr(argExpr);

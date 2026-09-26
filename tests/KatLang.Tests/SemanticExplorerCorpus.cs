@@ -438,6 +438,14 @@ public static class SemanticExplorerCorpus
         Special("chainErrorAfterFalse", "3 < 2 < 1 / 0"),
         Special("chainPropertyOperands", "P = 2\n1 < P < 3, P == P == 2"),
         Special("chainCallOperands", "F(x) = x + 1\nF(0) < F(1) < F(2)"),
+        // The comparison-chain hostile audit (September 2026): the chains a downstream review's
+        // "`a < b == c` is false" wording questioned. Each one's value differs from the
+        // left-associated reading `(a op b) op c` (a different Boolean, or an ordering rejection),
+        // so the derived Lean guard pins adjacent-pair semantics on the parsed chain itself.
+        Special("chainLtThenEq", "1 < 2 == 2"),
+        Special("chainLtThenGt", "1 < 2 > 1"),
+        Special("chainNeThenLt", "1 != 2 < 3"),
+        Special("chainFalseFirstThenEqFalse", "2 < 1 == false"),
         Special("strCount", "count('ab')"),
         Special("strCapture", "x = 'ab'\nx"),
         // Exact list values: spread inside list literals, list/sequence kind

@@ -57,7 +57,8 @@ internal sealed record EditorReport(
 /// exposes.</para>
 ///
 /// <para>The goal is NOT to make difficult source resolve. A structured "no result", an ordinary
-/// diagnostic, or a declined unresolved-load request is a perfectly good outcome. What must never
+/// diagnostic, or a model over an unavailable module (an unresolved <c>load</c>, whose names the
+/// model classifies as indeterminate) is a perfectly good outcome. What must never
 /// happen is an unexpected exception, an out-of-range or self-inconsistent span, a resolution to a
 /// differently named or non-existent symbol, an invented or synthetic symbol, a non-deterministic
 /// result, stale source surviving a request boundary, or a contradictory metamorphic projection.</para>
@@ -93,11 +94,8 @@ internal static class EditorInvariants
         var (cursorLine, cursorColumn) = EditorCursor.QueryPosition(parameters, testCase.Source, testCase.CursorOffset);
 
         phase = EditorPhase.ModelInvariants;
-        if (baseResult.Model is { } model)
-        {
-            EditorModel.ValidateModel(testCase.Source, model);
-            EditorSurfaces.CheckCoreInvariants(testCase.Source, model);
-        }
+        EditorModel.ValidateModel(testCase.Source, baseResult.Model);
+        EditorSurfaces.CheckCoreInvariants(testCase.Source, baseResult.Model);
 
         phase = EditorPhase.Surface;
         var surfaceObservation = EditorSurfaces.Exercise(testCase, baseResult, cursorLine, cursorColumn);
@@ -126,11 +124,8 @@ internal static class EditorInvariants
 
         phase = EditorPhase.EditInvariants;
         var editedResult = EditorModel.Run(testCase.EditedSource, parameters.ExecutionMode);
-        if (editedResult.Model is { } editedModel)
-        {
-            EditorModel.ValidateModel(testCase.EditedSource, editedModel);
-            EditorSurfaces.CheckCoreInvariants(testCase.EditedSource, editedModel);
-        }
+        EditorModel.ValidateModel(testCase.EditedSource, editedResult.Model);
+        EditorSurfaces.CheckCoreInvariants(testCase.EditedSource, editedResult.Model);
 
         phase = EditorPhase.EditDeterminism;
         CheckRequestDeterminism(testCase.EditedSource, parameters, testCase.EditedCursorOffset);
@@ -169,7 +164,7 @@ internal static class EditorInvariants
     {
         var result = EditorModel.Run(source, parameters.ExecutionMode);
         var (line, column) = EditorCursor.QueryPosition(parameters, source, cursorOffset);
-        var lookup = result.Model is { } model ? EditorSurfaces.ChooseLookupName(model) : "A";
+        var lookup = EditorSurfaces.ChooseLookupName(result.Model);
         return EditorModel.Digest(result, line, column, lookup);
     }
 
@@ -184,13 +179,12 @@ internal static class EditorInvariants
     {
         var model = result.Model;
         var classifications = new SortedSet<string>(StringComparer.Ordinal);
-        if (model is not null)
-            foreach (var resolution in model.IdentifierResolutions)
-                classifications.Add(resolution.Classification.ToString());
+        foreach (var resolution in model.IdentifierResolutions)
+            classifications.Add(resolution.Classification.ToString());
 
         var cursor = new SourcePosition(cursorLine, cursorColumn);
-        var cursorResolution = model?.FindResolutionAt(cursor);
-        var cursorProperty = model?.FindPropertyAt(cursor);
+        var cursorResolution = model.FindResolutionAt(cursor);
+        var cursorProperty = model.FindPropertyAt(cursor);
 
         var multilineDiagnostic = result.Diagnostics.Any(diagnostic =>
             diagnostic.Span is { } span && span.End.Line != span.Start.Line);
@@ -199,10 +193,10 @@ internal static class EditorInvariants
             Outcome: result.Outcome,
             DiagnosticCount: result.Diagnostics.Count,
             FirstDiagnosticBucket: Utf16Fingerprint.DiagnosticBucket(result.Diagnostics),
-            OccurrenceCount: model?.IdentifierOccurrences.Count ?? 0,
-            DeclarationCount: model?.Declarations.Count ?? 0,
-            ResolutionCount: model?.IdentifierResolutions.Count ?? 0,
-            PropertyCount: model?.PropertyInfos.Count ?? 0,
+            OccurrenceCount: model.IdentifierOccurrences.Count,
+            DeclarationCount: model.Declarations.Count,
+            ResolutionCount: model.IdentifierResolutions.Count,
+            PropertyCount: model.PropertyInfos.Count,
             ClassificationsPresent: classifications.Count == 0 ? "none" : string.Join('+', classifications),
             CursorResolutionClass: cursorResolution is null ? "none" : cursorResolution.Classification.ToString(),
             CursorHasProperty: cursorProperty is not null,

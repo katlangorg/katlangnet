@@ -83,7 +83,7 @@ public class SourceProvenanceEnforcementTests
         {
             ["EditorFuzzHarnessTests.cs"] =
                 "ERROR-TOLERANT-TOOLING: the editor contract is defined ON malformed source "
-                + "(unresolved load, recovery trees). Requiring a clean parse would delete the test.",
+                + "(recovery trees, unavailable modules). Requiring a clean parse would delete the test.",
         };
 
     private static IReadOnlyList<string> TestSourceFiles()

@@ -32,13 +32,19 @@ public enum IdentifierClassification
     OpenTarget = 9,
     Unresolved,
     /// <summary>
-    /// The identifier's meaning cannot be determined without materializing a DEFERRED module
-    /// dependency (branch-lazy module loading, B2c): it has no certain lexical resolution, and a
-    /// module-backed <c>open</c> whose module is loaded only when its conditional branch is
-    /// selected sits in the lookup chain (or is the receiver of the dot member) and may
-    /// supply it or make an ordinary open's candidate ambiguous. Neither resolved nor known to be invalid — the semantic model never loads
-    /// a branch's modules to find out — so tooling should treat it as indeterminate rather
-    /// than as an error, including in completion results. A name that no deferred open could supply stays
+    /// The identifier's meaning cannot be determined without a module the analyzed tree does
+    /// not contain: it has no certain lexical resolution, and a module-backed <c>open</c> (or a
+    /// <c>X = load('url')</c> receiver of the dot member) whose module was not elaborated sits
+    /// in the lookup chain and may supply it or make an ordinary open's candidate ambiguous.
+    /// Every situation that leaves a module out of the tree classifies alike: a DEFERRED module
+    /// (branch-lazy module loading, B2c), loaded only when its conditional branch is selected,
+    /// and a MISSING one whose written <c>load</c> directive the parse kept in place — unavailable
+    /// because the parse had no downloader (<see cref="RunOptions.DownloadCode"/>; reported as
+    /// <see cref="DiagnosticCode.LoadElaborationUnavailable"/>) or refused by module elaboration
+    /// (a failed fetch, a refused target, invalid module source; reported at the load site).
+    /// Neither resolved nor known to be invalid — the semantic model never loads a module to
+    /// find out — so tooling should treat it as indeterminate rather than as an error,
+    /// including in completion results. A name that no such open could supply stays
     /// <see cref="Unresolved"/>.
     /// </summary>
     DeferredModuleReference,
@@ -78,7 +84,10 @@ public sealed record IdentifierResolution(
 /// subtree (<c>open 'url'</c>, <c>load('url')</c>) is positioned in the module's
 /// own source text, so it contributes no sites at any nesting depth; document
 /// references that bind to its members resolve to locationless module-provided
-/// targets, and its public names stay visible through the open.
+/// targets, and its public names stay visible through the open. A MISSING module — a
+/// load directive the parse kept in place because the module was unavailable or refused —
+/// contributes only the directive's own sites, and the names it could supply classify as
+/// <see cref="IdentifierClassification.DeferredModuleReference"/>.
 /// </summary>
 public sealed class SemanticModel
 {

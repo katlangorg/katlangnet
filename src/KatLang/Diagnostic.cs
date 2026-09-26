@@ -68,6 +68,18 @@ public sealed record Diagnostic(
 /// When <see cref="HasErrors"/> is true this is a recovery tree for diagnostics and
 /// editor queries. Source-based engine entry points reject it without evaluation;
 /// passing <see cref="Root"/> directly to an AST evaluator discards that source gate.
+/// <para><see cref="Root"/> is ALWAYS the output of that complete front end, never raw
+/// syntax — including when a module is MISSING. A <c>load</c> directive whose module was not
+/// elaborated — unavailable because the parse had no <see cref="RunOptions.DownloadCode"/>
+/// (one <see cref="DiagnosticCode.LoadElaborationUnavailable"/> error per directive), or
+/// refused by module elaboration (a failed fetch, a refused target, a cycle, a budget limit,
+/// invalid module source — each reported at its site) — stays in place as written, never
+/// replaced by a stand-in value, and the program is elaborated PROVISIONALLY around it: the
+/// elaboration passes' own diagnostics are withheld, because any of them could depend on
+/// what the missing modules would supply. Such a result is never evaluated, but
+/// <see cref="Semantics.SemanticModelBuilder.Build(ParseResult)"/> models it like any
+/// other, classifying the names a missing module could supply as
+/// <see cref="Semantics.IdentifierClassification.DeferredModuleReference"/>.</para>
 /// <para>A result produced by <see cref="Parser"/> carries a read-only snapshot of its
 /// <see cref="Diagnostics"/>, taken when the parse completed: nothing KatLang does later
 /// (for example materializing a lazily loaded module while the tree is evaluated) changes
@@ -81,7 +93,12 @@ public sealed record ParseResult
     internal ParseResult(Algorithm.User Root, IReadOnlyList<Diagnostic> Diagnostics)
         => (this.Root, this.Diagnostics) = (Root, Diagnostics);
 
-    /// <summary>The elaborated or recovery root produced by the parser.</summary>
+    /// <summary>
+    /// The elaborated root produced by the complete front end: a recovery tree when the parse
+    /// has errors, and a provisional elaboration that keeps each unresolved <c>load</c> directive
+    /// in place when its module is missing (unavailable without a downloader, or refused by
+    /// module elaboration). Never raw syntax.
+    /// </summary>
     public Algorithm.User Root { get; }
 
     /// <summary>

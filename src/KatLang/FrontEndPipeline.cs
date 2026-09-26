@@ -180,17 +180,27 @@ internal static class FrontEndPipeline
         return false;
     }
 
+    /// <summary>
+    /// The front end without module elaboration. Every <c>load</c> directive is then
+    /// UNAVAILABLE: it is reported once per site (<see cref="DiagnosticCode.LoadElaborationUnavailable"/>,
+    /// which blocks evaluation), kept in place, and the program around it is elaborated
+    /// PROVISIONALLY (see <see cref="FinalizeElaboration"/>), so the published root is an
+    /// elaborated tree whatever the configuration.
+    /// </summary>
     private static FrontEndResult ProcessWithoutModuleElaboration(
         SyntaxParseResult syntaxResult,
         HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
         var diagnostics = syntaxResult.Diagnostics;
-        if (LoadElaborationGuard.ReportUnavailable(syntaxResult.SyntaxRoot, diagnostics))
-            return new FrontEndResult(syntaxResult.SyntaxRoot, diagnostics);
+        var modulesUnavailable = LoadElaborationGuard.ReportUnavailable(syntaxResult.SyntaxRoot, diagnostics);
 
         return FinalizeElaboration(
-            syntaxResult.SyntaxRoot, diagnostics, hostOperations: hostOperations, cancellationToken: cancellationToken);
+            syntaxResult.SyntaxRoot,
+            diagnostics,
+            hostOperations: hostOperations,
+            provisional: modulesUnavailable,
+            cancellationToken: cancellationToken);
     }
 
     private static async ValueTask<FrontEndResult> ProcessWithModuleElaborationAsync(
@@ -229,25 +239,58 @@ internal static class FrontEndPipeline
             return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
         }
 
-        if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _))
-        {
-            diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loadElaboratedRoot));
-            return new FrontEndResult(ElaboratedUserRoot(loadElaboratedRoot), diagnostics);
-        }
+        // An unresolved load directive left outside deferred regions means a module is MISSING:
+        // either the loader REFUSED it — reported why at its site and kept the written directive
+        // in place, never a stand-in value (ModuleLoader.RefuseLoad) — or its traversal never
+        // reached it, an internal failure of module elaboration and the only kind this reports.
+        // Either way the tree is published as a PROVISIONAL elaboration (see FinalizeElaboration),
+        // exactly like a program parsed without a downloader, so no consumer of a parse result
+        // ever receives raw syntax or a tree that pretends a module was something it was not.
+        var modulesMissing = LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _);
+        if (modulesMissing && LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, loader.RefusedLoads, out _))
+            diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loadElaboratedRoot, loader.RefusedLoads));
 
         return FinalizeElaboration(
             loadElaboratedRoot,
             diagnostics,
             hostOperations: hostOperations,
             hasDeferredModuleRegions: loader.DeferredRegionCount > 0,
+            provisional: modulesMissing,
             cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// The complete elaboration of a load-elaborated root: the structural gate, parameter
+    /// detection, implicit-argument resolution, ownership completion, the declaration and open
+    /// validators, and exposure resolution. Every parse result's root is produced here (or is
+    /// the empty placeholder root of a rejected source), so a published root is ALWAYS an
+    /// elaborated tree — never raw syntax.
+    /// <para>
+    /// A <paramref name="provisional"/> elaboration is the one for a program that still carries
+    /// unresolved <c>load</c> directives outside deferred regions — a MISSING module: unavailable
+    /// (the parse had no downloader) or refused by module elaboration (a failed fetch, a refused
+    /// target, a cycle, a budget limit, invalid module source) — and it is the whole-document
+    /// instance of a deferred module region's eager provisional elaboration: the same passes
+    /// build the same tree, the load directives stay in place as the source constructs they are,
+    /// and the passes' diagnostics are WITHHELD, because any of them may depend on members the
+    /// missing modules would have supplied (an undeclared name an <c>open</c> would provide, a
+    /// root parameter inferred for it, an open path through a module, a refused forwarding to a
+    /// module callable) and a module's reach is not confined to its load site: an <c>open</c>
+    /// covers every nested scope and a dot path can navigate into a module property from
+    /// anywhere. (A deferred materialization whose loads fail likewise runs no pass at all.) The
+    /// operation's own diagnostics — why each module is missing
+    /// (<see cref="DiagnosticCode.LoadElaborationUnavailable"/>, <see cref="DiagnosticCode.LoadFetchFailed"/>,
+    /// …), syntax errors, and the structural gate below — are reported as always and keep the
+    /// result unevaluable, while editor tooling models the tree with module-dependent names
+    /// indeterminate (<see cref="Semantics.IdentifierClassification.DeferredModuleReference"/>).
+    /// </para>
+    /// </summary>
     private static FrontEndResult FinalizeElaboration(
         Algorithm loadElaboratedRoot,
         DiagnosticBag diagnostics,
         HostOperations? hostOperations = null,
         bool hasDeferredModuleRegions = false,
+        bool provisional = false,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -274,6 +317,12 @@ internal static class FrontEndPipeline
             return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
         }
 
+        // Every pass below reports into `passDiagnostics`: the operation's bag, or — for a
+        // provisional elaboration — a bag of the same capacity that nothing ever commits (see
+        // the summary). The passes themselves run identically either way, so the provisional
+        // tree is exactly the tree the same program elaborates to without its modules.
+        var passDiagnostics = provisional ? diagnostics.CreateStage() : diagnostics;
+
         // Host-operation names resolve during parameter detection (through the
         // configuration's extended semantic prelude), so referencing one never turns
         // it into an implicit parameter — the front-end half of the same name-level
@@ -282,7 +331,7 @@ internal static class FrontEndPipeline
         // completion may replace both, so they are committed only once they stand.
         var origins = new ImplicitArgumentResolver.ResolutionOrigins();
         var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(
-            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace, diagnostics: diagnostics.CreateStage());
+            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace, diagnostics: passDiagnostics.CreateStage());
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -292,31 +341,31 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        var implicitDiagnostics = diagnostics.CreateStage();
+        var implicitDiagnostics = passDiagnostics.CreateStage();
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
             parameterizedRoot, observations: null, implicitDiagnostics, origins);
         if (origins.HasLiftedParameters)
         {
             var completed = ParameterDetector.CompleteOwnership(
-                implicitResolvedRoot, origins, hostOperations, diagnostics: diagnostics.CreateStage());
+                implicitResolvedRoot, origins, hostOperations, diagnostics: passDiagnostics.CreateStage());
             if (completed.Changed)
             {
                 // A completed enclosing signature can change an earlier nested binding.
                 // Rebuild forwarding and its diagnostics from written expressions with
                 // those signatures fixed; inference and Grace ordering are not replayed.
                 parameterDiagnostics = completed.Diagnostics;
-                implicitDiagnostics = diagnostics.CreateStage();
+                implicitDiagnostics = passDiagnostics.CreateStage();
                 implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
                     completed.Root, diagnostics: implicitDiagnostics, preserveSignatures: true);
             }
         }
-        diagnostics.AddRange(parameterDiagnostics);
-        diagnostics.AddRange(implicitDiagnostics);
+        passDiagnostics.AddRange(parameterDiagnostics);
+        passDiagnostics.AddRange(implicitDiagnostics);
 
-        new ParameterPropertyCollisionValidator(diagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
+        new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
         // The open PROVIDER rule needs completed signatures (an inferred parameter list is
         // final only now) and nothing from exposure, so it runs here.
-        OpenProviderValidator.Validate(implicitResolvedRoot, diagnostics, hostOperations);
+        OpenProviderValidator.Validate(implicitResolvedRoot, passDiagnostics, hostOperations);
 
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations);

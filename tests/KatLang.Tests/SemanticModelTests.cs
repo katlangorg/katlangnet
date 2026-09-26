@@ -1559,16 +1559,26 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_UnresolvedLoadSyntax_ThrowsInvariantViolation()
+    public void Build_UnresolvedLoad_IsModeledAsAnUnavailableModule_NotRejected()
     {
-        var parseResult = Parser.ParseSyntax(
+        // An unresolved load is an analysis state, not an invariant violation: the public parse
+        // without a downloader publishes a provisionally elaborated root that keeps the directive,
+        // and the model treats the module as one it does not have. The full contract is pinned by
+        // MissingModuleAnalysisTests.
+        var parseResult = Parser.Parse(
             """
             Lib = load('https://katlang.org/algorithm.kat')
             Lib.X
             """);
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, Assert.Single(parseResult.Diagnostics).Code);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => SemanticModelBuilder.Build(parseResult));
-        Assert.Contains("Unresolved load syntax", exception.Message, StringComparison.OrdinalIgnoreCase);
+        var model = SemanticModelBuilder.Build(parseResult);
+
+        Assert.Equal(IdentifierClassification.PropertyReference, ResolutionAt(model, 2, 1).Classification);
+        var member = ResolutionAt(model, 2, 5);
+        Assert.Equal(OccurrenceKind.DotMemberReference, member.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.DeferredModuleReference, member.Classification);
+        Assert.Null(member.ResolvedDeclaration);
     }
 
     [Fact]

@@ -14,17 +14,16 @@ public static class SemanticModelBuilder
     /// Builds a semantic model from an elaborated KatLang root algorithm — typically a
     /// host-built root, since a <see cref="ParseResult"/> is modeled through
     /// <see cref="Build(ParseResult)"/>, which also carries the host operations the parse
-    /// resolved names against. Throws if unresolved <c>load</c> syntax reaches semantic
-    /// modeling, and throws <see cref="ArgumentException"/> for a structurally unsafe
-    /// preconstructed root (structural AST depth beyond the front-end structural gate, or a
-    /// cyclic node graph) — checked non-recursively before any recursive walk, so an unsafe
-    /// host-built tree cannot overflow the CLR stack. Roots from
-    /// <see cref="Parser.Parse(string)"/> always pass.
+    /// resolved names against. An unresolved <c>load</c> directive in the root is modeled as
+    /// a module the model does not have (see <see cref="Build(ParseResult)"/>), never an
+    /// error. Throws <see cref="ArgumentException"/> for a structurally unsafe preconstructed
+    /// root (structural AST depth beyond the front-end structural gate, or a cyclic node
+    /// graph) — checked non-recursively before any recursive walk, so an unsafe host-built
+    /// tree cannot overflow the CLR stack. Roots from <see cref="Parser.Parse(string)"/>
+    /// always pass.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="root"/> is null.</exception>
     /// <exception cref="ArgumentException">The root is structurally unsafe.</exception>
-    /// <exception cref="InvalidOperationException">The root still contains an unresolved
-    /// <c>load</c> directive.</exception>
     public static SemanticModel Build(Algorithm root)
     {
         ArgumentNullException.ThrowIfNull(root);
@@ -40,15 +39,21 @@ public static class SemanticModelBuilder
 
     /// <summary>
     /// Builds a semantic model from a result of the public <see cref="Parser"/> entry points —
-    /// the supported editor-tooling path. A result of the SYNCHRONOUS <see cref="Parser.Parse(string)"/>
-    /// over source that uses <c>load</c> still holds the unresolved directive (source loading
-    /// is async-only, through <see cref="Parser.ParseAsync(string, RunOptions)"/>), and
-    /// modeling it is a host error rather than a partial model. A result with
-    /// <see cref="ParseResult.HasErrors"/> set is modeled from its recovery tree.
+    /// the supported editor-tooling path — whatever the parse's configuration and outcome. A
+    /// result with <see cref="ParseResult.HasErrors"/> set is modeled from its recovery tree.
+    /// Semantic inspection never requires module resolution: a program whose module is
+    /// MISSING — parsed WITHOUT a downloader (<see cref="RunOptions.DownloadCode"/>; source
+    /// loading is async-only, through <see cref="Parser.ParseAsync(string, RunOptions)"/>), or
+    /// with a load that module elaboration refused (a failed fetch, a refused target, invalid
+    /// module source) — keeps each unresolved directive in its provisionally elaborated root,
+    /// and the model treats every such module as one it does not have, exactly like a
+    /// deferred branch module: it performs no module I/O, invents no member of the missing
+    /// module, classifies a name the module could supply as
+    /// <see cref="IdentifierClassification.DeferredModuleReference"/> (indeterminate, never an
+    /// error), and models everything else — declarations, references, scopes, completion, and
+    /// property metadata — exactly as it would with the module absent from the lookup chain.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="parseResult"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">The parse result still contains an
-    /// unresolved <c>load</c> directive.</exception>
     /// <exception cref="ArgumentException">The elaborated root is structurally unsafe
     /// (see <see cref="Build(Algorithm)"/>); never the case for a parser-produced result.</exception>
     /// <remarks>A result parsed with <see cref="RunOptions.HostOperations"/> is modeled against
@@ -60,12 +65,6 @@ public static class SemanticModelBuilder
         ArgumentNullException.ThrowIfNull(parseResult);
         return BuildElaborated(parseResult.Root, observations: null, parseResult.HostOperations, nameof(parseResult));
     }
-
-    internal static SemanticModel Build(SyntaxParseResult syntaxParseResult)
-        => BuildElaborated(syntaxParseResult.Root);
-
-    internal static SemanticModel Build(FrontEndResult frontEndResult)
-        => BuildElaborated(frontEndResult.ElaboratedRoot);
 
     /// <summary>
     /// Test-only construction knobs of scope visibility storage (FE-4b). None of them may change
@@ -124,8 +123,8 @@ public static class SemanticModelBuilder
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
         // preflight that protects the evaluator entry points must run before any
-        // recursive walk here — including the load-guard walk below. Roots produced by
-        // Parser.Parse are already within the hard ceiling and pass unchanged.
+        // recursive walk here. Roots produced by Parser.Parse are already within the hard
+        // ceiling and pass unchanged.
         // The builder's own recursive walk measures in the fat-frame class (building a
         // 640-node spine overflows a 512 KiB thread; a 300-node one completes within
         // it), so semantic modeling shares the evaluation/elaboration structural
@@ -144,7 +143,11 @@ public static class SemanticModelBuilder
                 argumentName);
         }
 
-        LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
+        // An unresolved `load` directive is an analysis state, not an invariant violation: the
+        // front end publishes a provisional elaboration around each one whose module is missing
+        // — unavailable or refused (FrontEndPipeline.FinalizeElaboration) — and the builder
+        // models it like a deferred module region's unmaterialized load
+        // (OwnsDeferredModuleOpen, IsDeferredModulePlaceholder).
         return new Builder(observations, hostOperations, visibilityOptions).Build(elaboratedRoot, eagerReference);
     }
 
@@ -632,11 +635,13 @@ public static class SemanticModelBuilder
 
         /// <summary>
         /// Whether one of <paramref name="propertyScope"/>'s opens is a DEFERRED module open: the
-        /// raw <c>open 'url'</c> a deferred module region keeps until its branch is selected,
-        /// or an <c>open X</c> whose target is the unmaterialized placeholder of
-        /// <c>X = load('url')</c>. Outside deferred regions every load is already elaborated
-        /// (the load-elaboration guard proved it), so this is exactly the module-backed
-        /// uncertainty the editor cannot resolve without branch module I/O.
+        /// raw <c>open 'url'</c> whose module the tree does not contain, or an <c>open X</c> whose
+        /// target is the unmaterialized placeholder of <c>X = load('url')</c>. An unresolved load
+        /// directive survives elaboration in exactly two situations — inside a deferred module
+        /// region, until its branch is selected, and anywhere in a provisional elaboration, whose
+        /// modules are missing (unavailable because the parse had no downloader, or refused by
+        /// module elaboration) — so this is exactly the module-backed uncertainty the editor
+        /// cannot resolve without module I/O it never performs.
         /// </summary>
         private static bool OwnsDeferredModuleOpen(ElaboratedPropertyScope propertyScope)
         {
@@ -668,7 +673,8 @@ public static class SemanticModelBuilder
         }
 
         /// <summary>
-        /// The shape <c>X = load('url')</c> keeps inside a deferred module region: a wrapper
+        /// The shape <c>X = load('url')</c> keeps while its module is not in the tree — inside a
+        /// deferred module region, or in a provisional elaboration whose module is missing: a wrapper
         /// whose single output row is the still-unresolved load directive (module elaboration
         /// would have replaced the wrapper by the loaded module itself).
         /// </summary>
@@ -1328,9 +1334,9 @@ public static class SemanticModelBuilder
                 if (targetAlgorithm.DefinesConditionalBranchProperty(dotCall.Name))
                     return (IdentifierClassification.Unresolved, null, null);
 
-                // The receiver is the unmaterialized placeholder of `X = load('url')` inside a
-                // deferred module region: the module may define the member, and only branch
-                // selection would load it — indeterminate, never a hard error.
+                // The receiver is the unmaterialized placeholder of `X = load('url')` (a deferred
+                // module region's, or a missing module's): the module may define the member, and
+                // the model never loads it — indeterminate, never a hard error.
                 if (IsDeferredModulePlaceholder(targetAlgorithm))
                     return (IdentifierClassification.DeferredModuleReference, null, null);
 
@@ -1444,11 +1450,12 @@ public static class SemanticModelBuilder
         /// <summary>
         /// Classification of a parameter reference. An IMPLICIT parameter inferred by a body
         /// that sits under a deferred module open was inferred PROVISIONALLY (parameter
-        /// detection ran before the branch's modules could be consulted): once the branch is
-        /// selected and its modules materialize, the same name may resolve to a module member
-        /// instead, so the reference is indeterminate. Explicit parameters, conditional
-        /// binders, and implicit parameters declared outside any deferred region keep their
-        /// ordinary classification — nothing a module supplies can rebind them.
+        /// detection ran without the module's members — before a deferred branch's modules
+        /// materialize, or because the module is missing): once the module is there,
+        /// the same name may resolve to a module member instead, so the reference is
+        /// indeterminate. Explicit parameters, conditional binders, and implicit parameters
+        /// declared outside any deferred module open's reach keep their ordinary
+        /// classification — nothing a module supplies can rebind them.
         /// </summary>
         private static IdentifierClassification ClassifyParameterReference(ScopeFrame scope, string name, out SymbolDefinition? symbol)
         {

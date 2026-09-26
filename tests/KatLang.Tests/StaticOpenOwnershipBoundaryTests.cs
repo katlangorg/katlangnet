@@ -142,7 +142,11 @@ public class StaticOpenOwnershipBoundaryTests
         var errors = deferred
             ? Assert.IsType<RunResult.EvalFailure>(result).Errors
             : Assert.IsType<RunResult.ParseFailure>(result).Errors;
-        Assert.Contains(errors, e => e.Code == (deferred && fetchFails
+        // A failed fetch leaves the module MISSING: the eager parse is then a provisional
+        // elaboration that withholds its pass diagnostics (the parameter-owned open head included)
+        // until the module is available — exactly as a failed deferred materialization runs no
+        // pass at all — so the fetch failure is the outcome in both timings.
+        Assert.Contains(errors, e => e.Code == (fetchFails
             ? KatLangErrorCode.LoadFetchFailed : KatLangErrorCode.OpenTargetIsParameter));
         Assert.Equal(0, calls);
         Assert.Equal(1, downloads);

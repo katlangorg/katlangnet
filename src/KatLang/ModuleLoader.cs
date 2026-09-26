@@ -11,6 +11,10 @@ namespace KatLang;
 /// Outside deferred branch regions, load calls are replaced with
 /// <see cref="Expr.AlgorithmExpr"/> nodes containing the parsed remote algorithm.
 /// A selected deferred region completes loading and front-end elaboration before its body runs.
+/// A load the loader REFUSES — its position, target, policy, budget, fetch, or module source
+/// fails — is reported at its site and LEFT IN PLACE as the written directive (never a stand-in
+/// value), recorded in <see cref="RefusedLoads"/>: the module is missing, and the front end
+/// elaborates the document provisionally around it exactly as without a downloader.
 /// </para>
 ///
 /// <para><b>Async-only module acquisition:</b> source text is obtained through ONE
@@ -118,6 +122,21 @@ internal sealed partial class ModuleLoader
 
     /// <summary>Deferred module regions this loader created during its most recent walk (test-observable).</summary>
     internal int DeferredRegionCount { get; private set; }
+
+    // The load directives the most recent walk REFUSED — the root elaboration or one deferred
+    // materialization, nested module walks included. A refused load keeps its written node in the
+    // output (RefuseLoad), so these are exactly the unresolved directives the post-elaboration
+    // invariant must accept: an unresolved load NOT in this set is one the traversal never
+    // reached. Reference identity, because Expr is a record and two equal spanless directives of
+    // module text are two sites. Replaced at each walk's START (never cleared at its end): the
+    // front-end pipeline reads the root walk's set after ElaborateAsync returns.
+    private HashSet<Expr> _refusedLoads = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The load directives this loader's most recent walk refused and left in place (see
+    /// <see cref="RefuseLoad"/>), by reference identity.
+    /// </summary>
+    internal IReadOnlySet<Expr> RefusedLoads => _refusedLoads;
 
     /// <summary>The configured host source-processing token — the authoritative cancellation identity.</summary>
     internal CancellationToken SourceProcessingCancellationToken => _sourceProcessingCancellationToken;
@@ -523,6 +542,7 @@ internal sealed partial class ModuleLoader
     public async ValueTask<Algorithm> ElaborateAsync(Algorithm root)
     {
         ThrowIfCancellationRequested();
+        _refusedLoads = new(ReferenceEqualityComparer.Instance);
         // The root walk is one frame: its cache-hit splices charge this ledger, released if
         // observed cancellation abandons the walk (see SpliceLedger).
         var rootLedger = new SpliceLedger();
@@ -1030,6 +1050,7 @@ internal sealed partial class ModuleLoader
     {
         ThrowIfCancellationRequested();
         materializationCancellationToken.ThrowIfCancellationRequested();
+        _refusedLoads = new(ReferenceEqualityComparer.Instance);
 
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _sourceProcessingCancellationToken,
@@ -1079,8 +1100,11 @@ internal sealed partial class ModuleLoader
                 return loaded;
             }
 
-            if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, out _))
-                _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded, _importSite));
+            // A load this materialization REFUSED stays in place by design (its failure is
+            // already reported, which fails the materialization); only a load the walk never
+            // reached is the internal invariant violation.
+            if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, _refusedLoads, out _))
+                _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded, _refusedLoads, _importSite));
 
             return loaded;
         }
@@ -1306,7 +1330,7 @@ internal sealed partial class ModuleLoader
         Expr result;
         if (expr.TryGetUnresolvedLoadArguments(out var loadArgs))
         {
-            result = await ProcessLoadAsync(loadArgs, context, expr.Span, depth).ConfigureAwait(false);
+            result = await ProcessLoadAsync(expr, loadArgs, context, depth).ConfigureAwait(false);
             if (rewritesByDepth is not null)
                 rewritesByDepth[effectiveDepth] = result;
             return result;
@@ -1452,28 +1476,30 @@ internal sealed partial class ModuleLoader
     // ── load processing ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Elaborates one load call. <paramref name="span"/> is the call's OWN span — the load
-    /// site in the current document, or null for a load written inside a module (its import
-    /// view carries no locations) or in a spanless host tree — and stays the span of the node
-    /// spliced or substituted in its place, so a cached module view is never stamped with a
-    /// caller position. Every diagnostic is positioned at the SITE: the call's own span when
-    /// the document wrote it, otherwise the import site of the module content it lies in.
+    /// Elaborates one load call, <paramref name="load"/> (its arguments are
+    /// <paramref name="args"/>). The call's OWN span — the load site in the current document,
+    /// or null for a load written inside a module (its import view carries no locations) or in
+    /// a spanless host tree — stays the span of the node spliced in its place, so a cached
+    /// module view is never stamped with a caller position. Every diagnostic is positioned at
+    /// the SITE: the call's own span when the document wrote it, otherwise the import site of
+    /// the module content it lies in. A refused load returns the written call itself
+    /// (<see cref="RefuseLoad"/>).
     /// </summary>
-    private async ValueTask<Expr> ProcessLoadAsync(OutputBundle args, LoadContext context, SourceSpan? span, int depth)
+    private async ValueTask<Expr> ProcessLoadAsync(Expr load, OutputBundle args, LoadContext context, int depth)
     {
-        var site = span ?? _importSite;
+        var site = load.Span ?? _importSite;
 
         // 1. Position check: load only allowed in property definitions and open lists
         if (context == LoadContext.RuntimeExpr)
         {
             ReportError(DiagnosticCode.InvalidLoadDirective, "load not allowed in runtime expression.", site);
-            return new Expr.Num(0) { Span = span };
+            return RefuseLoad(load);
         }
 
         // 2. Extract URL: must be exactly 1 argument, must be a string literal
         var url = ExtractLoadUrl(args, site);
         if (url is null)
-            return new Expr.Num(0) { Span = span };
+            return RefuseLoad(load);
 
         // 3. Target policy — the ONE admission point (ModuleLoadTarget): an HTTPS URL without
         // user information whose canonical host is allowed. From here on the target is its
@@ -1481,13 +1507,13 @@ internal sealed partial class ModuleLoader
         // every diagnostic below share. Nothing above this line can invoke the downloader.
         var moduleUrl = AdmitLoadTarget(url, site);
         if (moduleUrl is null)
-            return new Expr.Num(0) { Span = span };
+            return RefuseLoad(load);
 
         // 4. Cycle detection
         if (_inProgress.Contains(moduleUrl))
         {
             ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {moduleUrl}", site);
-            return new Expr.Num(0) { Span = span };
+            return RefuseLoad(load);
         }
 
         // 5. Cache check — an already-elaborated module splices without re-traversal
@@ -1509,15 +1535,31 @@ internal sealed partial class ModuleLoader
                     checked(_budget.AggregateSource + cached.Weight),
                     _budget.MaxAggregateSourceLength,
                     site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             _spliceLedger.Charged += cached.Weight;
-            return new Expr.AlgorithmExpr(cached.View) { Span = span };
+            return new Expr.AlgorithmExpr(cached.View) { Span = load.Span };
         }
 
         // 6. Fetch + parse + splice — the loader's one awaiting path.
-        return await FetchAndSpliceAsync(moduleUrl, span, site, depth).ConfigureAwait(false);
+        return await FetchAndSpliceAsync(moduleUrl, load, site, depth).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Refuses one load directive whose failure the caller has just reported at its site: the
+    /// directive stays in the output AS WRITTEN — no stand-in value is substituted, so the tree
+    /// never claims the module is something it is not (a former <c>Num(0)</c> placeholder made
+    /// every name the missing module would supply read as undeclared) — and it is recorded in
+    /// <see cref="RefusedLoads"/>, which is what tells a refused directive from one the
+    /// traversal never reached. The front end then elaborates the document provisionally
+    /// around it (<c>FrontEndPipeline.FinalizeElaboration</c>), exactly as without a downloader.
+    /// A synchronous leaf, so nothing joins the async spine's state machines.
+    /// </summary>
+    private Expr RefuseLoad(Expr load)
+    {
+        _refusedLoads.Add(load);
+        return load;
     }
 
     /// <summary>
@@ -1568,7 +1610,8 @@ internal sealed partial class ModuleLoader
     /// <see cref="MaxTraversalDepth"/>). An incomplete download suspends HERE — the
     /// method resumes after the await with all validation, budget, and splice steps
     /// continuing exactly once; the downloader is never re-invoked for this fetch.
-    /// <paramref name="span"/> is the load call's own span (the spliced node's span);
+    /// <paramref name="load"/> is the load call (its own span is the spliced node's span, and a
+    /// refused fetch returns it unchanged — see <see cref="RefuseLoad"/>);
     /// <paramref name="site"/> is where every diagnostic is positioned (see
     /// <see cref="ProcessLoadAsync"/>) and the import site of everything inside the
     /// fetched module. <paramref name="moduleUrl"/> is the admitted target's canonical
@@ -1584,7 +1627,7 @@ internal sealed partial class ModuleLoader
     /// that can refuse a load without its content — depth, module count, cumulative nesting,
     /// and cancellation — runs BEFORE the slot is committed and the downloader invoked.</para>
     /// </summary>
-    private async ValueTask<Expr> FetchAndSpliceAsync(string moduleUrl, SourceSpan? span, SourceSpan? site, int depth)
+    private async ValueTask<Expr> FetchAndSpliceAsync(string moduleUrl, Expr load, SourceSpan? site, int depth)
     {
         // Import-depth ceiling: descend one level, or turn a would-be host stack overflow into a
         // structured diagnostic. Only reached on a cache MISS, so it bounds the true chain depth.
@@ -1593,7 +1636,7 @@ internal sealed partial class ModuleLoader
         {
             ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleImportDepthExceeded(
                 moduleUrl, _budget.CurrentDepth + 1, _budget.MaxModuleDepth, site));
-            return new Expr.Num(0) { Span = span };
+            return RefuseLoad(load);
         }
 
         _inProgress.Add(moduleUrl);
@@ -1608,7 +1651,7 @@ internal sealed partial class ModuleLoader
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleCountExceeded(
                     moduleUrl, _budget.ModuleCount + 1, _budget.MaxModuleCount, site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // Cumulative structural budget, pre-fetch half: when the parent traversal
@@ -1625,7 +1668,7 @@ internal sealed partial class ModuleLoader
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
                     moduleUrl, MaxTraversalDepth, site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // Fetch. The await is the elaboration's genuine suspension point: an
@@ -1670,13 +1713,13 @@ internal sealed partial class ModuleLoader
                     DiagnosticCode.LoadFetchFailed,
                     $"load: failed to fetch '{moduleUrl}': {ModuleLoadTarget.EchoHostMessage(ex.Message)}",
                     site);
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             if (source is null)
             {
                 ReportError(DiagnosticCode.LoadFetchFailed, $"load: fetch for '{moduleUrl}' returned no source text.", site);
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // Per-module source-length ceiling, checked after download and before parsing, so an
@@ -1685,7 +1728,7 @@ internal sealed partial class ModuleLoader
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleSourceLengthExceeded(
                     moduleUrl, source.Length, _budget.MaxSourceLength, site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // Aggregate-source ceiling: reserved only for text accepted for parsing; a rejected
@@ -1704,7 +1747,7 @@ internal sealed partial class ModuleLoader
                     requestedTotal,
                     _budget.MaxAggregateSourceLength,
                     site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             hasAggregateReservation = true;
@@ -1742,7 +1785,7 @@ internal sealed partial class ModuleLoader
                         site);
                 }
 
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // Propagate any non-error diagnostics (with context). The prefix is
@@ -1775,7 +1818,7 @@ internal sealed partial class ModuleLoader
             // the REMAINING allowance. Judged iteratively BEFORE the nested recursive
             // traversal (the unsafe tree is never walked recursively and never
             // rendered into the diagnostic); an unsafe nesting is one structured
-            // diagnostic and the load's established placeholder. The committed source
+            // diagnostic and a refused load (RefuseLoad). The committed source
             // reservation deliberately stays charged, exactly like a module whose
             // content fails to parse.
             if (AstStructuralPreflight.Check(
@@ -1785,7 +1828,7 @@ internal sealed partial class ModuleLoader
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.ModuleNestingTooDeep(
                     moduleUrl, MaxTraversalDepth, site));
-                return new Expr.Num(0) { Span = span };
+                return RefuseLoad(load);
             }
 
             // The source-coordinate boundary: the parsed module's own coordinates end here.
@@ -1821,7 +1864,7 @@ internal sealed partial class ModuleLoader
             if (_sink.ReportedErrorCount == nestedErrorsBefore)
                 _cache[moduleUrl] = new CachedModule(elaborated, checked((int)(_budget.AggregateSource - aggregateBeforeModule)));
 
-            return new Expr.AlgorithmExpr(elaborated) { Span = span };
+            return new Expr.AlgorithmExpr(elaborated) { Span = load.Span };
         }
         catch (OperationCanceledException) when (IsCancellationRequested)
         {

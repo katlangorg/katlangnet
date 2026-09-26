@@ -1167,8 +1167,8 @@ tooling, over arbitrary and malformed source: never crashes; stays deterministic
 UTF-16 source ranges; agrees with the real lexer/parser/front end; never invents a symbol; never
 leaks a synthetic helper; keeps comments and strings out of identifier classification; resolves
 dotted and ordinary calls to the same callable; and remains isolated across requests and small edits.
-A structured "no result", an ordinary diagnostic, or a declined unresolved-`load` request is a good
-outcome; an unexpected exception, an out-of-range or self-inconsistent span, a resolution to a
+A structured "no result", an ordinary diagnostic, or a model over an unavailable module (an unresolved
+`load`, whose names the model classifies as indeterminate) is a good outcome; an unexpected exception, an out-of-range or self-inconsistent span, a resolution to a
 differently named or non-existent symbol, or a non-deterministic result is a defect.
 
 ### Registered surfaces (only what exists)

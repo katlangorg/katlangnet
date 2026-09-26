@@ -657,9 +657,10 @@ public class FrontEndTraversalTests
 
     /// <summary>
     /// A load call inside every recursive child position is SEEN by the async
-    /// twin walk: it either elaborates into the stub module or reports the
-    /// runtime-position diagnostic, and no unresolved load ever survives —
-    /// a silently skipped variant would leave the load call in the tree.
+    /// twin walk: it either elaborates into the stub module, or reports the
+    /// runtime-position diagnostic and is REFUSED — kept as written and recorded in
+    /// <c>ModuleLoader.RefusedLoads</c> — so no load survives UNSEEN: a silently
+    /// skipped variant would leave an unrefused load call in the tree.
     /// </summary>
     [Theory]
     [MemberData(nameof(LoadBearingPositions))]
@@ -678,9 +679,11 @@ public class FrontEndTraversalTests
 
         var elaborated = await loader.ElaborateAsync(root);
 
+        Assert.False(LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, loader.RefusedLoads, out _));
         var loadCounter = new UnresolvedLoadCounter();
         loadCounter.VisitAlgorithm(elaborated);
-        Assert.Equal(0, loadCounter.UnresolvedLoads);
+        Assert.Equal(expectsRuntimePositionError ? 1 : 0, loadCounter.UnresolvedLoads);
+        Assert.Equal(loadCounter.UnresolvedLoads, loader.RefusedLoads.Count);
 
         if (expectsRuntimePositionError)
         {

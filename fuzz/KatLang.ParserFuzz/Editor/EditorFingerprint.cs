@@ -38,7 +38,7 @@ internal static class EditorFingerprint
         Append(builder, "collection", CollectionClass(parameters.Template));
         Append(builder, "dottedOrdinary", EditorTables.TemplateOf(parameters.Template).DottedOrdinaryPair ? "pair" : "-");
 
-        Append(builder, "outcome", observation.Outcome == EditorToolingOutcome.Built ? "model" : "declined-load");
+        Append(builder, "outcome", observation.Outcome == EditorToolingOutcome.Built ? "model" : "model-unavailable-modules");
         Append(builder, "parse", observation.DiagnosticCount == 0 ? "clean" : "diagnostics");
         Append(builder, "diagBucket", Utf16Fingerprint.Bucket(observation.DiagnosticCount));
         Append(builder, "diagFirst", observation.FirstDiagnosticBucket);

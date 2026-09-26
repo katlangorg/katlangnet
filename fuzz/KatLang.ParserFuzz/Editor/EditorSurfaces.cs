@@ -31,9 +31,7 @@ internal static class EditorSurfaces
     /// <summary>Drives the focused surface and returns a stable observation summary for the fingerprint.</summary>
     public static string Exercise(EditorCase testCase, EditorToolingResult result, int cursorLine, int cursorColumn)
     {
-        if (result.Model is not { } model)
-            return "declined";
-
+        var model = result.Model;
         return testCase.Parameters.Surface switch
         {
             EditorSurfaceKind.Classification => ExerciseClassification(model),

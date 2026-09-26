@@ -31,7 +31,7 @@ public class EditorReadinessTests
     {
         var outcomes = new SortedSet<string>(StringComparer.Ordinal);
         var relations = new SortedSet<string>(StringComparer.Ordinal);
-        var declines = 0;
+        var unavailableModules = 0;
         var built = 0;
 
         foreach (var parameters in Stratified)
@@ -59,12 +59,13 @@ public class EditorReadinessTests
             outcomes.Add(report.Observation.Outcome.ToString());
             foreach (var relation in report.Relations.Checked) relations.Add(relation);
             if (report.Observation.Outcome == EditorToolingOutcome.Built) built++;
-            else declines++;
+            else unavailableModules++;
         }
 
-        // Both outcomes are reached: models are built, and the unresolved-load decline path fires.
-        Assert.True(built > 0, "No stratified point built a semantic model.");
-        Assert.True(declines > 0, "The unresolved-load decline path was never reached.");
+        // Both outcomes are reached, and BOTH build a model: complete programs, and programs whose
+        // unresolved `load` leaves a module unavailable (modeled, never declined).
+        Assert.True(built > 0, "No stratified point built a semantic model over a complete program.");
+        Assert.True(unavailableModules > 0, "No stratified point built a semantic model over an unavailable module.");
 
         // Every metamorphic relation ran on at least one point, or its coverage claim is empty.
         Assert.Contains(EditorRelations.WhitespaceNeutral, relations);

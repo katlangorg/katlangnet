@@ -165,21 +165,27 @@ public class EditorFuzzHarnessTests
     // ── Documented tooling contracts ─────────────────────────────────────────
 
     [Fact]
-    public void UnresolvedLoad_ThrowsFromBuild_ButTheHarnessDeclinesCleanly()
+    public void UnresolvedLoad_BuildsAModel_InEveryMode()
     {
         const string source = "Data = load('lib')\nData";
-        var root = Parser.Parse(source).Root;
+        var parsed = Parser.Parse(source);
 
-        // The contract: building a semantic model from an AST that still carries a load throws.
-        Assert.Throws<InvalidOperationException>(() => SemanticModelBuilder.Build(root));
+        // The contract: an unavailable module is an analysis state. The public parse keeps the
+        // directive in a provisionally elaborated root, and both Build overloads model it.
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, Assert.Single(parsed.Diagnostics).Code);
+        Assert.NotNull(SemanticModelBuilder.Build(parsed.Root));
+        Assert.NotNull(SemanticModelBuilder.Build(parsed));
 
-        // The harness pre-checks and declines exactly as a correct editor caller must, never tripping it.
-        var result = EditorModel.Run(source, EditorExecutionMode.Elaborated);
-        Assert.Equal(EditorToolingOutcome.DeclinedUnresolvedLoad, result.Outcome);
-        Assert.Null(result.Model);
-
-        var raw = EditorModel.Run(source, EditorExecutionMode.RawSyntax);
-        Assert.Equal(EditorToolingOutcome.DeclinedUnresolvedLoad, raw.Outcome);
+        // The harness builds the model in both modes and runs every invariant over it.
+        foreach (var mode in new[] { EditorExecutionMode.Elaborated, EditorExecutionMode.RawSyntax })
+        {
+            var result = EditorModel.Run(source, mode);
+            Assert.Equal(EditorToolingOutcome.BuiltWithUnavailableModules, result.Outcome);
+            EditorModel.ValidateModel(source, result.Model);
+            EditorSurfaces.CheckCoreInvariants(source, result.Model);
+            Assert.Contains(result.Model.IdentifierResolutions, resolution =>
+                resolution.Occurrence.Name == "Data" && resolution.Classification == IdentifierClassification.PropertyReference);
+        }
     }
 
     [Fact]

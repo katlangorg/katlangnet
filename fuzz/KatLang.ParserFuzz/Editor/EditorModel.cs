@@ -5,22 +5,25 @@ using KatLang.Semantics;
 
 namespace KatLang.ParserFuzz;
 
-/// <summary>Whether a semantic model was built, or why the tooling declined.</summary>
+/// <summary>Which kind of tree the request's semantic model was built over (a model is always built).</summary>
 internal enum EditorToolingOutcome
 {
-    /// <summary>A semantic model was built and is available for querying.</summary>
+    /// <summary>A semantic model over a tree whose modules are all elaborated (or that uses none).</summary>
     Built,
 
-    /// <summary>The AST still carries an unresolved <c>load</c> directive. Building a semantic model
-    /// from it is a documented contract violation (<c>SemanticModelBuilder.Build</c> throws), so the
-    /// tooling declines exactly as a correct editor caller must, rather than tripping the guard.</summary>
-    DeclinedUnresolvedLoad,
+    /// <summary>A semantic model over a tree that still carries an unresolved <c>load</c> directive:
+    /// no fuzz mode configures a downloader, so every module is UNAVAILABLE (the elaborated mode
+    /// publishes a provisional elaboration around each directive). Building it is an ordinary,
+    /// supported request — <c>SemanticModelBuilder</c> models each missing module as indeterminate
+    /// and never throws for it — so the outcome only keeps these cases apart in the fingerprint and
+    /// out of the metamorphic relations, which compare complete programs.</summary>
+    BuiltWithUnavailableModules,
 }
 
 /// <summary>What one tooling request produced.</summary>
 internal sealed record EditorToolingResult(
     EditorToolingOutcome Outcome,
-    SemanticModel? Model,
+    SemanticModel Model,
     Algorithm Root,
     IReadOnlyList<Diagnostic> Diagnostics);
 
@@ -54,10 +57,10 @@ internal static class EditorModel
     }
 
     /// <summary>
-    /// Runs the tooling request: parse to the requested boundary, decline if the AST carries an
-    /// unresolved load, otherwise build the semantic model. An unexpected exception escapes — only
-    /// the documented unresolved-load contract is caught, and it is caught by PRE-CHECK, not by
-    /// swallowing the guard's throw.
+    /// Runs the tooling request: parse to the requested boundary and build the semantic model —
+    /// always, an unresolved <c>load</c> included (an unavailable module is an analysis state the
+    /// builder models, never a reason to decline). Nothing is caught: an unexpected exception
+    /// escapes to the fuzzing engine.
     /// </summary>
     public static EditorToolingResult Run(string source, EditorExecutionMode mode)
     {
@@ -78,11 +81,11 @@ internal static class EditorModel
             diagnostics = syntax.Diagnostics;
         }
 
-        if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(root, out _))
-            return new EditorToolingResult(EditorToolingOutcome.DeclinedUnresolvedLoad, null, root, diagnostics);
-
+        var outcome = LoadElaborationGuard.TryFindFirstUnresolvedLoad(root, out _)
+            ? EditorToolingOutcome.BuiltWithUnavailableModules
+            : EditorToolingOutcome.Built;
         var model = SemanticModelBuilder.Build(root);
-        return new EditorToolingResult(EditorToolingOutcome.Built, model, root, diagnostics);
+        return new EditorToolingResult(outcome, model, root, diagnostics);
     }
 
     public static bool IsSyntheticName(string name)
@@ -282,9 +285,7 @@ internal static class EditorModel
         builder.Append("outcome:").Append(result.Outcome).Append('\n');
         builder.Append("diagnostics:").Append(result.Diagnostics.Count).Append('\n');
 
-        if (result.Model is not { } model)
-            return builder.ToString();
-
+        var model = result.Model;
         builder.Append("occurrences:").Append(model.IdentifierOccurrences.Count).Append('\n');
         foreach (var occurrence in model.IdentifierOccurrences)
             builder.Append(' ').Append(occurrence.Kind).Append('|').Append(Span(occurrence.Span)).Append('|')

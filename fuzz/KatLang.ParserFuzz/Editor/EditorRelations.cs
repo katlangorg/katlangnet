@@ -70,16 +70,14 @@ internal static class EditorRelations
 
     private static string? CheckWhitespaceNeutral(EditorCase testCase, EditorExecutionMode mode)
     {
-        if (EditorModel.Run(testCase.Source, mode).Model is not { } model)
-            return "whitespace-model-not-built";
+        var model = EditorModel.Run(testCase.Source, mode).Model;
 
         var neutralIndex = FindNeutralSpaceIndex(testCase.Source);
         if (neutralIndex < 0)
             return "no-neutral-inter-token-space";
 
         var doubled = testCase.Source[..neutralIndex] + ' ' + testCase.Source[neutralIndex..];
-        if (EditorModel.Run(doubled, mode).Model is not { } doubledModel)
-            return "whitespace-doubled-model-not-built";
+        var doubledModel = EditorModel.Run(doubled, mode).Model;
 
         RequireSameShape(WhitespaceNeutral, model, doubledModel, Identity, Identity);
         return null;
@@ -114,10 +112,8 @@ internal static class EditorRelations
 
         var crlf = EditorSourceBuilder.BuildWithLineEndings(testCase.Parameters, EditorLineEndingMode.Crlf);
 
-        if (EditorModel.Run(lf.Source, mode).Model is not { } lfModel)
-            return "lf-model-not-built";
-        if (EditorModel.Run(crlf.Source, mode).Model is not { } crlfModel)
-            return "crlf-model-not-built";
+        var lfModel = EditorModel.Run(lf.Source, mode).Model;
+        var crlfModel = EditorModel.Run(crlf.Source, mode).Model;
 
         RequireSameShape(LineEndingNeutral, lfModel, crlfModel, Identity, Identity);
         return null;
@@ -127,8 +123,10 @@ internal static class EditorRelations
 
     private static string? CheckRename(EditorCase testCase, EditorToolingResult baseResult, EditorExecutionMode mode)
     {
-        if (HasErrors(baseResult) || baseResult.Model is not { } model)
+        if (HasErrors(baseResult))
             return "rename-requires-a-clean-model";
+
+        var model = baseResult.Model;
 
         if (TryChooseRenameTarget(model, out var target, out var newName) is false)
             return "no-uniquely-scoped-renameable-symbol";
@@ -138,8 +136,10 @@ internal static class EditorRelations
             return "rename-could-not-rewrite-source";
 
         var renamedResult = EditorModel.Run(renamed, mode);
-        if (HasErrors(renamedResult) || renamedResult.Model is not { } renamedModel)
+        if (HasErrors(renamedResult))
             return "renamed-source-does-not-reparse-cleanly";
+
+        var renamedModel = renamedResult.Model;
 
         // The renamed model must equal the original with every occurrence of the old name mapped to
         // the new one, and the old name must have vanished entirely.
@@ -231,8 +231,10 @@ internal static class EditorRelations
     private static string? CheckUnrelatedDeclaration(EditorCase testCase, EditorExecutionMode mode)
     {
         var baseResult = EditorModel.Run(testCase.Source, mode);
-        if (HasErrors(baseResult) || baseResult.Model is not { } model)
+        if (HasErrors(baseResult))
             return "unrelated-requires-a-clean-model";
+
+        var model = baseResult.Model;
 
         const string freshName = "Zzq9";
         if (testCase.Source.Contains(freshName, StringComparison.Ordinal))
@@ -240,8 +242,10 @@ internal static class EditorRelations
 
         var extended = testCase.Source + "\n" + freshName + " = 1";
         var extendedResult = EditorModel.Run(extended, mode);
-        if (HasErrors(extendedResult) || extendedResult.Model is not { } extendedModel)
+        if (HasErrors(extendedResult))
             return "extended-source-does-not-reparse-cleanly";
+
+        var extendedModel = extendedResult.Model;
 
         // Every original structural tuple survives unchanged; the only new tuples mention the fresh name.
         var before = ShapeLines(model, Identity, Identity);
@@ -263,8 +267,10 @@ internal static class EditorRelations
     {
         if (!EditorTables.TemplateOf(testCase.Parameters.Template).DottedOrdinaryPair)
             return "template-has-no-dotted-ordinary-pair";
-        if (HasErrors(baseResult) || baseResult.Model is not { } model)
+        if (HasErrors(baseResult))
             return "dotted-ordinary-requires-a-clean-model";
+
+        var model = baseResult.Model;
 
         var ordinary = model.IdentifierResolutions.FirstOrDefault(resolution =>
             resolution.Occurrence.Name == "MmF" && resolution.Occurrence.Kind == OccurrenceKind.ResolveReference);
@@ -317,6 +323,8 @@ internal static class EditorRelations
         return lines;
     }
 
+    // A model over unavailable modules is provisional, so the relations that need a clean
+    // COMPLETE program (rename, unrelated declaration, dotted/ordinary) treat it like an error.
     private static bool HasErrors(EditorToolingResult result)
         => result.Outcome != EditorToolingOutcome.Built
            || result.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);

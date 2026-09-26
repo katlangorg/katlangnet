@@ -2144,9 +2144,13 @@ public class FrontEndDagComplexityTests
         for (var i = 0; i < deepCaptureCount; i++)
             rewrittenDeep = Assert.IsType<Expr.Capture>(rewrittenDeep).Body[0];
 
-        Assert.IsType<Expr.Num>(rewrittenDeep);
+        // The deep occurrence is REFUSED — it keeps the written directive (the shared node
+        // itself, recorded as refused) — while the shallow occurrence of the same node splices.
+        Assert.Same(sharedLoad, rewrittenDeep);
+        Assert.Contains(sharedLoad, loader.RefusedLoads);
         Assert.IsType<Expr.AlgorithmExpr>(rewrittenValue.Output[1]);
         Assert.NotSame(rewrittenDeep, rewrittenValue.Output[1]);
+        Assert.False(LoadElaborationGuard.TryFindFirstUnresolvedLoad(elaborated, loader.RefusedLoads, out _));
     }
 
     /// <summary>
