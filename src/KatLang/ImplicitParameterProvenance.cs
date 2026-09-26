@@ -280,13 +280,19 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
     // shared node.
     private protected override void VisitCallArguments(OutputBundle arguments)
     {
-        if (Enter(arguments))
+        if (_claims.Reaches(arguments) && Enter(arguments))
             base.VisitCallArguments(arguments);
     }
 
+    // Only a claimed dot edge (or a nested algorithm, below which one may be) is acted on: a
+    // subtree that reaches neither is not walked in any scope (FE-3: a synthesized argument bundle
+    // shared by the owners of K scopes is not re-walked per scope).
+    private readonly NestedReachIndex _claims = new(static expr =>
+        expr is Expr.DotCall { InferredFallbackProvenance.DotMemberOrigin: not null });
+
     public override void VisitExpr(Expr expr)
     {
-        if (!Enter(expr))
+        if (!_claims.Reaches(expr) || !Enter(expr))
             return;
         if (expr is Expr.DotCall { InferredFallbackProvenance: { DotMemberOrigin: not null } note } edge)
         {

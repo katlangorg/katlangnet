@@ -175,6 +175,9 @@ public static class SemanticModelBuilder
         // PER FAMILY: its binder references resolve to different declarations). They live in
         // this builder, never on the frames — the prelude frame is process-lifetime and shared.
         private readonly Dictionary<ScopeFrame, FrameVisits> _visitsByFrame = new(ReferenceEqualityComparer.Instance);
+
+        // FE-3: per-build editor metadata of shared implicit-signature templates.
+        private readonly TemplatePropertyMetadataCache _templateMetadata = new();
         private readonly FrontEndTraversalObservations? _observations;
 
         // The prelude this build resolves against: the process-shared one, or — for a parse
@@ -404,6 +407,16 @@ public static class SemanticModelBuilder
 
             var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
 
+            // An inferred signature that is a shared implicit-signature template (FE-3) declares only
+            // implicit parameters: its table is a pure function of the template names, built once
+            // per template and shared by every owner frame over it (each frame is still its own
+            // level — owner identity lives in the frame chain, never in the symbols).
+            if (extraParameters is null
+                && algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns: ImplicitSignatureTemplate template })
+            {
+                return new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, OwnsDeferredModuleOpen(propertyScope));
+            }
+
             var parameterSymbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
             if (extraParameters is not null)
             {
@@ -474,6 +487,66 @@ public static class SemanticModelBuilder
             }
 
             return new ScopeFrame(parentScope, parameterSymbols, propertyScope, OwnsDeferredModuleOpen(propertyScope));
+        }
+
+        private IReadOnlyDictionary<string, SymbolDefinition> ImplicitParameterTable(ImplicitSignatureTemplate template)
+        {
+            // A composed signature: its owner-local head's symbols over the tail's shared table
+            // (disjoint names; enumeration keeps the head-then-tail order the per-owner table had).
+            if (template.Tail is { } tail)
+            {
+                var head = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
+                foreach (var capture in ParameterPattern.EnumerateCaptures(template.Head))
+                {
+                    if (!head.ContainsKey(capture.Name))
+                        head[capture.Name] = new SymbolDefinition(capture.Name, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
+                }
+
+                return new OverlayParameterTable(head, ImplicitParameterTable(tail));
+            }
+
+            _implicitParameterTables ??= new(ReferenceEqualityComparer.Instance);
+            if (!_implicitParameterTables.TryGetValue(template, out var table))
+            {
+                var symbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
+                foreach (var name in template.Facts.Names)
+                {
+                    if (!symbols.ContainsKey(name))
+                        symbols[name] = new SymbolDefinition(name, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
+                }
+
+                table = symbols;
+                _implicitParameterTables.Add(template, table);
+            }
+
+            return table;
+        }
+
+        private Dictionary<ImplicitSignatureTemplate, IReadOnlyDictionary<string, SymbolDefinition>>? _implicitParameterTables;
+
+        /// <summary>An owner-local head table over a shared tail table (disjoint names), read-only.</summary>
+        private sealed class OverlayParameterTable(
+            Dictionary<string, SymbolDefinition> head,
+            IReadOnlyDictionary<string, SymbolDefinition> tail) : IReadOnlyDictionary<string, SymbolDefinition>
+        {
+            public SymbolDefinition this[string key]
+                => TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(key);
+
+            public IEnumerable<string> Keys => head.Keys.Concat(tail.Keys);
+
+            public IEnumerable<SymbolDefinition> Values => head.Values.Concat(tail.Values);
+
+            public int Count => head.Count + tail.Count;
+
+            public bool ContainsKey(string key) => head.ContainsKey(key) || tail.ContainsKey(key);
+
+            public bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out SymbolDefinition value)
+                => head.TryGetValue(key, out value) || tail.TryGetValue(key, out value);
+
+            public IEnumerator<KeyValuePair<string, SymbolDefinition>> GetEnumerator()
+                => head.Concat(tail).GetEnumerator();
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
         }
 
         /// <summary>
@@ -616,7 +689,8 @@ public static class SemanticModelBuilder
                 canonicalDeclaration,
                 property.IsPublic,
                 property.Exposure,
-                property.DeclarationSpans);
+                property.DeclarationSpans,
+                templateMetadata: _templateMetadata);
 
             foreach (var declaration in declarations)
             {
@@ -663,7 +737,8 @@ public static class SemanticModelBuilder
                 property.IsPublic,
                 property.Exposure,
                 declarationSpans: null,
-                moduleProvided: true);
+                moduleProvided: true,
+                templateMetadata: _templateMetadata);
 
             var symbol = new SymbolDefinition(
                 property.Name,
@@ -933,6 +1008,11 @@ public static class SemanticModelBuilder
 
         private void VisitExpr(Expr expr, ScopeFrame scope)
         {
+            // A semantically inert subtree records nothing in any frame (FE-3): it is not walked,
+            // so a synthesized argument bundle shared by K owners is not re-classified per owner.
+            if (IsSemanticallyInert(expr))
+                return;
+
             ExtendCurrentRegion(expr.Span);
 
             // One analysis per (node, frame) in value position — see _visitsByFrame.
@@ -1062,11 +1142,66 @@ public static class SemanticModelBuilder
             }
         }
 
+        /// <summary>
+        /// FE-3: whether an expression subtree is SEMANTICALLY INERT — every node in it spanless and of
+        /// a kind whose visit records only through a written span (a parameter read, a literal, an
+        /// operator, a spread, a capture): its analysis adds no occurrence, resolution, declaration,
+        /// region extent, or scope in ANY frame, so it is skipped. Implicit lifting's synthesized
+        /// argument bundles are exactly such subtrees (spanless reads of the caller's own bindings),
+        /// and one bundle shared by K owners — K frames — is thereby never walked per owner. A name
+        /// resolved through a lookup (a <see cref="Expr.Resolve"/>, a dot edge), a call, and a nested
+        /// algorithm are never inert. Memoized per node reference for the build.
+        /// </summary>
+        private bool IsSemanticallyInert(Expr expr)
+        {
+            if (expr.Span is not null)
+                return false;
+            if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+                return expr is Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall;
+            _inert ??= new(ReferenceEqualityComparer.Instance);
+            if (_inert.TryGetValue(expr, out var inert))
+                return inert;
+            inert = expr switch
+            {
+                Expr.Unary unary => IsSemanticallyInert(unary.Operand),
+                Expr.Binary binary => IsSemanticallyInert(binary.Left) && IsSemanticallyInert(binary.Right),
+                Expr.Comparison comparison => IsSemanticallyInert(comparison.First)
+                    && comparison.Links.All(link => IsSemanticallyInert(link.Operand)),
+                Expr.Index index => IsSemanticallyInert(index.Target) && IsSemanticallyInert(index.Selector),
+                Expr.SequenceSpread spread => spread.SpreadMarkerSpan is null && IsSemanticallyInert(spread.Operand),
+                Expr.SequenceConstruct construct => IsSemanticallyInert(construct.Left) && IsSemanticallyInert(construct.Right),
+                Expr.ListLiteral list => IsSemanticallyInert(list.Items),
+                Expr.Capture capture => IsSemanticallyInert(capture.Body),
+                Expr.Grace grace => IsSemanticallyInert(grace.Inner),
+                Expr.Resolve or Expr.DotCall or Expr.Call or Expr.AlgorithmExpr => false,
+                Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall => true,
+            };
+            _inert[expr] = inert;
+            return inert;
+        }
+
+        private bool IsSemanticallyInert(OutputBundle bundle)
+        {
+            if (bundle.Count == 0)
+                return true;
+            _inert ??= new(ReferenceEqualityComparer.Instance);
+            if (_inert.TryGetValue(bundle, out var inert))
+                return inert;
+            inert = bundle.Head.All(IsSemanticallyInert) && (bundle.Tail is not { } tail || IsSemanticallyInert(tail));
+            _inert[bundle] = inert;
+            return inert;
+        }
+
+        private Dictionary<object, bool>? _inert;
+
         // One analysis per (argument bundle, frame, region): a bundle shared by several call nodes
         // (FE-2) is classified once. Revisiting it would only re-extend the same region with spans
         // it already covers and hit every slot's own per-frame memo.
         private void VisitCallArguments(OutputBundle arguments, ScopeFrame scope, FrameVisits visits)
         {
+            if (IsSemanticallyInert(arguments))
+                return;
+
             visits.CallArguments ??= new(CallArgumentsVisitComparer.Instance);
             if (!visits.CallArguments.Add((arguments, _regionStack.Count > 0 ? _regionStack[^1] : null)))
                 return;
@@ -1314,7 +1449,8 @@ public static class SemanticModelBuilder
             IReadOnlyList<SourceSpan>? declarationSpans,
             PropertyCallStyle preferredCallStyle = PropertyCallStyle.Plain,
             bool? supportsLexicalDotCall = null,
-            bool moduleProvided = false)
+            bool moduleProvided = false,
+            TemplatePropertyMetadataCache? templateMetadata = null)
         {
             // An imported property has no local metadata spans (its declarations carry
             // none). A document-owned property reusing imported callable metadata in a host
@@ -1347,7 +1483,7 @@ public static class SemanticModelBuilder
 
             return algorithm switch
             {
-                Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure, documentLocalSpans),
+                Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure, documentLocalSpans, templateMetadata),
                 Algorithm.Conditional conditional => CreateConditionalPropertyInfo(
                     name,
                     conditional,
@@ -1379,8 +1515,19 @@ public static class SemanticModelBuilder
             DeclarationOccurrence? declaration,
             bool isPublic,
             PropertyExposure exposure,
-            bool documentLocalSpans)
+            bool documentLocalSpans,
+            TemplatePropertyMetadataCache? templateMetadata = null)
         {
+            // FE-3: a property whose callable holds a shared implicit-signature template reads the
+            // template's metadata, built once per template and shared by every owner over it; only
+            // the owner-specific display texts remain, composed on first read.
+            if (templateMetadata is not null
+                && algorithm.ParameterPatterns is ImplicitSignatureTemplate template
+                && !template.Facts.HasRecoveryPlaceholder)
+            {
+                return CreateTemplatePropertyInfo(name, algorithm, template, declaration, isPublic, exposure, documentLocalSpans, templateMetadata);
+            }
+
             // Recovery binders have no written name. Their parser provenance keeps
             // them distinct from locationless imported parameters, including when
             // a host copies an imported body under a document-owned declaration.
@@ -1476,6 +1623,158 @@ public static class SemanticModelBuilder
                 signatures.Add(CreateReceiverInjectedSignature(signature.Name, signatureParameters));
 
             return Array.AsReadOnly(signatures.ToArray());
+        }
+
+        /// <summary>
+        /// FE-3: the owner-independent editor metadata of one shared implicit-signature template
+        /// (per parameter source and span locality): the flat parameter list, the signature
+        /// parameters (flat or pattern-display, by the binding plan's layout), and the
+        /// receiver-injected tail. Built once per build and handed to every owner property over the
+        /// template as library-owned immutable lists, so K owners never hold K copies of L entries.
+        /// </summary>
+        internal sealed class TemplatePropertyMetadataCache
+        {
+            private readonly Dictionary<(ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans), TemplatePropertyMetadata> _metadata
+                = new(new MetadataKeyComparer());
+
+            /// <summary>
+            /// The metadata of <paramref name="template"/>: shared for a flat template; for a composed
+            /// signature, the owner-local head's parameters over the tail's shared metadata.
+            /// Grouped and collecting heads also compose; both flat and pattern-display tail
+            /// views are cached so changing layout never expands the tail per owner.
+            /// </summary>
+            public TemplatePropertyMetadata? For(
+                ImplicitSignatureTemplate template,
+                Algorithm.User owner,
+                bool documentLocalSpans,
+                Func<CallableSignature, bool, TemplatePropertyMetadata> build)
+            {
+                var source = owner.HasExplicitParameterList ? CallableParameterSource.Explicit : CallableParameterSource.Implicit;
+                if (template.Tail is not { } tail)
+                    return Shared(template, source, documentLocalSpans, owner, build);
+
+                var shared = Shared(tail, source, documentLocalSpans, owner: null, build);
+                var head = build(CallableSignature.FromAlgorithm(string.Empty,
+                    owner with { ParameterPatterns = template.Head }), documentLocalSpans);
+                var useFlat = head.UsesFlatParameters && shared.UsesFlatParameters
+                    && template.Facts.TopLevelCollectingCount <= 1;
+                var flat = SharedPropertyParameterList.Concat([.. head.FlatParameters], shared.FlatParameters);
+                var patterns = SharedPropertyParameterList.Concat([.. head.PatternParameters], shared.PatternParameters);
+                var signatureParameters = useFlat ? flat : patterns;
+                var headSignature = useFlat ? head.FlatParameters : head.PatternParameters;
+                var tailSignature = useFlat ? shared.FlatParameters : shared.PatternParameters;
+                var dot = headSignature.Count == 0
+                    ? shared.DotParameters
+                    : SharedPropertyParameterList.Concat(
+                        [.. headSignature.Skip(1)], tailSignature);
+                return new TemplatePropertyMetadata(
+                    flat,
+                    patterns,
+                    signatureParameters,
+                    dot,
+                    signatureParameters.Count > 0 ? signatureParameters[0].Name : string.Empty,
+                    useFlat);
+            }
+
+            private TemplatePropertyMetadata Shared(
+                ImplicitSignatureTemplate template,
+                CallableParameterSource source,
+                bool documentLocalSpans,
+                Algorithm.User? owner,
+                Func<CallableSignature, bool, TemplatePropertyMetadata> build)
+            {
+                var key = (template, source, documentLocalSpans);
+                if (!_metadata.TryGetValue(key, out var metadata))
+                {
+                    var signatureOwner = owner ?? new Algorithm.User(null, template, [], [], []) { HasExplicitParameterList = source == CallableParameterSource.Explicit };
+                    metadata = build(CallableSignature.FromAlgorithm(string.Empty, signatureOwner), documentLocalSpans);
+                    _metadata.Add(key, metadata);
+                }
+
+                return metadata;
+            }
+
+            private sealed class MetadataKeyComparer : IEqualityComparer<(ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans)>
+            {
+                public bool Equals(
+                    (ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans) x,
+                    (ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans) y)
+                    => ReferenceEquals(x.Template, y.Template) && x.Source == y.Source && x.DocumentLocalSpans == y.DocumentLocalSpans;
+
+                public int GetHashCode((ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans) key)
+                    => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Template), key.Source, key.DocumentLocalSpans);
+            }
+        }
+
+        internal sealed record TemplatePropertyMetadata(
+            SharedPropertyParameterList FlatParameters,
+            SharedPropertyParameterList PatternParameters,
+            SharedPropertyParameterList SignatureParameters,
+            SharedPropertyParameterList DotParameters,
+            string ReceiverName,
+            bool UsesFlatParameters);
+
+        private static TemplatePropertyMetadata BuildTemplatePropertyMetadata(CallableSignature signature, bool documentLocalSpans)
+        {
+            var flat = new SharedPropertyParameterList([.. CreateOrdinaryParameters(signature, documentLocalSpans)]);
+            var bindingPlan = CallableBindingPlan.FromSignature(signature);
+            var useFlatParameters = bindingPlan.TryGetFlatFixedLayout(out _)
+                || bindingPlan.TryGetFlatCollectingLayout(out _, out _, out _);
+            var patternParameterKind = signature.HasExplicitParameterList
+                ? PropertyParameterKind.Explicit
+                : ToPropertyParameterKind(signature.Parameters.FirstOrDefault()?.Source ?? CallableParameterSource.Implicit);
+            var patternParameters = new SharedPropertyParameterList([.. signature.ParameterPatterns
+                    .Select(pattern => new PropertyParameterInfo(pattern.DisplayName, patternParameterKind, Span: null)
+                    {
+                        DisplayNameOverride = pattern.DisplayName,
+                    })]);
+            var signatureParameters = useFlatParameters ? flat : patternParameters;
+            var dot = new SharedPropertyParameterList([.. signatureParameters.Skip(1)]);
+            var receiverName = signatureParameters.Count > 0 ? signatureParameters[0].Name : string.Empty;
+            return new TemplatePropertyMetadata(flat, patternParameters, signatureParameters, dot, receiverName, useFlatParameters);
+        }
+
+        private static PropertyInfo CreateTemplatePropertyInfo(
+            string name,
+            Algorithm.User algorithm,
+            ImplicitSignatureTemplate template,
+            DeclarationOccurrence? declaration,
+            bool isPublic,
+            PropertyExposure exposure,
+            bool documentLocalSpans,
+            TemplatePropertyMetadataCache templateMetadata)
+        {
+            var metadata = templateMetadata.For(template, algorithm, documentLocalSpans, BuildTemplatePropertyMetadata);
+            if (metadata is null)
+                return CreateOrdinaryPropertyInfo(name, algorithm, declaration, isPublic, exposure, documentLocalSpans, templateMetadata: null);
+            // The same texts CreateOrdinarySignatures formats eagerly, composed on first read.
+            var signatures = new List<PropertySignatureInfo>(2)
+            {
+                new(
+                    PropertyCallStyle.Plain,
+                    () => CallableSignature.FormatDisplayText(name, template.Select(static pattern => pattern.DisplayName)),
+                    metadata.SignatureParameters),
+            };
+            if (metadata.SignatureParameters.Count > 0)
+            {
+                signatures.Add(new(
+                    PropertyCallStyle.Dot,
+                    () => FormatReceiverInjectedSignature(name, metadata.ReceiverName, metadata.DotParameters),
+                    metadata.DotParameters));
+            }
+
+            return new PropertyInfo(
+                name,
+                declaration,
+                PropertyShape.Ordinary,
+                isPublic,
+                exposure,
+                metadata.FlatParameters,
+                [])
+            {
+                Signatures = signatures,
+                SupportsLexicalDotCall = template.Count > 0,
+            };
         }
 
         private static PropertyInfo CreateConditionalPropertyInfo(

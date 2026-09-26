@@ -34,7 +34,10 @@ internal static class CallableSignatureDiagnostics
     public static CallableArityFacts GetArityFacts(CallableSignature signature)
     {
         var parameterPatterns = signature.ParameterPatterns;
-        var topLevelCollectingCount = parameterPatterns.Count(IsTopLevelCollectingCapture);
+        // A shared implicit-signature template knows its top-level collecting count (FE-3).
+        var topLevelCollectingCount = parameterPatterns is ImplicitSignatureTemplate template
+            ? template.Facts.TopLevelCollectingCount
+            : parameterPatterns.Count(IsTopLevelCollectingCapture);
 
         return new CallableArityFacts(
             ParameterPattern.MinimumSuppliedSlots(parameterPatterns),

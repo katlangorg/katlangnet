@@ -747,6 +747,10 @@ public class FrontEndDagComplexityTests
 
     // ── 3. PropertyExposureResolver ─────────────────────────────────────────
 
+    /// <summary>
+    /// A diamond over a nested algorithm (which exposure must reach and classify) rewrites each
+    /// distinct node once per region and stays a diamond.
+    /// </summary>
     [Theory]
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
@@ -754,12 +758,33 @@ public class FrontEndDagComplexityTests
         => AssertCompletesUnderWallClockGuard(() =>
         {
             var observations = new FrontEndTraversalObservations();
-            var root = EmptyAlgorithm(BinaryDiamond(depth, new Expr.Num(1)));
+            var root = EmptyAlgorithm(BinaryDiamond(depth, new Expr.AlgorithmExpr(EmptyAlgorithm(new Expr.Num(1)))));
 
             var rewritten = PropertyExposureResolver.Resolve(root, observations);
 
-            Assert.Equal(depth, observations.ExposureRewriteExpansions);
+            // The depth interior nodes and the one algorithm-expression leaf.
+            Assert.Equal(depth + 1, observations.ExposureRewriteExpansions);
             AssertDiamondSharingPreserved(((Algorithm.User)rewritten).Output[0], depth);
+        });
+
+    /// <summary>
+    /// FE-3: a subtree reaching no nested algorithm and no dot edge is REWRITE-INVARIANT — exposure
+    /// returns it as it is (the same instance, in every region), never a per-region copy.
+    /// </summary>
+    [Theory]
+    [InlineData(ShallowDepth)]
+    [InlineData(DeepDepth)]
+    public Task Exposure_InvariantDiamond_IsReturnedAsItIs(int depth)
+        => AssertCompletesUnderWallClockGuard(() =>
+        {
+            var observations = new FrontEndTraversalObservations();
+            var diamond = BinaryDiamond(depth, new Expr.Num(1));
+            var root = EmptyAlgorithm(diamond);
+
+            var rewritten = PropertyExposureResolver.Resolve(root, observations);
+
+            Assert.Equal(0, observations.ExposureRewriteExpansions);
+            Assert.Same(diamond, ((Algorithm.User)rewritten).Output[0]);
         });
 
     /// <summary>
@@ -1512,7 +1537,9 @@ public class FrontEndDagComplexityTests
             var exposed = PropertyExposureResolver.Resolve(resolved, exposureObservations);
             // Root, Mod, and each shared body once.
             Assert.Equal(depth + 2, exposureObservations.ExposureAlgorithmExpansions);
-            Assert.Equal(depth + 1, exposureObservations.ExposureRewriteExpansions);
+            // The root row's dot edge only: every body's `Left(0)` row is rewrite-invariant and is
+            // returned as it is (FE-3).
+            Assert.Equal(1, exposureObservations.ExposureRewriteExpansions);
             // Every family node once (two per level, memoized by node) plus Mod's body.
             Assert.Equal(2 * depth + 1, exposureObservations.DependencyAlgorithmSummaryComputations);
             // Every shared branch body once per binder set — one per level.
@@ -1919,8 +1946,9 @@ public class FrontEndDagComplexityTests
 
             var model = SemanticModelBuilder.Build(detected, observations);
 
-            // Leaf's own `1`, then the diamond's depth interior nodes and its one leaf.
-            Assert.Equal(depth + 2, observations.SemanticModelExpressionVisits);
+            // The diamond's depth interior nodes and its one leaf; Leaf's own spanless `1` records
+            // nothing in any frame and is not analyzed (FE-3's semantically inert subtrees).
+            Assert.Equal(depth + 1, observations.SemanticModelExpressionVisits);
             var occurrence = Assert.Single(model.IdentifierOccurrences);
             Assert.Equal("Leaf", occurrence.Name);
             Assert.Equal(

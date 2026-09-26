@@ -138,6 +138,58 @@ internal sealed class FrontEndTraversalObservations
         ImplicitArgumentSlotsBuilt = checked(ImplicitArgumentSlotsBuilt + slots);
     }
 
+    // ── Shared implicit-signature templates (FE-3) ───────────────────────────
+    //
+    // K owners that each lift the same L-wide callee hold K × L LOGICAL (owner, slot) bindings. These
+    // counters measure the PHYSICAL representation built for them: a template is built once per
+    // distinct lifted signature, an owner instance costs its own head, and only an owner whose own
+    // names reorder the lifted ones materializes a signature of its own.
+
+    /// <summary>
+    /// Flat signature TEMPLATES a resolution interned (<c>ImplicitSignatureTemplateInterner.InternFlat</c>):
+    /// one per distinct lifted signature content, however many owners lift it.
+    /// </summary>
+    public long SignatureTemplatesBuilt { get; private set; }
+
+    /// <summary>Top-level pattern slots of the templates counted by <see cref="SignatureTemplatesBuilt"/>.</summary>
+    public long SignatureTemplateSlotsBuilt { get; private set; }
+
+    internal void RecordSignatureTemplateBuilt(int slots)
+    {
+        SignatureTemplatesBuilt = checked(SignatureTemplatesBuilt + 1);
+        SignatureTemplateSlotsBuilt = checked(SignatureTemplateSlotsBuilt + slots);
+    }
+
+    /// <summary>
+    /// Owners given a lifted signature through a shared template (<c>ImplicitArgumentResolver.LiftSignature</c>):
+    /// the template itself for an owner with no own parameter, or its own head composed over the template.
+    /// </summary>
+    public long OwnerSignatureInstances { get; private set; }
+
+    /// <summary>Owner-local head slots copied by <see cref="OwnerSignatureInstances"/> (never the shared tail).</summary>
+    public long OwnerSignatureHeadSlots { get; private set; }
+
+    internal void RecordOwnerSignatureInstance(int headSlots)
+    {
+        OwnerSignatureInstances = checked(OwnerSignatureInstances + 1);
+        OwnerSignatureHeadSlots = checked(OwnerSignatureHeadSlots + headSlots);
+    }
+
+    /// <summary>
+    /// Owners whose own parameter names meet their lifted ones, so their signature order is genuinely
+    /// their own and is merged per owner (<c>ImplicitArgumentResolver.LiftSignature</c>).
+    /// </summary>
+    public long OwnerSignaturesMaterialized { get; private set; }
+
+    /// <summary>Top-level slots of the signatures counted by <see cref="OwnerSignaturesMaterialized"/>.</summary>
+    public long OwnerSignatureMaterializedSlots { get; private set; }
+
+    internal void RecordOwnerSignatureMaterialized(int slots)
+    {
+        OwnerSignaturesMaterialized = checked(OwnerSignaturesMaterialized + 1);
+        OwnerSignatureMaterializedSlots = checked(OwnerSignatureMaterializedSlots + slots);
+    }
+
     /// <summary>
     /// Conditional branch-body REGIONS the resolver processed (<c>ImplicitArgumentResolver.ProcessAlgorithm</c>
     /// misses of the run's algorithm region memo for bodies rewritten under a closed branch pattern): one
@@ -204,6 +256,17 @@ internal sealed class FrontEndTraversalObservations
         => ContextEntriesWritten = checked(ContextEntriesWritten + 1);
 
     /// <summary>
+    /// Shared implicit-signature templates added to a persistent context as ONE layer instead of one
+    /// entry per name (FE-3) — the detector's parameter-ownership map and the collision validator's
+    /// declaration bindings: an owner whose completed signature is an L-wide shared template costs one
+    /// layer, never L <see cref="ContextEntriesWritten"/>.
+    /// </summary>
+    public long ContextTemplateLayers { get; private set; }
+
+    internal void RecordContextTemplateLayer()
+        => ContextTemplateLayers = checked(ContextTemplateLayers + 1);
+
+    /// <summary>
     /// Owner parameter names materialized by the summary and exposure passes: one owner's
     /// parameter-name set is built once per resolution and shared by every property summary,
     /// fixed-point iteration, and requirement lookup at that owner — never once per property.
@@ -219,6 +282,12 @@ internal sealed class FrontEndTraversalObservations
     /// scanned, so a narrow seed under a wide owner costs its own size, never the owner's width.
     /// </summary>
     public long SummaryQualificationProbes { get; private set; }
+
+    /// <summary>Actual name probes in shared summary residual checks, including work before memo hits.</summary>
+    public long SummaryResidualNameProbes { get; private set; }
+
+    internal void RecordSummaryResidualNameProbe()
+        => SummaryResidualNameProbes = checked(SummaryResidualNameProbes + 1);
 
     internal void RecordSummaryQualificationProbe()
         => SummaryQualificationProbes = checked(SummaryQualificationProbes + 1);

@@ -247,9 +247,9 @@ internal static class AstStructuralPreflight
             {
                 // A shared argument bundle is a grouping node of this walk only: a rejection met
                 // AT it is positioned at the slot the slot-by-slot walk reports.
-                if (child is OutputBundle arguments
+                if (child is OutputBundle or ImplicitSignatureTemplate
                     && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
-                    return RejectWithinArgumentBundle(arguments, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount);
+                    return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount);
 
                 if (childHeight == OnStack)
                     return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount));
@@ -285,30 +285,39 @@ internal static class AstStructuralPreflight
 
     /// <summary>
     /// The rejection the slot-by-slot walk reports when it reaches a SHARED argument bundle again
-    /// (see <see cref="PickArgumentBundle"/>): the first slot, in order, that is still on the path
+    /// (see <see cref="PickArgumentBundle"/>) or shared signature template: the first child, in order, that is still on the path
     /// (a cycle) or whose memoized height crosses the limit from <paramref name="pathWeight"/>.
     /// Every slot before the first one still on the path is complete, and the bundle's own height
     /// is its slots' maximum, so one such slot exists.
     /// </summary>
-    private static AstStructuralRejection RejectWithinArgumentBundle(
-        OutputBundle arguments,
+    private static AstStructuralRejection RejectWithinGroupingNode(
+        object groupingNode,
         Dictionary<object, int> heights,
         int pathWeight,
         int maxDepth,
         Frame[] frames,
         int frameCount)
     {
-        foreach (var slot in arguments)
+        // A grouping node (an argument bundle, a shared signature template) is weightless, so its
+        // children are judged from the same path weight; a nested grouping child (a composed
+        // signature's shared tail) replays its own children in order.
+        for (var index = 0; TryGetChild(groupingNode, index, out var slot); index++)
         {
             var slotHeight = heights[slot];
-            if (slotHeight == OnStackHeight)
-                return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(slot, frames, frameCount));
-            if (pathWeight + slotHeight > maxDepth)
-                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(slot, frames, frameCount));
+            var onPath = slotHeight == OnStackHeight;
+            if (!onPath && pathWeight + slotHeight <= maxDepth)
+                continue;
+
+            // The first offending child; a nested grouping node holds the offending slot itself.
+            if (slot is OutputBundle or ImplicitSignatureTemplate)
+                return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount);
+            return new AstStructuralRejection(
+                onPath ? AstStructuralViolation.CycleDetected : AstStructuralViolation.DepthExceeded,
+                SpanOf(slot, frames, frameCount));
         }
 
         throw new InvalidOperationException(
-            "AstStructuralPreflight invariant violation: a shared argument bundle was rejected, but none of its slots is.");
+            "AstStructuralPreflight invariant violation: a shared grouping node was rejected, but none of its children is.");
     }
 
     /// <summary>
@@ -337,7 +346,7 @@ internal static class AstStructuralPreflight
         // constructed or wired at runtime).
         // A call's argument bundle is a grouping node of the walk only (PickArgumentBundle): it
         // stands for no frame of any consumer, so it contributes no depth on any profile.
-        if (node is OutputBundle)
+        if (node is OutputBundle or ImplicitSignatureTemplate)
             return 0;
 
         if (node is Expr.Capture or Expr.Call)
@@ -622,6 +631,21 @@ internal static class AstStructuralPreflight
                 index -= branches.Count;
                 index -= branches.Count;
                 var parameterPatterns = algorithm.ParameterPatterns;
+                // A shared implicit-signature template (FE-3) is ONE weightless grouping child, like
+                // an argument bundle: K owners sharing an L-wide template walk its patterns once,
+                // not L edges each.
+                if (parameterPatterns is ImplicitSignatureTemplate signatureTemplate)
+                {
+                    if (index == 0)
+                    {
+                        child = signatureTemplate;
+                        return true;
+                    }
+
+                    child = null!;
+                    return false;
+                }
+
                 if (index < parameterPatterns.Count)
                 {
                     child = parameterPatterns[index];
@@ -634,7 +658,33 @@ internal static class AstStructuralPreflight
 
             // A call or dot-call argument bundle (see PickArgumentBundle): its slots.
             case OutputBundle arguments:
-                return PickFromList(index, arguments, out child);
+                if (index == arguments.Head.Count && arguments.Tail is { } argumentTail)
+                {
+                    child = argumentTail;
+                    return true;
+                }
+                return PickFromList(index, arguments.Head, out child);
+
+            // A shared implicit-signature template (FE-3; see the algorithm case): its owner-local
+            // head patterns, then its flat shared tail as ONE further grouping child.
+            case ImplicitSignatureTemplate signatureTemplate:
+            {
+                var head = signatureTemplate.Head;
+                if (index < head.Count)
+                {
+                    child = head[index];
+                    return true;
+                }
+
+                if (index == head.Count && signatureTemplate.Tail is { } tail)
+                {
+                    child = tail;
+                    return true;
+                }
+
+                child = null!;
+                return false;
+            }
 
             case Pattern.SequenceValue sequenceValue:
                 return PickFromList(index, sequenceValue.Items, out child);

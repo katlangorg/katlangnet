@@ -166,7 +166,7 @@ internal static class PropertyExposureResolver
         FrontEndTraversalObservations? observations)
     {
         var run = new ExposureRun();
-        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(), observations, run);
+        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run);
         if (run.HasDotMemberOrigins)
             new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
         return root;
@@ -175,6 +175,53 @@ internal static class PropertyExposureResolver
     private sealed class ExposureRun
     {
         public bool HasDotMemberOrigins;
+
+        /// <summary>
+        /// FE-3: whether an expression subtree is REWRITE-INVARIANT — it reaches no nested algorithm
+        /// (the only thing this pass rewrites below an expression) and no dot-call edge (whose
+        /// provenance the pass records) — by node reference, for the whole resolution. Such a subtree
+        /// is returned as it is in every region instead of being re-copied per region, so one
+        /// synthesized argument bundle shared by K owners stays one bundle, walked once.
+        /// </summary>
+        private Dictionary<object, bool>? _rewriteInvariant;
+
+        public bool IsRewriteInvariant(Expr expr)
+        {
+            if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+                return expr is not Expr.AlgorithmExpr and not Expr.DotCall;
+            _rewriteInvariant ??= new(ReferenceEqualityComparer.Instance);
+            if (_rewriteInvariant.TryGetValue(expr, out var invariant))
+                return invariant;
+            invariant = expr switch
+            {
+                Expr.AlgorithmExpr or Expr.DotCall => false,
+                Expr.Grace grace => IsRewriteInvariant(grace.Inner),
+                Expr.Unary unary => IsRewriteInvariant(unary.Operand),
+                Expr.Binary binary => IsRewriteInvariant(binary.Left) && IsRewriteInvariant(binary.Right),
+                Expr.Comparison comparison => IsRewriteInvariant(comparison.First)
+                    && comparison.Links.All(link => IsRewriteInvariant(link.Operand)),
+                Expr.Index index => IsRewriteInvariant(index.Target) && IsRewriteInvariant(index.Selector),
+                Expr.SequenceSpread spread => IsRewriteInvariant(spread.Operand),
+                Expr.SequenceConstruct construct => IsRewriteInvariant(construct.Left) && IsRewriteInvariant(construct.Right),
+                Expr.ListLiteral list => IsRewriteInvariant(list.Items),
+                Expr.Capture capture => IsRewriteInvariant(capture.Body),
+                Expr.Call call => IsRewriteInvariant(call.Function) && IsRewriteInvariant(call.Args),
+                Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
+                    or Expr.EmptySequence or Expr.NativeCall => true,
+            };
+            _rewriteInvariant[expr] = invariant;
+            return invariant;
+        }
+
+        public bool IsRewriteInvariant(OutputBundle bundle)
+        {
+            _rewriteInvariant ??= new(ReferenceEqualityComparer.Instance);
+            if (_rewriteInvariant.TryGetValue(bundle, out var invariant))
+                return invariant;
+            invariant = bundle.Head.All(IsRewriteInvariant) && (bundle.Tail is not { } tail || IsRewriteInvariant(tail));
+            _rewriteInvariant[bundle] = invariant;
+            return invariant;
+        }
     }
 
     /// <summary>
@@ -770,6 +817,10 @@ internal static class PropertyExposureResolver
     /// </summary>
     private static OutputBundle RewriteArgumentBundle(OutputBundle arguments, ExposureWalkMemos memos)
     {
+        // A rewrite-invariant bundle is the same bundle in every region (FE-3).
+        if (memos.Run.IsRewriteInvariant(arguments))
+            return arguments;
+
         memos.ArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
         if (memos.ArgumentBundles.TryGetValue(arguments, out var rewritten))
             return rewritten;
@@ -799,6 +850,11 @@ internal static class PropertyExposureResolver
         // the same rewritten node for every later reach, preserving the input's sharing.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
             return RewriteExprCore(expr, memos);
+
+        // A rewrite-invariant subtree is returned as it is: its copy would be content-identical,
+        // and returning it keeps a shared subtree shared across regions (FE-3).
+        if (memos.Run.IsRewriteInvariant(expr))
+            return expr;
 
         memos.Rewrites ??= new(ReferenceEqualityComparer.Instance);
         if (memos.Rewrites.TryGetValue(expr, out var rewritten))

@@ -192,7 +192,10 @@ internal sealed class OpenProviderValidator : AstWalker
 
     public override void VisitExpr(Expr expr)
     {
-        if (!FirstVisit(expr))
+        // Opens are validated at algorithms only: a subtree that reaches none has nothing to
+        // validate in ANY scope region, so it is not walked (FE-3: one argument bundle shared by the
+        // owners of K scope regions is not re-walked per region).
+        if (!_nestedAlgorithms.Reaches(expr) || !FirstVisit(expr))
             return;
 
         var saved = _importSite;
@@ -203,12 +206,14 @@ internal sealed class OpenProviderValidator : AstWalker
     }
 
     // A call argument bundle shared by several call nodes (FE-2) is visited once per scope region,
-    // like a shared node.
+    // like a shared node — and not at all when it reaches no algorithm (FE-3).
     private protected override void VisitCallArguments(OutputBundle arguments)
     {
-        if (FirstVisit(arguments))
+        if (_nestedAlgorithms.Reaches(arguments) && FirstVisit(arguments))
             base.VisitCallArguments(arguments);
     }
+
+    private readonly NestedReachIndex _nestedAlgorithms = new();
 
     private void ValidateOpens(IReadOnlyList<Expr> opens)
     {

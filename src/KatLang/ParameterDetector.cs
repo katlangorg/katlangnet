@@ -195,10 +195,17 @@ internal static class ParameterDetector
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
 
-        // ONE projection of the written/inferred signature serves every read below.
-        var parameterNames = alg.Params;
-        var paramNames = new HashSet<string>(parameterNames);
-        var paramOrder = new List<string>(parameterNames);
+        // ONE projection of the written/inferred signature serves every read below. A completed
+        // signature that is a shared implicit-signature template (FE-3) — only a completion run
+        // sees one — is read through the template's facts and extends the ownership map by one
+        // layer: nothing here copies its L names per owner.
+        var signatureTemplate = run.ImplicitCallOrigins is not null
+            ? alg.ParameterPatterns as ImplicitSignatureTemplate
+            : null;
+        var parameterNames = signatureTemplate?.Facts.Names ?? alg.Params;
+        var paramNames = signatureTemplate is null ? new HashSet<string>(parameterNames) : null;
+        var paramOrder = signatureTemplate is null ? new List<string>(parameterNames) : null;
+        IReadOnlySet<string> ownParameterNames = (IReadOnlySet<string>?)paramNames ?? signatureTemplate!.Facts.NameSet;
         var graceWeights = new Dictionary<string, int>();
         var hasExplicitParameterList = alg.HasExplicitParameterList;
 
@@ -212,7 +219,7 @@ internal static class ParameterDetector
         // inherited ones plus this algorithm's written parameters, all owned by THIS level.
         // Ordinary nested algorithms close over already-known outer params: those rewrite to
         // Expr.Param but must not become new local params.
-        var boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
+        var boundParameters = ExtendOwnSignature(capturedParameters, scope, alg, signatureTemplate, parameterNames, isProgramRoot, observations);
 
         // Static-open ownership (F2): the head name of every open target is classified by the
         // SAME owner walk as every other bare-name occurrence, against the bindings established
@@ -228,7 +235,7 @@ internal static class ParameterDetector
             newOpens = ownedOpens;
             algWithProcessedOpens = alg with { Opens = newOpens };
             scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
-            boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
+            boundParameters = ExtendOwnSignature(capturedParameters, scope, alg, signatureTemplate, parameterNames, isProgramRoot, observations);
         }
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
@@ -245,13 +252,13 @@ internal static class ParameterDetector
         {
             provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
             CollectFreeParams(
-                writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
+                writtenRows, scope, boundParameters, paramNames!, paramOrder!, graceWeights,
                 FreeNameCollection.ImplicitSignature,
                 provenanceRecorder,
                 new FreeNameWalkMemo(observations));
 
             if (graceWeights.Count > 0)
-                ApplyGraceReordering(paramOrder, graceWeights);
+                ApplyGraceReordering(paramOrder!, graceWeights);
         }
 
         // The bindings in force inside this body: every inferred parameter is now known, and
@@ -260,7 +267,7 @@ internal static class ParameterDetector
         // same bindings with exactly the same owners.
         // Collection only adds names; Grace changes their order, not this map's contents.
         // Reuse the established map when no names were inferred, including completion runs.
-        var bodyParameters = paramOrder.Count == parameterNames.Count
+        var bodyParameters = paramOrder is null || paramOrder.Count == parameterNames.Count
             ? boundParameters
             : capturedParameters.Extend(scope, paramOrder, isProgramRoot, observations);
 
@@ -348,7 +355,7 @@ internal static class ParameterDetector
             observations,
             diagnostics,
             hasExplicitParameterList ? GraceEffectPolicy.ClosedExplicitList : GraceEffectPolicy.ImplicitSignature,
-            paramNames,
+            ownParameterNames,
             scope,
             provenanceRecorder?.DotMembers);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
@@ -362,7 +369,7 @@ internal static class ParameterDetector
         var parameterized = run.ImplicitCallOrigins is null
             ? algWithProcessedOpens with
             {
-                ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
+                ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder!, provenanceRecorder?.Provenance),
             }
             : algWithProcessedOpens;
         return parameterized with
@@ -371,6 +378,24 @@ internal static class ParameterDetector
             Output = rewrittenOutput,
         };
     }
+
+    /// <summary>
+    /// The ownership map inside one owner's body: the inherited bindings plus the owner's own
+    /// parameters, all owned by its level. A completed shared implicit-signature template (FE-3)
+    /// extends by one template layer (<see cref="ParameterOwnership.ExtendSignature"/>); every other
+    /// signature writes its names as before.
+    /// </summary>
+    private static ParameterOwnership ExtendOwnSignature(
+        ParameterOwnership capturedParameters,
+        ElaboratedPropertyScope scope,
+        Algorithm.User alg,
+        ImplicitSignatureTemplate? signatureTemplate,
+        IReadOnlyList<string> parameterNames,
+        bool isProgramRoot,
+        FrontEndTraversalObservations? observations)
+        => signatureTemplate is not null
+            ? capturedParameters.ExtendSignature(scope, alg.ParameterPatterns, isProgramRoot, observations)
+            : capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
 
     /// <summary>
     /// Elaborates one clause family (a property whose value is an
@@ -726,11 +751,29 @@ internal static class ParameterDetector
 
             while (pending.TryPop(out var map))
             {
-                set = interner.With(set, map.AddedNames);
+                // A template layer (FE-3) adds its template's whole name set: canonicalized once per
+                // template and combined by the interner's memoized union, never re-read per layer.
+                set = map.AddedTemplate is { } template
+                    ? interner.Union(set, TemplateNames(interner, template))
+                    : interner.With(set, map.AddedNames);
                 canonical.Add(map, set);
             }
 
             return set.Id;
+        }
+
+        private Dictionary<ImplicitSignatureTemplate, CanonicalNameSet>? _templateNameSets;
+
+        private CanonicalNameSet TemplateNames(NameSetInterner interner, ImplicitSignatureTemplate template)
+        {
+            _templateNameSets ??= new(ReferenceEqualityComparer.Instance);
+            if (!_templateNameSets.TryGetValue(template, out var names))
+            {
+                names = interner.With(NameSetInterner.Empty, template.Facts.Names);
+                _templateNameSets.Add(template, names);
+            }
+
+            return names;
         }
 
         /// <summary>

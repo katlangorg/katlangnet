@@ -50,27 +50,151 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
 /// </summary>
 public sealed record PropertySignatureInfo
 {
+    // FE-3: the display text of a signature the semantic model builds for a property whose callable
+    // shares a wide implicit-signature template is composed on first read instead of eagerly — the
+    // owner name makes it owner-specific, and K owners of one L-wide template would otherwise each
+    // hold an L-wide string nobody asked for. Held in an equality-transparent slot; equality below
+    // compares the TEXT exactly as the synthesized record equality did.
+    private readonly RuntimeStateSlot<Func<string>?> _composeDisplayText;
+    private string? _displayText;
+
     public PropertySignatureInfo(
         PropertyCallStyle CallStyle,
         string DisplayText,
         IReadOnlyList<PropertyParameterInfo> Parameters)
     {
         this.CallStyle = CallStyle;
-        this.DisplayText = DisplayText;
+        _displayText = DisplayText;
         this.Parameters = Snapshot(Parameters);
+    }
+
+    /// <summary>A signature whose display text is composed on first read (see the field comment).</summary>
+    internal PropertySignatureInfo(
+        PropertyCallStyle callStyle,
+        Func<string> composeDisplayText,
+        IReadOnlyList<PropertyParameterInfo> parameters)
+    {
+        CallStyle = callStyle;
+        _composeDisplayText = new(composeDisplayText);
+        Parameters = Snapshot(parameters);
     }
 
     public PropertyCallStyle CallStyle { get; }
 
-    public string DisplayText { get; }
+    public string DisplayText
+    {
+        get
+        {
+            var text = Volatile.Read(ref _displayText);
+            if (text is not null)
+                return text;
+            text = _composeDisplayText.Value!();
+            return Interlocked.CompareExchange(ref _displayText, text, null) ?? text;
+        }
+    }
 
     public IReadOnlyList<PropertyParameterInfo> Parameters { get; }
+
+    /// <summary>Record equality over the signature's values (its display text read through, never its lazy state).</summary>
+    public bool Equals(PropertySignatureInfo? other)
+        => other is not null
+            && (ReferenceEquals(this, other)
+                || (CallStyle == other.CallStyle
+                    && string.Equals(DisplayText, other.DisplayText, StringComparison.Ordinal)
+                    && EqualityComparer<IReadOnlyList<PropertyParameterInfo>>.Default.Equals(Parameters, other.Parameters)));
+
+    public override int GetHashCode()
+        => HashCode.Combine(
+            CallStyle,
+            DisplayText,
+            EqualityComparer<IReadOnlyList<PropertyParameterInfo>>.Default.GetHashCode(Parameters));
 
     private static IReadOnlyList<PropertyParameterInfo> Snapshot(
         IReadOnlyList<PropertyParameterInfo> parameters)
         => parameters.Count == 0
             ? Array.Empty<PropertyParameterInfo>()
-            : Array.AsReadOnly(parameters.ToArray());
+            : parameters as SharedPropertyParameterList ?? Array.AsReadOnly(parameters.ToArray());
+}
+
+/// <summary>
+/// FE-3: an immutable parameter-metadata list the semantic model builds ONCE for a shared
+/// implicit-signature template and hands to every owner property over it. Its storage is private
+/// to the library (no instance can be created, and no element replaced, outside it), so the
+/// defensive snapshot copy the metadata records make of a caller-supplied list is skipped for it.
+/// It is a <see cref="System.Collections.ObjectModel.ReadOnlyCollection{T}"/> exactly like the
+/// snapshots the records store for every other list.
+/// </summary>
+internal sealed class SharedPropertyParameterList : System.Collections.ObjectModel.ReadOnlyCollection<PropertyParameterInfo>
+{
+    public SharedPropertyParameterList(PropertyParameterInfo[] parameters)
+        : base(parameters)
+    {
+    }
+
+    private SharedPropertyParameterList(IList<PropertyParameterInfo> parameters)
+        : base(parameters)
+    {
+    }
+
+    /// <summary>
+    /// An owner-local head followed by a shared tail list, without copying the tail (a composed
+    /// implicit signature's metadata costs its head).
+    /// </summary>
+    public static SharedPropertyParameterList Concat(PropertyParameterInfo[] head, SharedPropertyParameterList tail)
+        => head.Length == 0 ? tail : new(new ConcatenatedParameters(head, tail));
+
+    // Read-only IList over head ++ tail (ReadOnlyCollection wraps an IList; every mutator throws).
+    private sealed class ConcatenatedParameters(PropertyParameterInfo[] head, SharedPropertyParameterList tail) : IList<PropertyParameterInfo>
+    {
+        public PropertyParameterInfo this[int index]
+        {
+            get => index < head.Length ? head[index] : tail[index - head.Length];
+            set => throw new NotSupportedException();
+        }
+
+        public int Count => head.Length + tail.Count;
+
+        public bool IsReadOnly => true;
+
+        public bool Contains(PropertyParameterInfo item) => IndexOf(item) >= 0;
+
+        public int IndexOf(PropertyParameterInfo item)
+        {
+            for (var i = 0; i < Count; i++)
+            {
+                if (EqualityComparer<PropertyParameterInfo>.Default.Equals(this[i], item))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        public void CopyTo(PropertyParameterInfo[] array, int arrayIndex)
+        {
+            head.CopyTo(array, arrayIndex);
+            tail.CopyTo(array, arrayIndex + head.Length);
+        }
+
+        public IEnumerator<PropertyParameterInfo> GetEnumerator()
+        {
+            foreach (var item in head)
+                yield return item;
+            foreach (var item in tail)
+                yield return item;
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public void Add(PropertyParameterInfo item) => throw new NotSupportedException();
+
+        public void Clear() => throw new NotSupportedException();
+
+        public void Insert(int index, PropertyParameterInfo item) => throw new NotSupportedException();
+
+        public bool Remove(PropertyParameterInfo item) => throw new NotSupportedException();
+
+        public void RemoveAt(int index) => throw new NotSupportedException();
+    }
 }
 
 /// <summary>
@@ -247,7 +371,7 @@ public sealed record PropertyInfo
         IReadOnlyList<PropertyParameterInfo> parameters)
         => parameters.Count == 0
             ? Array.Empty<PropertyParameterInfo>()
-            : Array.AsReadOnly(parameters.ToArray());
+            : parameters as SharedPropertyParameterList ?? Array.AsReadOnly(parameters.ToArray());
 }
 
 internal static class ConditionalBranchHeadFormatter

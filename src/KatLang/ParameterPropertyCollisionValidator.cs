@@ -53,17 +53,117 @@ internal sealed class ParameterPropertyCollisionValidator(
     /// <summary>
     /// Immutable completed bindings retained across deferred materialization: each visible
     /// parameter name with its first declaration's span, nearest signature winning. PERSISTENT
-    /// (FE-1): an extension shares the enclosing entries and writes only its own names.
+    /// (FE-1): an extension shares the enclosing entries and writes only its own names. A wide
+    /// shared implicit-signature template extends by ONE layer whose names answer with the
+    /// template's first declaration of each name (FE-3), so owners sharing an L-wide signature do
+    /// not write L entries each; a lookup consults the entries written since the nearest layer,
+    /// then each layer outward.
     /// </summary>
     internal sealed class ParameterBindings
     {
-        internal static readonly ParameterBindings Empty = new(ImmutableDictionary.Create<string, SourceSpan?>(StringComparer.Ordinal));
+        internal static readonly ParameterBindings Empty = new(
+            ImmutableDictionary.Create<string, SourceSpan?>(StringComparer.Ordinal), below: null, template: null);
 
-        internal ParameterBindings(ImmutableDictionary<string, SourceSpan?> declarations) => Entries = declarations;
+        private ParameterBindings(
+            ImmutableDictionary<string, SourceSpan?> entries,
+            ParameterBindings? below,
+            ImplicitSignatureTemplate? template)
+        {
+            Entries = entries;
+            Below = below;
+            Template = template;
+        }
 
+        /// <summary>The entries written since the nearest template layer beneath (empty for a layer).</summary>
         internal ImmutableDictionary<string, SourceSpan?> Entries { get; }
 
-        internal IReadOnlyDictionary<string, SourceSpan?> Declarations => Entries;
+        /// <summary>The nearest template layer beneath these entries (for a layer: what it extended).</summary>
+        internal ParameterBindings? Below { get; }
+
+        /// <summary>The template this layer adds (FE-3), or null for an entry segment.</summary>
+        internal ImplicitSignatureTemplate? Template { get; }
+
+        internal bool IsEmpty => Template is null && Entries.Count == 0 && Below is null;
+
+        /// <summary>Every visible declaration, nearest binding per name, as a read-only view over the layers.</summary>
+        internal IReadOnlyDictionary<string, SourceSpan?> Declarations => new DeclarationView(this);
+
+        private sealed class DeclarationView(ParameterBindings bindings) : IReadOnlyDictionary<string, SourceSpan?>
+        {
+            public SourceSpan? this[string key]
+                => bindings.TryGetDeclaration(key, out var span) ? span : throw new KeyNotFoundException(key);
+
+            public IEnumerable<string> Keys => bindings.Names;
+
+            public IEnumerable<SourceSpan?> Values => Keys.Select(key => this[key]);
+
+            public int Count => bindings.Names.Count();
+
+            public bool ContainsKey(string key) => bindings.TryGetDeclaration(key, out _);
+
+            public bool TryGetValue(string key, out SourceSpan? value) => bindings.TryGetDeclaration(key, out value);
+
+            public IEnumerator<KeyValuePair<string, SourceSpan?>> GetEnumerator()
+            {
+                foreach (var key in Keys)
+                    yield return new(key, this[key]);
+            }
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        }
+
+        /// <summary>The nearest visible declaration of <paramref name="name"/>, with its span.</summary>
+        internal bool TryGetDeclaration(string name, out SourceSpan? span)
+        {
+            for (var node = this; node is not null; node = node.Below)
+            {
+                if (node.Template is { } template)
+                {
+                    if (template.Facts.TryGetFirstCapture(name, out var capture))
+                    {
+                        span = capture.Span;
+                        return true;
+                    }
+                }
+                else if (node.Entries.TryGetValue(name, out span))
+                {
+                    return true;
+                }
+            }
+
+            span = null;
+            return false;
+        }
+
+        /// <summary>Every visible name, nearest binding first (canonicalization of a context this validator did not build).</summary>
+        internal IEnumerable<string> Names
+        {
+            get
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                for (var node = this; node is not null; node = node.Below)
+                {
+                    IEnumerable<string> names = node.Template is { } template ? template.Facts.NameSet : node.Entries.Keys;
+                    foreach (var name in names)
+                    {
+                        if (seen.Add(name))
+                            yield return name;
+                    }
+                }
+            }
+        }
+
+        /// <summary>These bindings with <paramref name="entries"/> written over them (a new entry segment above a layer).</summary>
+        internal ParameterBindings WithEntries(ImmutableDictionary<string, SourceSpan?> entries)
+            => new(entries, Template is null ? Below : this, template: null);
+
+        /// <summary>A builder over the entry segment an extension of these bindings writes into.</summary>
+        internal ImmutableDictionary<string, SourceSpan?>.Builder EntryBuilder()
+            => Template is null ? Entries.ToBuilder() : Empty.Entries.ToBuilder();
+
+        /// <summary>These bindings with every name of <paramref name="template"/> added as one layer.</summary>
+        internal ParameterBindings WithTemplateLayer(ImplicitSignatureTemplate template)
+            => new(Empty.Entries, this, template);
     }
 
     protected override bool VisitsExplicitParameterDeclarations => false;
@@ -87,7 +187,7 @@ internal sealed class ParameterPropertyCollisionValidator(
         if (_contextNames.TryGetValue(bindings, out var names))
             return names;
         TraversalObservations?.RecordCollisionContextIntern();
-        names = NameSets.With(NameSetInterner.Empty, bindings.Entries.Keys);
+        names = NameSets.With(NameSetInterner.Empty, bindings.Names);
         _contextNames.Add(bindings, names);
         return names;
     }
@@ -108,7 +208,10 @@ internal sealed class ParameterPropertyCollisionValidator(
 
     public override void VisitExpr(Expr expr)
     {
-        if (!FirstVisit(expr))
+        // Validity is decided only at algorithms: a subtree that reaches none has nothing to
+        // validate in ANY context, so it is not walked (FE-3: one argument bundle shared by K
+        // owners — K visible-parameter contexts — is not re-walked per owner).
+        if (!_nestedAlgorithms.Reaches(expr) || !FirstVisit(expr))
             return;
         var saved = _importSite;
         if (expr is Expr.AlgorithmExpr block && ImportSite.OfBlock(block) is { } site)
@@ -121,9 +224,11 @@ internal sealed class ParameterPropertyCollisionValidator(
     // like a shared node.
     private protected override void VisitCallArguments(OutputBundle arguments)
     {
-        if (FirstVisit(arguments))
+        if (_nestedAlgorithms.Reaches(arguments) && FirstVisit(arguments))
             base.VisitCallArguments(arguments);
     }
+
+    private readonly NestedReachIndex _nestedAlgorithms = new();
 
     protected override void VisitProperty(Property property)
     {
@@ -150,7 +255,7 @@ internal sealed class ParameterPropertyCollisionValidator(
         _parameters = Extend(algorithm.ParameterPatterns);
         try
         {
-            if (_parameters.Declarations.Count > 0)
+            if (!_parameters.IsEmpty)
                 ReportOwner(algorithm);
             // The root program's phantom signature is checked against its own declarations
             // only (see the class documentation): nested owners descend without it.
@@ -194,49 +299,88 @@ internal sealed class ParameterPropertyCollisionValidator(
     }
 
     private ParameterBindings Extend(IReadOnlyList<ParameterPattern> parameterPatterns)
-        => parameterPatterns.Count == 0
-            ? _parameters
-            : Extend(parameterPatterns, static patterns => ParameterPattern.FlattenCaptures(patterns));
+    {
+        if (parameterPatterns.Count == 0)
+            return _parameters;
+
+        // A shared implicit-signature template (FE-3): its shared tail extends the context by ONE
+        // layer — once per enclosing context, however many owners share it — and a composed
+        // signature's owner-local head by entries above that layer (disjoint names, so the order of
+        // the two writes cannot change a first-declaration span).
+        if (parameterPatterns is ImplicitSignatureTemplate template
+            && (template.Tail ?? template).Facts.CaptureCount >= ParameterOwnership.TemplateLayerMinimum)
+        {
+            var layered = ExtendByLayer(_parameters, template.Tail ?? template);
+            return template.IsComposed
+                ? Extend(layered, template, static composed => ParameterPattern.FlattenCaptures(composed.Head))
+                : layered;
+        }
+
+        return Extend(_parameters, parameterPatterns, static patterns => ParameterPattern.FlattenCaptures(patterns));
+    }
 
     private ParameterBindings Extend(IReadOnlyList<ParameterDeclaration> parameters)
-        => parameters.Count == 0 ? _parameters : Extend(parameters, static declarations => declarations);
+        => parameters.Count == 0 ? _parameters : Extend(_parameters, parameters, static declarations => declarations);
 
     // Keyed by the STORED list instance: a user algorithm's pattern list (the one parameter
     // channel; its flat Parameters view is a fresh projection per read, so it can never be the
     // memo key) or a branch pattern's binder list. Deconstruction helpers can share one wide
     // pattern list. Extend it once per enclosing context, rather than flatten and scan N
     // declarations for each of N helpers.
-    private ParameterBindings Extend<TList>(TList signature, Func<TList, IReadOnlyList<ParameterDeclaration>> declarationsOf)
+    private ParameterBindings Extend<TList>(
+        ParameterBindings context,
+        TList signature,
+        Func<TList, IReadOnlyList<ParameterDeclaration>> declarationsOf)
         where TList : class
     {
         if (!_extensions.TryGetValue(signature, out var contexts))
             _extensions.Add(signature, contexts = new(ReferenceEqualityComparer.Instance));
-        if (contexts.TryGetValue(_parameters, out var extended))
+        if (contexts.TryGetValue(context, out var extended))
             return extended;
         // PERSISTENT extension (FE-1): the enclosing declarations are shared, never copied, and
         // the context's name set is the enclosing one's extended by this signature's names.
         // First declaration wins within one signature; a nearer signature wins over
         // ancestors. Repeated pattern names therefore retain their first source anchor.
-        var declarations = _parameters.Entries.ToBuilder();
+        var declarations = context.EntryBuilder();
         var parameters = declarationsOf(signature);
         for (var i = parameters.Count - 1; i >= 0; i--)
         {
             declarations[parameters[i].Name] = parameters[i].Span;
             TraversalObservations?.RecordContextEntryWritten();
         }
-        extended = new(declarations.ToImmutable());
-        var enclosingNames = ContextNames(_parameters);
+        extended = context.WithEntries(declarations.ToImmutable());
+        var enclosingNames = ContextNames(context);
         TraversalObservations?.RecordCollisionContextIntern();
         _contextNames.Add(extended, NameSets.With(enclosingNames, parameters.Select(static parameter => parameter.Name)));
-        contexts.Add(_parameters, extended);
+        contexts.Add(context, extended);
         return extended;
     }
+
+    // One layer per (template, enclosing context): the template's names are canonicalized once per
+    // validator and combined with the enclosing context's set by the interner's memoized union.
+    private ParameterBindings ExtendByLayer(ParameterBindings context, ImplicitSignatureTemplate template)
+    {
+        if (!_extensions.TryGetValue(template, out var contexts))
+            _extensions.Add(template, contexts = new(ReferenceEqualityComparer.Instance));
+        if (contexts.TryGetValue(context, out var extended))
+            return extended;
+        extended = context.WithTemplateLayer(template);
+        TraversalObservations?.RecordContextTemplateLayer();
+        TraversalObservations?.RecordCollisionContextIntern();
+        if (!_templateNames.TryGetValue(template, out var templateNames))
+            _templateNames.Add(template, templateNames = NameSets.With(NameSetInterner.Empty, template.Facts.Names));
+        _contextNames.Add(extended, NameSets.Union(ContextNames(context), templateNames));
+        contexts.Add(context, extended);
+        return extended;
+    }
+
+    private readonly Dictionary<ImplicitSignatureTemplate, CanonicalNameSet> _templateNames = new(ReferenceEqualityComparer.Instance);
 
     private void ReportOwner(Algorithm owner)
     {
         foreach (var property in owner.Properties)
         {
-            if (!_parameters.Declarations.TryGetValue(property.Name, out var parameterSpan))
+            if (!_parameters.TryGetDeclaration(property.Name, out var parameterSpan))
                 continue;
             if (!_reported.Add(property))
                 continue;

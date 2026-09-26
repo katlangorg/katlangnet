@@ -262,9 +262,11 @@ public abstract class AstWalker
     /// </summary>
     private protected virtual void VisitCallArguments(OutputBundle arguments)
     {
-        TraversalObservations?.RecordWalkerCallArgumentSlots(arguments.Count);
-        foreach (var argument in arguments)
+        TraversalObservations?.RecordWalkerCallArgumentSlots(arguments.Head.Count);
+        foreach (var argument in arguments.Head)
             VisitExpr(argument);
+        if (arguments.Tail is { } tail)
+            VisitCallArguments(tail);
     }
 
     /// <summary>

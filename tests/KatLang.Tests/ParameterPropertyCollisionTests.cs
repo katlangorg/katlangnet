@@ -182,7 +182,9 @@ public class ParameterPropertyCollisionTests
     public void WideSignature_ContextKeyIsHashedOncePerContext_NotPerVisitedNode()
     {
         const int parameters = 2000;
-        var source = "G = " + string.Join(", ", Enumerable.Range(0, parameters).Select(i => $"v{i}")) + "\n1";
+        // Every row reaches a block: the validator walks toward nested algorithms only (FE-3), so
+        // each row's nodes are visited under G's context of P names.
+        var source = "G = " + string.Join(", ", Enumerable.Range(0, parameters).Select(i => $"v{i} + {{ 1 }}")) + "\n1";
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
         var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);

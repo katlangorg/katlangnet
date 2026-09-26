@@ -151,6 +151,22 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     // aliased, and no public member hands this array out, so the bundle's
     // ordered membership cannot change after construction.
     private readonly Expr[] _items;
+    private readonly OutputBundle? _tail;
+
+    // Library-created synthesized bundles may keep a small head over one shared flat
+    // tail. Public construction still snapshots arbitrary caller-owned membership.
+    internal IReadOnlyList<Expr> Head => _items;
+    internal OutputBundle? Tail => _tail;
+    internal static OutputBundle Prepend(IReadOnlyList<Expr> head, OutputBundle tail)
+        => head.Count == 0 ? tail : tail._tail is { } shared
+            ? new([.. head, .. tail._items], shared)
+            : new([.. head], tail);
+
+    private OutputBundle(Expr[] head, OutputBundle tail)
+    {
+        _items = head;
+        _tail = tail;
+    }
 
     /// <summary>
     /// Snapshots the ordered slot membership of <paramref name="items"/> at
@@ -165,6 +181,7 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     {
         ArgumentNullException.ThrowIfNull(items);
         _items = items is OutputBundle bundle ? bundle._items : ValidateItems([.. items]);
+        _tail = (items as OutputBundle)?._tail;
     }
 
     private static Expr[] ValidateItems(Expr[] items)
@@ -210,13 +227,18 @@ public sealed class OutputBundle : IReadOnlyList<Expr>
     public static implicit operator OutputBundle(Expr[] items)
         => From(items);
 
-    public int Count => _items.Length;
+    public int Count => _items.Length + (_tail?.Count ?? 0);
 
-    public Expr this[int index] => _items[index];
+    public Expr this[int index] => index < _items.Length ? _items[index] : _tail is { } tail ? tail[index - _items.Length] : _items[index];
 
-    public IEnumerator<Expr> GetEnumerator() => ((IEnumerable<Expr>)_items).GetEnumerator();
+    public IEnumerator<Expr> GetEnumerator()
+    {
+        foreach (var item in _items) yield return item;
+        if (_tail is { } tail)
+            foreach (var item in tail._items) yield return item;
+    }
 
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _items.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>
@@ -341,6 +363,10 @@ public closed record ParameterPattern
     /// </summary>
     internal static int CountCaptures(IReadOnlyList<ParameterPattern> patterns)
     {
+        // A shared implicit-signature template counts its captures once (FE-3).
+        if (patterns is ImplicitSignatureTemplate template)
+            return template.Facts.CaptureCount;
+
         var count = 0;
         Stack<ParameterPattern>? pending = null;
         for (var index = 0; index < patterns.Count; index++)
@@ -453,7 +479,10 @@ public closed record ParameterPattern
         => new($"Unhandled parameter pattern: {pattern.GetType().Name}");
 
     public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
-        => patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
+        => patterns is ImplicitSignatureTemplate template
+            // A shared implicit-signature template knows its top-level collecting count (FE-3).
+            ? template.Facts.TopLevelCollectingCount > 0
+            : patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
 
     /// <summary>
     /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts —

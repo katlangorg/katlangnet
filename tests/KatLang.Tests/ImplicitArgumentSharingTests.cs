@@ -221,9 +221,14 @@ public class ImplicitArgumentSharingTests
 
     /// <summary>
     /// K lifted references to a callable of L parameters: the resolver builds ONE bundle of L slots
-    /// and K call edges; every walker dispatches K + L call-argument slots (the K written
-    /// <c>abs</c> slots and the shared L once); exposure rewrites and summarizes K + 1 bundles; the
-    /// structural preflight enumerates 6K + 4L + 4 edges. Each count was K × L-shaped before.
+    /// and K call edges; every single-context walker dispatches K + L call-argument slots (the K
+    /// written <c>abs</c> slots and the shared L once); exposure summarizes K + 1 bundles; the
+    /// structural preflight enumerates 6K + 4L + 5 edges (the owner's shared signature template is
+    /// one grouping edge over its L patterns). Each count was K × L-shaped before FE-2.
+    /// <para>FE-3: a context-keyed pass skips what cannot matter in any context — the collision
+    /// validator and the provenance finalizer walk only toward nested algorithms (none here), the
+    /// editor model never re-analyzes the spanless shared bundle, and exposure returns every
+    /// rewrite-invariant bundle as it is — so those counts are K or zero, never K × L.</para>
     /// </summary>
     [Theory]
     [InlineData(16, 24)]
@@ -238,22 +243,23 @@ public class ImplicitArgumentSharingTests
         Assert.Equal(parameters, observed.Resolve.ImplicitArgumentSlotsBuilt);
 
         var slots = references + parameters;
-        Assert.Equal(slots, observed.Collision.WalkerCallArgumentSlots);
+        Assert.Equal(0, observed.Collision.WalkerCallArgumentSlots);
         Assert.Equal(slots, observed.OpenProviders.WalkerCallArgumentSlots);
         Assert.Equal(slots, observed.Validation.WalkerCallArgumentSlots);
         Assert.Equal(slots, observed.LoadGuard.WalkerCallArgumentSlots);
-        Assert.Equal(slots, observed.Semantic.SemanticModelCallArgumentSlots);
+        Assert.Equal(references, observed.Semantic.SemanticModelCallArgumentSlots);
         Assert.Equal(slots, observed.Semantic.WalkerCallArgumentSlots);
 
-        Assert.Equal(references + 1, observed.Exposure.ExposureArgumentBundleRewrites);
+        Assert.Equal(0, observed.Exposure.ExposureArgumentBundleRewrites);
         Assert.Equal(references + 1, observed.Exposure.DependencyArgumentBundleSummaries);
-        Assert.Equal(6L * references + 4L * parameters + 4, observed.Preflight.StructuralPreflightEdges);
+        Assert.Equal(6L * references + 4L * parameters + 5, observed.Preflight.StructuralPreflightEdges);
     }
 
     /// <summary>
     /// The open-provider validator walks a body only when it contains an <c>open</c>: with the
-    /// lifted references inside such a body, both its open-presence scan and the validation walk
-    /// dispatch the K written <c>abs</c> slots and the shared L once each.
+    /// lifted references inside such a body, its open-presence scan dispatches the K written
+    /// <c>abs</c> slots and the shared L once each, and the validation walk — which descends only
+    /// toward nested algorithms (FE-3) — dispatches none of them.
     /// </summary>
     [Theory]
     [InlineData(16, 24)]
@@ -263,12 +269,14 @@ public class ImplicitArgumentSharingTests
         var source = $"Lib = {{\n    public X = 1\n}}\nG = {Names("v", parameters)}\nH = {{\n    open Lib\n    "
             + string.Join(", ", Enumerable.Repeat("abs(G)", references)) + "\n}\n1";
         var observed = ObservePasses(source);
-        Assert.Equal(2 * (references + parameters), observed.OpenProviders.WalkerCallArgumentSlots);
+        Assert.Equal(references + parameters, observed.OpenProviders.WalkerCallArgumentSlots);
     }
 
     /// <summary>
-    /// The dot-member provenance finalizer walks the whole classified tree when a promotion came
-    /// from a missing member (<c>Lib.Missing</c>): it too dispatches the shared bundle once.
+    /// The dot-member provenance finalizer runs over the whole classified tree when a promotion came
+    /// from a missing member (<c>Lib.Missing</c>), but walks only toward a claimed dot edge (or a
+    /// nested algorithm): the lifted <c>abs(G)</c> rows reach neither, so neither their slots nor the
+    /// shared bundle is walked in any scope (FE-3), and the claim is still decided.
     /// </summary>
     [Theory]
     [InlineData(16, 24)]
@@ -278,7 +286,8 @@ public class ImplicitArgumentSharingTests
         var source = $"Lib = {{\n    public X = 1\n}}\nG = {Names("v", parameters)}\nH = "
             + string.Join(", ", Enumerable.Repeat("abs(G)", references)) + ", Lib.Missing\n1";
         var observed = ObservePasses(source);
-        Assert.Equal(references + parameters, observed.Exposure.WalkerCallArgumentSlots);
+        Assert.Equal(0, observed.Exposure.WalkerCallArgumentSlots);
+        Assert.InRange(observed.Exposure.WalkerExpressionExpansions, 1, references + 8);
     }
 
     /// <summary>
@@ -323,13 +332,15 @@ public class ImplicitArgumentSharingTests
     }
 
     /// <summary>
-    /// A bundle belongs to ONE resolver rewrite region: the same callee referenced twice from each
-    /// of two properties is two bundles — one per owner — each shared by its region's two calls.
-    /// Pinned on the resolver's own output (exposure rewrites every bundle per region anyway, so
-    /// the final tree alone could not show a bundle leaking across owners).
+    /// FE-3: a bundle is a pure function of the callee's patterns and the caller's forwarding inputs,
+    /// so two OWNERS whose inputs are identical — here A and B, each lifting G's two parameters with
+    /// no parameter of its own — share ONE bundle, while each of the four references keeps its own
+    /// spanned call node, and each owner still binds and evaluates its own activation. (FE-2 kept
+    /// one bundle per rewrite region; owners that forward differently still get their own — see
+    /// <see cref="Forwarding_ThatDiffersByCallerContext_IsNeverShared"/>.)
     /// </summary>
     [Fact]
-    public void SameCallee_InTwoRegions_KeepsOneBundlePerRegion()
+    public void SameCallee_InTwoOwnersWithIdenticalForwarding_SharesOneBundle()
     {
         const string source = "G = a + b\nA = G + G\nB = G * G\nA(1, 2) + B(1, 2)";
         var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
@@ -341,13 +352,18 @@ public class ImplicitArgumentSharingTests
 
         Assert.Empty(diagnostics);
         Assert.Equal(4, observations.ImplicitCallsSynthesized);
-        Assert.Equal(2, observations.ImplicitArgumentBundlesBuilt);
+        Assert.Equal(1, observations.ImplicitArgumentBundlesBuilt);
         static OutputBundle BundleIn(Algorithm root, string property)
             => SharedArguments(Census.Of(Assert.Single(root.Properties, p => p.Name == property).Value), "G");
-        Assert.NotSame(BundleIn(resolved, "A"), BundleIn(resolved, "B"));
+        Assert.Same(BundleIn(resolved, "A"), BundleIn(resolved, "B"));
         var parsed = SourceProvenance.ParseValid(source).Root;
-        Assert.NotSame(BundleIn(parsed, "A"), BundleIn(parsed, "B"));
+        Assert.Same(BundleIn(parsed, "A"), BundleIn(parsed, "B"));
+        var calls = Census.Of(parsed).CallsTo("G");
+        Assert.Equal(4, calls.Count);
+        Assert.Equal(4, calls.Select(call => call.Span).Distinct().Count());
         Assert.Equal("15", KatLangEngine.Run(source).ToDisplayString());
+        Assert.Equal("14", KatLangEngine.Run("G = a + b\nA = G + G\nB = G * G\nA(3, 4)").ToDisplayString());
+        Assert.Equal("49", KatLangEngine.Run("G = a + b\nA = G + G\nB = G * G\nB(3, 4)").ToDisplayString());
     }
 
     /// <summary>

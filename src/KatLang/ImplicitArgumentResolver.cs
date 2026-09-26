@@ -83,7 +83,7 @@ internal static class ImplicitArgumentResolver
             observations,
             diagnostics,
             branchContext: null,
-            new ResolutionRun(origins, preserveSignatures));
+            new ResolutionRun(origins, preserveSignatures) { Observations = observations });
     }
 
     /// <summary>
@@ -157,6 +157,41 @@ internal static class ImplicitArgumentResolver
         /// of the node — see <see cref="FreeReferenceNames"/>), by node reference.
         /// </summary>
         public Dictionary<Algorithm, CanonicalNameSet>? FreeReferenceNames;
+        /// <summary>
+        /// FE-3: the shared signature templates of this run (see <see cref="LiftSignature"/>). Run-local:
+        /// a template is shared by the owners of ONE resolution and never across parses.
+        /// </summary>
+        public ImplicitSignatureTemplateInterner Templates => _templates ??= new(Observations);
+        private ImplicitSignatureTemplateInterner? _templates;
+
+        /// <summary>The traversal observations of this run (null when none are recorded).</summary>
+        public FrontEndTraversalObservations? Observations;
+
+        /// <summary>
+        /// FE-3: synthesized implicit-argument bundles shared ACROSS owners, by the exact inputs a
+        /// bundle is a pure function of (see <see cref="SharedBundleKey"/>). FE-2 shared one bundle per
+        /// callee within a rewrite region; owners whose rewrite contexts give a callee identical
+        /// forwarding share it here too, so K owners lifting one L-wide callee keep one bundle.
+        /// </summary>
+        public Dictionary<SharedBundleKey, OutputBundle>? SharedBundles;
+
+        /// <summary>The capture-name set of each callee pattern list, by list reference (FE-3).</summary>
+        public IReadOnlySet<string> CalleeNamesOf(IReadOnlyList<ParameterPattern> patterns)
+        {
+            if (patterns is ImplicitSignatureTemplate template)
+                return template.Facts.NameSet;
+            _calleeNames ??= new(ReferenceEqualityComparer.Instance);
+            if (!_calleeNames.TryGetValue(patterns, out var names))
+            {
+                names = new HashSet<string>(ParameterPattern.EnumerateCaptures(patterns).Select(static capture => capture.Name), StringComparer.Ordinal);
+                _calleeNames.Add(patterns, names);
+            }
+
+            return names;
+        }
+
+        private Dictionary<IReadOnlyList<ParameterPattern>, IReadOnlySet<string>>? _calleeNames;
+
         public readonly NameSetInterner ReferenceNameSets = new();
         public readonly SignatureFootprints Footprints = new();
         public readonly BranchContextInterner BranchContexts = new();
@@ -547,7 +582,41 @@ internal static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> CallerParameterPatterns,
         IReadOnlyDictionary<string, ParameterKind> SourceBindingKinds,
         IReadOnlySet<string>? ClosedParameterNames,
-        string? ConditionalBranchName = null);
+        string? ConditionalBranchName = null)
+    {
+        /// <summary>
+        /// FE-3: for an OPEN (liftable) context, the owner's final signature — the list whose facts
+        /// <see cref="SourceBindingKinds"/> are — so a bundle can be shared with every other owner
+        /// whose forwarding inputs are identical (<see cref="SharedBundleKey"/>). Null for a closed
+        /// context (a written explicit list or a branch pattern), whose bundles stay region-local.
+        /// </summary>
+        public IReadOnlyList<ParameterPattern>? FinalSignature { get; init; }
+    }
+
+    /// <summary>
+    /// FE-3: the EXACT inputs of <see cref="BuildImplicitCallArguments"/> for one callee in one open
+    /// rewrite context, by reference: the callee's pattern list; the caller's single collecting
+    /// stream (the only way the caller's OWN patterns enter the bundle — its forwarding source), or
+    /// <see cref="NoForwardedStream"/>; and the list whose first-occurrence binding kinds are read for
+    /// the callee's capture names — a composed owner signature's shared TAIL when none of those names
+    /// is in the owner-local head (the kinds then come from the tail alone), otherwise the owner's
+    /// whole signature. Owners with equal keys build byte-identical bundles, so they share one.
+    /// </summary>
+    private readonly record struct SharedBundleKey(object Callee, object ForwardedStream, object Kinds)
+    {
+        public bool Equals(SharedBundleKey other)
+            => ReferenceEquals(Callee, other.Callee)
+                && ReferenceEquals(ForwardedStream, other.ForwardedStream)
+                && ReferenceEquals(Kinds, other.Kinds);
+
+        public override int GetHashCode()
+            => HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Callee),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(ForwardedStream),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Kinds));
+    }
+
+    private static readonly object NoForwardedStream = new();
 
     /// <summary>
     /// The conditional branch a body belongs to, threaded into
@@ -708,15 +777,87 @@ internal static class ImplicitArgumentResolver
             _implicitArguments ??= new(ReferenceEqualityComparer.Instance);
             if (!_implicitArguments.TryGetValue(calleePatterns, out var arguments))
             {
-                arguments = BuildImplicitArgumentBundle(calleePatterns, context);
+                // FE-3: an OPEN context shares the bundle with every owner whose forwarding inputs are
+                // identical (SharedBundleKey); a closed context keeps the region-local FE-2 bundle.
+                if (context.FinalSignature is { } finalSignature)
+                {
+                    var key = SharedBundleKeyOf(calleePatterns, context, finalSignature);
+                    Run.SharedBundles ??= new();
+                    if (!Run.SharedBundles.TryGetValue(key, out arguments))
+                    {
+                        arguments = BuildImplicitArgumentBundle(calleePatterns, context);
+                        Run.SharedBundles.Add(key, arguments);
+                    }
+                }
+                else
+                {
+                    arguments = BuildImplicitArgumentBundle(calleePatterns, context);
+                }
+
                 _implicitArguments.Add(calleePatterns, arguments);
             }
 
             return arguments;
         }
 
+        /// <summary>
+        /// The <see cref="SharedBundleKey"/> of one callee under one open context: the caller's own
+        /// patterns enter only as a single forwarded collecting stream, and the binding kinds of the
+        /// callee's capture names come from a composed signature's shared tail exactly when no such
+        /// name is in the owner-local head (the head is small, so the test costs the head).
+        /// </summary>
+        private SharedBundleKey SharedBundleKeyOf(
+            IReadOnlyList<ParameterPattern> calleePatterns,
+            ImplicitRewriteContext context,
+            IReadOnlyList<ParameterPattern> finalSignature)
+        {
+            object forwardedStream = TryGetSingleTopLevelCollectingCapture(context.CallerParameterPatterns, out _)
+                ? context.CallerParameterPatterns
+                : NoForwardedStream;
+            object kinds = finalSignature;
+            // A forwarded stream reads the kind of the CALLER's own collecting name (in the head), so
+            // only a bundle without one may take the tail's kinds.
+            if (ReferenceEquals(forwardedStream, NoForwardedStream)
+                && finalSignature is ImplicitSignatureTemplate { Tail: { } tail } composed)
+            {
+                var calleeNames = Run.CalleeNamesOf(calleePatterns);
+                var headTouchesCallee = false;
+                foreach (var capture in ParameterPattern.EnumerateCaptures(composed.Head))
+                {
+                    if (calleeNames.Contains(capture.Name))
+                    {
+                        headTouchesCallee = true;
+                        break;
+                    }
+                }
+
+                if (!headTouchesCallee)
+                    kinds = tail;
+            }
+
+            return new SharedBundleKey(calleePatterns, forwardedStream, kinds);
+        }
+
         private OutputBundle BuildImplicitArgumentBundle(IReadOnlyList<ParameterPattern> calleePatterns, ImplicitRewriteContext context)
         {
+            if (calleePatterns is ImplicitSignatureTemplate { Tail: { } tail } composed
+                && context.FinalSignature is ImplicitSignatureTemplate source
+                && ReferenceEquals(source.Tail ?? source, tail))
+            {
+                // These inputs forward the callee's own kinds unchanged. The local head
+                // and shared tail are independent, including collecting/grouped patterns.
+                var tailContext = context with { CallerParameterPatterns = [], SourceBindingKinds = tail.Facts.BindingKinds, FinalSignature = tail };
+                var tailKey = SharedBundleKeyOf(tail, tailContext, tail);
+                Run.SharedBundles ??= new();
+                if (!Run.SharedBundles.TryGetValue(tailKey, out var tailArguments))
+                {
+                    tailArguments = BuildImplicitArgumentBundle(tail, tailContext);
+                    Run.SharedBundles.Add(tailKey, tailArguments);
+                }
+                var head = BuildImplicitCallArguments(composed.Head, [], context.SourceBindingKinds);
+                Observations?.RecordImplicitArgumentBundleBuilt(head.Count);
+                return OutputBundle.Prepend(head, tailArguments);
+            }
             var arguments = OutputBundle.From(BuildImplicitCallArguments(
                 calleePatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
             Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
@@ -997,27 +1138,12 @@ internal static class ImplicitArgumentResolver
         }
 
         // Compute lifted parameter patterns: existing patterns first, then new
-        // dependency captures with their recursive shape preserved.
-        var existingParams = new HashSet<string>(alg.Params);
-        var newPatterns = new List<ParameterPattern>(alg.ParameterPatterns);
-        foreach (var (_, signature) in deps)
-        {
-            if (CanForwardSingleCollectingStream(alg.ParameterPatterns, signature.ParameterPatterns))
-                continue;
-
-            foreach (var pattern in signature.ParameterPatterns)
-            {
-                var missingPattern = MissingCapturePattern(pattern, existingParams);
-                if (missingPattern is null)
-                    continue;
-
-                newPatterns.Add(missingPattern);
-                if (run.Origins is { } origins)
-                    origins.HasLiftedParameters = true;
-                foreach (var capture in missingPattern.Captures)
-                    existingParams.Add(capture.Name);
-            }
-        }
+        // dependency captures with their recursive shape preserved — as a SHARED
+        // signature template (FE-3, see LiftSignature).
+        var lifting = LiftSignature(alg.ParameterPatterns, deps, run);
+        if (lifting.Lifted && run.Origins is { } origins)
+            origins.HasLiftedParameters = true;
+        var finalPatterns = lifting.Patterns;
 
         // Rewrite output expressions. Source binding kinds come from the
         // LIFTED pattern list: a callee name missing from the original caller
@@ -1026,8 +1152,11 @@ internal static class ImplicitArgumentResolver
         // is the forwarding source.
         var liftedContext = new ImplicitRewriteContext(
             alg.ParameterPatterns,
-            BuildSourceBindingKinds(newPatterns),
-            ClosedParameterNames: null);
+            lifting.SourceBindingKinds,
+            ClosedParameterNames: null)
+        {
+            FinalSignature = finalPatterns,
+        };
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
@@ -1051,7 +1180,7 @@ internal static class ImplicitArgumentResolver
         // stored channel; Parameters/Params follow it.
         return alg with
         {
-            ParameterPatterns = newPatterns,
+            ParameterPatterns = finalPatterns,
             Opens = newOpens,
             Properties = newProperties,
             Output = rewrittenOutput,
@@ -1176,7 +1305,7 @@ internal static class ImplicitArgumentResolver
             observations,
             diagnostics,
             new ConditionalBranchContext(context.BranchName, context.Pattern),
-            new ResolutionRun(origins, preserveSignatures, importSite));
+            new ResolutionRun(origins, preserveSignatures, importSite) { Observations = observations });
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
     {
@@ -1261,6 +1390,120 @@ internal static class ImplicitArgumentResolver
             && paramMap.TryGetValue(name, out var ps)
             && ps.Parameters.Count > 0;
 
+    /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
+    private readonly record struct LiftedSignature(
+        IReadOnlyList<ParameterPattern> Patterns,
+        IReadOnlyDictionary<string, ParameterKind> SourceBindingKinds,
+        bool Lifted);
+
+    /// <summary>
+    /// FE-3: the lifted signature of one open owner — its own patterns first, then every dependency
+    /// capture it does not already bind, in dependency order with recursive shape preserved (the
+    /// exact pre-FE-3 order) — built from SHARED signature templates instead of a fresh per-owner copy.
+    ///
+    /// <para>The dependencies' merged captures (the TAIL) are a function of the dependencies alone,
+    /// so they are merged once per distinct dependency sequence and interned
+    /// (<see cref="ImplicitSignatureTemplateInterner.LiftedTail"/>). The owner's own patterns (the
+    /// HEAD) meet the tail only through their capture names: when none is lifted, the head filters
+    /// nothing and the signature is exactly <c>head ++ tail</c> — the tail itself for an owner with
+    /// no own parameter (K such owners share ONE template), otherwise a composed signature that costs
+    /// the head (<see cref="ImplicitSignatureTemplate.Compose"/>). When an own name IS lifted, the
+    /// owner's order is genuinely its own (its capture stays first and the lifted one is filtered),
+    /// so that signature is merged per owner exactly as before and held as an immutable template.</para>
+    /// </summary>
+    private static LiftedSignature LiftSignature(
+        IReadOnlyList<ParameterPattern> own,
+        List<(string Name, CallableSignature Signature)> deps,
+        ResolutionRun run)
+    {
+        // A dependency whose whole shape the owner's own single collecting stream forwards
+        // contributes no capture (the same per-dependency test as always, O(1) each).
+        List<IReadOnlyList<ParameterPattern>>? included = null;
+        foreach (var (_, signature) in deps)
+        {
+            if (!CanForwardSingleCollectingStream(own, signature.ParameterPatterns))
+                (included ??= []).Add(signature.ParameterPatterns);
+        }
+
+        var tail = included is null ? null : run.Templates.LiftedTail(included, MergeLiftedTail);
+        if (tail is null)
+            return new(own, SourceBindingKindsOf(own), Lifted: false);
+
+        var tailNames = tail.Facts.NameSet;
+        var disjoint = true;
+        foreach (var capture in ParameterPattern.EnumerateCaptures(own))
+        {
+            if (tailNames.Contains(capture.Name))
+            {
+                disjoint = false;
+                break;
+            }
+        }
+
+        if (disjoint)
+        {
+            var signature = ImplicitSignatureTemplate.Compose(own.Select(run.Templates.Freeze).ToArray(), tail);
+            run.Observations?.RecordOwnerSignatureInstance(own.Count);
+            return new(signature, signature.Facts.BindingKinds, Lifted: true);
+        }
+
+        var merged = MergeOwnerSignature(own, included!);
+        if (merged is null)
+            return new(own, SourceBindingKindsOf(own), Lifted: false);
+        var distinct = run.Templates.InternFlat(merged);
+        run.Observations?.RecordOwnerSignatureMaterialized(merged.Length);
+        return new(distinct, distinct.Facts.BindingKinds, Lifted: true);
+    }
+
+    /// <summary>The first-occurrence binding kinds of an owner's own list (a template's are cached).</summary>
+    private static IReadOnlyDictionary<string, ParameterKind> SourceBindingKindsOf(IReadOnlyList<ParameterPattern> patterns)
+        => patterns is ImplicitSignatureTemplate template
+            ? template.Facts.BindingKinds
+            : BuildSourceBindingKinds(patterns);
+
+    /// <summary>The captures of a dependency sequence, first occurrence of each name winning.</summary>
+    private static IReadOnlyList<ParameterPattern> MergeLiftedTail(IReadOnlyList<IReadOnlyList<ParameterPattern>> dependencies)
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal);
+        var merged = new List<ParameterPattern>();
+        foreach (var dependency in dependencies)
+            AppendMissingPatterns(dependency, existing, merged);
+        return merged;
+    }
+
+    /// <summary>
+    /// One owner's merge when an own name is also lifted: exactly the pre-FE-3 loop (own patterns,
+    /// then each dependency's missing captures). Null when nothing is lifted.
+    /// </summary>
+    private static ParameterPattern[]? MergeOwnerSignature(
+        IReadOnlyList<ParameterPattern> own,
+        IReadOnlyList<IReadOnlyList<ParameterPattern>> dependencies)
+    {
+        var existing = new HashSet<string>(ParameterPattern.EnumerateCaptures(own).Select(static capture => capture.Name), StringComparer.Ordinal);
+        var merged = new List<ParameterPattern>(own);
+        var ownCount = merged.Count;
+        foreach (var dependency in dependencies)
+            AppendMissingPatterns(dependency, existing, merged);
+        return merged.Count == ownCount ? null : merged.ToArray();
+    }
+
+    private static void AppendMissingPatterns(
+        IReadOnlyList<ParameterPattern> patterns,
+        HashSet<string> existing,
+        List<ParameterPattern> merged)
+    {
+        foreach (var pattern in patterns)
+        {
+            var missingPattern = MissingCapturePattern(pattern, existing);
+            if (missingPattern is null)
+                continue;
+
+            merged.Add(missingPattern);
+            foreach (var capture in missingPattern.Captures)
+                existing.Add(capture.Name);
+        }
+    }
+
     private static ParameterPattern? MissingCapturePattern(
         ParameterPattern pattern,
         IReadOnlySet<string> existingParams)
@@ -1275,16 +1518,20 @@ internal static class ImplicitArgumentResolver
         IReadOnlySet<string> existingParams)
     {
         var missingItems = new List<ParameterPattern>(group.Items.Count);
+        var unchanged = true;
         foreach (var item in group.Items)
         {
             var missingItem = MissingCapturePattern(item, existingParams);
+            unchanged &= ReferenceEquals(missingItem, item);
             if (missingItem is not null)
                 missingItems.Add(missingItem);
         }
 
+        // A group none of whose captures is already bound lifts AS ITSELF — the callee's record,
+        // exactly like a lifted capture leaf — so owners lifting it share one record (FE-3).
         return missingItems.Count == 0
             ? null
-            : new SequenceValueParameterPattern(missingItems);
+            : unchanged ? group : new SequenceValueParameterPattern(missingItems);
     }
 
     private static bool TryGetSingleTopLevelCollectingCapture(

@@ -415,6 +415,101 @@ internal static class PropertyDependencyGraphBuilder
                 (_absorbed ??= []).Add(part);
         }
 
+        /// <summary>
+        /// FE-3: removes, WITHOUT folding it, every absorbed completed part whose whole content is
+        /// required ancestor-owned names that <paramref name="owned"/> covers. Called only where
+        /// the caller next qualifies and strips exactly the owned names at the owning level (an
+        /// algorithm summary's output seed), where such a part contributes nothing to the result —
+        /// so the result is the one folding would produce, while K owners that each absorbed one
+        /// shared L-name argument-bundle seed no longer each copy, qualify, and strip its L names.
+        /// The verdict per (part, owned set) is memoized on <paramref name="memo"/>.
+        /// </summary>
+        internal void DropOwnedAbsorbedParts(IReadOnlySet<string> owned, SummaryMemo memo)
+        {
+            if (_absorbed is not { } absorbed || owned.Count == 0)
+                return;
+
+            List<SummarySeed>? kept = null;
+            for (var i = 0; i < absorbed.Count; i++)
+            {
+                var part = absorbed[i];
+                if (memo.IsOwnedPureRequirement(part, owned))
+                {
+                    kept ??= absorbed.GetRange(0, i);
+                    continue;
+                }
+
+                kept?.Add(part);
+            }
+
+            if (kept is null)
+                return;
+            _absorbed = kept.Count == 0 ? null : kept;
+            _absorbedSet = kept.Count == 0 ? null : new HashSet<SummarySeed>(kept, ReferenceEqualityComparer.Instance);
+        }
+
+        /// <summary>
+        /// Whether this COMPLETED seed and every part it absorbed carry only required names, all in
+        /// <paramref name="owned"/>. Reads the stored sets directly: a completed seed is never folded
+        /// or mutated.
+        /// </summary>
+        internal bool IsPureRequirementWithin(IReadOnlySet<string> owned, FrontEndTraversalObservations? observations = null)
+            => RequiredNamesOutside(owned, observations: observations) is { Length: 0 };
+
+        /// <summary>
+        /// When this COMPLETED seed and every part it absorbed carry only required names: those names
+        /// that <paramref name="covered"/> does not contain (distinct, in walk order); otherwise null.
+        /// Reads the stored sets directly: a completed seed is never folded or mutated.
+        /// </summary>
+        internal string[]? RequiredNamesOutside(IReadOnlySet<string> covered,
+            Func<SummarySeed, IReadOnlySet<string>, string[]?>? residualOf = null,
+            FrontEndTraversalObservations? observations = null)
+        {
+            List<string>? outside = null;
+            HashSet<string>? seenOutside = null;
+            var visited = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance);
+            var pending = new Stack<SummarySeed>();
+            pending.Push(this);
+            while (pending.TryPop(out var part))
+            {
+                if (!visited.Add(part))
+                    continue;
+                if (part._visiblePropertyDependencyNames.Count > 0
+                    || part._pendingReferences.Count > 0
+                    || part._ownerQualifiedParameters.Count > 0)
+                {
+                    return null;
+                }
+
+                foreach (var name in part._requiredAncestorOwnedParameterNames)
+                {
+                    observations?.RecordSummaryResidualNameProbe();
+                    if (!covered.Contains(name) && (seenOutside ??= new(StringComparer.Ordinal)).Add(name))
+                        (outside ??= []).Add(name);
+                }
+
+                if (part._absorbed is { } nested)
+                {
+                    foreach (var absorbedPart in nested)
+                    {
+                        if (residualOf is null)
+                            pending.Push(absorbedPart);
+                        else
+                        {
+                            var residual = residualOf(absorbedPart, covered);
+                            if (residual is null)
+                                return null;
+                            foreach (var name in residual)
+                                if ((seenOutside ??= new(StringComparer.Ordinal)).Add(name))
+                                    (outside ??= []).Add(name);
+                        }
+                    }
+                }
+            }
+
+            return outside is null ? [] : [.. outside];
+        }
+
         // Folds every distinct absorbed seed into this seed's own sets — each once, depth-first in
         // absorption order, so the resulting content and insertion order are deterministic.
         private void Fold()
@@ -644,7 +739,7 @@ internal static class PropertyDependencyGraphBuilder
     /// standalone <see cref="BuildSummaries"/> call creates its own. Stored seeds follow the
     /// clone discipline documented on <see cref="SummarySeed"/>.
     /// </summary>
-    internal sealed class SummaryMemo
+    internal sealed class SummaryMemo(FrontEndTraversalObservations? observations = null)
     {
         internal readonly BranchContextInterner BranchContexts = new();
         internal Dictionary<Algorithm, AlgorithmSummary>? CompletedAlgorithmSummaries;
@@ -661,6 +756,85 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal Dictionary<BranchBodySummaryKey, SummarySeed>? CompletedBranchBodySummaries;
 
+        /// <summary>
+        /// Seeds of expressions walked in the TRANSPARENT context (argument slots and capture rows:
+        /// empty local summaries, nothing owned), by node reference. That context is the same in
+        /// every region, so such a seed is a pure function of the node and is computed once per
+        /// memo lifetime — never once per owner region (FE-3: K owners sharing one synthesized
+        /// argument bundle summarize it once). Stored pristine; readers clone.
+        /// </summary>
+        internal Dictionary<Expr, SummarySeed>? TransparentSeeds;
+
+        /// <summary>
+        /// Completed call and dot-call argument-bundle seeds, by bundle reference (FE-2): a pure
+        /// function of the bundle (the transparent walk), kept for the memo lifetime (FE-3).
+        /// </summary>
+        internal Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
+
+        /// <summary>
+        /// FE-3: whether a COMPLETED seed carries nothing but required names that an owner's name
+        /// set covers, by (seed, set) reference pair — see <see cref="SummarySeed.DropOwnedAbsorbedParts"/>.
+        /// </summary>
+        internal Dictionary<(SummarySeed Part, IReadOnlySet<string> Owned), bool>? OwnedPureParts;
+
+        internal bool IsOwnedPureRequirement(SummarySeed part, IReadOnlySet<string> owned)
+        {
+            // A composed owner signature's names are its owner-local head over a SHARED tail: the part
+            // is decided against the tail once (per part and tail), and only the names the tail does not
+            // cover are tested against this owner's own set — never the part's full width per owner.
+            if (owned is ImplicitSignatureTemplate.NameSetView { Tail: { } tail })
+            {
+                if (ResidualOf(part, tail) is not { } residual)
+                    return false;
+                foreach (var name in residual)
+                {
+                    observations?.RecordSummaryResidualNameProbe();
+                    if (!owned.Contains(name))
+                        return false;
+                }
+
+                return true;
+            }
+
+            OwnedPureParts ??= new(OwnedPartKeyComparer.Instance);
+            if (!OwnedPureParts.TryGetValue((part, owned), out var pure))
+            {
+                pure = part.IsPureRequirementWithin(owned, observations);
+                OwnedPureParts.Add((part, owned), pure);
+            }
+
+            return pure;
+        }
+
+        private Dictionary<(SummarySeed Part, IReadOnlySet<string> Owned), string[]?>? _residuals;
+
+        // The required names of a pure-requirement part that a tail name set does not cover (null
+        // when the part carries anything but required names), once per (part, tail).
+        private string[]? ResidualOf(SummarySeed part, IReadOnlySet<string> tail)
+        {
+            _residuals ??= new(OwnedPartKeyComparer.Instance);
+            if (!_residuals.TryGetValue((part, tail), out var residual))
+            {
+                residual = part.RequiredNamesOutside(tail, ResidualOf, observations);
+                _residuals.Add((part, tail), residual);
+            }
+
+            return residual;
+        }
+
+        private sealed class OwnedPartKeyComparer : IEqualityComparer<(SummarySeed Part, IReadOnlySet<string> Owned)>
+        {
+            public static readonly OwnedPartKeyComparer Instance = new();
+
+            public bool Equals((SummarySeed Part, IReadOnlySet<string> Owned) x, (SummarySeed Part, IReadOnlySet<string> Owned) y)
+                => ReferenceEquals(x.Part, y.Part) && ReferenceEquals(x.Owned, y.Owned);
+
+            public int GetHashCode((SummarySeed Part, IReadOnlySet<string> Owned) key)
+                => HashCode.Combine(
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Part),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Owned));
+        }
+
         private Dictionary<Algorithm, IReadOnlySet<string>>? _ownerParameterNames;
 
         private static readonly IReadOnlySet<string> NoParameterNames = new HashSet<string>(StringComparer.Ordinal);
@@ -675,8 +849,13 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal IReadOnlySet<string> ParameterNamesOf(Algorithm owner, FrontEndTraversalObservations? observations)
         {
-            if (owner is not Algorithm.User { ParameterPatterns.Count: > 0 })
+            if (owner is not Algorithm.User { ParameterPatterns.Count: > 0 } user)
                 return NoParameterNames;
+
+            // A shared implicit-signature template (FE-3) already holds its name set: every owner of
+            // the template reads that one set instead of materializing its own.
+            if (user.ParameterPatterns is ImplicitSignatureTemplate template)
+                return template.Facts.NameSet;
 
             _ownerParameterNames ??= new(ReferenceEqualityComparer.Instance);
             if (!_ownerParameterNames.TryGetValue(owner, out var names))
@@ -720,11 +899,6 @@ internal static class PropertyDependencyGraphBuilder
     internal sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations)
     {
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
-
-        public Dictionary<Expr, SummarySeed>? TransparentSeeds;
-
-        /// <summary>Completed call and dot-call argument-bundle seeds, by bundle reference (FE-2).</summary>
-        public Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
 
         public readonly SummaryMemo SharedMemo = sharedMemo;
 
@@ -811,7 +985,9 @@ internal static class PropertyDependencyGraphBuilder
             propertyNameToIndex[algorithm.Properties[i].Name] = i;
 
         var siblingNames = new HashSet<string>(propertyNameToIndex.Keys, StringComparer.Ordinal);
-        var ownedHere = CreateNameSet(algorithm.Params);
+        IReadOnlySet<string> ownedHere = algorithm.ParameterPatterns is ImplicitSignatureTemplate template
+            ? template.Facts.NameSet
+            : CreateNameSet(algorithm.Params);
 
         // Whether a prelude name is shadowed at this level through ordinary
         // resolution: siblings, this algorithm's own parameters, and
@@ -869,7 +1045,7 @@ internal static class PropertyDependencyGraphBuilder
         // summarized under the same empty locally-owned context, so two properties sharing
         // ONE value algorithm summarize it once — and the caller's shared memo carries the
         // same completed summaries across nesting levels.
-        var buildMemos = new SummaryWalkMemos(memo ?? new SummaryMemo(), observations);
+        var buildMemos = new SummaryWalkMemos(memo ?? new SummaryMemo(observations), observations);
         var nodes = new PropertyDependencySummaryNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
@@ -931,14 +1107,14 @@ internal static class PropertyDependencyGraphBuilder
 
     private static SummarySeed CollectSummarySeed(
         Algorithm algorithm,
-        HashSet<string> locallyOwnedNames,
+        IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
         => CollectAlgorithmSummary(algorithm, locallyOwnedNames, sharedMemo, observations).OutputSeed;
 
     private static AlgorithmSummary CollectAlgorithmSummary(
         Algorithm algorithm,
-        HashSet<string> locallyOwnedNames,
+        IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
         => algorithm switch
@@ -952,7 +1128,7 @@ internal static class PropertyDependencyGraphBuilder
 
     private static AlgorithmSummary CollectAlgorithmSummary(
         Algorithm.User algorithm,
-        HashSet<string> locallyOwnedNames,
+        IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
@@ -967,8 +1143,19 @@ internal static class PropertyDependencyGraphBuilder
             return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
 
         var ownerParameterNames = sharedMemo.ParameterNamesOf(algorithm, observations);
-        var ownedHere = CreateNameSet(locallyOwnedNames);
-        ownedHere.UnionWith(ownerParameterNames);
+        // The owned-here set is read only: with no locally owned names it IS the owner's parameter
+        // set (a template owner's shared set), never a per-owner copy of it (FE-3).
+        IReadOnlySet<string> ownedHere;
+        if (locallyOwnedNames.Count == 0)
+        {
+            ownedHere = ownerParameterNames;
+        }
+        else
+        {
+            var union = CreateNameSet(locallyOwnedNames);
+            union.UnionWith(ownerParameterNames);
+            ownedHere = union;
+        }
 
         // Ownership attribution follows the same transparency model as
         // ParameterDetector: transparent OutputBundle content (call/dot-call
@@ -1037,6 +1224,11 @@ internal static class PropertyDependencyGraphBuilder
         // `G` was hidden). The same expansion turns each name this level's own `open`
         // declarations may provide into a pending reference carrying those providers.
         var finalLevel = new LevelContext(algorithm, currentPropertySummaries, memos);
+        // Absorbed completed parts that only require names this level owns are exactly what the
+        // expansion below would qualify and the strip after it remove: they are dropped by
+        // reference, never folded (FE-3 — K owners that each absorbed one shared L-name argument
+        // bundle seed would otherwise each copy, qualify, and strip its L names).
+        seed.DropOwnedAbsorbedParts(ownedHere, sharedMemo);
         seed = ExpandAtLevel(seed, finalLevel);
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm, ownerHasParameters: ownerParameterNames.Count > 0, observations);
 
@@ -1424,7 +1616,7 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectOpenTargetSeeds(
         IReadOnlyList<Expr> opens,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
-        HashSet<string> ownedHere,
+        IReadOnlySet<string> ownedHere,
         SummaryWalkMemos memos)
     {
         var seed = new SummarySeed();
@@ -1450,7 +1642,7 @@ internal static class PropertyDependencyGraphBuilder
 
     private static SummarySeed CollectSummarySeed(
         Algorithm.Conditional algorithm,
-        HashSet<string> locallyOwnedNames,
+        IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
     {
@@ -1517,7 +1709,7 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSummarySeed(
         IReadOnlyList<Expr> expressions,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
-        HashSet<string> ownedHere,
+        IReadOnlySet<string> ownedHere,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
@@ -1531,7 +1723,7 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSummarySeed(
         Expr expr,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
-        HashSet<string> ownedHere,
+        IReadOnlySet<string> ownedHere,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
@@ -1545,7 +1737,7 @@ internal static class PropertyDependencyGraphBuilder
             return CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
         var seedMap = inTransparentContext
-            ? memos.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
+            ? memos.SharedMemo.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
             : memos.PrimarySeeds ??= new(ReferenceEqualityComparer.Instance);
         if (seedMap.TryGetValue(expr, out var stored))
             return stored.Clone();
@@ -1559,7 +1751,7 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectSummarySeedCore(
         Expr expr,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
-        HashSet<string> ownedHere,
+        IReadOnlySet<string> ownedHere,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
@@ -1621,12 +1813,17 @@ internal static class PropertyDependencyGraphBuilder
     /// empty owned-here set and an empty local-summary map in the transparent context.
     /// </summary>
     private static SummarySeed CollectTransparentBundleSummarySeed(OutputBundle bundle, SummaryWalkMemos memos)
-        => CollectSummarySeed(
-            bundle,
+    {
+        var seed = CollectSummarySeed(
+            bundle.Head,
             new Dictionary<string, SummarySeed>(StringComparer.Ordinal),
             CreateNameSet(),
             memos,
             inTransparentContext: true);
+        if (bundle.Tail is { } tail)
+            seed.AbsorbCompleted(CompletedArgumentBundleSeed(tail, memos));
+        return seed;
+    }
 
     /// <summary>
     /// The COMPLETED seed of a call or dot-call argument bundle, computed once per bundle per
@@ -1637,12 +1834,12 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     private static SummarySeed CompletedArgumentBundleSeed(OutputBundle bundle, SummaryWalkMemos memos)
     {
-        memos.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
-        if (!memos.ArgumentBundleSeeds.TryGetValue(bundle, out var seed))
+        var bundleSeeds = memos.SharedMemo.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
+        if (!bundleSeeds.TryGetValue(bundle, out var seed))
         {
             memos.Observations?.RecordDependencyArgumentBundleSummary();
             seed = CollectTransparentBundleSummarySeed(bundle, memos);
-            memos.ArgumentBundleSeeds.Add(bundle, seed);
+            bundleSeeds.Add(bundle, seed);
         }
 
         return seed;
@@ -1679,7 +1876,7 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CollectDotCallSummarySeed(
         Expr.DotCall dotCall,
         IReadOnlyDictionary<string, SummarySeed> localPropertySummaries,
-        HashSet<string> ownedHere,
+        IReadOnlySet<string> ownedHere,
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {

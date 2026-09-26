@@ -23,11 +23,21 @@ internal sealed record CallableParameter(
 
 internal sealed record CallableSignature
 {
+    // FE-3: the facts DERIVED from the stored patterns (the flat parameter list, the names, the display
+    // text, the arity facts) are computed on first read instead of eagerly per signature: implicit
+    // lifting builds one signature per owner (and the evaluator one per call), and K owners sharing an
+    // L-wide template must not each allocate L parameters, L names, and an L-wide display string. The
+    // cache is carried in an equality-transparent slot, so record equality stays that of the stored
+    // inputs (name, pattern list, explicit-list bit); every property is get-only, so a `with` copy is
+    // identical and may share it.
+    private readonly RuntimeStateSlot<DerivedFacts> _derived;
+
     public CallableSignature(string name, IReadOnlyList<CallableParameter> parameters)
         : this(
             name,
             CreateFlatParameterPatterns(parameters),
             parameters,
+            parameterSource: null,
             hasExplicitParameterList: false,
             displayText: null)
     {
@@ -36,37 +46,105 @@ internal sealed record CallableSignature
     private CallableSignature(
         string name,
         IReadOnlyList<ParameterPattern> parameterPatterns,
-        IReadOnlyList<CallableParameter> parameters,
+        IReadOnlyList<CallableParameter>? parameters,
+        CallableParameterSource? parameterSource,
         bool hasExplicitParameterList,
         string? displayText)
     {
         Name = name;
-        ParameterPatterns = parameterPatterns.ToArray();
-        Parameters = parameters.ToArray();
+        // A shared implicit-signature template is immutable: it is kept by reference (with its
+        // cached facts) instead of being copied per signature. Any other list is caller-owned and
+        // snapshotted exactly as before.
+        ParameterPatterns = parameterPatterns is ImplicitSignatureTemplate template
+            ? template
+            : parameterPatterns.ToArray();
         HasExplicitParameterList = hasExplicitParameterList;
-        ParameterNames = Parameters.Select(static parameter => parameter.Name).ToArray();
-        DisplayText = displayText ?? FormatDisplayText(Name, ParameterPatterns);
+        _derived = new(new DerivedFacts(parameters?.ToArray(), parameterSource, displayText));
     }
 
     public string Name { get; }
 
     public IReadOnlyList<ParameterPattern> ParameterPatterns { get; }
 
-    public IReadOnlyList<CallableParameter> Parameters { get; }
+    public IReadOnlyList<CallableParameter> Parameters => _derived.Value.Parameters(this);
 
-    public IReadOnlyList<string> ParameterNames { get; }
+    public IReadOnlyList<string> ParameterNames => _derived.Value.ParameterNames(this);
 
     public bool HasExplicitParameterList { get; }
 
-    public string DisplayText { get; }
+    public string DisplayText => _derived.Value.DisplayText(this);
 
     public int TopLevelParameterCount => ParameterPatterns.Count;
 
-    public int FlattenedParameterCount => Parameters.Count;
+    /// <summary>The flattened capture count, without materializing <see cref="Parameters"/>.</summary>
+    public int FlattenedParameterCount => _derived.Value.FlattenedParameterCount(this);
 
     public bool HasSequenceValueParameterPattern => ParameterPatterns.Any(ContainsSequenceValuePattern);
 
-    public CallableArityFacts ArityFacts => CallableSignatureDiagnostics.GetArityFacts(this);
+    public CallableArityFacts ArityFacts => _derived.Value.ArityFacts(this);
+
+    /// <summary>
+    /// The lazily derived facts of one signature, published atomically (a signature may be read
+    /// concurrently — the builtin registry's are process-wide). Each is a pure function of the
+    /// signature's stored inputs, so racing initializers compute equal values.
+    /// </summary>
+    private sealed class DerivedFacts(
+        CallableParameter[]? parameters,
+        CallableParameterSource? parameterSource,
+        string? displayText)
+    {
+        private IReadOnlyList<CallableParameter>? _parameters = parameters;
+        private IReadOnlyList<string>? _parameterNames;
+        private string? _displayText = displayText;
+        private CallableArityFacts? _arityFacts;
+
+        public IReadOnlyList<CallableParameter> Parameters(CallableSignature signature)
+        {
+            var computed = Volatile.Read(ref _parameters);
+            if (computed is not null)
+                return computed;
+            var source = parameterSource ?? CallableParameterSource.Explicit;
+            computed = signature.ParameterPatterns is ImplicitSignatureTemplate template
+                ? template.Facts.CallableParameters(source)
+                : CreateParameters(signature.ParameterPatterns, source);
+            return Interlocked.CompareExchange(ref _parameters, computed, null) ?? computed;
+        }
+
+        public IReadOnlyList<string> ParameterNames(CallableSignature signature)
+        {
+            var computed = Volatile.Read(ref _parameterNames);
+            if (computed is not null)
+                return computed;
+            computed = signature.ParameterPatterns is ImplicitSignatureTemplate template
+                ? template.Facts.Names
+                : Parameters(signature).Select(static parameter => parameter.Name).ToArray();
+            return Interlocked.CompareExchange(ref _parameterNames, computed, null) ?? computed;
+        }
+
+        public string DisplayText(CallableSignature signature)
+        {
+            var computed = Volatile.Read(ref _displayText);
+            if (computed is not null)
+                return computed;
+            computed = FormatDisplayText(signature.Name, signature.ParameterPatterns);
+            return Interlocked.CompareExchange(ref _displayText, computed, null) ?? computed;
+        }
+
+        public int FlattenedParameterCount(CallableSignature signature)
+            => Volatile.Read(ref _parameters)?.Count
+                ?? (signature.ParameterPatterns is ImplicitSignatureTemplate template
+                    ? template.Facts.CaptureCount
+                    : ParameterPattern.CountCaptures(signature.ParameterPatterns));
+
+        public CallableArityFacts ArityFacts(CallableSignature signature)
+        {
+            var computed = Volatile.Read(ref _arityFacts);
+            if (computed is not null)
+                return computed;
+            computed = CallableSignatureDiagnostics.GetArityFacts(signature);
+            return Interlocked.CompareExchange(ref _arityFacts, computed, null) ?? computed;
+        }
+    }
 
     public int CollectingParameterCount => ArityFacts.TopLevelCollectingCount;
 
@@ -101,17 +179,18 @@ internal sealed record CallableSignature
         // The ONE stored parameter channel is the signature; whether it was WRITTEN (a closed
         // explicit list) or inferred decides only how its parameters are classified.
         var hasExplicitParameterList = algorithm.HasExplicitParameterList;
-        var parameterPatterns = algorithm.ParameterPatterns;
         var source = sourceOverride
             ?? (hasExplicitParameterList ? CallableParameterSource.Explicit : CallableParameterSource.Implicit);
-        var parameters = CreateParameters(parameterPatterns, source);
 
+        // The flat parameters, names, and display text derive from the stored patterns on first
+        // read (a shared template serves them from its facts), never eagerly per signature.
         return new CallableSignature(
             name,
-            parameterPatterns,
-            parameters,
+            algorithm.ParameterPatterns,
+            parameters: null,
+            parameterSource: source,
             hasExplicitParameterList,
-            FormatDisplayText(name, parameterPatterns));
+            displayText: null);
     }
 
     internal static CallableSignature FromParameterDeclarations(
@@ -171,7 +250,7 @@ internal sealed record CallableSignature
             .Select(static parameter => (ParameterPattern)new CaptureParameterPattern(parameter.Name, Kind: parameter.Kind))
             .ToArray();
 
-    private static IReadOnlyList<CallableParameter> CreateParameters(
+    internal static IReadOnlyList<CallableParameter> CreateParameters(
         IReadOnlyList<ParameterPattern> parameterPatterns,
         CallableParameterSource source)
     {
