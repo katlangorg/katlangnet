@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2290
+- surface corpus cases: 2298
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2248
+- Lean-representable surface cases: 2256
 - internal-node cases: 14
-- total generated guards: 2262 case guards + 2 count guards
+- total generated guards: 2270 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -10784,6 +10784,46 @@ def case_special__chainFalseFirstThenEqFalse : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.num 2) [{ op := .lt, operand := (.num 1) }, { op := .eq, operand := (.boolLiteral false) }])])
 #guard obs case_special__chainFalseFirstThenEqFalse == "ok raw=false n=1"
 
+-- special__chainGroupedNotOperand: (not true) == false
+def case_special__chainGroupedNotOperand : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.unary .not (.boolLiteral true)) [{ op := .eq, operand := (.boolLiteral false) }])])
+#guard obs case_special__chainGroupedNotOperand == "ok raw=true n=1"
+
+-- special__chainParenLeftUnderOrdering: (1 < 2) < 3
+def case_special__chainParenLeftUnderOrdering : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }]) [{ op := .lt, operand := (.num 3) }])])
+#guard obs case_special__chainParenLeftUnderOrdering == "err type"
+
+-- special__chainNegatedBasePower: (-2) ^ 2 < -3
+def case_special__chainNegatedBasePower : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.binary .pow (.unary .minus (.num 2)) (.num 2)) [{ op := .lt, operand := (.unary .minus (.num 3)) }])])
+#guard obs case_special__chainNegatedBasePower == "ok raw=false n=1"
+
+-- special__chainNegatedPowerOperand: 1 < -2 ^ 2
+def case_special__chainNegatedPowerOperand : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.unary .minus (.binary .pow (.num 2) (.num 2))) }])])
+#guard obs case_special__chainNegatedPowerOperand == "ok raw=false n=1"
+
+-- special__chainGroupedNegatedBasePowerOperand: 1 < (-2) ^ 2
+def case_special__chainGroupedNegatedBasePowerOperand : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.binary .pow (.unary .minus (.num 2)) (.num 2)) }])])
+#guard obs case_special__chainGroupedNegatedBasePowerOperand == "ok raw=true n=1"
+
+-- special__chainArithmeticTiers: 1 + 1 < 2 * 2 == 2 ^ 2
+def case_special__chainArithmeticTiers : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.binary .add (.num 1) (.num 1)) [{ op := .lt, operand := (.binary .mul (.num 2) (.num 2)) }, { op := .eq, operand := (.binary .pow (.num 2) (.num 2)) }])])
+#guard obs case_special__chainArithmeticTiers == "ok raw=true n=1"
+
+-- special__chainMiddleOperandError: 1 < 1 / 0 < true
+def case_special__chainMiddleOperandError : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.binary .div (.num 1) (.num 0)) }, { op := .lt, operand := (.boolLiteral true) }])])
+#guard obs case_special__chainMiddleOperandError == "err div0"
+
+-- special__chainGroupedSelectionReceiver: (1 < 2 < 3):0 == true
+def case_special__chainGroupedSelectionReceiver : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.index (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 3) }]) (.num 0)) [{ op := .eq, operand := (.boolLiteral true) }])])
+#guard obs case_special__chainGroupedSelectionReceiver == "ok raw=true n=1"
+
 -- special__strCount: count('ab')
 def case_special__strCount : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [.stringLiteral "ab"])])
@@ -11334,7 +11374,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 2248 differential cases.
+-- 2256 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -13480,6 +13520,14 @@ def surfaceCaseIds : List String := [
   "special__chainLtThenGt",
   "special__chainNeThenLt",
   "special__chainFalseFirstThenEqFalse",
+  "special__chainGroupedNotOperand",
+  "special__chainParenLeftUnderOrdering",
+  "special__chainNegatedBasePower",
+  "special__chainNegatedPowerOperand",
+  "special__chainGroupedNegatedBasePowerOperand",
+  "special__chainArithmeticTiers",
+  "special__chainMiddleOperandError",
+  "special__chainGroupedSelectionReceiver",
   "special__strCount",
   "special__strCapture",
   "special__listSpreadOfSeqProp",
@@ -13591,7 +13639,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 2248
+#guard surfaceCaseIds.length == 2256
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -13693,5 +13741,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2262 case guards (2248 surface + 14 internal-node).
+-- Total: 2270 case guards (2256 surface + 14 internal-node).
 end SemanticExplorerCases

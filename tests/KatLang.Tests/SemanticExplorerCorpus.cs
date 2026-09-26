@@ -446,6 +446,17 @@ public static class SemanticExplorerCorpus
         Special("chainLtThenGt", "1 < 2 > 1"),
         Special("chainNeThenLt", "1 != 2 < 3"),
         Special("chainFalseFirstThenEqFalse", "2 < 1 == false"),
+        // The final comparison-chain review (September 2026): the precedence neighbours of the
+        // tier, parentheses on either side, an operand's own error between links, and a grouped
+        // chain as a postfix receiver — each Lean program derived from the parsed tree.
+        Special("chainGroupedNotOperand", "(not true) == false"),
+        Special("chainParenLeftUnderOrdering", "(1 < 2) < 3"),
+        Special("chainNegatedBasePower", "(-2) ^ 2 < -3"),
+        Special("chainNegatedPowerOperand", "1 < -2 ^ 2"),
+        Special("chainGroupedNegatedBasePowerOperand", "1 < (-2) ^ 2"),
+        Special("chainArithmeticTiers", "1 + 1 < 2 * 2 == 2 ^ 2"),
+        Special("chainMiddleOperandError", "1 < 1 / 0 < true"),
+        Special("chainGroupedSelectionReceiver", "(1 < 2 < 3):0 == true"),
         Special("strCount", "count('ab')"),
         Special("strCapture", "x = 'ab'\nx"),
         // Exact list values: spread inside list literals, list/sequence kind
