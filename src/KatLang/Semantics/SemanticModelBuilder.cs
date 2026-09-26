@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace KatLang.Semantics;
 
 /// <summary>
@@ -65,11 +67,59 @@ public static class SemanticModelBuilder
     internal static SemanticModel Build(FrontEndResult frontEndResult)
         => BuildElaborated(frontEndResult.ElaboratedRoot);
 
+    /// <summary>
+    /// Test-only construction knobs of scope visibility storage (FE-4b). None of them may change
+    /// any model content: <see cref="ForceBulk"/> pins every layer to one application path,
+    /// <see cref="CollideNodeHashes"/> makes every tree-node intern key hash alike, and
+    /// <see cref="PriorityOverride"/> replaces the name-derived treap priority.
+    /// </summary>
+    internal sealed record VisibilityConstructionOptions(
+        bool? ForceBulk = null,
+        bool CollideNodeHashes = false,
+        Func<string?, int>? PriorityOverride = null);
+
+    /// <summary>
+    /// Observed build of a parse result (tests): records the builder's walk and scope-visibility
+    /// construction work on <paramref name="observations"/>, under optional construction knobs.
+    /// </summary>
+    internal static SemanticModel Build(
+        ParseResult parseResult,
+        FrontEndTraversalObservations? observations,
+        VisibilityConstructionOptions? visibilityOptions = null)
+        => BuildElaborated(parseResult.Root, observations, parseResult.HostOperations, nameof(parseResult), visibilityOptions: visibilityOptions);
+
+    /// <summary>
+    /// The FE-4b differential oracle (tests): builds the model and, for each of its
+    /// <see cref="SemanticModel.ScopeVisibilities"/> in order, the scope's eager reference
+    /// enumeration — the pre-FE-4b per-scope chain walk, independent of the persistent storage.
+    /// </summary>
+    internal static (SemanticModel Model, IReadOnlyList<IReadOnlyList<VisibleSymbol>> EagerReference) BuildWithEagerVisibilityReference(
+        ParseResult parseResult,
+        VisibilityConstructionOptions? visibilityOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(parseResult);
+        return BuildWithEagerVisibilityReference(parseResult.Root, parseResult.HostOperations, visibilityOptions);
+    }
+
+    /// <summary>The differential oracle over an elaborated (possibly host-built) root.</summary>
+    internal static (SemanticModel Model, IReadOnlyList<IReadOnlyList<VisibleSymbol>> EagerReference) BuildWithEagerVisibilityReference(
+        Algorithm root,
+        HostOperations? hostOperations,
+        VisibilityConstructionOptions? visibilityOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        var eagerReference = new Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>(ReferenceEqualityComparer.Instance);
+        var model = BuildElaborated(root, observations: null, hostOperations, nameof(root), eagerReference, visibilityOptions);
+        return (model, model.ScopeVisibilities.Select(scope => eagerReference[scope]).ToList());
+    }
+
     private static SemanticModel BuildElaborated(
         Algorithm elaboratedRoot,
         FrontEndTraversalObservations? observations = null,
         HostOperations? hostOperations = null,
-        string argumentName = "elaboratedRoot")
+        string argumentName = "elaboratedRoot",
+        Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>? eagerReference = null,
+        VisibilityConstructionOptions? visibilityOptions = null)
     {
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
@@ -95,7 +145,7 @@ public static class SemanticModelBuilder
         }
 
         LoadElaborationGuard.ThrowIfUnresolvedLoad(elaboratedRoot, "Semantic model building");
-        return new Builder(observations, hostOperations).Build(elaboratedRoot);
+        return new Builder(observations, hostOperations, visibilityOptions).Build(elaboratedRoot, eagerReference);
     }
 
     /// <summary>
@@ -180,6 +230,9 @@ public static class SemanticModelBuilder
         private readonly TemplatePropertyMetadataCache _templateMetadata = new();
         private readonly FrontEndTraversalObservations? _observations;
 
+        // FE-4b: the per-build constructor (and intern table) of every scope visibility tree.
+        private readonly VisibilityTreeBuilder _visibilityTrees;
+
         // The prelude this build resolves against: the process-shared one, or — for a parse
         // configured with host operations — that same prelude extended with the operations'
         // signature-only wrappers (HostOperations.ExtendSemanticPrelude), exactly the prelude
@@ -190,9 +243,14 @@ public static class SemanticModelBuilder
         private readonly IReadOnlyList<VisibleSymbol> _preludeSymbols;
         private readonly IReadOnlySet<string>? _hostOperationNames;
 
-        public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null)
+        public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null, VisibilityConstructionOptions? visibilityOptions = null)
         {
             _observations = observations;
+            _visibilityTrees = new VisibilityTreeBuilder(observations, visibilityOptions?.CollideNodeHashes == true)
+            {
+                ForceBulk = visibilityOptions?.ForceBulk,
+                PriorityOverride = visibilityOptions?.PriorityOverride,
+            };
             if (hostOperations is null || hostOperations.Operations.Count == 0)
             {
                 _preludeAlgorithm = PreludeAlgorithm;
@@ -273,9 +331,13 @@ public static class SemanticModelBuilder
         }
 
         public SemanticModel Build(Algorithm root)
+            => Build(root, eagerReference: null);
+
+        public SemanticModel Build(Algorithm root, Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>? eagerReference)
         {
             ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms, _observations);
             VisitAlgorithm(root, _preludeScope, extraParameters: null);
+            EmitScopeVisibilities(eagerReference);
 
             var sortedIdentifierOccurrences = _identifierOccurrences
                 .OrderBy(static occurrence => occurrence.Span, SpanComparer.Instance)
@@ -406,6 +468,8 @@ public static class SemanticModelBuilder
                 CreatePropertySymbol(algorithm, property);
 
             var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
+            var ownsDeferredModuleOpen = OwnsDeferredModuleOpen(propertyScope);
+            _documentOwnsDeferredModuleOpen |= ownsDeferredModuleOpen;
 
             // An inferred signature that is a shared implicit-signature template (FE-3) declares only
             // implicit parameters: its table is a pure function of the template names, built once
@@ -414,7 +478,7 @@ public static class SemanticModelBuilder
             if (extraParameters is null
                 && algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns: ImplicitSignatureTemplate template })
             {
-                return new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, OwnsDeferredModuleOpen(propertyScope));
+                return new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, ownsDeferredModuleOpen);
             }
 
             var parameterSymbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
@@ -486,7 +550,7 @@ public static class SemanticModelBuilder
                     : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
             }
 
-            return new ScopeFrame(parentScope, parameterSymbols, propertyScope, OwnsDeferredModuleOpen(propertyScope));
+            return new ScopeFrame(parentScope, parameterSymbols, propertyScope, ownsDeferredModuleOpen);
         }
 
         private IReadOnlyDictionary<string, SymbolDefinition> ImplicitParameterTable(ImplicitSignatureTemplate template)
@@ -517,10 +581,14 @@ public static class SemanticModelBuilder
 
                 table = symbols;
                 _implicitParameterTables.Add(template, table);
+                _sharedParameterTables.Add(table);
             }
 
             return table;
         }
+
+        /// <summary>The per-template implicit parameter tables: one object shared by every owner frame over its template (FE-3).</summary>
+        private readonly HashSet<IReadOnlyDictionary<string, SymbolDefinition>> _sharedParameterTables = new(ReferenceEqualityComparer.Instance);
 
         private Dictionary<ImplicitSignatureTemplate, IReadOnlyDictionary<string, SymbolDefinition>>? _implicitParameterTables;
 
@@ -529,6 +597,12 @@ public static class SemanticModelBuilder
             Dictionary<string, SymbolDefinition> head,
             IReadOnlyDictionary<string, SymbolDefinition> tail) : IReadOnlyDictionary<string, SymbolDefinition>
         {
+            /// <summary>The owner-local head table.</summary>
+            public IReadOnlyDictionary<string, SymbolDefinition> Head => head;
+
+            /// <summary>The shared template tail's table (the same object for every owner over it).</summary>
+            public IReadOnlyDictionary<string, SymbolDefinition> Tail => tail;
+
             public SymbolDefinition this[string key]
                 => TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(key);
 
@@ -2096,17 +2170,14 @@ public static class SemanticModelBuilder
 
             // The root region is addressable without a span. A nested scope with
             // no source anchor at all (possible only in host-built trees) has no
-            // position a cursor could reach, so it is not emitted.
+            // position a cursor could reach, so it is not emitted. Its visible set is
+            // derived after the walk (see EmitScopeVisibilities), in this emission order.
+            if (region.IsRoot || region.Hull is not null)
+                RegisterVisibleMetadata(scope);
             if (region.IsRoot)
-                _scopeVisibilities.Add(new ScopeVisibility(
-                    Span: null,
-                    ComputeVisibleSymbols(scope),
-                    region.NestingDepth));
+                _pendingScopes.Add(new PendingScope(Span: null, region.NestingDepth, scope));
             else if (region.Hull is { } hull)
-                _scopeVisibilities.Add(new ScopeVisibility(
-                    hull,
-                    ComputeVisibleSymbols(scope),
-                    region.NestingDepth));
+                _pendingScopes.Add(new PendingScope(hull, region.NestingDepth, scope));
         }
 
         private void ExtendCurrentRegion(SourceSpan? span)
@@ -2141,8 +2212,586 @@ public static class SemanticModelBuilder
                 ExtendCurrentRegion(symbol.Declaration?.Span);
         }
 
+        // ── FE-4b: persistent scope visibility ──────────────────────────────
+
+        // The old visibility enumeration also registered one-level member declarations.
+        // Preserve those side effects at the same walk boundary: tied source spans expose
+        // registration order through Declarations and FindResolutionAt. These shrinking
+        // worklists contain only unfinished metadata, never a scope's visible-name snapshot.
+        private readonly Dictionary<ElaboratedPropertyScope, List<PropertyLookupHit>> _pendingDirectMetadata = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Algorithm, List<Property>> _pendingOpenMetadata = new(ReferenceEqualityComparer.Instance);
+
+        private readonly HashSet<Algorithm> _registeredMemberSurfaces = new(ReferenceEqualityComparer.Instance);
+
+        private bool MembersRegistered(Algorithm algorithm)
+        {
+            if (algorithm is not Algorithm.User user || _registeredMemberSurfaces.Contains(user) || _memberSymbolCache.ContainsKey(user))
+                return true;
+            foreach (var property in user.Properties)
+            {
+                _observations?.RecordScopeVisibilityMetadataEntry();
+                if (!IsSyntheticProperty(property) && !_propertySymbolCache.ContainsKey(property))
+                    return false;
+            }
+            _registeredMemberSurfaces.Add(user);
+            return true;
+        }
+
+        private static bool DirectVisibilityDecision(ScopeFrame scope, string name, out Property? selected)
+        {
+            selected = null;
+            for (var current = scope; current is not null; current = current.Parent)
+            {
+                if (current.Parameters.ContainsKey(name))
+                    return true;
+                var hit = current.PropertyScope.TryLookupOwnProperty(name);
+                if (hit is null)
+                    continue;
+                // Synthetic entries never decide completion; a later real declaration of
+                // the same spelling is still eligible in a host-built/recovery tree.
+                if (IsSyntheticProperty(hit.Value.Property))
+                    hit = current.PropertyScope.Properties
+                        .Where(h => h.Property.Name == name && !IsSyntheticProperty(h.Property))
+                        .Select(static h => (PropertyLookupHit?)h).FirstOrDefault();
+                if (hit is null)
+                    continue;
+                selected = hit.Value.Property;
+                return true;
+            }
+            return false;
+        }
+
+        private void RegisterVisibleMetadata(ScopeFrame scope)
+        {
+            for (var frame = scope; frame is not null && !ReferenceEquals(frame, _preludeScope); frame = frame.Parent)
+            {
+                var level = frame.PropertyScope;
+                if (!_pendingDirectMetadata.TryGetValue(level, out var pending))
+                {
+                    pending = [];
+                    foreach (var hit in level.Properties)
+                    {
+                        _observations?.RecordScopeVisibilityMetadataEntry();
+                        if (!IsSyntheticProperty(hit.Property) && !MembersRegistered(hit.Property.Value))
+                            pending.Add(hit);
+                    }
+                    _pendingDirectMetadata.Add(level, pending);
+                }
+                var kept = 0;
+                for (var i = 0; i < pending.Count; i++)
+                {
+                    var hit = pending[i];
+                    _observations?.RecordScopeVisibilityMetadataEntry();
+                    if (!MembersRegistered(hit.Property.Value)
+                        && DirectVisibilityDecision(scope, hit.Property.Name, out var selected)
+                        && ReferenceEquals(selected, hit.Property))
+                        _ = CreateMemberSymbols(hit.Property.Value);
+                    if (!MembersRegistered(hit.Property.Value))
+                        pending[kept++] = hit;
+                }
+                pending.RemoveRange(kept, pending.Count - kept);
+            }
+
+            for (var level = scope.PropertyScope; level is not null; level = level.Parent)
+            {
+                List<Algorithm>? memberSurfaces = null;
+                foreach (var provider in level.GetResolvedOpenProviders())
+                {
+                    var target = provider.Target;
+                    if (!_pendingOpenMetadata.TryGetValue(target, out var pending))
+                    {
+                        pending = [];
+                        var seen = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var property in target.Properties)
+                        {
+                            _observations?.RecordScopeVisibilityMetadataEntry();
+                            if (property.IsPublic && seen.Add(property.Name)
+                                && (!_propertySymbolCache.ContainsKey(property) || !MembersRegistered(property.Value)))
+                                pending.Add(property);
+                        }
+                        _pendingOpenMetadata.Add(target, pending);
+                    }
+                    var kept = 0;
+                    for (var i = 0; i < pending.Count; i++)
+                    {
+                        var property = pending[i];
+                        _observations?.RecordScopeVisibilityMetadataEntry();
+                        if (!DirectVisibilityDecision(scope, property.Name, out _))
+                        {
+                            var hits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope.PropertyScope, property.Name);
+                            // The eager pass registered the first provider even when a later
+                            // provider made the name ambiguous; only a unique name got members.
+                            if (hits.Count > 0 && ReferenceEquals(hits[0].Property, property))
+                            {
+                                _ = CreateLookupPropertySymbol(target, property);
+                                if (hits.Count == 1)
+                                    (memberSurfaces ??= []).Add(property.Value);
+                            }
+                        }
+                        if (!_propertySymbolCache.ContainsKey(property) || !MembersRegistered(property.Value))
+                            pending[kept++] = property;
+                    }
+                    pending.RemoveRange(kept, pending.Count - kept);
+                }
+                // The eager open pass registered all first-provider symbols before
+                // constructing the unique symbols' member surfaces, in that order.
+                if (memberSurfaces is not null)
+                    foreach (var algorithm in memberSurfaces)
+                        _ = CreateMemberSymbols(algorithm);
+            }
+        }
+        //
+        // A scope's visible set is a VIEW over an immutable, canonical, name-ordered tree
+        // (ScopeVisibilityStorage.cs). Each frame's tree is its parent frame's tree plus the
+        // frame's own layers, applied in the order that reproduces the eager enumeration
+        // exactly (ComputeEagerReferenceSymbols, retained as the differential oracle):
+        //
+        //   1. the level's OPEN decisions — for every public member name no DIRECT entry of the
+        //      parent chain and no prelude name decides: its one provider's member, or removal
+        //      when two providers supply it (ambiguity suppresses the name and masks outer opens);
+        //   2. the level's PARAMETERS, which decide their names before its properties;
+        //   3. the level's own non-synthetic PROPERTIES, first occurrence per name.
+        //
+        // An inner level's direct names override everything outer; its open decisions override
+        // outer open decisions but never a direct name — so every entry records whether it is
+        // direct, exactly the distinction the eager `decided` set drew. A deferred module open
+        // reclassifies open-provided property entries from its level outward WITHOUT rewriting
+        // them: an entry records the deferred-owning levels outside its deciding level, and the
+        // reading scope compares its own count (ScopeSymbolView.Resolve), shielded by synthetic
+        // property names of the chain as TryLookupDirectLexicalProperty would be.
+        //
+        // Every tree is derived after the walk, when every document property symbol already
+        // exists, so deriving visibility registers nothing (order-independent). A layer shared
+        // by several frames — the same open providers or the same FE-3 template table over the
+        // same parent tree — is applied once per (parent tree, layer), and a nested owner re-applying
+        // an FE-3 template table its container already applied (and nothing since overrode) costs
+        // nothing. Storage is proportional to distinct entries plus the changed paths of each
+        // derivation, never to scopes × names.
+
+        private readonly record struct PendingScope(SourceSpan? Span, int NestingDepth, ScopeFrame Frame);
+
+        /// <summary>A shared FE-3 template table applied under one deferred context.</summary>
+        private readonly record struct AppliedTable(IReadOnlyDictionary<string, SymbolDefinition> Table, bool Deferred);
+
         /// <summary>
-        /// Computes the resolved visible-name set for one scope: the ownership-first
+        /// A frame's derived visibility: its tree, its deferred-owning level count, its chain's synthetic
+        /// property names, and the shared template tables whose every entry the tree still holds
+        /// exactly (so re-applying one is a no-op: opens never touch direct entries, and a direct
+        /// layer that overrides one of a table's names drops the table).
+        /// </summary>
+        private sealed record FrameVisibility(
+            VisibilityNode? Root,
+            int DeferredLevels,
+            ImmutableHashSet<string> SyntheticNames,
+            AppliedTable[] AppliedTables)
+        {
+            public static FrameVisibility Empty { get; } = new(null, 0, ImmutableHashSet.Create<string>(StringComparer.Ordinal), []);
+        }
+
+        /// <summary>An open layer's identity: the parent tree, the level's resolved provider targets in order, and its deferred context.</summary>
+        private readonly struct OpenLayerKey(VisibilityNode? root, IReadOnlyList<ResolvedOpenProvider> providers, int outerDeferredLevels)
+            : IEquatable<OpenLayerKey>
+        {
+            private readonly VisibilityNode? _root = root;
+            private readonly IReadOnlyList<ResolvedOpenProvider> _providers = providers;
+            private readonly int _outerDeferredLevels = outerDeferredLevels;
+
+            public bool Equals(OpenLayerKey other)
+            {
+                if (!ReferenceEquals(_root, other._root)
+                    || _outerDeferredLevels != other._outerDeferredLevels
+                    || _providers.Count != other._providers.Count)
+                    return false;
+
+                for (var i = 0; i < _providers.Count; i++)
+                {
+                    if (!ReferenceEquals(_providers[i].Target, other._providers[i].Target))
+                        return false;
+                }
+
+                return true;
+            }
+
+            public override bool Equals(object? obj) => obj is OpenLayerKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                var hash = new HashCode();
+                hash.Add(_root is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_root));
+                hash.Add(_outerDeferredLevels);
+                foreach (var provider in _providers)
+                    hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(provider.Target));
+                return hash.ToHashCode();
+            }
+        }
+
+        private readonly List<PendingScope> _pendingScopes = [];
+        private readonly Dictionary<ScopeFrame, FrameVisibility> _frameVisibility = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<OpenLayerKey, VisibilityNode?> _openLayerMemo = new();
+        private readonly Dictionary<(VisibilityNode? Root, object Table, bool Deferred), (VisibilityNode? Result, List<VisibilityDelta> Changes)> _parameterLayerMemo = new();
+        private readonly Dictionary<(VisibilityNode? Root, int DeferredLevels, ImmutableHashSet<string>? SyntheticNames), ScopeSymbolView> _views = new();
+        private readonly Dictionary<SymbolDefinition, VisibleSymbol> _propertyVisibleSymbols = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<SymbolDefinition, VisibleSymbol> _parameterVisibleSymbols = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<SymbolDefinition, VisibleSymbol> _deferredParameterVisibleSymbols = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<string, VisibleSymbol> _deferredTwins = new(StringComparer.Ordinal);
+        private HashSet<string>? _preludeNames;
+        private bool _documentOwnsDeferredModuleOpen;
+
+        /// <summary>
+        /// Derives every pending scope's visibility and emits its <see cref="ScopeVisibility"/>, in
+        /// emission order. <paramref name="eagerReference"/> (tests only) receives each emitted
+        /// scope's eager reference enumeration beside it.
+        /// </summary>
+        private void EmitScopeVisibilities(Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>? eagerReference)
+        {
+            foreach (var pending in _pendingScopes)
+            {
+                var visibility = VisibilityOf(pending.Frame);
+                var scope = new ScopeVisibility(pending.Span, ViewOf(visibility), pending.NestingDepth);
+                _scopeVisibilities.Add(scope);
+                eagerReference?.Add(scope, ComputeEagerReferenceSymbols(pending.Frame));
+            }
+        }
+
+        private ScopeSymbolView ViewOf(FrameVisibility visibility)
+        {
+            // The deferred reading context matters only when some level of the chain owns a
+            // deferred open; otherwise one view per distinct tree serves every scope over it.
+            var key = visibility.DeferredLevels == 0
+                ? (visibility.Root, 0, (ImmutableHashSet<string>?)null)
+                : (visibility.Root, visibility.DeferredLevels, visibility.SyntheticNames);
+            if (!_views.TryGetValue(key, out var view))
+            {
+                view = new ScopeSymbolView(key.Item1, key.Item2, key.Item3);
+                _views.Add(key, view);
+                _observations?.RecordScopeVisibilityView();
+            }
+
+            return view;
+        }
+
+        /// <summary>The visibility of <paramref name="frame"/>, deriving each not-yet-derived ancestor first (iteratively, outermost first).</summary>
+        private FrameVisibility VisibilityOf(ScopeFrame frame)
+        {
+            if (_frameVisibility.TryGetValue(frame, out var known))
+                return known;
+
+            var chain = new Stack<ScopeFrame>();
+            for (var current = frame; current is not null && !_frameVisibility.ContainsKey(current); current = current.Parent)
+                chain.Push(current);
+
+            while (chain.TryPop(out var next))
+            {
+                var parent = next.Parent is { } parentFrame ? _frameVisibility[parentFrame] : FrameVisibility.Empty;
+                _frameVisibility.Add(next, DeriveFrameVisibility(next, parent));
+            }
+
+            return _frameVisibility[frame];
+        }
+
+        private FrameVisibility DeriveFrameVisibility(ScopeFrame frame, FrameVisibility parent)
+        {
+            _observations?.RecordScopeVisibilityStateDerived();
+            var root = ApplyOpenLayer(frame.PropertyScope, parent.Root, parent.DeferredLevels);
+            var applied = parent.AppliedTables;
+            root = ApplyParameterLayer(frame.Parameters, root, frame.HasDeferredModuleOpen, ref applied);
+
+            // The prelude level's properties are never offered (the catalog is merged at query
+            // time); they only keep opens from providing their names (PreludeNames).
+            var syntheticNames = parent.SyntheticNames;
+            if (!ReferenceEquals(frame, _preludeScope))
+                root = ApplyPropertyLayer(frame, root, ref syntheticNames, ref applied);
+
+            return root == parent.Root
+                && frame.DeferredModuleLevels == parent.DeferredLevels
+                && syntheticNames == parent.SyntheticNames
+                && applied == parent.AppliedTables
+                    ? parent
+                    : new FrameVisibility(root, frame.DeferredModuleLevels, syntheticNames, applied);
+        }
+
+        /// <summary>
+        /// Drops every tracked template table one of whose names a direct layer just set to a
+        /// different symbol (the table's entries are then no longer all present).
+        /// </summary>
+        private AppliedTable[] InvalidateAppliedTables(AppliedTable[] applied, List<VisibilityDelta> directChanges)
+        {
+            if (applied.Length == 0 || directChanges.Count == 0)
+                return applied;
+
+            List<AppliedTable>? kept = null;
+            for (var index = 0; index < applied.Length; index++)
+            {
+                var tracked = applied[index];
+                var intact = true;
+                foreach (var change in directChanges)
+                {
+                    if (change.Name is { } name
+                        && tracked.Table.TryGetValue(name, out var symbol)
+                        && !ReferenceEquals(ParameterVisibleSymbol(name, symbol, tracked.Deferred), change.Entry.Symbol))
+                    {
+                        intact = false;
+                        break;
+                    }
+                }
+
+                if (!intact && kept is null)
+                {
+                    kept = new List<AppliedTable>(applied.Length);
+                    for (var previous = 0; previous < index; previous++)
+                        kept.Add(applied[previous]);
+                }
+                else if (intact)
+                {
+                    kept?.Add(tracked);
+                }
+            }
+
+            return kept is null ? applied : kept.ToArray();
+        }
+
+        /// <summary>Every name the prelude level declares: a direct prelude name is never open-provided (direct-anywhere beats open-anywhere).</summary>
+        private HashSet<string> PreludeNames
+        {
+            get
+            {
+                if (_preludeNames is null)
+                {
+                    _preludeNames = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var hit in _preludeScope.PropertyScope.Properties)
+                        _preludeNames.Add(hit.Property.Name);
+                }
+
+                return _preludeNames;
+            }
+        }
+
+        /// <summary>
+        /// One level's open decisions (see <see cref="ComputeEagerReferenceSymbols"/>'s open pass):
+        /// written named targets dedup first-occurrence-wins, only public members are provided, a
+        /// name any direct entry of the parent chain or the prelude decides is never provided, one
+        /// provider's name becomes an open entry, and a name two providers supply is removed.
+        /// </summary>
+        private VisibilityNode? ApplyOpenLayer(ElaboratedPropertyScope level, VisibilityNode? root, int outerDeferredLevels)
+        {
+            var providers = level.GetResolvedOpenProviders();
+            if (providers.Count == 0)
+                return root;
+
+            var key = new OpenLayerKey(root, providers, outerDeferredLevels);
+            if (_openLayerMemo.TryGetValue(key, out var memo))
+            {
+                _observations?.RecordScopeVisibilityLayerMemoHit();
+                return memo;
+            }
+
+            Dictionary<string, SymbolDefinition?>? levelProviders = null;
+            foreach (var provider in providers)
+            {
+                var targetAlgorithm = provider.Target;
+                var providedNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in targetAlgorithm.Properties)
+                {
+                    if (!property.IsPublic)
+                        continue;
+
+                    if (IsDirectlyDecided(root, property.Name) || !providedNames.Add(property.Name))
+                        continue;
+
+                    levelProviders ??= new(StringComparer.Ordinal);
+                    levelProviders[property.Name] = levelProviders.TryGetValue(property.Name, out _)
+                        ? null // second distinct provider at this level: ambiguous
+                        : CreateLookupPropertySymbol(targetAlgorithm, property);
+                }
+            }
+
+            var result = root;
+            if (levelProviders is not null)
+            {
+                var meta = VisibilityEntry.OpenMeta(outerDeferredLevels);
+                var changes = new List<VisibilityDelta>(levelProviders.Count);
+                foreach (var (name, symbol) in levelProviders)
+                {
+                    changes.Add(symbol is null
+                        ? VisibilityDelta.Remove(name)
+                        : VisibilityDelta.Set(OpenProvidedEntry(symbol, meta)));
+                }
+
+                result = _visibilityTrees.Apply(root, changes);
+            }
+
+            _openLayerMemo.Add(key, result);
+            return result;
+        }
+
+        private bool IsDirectlyDecided(VisibilityNode? root, string name)
+            => PreludeNames.Contains(name) || VisibilityTree.Find(root, name) is { IsOpenProvided: false };
+
+        private VisibilityEntry OpenProvidedEntry(SymbolDefinition symbol, int meta)
+        {
+            var visible = PropertyVisibleSymbol(symbol);
+            var twin = _documentOwnsDeferredModuleOpen && visible.Classification == IdentifierClassification.PropertyReference
+                ? DeferredTwin(visible.Name)
+                : null;
+            return _visibilityTrees.Entry(visible, meta, twin);
+        }
+
+        /// <summary>The indeterminate symbol a deferred module open makes of an open-provided property name (one per name).</summary>
+        private VisibleSymbol DeferredTwin(string name)
+        {
+            if (!_deferredTwins.TryGetValue(name, out var twin))
+            {
+                twin = new VisibleSymbol(name, IdentifierClassification.DeferredModuleReference, Declaration: null, Property: null);
+                _deferredTwins.Add(name, twin);
+            }
+
+            return twin;
+        }
+
+        /// <summary>
+        /// One level's parameter decisions. A composed FE-3 signature applies its shared tail table
+        /// and its owner-local head as two layers (disjoint names). A shared template table is applied
+        /// once per parent tree, and not at all when the tree already holds all of its entries (a
+        /// nested owner lifting the same callee as its container).
+        /// </summary>
+        private VisibilityNode? ApplyParameterLayer(
+            IReadOnlyDictionary<string, SymbolDefinition> table,
+            VisibilityNode? root,
+            bool deferred,
+            ref AppliedTable[] applied)
+        {
+            if (table.Count == 0)
+                return root;
+
+            if (table is OverlayParameterTable overlay)
+            {
+                root = ApplyParameterLayer(overlay.Tail, root, deferred, ref applied);
+                return ApplyParameterLayer(overlay.Head, root, deferred, ref applied);
+            }
+
+            var shared = _sharedParameterTables.Contains(table);
+            if (shared && Array.IndexOf(applied, new AppliedTable(table, deferred)) >= 0)
+            {
+                _observations?.RecordScopeVisibilityLayerMemoHit();
+                return root;
+            }
+
+            var key = (root, (object)table, deferred);
+            if (!shared || !_parameterLayerMemo.TryGetValue(key, out var layer))
+            {
+                var changes = new List<VisibilityDelta>(table.Count);
+                foreach (var (name, symbol) in table)
+                {
+                    changes.Add(VisibilityDelta.Set(_visibilityTrees.Entry(
+                        ParameterVisibleSymbol(name, symbol, deferred),
+                        VisibilityEntry.DirectMeta,
+                        deferredTwin: null)));
+                }
+
+                layer = (_visibilityTrees.Apply(root, changes), changes);
+                if (shared)
+                    _parameterLayerMemo.Add(key, layer);
+            }
+            else
+            {
+                _observations?.RecordScopeVisibilityLayerMemoHit();
+            }
+
+            applied = InvalidateAppliedTables(applied, layer.Changes);
+            if (shared)
+                applied = [.. applied, new AppliedTable(table, deferred)];
+            return layer.Result;
+        }
+
+        /// <summary>
+        /// One level's own properties: first occurrence per name, a same-level parameter wins, and a
+        /// synthetic property (deconstruction's hoisted source) decides nothing — its name only
+        /// shields open-provided names from deferred reclassification, as a direct lexical hit does.
+        /// </summary>
+        private VisibilityNode? ApplyPropertyLayer(
+            ScopeFrame frame,
+            VisibilityNode? root,
+            ref ImmutableHashSet<string> syntheticNames,
+            ref AppliedTable[] applied)
+        {
+            var hits = frame.PropertyScope.Properties;
+            if (hits.Count == 0)
+                return root;
+
+            List<VisibilityDelta>? changes = null;
+            HashSet<string>? seen = null;
+            foreach (var hit in hits)
+            {
+                var property = hit.Property;
+                var name = property.Name;
+                if (IsSyntheticProperty(property))
+                {
+                    if (name is not null)
+                        syntheticNames = syntheticNames.Add(name);
+                    continue;
+                }
+
+                if (name is not null && frame.Parameters.ContainsKey(name))
+                    continue;
+
+                seen ??= new HashSet<string>(StringComparer.Ordinal);
+                if (!seen.Add(name!))
+                    continue;
+
+                var symbol = CreateLookupPropertySymbol(hit.Owner, property);
+                (changes ??= new List<VisibilityDelta>(hits.Count)).Add(VisibilityDelta.Set(_visibilityTrees.Entry(
+                    PropertyVisibleSymbol(symbol),
+                    VisibilityEntry.DirectMeta,
+                    deferredTwin: null)));
+            }
+
+            if (changes is null)
+                return root;
+
+            root = _visibilityTrees.Apply(root, changes);
+            applied = InvalidateAppliedTables(applied, changes);
+            return root;
+        }
+
+        /// <summary>The one visible symbol of a property symbol (direct or open-provided), shared by every scope that offers it.</summary>
+        private VisibleSymbol PropertyVisibleSymbol(SymbolDefinition symbol)
+        {
+            if (!_propertyVisibleSymbols.TryGetValue(symbol, out var visible))
+            {
+                visible = CreateVisibleSymbol(symbol.Name, symbol);
+                _propertyVisibleSymbols.Add(symbol, visible);
+            }
+
+            return visible;
+        }
+
+        /// <summary>
+        /// The one visible symbol of a parameter symbol under its declaring level's deferred context
+        /// (an implicit parameter under a deferred module open is indeterminate), shared by every
+        /// scope that sees it — including every owner frame over one FE-3 template table.
+        /// </summary>
+        private VisibleSymbol ParameterVisibleSymbol(string name, SymbolDefinition symbol, bool deferred)
+        {
+            var classification = symbol.Kind == SymbolKind.ImplicitParameter && deferred
+                ? IdentifierClassification.DeferredModuleReference
+                : ClassifyParameterSymbol(symbol);
+            var cache = classification == IdentifierClassification.DeferredModuleReference
+                ? _deferredParameterVisibleSymbols
+                : _parameterVisibleSymbols;
+            if (!cache.TryGetValue(symbol, out var visible) || visible.Name != name)
+            {
+                visible = new VisibleSymbol(name, classification, symbol.Declaration, Property: null);
+                cache[symbol] = visible;
+            }
+
+            return visible;
+        }
+
+        /// <summary>
+        /// THE EAGER REFERENCE ENUMERATION (the pre-FE-4b algorithm, kept verbatim as the
+        /// differential oracle of the persistent representation; production never calls it —
+        /// only the internal <c>BuildWithEagerVisibilityReference</c> entry points do). Computes the resolved
+        /// visible-name set for one scope by walking its whole chain: the ownership-first
         /// direct chain (each level's parameters and own properties, an inner level
         /// deciding a name before any outer level), then open-provided public
         /// exported members level by level with the evaluator's first-occurrence
@@ -2157,12 +2806,13 @@ public static class SemanticModelBuilder
         /// per-name form the front end's parameter and receiver classification use):
         /// same aligned level chain — <see cref="ScopeFrame.PropertyScope"/> is the
         /// level of the frame's own algorithm — parameters asked before that level's
-        /// own properties, and the first deciding level winning. Keep the two in step;
-        /// this must never become a third precedence rule. Frames whose parameter
+        /// own properties, and the first deciding level winning. Keep the two in step —
+        /// and keep the persistent layers above in step with this — it must never become
+        /// a third precedence rule. Frames whose parameter
         /// tables carry names no level of the chain would answer for cannot arise:
         /// each frame's table holds exactly that algorithm's own parameters.</para>
         /// </summary>
-        private IReadOnlyList<VisibleSymbol> ComputeVisibleSymbols(ScopeFrame scope)
+        private List<VisibleSymbol> ComputeEagerReferenceSymbols(ScopeFrame scope)
         {
             // Properties matching same-owner or enclosing parameters are front-end declaration errors.
             // Keep parameter-first recovery lookup deterministic; the conflicting property's
@@ -2293,7 +2943,7 @@ public static class SemanticModelBuilder
         }
 
         private VisibleSymbol CreateVisibleSymbol(string name, SymbolDefinition symbol)
-            => new(
+            => VisibleSymbol.FromModelMembers(
                 name,
                 ClassifyReferenceSymbol(symbol),
                 symbol.Declaration,
@@ -2484,10 +3134,23 @@ public static class SemanticModelBuilder
             Parent = parent;
             Parameters = parameters;
             PropertyScope = propertyScope;
-            HasDeferredModuleOpen = ownsDeferredModuleOpen || parent?.HasDeferredModuleOpen == true;
+            OwnsDeferredModuleOpen = ownsDeferredModuleOpen;
+            DeferredModuleLevels = (parent?.DeferredModuleLevels ?? 0) + (ownsDeferredModuleOpen ? 1 : 0);
+            HasDeferredModuleOpen = DeferredModuleLevels > 0;
         }
 
         public ScopeFrame? Parent { get; }
+
+        /// <summary>This level's own open list holds a DEFERRED module open.</summary>
+        public bool OwnsDeferredModuleOpen { get; }
+
+        /// <summary>
+        /// How many levels of this chain (this one included) own a deferred module open. An
+        /// open-provided visible name decided at level L is indeterminate here exactly when a level
+        /// between here and L owns one — when this count exceeds the count outside L — which is what
+        /// lets a scope's visibility read inherited entries without rewriting them (FE-4b).
+        /// </summary>
+        public int DeferredModuleLevels { get; }
 
         public IReadOnlyDictionary<string, SymbolDefinition> Parameters { get; }
 

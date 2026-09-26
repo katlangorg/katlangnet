@@ -8,8 +8,17 @@ namespace KatLang.Semantics;
 /// implicit-parameter symbols have none, and neither does a symbol supplied by
 /// a load-elaborated module (its declaration lies in the module's own source
 /// text, so it is locationless with respect to the current document while
-/// <see cref="Property"/> still carries its callable metadata).
+/// <see cref="Property"/> still carries its callable metadata). Within one
+/// <see cref="SemanticModel"/>, a symbol visible from several scopes is ONE instance
+/// shared by all of them; distinct declarations of one spelling are distinct symbols.
 /// </summary>
+/// <remarks>
+/// Sharing is local to one model. Generated record equality compares the public payload,
+/// including the identity of <see cref="Members"/>; it is not a declaration-identity test.
+/// Reusing a symbol also reuses its immutable members list, so member-bearing symbols seen
+/// in several scopes compare equal. A host needing declaration identity should use the
+/// model's canonical <see cref="Declaration"/> instance when one exists.
+/// </remarks>
 public sealed record VisibleSymbol
 {
     public VisibleSymbol(
@@ -18,14 +27,30 @@ public sealed record VisibleSymbol
         DeclarationOccurrence? Declaration,
         PropertyInfo? Property,
         IReadOnlyList<VisibleSymbol>? Members = null)
+        : this(Name, Classification, Declaration, Property, Members, shareMembers: false)
     {
-        this.Name = Name;
-        this.Classification = Classification;
-        this.Declaration = Declaration;
-        this.Property = Property;
-        this.Members = Members is null or { Count: 0 }
+    }
+
+    // Model-owned member lists are already immutable snapshots. Keep a distinct public
+    // wrapper for this symbol (record equality includes it), sharing only their backing.
+    internal static VisibleSymbol FromModelMembers(
+        string name, IdentifierClassification classification, DeclarationOccurrence? declaration,
+        PropertyInfo? property, IReadOnlyList<VisibleSymbol> members)
+        => new(name, classification, declaration, property, members, shareMembers: true);
+
+    private VisibleSymbol(
+        string name, IdentifierClassification classification, DeclarationOccurrence? declaration,
+        PropertyInfo? property, IReadOnlyList<VisibleSymbol>? members, bool shareMembers)
+    {
+        Name = name;
+        Classification = classification;
+        Declaration = declaration;
+        Property = property;
+        Members = members is null or { Count: 0 }
             ? Array.Empty<VisibleSymbol>()
-            : Array.AsReadOnly(Members.ToArray());
+            : shareMembers
+                ? new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>((IList<VisibleSymbol>)members)
+                : Array.AsReadOnly(members.ToArray());
     }
 
     public string Name { get; }
@@ -59,6 +84,14 @@ public sealed record VisibleSymbol
 /// <see cref="PreludeCatalog.Symbols"/> for names not shadowed here (or use
 /// <see cref="SemanticModel.GetVisibleSymbolsAt"/>, which does the merge).
 /// </summary>
+/// <remarks>
+/// A visible set is a semantic VIEW, not a snapshot the model copies per scope: scopes of one
+/// model built by <see cref="SemanticModelBuilder"/> may share immutable backing storage, and
+/// the same <see cref="VisibleSymbol"/> instance may appear in several scopes. Each scope still
+/// exposes its own read-only <see cref="Symbols"/> list, whose contents and order are exactly
+/// the scope's; enumerating every symbol of every scope remains proportional to that logical
+/// output.
+/// </remarks>
 public sealed record ScopeVisibility
 {
     public ScopeVisibility(
@@ -74,9 +107,38 @@ public sealed record ScopeVisibility
         this.NestingDepth = NestingDepth;
     }
 
+    /// <summary>
+    /// A builder scope over its shared immutable visibility view (FE-4b): no symbol is copied.
+    /// The public list is a distinct wrapper per scope, so storage sharing never makes two scopes'
+    /// <see cref="Symbols"/> the same object (record equality stays per scope). An empty scope keeps
+    /// the shared empty array and no view, exactly like a host-constructed empty scope.
+    /// </summary>
+    internal ScopeVisibility(SourceSpan? span, ScopeSymbolView view, int nestingDepth)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(nestingDepth);
+        Span = span;
+        if (view.Count == 0)
+        {
+            Symbols = Array.Empty<VisibleSymbol>();
+        }
+        else
+        {
+            Symbols = new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>(view);
+            View = view;
+        }
+
+        NestingDepth = nestingDepth;
+    }
+
     public SourceSpan? Span { get; }
 
     public IReadOnlyList<VisibleSymbol> Symbols { get; }
+
+    /// <summary>
+    /// The shared view behind <see cref="Symbols"/> for a non-empty builder scope (name lookup
+    /// without copying); null for host-constructed and empty scopes.
+    /// </summary>
+    internal ScopeSymbolView? View { get; }
 
     /// <summary>
     /// Lexical nesting depth, with the document root at zero. Cursor lookup

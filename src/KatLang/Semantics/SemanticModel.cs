@@ -163,7 +163,10 @@ public sealed class SemanticModel
     /// sets, root first. Regions are the source hulls of scope content, so nested
     /// scopes appear as contained spans; each region's symbols already apply
     /// shadowing, open dedup/ambiguity, and direct-beats-open precedence, and
-    /// exclude prelude names (see <see cref="PreludeCatalog.Symbols"/>).
+    /// exclude prelude names (see <see cref="PreludeCatalog.Symbols"/>). Scopes share
+    /// immutable storage (a symbol seen from several scopes is one
+    /// <see cref="VisibleSymbol"/> instance), so enumerating every symbol of every scope
+    /// costs what its logical output does while the model retains far less.
     /// </summary>
     public IReadOnlyList<ScopeVisibility> ScopeVisibilities { get; }
 
@@ -204,11 +207,28 @@ public sealed class SemanticModel
     /// The full effective visible-name set at the supplied position: the innermost
     /// scope's resolved symbols followed by the prelude names they do not shadow.
     /// Dot-only intrinsics (<see cref="PreludeCatalog.DotIntrinsicSymbols"/>) are
-    /// not bare-name-visible and are deliberately excluded.
+    /// not bare-name-visible and are deliberately excluded. The returned read-only list
+    /// reads the scope's shared storage in place rather than copying it.
     /// </summary>
     public IReadOnlyList<VisibleSymbol> GetVisibleSymbolsAt(SourcePosition position)
     {
         var scope = FindScopeAt(position);
+        if (scope.View is { } view)
+        {
+            // A builder scope's names are unique and name-indexed: the merged list reads the
+            // scope's shared view in place and keeps only the prelude symbols it does not shadow
+            // (each checked by one name lookup), instead of copying the scope per query.
+            var unshadowed = new List<VisibleSymbol>(PreludeSymbols.Count);
+            foreach (var symbol in PreludeSymbols)
+            {
+                if (view.Find(symbol.Name) is null)
+                    unshadowed.Add(symbol);
+            }
+
+            return new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>(
+                new MergedVisibleSymbolList(view, unshadowed.ToArray()));
+        }
+
         var result = new List<VisibleSymbol>(scope.Symbols.Count + PreludeSymbols.Count);
         result.AddRange(scope.Symbols);
 

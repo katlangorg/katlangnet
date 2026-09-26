@@ -620,6 +620,65 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSemanticModelAlgorithmVisit()
         => SemanticModelAlgorithmVisits = checked(SemanticModelAlgorithmVisits + 1);
 
+    // ── Scope visibility construction (editor, FE-4b) ─────────────────────────
+    // Every visibility tree node is made by ONE interner (VisibilityTreeBuilder.Make) and
+    // every layer change passes ONE entry (VisibilityTreeBuilder.Apply), so these counters
+    // bound all visibility construction work: no per-scope snapshot can be built elsewhere.
+
+    /// <summary>Frames whose visibility the builder derived: at most one per frame, and only for frames an emitted scope needs.</summary>
+    public long ScopeVisibilityStatesDerived { get; private set; }
+
+    internal void RecordScopeVisibilityStateDerived()
+        => ScopeVisibilityStatesDerived = checked(ScopeVisibilityStatesDerived + 1);
+
+    /// <summary>Layer changes (set or remove one name) applied to visibility trees; a memoized layer applies none.</summary>
+    public long ScopeVisibilityLayerChanges { get; private set; }
+
+    internal void RecordScopeVisibilityLayerChanges(int changes)
+        => ScopeVisibilityLayerChanges = checked(ScopeVisibilityLayerChanges + changes);
+
+    /// <summary>Layers served from the (parent tree, layer) memo: a shared open-provider set or FE-3 template table applied once.</summary>
+    public long ScopeVisibilityLayerMemoHits { get; private set; }
+
+    internal void RecordScopeVisibilityLayerMemoHit()
+        => ScopeVisibilityLayerMemoHits = checked(ScopeVisibilityLayerMemoHits + 1);
+
+    /// <summary>Distinct visibility tree nodes created — the physical backing of every scope's visible set.</summary>
+    public long ScopeVisibilityNodesCreated { get; private set; }
+
+    internal void RecordScopeVisibilityNodeCreated()
+        => ScopeVisibilityNodesCreated = checked(ScopeVisibilityNodesCreated + 1);
+
+    /// <summary>Node constructions answered by an existing identical node (hash-consing).</summary>
+    public long ScopeVisibilityNodesReused { get; private set; }
+
+    internal void RecordScopeVisibilityNodeReused()
+        => ScopeVisibilityNodesReused = checked(ScopeVisibilityNodesReused + 1);
+
+    /// <summary>Bulk (merge-and-rebuild) layer applications, and the entries they walked.</summary>
+    public long ScopeVisibilityBulkBuilds { get; private set; }
+
+    /// <summary>Entries walked by bulk layer applications.</summary>
+    public long ScopeVisibilityBulkBuildEntries { get; private set; }
+
+    internal void RecordScopeVisibilityBulkBuild(int entries)
+    {
+        ScopeVisibilityBulkBuilds = checked(ScopeVisibilityBulkBuilds + 1);
+        ScopeVisibilityBulkBuildEntries = checked(ScopeVisibilityBulkBuildEntries + entries);
+    }
+
+    /// <summary>Distinct read-only views created (one per distinct tree and deferred reading context).</summary>
+    public long ScopeVisibilityViews { get; private set; }
+
+    internal void RecordScopeVisibilityView()
+        => ScopeVisibilityViews = checked(ScopeVisibilityViews + 1);
+
+    /// <summary>Property entries inspected by the compatibility metadata-registration worklists.</summary>
+    public long ScopeVisibilityMetadataEntries { get; private set; }
+
+    internal void RecordScopeVisibilityMetadataEntry()
+        => ScopeVisibilityMetadataEntries = checked(ScopeVisibilityMetadataEntries + 1);
+
     // ── Elaborated scope-lookup work (M18) ────────────────────────────────────
     // Unlike the traversal counters above, these record LOOKUP work performed by
     // ElaboratedScopeLookup over one observed front-end pass: chain levels
