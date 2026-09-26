@@ -29,7 +29,8 @@ internal static partial class LoopOptimizer
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
         ValEnv parentValEnv,
-        bool includeDiagnostics)
+        bool includeDiagnostics,
+        LoopTempCallArgumentMemo argumentMemo)
     {
         var plans = new List<LoopTempPlan>(userStep.Properties.Count);
         List<LoopTempDiagnosticSnapshot>? diagnostics = includeDiagnostics
@@ -39,7 +40,7 @@ internal static partial class LoopOptimizer
         foreach (var property in userStep.Properties)
         {
             var tempIndex = plans.Count;
-            var tempR = TryBuildLoopTempPlan(property, plans, stateNames, ctx, parentValEnv);
+            var tempR = TryBuildLoopTempPlan(property, plans, stateNames, ctx, parentValEnv, argumentMemo);
             if (tempR.Plan is not null)
             {
                 var parameterNames = property.Value is Algorithm.User userProperty
@@ -80,7 +81,8 @@ internal static partial class LoopOptimizer
         IReadOnlyList<LoopTempPlan> earlierTempPlans,
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
-        ValEnv parentValEnv)
+        ValEnv parentValEnv,
+        LoopTempCallArgumentMemo argumentMemo)
     {
         if (property.Value is not Algorithm.User userProperty)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property kind: {property.Name}");
@@ -104,7 +106,7 @@ internal static partial class LoopOptimizer
         if (userProperty.Output.Count != 1)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property output arity: {property.Name}");
 
-        var bodyPlan = TryBuildLoopExprPlan(userProperty.Output[0], stateNames, ctx, parentValEnv, earlierTempPlans);
+        var bodyPlan = TryBuildLoopExprPlan(userProperty.Output[0], stateNames, ctx, parentValEnv, earlierTempPlans, argumentMemo);
         if (bodyPlan.Plan is null)
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property body {property.Name}: {bodyPlan.FallbackReason}");
 

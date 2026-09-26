@@ -590,6 +590,10 @@ K3-05 consumer follow-up: once KatLangWeb adopts a package containing `RenderDis
 5. If the change is optimization-only, add or preserve equivalence tests against the generic path.
 6. If unsure, stop and ask before changing observable semantics.
 
+### FE-2 hostile review: loop-plan forwarding inspection
+
+C# optimization only; no Lean semantic edit. `LoopTempCallArgumentMemo` computes a shared forwarding bundle's shape verdict and generic limit span once per selected local-property plan during one loop-plan construction. Keys use both bundle and temp-plan reference identity; each call's plan node and diagnostic boundary remain distinct. The builder projects the step's ordered state names once. No runtime values, binding, budget charges, cancellation, or evaluation order are cached or changed. `ImplicitArgumentSharingHostileReviewTests` pins actual slot inspections at three widths, different selected signatures over the same bundle, source-span retention, and optimized/generic values and emitted counts. V3 remains required because this touches the optimizer.
+
 ### Independent public API review (#11)
 
 C# packaging and host-boundary repairs only; no Lean semantics changed: `RunResult`/`ParseResult` construction and payload replacement are internal, the flat evaluator families accept host operations through the existing bounded projection, output bundles reject null slots, lexical/semantic query collections are read-only, and argument exceptions name the public parameter. Removed redundant `ErrorContext.ToLegacyString`, three-part `ScopeCtx.Deconstruct`, and the never-produced semantic classification at value 8 (remaining values unchanged). `ScopeCtx` and AST manipulation helpers remain deliberate advanced semantic-AST APIs; they do not compose the source front end. Validation remains V3 for this broad candidate.

@@ -306,21 +306,26 @@ internal static partial class LoopOptimizer
             return null;
         }
 
-        var loopCtx = ShadowLoopStepParameterEnvironments(ctx, userStep);
+        // One immutable state-name projection and bundle-facts memo for this construction.
+        // Output rows keep separate expression memos (including stack-sensitive fallbacks).
+        var stateNames = userStep.Params;
+        var loopCtx = ShadowLoopStepParameterEnvironments(ctx, stateNames);
         var iterationCtx = loopCtx.Push(userStep);
+        var argumentMemo = new LoopTempCallArgumentMemo();
         var tempPlanBuild = BuildLoopTempPlans(
             userStep,
-            userStep.Params,
+            stateNames,
             iterationCtx,
             parentValEnv,
-            includeDiagnostics: ctx.LoopDiagnostics is not null);
+            includeDiagnostics: ctx.LoopDiagnostics is not null,
+            argumentMemo);
         var tempPlans = tempPlanBuild.Plans;
 
         var nextStateOutputs = new List<LoopExprPlan>(stateArity);
         var requiresPerIterationCacheIdentity = false;
         for (var i = 0; i < stateArity; i++)
         {
-            var plan = BuildLoopExprPlan(userStep.Output[i], userStep.Params, iterationCtx, parentValEnv, tempPlans);
+            var plan = BuildLoopExprPlan(userStep.Output[i], stateNames, iterationCtx, parentValEnv, tempPlans, argumentMemo);
             if (!plan.IsFullyPlanned)
                 requiresPerIterationCacheIdentity = true;
             nextStateOutputs.Add(plan.Plan);
@@ -329,7 +334,7 @@ internal static partial class LoopOptimizer
         LoopExprPlan? continuationOutput = null;
         if (kind == LoopKind.While)
         {
-            var plan = BuildLoopExprPlan(userStep.Output[stateArity], userStep.Params, iterationCtx, parentValEnv, tempPlans);
+            var plan = BuildLoopExprPlan(userStep.Output[stateArity], stateNames, iterationCtx, parentValEnv, tempPlans, argumentMemo);
             if (!plan.IsFullyPlanned)
                 requiresPerIterationCacheIdentity = true;
             continuationOutput = plan.Plan;
@@ -343,13 +348,13 @@ internal static partial class LoopOptimizer
             for (var index = 0; index < stateArity; index++)
             {
                 nextStateOutputs.Add(BuildLoopExprPlan(
-                    userStep.Output[index], userStep.Params, iterationCtx, parentValEnv, tempPlans).Plan);
+                    userStep.Output[index], stateNames, iterationCtx, parentValEnv, tempPlans, argumentMemo).Plan);
             }
 
             if (kind == LoopKind.While)
             {
                 continuationOutput = BuildLoopExprPlan(
-                    userStep.Output[stateArity], userStep.Params, iterationCtx, parentValEnv, tempPlans).Plan;
+                    userStep.Output[stateArity], stateNames, iterationCtx, parentValEnv, tempPlans, argumentMemo).Plan;
             }
 
             tempPlanBuild = new LoopTempPlanBuild(tempPlans, tempPlanBuild.Diagnostics.Select(temp => temp.Planned
@@ -392,8 +397,8 @@ internal static partial class LoopOptimizer
     /// </summary>
     private static Evaluator.EvalCtx ShadowLoopStepParameterEnvironments(
         Evaluator.EvalCtx ctx,
-        Algorithm.User userStep)
-        => Evaluator.ShadowInheritedParameterEnvironments(ctx, userStep.Params);
+        IReadOnlyList<string> stateNames)
+        => Evaluator.ShadowInheritedParameterEnvironments(ctx, stateNames);
 
     private static void RecordLoopPlanFallbackDiagnostic(
         LoopKind kind,

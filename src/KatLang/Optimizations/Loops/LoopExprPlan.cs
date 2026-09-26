@@ -96,9 +96,10 @@ internal static partial class LoopOptimizer
         IReadOnlyList<string> stateNames,
         Evaluator.EvalCtx ctx,
         ValEnv parentValEnv,
-        IReadOnlyList<LoopTempPlan> tempPlans)
+        IReadOnlyList<LoopTempPlan> tempPlans,
+        LoopTempCallArgumentMemo argumentMemo)
     {
-        var result = TryBuildLoopExprPlan(expr, stateNames, ctx, parentValEnv, tempPlans);
+        var result = TryBuildLoopExprPlan(expr, stateNames, ctx, parentValEnv, tempPlans, argumentMemo);
         if (result.Plan is not null)
             return new LoopExprPlanBuild(result.Plan, true);
 
@@ -119,6 +120,7 @@ internal static partial class LoopOptimizer
         Evaluator.EvalCtx ctx,
         ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
+        LoopTempCallArgumentMemo argumentMemo,
         Dictionary<Expr, LoopExprPlanTryBuildResult>? memo = null)
     {
         // A plan is built at loop-INVOCATION time, after the dynamic recursion has already
@@ -135,7 +137,7 @@ internal static partial class LoopOptimizer
         if (memo.TryGetValue(expr, out var existing))
             return existing;
 
-        var result = TryBuildLoopExprPlanCore(expr, stateNames, ctx, parentValEnv, tempPlans, memo);
+        var result = TryBuildLoopExprPlanCore(expr, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
         memo.Add(expr, result);
         return result;
     }
@@ -146,6 +148,7 @@ internal static partial class LoopOptimizer
         Evaluator.EvalCtx ctx,
         ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
+        LoopTempCallArgumentMemo argumentMemo,
         Dictionary<Expr, LoopExprPlanTryBuildResult> memo)
     {
         switch (expr)
@@ -202,7 +205,7 @@ internal static partial class LoopOptimizer
 
             case Expr.Unary(var op, var operand):
             {
-                var operandPlan = TryBuildLoopExprPlan(operand, stateNames, ctx, parentValEnv, tempPlans, memo);
+                var operandPlan = TryBuildLoopExprPlan(operand, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                 if (operandPlan.Plan is null)
                     return new LoopExprPlanTryBuildResult(null, operandPlan.FallbackReason);
 
@@ -213,11 +216,11 @@ internal static partial class LoopOptimizer
 
             case Expr.Binary(var op, var left, var right):
             {
-                var leftPlan = TryBuildLoopExprPlan(left, stateNames, ctx, parentValEnv, tempPlans, memo);
+                var leftPlan = TryBuildLoopExprPlan(left, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                 if (leftPlan.Plan is null)
                     return new LoopExprPlanTryBuildResult(null, leftPlan.FallbackReason);
 
-                var rightPlan = TryBuildLoopExprPlan(right, stateNames, ctx, parentValEnv, tempPlans, memo);
+                var rightPlan = TryBuildLoopExprPlan(right, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                 if (rightPlan.Plan is null)
                     return new LoopExprPlanTryBuildResult(null, rightPlan.FallbackReason);
 
@@ -228,14 +231,14 @@ internal static partial class LoopOptimizer
 
             case Expr.Comparison(var first, var links):
             {
-                var firstPlan = TryBuildLoopExprPlan(first, stateNames, ctx, parentValEnv, tempPlans, memo);
+                var firstPlan = TryBuildLoopExprPlan(first, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                 if (firstPlan.Plan is null)
                     return new LoopExprPlanTryBuildResult(null, firstPlan.FallbackReason);
 
                 var linkPlans = new List<LoopComparisonLink>(links.Count);
                 foreach (var link in links)
                 {
-                    var operandPlan = TryBuildLoopExprPlan(link.Operand, stateNames, ctx, parentValEnv, tempPlans, memo);
+                    var operandPlan = TryBuildLoopExprPlan(link.Operand, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                     if (operandPlan.Plan is null)
                         return new LoopExprPlanTryBuildResult(null, operandPlan.FallbackReason);
 
@@ -262,18 +265,19 @@ internal static partial class LoopOptimizer
                     && resolvedCallee.Name == IfBuiltinName
                     && Evaluator.ResolvesToBuiltinAlgorithm(IfBuiltinName, BuiltinId.@if, ctx))
                 {
-                    return TryBuildLoopIfExprPlan(expr, func, callArgs, stateNames, ctx, parentValEnv, tempPlans, memo);
+                    return TryBuildLoopIfExprPlan(expr, func, callArgs, stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
                 }
 
                 if (func is Expr.Resolve(var tempName) && TryFindLoopTempPlan(tempPlans, tempName, out var calledTempPlan))
                 {
-                    if (IsLoopTempCallShape(callArgs, calledTempPlan))
+                    var argumentFacts = argumentMemo.Get(callArgs, calledTempPlan, ctx.LoopDiagnostics);
+                    if (argumentFacts.Matches)
                     {
                         return new LoopExprPlanTryBuildResult(
                             new LoopExprPlan.TempCall(
                                 expr,
                                 func,
-                                Evaluator.UserCallLimitSpan(callArgs),
+                                argumentFacts.LimitSpan,
                                 calledTempPlan.Index,
                                 tempName),
                             null);
@@ -385,20 +389,6 @@ internal static partial class LoopOptimizer
         return false;
     }
 
-    private static bool IsLoopTempCallShape(OutputBundle args, LoopTempPlan tempPlan)
-    {
-        if (args.Count != tempPlan.ParameterNames.Count)
-            return false;
-
-        for (var i = 0; i < args.Count; i++)
-        {
-            if (args[i] is not Expr.Param(var name) || name != tempPlan.ParameterNames[i])
-                return false;
-        }
-
-        return true;
-    }
-
     private static LoopExprPlanTryBuildResult TryBuildLoopIfExprPlan(
         Expr source,
         Expr callee,
@@ -407,20 +397,21 @@ internal static partial class LoopOptimizer
         Evaluator.EvalCtx ctx,
         ValEnv parentValEnv,
         IReadOnlyList<LoopTempPlan> tempPlans,
+        LoopTempCallArgumentMemo argumentMemo,
         Dictionary<Expr, LoopExprPlanTryBuildResult> memo)
     {
         if (callArgs.Count != 3)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if arity: {callArgs.Count}");
 
-        var conditionPlan = TryBuildLoopExprPlan(callArgs[0], stateNames, ctx, parentValEnv, tempPlans, memo);
+        var conditionPlan = TryBuildLoopExprPlan(callArgs[0], stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
         if (conditionPlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if condition: {conditionPlan.FallbackReason}");
 
-        var truePlan = TryBuildLoopExprPlan(callArgs[1], stateNames, ctx, parentValEnv, tempPlans, memo);
+        var truePlan = TryBuildLoopExprPlan(callArgs[1], stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
         if (truePlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if true branch: {truePlan.FallbackReason}");
 
-        var falsePlan = TryBuildLoopExprPlan(callArgs[2], stateNames, ctx, parentValEnv, tempPlans, memo);
+        var falsePlan = TryBuildLoopExprPlan(callArgs[2], stateNames, ctx, parentValEnv, tempPlans, argumentMemo, memo);
         if (falsePlan.Plan is null)
             return new LoopExprPlanTryBuildResult(null, $"unsupported if false branch: {falsePlan.FallbackReason}");
 

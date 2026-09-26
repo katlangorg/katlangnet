@@ -2,6 +2,11 @@ namespace KatLang.Optimizations.Loops;
 
 internal sealed class LoopOptimizationDiagnostics
 {
+    /// <summary>Forwarding slots actually inspected during plan construction (FE-2).</summary>
+    public long TempCallArgumentSlotsExamined { get; private set; }
+
+    internal void RecordTempCallArgumentSlotExamined() => TempCallArgumentSlotsExamined++;
+
     private readonly Dictionary<string, long> _fallbackReasons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LoopPlanDiagnosticBuilder> _loopPlans = new(StringComparer.Ordinal);
 
