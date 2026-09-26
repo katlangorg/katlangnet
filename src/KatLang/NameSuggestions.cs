@@ -2,7 +2,7 @@ namespace KatLang;
 
 /// <summary>
 /// The statically known receiver of a dot edge whose member/fallback name is
-/// being suggested for: the receiver's algorithm (its exported structural
+/// being suggested for: the receiver's algorithm (its declared structural
 /// members are the member suggestion surface) and, when the receiver is
 /// written as a dotted name path, the spelling a member suggestion is offered
 /// after (<c>Math</c> for <c>Math.Ceil</c>; <c>null</c> keeps the bare member).
@@ -21,9 +21,10 @@ internal readonly record struct DotMemberReceiver(Algorithm Algorithm, string? Q
 /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/> can resolve
 /// (plus the already-bound capture/parameter names the detector treats as
 /// bound), and dot-member candidates are the structural members ordinary dot
-/// access can reach on a statically known receiver (exposure-filtered like the
-/// evaluator's structural lookup; public-vs-private deliberately ignored,
-/// matching structural access). No name outside those sets is ever offered.</para>
+/// access selects on a statically known receiver (every DECLARED member, like
+/// the evaluator's structural selection, which never depends on exposure;
+/// public-vs-private deliberately ignored, matching structural access). No
+/// name outside those sets is ever offered.</para>
 ///
 /// <para>Which surface is searched follows what the written syntax most
 /// plausibly targeted, never which spelling the receiver has. A dot member on

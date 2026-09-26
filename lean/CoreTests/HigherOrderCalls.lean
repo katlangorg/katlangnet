@@ -1795,7 +1795,7 @@ def test19e : Bool :=
 --------------------------------------------------------------------------------
 
 -- Test 20: 3-arg if true → produce then-branch value
--- if(1, 5, 6) → [5]
+-- if(true, 5, 6) → [5]
 def test20 : Bool :=
   match runFlat (.call (resolve "if") [.boolLiteral true, .num 5, .num 6]) with
   | Except.ok [5] => true
@@ -1805,7 +1805,7 @@ def test20 : Bool :=
 #eval runFlat (.call (resolve "if") [.boolLiteral true, .num 5, .num 6])
 
 -- Test 21: 3-arg if false → produce else-branch value
--- if(0, 5, 6) → [6]
+-- if(false, 5, 6) → [6]
 def test21 : Bool :=
   match runFlat (.call (resolve "if") [.boolLiteral false, .num 5, .num 6]) with
   | Except.ok [6] => true

@@ -304,7 +304,7 @@ Associativity and precedence warnings:
 - `^` is right-associative: `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`, which is `512`.
 - The comparison level chains (see Comparisons above); equality and ordering share it, so `1 == 1 < 2` is `true`.
 - `^` binds tighter than unary minus on the left, so `-2 ^ 2` means `-(2 ^ 2)` (which is `-4`), NOT `(-2) ^ 2`. Likewise `-2 ^ 0.5` negates the positive-base power. Parentheses are required when the negative value is the power BASE: `(-2) ^ 2` is `4`. The exponent side accepts a unary value directly: `2 ^ -2` is `0.25`. To negate a power, writing `-(a ^ b)` is still fine for visual clarity — it is semantically equivalent to `-a ^ b`.
-- `not` binds less tightly than the comparison and equality operators and more tightly than `and`, `xor`, and `or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
+- `not` binds less tightly than the comparison operators and more tightly than `and`, `xor`, and `or`, so `not x > 0` means `not (x > 0)` and `not a and b` means `(not a) and b`. A `not` cannot begin the operand of a tighter operator: `a == not b`, `1 + not x`, and `2 ^ not x` are parse errors — write `a == (not b)`. A direct comparison such as `x <= 0` or `a != b` is still the clearest spelling of a negated test.
 - Write range tests as one chain (`low <= x < high`); `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - Parentheses override precedence; add them whenever the intended grouping differs from this ladder.
 
@@ -600,7 +600,7 @@ If a property receives a sequence-valued or multi-output value as one parameter,
 
 If `f` is a structural property of receiver `a`, `a.f(args)` calls it directly without receiver injection. Otherwise lexical fallback injects `a` as the first argument and resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. The nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the receiver always win before either.
 
-Chained access is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` exposes an accessible `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested public members at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; a declared local-only or conditional-branch intermediate member is an error at that edge, never a fallback.
+Chained access is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` declares a `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested declared members (private included) at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; an intermediate member that is inaccessible from the site (a local-only member outside its owner's activation) or declared only inside conditional branches is an error at that edge, never a fallback.
 
 A member name the receiver does not declare is NOT an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special treatment: `Math.Ceiling(x)` has no structural `Ceiling`, so it is the lexical fallback `Ceiling(Math, x)` — valid when a `Ceiling(a, b)` is visible, and otherwise an enclosing algorithm with inferred inputs infers `Ceiling` as an implicit parameter (the program then needs an argument for it; the report names the receiver, explains the fallback, and suggests `Math.Ceil`). Spell members exactly as the receiver declares them (`Math.Ceil`, `Math.Floor`, `Math.Sqrt`) and never rely on a misspelling being rejected as a missing member.
 
@@ -813,7 +813,7 @@ Conditional algorithms use branch definitions:
     public Name(pattern) = body
 
 In definition context, `Name(...) = ...` is a branch definition, not a runtime call.
-Public visibility is family-level. For exported APIs, every clause in a same-name family must include `public`; do not mix public and private clauses.
+Public visibility is family-level. For a family that `open` must provide, every clause in a same-name family must include `public`; do not mix public and private clauses.
 
 Supported patterns:
 - binders: `x`
@@ -913,7 +913,7 @@ Each algorithm may have at most one `open` declaration. Multiple open targets us
 1. the owner walk: this algorithm, then each enclosing one outward, ending at the prelude. A scope owns both the parameters it binds (written, inferred, or bound by its branch pattern) and the properties it declares; the first owner that declares the name decides, and a property may not have the same name as a completed parameter of that or any enclosing lexical algorithm.
 2. opened public properties
 
-Completed parameters include later implicit forwarding captures; properties matching parameters of the same or any enclosing lexical algorithm are declaration errors even when unused. Every owned name wins over an opened name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope alike. If two opened providers export the same bare name, bare lookup is ambiguous and is an error — qualify the reference or open only one provider:
+Completed parameters include later implicit forwarding captures; properties matching parameters of the same or any enclosing lexical algorithm are declaration errors even when unused. Every owned name wins over an opened name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope alike. If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference or open only one provider:
     open A, B
     X                    # error: Ambiguous open 'X': provided by A, B
 Prefer a qualified reference such as `A.X`, or open only the provider you need.
@@ -934,7 +934,7 @@ The `open` target itself only needs to be lexically visible — it may be a priv
     }
     Pi                   # 3
 
-Do not put `public` on `open`. Use `public` only when the task requires exported properties or clause families for open/load use.
+Do not put `public` on `open`. Use `public` only when the task needs a property or clause family to be visible through `open` (including an opened module); `open` imports only public members.
 
 `load` is a compile-time module directive, not a runtime callable. Single-quoted strings in `open 'url'` or `load(...)` targets are compile-time directive targets; runtime strings follow the normal string-literal rules. Valid forms:
     Lib = load('https://katlang.org/lib.kat')       # property definition
@@ -1707,7 +1707,7 @@ Regenerate this block from the repo root with:
     6
     305
 
-[visibility-private-member-is-structural-not-exported] Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.
+[visibility-private-member-is-structural-not-exported] Private means not provided by `open`, not unreachable: `open` (an opened module included) brings only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.
 
     Lib = {
         public Area = 4

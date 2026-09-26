@@ -2741,7 +2741,7 @@ public class SemanticModelTests
         Assert.Same(innerReference, Assert.Single(model.FindResolutions("Inner")));
 
         // Visibility: lib's public names, and nothing that lib merely opened or kept private.
-        // Deep's structural member surface lists its exported members (private ones included,
+        // Deep's structural member surface lists its declared members (private ones included,
         // as structural dot access reaches them), every one locationless.
         var root = Assert.Single(model.ScopeVisibilities);
         Assert.Null(root.Span);

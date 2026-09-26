@@ -938,7 +938,7 @@ mutual
     --   member is a parameter reference). Resolution is structural-first with
     --   the fallback applying only on a structural miss — at EVERY level of
     --   a chain: a receiver that is itself an argumentless dot edge navigates
-    --   its exported structural members (`resolveDotReceiver`), so
+    --   its declared structural members (`resolveDotReceiver`), so
     --   `Lib.Sub.Q` reads `Sub`'s own `Q` before any lexical `Q`. Runtime
     --   consumers CONSUME these facts (`resolveAlg fallback`) instead of
     --   reconstructing the Param-vs-Resolve decision from environments. The C# front end
@@ -4621,7 +4621,7 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       -- elaborated fallback identity — rides along unchanged. This is the
       -- higher-order/value identity of a dot RESULT; a dot edge in RECEIVER
       -- position resolves through `resolveDotReceiver` below, which navigates
-      -- an argumentless chain's exported structural members before falling
+      -- an argumentless chain's declared structural members before falling
       -- back to this memberless wrapper.
       identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
@@ -5314,7 +5314,7 @@ mutual
       entered — a selected `if` branch, a loop's initial state, the `repeat`
       count, and the `atoms`/`range` arguments reject a callable that cannot
       accept zero supplied arguments exactly like value-position access does
-      (`if(1, Inc, 0)` with `Inc(x)` is the property arity error, never
+      (`if(true, Inc, 0)` with `Inc(x)` is the property arity error, never
       `unknownName x` from inside `Inc`), while a callable that CAN (a property,
       a captured-binding thunk, a written value, a collecting-only signature)
       evaluates through the shared demand funnel. Laziness is untouched: a slot is
@@ -6316,7 +6316,7 @@ mutual
       of dot-call dispatch; `evalDotCall` is its Result projection.
       Smart dispatch:
       - Receiver resolution through `resolveDotReceiver`: a chained receiver
-        navigates its exported structural members, so the property-first
+        navigates its declared structural members, so the property-first
         rule below holds at every level of `A.B.C.D`
       - "string" value intrinsic → evaluate target, convert numeric result to string
       - Structural property found (navigation-only):

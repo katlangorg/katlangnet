@@ -2801,8 +2801,9 @@ public static class SemanticModelBuilder
         /// visible-name set for one scope by walking its whole chain: the ownership-first
         /// direct chain (each level's parameters and own properties, an inner level
         /// deciding a name before any outer level), then open-provided public
-        /// exported members level by level with the evaluator's first-occurrence
-        /// open dedup and same-level ambiguity suppression — mirroring
+        /// members (exposure takes no part in selection) level by level with the
+        /// evaluator's first-occurrence open dedup and same-level ambiguity
+        /// suppression — mirroring
         /// <see cref="ElaboratedScopeLookup.LookupLexicalPropertyMatches"/> so every
         /// emitted symbol agrees with what identifier resolution selects for that
         /// name in this scope. Prelude names participate in shadowing but are

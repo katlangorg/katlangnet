@@ -842,8 +842,9 @@ public closed record Expr
         /// (<see cref="LexicalFallbackSelection"/>), stamped by parameter
         /// detection from the receiver's elaborated static structural-member
         /// provider — the same classification implicit-signature inference acts
-        /// on. Exposure rechecks structural-winner proofs as local-only open
-        /// providers are removed. The dependency summary consumes it through
+        /// on. The verdict is final: selection never depends on exposure
+        /// (K1-08), so exposure analysis never rechecks it. The dependency
+        /// summary consumes it through
         /// <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>, so a fallback
         /// that names an enclosing owner's parameter is charged exactly when
         /// the runtime may take it. <c>null</c> on an unelaborated tree (a raw

@@ -616,7 +616,7 @@ internal static class AstHelpers
     /// lexical fallback can be the selected resolution at runtime. The
     /// ELABORATED scope-aware verdict decides when present
     /// (<see cref="Expr.DotCall.ElaboratedFallbackSelection"/>, stamped by
-    /// parameter detection and rechecked by exposure against eligible opens): a receiver
+    /// parameter detection; the verdict is final, never rechecked by exposure): a receiver
     /// that declares the member never selects the fallback, so a Param
     /// fallback hidden behind a structural winner charges nothing; a receiver
     /// known to lack it — a sibling property whose value is a list, a literal,

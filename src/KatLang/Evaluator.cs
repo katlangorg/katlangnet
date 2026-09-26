@@ -24,7 +24,8 @@ namespace KatLang;
 /// Uses <see cref="EvalResult{T}"/> for structured errors instead of nullable returns;
 /// Lean's <c>EvalM</c> also carries the per-run cache and binding-context state.
 /// Ownership-first lookup: local → parent chain structural → opens fallback across chain.
-/// Property visibility: opens only expose PUBLIC exported properties; structural lookup sees exported properties only.
+/// Member selection: an open provides only PUBLIC members, and structural dot access selects DECLARED members
+/// (private included). Selection never depends on exposure: the selected member's accessibility is checked afterwards.
 ///
 /// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Contains, First, Last, Order, OrderDesc, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
 /// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
@@ -2302,7 +2303,7 @@ public static partial class Evaluator
     /// <c>evalDotCall</c> — owns all dot semantics (builtin property special cases,
     /// structural lookup, lexical fallback). A dot edge in RECEIVER position resolves
     /// through <c>ResolveDotReceiver</c> instead, which navigates an argumentless chain's
-    /// exported structural members before falling back to this memberless wrapper
+    /// declared structural members before falling back to this memberless wrapper
     /// (Lean: resolveDotReceiver).
     /// </summary>
     private static EvalResult<Algorithm> ResolveDotCallAlgorithm(Expr.DotCall dotCall, EvalCtx ctx)

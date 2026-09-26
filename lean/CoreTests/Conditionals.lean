@@ -181,7 +181,7 @@ def ifDotCallExactArityStillDispatches : Bool :=
 
 #guard ifDotCallExactArityStillDispatches
 
--- Test 25: Spread of an internal constructed sequence `(1, if(0, 2, 9), 3)*` with a
+-- Test 25: Spread of an internal constructed sequence `(1, if(false, 2, 9), 3)*` with a
 -- 3-arg if that selects the else branch → [1, 9, 3]
 def test25 : Bool :=
   match runFlat (sequenceSpread (.sequenceConstruct (.sequenceConstruct (.num 1) (.call (resolve "if") [.boolLiteral false, .num 2, .num 9])) (.num 3))) with

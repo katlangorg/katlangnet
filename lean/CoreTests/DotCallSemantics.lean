@@ -1175,12 +1175,13 @@ def test5b : Bool :=
 --------------------------------------------------------------------------------
 -- Chained dot resolution: property-first / extension-fallback at EVERY level
 -- `resolveDotReceiver` navigates an argumentless dot edge used as a RECEIVER
--- through its exported structural members, so `Lib.Sub.Q` reads Sub's own Q
+-- through its declared structural members, so `Lib.Sub.Q` reads Sub's own Q
 -- before any lexical `Q(x)` is considered. A receiver that lacks the member
 -- stays an ordinary dot RESULT and the chain continues by value (`3.A.B` is
--- `B(A(3))`), and the established one-level accessibility rule holds at every
--- level: a declared local-only or conditional-branch intermediate member is
--- the structural error, never a fallback. C#: `ChainedDotStructuralPrecedenceTests`.
+-- `B(A(3))`), and the member-accessibility law holds at every level: a
+-- declared intermediate member inaccessible from the site (a local-only
+-- member outside its owner's activation) or a conditional-branch
+-- intermediate member is the structural error, never a fallback. C#: `ChainedDotStructuralPrecedenceTests`.
 --------------------------------------------------------------------------------
 
 -- Lib = { public Sub = { public Q = 1 } }

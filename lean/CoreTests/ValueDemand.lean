@@ -81,30 +81,30 @@ def rejectsAsPropertyArity (out : List KatLang.Expr) : Bool :=
 def flatOk (out : List KatLang.Expr) (expected : List Int) : Bool :=
   expectFlat (runFlat (valueDemandRoot out)) expected
 
--- `if(1, Inc, 0)`: the selected true branch.
+-- `if(true, Inc, 0)`: the selected true branch.
 #guard rejectsAsPropertyArity [.call (resolve "if") [.boolLiteral true, resolve "Inc", .num 0]]
 
--- `if(0, 0, Inc)`: the selected false branch.
+-- `if(false, 0, Inc)`: the selected false branch.
 #guard rejectsAsPropertyArity [.call (resolve "if") [.boolLiteral false, .num 0, resolve "Inc"]]
 
 -- `if(Inc, 1, 0)`: the condition slot.
 #guard rejectsAsPropertyArity [.call (resolve "if") [resolve "Inc", .num 1, .num 0]]
 
--- `if(0, Inc, 7)` / `if(1, 7, Inc)`: the unselected slot is never demanded.
+-- `if(false, Inc, 7)` / `if(true, 7, Inc)`: the unselected slot is never demanded.
 #guard flatOk [.call (resolve "if") [.boolLiteral false, resolve "Inc", .num 7]] [7]
 #guard flatOk [.call (resolve "if") [.boolLiteral true, .num 7, resolve "Inc"]] [7]
 
--- `if(1, A, 0)`: a zero-parameter algorithm is an ordinary value.
+-- `if(true, A, 0)`: a zero-parameter algorithm is an ordinary value.
 #guard flatOk [.call (resolve "if") [.boolLiteral true, resolve "A", .num 0]] [7]
 
--- `if(1, K, 0)`: the decision is the signature's, not the body's — `K(x) = 5`
+-- `if(true, K, 0)`: the decision is the signature's, not the body's — `K(x) = 5`
 -- would succeed if entered, and is rejected all the same.
 #guard rejectsAsPropertyArityOf "K" [.call (resolve "if") [.boolLiteral true, resolve "K", .num 0]]
 
--- `if(1, Inc(4), 0)`: an explicit call is a value.
+-- `if(true, Inc(4), 0)`: an explicit call is a value.
 #guard flatOk [.call (resolve "if") [.boolLiteral true, .call (resolve "Inc") [.num 4], .num 0]] [5]
 
--- `if(1, Collect, 0)` and `if(1, Collect(), 0)` AGREE (September 2026): a
+-- `if(true, Collect, 0)` and `if(true, Collect(), 0)` AGREE (September 2026): a
 -- collecting parameter requires no supplied slot, so `Collect()` accepts zero
 -- supplied arguments and bare `Collect` is therefore a zero-argument value too,
 -- with the collecting parameter bound to the exact empty list.
@@ -127,7 +127,7 @@ def parameterSlotRejectsBare : Bool :=
   | _ => false
 #guard parameterSlotRejectsBare
 
--- `if(1, {x + 1}, 0)` with the block's `x` an (unresolved) parameter: a written
+-- `if(true, {x + 1}, 0)` with the block's `x` an (unresolved) parameter: a written
 -- brace block reports `unresolvedImplicitParams`, as it does in value position.
 def blockSlotReportsUnresolvedImplicitParams : Bool :=
   match runResult (valueDemandRoot [.call (resolve "if")

@@ -332,11 +332,13 @@ public static partial class Evaluator
     /// Every receiver shape resolves through canonical <see cref="ResolveAlg"/>
     /// except an argumentless, non-<c>string</c> dot edge <c>X.M</c>, which
     /// NAVIGATES: when <c>X</c> (resolved the same way, recursively) is an
-    /// algorithm that declares an exported <c>M</c>, the receiver IS that
-    /// member algorithm wired to <c>X</c> — so <c>Lib.Sub.Q</c> reads
+    /// algorithm that declares <c>M</c> (any visibility; selection never
+    /// depends on exposure), the receiver IS that member algorithm wired to
+    /// <c>X</c> — so <c>Lib.Sub.Q</c> reads
     /// <c>Sub</c>'s own <c>Q</c> before any lexical <c>Q(x)</c> is considered,
-    /// exactly as <c>Lib.Q</c> reads <c>Lib</c>'s. A declared but local-only
-    /// <c>M</c>, or one defined only inside conditional branches, is the same
+    /// exactly as <c>Lib.Q</c> reads <c>Lib</c>'s. A declared <c>M</c> that is
+    /// inaccessible from the site (a local-only member outside its owner's
+    /// activation), or one defined only inside conditional branches, is the same
     /// structural error that evaluating <c>X.M</c> itself reports — never a
     /// fallback. When <c>X</c> does not declare <c>M</c> (or is not an
     /// algorithm at all), the edge is an ordinary dot RESULT — its lexical
@@ -424,7 +426,8 @@ public static partial class Evaluator
     /// (<see cref="EvalDotCall"/> is its value projection).
     /// Smart dispatch:
     /// 0. Receiver resolution through <see cref="ResolveDotReceiver"/>: a
-    ///    chained receiver navigates its exported structural members, so the
+    ///    chained receiver navigates its declared structural members (each
+    ///    selected member then checked for accessibility), so the
     ///    property-first rule below holds at every level of <c>A.B.C.D</c>
     /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
     /// 2. Structural property found (navigation-only):

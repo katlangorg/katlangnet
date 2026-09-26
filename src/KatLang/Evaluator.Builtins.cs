@@ -1915,7 +1915,7 @@ public static partial class Evaluator
     /// Builtin argument evaluation re-enters an algorithm body exactly like a call
     /// does, so it must consume depth: without the charge, a zero-parameter
     /// property that reaches itself through a builtin argument (<c>A = count(A)</c>,
-    /// <c>A = if(1, A, 0)</c>, <c>A = range(1, A)</c>, a loop's initial state or
+    /// <c>A = if(true, A, 0)</c>, <c>A = range(1, A)</c>, a loop's initial state or
     /// count) recurses outside every budget chokepoint and terminates the process
     /// with an uncatchable <see cref="StackOverflowException"/>. It charges no STEP,
     /// preserving the frozen step accounting (steps count dynamic invocations and
@@ -2035,7 +2035,7 @@ public static partial class Evaluator
     /// value-position arms reject before their invocation chokepoint — so a selected
     /// <c>if</c> branch, a loop's initial state, the <c>repeat</c> count, and the
     /// <c>atoms</c>/<c>range</c> arguments reject a parameterized algorithm exactly like
-    /// value-position access does (<c>if(1, Inc, 0)</c> with <c>Inc(x)</c> is the
+    /// value-position access does (<c>if(true, Inc, 0)</c> with <c>Inc(x)</c> is the
     /// property arity error, never <c>Unknown name: x</c> from inside <c>Inc</c>), while
     /// a zero-parameter algorithm evaluates its output through the charged funnel as
     /// before. Laziness is untouched: a slot is demanded only when the builtin selects
@@ -2059,7 +2059,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// A demanded VALUE argument with no defined output is the argument's failure, not the
-    /// callee's: a NAMED argument (`sum(L)`, `if(1, L, 0)`) is reported through the same
+    /// callee's: a NAMED argument (`sum(L)`, `if(true, L, 0)`) is reported through the same
     /// property context a value-position read of `L` attaches
     /// (<see cref="WithPropertyContextOnMissingOutput{T}"/>), so the enclosing call context
     /// renders "Property 'L' has no defined output" instead of blaming the callee, and
@@ -2172,7 +2172,7 @@ public static partial class Evaluator
                     // property access. A multi-output branch property such as
                     // `X = 1, 2, 3` therefore yields the grouped sequence value
                     // `(1, 2, 3)` with emitted count 1, not three separate outputs.
-                    // Explicit spread (`if(1, X, X)*`) is the way to open it.
+                    // Explicit spread (`if(true, X, X)*`) is the way to open it.
                     // Unlike `while`/`repeat`, which intentionally preserve multi-slot
                     // loop state, `if` re-counts the chosen branch value here.
                     var branchR = truth.Value

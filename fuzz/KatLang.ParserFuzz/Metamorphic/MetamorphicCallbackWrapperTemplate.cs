@@ -107,8 +107,8 @@ internal static class MetamorphicCallbackWrapperTemplate
             MetamorphicWrapperProjection.Collecting =>
                 MetamorphicPrecondition.Rejected("collecting-projection-collects-a-list-not-the-supplied-value"),
 
-            // A flat multi-parameter callee opens a lone sequence element into rows and
-            // arity-errors otherwise, so it is a different callback contract.
+            // A flat callee whose parameter count differs from the callback arity receives each
+            // element as ONE ordinary argument and arity-errors, so it is a different callback contract.
             MetamorphicWrapperProjection.ArityMismatched =>
                 MetamorphicPrecondition.Rejected("wrapper-arity-does-not-match-callback-projection"),
 

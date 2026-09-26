@@ -7,8 +7,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// The property-first / extension-fallback law of dot syntax holds at EVERY
 /// level of a chained dot expression. For <c>receiver.Q</c>: if the receiver
-/// exposes an accessible (exported) structural member <c>Q</c>, that member is
-/// selected; only otherwise is <c>Q</c> resolved lexically and applied as the
+/// declares a structural member <c>Q</c>, that member is selected (and then
+/// checked for accessibility — an inaccessible member is an error, never a
+/// fallback); only otherwise is <c>Q</c> resolved lexically and applied as the
 /// extension call <c>Q(receiver)</c>. A receiver that is itself an argumentless
 /// dot edge (<c>Lib.Sub</c> in <c>Lib.Sub.Q</c>) is therefore navigated
 /// structurally (<c>Evaluator.ResolveDotReceiver</c>, Lean

@@ -2321,7 +2321,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                // `open` exports only public members: Area arrives, Helper does not (it would be a root parameter).
+                // `open` provides only public members: Area arrives, Helper does not (it would be a root parameter).
                 new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nArea", "ok raw=4 n=1"),
                 new SpecProbe("open Lib\nLib = {\n    public Area = 4\n    Helper = Area / 2\n}\n\nHelper", "err unresolvedImplicitParams"),
                 // Opening the library does not take structural access away.
@@ -2335,7 +2335,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Outer(r) = {\n    open Lib\n    Lib = {\n        public Area = r * r\n    }\n    Area\n}\n\nOuter(3)", "ok raw=9 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Private means not exported, not unreachable: `open` and `load` bring only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.",
+            Explanation = "Private means not provided by `open`, not unreachable: `open` (an opened module included) brings only `public` members into scope, while structural dot access ignores `public`, so `Lib.Helper` reaches the private, self-contained `Helper`. Exposure never removes a member from selection: a `public` member that depends on an enclosing parameter is selected as usual and then refused at any access written outside the owner of that parameter. A parameterized algorithm is refused as an `open` target outright, because `open` imports a namespace and never creates the activation its members would read.",
         },
         new()
         {

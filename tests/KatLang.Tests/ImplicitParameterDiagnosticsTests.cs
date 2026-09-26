@@ -455,7 +455,7 @@ public class ImplicitParameterDiagnosticsTests
 
     /// <summary>
     /// The same when the lexical sweep would have overflowed on an OPENED
-    /// target's exported properties rather than direct lexical ones.
+    /// target's public properties rather than direct lexical ones.
     /// </summary>
     [Fact]
     public void MemberBearingReceiver_SuggestsItsMemberRegardlessOfOpenedCandidateCount()
@@ -471,7 +471,7 @@ public class ImplicitParameterDiagnosticsTests
     }
 
     /// <summary>
-    /// The member surface has its own work bound: past 512 exported members no
+    /// The member surface has its own work bound: past 512 declared members no
     /// member suggestion is attempted — and no lexical name (the one-edit-away
     /// root property here) is offered in its place.
     /// </summary>

@@ -62,7 +62,7 @@ internal static class BenchmarkScenarioCatalog
 		new(() => Load(
 			id: "nested-property-chains",
 			displayName: "Nested property chains",
-			description: "Repeated one-hop nested receiver property lookup across multiple contexts, matching KatLang's current exported dot-access surface.",
+			description: "Repeated one-hop nested receiver property lookup across multiple contexts (deliberately one hop; dot chains of any depth are legal).",
 			origin: "tests/KatLang.Tests/EvaluatorTests.cs (Eval_Distinguishes_HigherOrderAlgorithmContexts)",
 			resourceName: "KatLang.Benchmarks.Scenarios.nested-property-chains.kat",
 			expectedAtoms: [69m]));
