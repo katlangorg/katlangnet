@@ -139,7 +139,7 @@ public class ElaboratedLookupAccelerationTests
     /// <summary>
     /// A consulted level resolves each of its open targets ONCE per operation
     /// (six opened-name lookups previously re-resolved the target six times),
-    /// builds the provider's exported-member index once, and never walks to
+    /// builds the target's public-member index once, and never walks to
     /// the chain root (the root is captured at construction).
     /// </summary>
     [Fact]
@@ -311,7 +311,7 @@ public class ElaboratedLookupAccelerationTests
     /// <summary>
     /// The opened-member lookup rule is first-QUALIFYING-occurrence: a
     /// non-public same-name entry earlier in the provider's list is skipped
-    /// and a later public exported entry is the answer — exactly the linear
+    /// and a later public entry is the answer — exactly the linear
     /// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty"/>
     /// relation, which the provider's member index must replicate.
     /// </summary>

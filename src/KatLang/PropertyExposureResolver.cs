@@ -153,7 +153,8 @@ internal static class PropertyExposureResolver
             new SummaryScope(
                 null,
                 ElaboratedScopeLookup.CreateScope(
-                    hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm()),
+                    hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm(),
+                    memberIndexes: new OpenMemberIndexCache(observations)),
                 NoSummaries),
             observations);
 

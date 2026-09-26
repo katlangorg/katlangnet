@@ -96,7 +96,8 @@ internal static class ParameterDetector
         diagnostics ??= new DiagnosticBag();
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
             ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        var preludeScope = ElaboratedScopeLookup.CreateScope(preludeAlgorithm, observations: observations);
+        var preludeScope = ElaboratedScopeLookup.CreateScope(
+            preludeAlgorithm, observations: observations, memberIndexes: new OpenMemberIndexCache(observations));
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
@@ -145,7 +146,9 @@ internal static class ParameterDetector
         else
         {
             var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-            processed = ProcessAlgorithm(root, ElaboratedScopeLookup.CreateScope(prelude, observations: observations),
+            processed = ProcessAlgorithm(
+                root,
+                ElaboratedScopeLookup.CreateScope(prelude, observations: observations, memberIndexes: new OpenMemberIndexCache(observations)),
                 ParameterOwnership.Empty, diagnostics, observations, run);
         }
         return (processed, diagnostics, run.OwnershipChanged);

@@ -721,7 +721,8 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordLookupOpenTargetResolution()
         => LookupOpenTargetResolutions = checked(LookupOpenTargetResolutions + 1);
 
-    /// <summary>Per-provider exported-member index constructions (at most one per consulted provider).</summary>
+    /// <summary>Public-member index constructions: one per exact target in an operation's shared cache;
+    /// providers without an operation cache build their own index.</summary>
     public long LookupOpenMemberIndexBuilds { get; private set; }
 
     internal void RecordLookupOpenMemberIndexBuild()

@@ -246,6 +246,7 @@ public static class SemanticModelBuilder
         public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null, VisibilityConstructionOptions? visibilityOptions = null)
         {
             _observations = observations;
+            _openMemberIndexes = new OpenMemberIndexCache(observations);
             _visibilityTrees = new VisibilityTreeBuilder(observations, visibilityOptions?.CollideNodeHashes == true)
             {
                 ForceBulk = visibilityOptions?.ForceBulk,
@@ -266,9 +267,15 @@ public static class SemanticModelBuilder
             _preludeScope = new ScopeFrame(
                 parent: null,
                 parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
-                ElaboratedScopeLookup.CreateScope(_preludeAlgorithm));
+                ElaboratedScopeLookup.CreateScope(_preludeAlgorithm, memberIndexes: _openMemberIndexes));
             _preludeSymbols = CreatePreludeCatalog(_preludeAlgorithm, _hostOperationNames);
         }
+
+        // This build's shared open-target member indexes: every level this build derives — from the
+        // process-shared prelude level too, which never carries one — gets it explicitly, so K
+        // levels opening one target build its public-member index once, and the cache dies with
+        // the build (a model retains no scope level).
+        private readonly OpenMemberIndexCache _openMemberIndexes;
 
         /// <summary>
         /// Whether ordinary lexical dot-call fallback may inject a receiver into a prelude
@@ -467,7 +474,7 @@ public static class SemanticModelBuilder
             foreach (var property in algorithm.Properties)
                 CreatePropertySymbol(algorithm, property);
 
-            var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope);
+            var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope, memberIndexes: _openMemberIndexes);
             var ownsDeferredModuleOpen = OwnsDeferredModuleOpen(propertyScope);
             _documentOwnsDeferredModuleOpen |= ownsDeferredModuleOpen;
 
@@ -2889,7 +2896,7 @@ public static class SemanticModelBuilder
         /// Adds one scope level's open-provided names, mirroring
         /// <see cref="ElaboratedScopeLookup.LookupOpenPropertyMatches"/>: written
         /// named targets dedup first-occurrence-wins by open spelling, inline
-        /// blocks never dedup, only public exported members are provided, and a
+        /// blocks never dedup, only public members are provided, and a
         /// name supplied by two distinct providers at the same level is ambiguous —
         /// it resolves to nothing there, so it is suppressed rather than offered.
         /// </summary>

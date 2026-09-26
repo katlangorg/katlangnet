@@ -66,7 +66,12 @@ internal sealed class OpenProviderValidator : AstWalker
         FrontEndTraversalObservations? observations = null)
     {
         var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        Validate(root, diagnostics, ElaboratedScopeLookup.CreateScope(prelude), importSite: null, observations);
+        Validate(
+            root,
+            diagnostics,
+            ElaboratedScopeLookup.CreateScope(prelude, memberIndexes: new OpenMemberIndexCache(observations)),
+            importSite: null,
+            observations);
     }
 
     /// <summary>

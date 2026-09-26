@@ -20,6 +20,23 @@ namespace KatLang;
 /// The semantic model's one process-shared prelude level is the deliberate
 /// exception: its immutable source and every reachable lazy lookup cache are
 /// prewarmed before the level is published.</para>
+///
+/// <para><b>Shared open-target member indexes:</b> an <c>open</c> provider's
+/// public-member index is a pure function of its target's ordered property list
+/// (<see cref="OpenTargetMemberIndex"/>), so every provider of the SAME target object
+/// within one operation shares one index through the operation's
+/// <see cref="OpenMemberIndexCache"/> (<see cref="MemberIndexes"/>): K levels opening
+/// one W-member target cost O(K + W), not O(K × W). The operation creates the cache
+/// with its chain (at the chain's root, or — for the semantic model, whose chains
+/// hang under the process-shared prelude level — at every level it derives from that
+/// level), every level derived from a level inherits it, and it is reachable only
+/// from that operation's chain: never from a target, never from the process-shared
+/// prelude level, never static. A chain retained past its operation for a deferred
+/// module region's demand-time continuation keeps its cache with it; those
+/// continuations belong to the same parse and are serialized by its loader's
+/// materialization gate, so the cache is never used by two operations at once. Only
+/// the target index is shared: which providers a level has, their dedup, ambiguity,
+/// and precedence stay per level.</para>
 /// </summary>
 internal sealed class ElaboratedPropertyScope
 {
@@ -31,14 +48,24 @@ internal sealed class ElaboratedPropertyScope
         ElaboratedPropertyScope? parent,
         IReadOnlyList<Expr> opens,
         IReadOnlyList<PropertyLookupHit> properties,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        OpenMemberIndexCache? memberIndexes = null)
     {
         Parent = parent;
         Opens = opens;
         Properties = properties;
         Observations = parent?.Observations ?? observations;
         Root = parent is null ? this : parent.Root;
+        MemberIndexes = memberIndexes ?? parent?.MemberIndexes;
     }
+
+    /// <summary>
+    /// The owning operation's shared open-target member indexes (see the class remarks):
+    /// supplied where the operation creates a level, otherwise inherited from the parent.
+    /// Null for the semantic model's process-shared prelude level (and any chain created
+    /// without one), whose providers then build private indexes exactly as before.
+    /// </summary>
+    public OpenMemberIndexCache? MemberIndexes { get; }
 
     public ElaboratedPropertyScope? Parent { get; }
 
@@ -126,7 +153,7 @@ internal sealed class ElaboratedPropertyScope
 
             Observations?.RecordLookupOpenTargetResolution();
             if (ElaboratedScopeLookup.ResolveOpenTarget(this, openExpr) is { } target)
-                (providers ??= []).Add(new ResolvedOpenProvider(target, Observations));
+                (providers ??= []).Add(new ResolvedOpenProvider(target, Observations, MemberIndexes));
         }
 
         return _openProviders = providers is not null ? providers : [];
@@ -152,7 +179,9 @@ internal sealed class ElaboratedPropertyScope
 /// <summary>
 /// One resolved <c>open</c> provider of a scope level, caching the exact target
 /// algorithm the level's open declaration resolved to. Member lookup is served
-/// from a lazy name→first-QUALIFYING-index map replicating
+/// from the target's <see cref="OpenTargetMemberIndex"/> — shared with every other
+/// provider of the same target in the owning operation (<see cref="OpenMemberIndexCache"/>),
+/// or built privately when the level has no cache — which replicates
 /// <see cref="ElaboratedScopeLookup.TryLookupPublicProperty(Algorithm, string)"/> exactly: the
 /// first list entry that matches the name AND is public wins (a private
 /// same-name entry earlier in the list is skipped, never an answer). Exposure
@@ -161,53 +190,138 @@ internal sealed class ElaboratedPropertyScope
 /// (the evaluator's accessibility law) — which is what lets detection, which runs
 /// before exposure is classified, select exactly what the evaluator selects.
 /// The target's ordered property list remains the enumeration source for
-/// visible-name gathering.
+/// visible-name gathering. Everything scope-dependent — whether this provider is
+/// active at a level, its dedup, and ambiguity with the level's other providers —
+/// stays with the level; the provider only answers "which member does THIS target
+/// provide under this name".
 /// </summary>
 internal sealed class ResolvedOpenProvider
 {
     private readonly FrontEndTraversalObservations? _observations;
-    private Dictionary<string, int>? _publicMemberIndex;
-    private int _firstNullPublicMemberIndex = -1;
+    private readonly OpenMemberIndexCache? _memberIndexes;
+    private OpenTargetMemberIndex? _index;
 
-    public ResolvedOpenProvider(Algorithm target, FrontEndTraversalObservations? observations)
+    public ResolvedOpenProvider(
+        Algorithm target,
+        FrontEndTraversalObservations? observations,
+        OpenMemberIndexCache? memberIndexes = null)
     {
         Target = target;
         _observations = observations;
+        _memberIndexes = memberIndexes;
     }
 
     public Algorithm Target { get; }
 
     public PropertyLookupHit? TryLookupPublicMember(string name)
     {
-        var properties = Target.Properties;
-        var index = _publicMemberIndex;
+        var index = _index;
         if (index is null)
         {
-            _observations?.RecordLookupOpenMemberIndexBuild();
-            index = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (var i = 0; i < properties.Count; i++)
+            if (_memberIndexes is { } shared)
             {
-                var property = properties[i];
-                if (property.IsPublic)
-                {
-                    if (property.Name is { } memberName)
-                        index.TryAdd(memberName, i);
-                    else if (_firstNullPublicMemberIndex < 0)
-                        _firstNullPublicMemberIndex = i;
-                }
+                index = shared.IndexOf(Target);
+            }
+            else
+            {
+                _observations?.RecordLookupOpenMemberIndexBuild();
+                index = OpenTargetMemberIndex.Build(Target);
             }
 
-            _publicMemberIndex = index;
+            _index = index;
         }
 
-        var propertyIndex = name is null
-            ? _firstNullPublicMemberIndex
-            : index.TryGetValue(name, out var namedPropertyIndex) ? namedPropertyIndex : -1;
-        return propertyIndex >= 0 ? new PropertyLookupHit(Target, properties[propertyIndex]) : null;
+        return index.Lookup(name);
     }
 
     internal void PrewarmSharedLookupCaches()
         => _ = TryLookupPublicMember(string.Empty);
+}
+
+/// <summary>
+/// The public-member index of ONE open target: for each ordinal name, the target's FIRST
+/// PUBLIC property with that name (a private same-name entry is skipped, never an answer),
+/// and the first public property with a null name. It reads nothing but the target's own
+/// ordered property list — no scope, open declaration, provider, dedup, ambiguity, or
+/// exposure fact — so it is invariant for the target object and immutable once built, which
+/// is what lets every provider of that target within one operation share it.
+/// </summary>
+internal sealed class OpenTargetMemberIndex
+{
+    private readonly Algorithm _target;
+    private readonly IReadOnlyList<Property> _properties;
+    private readonly Dictionary<string, int> _firstPublicByName;
+    private readonly int _firstPublicWithNullName;
+
+    private OpenTargetMemberIndex(
+        Algorithm target,
+        IReadOnlyList<Property> properties,
+        Dictionary<string, int> firstPublicByName,
+        int firstPublicWithNullName)
+    {
+        _target = target;
+        _properties = properties;
+        _firstPublicByName = firstPublicByName;
+        _firstPublicWithNullName = firstPublicWithNullName;
+    }
+
+    public static OpenTargetMemberIndex Build(Algorithm target)
+    {
+        var properties = target.Properties;
+        var firstPublicByName = new Dictionary<string, int>(StringComparer.Ordinal);
+        var firstPublicWithNullName = -1;
+        for (var i = 0; i < properties.Count; i++)
+        {
+            var property = properties[i];
+            if (!property.IsPublic)
+                continue;
+
+            if (property.Name is { } memberName)
+                firstPublicByName.TryAdd(memberName, i);
+            else if (firstPublicWithNullName < 0)
+                firstPublicWithNullName = i;
+        }
+
+        return new OpenTargetMemberIndex(target, properties, firstPublicByName, firstPublicWithNullName);
+    }
+
+    /// <summary>The target member provided under <paramref name="name"/>, or null.</summary>
+    public PropertyLookupHit? Lookup(string? name)
+    {
+        var position = name is null
+            ? _firstPublicWithNullName
+            : _firstPublicByName.TryGetValue(name, out var namedPosition) ? namedPosition : -1;
+        return position >= 0 ? new PropertyLookupHit(_target, _properties[position]) : null;
+    }
+}
+
+/// <summary>
+/// ONE front-end operation's open-target member indexes, keyed by exact target identity
+/// (reference, never record equality or spelling): the operation's providers of one target
+/// share one immutable <see cref="OpenTargetMemberIndex"/>, built on first need. The owning
+/// operation creates it with its scope chain (see <see cref="ElaboratedPropertyScope"/>'s
+/// remarks); it is never static and never reachable from a target or from the
+/// process-shared prelude level, so nothing outlives the chain it serves and no two parses
+/// or model builds share it.
+/// </summary>
+internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observations = null)
+{
+    private readonly Dictionary<Algorithm, OpenTargetMemberIndex> _indexes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Distinct targets indexed so far (tests).</summary>
+    internal int Count => _indexes.Count;
+
+    public OpenTargetMemberIndex IndexOf(Algorithm target)
+    {
+        if (!_indexes.TryGetValue(target, out var index))
+        {
+            observations?.RecordLookupOpenMemberIndexBuild();
+            index = OpenTargetMemberIndex.Build(target);
+            _indexes.Add(target, index);
+        }
+
+        return index;
+    }
 }
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
@@ -318,15 +432,22 @@ internal interface IOwnedParameterBindings
 
 internal static class ElaboratedScopeLookup
 {
+    /// <param name="algorithm">The level's algorithm.</param>
+    /// <param name="parentOverride">The enclosing level; when null, a chain is synthesized from the algorithm's lexical parent context.</param>
+    /// <param name="observations">Passive lookup observer for a new chain root (a level inherits its parent's).</param>
+    /// <param name="memberIndexes">The creating operation's shared open-target member indexes; when null,
+    /// the level inherits its parent's (see <see cref="ElaboratedPropertyScope"/>'s remarks).</param>
     public static ElaboratedPropertyScope CreateScope(
         Algorithm algorithm,
         ElaboratedPropertyScope? parentOverride = null,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        OpenMemberIndexCache? memberIndexes = null)
         => new(
-            parentOverride ?? CreateParentScope(algorithm.Parent),
+            parentOverride ?? CreateParentScope(algorithm.Parent, memberIndexes),
             algorithm.Opens,
             CreatePropertyHits(algorithm, algorithm.Properties),
-            observations);
+            observations,
+            memberIndexes);
 
     public static PropertyLookupHit? TryLookupProperty(Algorithm owner, string name)
     {
@@ -530,14 +651,15 @@ internal static class ElaboratedScopeLookup
         return LookupOpenPropertyMatches(scope, name);
     }
 
-    private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent)
-        => parent is null ? null : CreateScope(parent);
+    private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent, OpenMemberIndexCache? memberIndexes)
+        => parent is null ? null : CreateScope(parent, memberIndexes);
 
-    private static ElaboratedPropertyScope CreateScope(ScopeCtx scope)
+    private static ElaboratedPropertyScope CreateScope(ScopeCtx scope, OpenMemberIndexCache? memberIndexes)
         => new(
-            CreateParentScope(scope.Parent),
+            CreateParentScope(scope.Parent, memberIndexes),
             scope.Opens,
-            CreatePropertyHits(CreateSyntheticOwner(scope), scope.Properties));
+            CreatePropertyHits(CreateSyntheticOwner(scope), scope.Properties),
+            memberIndexes: memberIndexes);
 
     private static IReadOnlyList<PropertyLookupHit> CreatePropertyHits(Algorithm owner, IReadOnlyList<Property> properties)
     {
