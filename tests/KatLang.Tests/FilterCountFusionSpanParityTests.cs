@@ -144,6 +144,13 @@ public class FilterCountFusionSpanParityTests
         data.Add("dot-filter-dot-count", "generic source", $"{badPredicate}\nData = 1, 2, 3\nData.filter(F).count");
         data.Add("plain-count-dot-filter", "generic source", $"{badPredicate}\nData = 1, 2, 3\ncount(Data.filter(F))");
 
+        // A prefix-form receiver: both strategies describe it in postfix position, `(-5)`.
+        data.Add("dot-filter-dot-count", "prefix-form source", $"{badPredicate}\n(-5).filter(F).count");
+        data.Add("plain-count-dot-filter", "prefix-form source", $"{badPredicate}\ncount((-5).filter(F))");
+        data.Add("dot-filter-dot-count", "not source", "F(x) = x, x\n(not false).filter(F).count");
+        data.Add("plain-count-dot-filter", "comparison source", "F(x) = x, x\ncount((1 < 2).filter(F))");
+        data.Add("dot-filter-dot-count", "call on dot result", $"{badPredicate}\nObj = {{ Data = 5 }}\n((Obj.Data)()).filter(F).count");
+
         return data;
     }
 

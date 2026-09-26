@@ -34,17 +34,22 @@ public class ComparisonChainHostileReviewTests
         Assert.Contains($"while evaluating `{expected}`", error.Message, StringComparison.Ordinal);
     }
 
+    private static readonly string[] RoundTripOperators =
+        ["+", "-", "*", "/", "div", "mod", "^", "and", "xor", "or", "<", "<=", ">", ">=", "==", "!="];
+
     [Fact]
     public void DiagnosticNames_RoundTripOperatorTrees()
     {
         // Source-derived trees, not a value oracle: equal final values cannot hide a
         // lost grouping boundary. Include all binary pairs and each chain operand slot.
-        string[] operators = ["+", "-", "*", "/", "div", "mod", "^", "and", "xor", "or", "<", "<=", ">", ">=", "==", "!="];
+        // Both user-facing spellings read back: the operand-shape name of the
+        // "while evaluating `…`" frames and the Open name of argument, callee, and
+        // receiver descriptions.
         var atoms = new List<string> { "a", "not a", "-a", "-a ^ b", "a < b == c", "(-a).f", "(not a).f", "a:(b < c)", "(a < b):0" };
-        atoms.AddRange(operators.Select(op => $"a {op} b"));
+        atoms.AddRange(RoundTripOperators.Select(op => $"a {op} b"));
         foreach (var child in atoms)
         {
-            foreach (var op in operators)
+            foreach (var op in RoundTripOperators)
             {
                 Check($"({child}) {op} c");
                 Check($"c {op} ({child})");
@@ -52,14 +57,54 @@ public class ComparisonChainHostileReviewTests
             Check($"a < ({child}) == c");
             Check($"not ({child})");
             Check($"-({child})");
+            Check($"({child}).f");
+            Check($"({child}):0");
         }
 
         static void Check(string source)
         {
             var original = Raw(source);
-            var rendered = ExprNameRenderer.Render(original, ExprNameMode.DiagnosticName);
-            Assert.Equal(Shape(original), Shape(Raw(rendered)));
+            foreach (var mode in new[] { ExprNameMode.DiagnosticName, ExprNameMode.Open })
+            {
+                var rendered = ExprNameRenderer.Render(original, mode);
+                Assert.Equal(Shape(original), Shape(Raw(rendered)));
+            }
         }
+    }
+
+    [Fact]
+    public void DotReceiverDescriptions_ComposeIntoTheEdgeTheyName()
+    {
+        // A dot-call context's receiver description is composed with its member by the
+        // missing-output message (`The value `{receiver}.{member}` has no defined
+        // output`). A bare prefix form would rebind there — `-2.f` is `-(2.f)`, `not a.f`
+        // is `not (a.f)` — so the description is written in postfix position and the
+        // composition is exactly the edge's own name.
+        var receivers = new List<string> { "a", "2", "-a", "not a", "-(-a)", "-a ^ b", "not a < b", "-a.f", "(-a).f", "a < b == c", "(1, 2)", "a:0", "(-a):0", "a.f" };
+        receivers.AddRange(RoundTripOperators.Select(op => $"a {op} b"));
+        foreach (var source in receivers)
+        {
+            var receiver = Raw(source);
+            var edge = new Expr.DotCall(receiver, "m", null);
+            var composed = ExprNameRenderer.RenderDotReceiver(receiver) + ".m";
+            Assert.Equal(Shape(edge), Shape(Raw(composed)));
+            Assert.Equal(ExprNameRenderer.Render(edge, ExprNameMode.Open), composed);
+        }
+    }
+
+    [Theory]
+    [InlineData("f = { X = 1 }\n(-2).f", "(-2).f")]
+    [InlineData("a = 2\nf = { X = 1 }\n(-a).f", "(-a).f")]
+    [InlineData("f = { X = 1 }\n(not true).f", "(not true).f")]
+    [InlineData("f = { X = 1 }\n(1 + 2).f", "(1 + 2).f")]
+    [InlineData("f = { X = 1 }\n2.f", "2.f")]
+    [InlineData("Obj = { M = { X = 1 } }\nObj.M", "Obj.M")]
+    public void MissingOutputDotEdgeNames_PreservePostfixReceiverGrouping(string source, string expectedEdge)
+    {
+        SourceProvenance.ParseValid(source);
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
+        Assert.Equal(KatLangErrorCode.MissingOutput, error.Code);
+        Assert.StartsWith($"The value `{expectedEdge}` has no defined output.", error.Message, StringComparison.Ordinal);
     }
 
     private static Expr Raw(string source)
@@ -127,6 +172,8 @@ public class ComparisonChainHostileReviewTests
             Assert.Equal("(-2)*", ExprNameRenderer.Render(new Expr.SequenceSpread(negative), mode));
             Assert.Equal("(-2)(...)", ExprNameRenderer.Render(new Expr.Call(negative, OutputBundle.Empty), mode));
         }
+
+        Assert.Equal("(-2)", ExprNameRenderer.RenderDotReceiver(negative));
     }
 
     [Fact]

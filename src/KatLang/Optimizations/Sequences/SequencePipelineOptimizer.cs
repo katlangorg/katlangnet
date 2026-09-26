@@ -910,7 +910,7 @@ internal static class SequencePipelineOptimizer
         {
             FilterCountPipelineForm.DotFilterDotCount or FilterCountPipelineForm.PlainCountDotFilter =>
                 new DotCallContext(
-                    Evaluator.CallDiagnosticExprName(syntax.Source, ctx),
+                    Evaluator.DotReceiverDiagnosticExprName(syntax.Source, ctx),
                     FilterBuiltinName),
             FilterCountPipelineForm.PlainCountPlainFilter =>
                 new CallContext(Evaluator.CallDiagnosticExprName(syntax.PlainFilterFunction!, ctx)),

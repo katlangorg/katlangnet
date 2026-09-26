@@ -848,6 +848,14 @@ public static partial class Evaluator
         => CallDiagnosticName.FromExpression(expression).Render(ctx);
 
     /// <summary>
+    /// <see cref="CallDiagnosticExprName"/> for the RECEIVER of a dot edge — the one
+    /// description every <see cref="DotCallContext"/> carries (see
+    /// <see cref="CallDiagnosticName.RenderAsDotReceiver"/>).
+    /// </summary>
+    internal static string DotReceiverDiagnosticExprName(Expr receiver, EvalCtx ctx)
+        => CallDiagnosticName.FromExpression(receiver).RenderAsDotReceiver(ctx);
+
+    /// <summary>
     /// Stack-only description of a callable's diagnostic name. Simple identifiers reuse their
     /// existing string; compound expressions retain the AST reference and are rendered only if an
     /// error actually needs the name. This avoids both a closure and diagnostic string allocation
@@ -908,6 +916,21 @@ public static partial class Evaluator
             ctx.Observations?.RecordCallDiagnosticNameRender();
             return OpenExprName(_expression!);
         }
+
+        /// <summary>
+        /// This name as the RECEIVER of a dot edge (<see cref="ExprNameRenderer.RenderDotReceiver"/>):
+        /// a prefix-form receiver keeps its parentheses, so a message that composes the
+        /// description with the member reads back as the edge — <c>(-2).f</c>, never
+        /// <c>-2.f</c>. Identifiers and every other receiver render as <see cref="Render"/> does.
+        /// </summary>
+        public string RenderAsDotReceiver(EvalCtx ctx)
+        {
+            if (_knownName is not null)
+                return _knownName;
+
+            ctx.Observations?.RecordCallDiagnosticNameRender();
+            return ExprNameRenderer.RenderDotReceiver(_expression!);
+        }
     }
 
     /// <summary>
@@ -941,7 +964,7 @@ public static partial class Evaluator
     private static ErrorContext CtxCall(CallDiagnosticName name, EvalCtx ctx) => new CallContext(name.Render(ctx));
     private static ErrorContext CtxProperty(string name) => new PropertyEvaluationContext(name);
     private static ErrorContext CtxDotCall(Expr obj, string name, EvalCtx ctx)
-        => new DotCallContext(CallDiagnosticName.FromExpression(obj).Render(ctx), name);
+        => new DotCallContext(DotReceiverDiagnosticExprName(obj, ctx), name);
 
     // ── Error context helper ────────────────────────────────────────────────
 

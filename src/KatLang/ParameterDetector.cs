@@ -613,7 +613,7 @@ internal static class ParameterDetector
             DotMemberFallbackOrigin? origin = null;
             if (_dotMember is { } dotMember && string.Equals(dotMember.MemberName, name, StringComparison.Ordinal))
             {
-                var description = ExprNameRenderer.Render(dotMember.ReceiverExpr, ExprNameMode.Open);
+                var description = ExprNameRenderer.RenderDotReceiver(dotMember.ReceiverExpr);
                 receiver = new DotMemberReceiver(
                     dotMember.Algorithm,
                     IsDottedNamePath(dotMember.ReceiverExpr)

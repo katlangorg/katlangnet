@@ -105,6 +105,8 @@ After that, continue with [Higher-Order Algorithms](#higher-order-algorithms), [
 
 Examples labelled **Result** produce one top-level output. **Results** shows several top-level output rows in order. An example labelled **Result:** error is intentionally invalid and demonstrates a diagnostic. These labelled outputs are executable documentation: the test suite runs every labelled example and checks the displayed result (see `docs/design/executable-language-spec.md`).
 
+Expression names in diagnostics preserve operator grouping: `(-2).f` keeps its parentheses, and `(Obj.F)(...)` distinguishes a call on a selected result from `Obj.F(...)`. The `...` in diagnostic names abbreviates arguments or a block body; it is not KatLang syntax. Parser repair suggestions also preserve Grace weights, including repeated and cancelling markers.
+
 ---
 
 ## What KatLang Is

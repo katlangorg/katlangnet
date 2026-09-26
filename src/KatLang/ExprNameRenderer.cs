@@ -187,6 +187,26 @@ internal static class ExprNameRenderer
     }
 
     /// <summary>
+    /// Renders the RECEIVER of a dot edge exactly as that edge's own name writes it
+    /// (<see cref="PushDotReceiver"/>): in postfix position, so a prefix form keeps its
+    /// parentheses and every other receiver renders as in <see cref="ExprNameMode.Open"/>.
+    /// A diagnostic that composes the description with the member —
+    /// <c>{receiver}.{member}</c> — therefore reads back as the dot edge itself:
+    /// <c>(-2).f</c>, never <c>-2.f</c>, which is <c>-(2.f)</c>.
+    /// </summary>
+    internal static string RenderDotReceiver(Expr receiver)
+    {
+        if (receiver is Expr.Resolve(var resolveName))
+            return CapLeafName(resolveName);
+        if (receiver is Expr.Param(var paramName))
+            return CapLeafName(paramName);
+
+        var pending = new Stack<Piece>();
+        PushDotReceiver(pending, receiver);
+        return Drain(pending);
+    }
+
+    /// <summary>
     /// Renders ONE link of a comparison chain in operand shape — <c>left op right</c>,
     /// the two ADJACENT operands the link compares, in
     /// <see cref="ExprNameMode.DiagnosticName"/> with no outer parentheses — so the
@@ -333,6 +353,15 @@ internal static class ExprNameRenderer
     /// </summary>
     private static void PushComparisonOperand(Stack<Piece> pending, Expr operand, ExprNameMode mode)
         => PushOperand(pending, operand, AdditiveTier, mode);
+
+    /// <summary>
+    /// Pushes a dot edge's receiver, written at the postfix tier: a prefix form keeps its
+    /// parentheses (`(-a).f`, `(not a).f`); binary and comparison names self-parenthesize.
+    /// Shared by the edge's own name and <see cref="RenderDotReceiver"/>, so a receiver
+    /// description composed with its member is exactly this spelling.
+    /// </summary>
+    private static void PushDotReceiver(Stack<Piece> pending, Expr receiver)
+        => PushOperand(pending, receiver, PostfixTier, ExprNameMode.Open);
 
     /// <summary>
     /// Pushes a whole comparison chain — <c>first op1 x1 op2 x2 …</c> — with every
@@ -692,29 +721,45 @@ internal static class ExprNameRenderer
                 pending.Push(new Piece(target, ExprNameMode.IndexTarget));
                 return true;
 
-            case Expr.DotCall(var target, var name, var argsOpt):
+            case Expr.DotCall(var target, var name, var argsOpt) dot:
                 if (argsOpt is not null)
                     pending.Push(new Piece("(...)"));
-                pending.Push(new Piece(name));
+                // Raw parser suggestions still carry member Grace; elaborated
+                // edges have consumed it. Keep that occurrence's annotation.
+                pending.Push(dot.LexicalFallback is Expr.Grace grace
+                    ? new Piece(grace, ExprNameMode.Open)
+                    : new Piece(name));
                 pending.Push(new Piece("."));
-                PushOperand(pending, target, PostfixTier, ExprNameMode.Open);
+                PushDotReceiver(pending, target);
                 return true;
 
             case Expr.Call(var function, _):
                 pending.Push(new Piece("(...)"));
-                PushOperand(pending, function, PostfixTier, ExprNameMode.Open);
+                // A bare argumentless dot edge absorbs the following argument
+                // list: a.f(...) is a DotCall, while (a.f)(...) calls its result.
+                // This grammar distinction needs parentheses even at equal tier.
+                if (function is Expr.DotCall { Args: null })
+                    PushParenthesized(pending, function);
+                else
+                    PushOperand(pending, function, PostfixTier, ExprNameMode.Open);
                 return true;
 
             case Expr.Grace(var inner, var weight):
+                // Preserve the whole annotation, including cancelling markers:
+                // zero weight still marks an occurrence for effectiveness checks.
+                // Cap before allocating, and widen before negating int.MinValue.
+                var markers = new string('~', (int)Math.Min(Math.Abs((long)weight), MaxRenderedNameLength + 1L));
                 if (weight < 0)
                 {
                     pending.Push(new Piece(inner, ExprNameMode.Open));
-                    pending.Push(new Piece("~"));
+                    pending.Push(new Piece(markers));
                 }
                 else
                 {
-                    pending.Push(new Piece("~"));
+                    pending.Push(new Piece(weight == 0 ? "~" : markers));
                     pending.Push(new Piece(inner, ExprNameMode.Open));
+                    if (weight == 0)
+                        pending.Push(new Piece("~"));
                 }
 
                 return true;
