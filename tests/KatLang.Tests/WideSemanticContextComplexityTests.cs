@@ -313,10 +313,12 @@ public class WideSemanticContextComplexityTests
 
     /// <summary>
     /// K properties of an owner of W parameters, each requiring one of them: the owner's W names are
-    /// materialized ONCE per resolution, and each property's single requirement is qualified by
-    /// probing that one name — once in each of the two fixed-point rounds, 2K probes (the output
-    /// row's <c>v0</c> is owned directly and needs none) — never by scanning the owner's W
-    /// parameters per property per round.
+    /// materialized ONCE per resolution, and a property's single requirement is qualified by probing
+    /// that one name — never by scanning the owner's W parameters per property. Since FE-4a the K
+    /// properties' equal seeds are qualified ONCE: the member solve evaluates every equation once in
+    /// dependency order (no second round), and a member whose base seed has the content of an
+    /// already-expanded one reuses that expansion (the output row's <c>v0</c> is owned directly and
+    /// needs none). The former round-by-round solve probed 2K times.
     /// </summary>
     [Theory]
     [InlineData(400, 300)]
@@ -332,7 +334,9 @@ public class WideSemanticContextComplexityTests
         _ = PropertyExposureResolver.Resolve(resolved, observations);
 
         Assert.Equal(width, observations.OwnerParameterNamesMaterialized);
-        Assert.Equal(2 * properties, observations.SummaryQualificationProbes);
+        Assert.Equal(1, observations.SummaryQualificationProbes);
+        Assert.Equal(properties, observations.SummaryMemberEvaluations);
+        Assert.Equal(1, observations.SummaryMemberExpansions);
     }
 
     // ── Sibling-order walk: shadow scopes ─────────────────────────────────────

@@ -2,34 +2,31 @@ namespace KatLang;
 
 internal static class PropertyExposureResolver
 {
+    /// <summary>
+    /// One owner-qualified required input: its name AND the exact scope that binds it (by reference;
+    /// null when no level of the chain binds the name). Two same-named parameters of different owners
+    /// are two requirements — the identity every requirement set is built from (FE-4a).
+    /// </summary>
     internal readonly record struct Requirement(string Name, ElaboratedPropertyScope? Owner);
-
-    internal sealed class AnalysisSummary(IEnumerable<Requirement> requirements)
-    {
-        public static AnalysisSummary Empty { get; } = new([]);
-        public HashSet<Requirement> Requirements { get; } = new(requirements);
-        public IEnumerable<string> RequiredAncestorOwnedParameterNames => Requirements.Select(r => r.Name).Distinct(StringComparer.Ordinal);
-        public bool RequiresAncestorOwnedParameters => Requirements.Count > 0;
-        public bool SetEquals(AnalysisSummary other) => Requirements.SetEquals(other.Requirements);
-    }
 
     /// <summary>
     /// One level of the resolver's lexical chain: the level's elaborated property scope (its
     /// declarations, its <c>open</c> targets, and the ancestor levels through
     /// <see cref="ElaboratedPropertyScope.Parent"/>) paired with the FINAL requirement summary
-    /// of each property the level declares (the level in progress carries the current
-    /// fixed-point iteration's map). Kept as a chain rather than one merged name→summary map
+    /// of each property the level declares (the level in progress carries its fixed point's live
+    /// map). Kept as a chain rather than one merged name→summary map
     /// so that a seed relative to an ANCESTOR level — the requirements of a member reached
     /// through an <c>open</c> provider or a member path declared farther out — is expanded from
     /// that level outward, never against declarations that shadow it only from the consumer's
-    /// position.
+    /// position. Summaries are canonical <see cref="RequirementSet"/>s (FE-4a): properties with equal
+    /// requirements share one immutable set.
     /// </summary>
     internal sealed class SummaryScope
     {
         public SummaryScope(
             SummaryScope? parent,
             ElaboratedPropertyScope propertyScope,
-            IReadOnlyDictionary<string, AnalysisSummary> summaries,
+            IReadOnlyDictionary<string, RequirementSet> summaries,
             IReadOnlySet<string>? parameters = null,
             Algorithm? algorithm = null)
         {
@@ -81,11 +78,12 @@ internal static class PropertyExposureResolver
             }
         }
 
-        public int OwnerDepth(Requirement requirement)
+        /// <summary>The distance from this level to the level whose scope is <paramref name="owner"/>; -1 when off the chain.</summary>
+        public int OwnerDepth(ElaboratedPropertyScope? owner)
         {
             var depth = 0;
             for (var level = this; level is not null; level = level.Parent, depth++)
-                if (ReferenceEquals(level.PropertyScope, requirement.Owner))
+                if (ReferenceEquals(level.PropertyScope, owner))
                     return depth;
             return -1;
         }
@@ -94,16 +92,18 @@ internal static class PropertyExposureResolver
 
         public ElaboratedPropertyScope PropertyScope { get; }
 
-        public IReadOnlyDictionary<string, AnalysisSummary> Summaries { get; }
+        public IReadOnlyDictionary<string, RequirementSet> Summaries { get; }
 
         /// <summary>The prelude level every inline <c>open</c> target region starts at.</summary>
         public SummaryScope Root { get; }
 
         /// <summary>
         /// Ownership-first PROPERTY lookup from this level outward — the direct lexical chain
-        /// (the evaluator's <c>LookupLexicalDirect</c>); opens are never consulted here.
+        /// (the evaluator's <c>LookupLexicalDirect</c>); opens are never consulted here. The summary
+        /// belongs to the run that built <paramref name="level"/>; combining adopts it into the
+        /// reader's interner (<see cref="RequirementSetInterner.Union"/>).
         /// </summary>
-        public bool TryLookup(string name, out SummaryScope level, out PropertyLookupHit hit, out AnalysisSummary summary)
+        public bool TryLookup(string name, out SummaryScope level, out PropertyLookupHit hit, out RequirementSet summary)
         {
             for (var current = this; current is not null; current = current.Parent)
             {
@@ -111,14 +111,14 @@ internal static class PropertyExposureResolver
                 {
                     level = current;
                     hit = found;
-                    summary = current.Summaries.TryGetValue(name, out var stored) ? stored : AnalysisSummary.Empty;
+                    summary = current.Summaries.TryGetValue(name, out var stored) ? stored : default;
                     return true;
                 }
             }
 
             level = null!;
             hit = default;
-            summary = AnalysisSummary.Empty;
+            summary = default;
             return false;
         }
     }
@@ -157,15 +157,15 @@ internal static class PropertyExposureResolver
                 NoSummaries),
             observations);
 
-    private static readonly IReadOnlyDictionary<string, AnalysisSummary> NoSummaries =
-        new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, RequirementSet> NoSummaries =
+        new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
 
     private static Algorithm ResolveInScope(
         Algorithm root,
         SummaryScope parent,
         FrontEndTraversalObservations? observations)
     {
-        var run = new ExposureRun();
+        var run = new ExposureRun(observations);
         root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run);
         if (run.HasDotMemberOrigins)
             new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
@@ -174,7 +174,22 @@ internal static class PropertyExposureResolver
 
     private sealed class ExposureRun
     {
+        public ExposureRun(FrontEndTraversalObservations? observations)
+        {
+            Requirements = new RequirementSetInterner(observations);
+            Outputs = new RequiredAncestorOutputs(Requirements, observations);
+        }
+
         public bool HasDotMemberOrigins;
+
+        /// <summary>
+        /// FE-4a: the run's one requirement-set interner — every level's summaries are canonical sets
+        /// of this interner, so equal summaries are one shared set and compare by reference.
+        /// </summary>
+        public readonly RequirementSetInterner Requirements;
+
+        /// <summary>FE-4a: the run's one output projection — one shared list per distinct set.</summary>
+        public readonly RequiredAncestorOutputs Outputs;
 
         /// <summary>
         /// FE-3: whether an expression subtree is REWRITE-INVARIANT — it reaches no nested algorithm
@@ -248,10 +263,10 @@ internal static class PropertyExposureResolver
     /// channel, for anything the branch itself hands out — a branch declaration therefore
     /// behaves exactly like the same declaration in a parameterized body.
     /// </summary>
-    private static PropertyExposure ClassifyDeclaredProperty(AnalysisSummary summary)
-        => summary.RequiresAncestorOwnedParameters
-            ? PropertyExposure.LocalOnlyCapturedAncestorParameters
-            : PropertyExposure.Exported;
+    private static PropertyExposure ClassifyDeclaredProperty(RequirementSet summary)
+        => summary.IsEmpty
+            ? PropertyExposure.Exported
+            : PropertyExposure.LocalOnlyCapturedAncestorParameters;
 
     /// <summary>
     /// Reference-identity memo state for ONE exposure rewrite region — one user algorithm's
@@ -361,61 +376,40 @@ internal static class PropertyExposureResolver
         // fixed-point iteration's scope and the final one (FE-1).
         var parameterNames = summaryMemo.ParameterNamesOf(algorithm, observations);
         var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations);
-        var currentPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
+        var summaries = new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
         foreach (var property in algorithm.Properties)
-            currentPropertySummaries[property.Name] = AnalysisSummary.Empty;
+            summaries[property.Name] = default;
 
         // The summary graph already centralizes the stable per-property seed facts:
         // direct required ancestor-owned names plus summary edges to visible names, sibling
         // properties, and pending member paths / opened names. What still changes here is each
-        // property's accumulated RequiredAncestorOwnedParameterNames after following those
-        // edges through the current local summary map. That closure can be transitive or
-        // cyclic (mutually opening libraries included), so the exposure pass runs a local
-        // least fixed point before rewriting children with the final summaries.
-        while (true)
-        {
-            var level = new SummaryScope(parent, levelScope, currentPropertySummaries, parameterNames, algorithm);
-            var resolution = new PendingResolution(walkMemos);
-            var nextPropertySummaries = new Dictionary<string, AnalysisSummary>(StringComparer.Ordinal);
-            for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
-            {
-                var property = algorithm.Properties[propertyIndex];
-                nextPropertySummaries[property.Name] = SummarizePropertyDependencies(
-                    summaryGraph,
-                    propertyIndex,
-                    level,
-                    resolution);
-            }
+        // property's accumulated requirement set after following those edges through the level's
+        // summary map. That closure can be transitive or cyclic (mutually opening libraries
+        // included), so the exposure pass solves the level's least fixed point before rewriting
+        // children with the final summaries (FE-4a: dependency-driven, over canonical sets).
+        var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm);
+        if (algorithm.Properties.Count > 0)
+            new LevelSolver(summaryGraph, finalLevel, summaries, new PendingResolution(walkMemos, run.Requirements, finalLevel), run.Requirements, observations)
+                .Solve();
 
-            if (SummariesEqual(currentPropertySummaries, nextPropertySummaries))
-            {
-                currentPropertySummaries = nextPropertySummaries;
-                break;
-            }
-
-            currentPropertySummaries = nextPropertySummaries;
-        }
-
-        var finalLevel = new SummaryScope(parent, levelScope, currentPropertySummaries, parameterNames, algorithm);
         // Properties and output share one lexical scope and summary context. Inline
         // open providers below have their own memo because they resolve at the prelude.
         var memos = new ExposureWalkMemos(summaryMemo, observations, finalLevel, run);
+        Func<ElaboratedPropertyScope?, int> ownerDepth = finalLevel.OwnerDepth;
         var rewrittenProperties = new List<Property>(algorithm.Properties.Count);
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
             var property = algorithm.Properties[propertyIndex];
             var rewrittenPropertyValue = ProcessSharedNestedAlgorithm(property.Value, memos);
 
-            var summary = currentPropertySummaries[property.Name];
+            // Equal final summaries are one canonical set, and the run materializes each distinct
+            // backing once. Distinct wrappers preserve Property's list-reference equality (FE-4a).
+            var summary = summaries[property.Name];
             var rewrittenProperty = new Property(property.Name, rewrittenPropertyValue, property.IsPublic, ClassifyDeclaredProperty(summary))
             {
                 DeclarationSpans = property.DeclarationSpans,
-                CaptureRequirements = summary.Requirements
-                    .Select(r => new CapturedParameterRequirement(r.Name, finalLevel.OwnerDepth(r)))
-                    .OrderBy(r => r.Name, StringComparer.Ordinal).ThenBy(r => r.OwnerDepth).ToArray(),
-                RequiredAncestorParameters = summary.RequiresAncestorOwnedParameters
-                    ? summary.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray()
-                    : [],
+                CaptureRequirements = RequiredAncestorList<CapturedParameterRequirement>.ForProperty(run.Outputs.Captures(summary, ownerDepth)),
+                RequiredAncestorParameters = RequiredAncestorList<string>.ForProperty(run.Outputs.Names(summary)),
             };
             rewrittenProperties.Add(rewrittenProperty);
         }
@@ -459,40 +453,174 @@ internal static class PropertyExposureResolver
         return rewritten;
     }
 
-    private static AnalysisSummary SummarizePropertyDependencies(
-        PropertyDependencySummaryGraph summaryGraph,
-        int propertyIndex,
+    /// <summary>
+    /// FE-4a: the LEAST FIXED POINT of one level's requirement equations. A property's summary is
+    /// its constant own requirements (resolved once) united with the current summaries it reads —
+    /// its sibling edges, and the level-local summaries its visible-name and pending-reference
+    /// settlements consult. Every equation is monotone (unions of summaries; which providers settle a
+    /// reference is structural, never summary-dependent), so ANY fair iteration from the empty
+    /// summaries reaches the same least fixed point the former round-by-round (Jacobi) iteration
+    /// reached. This one is dependency-driven: every equation is evaluated once, and later only when a
+    /// summary it read has changed — so a chain of K properties costs O(K) evaluations instead of K
+    /// rounds of all K, and over canonical sets an evaluation that merely inherits a sibling's summary
+    /// SHARES that set instead of copying its W requirements. The map is keyed by NAME, and a name's
+    /// equation is its LAST declaration's: every reader and every same-named declaration receives that
+    /// summary, exactly as the former last-write-wins map did.
+    ///
+    /// <para>Settlements of visible names and pending references are memoized per top-level key and
+    /// validated against the level-local summaries they read, so K properties reading one opened or
+    /// navigated member settle it once. Only TOP-LEVEL settlements are cached: they start with no
+    /// reference in progress, so a cycle cut inside one (a re-entered reference contributes nothing
+    /// that the enclosing settlement does not already add) is complete for that settlement, while a
+    /// nested, possibly cycle-cut intermediate is never reused. A cached settlement is served only
+    /// while every level-local summary it read is still the same canonical set.</para>
+    /// </summary>
+    private sealed class LevelSolver(
+        PropertyDependencySummaryGraph graph,
         SummaryScope level,
-        PendingResolution resolution)
+        Dictionary<string, RequirementSet> summaries,
+        PendingResolution resolution,
+        RequirementSetInterner sets,
+        FrontEndTraversalObservations? observations)
     {
-        var node = summaryGraph[propertyIndex];
-        var requiredAncestorOwnedParameterNames = new HashSet<Requirement>(
-            level.ResolveRequirements(node.RequiredAncestorOwnedParameterNames));
-        requiredAncestorOwnedParameterNames.UnionWith(level.ResolveRequirements(node.OwnerQualifiedParameters));
+        private readonly RequirementSet?[] _constants = new RequirementSet?[graph.Count];
+        private Dictionary<string, Settlement>? _visibleSettlements;
+        private Dictionary<string, Settlement>? _pendingSettlements;
 
-        // A bare visible name is settled by the ONE settlement the pending references use
-        // (the chain's own properties first, then the owning level's and its ancestors'
-        // opens, in the evaluator's order): a name the property reads through an `open`
-        // declared at THIS level — or at an ancestor level — charges the provided member's
-        // requirements exactly like a dotted path or an open written inside the value.
-        // Dropping such a name classified `Y = X` as Exported beside a local-only opened `X`,
-        // so the run-scoped cache handed the first activation's value to every later one.
-        foreach (var dependencyName in node.SummaryVisiblePropertyDependencyNames)
-            requiredAncestorOwnedParameterNames.UnionWith(resolution.ResolveVisibleName(dependencyName, level));
+        // One cached top-level settlement and the level-local summaries it read (name, set read).
+        private sealed record Settlement(RequirementSet Result, (string Name, RequirementSet Read)[] Reads);
 
-        foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
+        public void Solve()
         {
-            var dependencyName = summaryGraph.Properties[dependencyIndex].Name;
-            if (level.Summaries.TryGetValue(dependencyName, out var summary))
-                requiredAncestorOwnedParameterNames.UnionWith(summary.Requirements);
+            var properties = graph.Properties;
+            var equationOf = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var i = 0; i < properties.Count; i++)
+                equationOf[properties[i].Name] = i;
+
+            // Statically read equations: sibling edges, and level-local names a reference reads directly.
+            IEnumerable<int> StaticReads(int index)
+            {
+                var node = graph[index];
+                foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
+                    yield return equationOf[properties[dependencyIndex].Name];
+                foreach (var name in node.SummaryVisiblePropertyDependencyNames)
+                    if (equationOf.TryGetValue(name, out var read))
+                        yield return read;
+                foreach (var pending in node.PendingReferences)
+                    if (equationOf.TryGetValue(pending.Head, out var read))
+                        yield return read;
+            }
+
+            var queue = new Queue<int>();
+            var queued = new bool[properties.Count];
+            foreach (var index in DependencyFirstOrder.Of(properties.Count, i => equationOf[properties[i].Name] == i, StaticReads))
+            {
+                queue.Enqueue(index);
+                queued[index] = true;
+            }
+
+            var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+            var reads = new List<string>();
+            while (queue.TryDequeue(out var index))
+            {
+                queued[index] = false;
+                observations?.RecordRequiredAncestorLevelEvaluation();
+                reads.Clear();
+                var next = Evaluate(index, reads);
+                foreach (var readName in reads)
+                {
+                    if (!readers.TryGetValue(readName, out var nameReaders))
+                        readers.Add(readName, nameReaders = []);
+                    nameReaders.Add(index);
+                }
+
+                var name = properties[index].Name;
+                if (next.Equals(summaries[name]))
+                    continue;
+
+                summaries[name] = next;
+                if (!readers.TryGetValue(name, out var dependents))
+                    continue;
+                foreach (var dependent in dependents)
+                {
+                    observations?.RecordRequiredAncestorReaderNotification();
+                    if (!queued[dependent])
+                    {
+                        queued[dependent] = true;
+                        queue.Enqueue(dependent);
+                    }
+                }
+            }
         }
 
-        foreach (var pending in node.PendingReferences)
-            requiredAncestorOwnedParameterNames.UnionWith(resolution.Resolve(pending, level));
+        private RequirementSet Evaluate(int propertyIndex, List<string> reads)
+        {
+            var node = graph[propertyIndex];
+            var requirements = _constants[propertyIndex] ??= sets.From(
+                level.ResolveRequirements(node.RequiredAncestorOwnedParameterNames)
+                    .Concat(level.ResolveRequirements(node.OwnerQualifiedParameters)));
 
-        return requiredAncestorOwnedParameterNames.Count == 0
-            ? AnalysisSummary.Empty
-            : new AnalysisSummary(requiredAncestorOwnedParameterNames);
+            // A bare visible name is settled by the ONE settlement the pending references use
+            // (the chain's own properties first, then the owning level's and its ancestors'
+            // opens, in the evaluator's order): a name the property reads through an `open`
+            // declared at THIS level — or at an ancestor level — charges the provided member's
+            // requirements exactly like a dotted path or an open written inside the value.
+            // Dropping such a name classified `Y = X` as Exported beside a local-only opened `X`,
+            // so the run-scoped cache handed the first activation's value to every later one.
+            foreach (var dependencyName in node.SummaryVisiblePropertyDependencyNames)
+                requirements = sets.Union(requirements, Settle(dependencyName, pending: null, reads));
+
+            foreach (var dependencyIndex in node.SummarySiblingDependencyIndices)
+            {
+                var dependencyName = graph.Properties[dependencyIndex].Name;
+                if (summaries.TryGetValue(dependencyName, out var summary))
+                {
+                    reads.Add(dependencyName);
+                    requirements = sets.Union(requirements, summary);
+                }
+            }
+
+            foreach (var pending in node.PendingReferences)
+                requirements = sets.Union(requirements, Settle(pending.ContentKey, pending, reads));
+
+            return requirements;
+        }
+
+        private RequirementSet Settle(string key, PendingReference? pending, List<string> reads)
+        {
+            var settlements = pending is null
+                ? _visibleSettlements ??= new(StringComparer.Ordinal)
+                : _pendingSettlements ??= new(StringComparer.Ordinal);
+            if (!settlements.TryGetValue(key, out var settlement) || !StillValid(settlement))
+            {
+                observations?.RecordRequiredAncestorResolutionComputation();
+                var levelReads = resolution.BeginRecording();
+                var result = pending is null
+                    ? resolution.ResolveVisibleName(key, level)
+                    : resolution.Resolve(pending, level);
+                resolution.EndRecording();
+                var read = new (string Name, RequirementSet Read)[levelReads.Count];
+                var i = 0;
+                foreach (var readName in levelReads)
+                    read[i++] = (readName, summaries[readName]);
+                settlements[key] = settlement = new Settlement(result, read);
+            }
+
+            foreach (var (readName, _) in settlement.Reads)
+                reads.Add(readName);
+            return settlement.Result;
+        }
+
+        private bool StillValid(Settlement settlement)
+        {
+            foreach (var (readName, read) in settlement.Reads)
+            {
+                if (!summaries[readName].Equals(read))
+                    return false;
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -507,13 +635,35 @@ internal static class PropertyExposureResolver
     /// reached by navigation charges its requirement seed expanded from ITS declaring level
     /// outward. Requirement sets are monotone unions, so a reference re-entered through a
     /// cycle of mutually opening libraries contributes nothing new (the least fixed point);
-    /// the enclosing sibling fixed point iterates the rest to stability.
+    /// the enclosing sibling fixed point iterates the rest to stability. Results are canonical
+    /// sets of the run's interner (FE-4a), and every read of a summary of the level in progress
+    /// (<paramref name="levelInProgress"/>) is recorded while a recording is open, so the level's
+    /// solver can reuse a settlement exactly as long as what it read still stands.
     /// </summary>
-    private sealed class PendingResolution(PropertyDependencyGraphBuilder.SummaryWalkMemos memos)
+    private sealed class PendingResolution(
+        PropertyDependencyGraphBuilder.SummaryWalkMemos memos,
+        RequirementSetInterner sets,
+        SummaryScope levelInProgress)
     {
         private readonly HashSet<(string Key, SummaryScope Level, SummaryScope Site, string Bound)> _inProgress = [];
+        private HashSet<string>? _levelReads;
 
-        public HashSet<Requirement> Resolve(PendingReference pending, SummaryScope level, SummaryScope? site = null,
+        /// <summary>Starts recording the level-in-progress summaries a top-level settlement reads.</summary>
+        public HashSet<string> BeginRecording() => _levelReads = new HashSet<string>(StringComparer.Ordinal);
+
+        public void EndRecording() => _levelReads = null;
+
+        // The direct-chain property lookup, recording a read of the level-in-progress summary it returns.
+        private bool TryLookupSummary(SummaryScope from, string name, out SummaryScope level, out PropertyLookupHit hit, out RequirementSet summary)
+        {
+            if (!from.TryLookup(name, out level, out hit, out summary))
+                return false;
+            if (ReferenceEquals(level, levelInProgress))
+                _levelReads?.Add(name);
+            return true;
+        }
+
+        public RequirementSet Resolve(PendingReference pending, SummaryScope level, SummaryScope? site = null,
             IReadOnlySet<Algorithm>? boundOwners = null)
         {
             site ??= level;
@@ -525,29 +675,25 @@ internal static class PropertyExposureResolver
             }
             var key = (pending.ContentKey, level, site,
                 boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
-            var names = new HashSet<Requirement>();
             if (!_inProgress.Add(key))
-                return names;
+                return default;
 
             try
             {
-                if (level.TryLookup(pending.Head, out var found, out var hit, out var summary))
+                if (TryLookupSummary(level, pending.Head, out var found, out var hit, out var summary))
                 {
                     if (pending.Members.Count == 0)
-                    {
-                        names.UnionWith(summary.Requirements);
-                        return names;
-                    }
+                        return sets.Adopt(summary);
 
                     var (charged, navigated) = PropertyDependencyGraphBuilder.ChargePath(
                         hit.Property.Value,
                         PropertyDependencyGraphBuilder.StructuralSteps(pending.Members),
                         memos);
-                    names.UnionWith(ResolveSeed(charged, found, site, boundOwners));
-                    if (navigated == 0)
-                        names.UnionWith(summary.Requirements);
-                    return names;
+                    var names = ResolveSeed(charged, found, site, boundOwners);
+                    return navigated == 0 ? sets.Union(names, summary) : names;
                 }
+
+                var result = default(RequirementSet);
 
                 // The escaped levels' providers, innermost level first. Each level is ONE open
                 // lookup: the first level at which any target provides the head decides, and
@@ -565,13 +711,10 @@ internal static class PropertyExposureResolver
 
                     var group = new OpenLevelSettlement();
                     for (var i = start; i < end; i++)
-                    {
-                        var provided = new HashSet<Requirement>();
-                        group.Offer(Provides(candidates[i], pending, level, provided, site, boundOwners), provided);
-                    }
+                        group.Offer(Provides(candidates[i], pending, level, site, boundOwners));
 
-                    if (group.Decides(names))
-                        return names;
+                    if (group.Decides(sets, ref result))
+                        return result;
                     start = end;
                 }
 
@@ -587,33 +730,30 @@ internal static class PropertyExposureResolver
                         if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
                             continue;
 
-                        var provided = new HashSet<Requirement>();
                         if (target is Expr.AlgorithmExpr(var block))
                         {
                             // An inline target is wired to the prelude: nothing outside it can
                             // be referenced, so only its own requirement names survive.
                             var inlineSeed = PropertyDependencyGraphBuilder.TryChargeProvidedMember(block, pending, memos);
-                            if (inlineSeed is not null)
-                            {
-                                provided.UnionWith(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames));
-                                provided.UnionWith(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners));
-                            }
+                            var inlineCharge = inlineSeed is null
+                                ? default
+                                : sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
+                                    .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners)));
 
-                            group.Offer(inlineSeed is not null, provided);
+                            group.Offer((inlineSeed is not null, inlineCharge));
                             continue;
                         }
 
-                        group.Offer(
-                            PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps)
-                                && TryProvide(current, head, steps, pending, provided, site, boundOwners),
-                            provided);
+                        group.Offer(PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps)
+                            ? TryProvide(current, head, steps, pending, site, boundOwners)
+                            : default);
                     }
 
-                    if (group.Decides(names))
-                        return names;
+                    if (group.Decides(sets, ref result))
+                        return result;
                 }
 
-                return names;
+                return result;
             }
             finally
             {
@@ -622,23 +762,16 @@ internal static class PropertyExposureResolver
         }
 
         /// <summary>
-        /// Whether one carried candidate provides the pending head, accumulating its charge into
-        /// <paramref name="provided"/>: a resolved candidate exists only because its target
-        /// provides the head, while an unresolved one is settled here, from the owning level
-        /// outward (no level it escaped declared the head).
+        /// Whether one carried candidate provides the pending head, and its charge: a resolved
+        /// candidate exists only because its target provides the head, while an unresolved one is
+        /// settled here, from the owning level outward (no level it escaped declared the head).
         /// </summary>
-        private bool Provides(OpenCandidate candidate, PendingReference pending, SummaryScope level, HashSet<Requirement> provided, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        private (bool Provides, RequirementSet Charge) Provides(OpenCandidate candidate, PendingReference pending, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
             => candidate switch
             {
-                ResolvedOpenCandidate resolved => Charge(provided, ResolveSeed(resolved.Seed, level, site, boundOwners)),
-                UnresolvedOpenCandidate unresolved => TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, provided, site, boundOwners),
+                ResolvedOpenCandidate resolved => (true, ResolveSeed(resolved.Seed, level, site, boundOwners)),
+                UnresolvedOpenCandidate unresolved => TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, site, boundOwners),
             };
-
-        private static bool Charge(HashSet<Requirement> provided, HashSet<Requirement> requirements)
-        {
-            provided.UnionWith(requirements);
-            return true;
-        }
 
         /// <summary>
         /// ONE open lookup level's verdict (the evaluator's <c>LookupOpens</c>): every deduplicated
@@ -649,21 +782,21 @@ internal static class PropertyExposureResolver
         private sealed class OpenLevelSettlement
         {
             private int _providers;
-            private HashSet<Requirement>? _charge;
+            private RequirementSet _charge;
 
-            public void Offer(bool provides, HashSet<Requirement> charge)
+            public void Offer((bool Provides, RequirementSet Charge) offer)
             {
-                if (!provides)
+                if (!offer.Provides)
                     return;
 
                 _providers++;
-                _charge = charge;
+                _charge = offer.Charge;
             }
 
-            public bool Decides(HashSet<Requirement> names)
+            public bool Decides(RequirementSetInterner sets, ref RequirementSet names)
             {
                 if (_providers == 1)
-                    names.UnionWith(_charge!);
+                    names = sets.Union(names, _charge);
                 return _providers > 0;
             }
         }
@@ -676,10 +809,11 @@ internal static class PropertyExposureResolver
         /// seed — the navigated steps' and the provided member's requirements — is relative to
         /// the level that declares the target's head and is resolved from there.
         /// </summary>
-        private bool TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending, HashSet<Requirement> names, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        private (bool Provides, RequirementSet Charge) TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
+            // The head's DECLARATION is what matters here, never its summary.
             if (!openingLevel.TryLookup(head, out var found, out var hit, out _))
-                return false;
+                return default;
 
             var headNode = hit.Property.Value;
             var (providerSeed, providerNavigated) = PropertyDependencyGraphBuilder.ChargePath(
@@ -687,32 +821,31 @@ internal static class PropertyExposureResolver
                 PropertyDependencyGraphBuilder.PublicSteps(steps),
                 memos);
             if (providerNavigated < steps.Count)
-                return false;
+                return default;
 
             var provider = PropertyDependencyGraphBuilder.NavigateNode(headNode, steps);
             if (provider is null
                 || PropertyDependencyGraphBuilder.TryChargeProvidedMember(provider, pending, memos) is not { } memberSeed)
-                return false;
+                return default;
 
             var seed = PropertyDependencyGraphBuilder.ExpandThroughNodes(
                 memberSeed,
                 PropertyDependencyGraphBuilder.NodePath(headNode, steps),
                 memos);
             seed.UnionWith(providerSeed);
-            names.UnionWith(ResolveSeed(seed, found, site, boundOwners));
-            return true;
+            return (true, ResolveSeed(seed, found, site, boundOwners));
         }
 
-        /// <summary>The requirement names of a seed relative to <paramref name="level"/>, resolved from there outward.</summary>
-        private HashSet<Requirement> ResolveSeed(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        /// <summary>The requirements of a seed relative to <paramref name="level"/>, resolved from there outward.</summary>
+        private RequirementSet ResolveSeed(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
-            var names = new HashSet<Requirement>(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames));
-            names.UnionWith(site.ResolveRequirements(seed.OwnerQualifiedParameters, boundOwners));
+            var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
+                .Concat(site.ResolveRequirements(seed.OwnerQualifiedParameters, boundOwners)));
             foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
-                names.UnionWith(ResolveVisibleName(dependencyName, level, site, boundOwners));
+                names = sets.Union(names, ResolveVisibleName(dependencyName, level, site, boundOwners));
 
             foreach (var pending in seed.PendingReferences)
-                names.UnionWith(Resolve(pending, level, site, boundOwners));
+                names = sets.Union(names, Resolve(pending, level, site, boundOwners));
 
             return names;
         }
@@ -725,11 +858,11 @@ internal static class PropertyExposureResolver
         /// its own requirements. A name provided by nothing (an unresolvable name, or one the
         /// prelude declares) contributes no requirement.
         /// </summary>
-        public HashSet<Requirement> ResolveVisibleName(string name, SummaryScope level, SummaryScope? site = null,
+        public RequirementSet ResolveVisibleName(string name, SummaryScope level, SummaryScope? site = null,
             IReadOnlySet<Algorithm>? boundOwners = null)
         {
-            if (level.TryLookup(name, out _, out _, out var summary))
-                return [.. summary.Requirements];
+            if (TryLookupSummary(level, name, out _, out _, out var summary))
+                return sets.Adopt(summary);
 
             return Resolve(new PendingReference(name, [], []), level, site, boundOwners);
         }
@@ -946,21 +1079,5 @@ internal static class PropertyExposureResolver
             Target = rewrittenTarget,
             Args = rewrittenArgs,
         };
-    }
-
-    private static bool SummariesEqual(
-        IReadOnlyDictionary<string, AnalysisSummary> left,
-        IReadOnlyDictionary<string, AnalysisSummary> right)
-    {
-        if (left.Count != right.Count)
-            return false;
-
-        foreach (var (name, leftSummary) in left)
-        {
-            if (!right.TryGetValue(name, out var rightSummary) || !leftSummary.SetEquals(rightSummary))
-                return false;
-        }
-
-        return true;
     }
 }

@@ -1487,13 +1487,18 @@ public sealed record Property(
     /// <c>PropExposure.localCapturedAncestorParams</c>). Empty for exported properties. A
     /// host-built local-only property that names no required parameter states no
     /// requirement and is therefore accessible everywhere while keeping the local-only
-    /// (per-binding-context) cache scope.
+    /// (per-binding-context) cache scope. Elaborated lists are immutable, ordered by ordinal
+    /// name, and may share backing storage. Nonempty lists have a distinct wrapper per property
+    /// so storage sharing preserves the record's existing reference-based list equality and
+    /// hashing; a record copy keeps its wrapper. Collection reference identity is not semantic
+    /// requirement identity. K equal W-wide lists retain W backing entries plus K wrappers.
     /// </summary>
     public IReadOnlyList<string> RequiredAncestorParameters { get; init; } = [];
 
     // The diagnostic names alone cannot identify a transitive capture across a
     // same-named intervening binder. Depth is relative to this property's declaring
     // scope; null metadata preserves the nearest-owner convention of host-built trees.
+    // Immutable shared backing with per-property wrapper identity, like the public names (FE-4a).
     internal IReadOnlyList<CapturedParameterRequirement>? CaptureRequirements { get; init; }
 }
 

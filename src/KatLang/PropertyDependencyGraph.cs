@@ -284,6 +284,121 @@ internal sealed class PropertyDependencySummaryGraph
         => propertyNameToIndex.TryGetValue(propertyName, out propertyIndex);
 }
 
+/// <summary>
+/// FE-4a: the order in which a level's fixed-point equations are FIRST evaluated — every equation
+/// after the equations it statically reads (the postorder of a depth-first walk over those read edges,
+/// cycles broken where the walk closes them). It is an evaluation order only: any fair iteration of
+/// the level's monotone equations reaches the same least fixed point, but a dependency-first order lets
+/// one pass carry a chain or a cycle whole instead of advancing one step per round, however the
+/// properties are declared. The walk is iterative (a long chain costs no host stack).
+/// </summary>
+internal static class DependencyFirstOrder
+{
+    /// <param name="count">The number of equations.</param>
+    /// <param name="isEquation">Whether an index is an equation to order (a name's representative).</param>
+    /// <param name="reads">The equation indices an equation statically reads.</param>
+    public static List<int> Of(int count, Func<int, bool> isEquation, Func<int, IEnumerable<int>> reads)
+    {
+        var order = new List<int>(count);
+        var visited = new bool[count];
+        var stack = new Stack<(int Index, IEnumerator<int> Reads)>();
+        for (var root = 0; root < count; root++)
+        {
+            if (visited[root] || !isEquation(root))
+                continue;
+
+            visited[root] = true;
+            stack.Push((root, reads(root).GetEnumerator()));
+            while (stack.TryPeek(out var frame))
+            {
+                if (frame.Reads.MoveNext())
+                {
+                    var next = frame.Reads.Current;
+                    if (!visited[next] && isEquation(next))
+                    {
+                        visited[next] = true;
+                        stack.Push((next, reads(next).GetEnumerator()));
+                    }
+
+                    continue;
+                }
+
+                frame.Reads.Dispose();
+                stack.Pop();
+                order.Add(frame.Index);
+            }
+        }
+
+        return order;
+    }
+
+    /// <summary>
+    /// The strongly connected components of the equations over the static read edges, dependency
+    /// first (Tarjan's order: a component is emitted after every component it reads). Iterative.
+    /// </summary>
+    public static List<List<int>> Components(int count, Func<int, bool> isEquation, Func<int, IEnumerable<int>> reads)
+    {
+        var components = new List<List<int>>();
+        var index = new int[count];
+        var lowLink = new int[count];
+        var onStack = new bool[count];
+        Array.Fill(index, -1);
+        var nextIndex = 0;
+        var stack = new Stack<int>();
+        var frames = new Stack<(int Node, IEnumerator<int> Reads)>();
+        for (var root = 0; root < count; root++)
+        {
+            if (index[root] >= 0 || !isEquation(root))
+                continue;
+
+            Enter(root);
+            while (frames.TryPeek(out var frame))
+            {
+                if (frame.Reads.MoveNext())
+                {
+                    var next = frame.Reads.Current;
+                    if (!isEquation(next))
+                        continue;
+                    if (index[next] < 0)
+                        Enter(next);
+                    else if (onStack[next])
+                        lowLink[frame.Node] = Math.Min(lowLink[frame.Node], index[next]);
+                    continue;
+                }
+
+                frame.Reads.Dispose();
+                frames.Pop();
+                if (frames.TryPeek(out var caller))
+                    lowLink[caller.Node] = Math.Min(lowLink[caller.Node], lowLink[frame.Node]);
+                if (lowLink[frame.Node] != index[frame.Node])
+                    continue;
+
+                var component = new List<int>();
+                int member;
+                do
+                {
+                    member = stack.Pop();
+                    onStack[member] = false;
+                    component.Add(member);
+                }
+                while (member != frame.Node);
+                component.Reverse();
+                components.Add(component);
+            }
+        }
+
+        return components;
+
+        void Enter(int node)
+        {
+            index[node] = lowLink[node] = nextIndex++;
+            stack.Push(node);
+            onStack[node] = true;
+            frames.Push((node, reads(node).GetEnumerator()));
+        }
+    }
+}
+
 internal static class PropertyDependencyGraphBuilder
 {
     /// <summary>
@@ -386,6 +501,47 @@ internal static class PropertyDependencyGraphBuilder
         {
             UnionWith(other);
             return this;
+        }
+
+        /// <summary>
+        /// A carried open candidate is used only after lexical lookup of its head has failed.
+        /// Under that same assumption, a nested lookup of the SAME head with a fully resolved
+        /// first provider level can already select its sole provider (or select nothing on
+        /// ambiguity). Keeping it symbolic repeatedly wraps a cycle's previous summary in
+        /// another identical condition and never reaches a finite fixed point.
+        /// </summary>
+        internal SummarySeed UnderMissingLexicalHead(string head)
+        {
+            var result = new SummarySeed(RequiredAncestorOwnedParameterNames,
+                VisiblePropertyDependencyNames, ownerQualifiedParameters: OwnerQualifiedParameters);
+            foreach (var pending in PendingReferences)
+            {
+                var candidates = pending.Candidates.Select(candidate => candidate is ResolvedOpenCandidate resolved
+                    ? resolved.WithSeed(resolved.Seed.UnderMissingLexicalHead(head)) : candidate).ToArray();
+                var firstLevel = candidates.TakeWhile(c => c.ProviderLevel == candidates[0].ProviderLevel).ToArray();
+                if (pending.Head == head && firstLevel.Length > 0 && firstLevel.All(c => c is ResolvedOpenCandidate))
+                {
+                    if (firstLevel.Length == 1)
+                    {
+                        var selected = ((ResolvedOpenCandidate)firstLevel[0]).Seed.Clone();
+                        selected.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
+                            && pending.BoundOwners.Any(owner => ReferenceEquals(owner, r.Owner)));
+                        var nested = selected.PendingReferences.ToArray();
+                        selected.PendingReferences.Clear();
+                        foreach (var reference in nested)
+                        {
+                            var bound = reference;
+                            foreach (var owner in pending.BoundOwners)
+                                bound = bound.BoundBy(owner, ownerHasParameters: true);
+                            selected.PendingReferences.Add(bound);
+                        }
+                        result.UnionWith(selected);
+                    }
+                    continue;
+                }
+                result.PendingReferences.Add(pending.WithCandidates(candidates));
+            }
+            return result;
         }
 
         /// <summary>
@@ -684,6 +840,58 @@ internal static class PropertyDependencyGraphBuilder
                 && VisiblePropertyDependencyNames.SetEquals(other.VisiblePropertyDependencyNames)
                 && PendingReferences.SetEquals(other.PendingReferences)
                 && OwnerQualifiedParameters.SetEquals(other.OwnerQualifiedParameters);
+
+        /// <summary>
+        /// FE-4a: whether the seed's content is empty, decided WITHOUT folding: its own sets and every
+        /// seed it holds by reference (transitively) are empty. Reads only; a seed held by reference is
+        /// never mutated, and the parts form no cycle (a seed only ever holds seeds built before it).
+        /// </summary>
+        internal bool IsEmptyWithoutFolding()
+        {
+            if (!OwnSetsEmpty(this))
+                return false;
+            if (_absorbed is null)
+                return true;
+
+            var visited = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance) { this };
+            var pending = new Stack<SummarySeed>(_absorbed);
+            while (pending.TryPop(out var part))
+            {
+                if (!visited.Add(part))
+                    continue;
+                if (!OwnSetsEmpty(part))
+                    return false;
+                if (part._absorbed is { } nested)
+                {
+                    foreach (var nestedPart in nested)
+                        pending.Push(nestedPart);
+                }
+            }
+
+            return true;
+
+            static bool OwnSetsEmpty(SummarySeed seed)
+                => seed._requiredAncestorOwnedParameterNames.Count == 0
+                    && seed._visiblePropertyDependencyNames.Count == 0
+                    && seed._pendingReferences.Count == 0
+                    && seed._ownerQualifiedParameters.Count == 0;
+        }
+
+        /// <summary>
+        /// FE-4a: a SUFFICIENT test of equal content that never folds: equal own sets and the same
+        /// seeds held by reference. False means "not decided here" (compare <see cref="SetEquals"/>).
+        /// </summary>
+        internal bool StructurallyEquals(SummarySeed other)
+        {
+            if ((_absorbedSet?.Count ?? 0) != (other._absorbedSet?.Count ?? 0))
+                return false;
+            if (_absorbedSet is { } parts && !parts.SetEquals(other._absorbedSet!))
+                return false;
+            return _requiredAncestorOwnedParameterNames.SetEquals(other._requiredAncestorOwnedParameterNames)
+                && _visiblePropertyDependencyNames.SetEquals(other._visiblePropertyDependencyNames)
+                && _pendingReferences.SetEquals(other._pendingReferences)
+                && _ownerQualifiedParameters.SetEquals(other._ownerQualifiedParameters);
+        }
 
         public bool IsEmpty
             => RequiredAncestorOwnedParameterNames.Count == 0
@@ -1185,24 +1393,8 @@ internal static class PropertyDependencyGraphBuilder
             propertyBaseSeeds[i] = CollectSharedAlgorithmSummarySeed(property.Value, memos);
         }
 
-        while (true)
-        {
-            var level = new LevelContext(algorithm, currentPropertySummaries, memos);
-            var nextPropertySummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
-            for (var i = 0; i < algorithm.Properties.Count; i++)
-            {
-                var property = algorithm.Properties[i];
-                nextPropertySummaries[property.Name] = ExpandAtLevel(propertyBaseSeeds[i], level);
-            }
-
-            if (SummarySeedsEqual(currentPropertySummaries, nextPropertySummaries))
-            {
-                currentPropertySummaries = nextPropertySummaries;
-                break;
-            }
-
-            currentPropertySummaries = nextPropertySummaries;
-        }
+        if (propertyBaseSeeds.Length > 0)
+            SolveMemberSeeds(algorithm, propertyBaseSeeds, currentPropertySummaries, memos);
 
         var seed = CollectOpenTargetSeeds(algorithm.Opens, currentPropertySummaries, ownedHere, memos);
         seed.UnionWith(CollectSummarySeed(
@@ -1233,9 +1425,11 @@ internal static class PropertyDependencyGraphBuilder
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm, ownerHasParameters: ownerParameterNames.Count > 0, observations);
 
         // Navigating a member does not call its owner. Retain the exact declaration
-        // that binds each parameter instead of reinterpreting its name at the consumer.
-        foreach (var member in currentPropertySummaries.Values)
-            member.QualifyParameters(algorithm, ownerParameterNames, observations);
+        // that binds each parameter instead of reinterpreting its name at the consumer:
+        // every member seed is already qualified with this algorithm's parameter names, because
+        // each one is its own expansion at this level (ExpandAtLevel qualifies with the same
+        // names, and a shared seed is such an expansion too). Qualifying again would be a no-op
+        // that folds, and so copies, every seed a member holds by reference (FE-4a).
 
         // The member seeds a consumer navigates into (`Inner.X`, an opened `X`) are the
         // level's final local summaries, which are relative to this level's PARENT: they keep
@@ -1353,7 +1547,9 @@ internal static class PropertyDependencyGraphBuilder
             return;
         }
 
-        expanded.PendingReferences.Add(pending.WithCandidates(candidates));
+        expanded.PendingReferences.Add(pending.WithCandidates(candidates.Select(candidate =>
+            candidate is ResolvedOpenCandidate resolved
+                ? resolved.WithSeed(resolved.Seed.UnderMissingLexicalHead(pending.Head)) : candidate).ToArray()));
     }
 
     /// <summary>
@@ -1900,20 +2096,278 @@ internal static class PropertyDependencyGraphBuilder
         return seed;
     }
 
-    private static bool SummarySeedsEqual(
-        IReadOnlyDictionary<string, SummarySeed> left,
-        IReadOnlyDictionary<string, SummarySeed> right)
+    /// <summary>
+    /// FE-4a: the LEAST FIXED POINT of one algorithm's member-seed equations — member <c>i</c>'s seed is
+    /// its base seed expanded at the level (<see cref="ExpandAtLevel"/>) against the current member
+    /// seeds. Every expansion is monotone in those seeds (it unites them; which references escape and
+    /// which providers settle them is structural), so any fair iteration from the empty seeds reaches
+    /// the least fixed point the former round-by-round iteration reached. This one is dependency-driven:
+    /// every equation is evaluated once and later only when a member seed it read has changed, so a
+    /// chain of K members costs O(K) evaluations instead of K rounds of all K. The map is keyed by
+    /// NAME and a name's equation is its LAST declaration's, exactly as the former last-write-wins map.
+    ///
+    /// <para>Evaluations SHARE seeds instead of copying them. A base seed that carries no path and only
+    /// names local members (besides its own requirements) expands to exactly its own requirements,
+    /// qualified here, united with those members' seeds — already expanded and qualified at this level.
+    /// Content-empty member seeds contribute nothing; when the rest are ONE seed, the member IS that
+    /// seed (no own requirements: K members aliasing one W-wide member hold one seed) or holds it BY
+    /// REFERENCE beneath its own qualified delta (a member adding a few inputs to a shared W-wide member
+    /// costs its delta). Base seeds of equal content expand to equal content while the member seeds
+    /// they read stand, so any other expansion is reused, validated by those reads, for every member
+    /// whose base seed has that content (K members reading one opened or navigated member expand it
+    /// once). A member seed is never mutated after it enters the map (every one is its own expansion at
+    /// this level, so it is already qualified), and every consumer clones a member seed before
+    /// accumulating, so sharing is unobservable. Change detection compares structure first (own sets
+    /// and the seeds held by reference) and folds only when that cannot decide.</para>
+    /// </summary>
+    private static void SolveMemberSeeds(
+        Algorithm.User algorithm,
+        SummarySeed[] baseSeeds,
+        Dictionary<string, SummarySeed> seeds,
+        SummaryWalkMemos memos)
     {
-        if (left.Count != right.Count)
-            return false;
+        var properties = algorithm.Properties;
+        var recorded = new RecordingMemberSeeds(seeds);
+        var level = new LevelContext(algorithm, recorded, memos);
+        var equationOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < properties.Count; i++)
+            equationOf[properties[i].Name] = i;
 
-        foreach (var (name, leftSummary) in left)
+        // Statically read members: the local names a base seed reads directly or heads a path with.
+        IEnumerable<int> StaticReads(int index)
         {
-            if (!right.TryGetValue(name, out var rightSummary) || !leftSummary.SetEquals(rightSummary))
-                return false;
+            var baseSeed = baseSeeds[index];
+            foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+                if (equationOf.TryGetValue(name, out var read))
+                    yield return read;
+            foreach (var pending in baseSeed.PendingReferences)
+                if (equationOf.TryGetValue(pending.Head, out var read))
+                    yield return read;
         }
 
-        return true;
+        // Evaluation units, dependency first. A strongly connected component whose every member has the
+        // SHARE shape (TryShareMemberSeed) is a system of pure unions over exactly its static edges, so
+        // its least fixed point gives every member the SAME seed: the members' own requirements,
+        // qualified here, united with the seeds the component reads from outside. It is solved as ONE
+        // unit (its first member stands for it) instead of propagating each member's requirements
+        // around the cycle member by member.
+        var components = DependencyFirstOrder.Components(properties.Count, i => equationOf[properties[i].Name] == i, StaticReads);
+        var componentOf = new int[properties.Count];
+        Array.Fill(componentOf, -1);
+        var queue = new Queue<int>();
+        var queued = new bool[properties.Count];
+        for (var c = 0; c < components.Count; c++)
+        {
+            var component = components[c];
+            if (component.Count > 1 && component.TrueForAll(member => HasShareShape(baseSeeds[member], equationOf)))
+            {
+                foreach (var member in component)
+                    componentOf[member] = c;
+                queue.Enqueue(component[0]);
+                queued[component[0]] = true;
+                continue;
+            }
+
+            foreach (var member in component)
+            {
+                queue.Enqueue(member);
+                queued[member] = true;
+            }
+        }
+
+        var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var contentKeys = new string?[properties.Count];
+        Dictionary<string, (SummarySeed Result, (string Name, SummarySeed Read)[] Reads)>? expansions = null;
+        while (queue.TryDequeue(out var index))
+        {
+            queued[index] = false;
+            memos.Observations?.RecordSummaryMemberEvaluation();
+            recorded.Reads.Clear();
+            var component = componentOf[index];
+            var next = component < 0 ? EvaluateMemberSeed(index) : EvaluateComponent(components[component], component);
+            foreach (var readName in recorded.Reads)
+            {
+                if (!readers.TryGetValue(readName, out var nameReaders))
+                    readers.Add(readName, nameReaders = []);
+                nameReaders.Add(index);
+            }
+
+            // The members of one unit share their previous seed after the unit's first evaluation,
+            // so one comparison decides them all.
+            SummarySeed? comparedPrevious = null;
+            var comparedSame = false;
+            foreach (var member in component < 0 ? [index] : components[component])
+            {
+                var name = properties[member].Name;
+                var previous = seeds[name];
+                if (!ReferenceEquals(previous, comparedPrevious))
+                {
+                    comparedPrevious = previous;
+                    comparedSame = SameContent(next, previous);
+                }
+
+                if (comparedSame)
+                    continue;
+
+                seeds[name] = next;
+                if (!readers.TryGetValue(name, out var dependents))
+                    continue;
+                foreach (var dependent in dependents)
+                {
+                    memos.Observations?.RecordSummaryMemberReaderNotification();
+                    if (!queued[dependent])
+                    {
+                        queued[dependent] = true;
+                        queue.Enqueue(dependent);
+                    }
+                }
+            }
+        }
+
+        // One share-shaped component's seed: its members' own requirements qualified here, united with
+        // the non-empty seeds it reads from outside itself (held by reference when large).
+        SummarySeed EvaluateComponent(List<int> members, int component)
+        {
+            var value = new SummarySeed(
+                members.SelectMany(member => baseSeeds[member].RequiredAncestorOwnedParameterNames),
+                ownerQualifiedParameters: members.SelectMany(member => baseSeeds[member].OwnerQualifiedParameters));
+            value.QualifyParameters(level.Algorithm, level.ParameterNames, memos.Observations);
+            foreach (var member in members)
+            {
+                foreach (var name in baseSeeds[member].VisiblePropertyDependencyNames)
+                {
+                    if (componentOf[equationOf[name]] == component)
+                        continue;
+                    recorded.Reads.Add(name);
+                    if (!seeds[name].IsEmptyWithoutFolding())
+                        value.AbsorbCompleted(seeds[name]);
+                }
+            }
+
+            return value;
+        }
+
+        SummarySeed EvaluateMemberSeed(int index)
+        {
+            var baseSeed = baseSeeds[index];
+            if (TryShareMemberSeed(baseSeed, recorded, level) is { } shared)
+                return shared;
+
+            var key = contentKeys[index] ??= baseSeed.ContentKey;
+            expansions ??= new(StringComparer.Ordinal);
+            if (expansions.TryGetValue(key, out var expansion)
+                && expansion.Reads.All(read => ReferenceEquals(seeds[read.Name], read.Read)))
+            {
+                foreach (var (readName, _) in expansion.Reads)
+                    recorded.Reads.Add(readName);
+                return expansion.Result;
+            }
+
+            memos.Observations?.RecordSummaryMemberExpansion();
+            var expanded = ExpandAtLevel(baseSeed, level);
+            expansions[key] = (expanded, [.. recorded.Reads.Select(readName => (readName, seeds[readName]))]);
+            return expanded;
+        }
+    }
+
+    // The SHARE shape: a base seed with no path whose visible names are all members of the level. Its
+    // expansion is exactly its own requirements, qualified at the level, united with those members' seeds.
+    private static bool HasShareShape(SummarySeed baseSeed, Dictionary<string, int> members)
+        => baseSeed.PendingReferences.Count == 0
+            && baseSeed.VisiblePropertyDependencyNames.Count != 0
+            && baseSeed.VisiblePropertyDependencyNames.All(members.ContainsKey);
+
+    // The expansion of a share-shaped base seed, built by SHARING the members' seeds it reads (see
+    // SolveMemberSeeds): content-empty member seeds contribute nothing, and the rest must be ONE seed.
+    // Null when the base seed does not have that shape or reads several distinct non-empty seeds.
+    private static SummarySeed? TryShareMemberSeed(SummarySeed baseSeed, RecordingMemberSeeds seeds, LevelContext level)
+    {
+        if (baseSeed.PendingReferences.Count != 0 || baseSeed.VisiblePropertyDependencyNames.Count == 0)
+            return null;
+
+        SummarySeed? shared = null;
+        SummarySeed? empty = null;
+        foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+        {
+            if (!seeds.Seeds.TryGetValue(name, out var member))
+                return null;
+            if (member.IsEmptyWithoutFolding())
+            {
+                empty ??= member;
+                continue;
+            }
+
+            if (shared is not null && !ReferenceEquals(shared, member))
+                return null;
+            shared = member;
+        }
+
+        foreach (var name in baseSeed.VisiblePropertyDependencyNames)
+            seeds.Reads.Add(name);
+        if (baseSeed.RequiredAncestorOwnedParameterNames.Count == 0 && baseSeed.OwnerQualifiedParameters.Count == 0)
+            return shared ?? empty;
+
+        // Own requirements, qualified here exactly as a full expansion qualifies them (the shared
+        // member is already qualified at this level, and qualification distributes over union).
+        var delta = new SummarySeed(
+            baseSeed.RequiredAncestorOwnedParameterNames,
+            ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+        delta.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        return shared is null ? delta : delta.AbsorbCompleted(shared);
+    }
+
+    // Exact content equality of a member's new and previous seed, without folding when structure decides.
+    private static bool SameContent(SummarySeed next, SummarySeed previous)
+    {
+        if (ReferenceEquals(next, previous))
+            return true;
+        if (previous.IsEmptyWithoutFolding())
+            return next.IsEmptyWithoutFolding();
+        return next.StructurallyEquals(previous) || next.SetEquals(previous);
+    }
+
+    /// <summary>
+    /// The member-seed map of a level whose fixed point is being solved, recording which members'
+    /// seeds an expansion READ (a <see cref="TryGetValue"/> hit): the solver re-evaluates a member
+    /// exactly when a seed it read has changed. Presence tests (<see cref="ContainsKey"/>) are
+    /// structural — which members a level declares never changes — and record nothing.
+    /// </summary>
+    private sealed class RecordingMemberSeeds(Dictionary<string, SummarySeed> seeds) : IReadOnlyDictionary<string, SummarySeed>
+    {
+        public Dictionary<string, SummarySeed> Seeds { get; } = seeds;
+
+        public HashSet<string> Reads { get; } = new(StringComparer.Ordinal);
+
+        public bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out SummarySeed value)
+        {
+            if (!Seeds.TryGetValue(key, out value))
+                return false;
+            Reads.Add(key);
+            return true;
+        }
+
+        public SummarySeed this[string key]
+        {
+            get
+            {
+                var value = Seeds[key];
+                Reads.Add(key);
+                return value;
+            }
+        }
+
+        public bool ContainsKey(string key) => Seeds.ContainsKey(key);
+
+        public IEnumerable<string> Keys => Seeds.Keys;
+
+        public IEnumerable<SummarySeed> Values => throw new NotSupportedException("A member-seed view is read by name.");
+
+        public int Count => Seeds.Count;
+
+        public IEnumerator<KeyValuePair<string, SummarySeed>> GetEnumerator()
+            => throw new NotSupportedException("A member-seed view is read by name.");
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>

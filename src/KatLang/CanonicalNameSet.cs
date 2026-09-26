@@ -35,34 +35,81 @@ internal readonly struct CanonicalNameSet : IEquatable<CanonicalNameSet>
 }
 
 /// <summary>
-/// Run-local interner of <see cref="CanonicalNameSet"/>s (FE-1): each name gets a dense integer key,
-/// and every set is the HASH-CONSED big-endian Patricia trie of its keys. A big-endian Patricia trie
-/// is unique for its key set (each branch splits on the highest bit its keys differ in), and every
-/// node is built through one table keyed by its exact structure, so equal content is always the
-/// SAME node — the property that lets a region memo keep exact content-canonical identity while
-/// comparing one reference. Adding d names to a set rebuilds only the paths the new keys touch:
-/// O(d × 31) nodes, however large the set already is. <see cref="Union(CanonicalNameSet, CanonicalNameSet)"/>
-/// and <see cref="Except(CanonicalNameSet, CanonicalNameSet)"/> memoize every branch pair they combine (a pure function of two canonical nodes), so combining a
-/// context that differs from an already combined one by a few names re-walks only the paths those
-/// names touch. Never static or ambient: one interner serves one pass run, and is garbage afterwards
-/// except for the immutable sets a run hands out.
+/// Run-local interner of <see cref="CanonicalNameSet"/>s (FE-1): the name instance of the one
+/// canonical-set engine, <see cref="CanonicalSetInterner{TElement}"/>, over ordinal names. Never
+/// static or ambient: one interner serves one pass run, and is garbage afterwards except for the
+/// immutable sets a run hands out.
 /// </summary>
 internal sealed class NameSetInterner(FrontEndTraversalObservations? observations = null)
+    : CanonicalSetInterner<string>(StringComparer.Ordinal)
+{
+    /// <summary>The empty set.</summary>
+    public static CanonicalNameSet Empty => default;
+
+    /// <summary>
+    /// <paramref name="set"/> with <paramref name="names"/> added. Names already present change
+    /// nothing, and the result is the canonical node of the combined content.
+    /// </summary>
+    public CanonicalNameSet With(CanonicalNameSet set, IEnumerable<string> names)
+        => new(WithElements(set.Root, names));
+
+    /// <summary>The canonical set of the names in <paramref name="first"/> or <paramref name="second"/>.</summary>
+    public CanonicalNameSet Union(CanonicalNameSet first, CanonicalNameSet second)
+        => new(UnionRoots(first.Root, second.Root));
+
+    /// <summary>The canonical set of the names in <paramref name="first"/> but not in <paramref name="second"/>.</summary>
+    public CanonicalNameSet Except(CanonicalNameSet first, CanonicalNameSet second)
+        => new(ExceptRoots(first.Root, second.Root));
+
+    /// <summary>Whether <paramref name="name"/> belongs to <paramref name="set"/>.</summary>
+    public bool Contains(CanonicalNameSet set, string name)
+        => ContainsElement(set.Root, name);
+
+    /// <summary>The names below <paramref name="root"/>; reads only immutable nodes.</summary>
+    internal static IEnumerable<string> EnumerateNames(Node? root) => EnumerateElements(root);
+
+    protected override void RecordElementCanonicalized() => observations?.RecordContextNameCanonicalized();
+
+    protected override void RecordOperationStep() => observations?.RecordNameSetOperationStep();
+}
+
+/// <summary>
+/// The front end's ONE canonical-set engine (FE-1, generalized by FE-4a): a run-local interner that
+/// gives each distinct element a dense integer key and represents every set as the HASH-CONSED
+/// big-endian Patricia trie of its keys. A big-endian Patricia trie is unique for its key set (each
+/// branch splits on the highest bit its keys differ in), and every node is built through one table
+/// keyed by its exact structure, so equal content is always the SAME node — the property that lets a
+/// memo keep exact content-canonical identity while comparing one reference. Element identity is the
+/// supplied comparer's EXACT equality (a hash only accelerates the key lookup), so two elements the
+/// comparer distinguishes are never merged. Adding d elements to a set rebuilds only the paths the new
+/// keys touch: O(d × 31) nodes, however large the set already is, and every other node is SHARED with
+/// the set it was built from. Union and difference memoize every branch pair they combine (a pure
+/// function of two canonical nodes), so combining sets that differ from already combined ones by a few
+/// elements re-walks only the paths those elements touch.
+///
+/// <para>Nodes are immutable once built and reference no interner state, so a set may be retained
+/// and read from any thread after its building run has finished, and retaining one never retains the
+/// interner's tables. Keys and ids are meaningful only within the interner that built them: sets from
+/// two interners must never be combined (an instance that must read another run's sets re-interns
+/// them by their elements, see <see cref="RequirementSetInterner.Adopt"/>). Never static or ambient.</para>
+/// </summary>
+internal abstract class CanonicalSetInterner<TElement>(IEqualityComparer<TElement> comparer)
+    where TElement : notnull
 {
     internal abstract class Node(int id, int count)
     {
         /// <summary>Unique per canonical node of this interner (positive).</summary>
         public int Id { get; } = id;
 
-        /// <summary>The number of names below this node.</summary>
+        /// <summary>The number of elements below this node.</summary>
         public int Count { get; } = count;
     }
 
-    private sealed class Leaf(int id, int key, string name) : Node(id, 1)
+    private sealed class Leaf(int id, int key, TElement element) : Node(id, 1)
     {
         public int Key { get; } = key;
 
-        public string Name { get; } = name;
+        public TElement Element { get; } = element;
     }
 
     private sealed class Branch(int id, int prefix, int bit, Node left, Node right) : Node(id, left.Count + right.Count)
@@ -78,27 +125,34 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
         public Node Right { get; } = right;
     }
 
-    private readonly Dictionary<string, int> _keys = new(StringComparer.Ordinal);
+    private readonly Dictionary<TElement, int> _keys = new(comparer);
     private readonly List<Leaf> _leaves = [];
     private readonly Dictionary<(int Prefix, int Bit, int Left, int Right), Branch> _branches = [];
     private readonly Dictionary<(int Lower, int Upper), Node> _unions = [];
     private readonly Dictionary<(int First, int Second), Node?> _differences = [];
     private int _lastNodeId;
 
-    /// <summary>The empty set.</summary>
-    public static CanonicalNameSet Empty => default;
+    /// <summary>Observation hook: one element fed into canonicalization (<see cref="WithElements"/>).</summary>
+    protected virtual void RecordElementCanonicalized()
+    {
+    }
+
+    /// <summary>Observation hook: one union/difference branch pair combined (a memo miss).</summary>
+    protected virtual void RecordOperationStep()
+    {
+    }
 
     /// <summary>
-    /// <paramref name="set"/> with <paramref name="names"/> added. Names already present change
-    /// nothing, and the result is the canonical node of the combined content.
+    /// The canonical root of <paramref name="set"/> with <paramref name="elements"/> added. Elements
+    /// already present change nothing.
     /// </summary>
-    public CanonicalNameSet With(CanonicalNameSet set, IEnumerable<string> names)
+    protected Node? WithElements(Node? set, IEnumerable<TElement> elements)
     {
         List<int>? keys = null;
-        foreach (var name in names)
+        foreach (var element in elements)
         {
-            observations?.RecordContextNameCanonicalized();
-            (keys ??= []).Add(KeyOf(name));
+            RecordElementCanonicalized();
+            (keys ??= []).Add(KeyOf(element));
         }
 
         if (keys is null)
@@ -112,23 +166,106 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
                 keys[distinct++] = keys[index];
         }
 
-        return new CanonicalNameSet(Union(set.Root, Build(keys, 0, distinct - 1)));
+        return UnionRoots(set, Build(keys, 0, distinct - 1));
     }
 
-    /// <summary>The canonical set of the names in <paramref name="first"/> or <paramref name="second"/>.</summary>
-    public CanonicalNameSet Union(CanonicalNameSet first, CanonicalNameSet second)
-        => new(Union(first.Root, second.Root));
+    /// <summary>The canonical root of the elements in <paramref name="first"/> or <paramref name="second"/>.</summary>
+    protected Node? UnionRoots(Node? first, Node? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null || ReferenceEquals(first, second))
+            return first;
+        if (first is Leaf firstLeaf)
+            return Insert(second, firstLeaf.Key);
+        if (second is Leaf secondLeaf)
+            return Insert(first, secondLeaf.Key);
 
-    /// <summary>The canonical set of the names in <paramref name="first"/> but not in <paramref name="second"/>.</summary>
-    public CanonicalNameSet Except(CanonicalNameSet first, CanonicalNameSet second)
-        => new(Except(first.Root, second.Root));
+        var a = (Branch)first;
+        var b = (Branch)second;
+        var pair = a.Id < b.Id ? (a.Id, b.Id) : (b.Id, a.Id);
+        if (_unions.TryGetValue(pair, out var known))
+            return known;
 
-    /// <summary>Whether <paramref name="name"/> belongs to <paramref name="set"/>.</summary>
-    public bool Contains(CanonicalNameSet set, string name)
-        => set.Root is not null && _keys.TryGetValue(name, out var key) && ContainsKey(set.Root, key);
+        RecordOperationStep();
+        Node result;
+        if (a.Bit == b.Bit && a.Prefix == b.Prefix)
+        {
+            result = MakeBranch(a.Prefix, a.Bit, UnionRoots(a.Left, b.Left)!, UnionRoots(a.Right, b.Right)!);
+        }
+        // A higher branching bit covers a wider key range: the other trie lies wholly on one side.
+        else if (a.Bit > b.Bit && MatchesPrefix(b.Prefix, a.Prefix, a.Bit))
+        {
+            result = IsClear(b.Prefix, a.Bit)
+                ? MakeBranch(a.Prefix, a.Bit, UnionRoots(a.Left, b)!, a.Right)
+                : MakeBranch(a.Prefix, a.Bit, a.Left, UnionRoots(a.Right, b)!);
+        }
+        else if (b.Bit > a.Bit && MatchesPrefix(a.Prefix, b.Prefix, b.Bit))
+        {
+            result = IsClear(a.Prefix, b.Bit)
+                ? MakeBranch(b.Prefix, b.Bit, UnionRoots(a, b.Left)!, b.Right)
+                : MakeBranch(b.Prefix, b.Bit, b.Left, UnionRoots(a, b.Right)!);
+        }
+        else
+        {
+            result = Join(a.Prefix, a, b.Prefix, b);
+        }
 
-    /// <summary>The names below <paramref name="root"/>; reads only immutable nodes.</summary>
-    internal static IEnumerable<string> EnumerateNames(Node? root)
+        _unions.Add(pair, result);
+        return result;
+    }
+
+    /// <summary>The canonical root of the elements in <paramref name="first"/> but not in <paramref name="second"/>.</summary>
+    protected Node? ExceptRoots(Node? first, Node? second)
+    {
+        if (first is null || second is null)
+            return first;
+        if (ReferenceEquals(first, second))
+            return null;
+        if (first is Leaf firstLeaf)
+            return ContainsKey(second, firstLeaf.Key) ? null : first;
+        if (second is Leaf secondLeaf)
+            return Remove(first, secondLeaf.Key);
+
+        var a = (Branch)first;
+        var b = (Branch)second;
+        if (_differences.TryGetValue((a.Id, b.Id), out var known))
+            return known;
+
+        RecordOperationStep();
+        Node? result;
+        if (a.Bit == b.Bit && a.Prefix == b.Prefix)
+        {
+            result = Collapse(a.Prefix, a.Bit, ExceptRoots(a.Left, b.Left), ExceptRoots(a.Right, b.Right));
+        }
+        // The removed trie lies wholly on one side of the wider one.
+        else if (a.Bit > b.Bit && MatchesPrefix(b.Prefix, a.Prefix, a.Bit))
+        {
+            result = IsClear(b.Prefix, a.Bit)
+                ? Collapse(a.Prefix, a.Bit, ExceptRoots(a.Left, b), a.Right)
+                : Collapse(a.Prefix, a.Bit, a.Left, ExceptRoots(a.Right, b));
+        }
+        // Only the side of the removed trie that covers this trie's keys can remove any of them.
+        else if (b.Bit > a.Bit && MatchesPrefix(a.Prefix, b.Prefix, b.Bit))
+        {
+            result = ExceptRoots(a, IsClear(a.Prefix, b.Bit) ? b.Left : b.Right);
+        }
+        else
+        {
+            // Disjoint key ranges: nothing to remove.
+            result = a;
+        }
+
+        _differences.Add((a.Id, b.Id), result);
+        return result;
+    }
+
+    /// <summary>Whether <paramref name="element"/> belongs to the set rooted at <paramref name="set"/>.</summary>
+    protected bool ContainsElement(Node? set, TElement element)
+        => set is not null && _keys.TryGetValue(element, out var key) && ContainsKey(set, key);
+
+    /// <summary>The elements below <paramref name="root"/>, in key order; reads only immutable nodes.</summary>
+    internal static IEnumerable<TElement> EnumerateElements(Node? root)
     {
         if (root is null)
             yield break;
@@ -144,19 +281,19 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
             }
             else
             {
-                yield return ((Leaf)node).Name;
+                yield return ((Leaf)node).Element;
             }
         }
     }
 
-    private int KeyOf(string name)
+    private int KeyOf(TElement element)
     {
-        if (_keys.TryGetValue(name, out var key))
+        if (_keys.TryGetValue(element, out var key))
             return key;
 
         key = _keys.Count;
-        _keys.Add(name, key);
-        _leaves.Add(new Leaf(++_lastNodeId, key, name));
+        _keys.Add(element, key);
+        _leaves.Add(new Leaf(++_lastNodeId, key, element));
         return key;
     }
 
@@ -239,7 +376,7 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
                 return Join(key, _leaves[key], branch.Prefix, branch);
 
             default:
-                throw new InvalidOperationException($"Unhandled name-set node {node.GetType().Name}.");
+                throw new InvalidOperationException($"Unhandled canonical-set node {node.GetType().Name}.");
         }
     }
 
@@ -266,97 +403,8 @@ internal sealed class NameSetInterner(FrontEndTraversalObservations? observation
                 return branch;
 
             default:
-                throw new InvalidOperationException($"Unhandled name-set node {node.GetType().Name}.");
+                throw new InvalidOperationException($"Unhandled canonical-set node {node.GetType().Name}.");
         }
-    }
-
-    private Node? Union(Node? first, Node? second)
-    {
-        if (first is null)
-            return second;
-        if (second is null || ReferenceEquals(first, second))
-            return first;
-        if (first is Leaf firstLeaf)
-            return Insert(second, firstLeaf.Key);
-        if (second is Leaf secondLeaf)
-            return Insert(first, secondLeaf.Key);
-
-        var a = (Branch)first;
-        var b = (Branch)second;
-        var pair = a.Id < b.Id ? (a.Id, b.Id) : (b.Id, a.Id);
-        if (_unions.TryGetValue(pair, out var known))
-            return known;
-
-        observations?.RecordNameSetOperationStep();
-        Node result;
-        if (a.Bit == b.Bit && a.Prefix == b.Prefix)
-        {
-            result = MakeBranch(a.Prefix, a.Bit, Union(a.Left, b.Left)!, Union(a.Right, b.Right)!);
-        }
-        // A higher branching bit covers a wider key range: the other trie lies wholly on one side.
-        else if (a.Bit > b.Bit && MatchesPrefix(b.Prefix, a.Prefix, a.Bit))
-        {
-            result = IsClear(b.Prefix, a.Bit)
-                ? MakeBranch(a.Prefix, a.Bit, Union(a.Left, b)!, a.Right)
-                : MakeBranch(a.Prefix, a.Bit, a.Left, Union(a.Right, b)!);
-        }
-        else if (b.Bit > a.Bit && MatchesPrefix(a.Prefix, b.Prefix, b.Bit))
-        {
-            result = IsClear(a.Prefix, b.Bit)
-                ? MakeBranch(b.Prefix, b.Bit, Union(a, b.Left)!, b.Right)
-                : MakeBranch(b.Prefix, b.Bit, b.Left, Union(a, b.Right)!);
-        }
-        else
-        {
-            result = Join(a.Prefix, a, b.Prefix, b);
-        }
-
-        _unions.Add(pair, result);
-        return result;
-    }
-
-    private Node? Except(Node? first, Node? second)
-    {
-        if (first is null || second is null)
-            return first;
-        if (ReferenceEquals(first, second))
-            return null;
-        if (first is Leaf firstLeaf)
-            return ContainsKey(second, firstLeaf.Key) ? null : first;
-        if (second is Leaf secondLeaf)
-            return Remove(first, secondLeaf.Key);
-
-        var a = (Branch)first;
-        var b = (Branch)second;
-        if (_differences.TryGetValue((a.Id, b.Id), out var known))
-            return known;
-
-        observations?.RecordNameSetOperationStep();
-        Node? result;
-        if (a.Bit == b.Bit && a.Prefix == b.Prefix)
-        {
-            result = Collapse(a.Prefix, a.Bit, Except(a.Left, b.Left), Except(a.Right, b.Right));
-        }
-        // The removed trie lies wholly on one side of the wider one.
-        else if (a.Bit > b.Bit && MatchesPrefix(b.Prefix, a.Prefix, a.Bit))
-        {
-            result = IsClear(b.Prefix, a.Bit)
-                ? Collapse(a.Prefix, a.Bit, Except(a.Left, b), a.Right)
-                : Collapse(a.Prefix, a.Bit, a.Left, Except(a.Right, b));
-        }
-        // Only the side of the removed trie that covers this trie's keys can remove any of them.
-        else if (b.Bit > a.Bit && MatchesPrefix(a.Prefix, b.Prefix, b.Bit))
-        {
-            result = Except(a, IsClear(a.Prefix, b.Bit) ? b.Left : b.Right);
-        }
-        else
-        {
-            // Disjoint key ranges: nothing to remove.
-            result = a;
-        }
-
-        _differences.Add((a.Id, b.Id), result);
-        return result;
     }
 
     // The canonical trie of sorted DISTINCT keys[low..high]: every key between the extremes shares

@@ -174,6 +174,10 @@ public closed record EvalError
         /// </summary>
         public IReadOnlyList<string>? RequiredParameters { get; init; }
 
+        /// <summary>Formats required names by content, independently of their collection representation.</summary>
+        public override string ToString()
+            => $"LocalOnlyProperty {{ Span = {Span}, IsResourceLimit = {IsResourceLimit}, Code = {Code}, ObjectDesc = {ObjectDesc}, PropertyName = {PropertyName}, Exposure = {Exposure}, RequiredParameters = {(RequiredParameters is null ? "" : "[" + ExprNameRenderer.BoundedJoin(RequiredParameters, ", ") + "]")} }}";
+
         public bool Equals(LocalOnlyProperty? other)
             => other is not null
                 && EqualityContract == other.EqualityContract

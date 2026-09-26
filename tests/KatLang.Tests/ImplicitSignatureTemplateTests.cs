@@ -286,7 +286,7 @@ public class ImplicitSignatureTemplateTests
     /// <summary>
     /// A design-independent guard over the public parse and run path: doubling K = L roughly doubles
     /// the allocation (the former per-owner representation quadrupled it). The editor model is left
-    /// out: its per-scope visible-symbol snapshots are the separate K × W representation (FE-4).
+    /// out: its per-scope visible-symbol snapshots are the separate K × W representation (FE-4b).
     /// </summary>
     [Theory]
     [InlineData(false)]

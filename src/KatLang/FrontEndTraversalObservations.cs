@@ -342,6 +342,124 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordExposureAlgorithmExpansion()
         => ExposureAlgorithmExpansions = checked(ExposureAlgorithmExpansions + 1);
 
+    // ── FE-4a: required-ancestor sets (PropertyExposureResolver) ──────────────
+    // The logical relation "property P requires ancestor input A" can hold K × W times while the
+    // representation stays O(K + W): these count the REPRESENTATION work — canonical-set
+    // construction and combination, level evaluations, and output lists materialized — never the
+    // logical memberships themselves.
+
+    /// <summary>
+    /// Worklist evaluations of the exposure level fixed point: one per evaluation of one
+    /// property's requirement equation. Bounded by the properties plus the re-evaluations their
+    /// changing dependencies cause — never iterations × properties.
+    /// </summary>
+    public long RequiredAncestorLevelEvaluations { get; private set; }
+
+    internal void RecordRequiredAncestorLevelEvaluation()
+        => RequiredAncestorLevelEvaluations = checked(RequiredAncestorLevelEvaluations + 1);
+
+    /// <summary>
+    /// Owner-qualified requirement elements fed into canonical-set construction (each costs one
+    /// key lookup). A property whose set equals a sibling's shares it without canonicalizing again.
+    /// </summary>
+    public long RequiredAncestorElementsCanonicalized { get; private set; }
+
+    internal void RecordRequiredAncestorElementCanonicalized()
+        => RequiredAncestorElementsCanonicalized = checked(RequiredAncestorElementsCanonicalized + 1);
+
+    /// <summary>Canonical requirement-set branch pairs combined by union or difference (memo misses).</summary>
+    public long RequiredAncestorSetOperationSteps { get; private set; }
+
+    internal void RecordRequiredAncestorSetOperationStep()
+        => RequiredAncestorSetOperationSteps = checked(RequiredAncestorSetOperationSteps + 1);
+
+    /// <summary>
+    /// Top-level open/path/visible-name requirement resolutions COMPUTED (memo misses of the
+    /// level solver's validated resolution memo): K properties reading one opened or navigated
+    /// member resolve it once while the summaries it read stand.
+    /// </summary>
+    public long RequiredAncestorResolutionComputations { get; private set; }
+
+    internal void RecordRequiredAncestorResolutionComputation()
+        => RequiredAncestorResolutionComputations = checked(RequiredAncestorResolutionComputations + 1);
+
+    /// <summary>
+    /// Distinct output lists materialized (<see cref="Property.RequiredAncestorParameters"/> name
+    /// lists and internal capture-requirement lists): one per distinct content per run, however
+    /// many properties share it.
+    /// </summary>
+    public long RequiredAncestorListsMaterialized { get; private set; }
+
+    /// <summary>Entries in the lists counted by <see cref="RequiredAncestorListsMaterialized"/> — the physical output storage.</summary>
+    public long RequiredAncestorListEntriesMaterialized { get; private set; }
+
+    internal void RecordRequiredAncestorListMaterialized(int entries)
+    {
+        RequiredAncestorListsMaterialized = checked(RequiredAncestorListsMaterialized + 1);
+        RequiredAncestorListEntriesMaterialized = checked(RequiredAncestorListEntriesMaterialized + entries);
+    }
+
+    /// <summary>
+    /// Persistent base lists built (one per distinct base a derived list extends) and their entries —
+    /// the O(W) a family of overlapping requirement sets pays once.
+    /// </summary>
+    public long RequiredAncestorPersistentBases { get; private set; }
+
+    /// <summary>Entries of the persistent base lists counted by <see cref="RequiredAncestorPersistentBases"/>.</summary>
+    public long RequiredAncestorPersistentBaseEntries { get; private set; }
+
+    internal void RecordRequiredAncestorPersistentBase(int entries)
+    {
+        RequiredAncestorPersistentBases = checked(RequiredAncestorPersistentBases + 1);
+        RequiredAncestorPersistentBaseEntries = checked(RequiredAncestorPersistentBaseEntries + entries);
+    }
+
+    /// <summary>
+    /// Lists DERIVED from a persistent base by their difference, and the difference entries inserted —
+    /// a derived list stores only those (sharing every other node with its base).
+    /// </summary>
+    public long RequiredAncestorListsDerived { get; private set; }
+
+    /// <summary>Difference entries inserted into the lists counted by <see cref="RequiredAncestorListsDerived"/>.</summary>
+    public long RequiredAncestorDerivedEntries { get; private set; }
+
+    internal void RecordRequiredAncestorListDerived(int deltaEntries)
+    {
+        RequiredAncestorListsDerived = checked(RequiredAncestorListsDerived + 1);
+        RequiredAncestorDerivedEntries = checked(RequiredAncestorDerivedEntries + deltaEntries);
+    }
+
+    /// <summary>
+    /// Worklist evaluations of the summary channel's member fixed point
+    /// (<c>PropertyDependencyGraphBuilder.CollectAlgorithmSummary</c>): one per evaluation of one
+    /// member's seed equation, bounded by members plus dependency-driven re-evaluations.
+    /// </summary>
+    public long SummaryMemberEvaluations { get; private set; }
+
+    /// <summary>Changed exposure summaries notifying an equation that read them.</summary>
+    public long RequiredAncestorReaderNotifications { get; private set; }
+
+    internal void RecordRequiredAncestorReaderNotification()
+        => RequiredAncestorReaderNotifications = checked(RequiredAncestorReaderNotifications + 1);
+
+    /// <summary>Changed member seeds notifying an equation that read them.</summary>
+    public long SummaryMemberReaderNotifications { get; private set; }
+
+    internal void RecordSummaryMemberReaderNotification()
+        => SummaryMemberReaderNotifications = checked(SummaryMemberReaderNotifications + 1);
+
+    internal void RecordSummaryMemberEvaluation()
+        => SummaryMemberEvaluations = checked(SummaryMemberEvaluations + 1);
+
+    /// <summary>
+    /// Member-seed evaluations that ran a full level expansion (neither an alias of one sibling's
+    /// seed nor a validated reuse of an equal-content expansion) — each copies its seed's content.
+    /// </summary>
+    public long SummaryMemberExpansions { get; private set; }
+
+    internal void RecordSummaryMemberExpansion()
+        => SummaryMemberExpansions = checked(SummaryMemberExpansions + 1);
+
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
 

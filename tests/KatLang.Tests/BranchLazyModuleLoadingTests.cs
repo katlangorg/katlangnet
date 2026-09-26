@@ -823,23 +823,23 @@ public class BranchLazyModuleLoadingTests
     // deferred body's property resolves a name declared at that level (the program below
     // declares `Local = Root + 1`), which is where this gate blocks the finalization.
     private sealed class GatedSummaries(
-        IReadOnlyDictionary<string, PropertyExposureResolver.AnalysisSummary> inner,
-        Action onFirstLookup) : IReadOnlyDictionary<string, PropertyExposureResolver.AnalysisSummary>
+        IReadOnlyDictionary<string, RequirementSet> inner,
+        Action onFirstLookup) : IReadOnlyDictionary<string, RequirementSet>
     {
         private Action? _onFirstLookup = onFirstLookup;
 
-        public PropertyExposureResolver.AnalysisSummary this[string key] => inner[key];
+        public RequirementSet this[string key] => inner[key];
         public IEnumerable<string> Keys => inner.Keys;
-        public IEnumerable<PropertyExposureResolver.AnalysisSummary> Values => inner.Values;
+        public IEnumerable<RequirementSet> Values => inner.Values;
         public int Count => inner.Count;
         public bool ContainsKey(string key) => inner.ContainsKey(key);
-        public bool TryGetValue(string key, out PropertyExposureResolver.AnalysisSummary value)
+        public bool TryGetValue(string key, out RequirementSet value)
         {
             Interlocked.Exchange(ref _onFirstLookup, null)?.Invoke();
             return inner.TryGetValue(key, out value!);
         }
 
-        public IEnumerator<KeyValuePair<string, PropertyExposureResolver.AnalysisSummary>> GetEnumerator()
+        public IEnumerator<KeyValuePair<string, RequirementSet>> GetEnumerator()
             => inner.GetEnumerator();
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
