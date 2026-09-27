@@ -1578,7 +1578,10 @@ public static partial class Evaluator
         // Decimal128.Min propagates NaN (any NaN element makes the result NaN),
         // so the outcome never depends on where in the collection a NaN sits —
         // a bare `<` scan would be order-dependent because every IEEE comparison
-        // against NaN is false.
+        // against NaN is false. It is IEEE 754 `minimum` for signed zero too, the
+        // frozen signed-zero extremum rule: -0 counts below 0, so a zero minimum is
+        // -0 whenever a negative zero takes part, in every element order (a `<`
+        // scan would keep whichever equal zero came first).
         var minimum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
             minimum = Decimal128.Min(numbers[i], minimum);
@@ -1600,7 +1603,9 @@ public static partial class Evaluator
         if (numbers.Count == 0)
             return new EvalError.BadArity();
 
-        // NaN-propagating for the same reason as EvalMinCounted.
+        // NaN-propagating for the same reason as EvalMinCounted, and IEEE 754
+        // `maximum` for signed zero: a zero maximum is 0 whenever an ordinary zero
+        // takes part, in every element order.
         var maximum = numbers[0];
         for (var i = 1; i < numbers.Count; i++)
             maximum = Decimal128.Max(numbers[i], maximum);

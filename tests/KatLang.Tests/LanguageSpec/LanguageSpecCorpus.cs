@@ -5130,6 +5130,31 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "min-max-signed-zero",
+            Category = "collection-builtins",
+            Source = "min((0, -0))\nmin((-0, 0))\nmax((0, -0))\nmax((-0, 0))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "-0\n-0\n0\n0",
+            ExpectedRaw = "S[-0, -0, 0, 0]",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Decimal128 signed zero is outside the Lean Int numeric model: Int has one zero, so Lean's `evalMinCounted`/`evalMaxCounted` return `0` for every program here and the sign-decided tie between `0` and `-0` is unobservable there — the runtime rule agrees with Lean on every Int value.",
+            Probes =
+            [
+                // The tie only chooses between zeros that are present: no sign is manufactured.
+                new SpecProbe("max((-0, -0))", "ok raw=-0 n=1"),
+                new SpecProbe("min((0, 0))", "ok raw=0 n=1"),
+                // It matters only where zero IS the extremum.
+                new SpecProbe("min((1, 0, -0))", "ok raw=-0 n=1"),
+                new SpecProbe("max((-1, -0, 0))", "ok raw=0 n=1"),
+                new SpecProbe("min((-1, -0, 0))", "ok raw=-1 n=1"),
+                // Ordinary ordering still treats the two zeros as one value.
+                new SpecProbe("-0 < 0", "ok raw=false n=1"),
+            ],
+            Notes = "C#-only Decimal128 rule owned by IEEE 754 `minimum`/`maximum` (`Decimal128.Min`/`Max`) in `Evaluator.EvalMinCounted`/`EvalMaxCounted`, the one implementation the synchronous dispatch, the async twin, and the planned loop's fallback all reach. Which of several SAME-SIGNED equal values with different quanta is returned (`1` vs `1.0`, `-0` vs `-0.0`) is not part of the rule. `SignedZeroExtremaTests` holds the exhaustive arrangement matrix against an order-free oracle and the route, strategy, and presentation parity.",
+            Explanation = "`-0` and `0` are one value to `==` and to the ordering operators (`-0 < 0` is `false`), but `min` and `max` decide a tie between the two zeros by sign, as IEEE 754 `minimum`/`maximum` do: `min` returns `-0` whenever a negative zero takes part in a zero minimum, and `max` returns `0` whenever an ordinary zero takes part in a zero maximum, whatever the element order. The result is always one of the elements, so `max((-0, -0))` stays `-0`, and a nonzero extremum wins as usual. KatLang spells the two zeros `0` and `-0`; there is no unary `+`.",
+        },
+        new()
+        {
             Id = "display-decimals-rounds-ties-away-from-zero",
             Category = "arithmetic",
             Source = "DisplayDecimals = 2\n0.125, 0.375, -0.125, 2.5",

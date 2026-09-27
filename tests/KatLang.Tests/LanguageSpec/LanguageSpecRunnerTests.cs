@@ -310,6 +310,8 @@ public class LanguageSpecRunnerTests
             // sign-symmetric delegated power are Decimal128 accuracy properties.
             "avg-is-the-correctly-rounded-exact-mean",
             "negative-near-one-base-power-is-sign-symmetric",
+            // The signed-zero extremum freeze (September 2026): Lean's Int has one zero.
+            "min-max-signed-zero",
         ];
 
         Assert.Equal(
@@ -337,7 +339,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 170;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 17;
+        const int MaximumCSharpOnlyCases = 18;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);
