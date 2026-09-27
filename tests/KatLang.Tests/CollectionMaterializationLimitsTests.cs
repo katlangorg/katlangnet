@@ -401,22 +401,21 @@ public class CollectionMaterializationLimitsTests
             Total(30)));
 
         // A named receiver of a collection builtin is the builtin's ordinary written
-        // argument (dot-call passes a value): `Values.count`, like `count(Values)`, demands
-        // the property's algorithm directly, so every use re-materializes the range and the
-        // same budget runs out in both spellings — and in the redundantly grouped ones,
-        // because parentheses group syntax and never route a demand through the cache.
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
+        // argument (dot-call passes a value), and a builtin argument that names a property
+        // READS it through the same cache — how a property value is consumed does not affect
+        // caching — so `Values.count`, `count(Values)`, and the redundantly grouped spellings
+        // (parentheses group syntax) all materialize the range once and fit the same budget.
+        foreach (var source in new[]
+        {
             "Values = range(1, 10)\nValues.count + Values.count + Values.count + Values.count",
-            Total(30)));
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Values = range(1, 10)\ncount(Values) + count(Values) + count(Values) + count(Values)",
-            Total(30)));
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Values = range(1, 10)\n(Values).count + (Values).count + (Values).count + (Values).count",
-            Total(30)));
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(ErrorOf(
             "Values = range(1, 10)\ncount((Values)) + count((Values)) + count((Values)) + count((Values))",
-            Total(30)));
+        })
+        {
+            var result = Eval(source, Total(30));
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        }
     }
 
     [Fact]

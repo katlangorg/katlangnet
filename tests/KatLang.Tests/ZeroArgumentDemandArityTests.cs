@@ -628,11 +628,13 @@ public class ZeroArgumentDemandArityTests
         Assert.Equal(3, zeroParameterCache.Requests.GetValueOrDefault("A"));
         Assert.Equal(1, zeroParameterCache.Evaluations.GetValueOrDefault("A"));
 
-        // A builtin VALUE slot demands its argument DIRECTLY and bypasses the entry, in
-        // the dotted spelling exactly as in the written one — unchanged by this rule.
+        // A builtin VALUE slot READS the entry like every other consumer, in the dotted
+        // spelling exactly as in the written one (how a property value is consumed does not
+        // affect caching): two requests, ONE evaluation.
         var (dottedCache, dotted) = RunCounting("Only(*xs) = xs\nOnly.count, count(Only)");
         Assert.Equal([0m, 0m], Atoms(dotted));
-        Assert.Equal(0, dottedCache.Requests.GetValueOrDefault("Only"));
+        Assert.Equal(2, dottedCache.Requests.GetValueOrDefault("Only"));
+        Assert.Equal(1, dottedCache.Evaluations.GetValueOrDefault("Only"));
     }
 
     /// <summary>
@@ -709,7 +711,8 @@ public class ZeroArgumentDemandArityTests
         // any hidden preliminary evaluation. Never assume random values are distinct.
         Assert.Equal([reference[0], reference[0], reference[0], reference[1]], bareValues);
         Assert.Equal(reference, calledValues);
-        Assert.Equal(reference, Lines(Run("Only(*xs) = " + draw +
+        // Builtin VALUE slots read the one cached draw in every spelling, like bare reads.
+        Assert.Equal([reference[0], reference[0], reference[0], reference[1]], Lines(Run("Only(*xs) = " + draw +
             "\nfirst(Only), Only.first, first((Only)), " + draw)));
     }
 

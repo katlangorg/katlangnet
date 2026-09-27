@@ -17,11 +17,15 @@ namespace KatLang;
 /// </summary>
 internal sealed class ParameterActivation
 {
-    private ParameterActivation(ValEnv values, AlgEnv algorithms, CountedParamEnv counted)
+    private ParameterActivation(ValEnv values, AlgEnv algorithms, CountedParamEnv counted,
+        object valueEnvironmentIdentity, object algorithmEnvironmentIdentity, object countedEnvironmentIdentity)
     {
         Values = values;
         Algorithms = algorithms;
         Counted = counted;
+        ValueEnvironmentIdentity = valueEnvironmentIdentity;
+        AlgorithmEnvironmentIdentity = algorithmEnvironmentIdentity;
+        CountedEnvironmentIdentity = countedEnvironmentIdentity;
     }
 
     public ValEnv Values { get; }
@@ -29,6 +33,12 @@ internal sealed class ParameterActivation
     public AlgEnv Algorithms { get; }
 
     public CountedParamEnv Counted { get; }
+
+    // The binding context at OWNER entry, not the eventual consumer's context.
+    // Parameterless property reads retain it; explicit calls bind fresh environments.
+    internal object ValueEnvironmentIdentity { get; }
+    internal object AlgorithmEnvironmentIdentity { get; }
+    internal object CountedEnvironmentIdentity { get; }
 
     /// <summary>
     /// Captures the bindings of <paramref name="names"/> from the three tiers of a binding
@@ -40,7 +50,8 @@ internal sealed class ParameterActivation
         => new(
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.AlgEnv, names, static binding => binding.Name),
-            FilterOwned(ctx.CountedParamEnv, names, static binding => binding.Name));
+            FilterOwned(ctx.CountedParamEnv, names, static binding => binding.Name),
+            Evaluator.ValueEnvironmentCacheIdentity(values), ctx.AlgEnv, ctx.CountedParamEnv);
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
@@ -101,14 +112,14 @@ public static partial class Evaluator
     /// <see cref="ParameterActivation"/> and the entered context carries the activated head
     /// scope (<see cref="EvalCtx.HeadScope"/>): the scope the body's own declaring level
     /// resolves to, the level captured-parameter reads and the accessibility law find its
-    /// activation on, and the parent of every scope wired under the head. A parameterless
-    /// body is pushed with no head scope; its site scope is its plain declaring scope.
+    /// activation on, and the parent of every scope wired under the head. A parameterless owner with local properties also retains its entry context for
+    /// their cache identity. Other parameterless bodies need no activated head scope.
     /// Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>).
     /// </summary>
     internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, ValEnv values)
     {
         var names = algorithm.Params;
-        if (names.Count == 0)
+        if (names.Count == 0 && !algorithm.Properties.Any(static property => property.Exposure != PropertyExposure.Exported))
             return ctx.Push(algorithm);
 
         var headScope = new ScopeCtx(algorithm.Parent, algorithm.Opens, algorithm.Properties, names)

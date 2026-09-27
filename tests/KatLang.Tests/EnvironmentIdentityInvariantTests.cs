@@ -11,7 +11,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// The evaluator's environment tiers are plain lists whose REFERENCE IDENTITY is the
 /// binding-context identity of the run-scoped caches: a LOCAL-ONLY zero-argument property
-/// entry is keyed by the identities of the three tiers at the access
+/// entry is keyed by the identities of the three tiers at its declaring owner's entry
 /// (<see cref="ZeroArgPropertyCacheKey"/>), and a deconstruction group's shared bind by
 /// the caller's three environment identities (<see cref="DeconstructionBindingExecution"/>).
 /// <c>Evaluator.Concat</c> — the ONE helper that builds a new binding context's tier by

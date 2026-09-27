@@ -562,21 +562,20 @@ public class MetamorphicPhase3FamilyTests
 
     /// <summary>
     /// MEASURED cache-surface fact, pinned so the template table cannot quietly claim otherwise:
-    /// a bare property reference in a builtin's collection slot records no zero-argument property
-    /// cache request at all — in the written spelling <c>sum(MmA)</c> and, because dot-call passes
-    /// the receiver as the ordinary leading argument, in the dotted spelling <c>MmA.sum</c> alike —
-    /// while the captured receiver <c>(MmA).sum</c> reads the property in value position and is
-    /// served from the cache on its second use.
+    /// a bare property reference in a builtin's collection slot READS the zero-argument property
+    /// cache exactly like a value-position read — in the written spelling <c>sum(MmA)</c>, in the
+    /// dotted spelling <c>MmA.sum</c> (dot-call passes the receiver as the ordinary leading
+    /// argument), in the redundantly grouped spellings <c>(MmA).sum</c> and <c>sum((MmA))</c>
+    /// (parentheses group syntax), and as the row of a brace-block receiver <c>{MmA}.sum</c>:
+    /// two uses make two requests and the second one hits.
     ///
-    /// <para>All three forms produce identical values, so this is a missed reuse rather than a
-    /// defect — the repository documents the cache as something property-style access <i>may</i>
-    /// use. It is recorded here because the cached-versus-rebuilt family would otherwise silently
-    /// claim a reuse it demonstrably does not get, because the two spellings of the builtin call
-    /// must never drift apart again, and because a future change in either direction should be a
-    /// deliberate, visible one.</para>
+    /// <para>How a property value is consumed does not affect caching (September 27 2026). Before
+    /// that, the builtin slot demanded the property's algorithm directly and recorded no request
+    /// at all, so the consumed value depended on the consumer for random- and host-backed
+    /// properties; the templates now demand reuse evidence from every spelling.</para>
     /// </summary>
     [Fact]
-    public void BuiltinCollectionSlot_DoesNotConsultTheCache_InAnySpelling()
+    public void BuiltinCollectionSlot_ReadsTheCache_InEverySpelling()
     {
         var argument = ObserveWithEvidence("MmA = range(1, 6)\nsum(MmA), sum(MmA)", enableOptimizations: true);
         var receiver = ObserveWithEvidence("MmA = range(1, 6)\nMmA.sum, MmA.sum", enableOptimizations: true);
@@ -584,27 +583,14 @@ public class MetamorphicPhase3FamilyTests
         var groupedArgument = ObserveWithEvidence("MmA = range(1, 6)\nsum((MmA)), sum((MmA))", enableOptimizations: true);
         var blockRow = ObserveWithEvidence("MmA = range(1, 6)\n{MmA}.sum, {MmA}.sum", enableOptimizations: true);
 
-        var argumentCache = Assert.IsType<MetamorphicCacheEvidence>(argument.CacheEvidence);
-        var receiverCache = Assert.IsType<MetamorphicCacheEvidence>(receiver.CacheEvidence);
-        var groupedCache = Assert.IsType<MetamorphicCacheEvidence>(grouped.CacheEvidence);
-        var groupedArgumentCache = Assert.IsType<MetamorphicCacheEvidence>(groupedArgument.CacheEvidence);
-        var blockRowCache = Assert.IsType<MetamorphicCacheEvidence>(blockRow.CacheEvidence);
+        foreach (var observation in new[] { argument, receiver, grouped, groupedArgument, blockRow })
+        {
+            var cache = Assert.IsType<MetamorphicCacheEvidence>(observation.CacheEvidence);
+            Assert.Equal(2, cache.Requests);
+            Assert.Equal(1, cache.Hits);
+        }
 
-        Assert.Equal(0, argumentCache.Requests);
-        Assert.Equal(0, argumentCache.Hits);
-        Assert.Equal(0, receiverCache.Requests);
-        Assert.Equal(0, receiverCache.Hits);
-        // PARENTHESES GROUP SYNTAX: `(MmA).sum` IS `MmA.sum` and `sum((MmA))` IS `sum(MmA)`
-        // — a direct demand in every spelling; only a genuine VALUE-position read (here the
-        // row of a brace-block receiver) goes through the cache.
-        Assert.Equal(0, groupedCache.Requests);
-        Assert.Equal(0, groupedCache.Hits);
-        Assert.Equal(0, groupedArgumentCache.Requests);
-        Assert.Equal(0, groupedArgumentCache.Hits);
-        Assert.Equal(2, blockRowCache.Requests);
-        Assert.Equal(1, blockRowCache.Hits);
-
-        // The values are the same in every spelling; only the reuse differs.
+        // The values are the same in every spelling, and so is the work.
         Assert.Equal(receiver.Semantic, argument.Semantic);
         Assert.Equal(grouped.Semantic, argument.Semantic);
         Assert.Equal(groupedArgument.Semantic, argument.Semantic);
@@ -614,6 +600,8 @@ public class MetamorphicPhase3FamilyTests
         Assert.Equal(receiver.EvaluationSteps, argument.EvaluationSteps);
         Assert.Equal(grouped.MaterializedItems, argument.MaterializedItems);
         Assert.Equal(grouped.EvaluationSteps, argument.EvaluationSteps);
+        Assert.Equal(groupedArgument.MaterializedItems, argument.MaterializedItems);
+        Assert.Equal(groupedArgument.EvaluationSteps, argument.EvaluationSteps);
     }
 
     /// <summary>A cumulative budget cannot bind equally on the two forms, so those modes are rejected by name.</summary>

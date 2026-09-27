@@ -1424,8 +1424,23 @@ inductive ZeroArgPropertyAccessKind where
   deriving Repr, BEq
 
 /-- Key of the per-run zero-parameter property cache — and with it the cache's
-    semantic LAW (C#: `ZeroArgPropertyCacheKey`). The scope of a stored value
-    follows the binding's exposure classification:
+    semantic LAW (C#: `ZeroArgPropertyCacheKey`).
+
+    THE RULE: a zero-parameter property is evaluated once per run for each
+    resolved property binding; repeated VALUE access to that same binding reuses
+    the result, a shadowing property is a different binding with its own entry,
+    and an explicit call `A()` evaluates afresh, neither reading nor replacing
+    the entry. CACHE IDENTITY FOLLOWS SEMANTIC BINDING IDENTITY, never the
+    spelling of the name: the key is the resolved binding (its declaring scope
+    and declaration), so two properties that happen to share a name never share
+    an entry. HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING: the
+    decision to reuse or evaluate belongs to the property ACCESS, and every
+    consumer — an operator, a comparison, a list element, a selection, a user
+    call argument, a builtin VALUE slot (`sum(A)`, `A.sum`, `if(c, A, B)`, a
+    loop's initial state, `reduce`'s initial accumulator), the `.string`
+    intrinsic's receiver, a callback body — receives the value that access
+    produced (`resolveArgAlgExpr`, `evalDotStringReceiverValue`). The scope of a
+    stored value follows the binding's exposure classification:
 
     * an EXPORTED binding is self-contained — its value depends on no input that
       an enclosing owner's call binds — so the binding context at the access is
@@ -1434,9 +1449,10 @@ inductive ZeroArgPropertyAccessKind where
       iteration, or explicit outer call. Its environment components are `none`.
     * a LOCAL-ONLY binding reads an input an enclosing owner's call binds
       through the dynamically threaded environments, so its value is a
-      function of the binding context: the key carries the three environments
-      at the access (`some`) plus a fresh binding-context identity, and two
-      activations never share an entry, even if all their values are equal.
+      function of its DECLARING owner's binding context, retained by the existing
+      lexical activation. Nested consumers never split that entry, and distinct
+      owner calls never share it even with equal values. Scopes without retained
+      activations keep the host environment fallback.
 
     Lean keys use structural representations (`reprStr`) because the model has
     immutable AST values rather than C# object identities. Run preparation
@@ -1485,6 +1501,7 @@ structure ParameterActivation where
   values : ValEnv
   algorithms : AlgEnv
   counted : CountedParamEnv
+  bindingContext : Nat := 0
   deriving Repr
 
 /-- Per-run evaluator state. The zero-parameter property cache is part of the
@@ -2252,13 +2269,14 @@ def recordParameterActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv
   let activation : ParameterActivation := {
     values := env.filter (fun b => names.contains b.fst)
     algorithms := ctx.algEnv.filter (fun b => names.contains b.fst)
-    counted := ctx.countedParamEnv.filter (fun b => names.contains b.fst) }
+    counted := ctx.countedParamEnv.filter (fun b => names.contains b.fst)
+    bindingContext := ctx.bindingContext }
   set { state with
     lexicalActivations := state.lexicalActivations.push activation }
   pure id
 
 def enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM EvalCtx := do
-  if a.params.isEmpty then pure (ctx.push a)
+  if a.params.isEmpty && a.props.all (fun p => p.exposure.isExported) then pure (ctx.push a)
   else
     let id <- recordParameterActivation a.params ctx env
     pure { ctx.push a with headScope := some (a.asScopeCtx.withActivation id) }
@@ -2488,10 +2506,17 @@ structure CallableCallItem where
   error? : Option Error := none
   skipMissingValue : Bool := false
   source? : Option Expr := none
-  /-- The parameter's ALGORITHM-channel binding, carried beside the value-side
-      `algorithm?` (`ResolvedArgumentAlgorithm.callable?`). -/
+  /-- The named binding's ALGORITHM-channel identity (a parameter's or a
+      property reference's), carried beside the value-side `algorithm?`
+      (`ResolvedArgumentAlgorithm.callable?`). -/
   callable? : Option Algorithm := none
   deriving Repr
+
+/-- The algorithm a call item NAMES (`ResolvedArgumentAlgorithm.invoked`): the
+    identity the zero-argument value-demand law judges, while a VALUE demand
+    evaluates the value-side `algorithm?`. -/
+def CallableCallItem.named? (item : CallableCallItem) : Option Algorithm :=
+  item.callable?.or item.algorithm?
 
 /-- One supplied item prepared for parameter binding: its value view
     (`value?`), its algorithm view where resolvable, and a retained value
@@ -3097,20 +3122,29 @@ structure ResolvedArgumentAlgorithm where
       value-reified arguments (prepared callback data, expanded spread items,
       dotted receivers), whose algorithms carry no parameters. -/
   source? : Option Expr := none
-  /-- A parameter argument bound on BOTH channels resolves to its value side
-      (`algorithm`, a wrapper that reads the bound value, so a VALUE slot never
-      re-runs the argument's body) and keeps its ALGORITHM-channel binding here.
-      A slot that INVOKES its argument — a sequence callback or a loop step —
-      calls `invoked`, so `Apply(f, xs) = map(xs, f)` applies the callable `f`
-      exactly as `map(xs, Cnt)` does even when `Cnt` also satisfies a
-      zero-argument value demand. `none` for every other argument, whose
+  /-- An argument that NAMES a binding resolves to its value side (`algorithm`,
+      a wrapper that performs the ordinary value read of the written name) and
+      keeps the named algorithm here: a parameter bound on BOTH channels (the
+      wrapper reads the bound value, so a VALUE slot never re-runs the
+      argument's body), and a lexical property reference `A` (the wrapper is the
+      ordinary property read `A` — the zero-argument property access with its run
+      cache — so a VALUE slot never re-runs the property's body: HOW A PROPERTY
+      VALUE IS CONSUMED DOES NOT AFFECT CACHING, and `sum(A)` reads exactly the
+      value `A` reads). A slot that INVOKES its argument — a sequence callback or
+      a loop step — calls `invoked`, so `Apply(f, xs) = map(xs, f)` applies the
+      callable `f` exactly as `map(xs, Cnt)` does even when `Cnt` also satisfies
+      a zero-argument value demand; the zero-argument value-demand law and every
+      signature classification read `invoked` too, because they judge the named
+      callable, not its value wrapper. `none` for every other argument, whose
       `algorithm` already is its algorithm-channel identity. -/
   callable? : Option Algorithm := none
   deriving Repr
 
-/-- The algorithm an ALGORITHM slot (a sequence callback or a loop step)
-    invokes: a parameter's algorithm-channel binding when it has one, otherwise
-    the resolved algorithm. VALUE slots read `algorithm`. -/
+/-- The algorithm an argument NAMES: the callable an ALGORITHM slot (a sequence
+    callback or a loop step) invokes and the identity the zero-argument
+    value-demand law and signature classification judge — a named binding's
+    algorithm-channel identity when it has one, otherwise the resolved
+    algorithm. VALUE slots read `algorithm`. -/
 def ResolvedArgumentAlgorithm.invoked (arg : ResolvedArgumentAlgorithm) : Algorithm :=
   arg.callable?.getD arg.algorithm
 
@@ -3873,21 +3907,33 @@ def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
 
 /-- The cache key of one property-style access (see `ZeroArgPropertyCacheKey`
     for the law it encodes): an exported binding's key carries no environment
-    components, a local-only binding's key carries all three. -/
-def zeroArgPropertyCacheKey (accessKind : ZeroArgPropertyAccessKind)
+    components; a local-only binding uses its declaring owner's retained binding
+    context, falling back to the access environments only for unactivated host scopes. -/
+def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (ctx : EvalCtx) (env : ValEnv)
+    (ownerBindingContext : Option Nat := none)
     : ZeroArgPropertyCacheKey :=
   let bindingContextFree := binding.exposure.isExported
   {
-    accessKind := if bindingContextFree then .lexical else accessKind,
-    owner := reprStr (cacheScopeShape owner.asScopeCtx),
+    accessKind := .lexical,
+    owner := reprStr owner.declarationId ++ reprStr (cacheScopeShape owner.asScopeCtx),
     propertyName := binding.name,
     propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
-    valEnv := if bindingContextFree then none else some (reprStr env),
-    algEnv := if bindingContextFree then none else some (reprStr ctx.algEnv),
-    countedParamEnv := if bindingContextFree then none else some (reprStr ctx.countedParamEnv),
-    bindingContext := if bindingContextFree then none else some ctx.bindingContext
+    valEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr env),
+    algEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr ctx.algEnv),
+    countedParamEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr ctx.countedParamEnv),
+    bindingContext := if bindingContextFree then none else some (ownerBindingContext.getD ctx.bindingContext)
   }
+
+/-- The context at the declaring owner's entry, independent of the consumer. A
+    parameterless property read preserves it; an explicit call binds a fresh one. -/
+partial def propertyOwnerBindingContext (scope : Option ScopeCtx) (state : EvalState) : Option Nat :=
+  match scope with
+  | none => none
+  | some level =>
+      match level.activation.bind (fun id => state.lexicalActivations[id]?) with
+      | some activation => some activation.bindingContext
+      | none => propertyOwnerBindingContext level.parent state
 
 def requireCallableValues (items : List CallableCallItem)
     : EvalM (List Result) := do
@@ -3976,10 +4022,11 @@ def internalSequenceBuiltinSuffixArgMetadataError
     Error.badArity)
 
 /-- After binding chooses a VALUE position, apply the shared demand rejection to
-    an unevaluated callable using its written source. Preserve a valid value's
-    body error; callback positions never consult this helper. -/
+    an unevaluated callable using its written source — judging the callable the
+    item NAMES (`CallableCallItem.named?`), never its value wrapper. Preserve a
+    valid value's body error; callback positions never consult this helper. -/
 def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
-  match item.algorithm? with
+  match item.named? with
   | some alg => (zeroArgumentDemandError? item.source? alg).or item.error?
   | none => item.error?
 
@@ -4700,28 +4747,44 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
 
 
 /-- Resolve one builtin argument expression to its algorithm, paired with the
-    parameter's ALGORITHM-channel binding when the argument is a parameter
-    reference resolved to its value side (`ResolvedArgumentAlgorithm.callable?`).
-    A parameter with a value binding resolves to a wrapper that reads that value,
-    so a VALUE slot never re-runs the argument's body; the algorithm binding rides
-    along for the slots that INVOKE their argument. A parameter bound only on the
-    value channel has no algorithm binding (`resolveAlg` reports `notAnAlgorithm`),
-    so it carries none. -/
+    named ALGORITHM-channel identity when the argument is a name resolved to its
+    value side (`ResolvedArgumentAlgorithm.callable?`):
+    * a parameter with a value binding resolves to a wrapper that reads that
+      value, so a VALUE slot never re-runs the argument's body. A parameter bound
+      only on the value channel has no algorithm binding (`resolveAlg` reports
+      `notAnAlgorithm`), so it carries none;
+    * a lexical property reference `A` resolves to a wrapper that performs the
+      ordinary property read `A` — the zero-argument property access with its
+      run cache (`evalZeroArgPropertyAccessCounted`) — so a VALUE slot never
+      re-runs the property's body. HOW A PROPERTY VALUE IS CONSUMED DOES NOT
+      AFFECT CACHING: `sum(A)`, `A.sum`, `if(c, A, B)`, `take(A, 2)`, a loop's
+      initial state, and every other builtin VALUE slot read exactly the value
+      the value-position `A` reads, from the one entry of A's resolved binding.
+      The property's own algorithm is NOT the value channel: builtins never
+      receive a property thunk they could re-run for its value.
+    Either way the named algorithm rides along for the slots that INVOKE their
+    argument (an invocation is an explicit call, which never reads the property
+    cache — the `A` versus `A()` rule) and for the zero-argument value-demand
+    law, which judges the named callable. -/
 def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv)
     : EvalM (Algorithm × Option Algorithm) := do
   let shouldUseValueSide <- match e with
     | .param name => do
         let (parameterCtx, values) <- parameterContext name ctx env
         pure ((parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome)
+    | .resolve _ => pure true
     | _ => pure false
   if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e then
     pure (wireToCaller ctx (Algorithm.ofExpr e), none)
   else if shouldUseValueSide then
+    -- A name that resolves to no algorithm carries no algorithm channel (a
+    -- value-only parameter); a genuine lookup failure propagates at once, exactly
+    -- as it always did for an argument (`isLiftableArgResolutionError`).
     let callable? <-
       match <- evalAttempt (resolveAlg e ctx) with
       | .ok a => pure (some a)
-      | .error (.notAnAlgorithm _) => pure none
-      | .error err => .error err
+      | .error err =>
+          if isLiftableArgResolutionError err then pure none else .error err
     pure (wireToCaller ctx (Algorithm.ofExpr e), callable?)
   else
     match <- evalAttempt (resolveAlg e ctx) with
@@ -5317,11 +5380,15 @@ mutual
       (`if(true, Inc, 0)` with `Inc(x)` is the property arity error, never
       `unknownName x` from inside `Inc`), while a callable that CAN (a property,
       a captured-binding thunk, a written value, a collecting-only signature)
-      evaluates through the shared demand funnel. Laziness is untouched: a slot is
-      demanded only when the builtin selects it. C#: `EvalResolvedArgumentCounted`. -/
+      evaluates through the shared demand funnel. The law judges the callable
+      the argument NAMES (`invoked`); the accepted demand evaluates the VALUE
+      channel (`algorithm`), which for a named property is the ordinary property
+      read — so the slot reads the property's cached value and never re-runs its
+      body. Laziness is untouched: a slot is demanded only when the builtin
+      selects it. C#: `EvalResolvedArgumentCounted`. -/
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    match zeroArgumentDemandError? arg.source? arg.algorithm with
+    match zeroArgumentDemandError? arg.source? arg.invoked with
     | some err => .error err
     | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
 
@@ -5339,8 +5406,9 @@ mutual
       (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx)
       (env : ValEnv) : EvalM CountedResult := do
     if isCacheableZeroArgPropertyAlgorithm resolvedAlgorithm then
-      let key := zeroArgPropertyCacheKey accessKind owner binding ctx env
       let state <- get
+      let key := zeroArgPropertyCacheKey accessKind owner binding ctx env
+        (propertyOwnerBindingContext resolvedAlgorithm.parent state)
       match ZeroArgPropertyCache.lookup state.zeroArgPropertyCache key with
       | some cached => pure cached
       | none =>
@@ -5468,13 +5536,18 @@ mutual
           -- self-referential thunk, that stray lookup re-enters the same builtin call and
           -- never settles. Keep the algorithm unevaluated so it is applied with bound
           -- parameters later; only value-shaped arguments are materialized eagerly.
-          let callableShaped := match alg with
+          -- The shape is the NAMED callable's (`invoked`), never its value wrapper's:
+          -- a named collecting-only callback (`map(xs, Only)`) stays unevaluated,
+          -- while a named zero-parameter property is read through its value side —
+          -- the ordinary property read, served from the run cache.
+          let callableShaped := match arg.invoked with
             | .conditional _ _ _ _ => true
-            | _ => !(Algorithm.parameterPatterns alg).isEmpty
+            | named => !(Algorithm.parameterPatterns named).isEmpty
           let head <-
             if callableShaped then do
               let item : CallableCallItem :=
-                { value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source? }
+                { value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source?,
+                  callable? := arg.callable? }
               -- The descriptor binds this slot's role before later argument effects.
               -- Only VALUE positions demand newly eligible callables; callbacks do not.
               let item <- if isValueSlot slot then demandSequenceBuiltinCallItemValue item ctx env else pure item
@@ -5498,17 +5571,19 @@ mutual
       position. Call-item assembly leaves a callable-shaped CALLBACK item
       unevaluated (a CALLBACK slot must receive the algorithm, never a value), so
       the demand happens HERE, once the descriptor has decided the slot is a
-      value: an item the ONE law accepts (`acceptsZeroArgumentValueDemand` — a
-      collecting-only signature such as `Only` alongside every zero-parameter
-      property) is evaluated through the shared demand funnel, and every other
-      item is returned untouched for `sequenceBuiltinValueDemandError?` to
-      report. An item that was already evaluated, or whose evaluation already
-      failed, is never re-entered. C#: `DemandSequenceBuiltinCallItemValue`. -/
+      value: an item whose NAMED callable (`CallableCallItem.named?`) the ONE law
+      accepts (`acceptsZeroArgumentValueDemand` — a collecting-only signature
+      such as `Only` alongside every zero-parameter property) is evaluated
+      through the shared demand funnel on its VALUE side — for a named property
+      the ordinary property read with its run cache — and every other item is
+      returned untouched for `sequenceBuiltinValueDemandError?` to report. An
+      item that was already evaluated, or whose evaluation already failed, is
+      never re-entered. C#: `DemandSequenceBuiltinCallItemValue`. -/
   partial def demandSequenceBuiltinCallItemValue (item : CallableCallItem)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem := do
     match item.value?, item.error?, item.algorithm? with
     | none, none, some alg =>
-        if acceptsZeroArgumentValueDemand alg then
+        if acceptsZeroArgumentValueDemand (item.callable?.getD alg) then
           match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
           | .ok counted => pure { item with value? := some counted.fst }
           | .error err => pure { item with error? := some err }
@@ -5600,11 +5675,13 @@ mutual
     -- rejected from its signature at this boundary — never by entering its body
     -- and reinterpreting the failure — with reduce's dedicated hint, the same
     -- rejection the dotted `Values.reduce(Add)` form reports for a visibly
-    -- parameterized reducer.
+    -- parameterized reducer. The law and the hint judge the callable the
+    -- argument NAMES (`invoked`); the accepted demand reads the VALUE side, so a
+    -- named property initial is its ordinary cached property read.
     let initOut <-
-      match zeroArgumentDemandError? initial.source? initial.algorithm with
+      match zeroArgumentDemandError? initial.source? initial.invoked with
       | some err =>
-          if (Algorithm.params initial.algorithm).isEmpty then .error err
+          if (Algorithm.params initial.invoked).isEmpty then .error err
           else .error reduceInitialAccumulatorRequiresValueError
       | none => evalZeroArgumentDemandOutputCounted initial.algorithm ctx env
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
@@ -6307,6 +6384,51 @@ mutual
       if items.length = 0 then pure ()
       else .error (Error.arityMismatch 0 items.length)
 
+  /-- The VALUE the ordinary-dot `string` intrinsic converts, demanded after the
+      zero-argument value-demand law accepted the resolved receiver. HOW A
+      PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING, so the intrinsic reads
+      its receiver exactly as a value position reads it:
+      * a lexical property reference `A` is read through the zero-argument
+        property access of its resolved binding (the run cache), so `A.string`
+        converts the very value `A` reads;
+      * a structurally navigated member `Obj.A` is read through the structural
+        property access of the member it selects, so `Obj.A.string` converts the
+        very value `Obj.A` reads;
+      * a parameter is the ordinary value-position parameter read — its bound
+        value when it has one — so a forwarded property value is never re-run
+        through the parameter's algorithm channel (`F(v) = v.string` converts the
+        value `F(A)` passed);
+      * every other receiver shape (a written block, a capture, a dot result) is
+        its resolved algorithm's zero-argument demand, as before.
+      C#: `EvalDotStringReceiverAlgOutput`. -/
+  partial def evalDotStringReceiverValue (target : Expr) (targetAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    match target with
+    | .resolve n =>
+        match ctx.callStack with
+        | owner :: _ =>
+            let resolved <- lookupLexicalProperty owner n ctx
+            let counted <- evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
+            pure counted.fst
+        | [] => evalZeroArgumentDemandOutput targetAlg ctx env
+    | .param _ => eval target ctx env
+    | .dotMember receiver member _ none =>
+        if member = "string" then evalZeroArgumentDemandOutput targetAlg ctx env
+        else
+          -- The same navigation `resolveDotReceiver` just performed: a member the
+          -- container DECLARES is the selected structural binding (its
+          -- accessibility was already enforced there); anything else is a dot result.
+          match <- evalAttempt (resolveDotReceiver receiver ctx) with
+          | .ok container =>
+              match Algorithm.lookupPropDefAny? container member with
+              | some p =>
+                  let accessed := (flatBinderUserEquivalent? targetAlg).getD targetAlg
+                  let counted <- evalZeroArgPropertyAccessCounted .structural container p accessed ctx env
+                  pure counted.fst
+              | none => evalZeroArgumentDemandOutput targetAlg ctx env
+          | .error _ => evalZeroArgumentDemandOutput targetAlg ctx env
+    | _ => evalZeroArgumentDemandOutput targetAlg ctx env
+
   /-- Evaluate dotCall: a.f or a.f(args). The member result is a value boundary:
       structural zero-arg property access and collection builtins re-count to
       `Result.valueCount`, and user/lexical member calls re-count via
@@ -6338,12 +6460,10 @@ mutual
       Lean receives the same dotMember and the same structural-first dispatch
       as for ordinary `a.f`.)
 
-      Optimization note for executable evaluators: repeated references to the
-      same eligible structural or lexical property may be reused within one
-      top-level run when the property is fully wired and requires no further
-      arguments in the current evaluation context. This is intentionally local
-      to one run and must not be interpreted as memoizing arbitrary calls or as
-      changing the semantic behavior of dotCall itself. -/
+      A structurally navigated zero-argument member read goes through the
+      zero-argument property access of the member's binding (the run cache,
+      `evalZeroArgPropertyAccessCounted`), exactly like the lexical read of the
+      same binding; an explicit member call `Obj.A()` does not. -/
   partial def evalDotCallCounted (target : Expr) (name : Ident)
       (fallback : Expr) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -6361,11 +6481,14 @@ mutual
         -- signature before its body is entered: `Inc.string` with `Inc(x)` is
         -- the property arity error, a navigated parameterized member the bare
         -- one, and a written parameterized block `unresolvedImplicitParams`.
+        -- The accepted receiver is then READ like a value position reads it
+        -- (`evalDotStringReceiverValue`): a named property through its cached
+        -- property access, a parameter through its bound value.
         -- C#: `EvalDotStringReceiverAlgOutput`.
         match zeroArgumentDemandError? (some target) targetAlg with
         | some err => .error err
         | none => pure ()
-        let val <- evalZeroArgumentDemandOutput targetAlg ctx env
+        let val <- evalDotStringReceiverValue target targetAlg ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
       else

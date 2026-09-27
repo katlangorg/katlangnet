@@ -347,7 +347,7 @@ def zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls : Bool :=
 #guard zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls
 
 -- A LOCAL-ONLY property reads an input its owner's call binds, so its key carries
--- the environments at the access: two activations of `Outer` never share `P`,
+-- the declaring owner's retained context: two activations of `Outer` never share `P`,
 -- while the two reads within one activation do.
 def zeroArgLocalOnlyPropertyPerActivationRoot : Algorithm :=
   algPrivate [] [] [
@@ -366,7 +366,8 @@ def zeroArgLocalOnlyPropertyIsKeyedByBindingContext : Bool :=
       let pEntries := state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")
       pEntries.length == 2
         && pEntries.all (fun entry =>
-          entry.fst.valEnv.isSome && entry.fst.algEnv.isSome && entry.fst.countedParamEnv.isSome)
+          entry.fst.bindingContext.isSome && entry.fst.valEnv.isNone
+            && entry.fst.algEnv.isNone && entry.fst.countedParamEnv.isNone)
   | _ => false
 
 #guard zeroArgLocalOnlyPropertyIsKeyedByBindingContext
@@ -488,19 +489,22 @@ def zeroArgDistinctIdenticalDeclarations : Bool :=
 
 -- Host DAGs express sharing explicitly. Without that identity these are two
 -- inline declaration sites, just as two written `{ A = 4 }` blocks are.
-def zeroArgInlineDeclarationIdentity (shared : Bool) : Bool :=
+def zeroArgInlineDeclarationIdentity (shared : Bool) (shareOwner : Bool := true) : Bool :=
   let member := publicProp "A" (alg [] [] [] [.num 4])
   let member := if shared then { member with identity := some (.shared 0) } else member
   let box := alg [] [] [member] []
+  let box := if shared && shareOwner then box.withDeclarationId (some (.shared 1)) else box
   let root := alg [] [] [] [
     .dotCall (.algorithmExpr box) "A" none,
     .dotCall (.algorithmExpr box) "A" none]
   match KatLang.runResultWithState (.algorithmExpr root) with
-  | .ok (_, state) => state.zeroArgPropertyCache.length == (if shared then 1 else 2)
+  | .ok (_, state) => state.zeroArgPropertyCache.length == (if shared && shareOwner then 1 else 2)
   | _ => false
 
 #guard zeroArgInlineDeclarationIdentity false
 #guard zeroArgInlineDeclarationIdentity true
+-- Sharing only a member does not merge two distinct declaring owners.
+#guard zeroArgInlineDeclarationIdentity true false
 
 -- An explicit outer call `B()` re-evaluates B on every call, and the property-style
 -- `A` inside it keeps its one run-wide entry across both calls.

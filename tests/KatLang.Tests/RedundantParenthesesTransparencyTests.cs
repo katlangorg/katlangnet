@@ -281,25 +281,27 @@ public class RedundantParenthesesTransparencyTests
     // ── Cache and value demand: grouping never changes the access path ──────
 
     [Theory]
-    [InlineData("A.count, A.count", 2)]
-    [InlineData("(A).count, (A).count", 2)]
-    [InlineData("((A)).count, ((A)).count", 2)]
-    [InlineData("count((A)), count((A))", 2)]
-    [InlineData("sum(A), sum((A))", 2)]
+    [InlineData("A.count, A.count", 1)]
+    [InlineData("(A).count, (A).count", 1)]
+    [InlineData("((A)).count, ((A)).count", 1)]
+    [InlineData("count((A)), count((A))", 1)]
+    [InlineData("sum(A), sum((A))", 1)]
     [InlineData("A, (A), ((A))", 1)]
     [InlineData("X = (A)\nX, X, A", 1)]
     [InlineData("X = A\nY = (A)\nX == Y, (X) == (Y)", 1)]
-    [InlineData("if(true, A, 0), if(true, (A), 0)", 2)]
-    [InlineData("A.string, (A).string", 2)]
+    [InlineData("if(true, A, 0), if(true, (A), 0)", 1)]
+    [InlineData("A.string, (A).string", 1)]
     [InlineData("A(), (A)()", 2)]
+    [InlineData("A, A(), (A), (A)()", 3)]
     [InlineData("[A, (A)], [(A)]:0", 1)]
     [InlineData("Two(x, y) = [x, y]\nTwo(A, (A))", 1)]
     public async Task HostBackedProperty_IsDemandedIdenticallyInEverySpelling(string output, int expectedCalls)
     {
-        // A builtin value slot and an explicit call demand the property directly (one host
-        // call per demand); a value-position read is served from the zero-argument cache
-        // (one host call per run). Redundant parentheses pick neither path — they are not
-        // there. The async host operation genuinely yields, so the suspended twin is
+        // Every VALUE consumer — a value-position read and a builtin value slot alike (how a
+        // property value is consumed does not affect caching) — is served from the
+        // zero-argument cache (one host call per run), while an explicit call evaluates
+        // afresh (one host call per call). Redundant parentheses pick neither path — they
+        // are not there. The async host operation genuinely yields, so the suspended twin is
         // measured too.
         foreach (var asynchronous in new[] { false, true })
         {
@@ -323,20 +325,22 @@ public class RedundantParenthesesTransparencyTests
     }
 
     [Theory]
-    [InlineData("sum(R) == sum(R)", "false")]
-    [InlineData("sum((R)) == sum((R))", "false")]
-    [InlineData("(R).sum == (R).sum", "false")]
-    [InlineData("R.sum == R.sum", "false")]
-    [InlineData("((R)).sum == sum(R)", "false")]
+    [InlineData("sum(R) == sum(R)", "true")]
+    [InlineData("sum((R)) == sum((R))", "true")]
+    [InlineData("(R).sum == (R).sum", "true")]
+    [InlineData("R.sum == R.sum", "true")]
+    [InlineData("((R)).sum == sum(R)", "true")]
+    [InlineData("R == sum(R)", "true")]
     [InlineData("R == R", "true")]
     [InlineData("(R) == (R)", "true")]
     [InlineData("R == ((R))", "true")]
     [InlineData("X = (R)\nX == R", "true")]
     [InlineData("R() == R()", "false")]
     [InlineData("(R)() == R()", "false")]
-    [InlineData("R.string == R.string", "false")]
-    [InlineData("(R).string == (R).string", "false")]
-    [InlineData("if(true, R, 0) == if(true, (R), 0)", "false")]
+    [InlineData("sum(R) == R()", "false")]
+    [InlineData("R.string == R.string", "true")]
+    [InlineData("(R).string == (R).string", "true")]
+    [InlineData("if(true, R, 0) == if(true, (R), 0)", "true")]
     [InlineData("X = if(true, (R), 0)\nX == X", "true")]
     public async Task RandomBackedProperty_DrawsIdenticallyInEverySpelling(string output, string expected)
     {

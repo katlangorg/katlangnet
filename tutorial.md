@@ -555,7 +555,7 @@ katlang eval "Math.RandomInt(1, 7), Math.Random(0, 1)" --random-seed 42
 
 Seeding is host configuration only: KatLang source has no seeding syntax, and a property named `RandomSeed` is an ordinary property that seeds nothing.
 
-A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property read as a value (`A`, `A.sum`, `F(A)`) is drawn once and reused while an explicit `A()` and every builtin value slot that demands the algorithm directly (`sum(A)`, `if(true, A, 0)`, `A.string` — see [Zero-Parameter Property Caching](#zero-parameter-property-caching)) draw again, callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
+A seed reproduces a *stream*, not individual calls: both random operations, in every spelling, draw from one stream in evaluation order, so the values a call receives depend on which random calls executed before it. The ordinary evaluation rules decide that — arguments evaluate left to right and exactly once, only the selected branch of `if` runs, a zero-parameter property is drawn once and that value is reused by everything that consumes it (`A`, `sum(A)`, `A.sum`, `if(true, A, 0)`, `A.string`, `F(A)`) while every explicit `A()` draws again (see [Zero-Parameter Property Caching](#zero-parameter-property-caching)), callbacks draw in sequence order, and the output rows draw before a `DisplayDecimals` property is evaluated. Removing an earlier random call therefore generally changes the later values. Unseeded evaluation stays nondeterministic, and KatLang randomness is not cryptographically secure.
 
 ### Lowercase Math Aliases
 
@@ -1061,7 +1061,9 @@ What a call returns is a separate question from how a dot-call receiver is hande
 
 ### Zero-Parameter Property Caching
 
-When a body always produces the same value, both forms show that value, but the call shape controls reuse. During one evaluation run, repeated property-style reads of the same self-contained zero-parameter property reuse its first successful result:
+A zero-parameter property is evaluated once per run for each resolved property binding. Repeated value access to that same binding reuses the result. A shadowing property is a different binding and has its own cached value. `A()` explicitly requests a fresh evaluation.
+
+When a body always produces the same value, the reuse is invisible — both forms show that value:
 
 ```
 Fun = 1 + 2
@@ -1130,7 +1132,35 @@ Host-backed properties follow the same rule. Every independent evaluation starts
 
 A recursive read entered before any result is stored still evaluates the body. The first successful completion supplies the cache entry; reads already in progress finish with their own results and do not replace it.
 
-The guarantee concerns property-value reads: a bare `A` in value position, `A + 0`, `A == A`, a list element `[A]`, a user call argument `F(A)` (and its dotted spelling `A.F`, which is the same call), all read A's cached value. Passing a name as an ALGORITHM argument follows the receiving callable's rules instead, and every builtin VALUE slot demands the algorithm directly rather than reading the property: `if(true, A, 0)`, the collection arguments `sum(A)`, `count(A)`, `take(A, n)`, `first(A)`, `atoms(A)`, `range(A, A)` — in the dotted spelling exactly as in the written one, because `A.sum` IS `sum(A)` — a loop's initial state and `repeat` count, the `reduce` initial accumulator, and the `.string` receiver (`A.string`) each evaluate A's body again and neither read nor store its entry. Parentheses change none of this, because parentheses group syntax and never introduce a boundary: `(A)` is `A`, so `if(true, (A), 0)`, `sum((A))`, `(A).sum`, and `(A).string` are the same direct demands as their bare spellings. Where a property draws randomness or calls a host operation this is observable — `sum(A)`, `sum((A))`, and `A.sum` all draw again, while `A == A` compares one cached draw with itself — so read such a property through a genuine value position (for example a helper property `V = A`, whose own demand reads `A` from the cache: `V.sum` reuses A's draw). (Whether a builtin's value slot should read the cache at all is a documented open design question; today every spelling of a builtin call agrees, grouped or not.)
+How the value is used does not matter. A bare `A`, `A + 0`, `A == A`, a list element `[A]`, a selection `A:0`, a user algorithm's argument `F(A)` (and its dotted spelling `A.F`), a built-in operation in either spelling (`sum(A)`, `A.sum`, `count(A)`, `A.max`, `first(A)`, `take(A, 2)`), the branch `if(c, A, B)` selects, a loop's starting state, `reduce`'s starting accumulator, `A.string`, and a callback that reads `A` all receive the same cached value. Parentheses change nothing, because `(A)` is `A`. Passing `A` to an algorithm passes that value, so the algorithm cannot evaluate `A` again either: with `Show(v) = v.string`, `Show(A)` converts the value `A` already has. Only an explicit call evaluates the body again — `A()` itself, or calling an algorithm that was passed along (`Call0(f) = f()` with `Call0(A)`), or a built-in operation that calls its argument as a callback or loop step.
+
+```
+Dice = Math.RandomInt(1, 7), Math.RandomInt(1, 7)
+
+Dice          # one pair, drawn once for this run
+Dice.sum      # the sum of that same pair
+Dice.max      # the larger die of that same pair
+Dice()        # an explicit call: a fresh pair, which does not replace the cached one
+Dice          # still the first pair
+```
+
+The cached value belongs to the property, not to its name. A property that shadows another one with the same name is a different property with its own cached value, and each is still evaluated only once:
+
+```
+Score = 10
+Round = {
+    Score = 20        # shadows the outer Score: a different property, cached separately
+    Score, Score.string
+}
+Score, Round, Score.string
+```
+
+**Results:**
+```
+10
+(20, 20)
+10
+```
 
 A property body may produce several items, but property-style access is a value boundary: the caller observes them as one sequence value. Caller-site spread (`value*`) turns that value back into separate output rows:
 

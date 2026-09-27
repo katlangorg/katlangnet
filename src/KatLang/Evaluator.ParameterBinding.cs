@@ -37,17 +37,29 @@ public static partial class Evaluator
         EvalError? ValueError,
         CountedResult? PreparedValue = null,
         Expr? Source = null,
-        Algorithm? Callable = null);
+        Algorithm? Callable = null)
+    {
+        /// <summary>
+        /// The algorithm this item NAMES (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>):
+        /// the identity the zero-argument value-demand law judges, while a VALUE demand
+        /// evaluates the value-side <see cref="Algorithm"/>. Lean: <c>CallableCallItem.named?</c>.
+        /// </summary>
+        public Algorithm? NamedAlgorithm => Callable ?? Algorithm;
+    }
 
     internal readonly record struct ResolvedArgumentAlgorithm(
         Algorithm? Algorithm,
         bool SpreadsSequence)
     {
         /// <summary>
-        /// A parameter argument bound on BOTH channels resolves to its value side
-        /// (<see cref="Algorithm"/>, a wrapper that reads the bound value, so a VALUE slot
-        /// never re-runs the argument's body) and keeps its ALGORITHM-channel binding here.
-        /// A slot that INVOKES its argument — a sequence callback or a loop step — calls
+        /// An argument that NAMES a binding resolves to its value side (<see cref="Algorithm"/>,
+        /// a wrapper that performs the ordinary value read of the written name) and keeps the
+        /// named algorithm here: a parameter bound on BOTH channels (the wrapper reads the bound
+        /// value, so a VALUE slot never re-runs the argument's body), and a lexical property
+        /// reference <c>A</c> (the wrapper is the ordinary property read — the zero-argument
+        /// property access with its run cache — so a VALUE slot never re-runs the property's
+        /// body: how a property value is consumed does not affect caching). A slot that
+        /// INVOKES its argument — a sequence callback or a loop step — calls
         /// <see cref="InvokedAlgorithm"/>, so <c>Apply(f, xs) = map(xs, f)</c> applies the
         /// callable <c>f</c> exactly as <c>map(xs, Cnt)</c> does even when <c>Cnt</c> also
         /// satisfies a zero-argument value demand. <c>null</c> for every other argument,
@@ -57,10 +69,11 @@ public static partial class Evaluator
         public Algorithm? Callable { get; init; }
 
         /// <summary>
-        /// The algorithm an ALGORITHM slot (a sequence callback or a loop step) invokes:
-        /// the parameter's algorithm-channel binding when it has one, otherwise the resolved
-        /// algorithm. VALUE slots read <see cref="Algorithm"/>. Lean:
-        /// <c>ResolvedArgumentAlgorithm.invoked</c>.
+        /// The algorithm this argument NAMES: the callable an ALGORITHM slot (a sequence
+        /// callback or a loop step) invokes, and the identity the zero-argument value-demand
+        /// law and every signature classification judge — the named binding's algorithm when
+        /// it has one, otherwise the resolved algorithm. VALUE slots demand
+        /// <see cref="Algorithm"/>. Lean: <c>ResolvedArgumentAlgorithm.invoked</c>.
         /// </summary>
         public Algorithm? InvokedAlgorithm => Callable ?? Algorithm;
 

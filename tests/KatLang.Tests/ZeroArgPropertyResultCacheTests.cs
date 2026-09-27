@@ -140,8 +140,9 @@ public class ZeroArgPropertyResultCacheTests
         var algorithmEnv = new object();
         var countedParamEnv = new object();
         var runIdentity = new object();
+        var owner = NewAlgorithm();
         var first = new ZeroArgPropertyExecution(
-            NewAlgorithm(),
+            owner,
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
@@ -149,7 +150,7 @@ public class ZeroArgPropertyResultCacheTests
             countedParamEnv,
             runIdentity);
         var second = new ZeroArgPropertyExecution(
-            NewAlgorithm(),
+            owner with { },
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
@@ -206,9 +207,12 @@ public class ZeroArgPropertyResultCacheTests
         IReadOnlyList<Property> parentProperties = [NewProperty("Parent")];
         IReadOnlyList<Expr> ownerOpens = [new Expr.Num(3m)];
         IReadOnlyList<Property> ownerProperties = [binding];
+        // Rebuilding a runtime view preserves its declaration token. A freshly
+        // constructed algorithm is a distinct declaration even with shared lists.
+        var owner = NewAlgorithm();
 
         Algorithm.User RebuildOwner()
-            => NewAlgorithm() with
+            => owner with
             {
                 Parent = new ScopeCtx(
                     new ScopeCtx(null, grandparentOpens, grandparentProperties),
@@ -544,12 +548,13 @@ public class ZeroArgPropertyResultCacheTests
     }
 
     [Fact]
-    public void Evaluator_ZeroArgPropertyCaching_BareDotReceiverIsDemandedLikeTheWrittenBuiltinArgument()
+    public void Evaluator_ZeroArgPropertyCaching_BareDotReceiverReadsTheCacheLikeTheWrittenBuiltinArgument()
     {
         // Dot-call passes the receiver as the ordinary leading argument, so a bare named
-        // receiver of a collection builtin is demanded exactly like the written argument:
-        // `Values.count` and `count(Values)` both demand the algorithm directly through the
-        // zero-argument value-demand law and neither read nor store its cache entry.
+        // receiver of a collection builtin is read exactly like the written argument:
+        // `Values.count` and `count(Values)` both read the property through the ordinary
+        // zero-argument property access — two requests, ONE store, one hit — because how
+        // a property value is consumed does not affect caching.
         var dotted = RunCached("Values = range(1, 5)\nValues.count + Values.count");
         var written = RunCached("Values = range(1, 5)\ncount(Values) + count(Values)");
 
@@ -557,10 +562,10 @@ public class ZeroArgPropertyResultCacheTests
         Assert.False(written.Result.IsError);
         Assert.Equal([10m], dotted.Result.Value.ToAtoms());
         Assert.Equal([10m], written.Result.Value.ToAtoms());
-        Assert.Equal(0, dotted.Snapshot.TotalRequests);
-        Assert.Equal(0, written.Snapshot.TotalRequests);
-        Assert.Equal(0, dotted.Snapshot.Stores);
-        Assert.Equal(0, written.Snapshot.Stores);
+        Assert.Equal(2, dotted.Snapshot.TotalRequests);
+        Assert.Equal(2, written.Snapshot.TotalRequests);
+        Assert.Equal(1, dotted.Snapshot.Stores);
+        Assert.Equal(1, written.Snapshot.Stores);
     }
 
     [Fact]
@@ -572,28 +577,27 @@ public class ZeroArgPropertyResultCacheTests
             V.count + V.count
             """;
         var (result, snapshot) = RunCached(source);
-        // The semantic point is the access SHAPE: the receiver property's body reads
-        // `Values` in value position through lexical resolution, never through
-        // structural owner keying (the builtin's collection slot demands `V` itself
-        // directly, in the bare spelling exactly as in the redundantly grouped
-        // `(V).count` — parentheses group syntax). Plain Run reaches the cache
-        // through the counted lexical wiring point (plain = value projection of
-        // counted, M8); the second read is served from the entry, and the
-        // structural kinds stay quiet.
+        // The semantic point is the access SHAPE: the builtin's collection slot reads `V`,
+        // and `V`'s body reads `Values`, both in value position through lexical
+        // resolution, never through structural owner keying — in the bare spelling exactly
+        // as in the redundantly grouped `(V).count` (parentheses group syntax). Plain Run
+        // reaches the cache through the counted lexical wiring point (plain = value
+        // projection of counted, M8): the first `V.count` misses `V` and then `Values`, the
+        // second is served from `V`'s entry, and the structural kinds stay quiet.
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
 
         Assert.False(result.IsError);
         Assert.Equal([10m], result.Value.ToAtoms());
-        Assert.Equal(2, snapshot.TotalRequests);
+        Assert.Equal(3, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
-        Assert.Equal(1, snapshot.Misses);
-        Assert.Equal(1, snapshot.Stores);
-        Assert.Equal(2, countedLexical.Requests);
+        Assert.Equal(2, snapshot.Misses);
+        Assert.Equal(2, snapshot.Stores);
+        Assert.Equal(3, countedLexical.Requests);
         Assert.Equal(1, countedLexical.Hits);
-        Assert.Equal(1, countedLexical.Misses);
-        Assert.Equal(1, countedLexical.Stores);
+        Assert.Equal(2, countedLexical.Misses);
+        Assert.Equal(2, countedLexical.Stores);
         Assert.Equal(0, structural.Requests);
         Assert.Equal(0, countedStructural.Requests);
         AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);

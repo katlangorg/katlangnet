@@ -402,8 +402,11 @@ public class BudgetConservationTests
 
     /// <summary>
     /// A rejected enter must not evaluate what the region would have evaluated. Source
-    /// level: <c>count(A)</c> reaches <c>A</c> only through the depth-charged builtin
-    /// argument funnel, so at one level below the boundary the property is never accessed.
+    /// level: <c>count(A)</c> reaches <c>A</c> through the depth-charged builtin argument
+    /// funnel and then A's own zero-argument property access (a builtin argument that names
+    /// a property reads it like any value position), and A's body reaches <c>B</c> through
+    /// B's access. At each boundary the rejected enter consults nothing beneath it: the
+    /// cache is never asked for a property whose access level was refused.
     /// </summary>
     [Fact]
     public void RejectedArgumentDepthEnter_DoesNotEvaluateTheArgumentBody()
@@ -412,11 +415,12 @@ public class BudgetConservationTests
 
         var admitted = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
         var (okResult, okBudget) = Evaluator.RunCountedObserved(
-            ast, new EvaluationLimits { MaxDepth = 2 }, zeroArgPropertyResultCache: admitted);
+            ast, new EvaluationLimits { MaxDepth = 3 }, zeroArgPropertyResultCache: admitted);
         Assert.False(okResult.IsError);
-        Assert.Equal(1, admitted.Accesses);
+        Assert.Equal(2, admitted.Accesses);
         AssertConserved(okBudget, "admitted builtin argument funnel");
 
+        // Argument level admitted, A's access refused: nothing is accessed.
         var rejected = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
         var (failResult, failBudget) = Evaluator.RunCountedObserved(
             ast, new EvaluationLimits { MaxDepth = 1 }, zeroArgPropertyResultCache: rejected);
@@ -424,6 +428,15 @@ public class BudgetConservationTests
         Assert.IsType<EvalError.EvaluationDepthExceeded>(failResult.Error);
         Assert.Equal(0, rejected.Accesses);
         AssertConserved(failBudget, "rejected builtin argument funnel");
+
+        // A's access admitted, B's refused: only A is accessed, and B's body never runs.
+        var nested = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
+        var (nestedResult, nestedBudget) = Evaluator.RunCountedObserved(
+            ast, new EvaluationLimits { MaxDepth = 2 }, zeroArgPropertyResultCache: nested);
+        Assert.True(nestedResult.IsError);
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(nestedResult.Error));
+        Assert.Equal(1, nested.Accesses);
+        AssertConserved(nestedBudget, "rejected nested property access");
     }
 
     // ── B. Balanced exactly once: structured failure ─────────────────────────

@@ -138,8 +138,6 @@ public class CacheKeyDifferentialTests
         // Each single changed semantic dimension: MISS.
         var changed = new[]
         {
-            ("access shape", ZeroArgPropertyCacheKey.FromExecution(
-                baseline with { AccessKind = ZeroArgPropertyAccessKind.Structural })),
             ("owner", ZeroArgPropertyCacheKey.FromExecution(
                 baseline with { Owner = NewAlgorithm() with { Properties = [baseline.Binding] } })),
             ("binding", ZeroArgPropertyCacheKey.FromExecution(
@@ -156,6 +154,9 @@ public class CacheKeyDifferentialTests
 
         foreach (var (dimension, key) in changed)
             Assert.False(comparer.Equals(baselineKey, key), $"changed {dimension} must miss");
+
+        Assert.True(comparer.Equals(baselineKey, ZeroArgPropertyCacheKey.FromExecution(
+            baseline with { AccessKind = ZeroArgPropertyAccessKind.Structural })));
     }
 
     /// <summary>

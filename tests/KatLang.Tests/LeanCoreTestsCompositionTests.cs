@@ -32,6 +32,7 @@ public class LeanCoreTestsCompositionTests
         "ComparisonChains",
         "SelectionValueBoundary",
         "ExplicitValueOpening",
+        "PropertyCacheConsumers",
     ];
 
     [Fact]

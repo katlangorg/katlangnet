@@ -71,13 +71,14 @@ public class SeededEvaluationOrderTests
     [Fact]
     public void LocalOnlyProperty_IsDrawnOncePerBindingContext()
     {
-        // Tutorial contract: a property capturing a parameter is cached per binding
-        // context; property-style reads in one context share one draw, and every
-        // explicit call opens a NEW context whose A is drawn afresh.
-        var d = Draws(4);
+        // B() evaluates B fresh, but its ordinary reads of A still select F's
+        // existing binding. A new activation of F establishes a different A.
+        var d = Draws(3);
         var atoms = Run("F(x) = {\n    A = R() + x\n    B = A, A\n    B, B, B(), B()\n}\nF(0), R()");
 
-        Assert.Equal([d[0], d[0], d[0], d[0], d[1], d[1], d[2], d[2], d[3]], atoms);
+        Assert.Equal([d[0], d[0], d[0], d[0], d[0], d[0], d[0], d[0], d[1]], atoms);
+        Assert.Equal([d[0], d[0], d[1], d[1], d[2]],
+            Run("F(x) = {\n A = R() + x\n A, A\n}\nF(0), F(0), R()"));
     }
 
     [Fact]

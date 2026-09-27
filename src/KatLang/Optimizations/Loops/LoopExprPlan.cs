@@ -28,9 +28,9 @@ internal closed record LoopExprPlan(Expr Source)
     /// (<c>T</c>). Mirrors the generic zero-argument property access: charged as one
     /// dynamic invocation on EVERY read and memoized per iteration exactly like the run's
     /// zero-argument property cache, whose entries are keyed by the iteration's
-    /// environment identities. Passed DIRECTLY as a planned <c>if</c> argument it is
-    /// instead the property's own algorithm on the argument's algorithm channel — see
-    /// <c>LoopOptimizer.EvalLoopIfArgument</c>.
+    /// environment identities. Passed DIRECTLY as a planned <c>if</c> argument it is the
+    /// same read inside that argument's evaluation level — how a property value is
+    /// consumed does not affect caching (see <c>EvalLoopIfArgument</c>).
     /// </summary>
     public sealed record TempSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
 
@@ -41,8 +41,8 @@ internal closed record LoopExprPlan(Expr Source)
     /// parameters, so the planned body reads the same slots). Mirrors the generic user
     /// call — <c>A</c> versus <c>A()</c> is core KatLang semantics, a call bypasses the
     /// property cache — so the body is evaluated FRESH on every call under the user-call
-    /// chokepoint, with the caller's temp memo suspended for the call's duration
-    /// (<see cref="LoopRunFrame.SuspendTempMemo"/>), inside the generic call-expression
+    /// chokepoint, keeping the declaring step's memo for sibling property reads,
+    /// inside the generic call-expression
     /// diagnostic boundary. <paramref name="Callee"/> is the ORIGINAL callee expression
     /// and <paramref name="LimitSpan"/> the span a rejected enter is stamped with
     /// (<see cref="Evaluator.UserCallLimitSpan"/>), both retained so attribution cannot
@@ -528,10 +528,9 @@ internal static partial class LoopOptimizer
     /// invocation is charged through the SAME helper with the same limit-span rule, the
     /// body is evaluated FRESH on every call (a call bypasses the property cache — the
     /// <c>A</c> versus <c>A()</c> rule), and the caller's per-iteration temp memo is
-    /// suspended for the call's duration because the generic callee runs in fresh
-    /// environments, whose identities key every LOCAL-ONLY property entry
-    /// (<see cref="LoopRunFrame.SuspendTempMemo"/>); an EXPORTED temp read inside the
-    /// call keeps hitting the run cache exactly like the generic callee's read. Only the
+    /// retained for sibling reads because they resolve to the same declaring step
+    /// activation, even though the called temp itself runs fresh; an EXPORTED temp
+    /// keeps hitting the run cache exactly like the generic callee's read. Only the
     /// RETURNED result is decorated by the boundary, exactly like the planned <c>if</c>.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopTempCall(
@@ -559,12 +558,7 @@ internal static partial class LoopOptimizer
     private static EvalResult<PlannedLoopValue> EvalFreshLoopTemp(
         LoopRunFrame frame,
         int index)
-    {
-        using (frame.SuspendTempMemo())
-        {
-            return EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame);
-        }
-    }
+        => EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame);
 
     /// <summary>
     /// Evaluates one planned node. Compiler-exhaustive over the closed
@@ -752,17 +746,17 @@ internal static partial class LoopOptimizer
     /// One planned <c>if</c> argument — the condition, or the selected branch. MIRROR of
     /// the generic builtin argument funnel (<c>Evaluator.EvalResolvedArgumentCounted</c>
     /// over <c>EvalArgumentAlgOutputCounted</c>): EVERY argument the generic <c>if</c>
-    /// evaluates is one algorithm re-entered under one depth-only argument-evaluation
-    /// level — a literal, a parameter, or an expression is wrapped in a value thunk, and
-    /// a bare reference to a zero-parameter local property resolves to that property's
-    /// OWN algorithm on the argument's algorithm channel. The level is charged through
-    /// the SAME helper as the generic funnel, so nested planned <c>if</c>s stack levels
-    /// exactly like the generic composition. The algorithm-channel case is the one place
-    /// a temp is evaluated without the zero-argument property access: the generic
-    /// evaluator runs the property's body directly (fresh, no cache, no invocation
-    /// charge), so a <see cref="LoopExprPlan.TempSlot"/> passed DIRECTLY as an argument
-    /// evaluates its body plan here rather than reading the memoized slot. An unselected
-    /// branch is never evaluated and charges nothing, on either strategy.
+    /// evaluates is one VALUE-side algorithm re-entered under one depth-only
+    /// argument-evaluation level — a literal, a parameter, or an expression is wrapped in
+    /// a value thunk, and a bare reference to a zero-parameter local property resolves to
+    /// its value side, the ordinary property READ (how a property value is consumed does
+    /// not affect caching). The level is charged through the SAME helper as the generic
+    /// funnel, so nested planned <c>if</c>s stack levels exactly like the generic
+    /// composition, and a <see cref="LoopExprPlan.TempSlot"/> argument is then the
+    /// ordinary planned temp read (<see cref="EvalLoopTempSlot"/>: the charged dynamic
+    /// invocation plus the run cache or per-iteration memo), exactly as the generic
+    /// wrapper's property read is. An unselected branch is never evaluated and charges
+    /// nothing, on either strategy.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopIfArgument(
         LoopExprPlan argument,
@@ -773,9 +767,7 @@ internal static partial class LoopOptimizer
 
         using (level)
         {
-            return argument is LoopExprPlan.TempSlot tempSlot
-                ? EvalLoopExprPlan(frame.Template.TempPlans[tempSlot.Index].Plan, frame)
-                : EvalLoopExprPlan(argument, frame);
+            return EvalLoopExprPlan(argument, frame);
         }
     }
 

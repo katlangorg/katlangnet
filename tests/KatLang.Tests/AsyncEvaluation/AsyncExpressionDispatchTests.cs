@@ -219,8 +219,10 @@ public class AsyncExpressionDispatchTests
     /// One program per recursive variant and child position, each placing a
     /// zero-argument property access (the async-sensitive construct) INSIDE
     /// that child position. Argument-slot programs use a small expression spine
-    /// (<c>P + 0</c>) so the access resolves through the cache seam rather than
-    /// the builtin-argument funnel, which bypasses the cache by design.
+    /// (<c>P + 0</c>) so the access sits inside that child position's own expression;
+    /// a bare name in a builtin argument slot reaches the same cache seam through the
+    /// argument's value channel (how a property value is consumed does not affect
+    /// caching).
     /// </summary>
     public static TheoryData<string, string> AsyncSensitiveChildPrograms() => new()
     {

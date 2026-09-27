@@ -407,14 +407,13 @@ remove the property-access machinery from one side and make the comparison about
 cached side must record at least `uses - 1` cache hits and the rebuilt side none at all, which turns
 "distinct names cannot share an entry" from an argument into a measurement.
 
-Two entries in the table are there because they were **measured not to cache**: a bare property reference
-in a builtin's collection slot records no cache request at all, whether written as the ordinary argument
-(`sum(MmA)`) or as the dotted receiver (`MmA.sum`) — dot-call passes the receiver as the ordinary leading
-argument, and the slot demands the property's algorithm directly. The captured receiver `(MmA).sum` reads
-the cache, which is why the other uses in the table are written `(MmA).count`. Values are identical either
-way, so this is a missed reuse rather than a defect — the repository documents the cache as something
-property-style access *may* use — and the templates say so instead of claiming reuse they demonstrably do
-not get (`BuiltinCollectionSlot_DoesNotConsultTheCache_InEitherSpelling`).
+Three entries in the table pin the cache in a builtin's collection slot: a bare property reference there
+reads the cache like every other consumer, whether written as the ordinary argument (`sum(MmA)`), as the
+dotted receiver (`MmA.sum` — dot-call passes the receiver as the ordinary leading argument), or redundantly
+grouped (`(MmA).sum`), because how a property value is consumed does not affect caching. They were once
+**measured not to cache** (the slot demanded the property's algorithm directly, a missed reuse that made the
+consumed value depend on the consumer); since September 27 2026 they demand reuse evidence like every other
+entry (`BuiltinCollectionSlot_ReadsTheCache_InEverySpelling`).
 
 Cumulative budgets are **rejected** by name (`rebuilt-form-does-not-share-the-cumulative-budget`) for the
 same reason Group A excludes them. Per-*object* ceilings are kept: both forms build the same individual

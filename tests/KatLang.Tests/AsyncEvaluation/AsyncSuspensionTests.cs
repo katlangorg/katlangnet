@@ -25,16 +25,18 @@ public class AsyncSuspensionTests
         { "filter-callback", "Threshold = 2\nP(x) = x > Threshold\n[1, 2, 3, 4].filter(P)" },
         // The callback body touches `Zero` per step and the initial accumulator is an
         // expression whose spine resolves `Base` — both route through the property
-        // cache seam. (A bare property name in a builtin ARGUMENT position resolves
-        // through the argument funnel and deliberately bypasses the cache — the
-        // documented builtin-argument reuse gap — so it would not exercise the seam.)
+        // cache seam.
         { "reduce-callback", "Base = 100\nZero = 0\nR(el, acc) = acc + el + Zero\n[1, 2, 3].reduce(R, Base * 1)" },
+        // A bare property name in a builtin ARGUMENT position reads through the SAME seam:
+        // the argument's value channel is the ordinary property read (how a property value
+        // is consumed does not affect caching), in every slot kind and both spellings.
+        { "builtin-argument-reads", "Base = 100\nZero = 0\nXs = [1, 2, 3]\nR(el, acc) = acc + el\nXs.reduce(R, Base), sum(Xs), Xs.max, if(Zero == 0, Base, Zero), Base.string, repeat(Keep, 0, Base)\nKeep(s) = s" },
         { "deconstruction", "Src = (1, (2, 3), 4)\nx, y, z = Src\ny" },
         { "structural-dot", "Lib = {public V = 41}\nLib.V + 1" },
         // A named receiver of a BUILTIN is that builtin's written argument (dot-call
-        // passes a value), demanded through the argument funnel like `count(A)` — in the
-        // grouped spelling `(A).count` exactly as in the bare one (parentheses group
-        // syntax) — so the extension-fallback seam is exercised through a USER callee,
+        // passes a value), read through the argument's value channel like `count(A)` — in
+        // the grouped spelling `(A).count` exactly as in the bare one (parentheses group
+        // syntax); the extension-fallback seam is also exercised through a USER callee,
         // whose parameter binding reads the receiver property in value position, and
         // through a receiver PROPERTY whose body reads the cached value.
         { "lexical-dot-fallback", "A = (1, 2, 3)\nTotal(v) = v.count\nA.Total" },
@@ -42,10 +44,10 @@ public class AsyncSuspensionTests
         { "fluent-spread", "A = (1, 2, 3)\nTotal(*v) = v.sum\nA*.Total" },
         { "spread-capture", "A = (1, 2)\nB = (A*, A*)\nB.count" },
         { "clause-family", "F(0) = Zero\nF(n) = NonZero\nZero = 100\nNonZero = 200\nF(0), F(7)" },
-        // Spine-shaped branch/condition arguments so the property resolutions happen
-        // inside expression evaluation (cache seam), not in bare builtin-argument
-        // position (argument funnel, which bypasses the cache by design).
+        // Spine-shaped branch/condition arguments place the property resolutions inside
+        // expression evaluation; the bare branch spelling reads through the same seam.
         { "if-builtin", "Cond = 1\nT = 10\nE = 20\nif(Cond > 0, T * 1, E * 1)" },
+        { "if-builtin-bare-branch", "Cond = 1\nT = 10\nE = 20\nif(Cond > 0, T, E), if(Cond < 0, T, E)" },
         { "string-building", "Name = 'Kat'\nName + 'Lang'" },
         { "expression-spine", "A = 1\n(A + 1) * (A + 2) * (A + 3) - A" },
         { "range-pipeline", "N = 3\nrange(1, N + 0).sum" },

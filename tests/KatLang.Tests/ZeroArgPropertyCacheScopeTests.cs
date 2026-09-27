@@ -363,11 +363,16 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("B()", "100,100", 1)]
     [InlineData("B(), B()", "100,100,100,100", 1)]
     [InlineData("B, B(), B", "100,100,100,100,100,100", 1)]
-    [InlineData("if(true, A, 0), A", "100,200", 2)]
-    // PARENTHESES GROUP SYNTAX: `(A)` in the builtin's value slot IS `A` there — the
-    // same direct demand, never a cached value-position read.
-    [InlineData("if(true, (A), 0), A", "100,200", 2)]
-    [InlineData("if(true, ((A)), 0), A", "100,200", 2)]
+    // A builtin value slot reads the property like any value position (how a property value
+    // is consumed does not affect caching), so the `if` branch and the later bare read share
+    // ONE host evaluation; an explicit call inside the slot is still an explicit call.
+    [InlineData("if(true, A, 0), A", "100,100", 1)]
+    // PARENTHESES GROUP SYNTAX: `(A)` in the builtin's value slot IS `A` there — the same
+    // cached read.
+    [InlineData("if(true, (A), 0), A", "100,100", 1)]
+    [InlineData("if(true, ((A)), 0), A", "100,100", 1)]
+    [InlineData("A, if(true, A(), 0), sum(A)", "100,200,100", 2)]
+    [InlineData("A.max, A(), sum(A)", "100,200,100", 2)]
     public Task ExplicitCallMatrix_ExactHostCountsAcrossExecutionPaths(string output, string expected, int calls)
         => AssertHostCounterPaths("A = Data()\nB = A, A\n" + output, expected, calls);
 
@@ -382,12 +387,12 @@ public class ZeroArgPropertyCacheScopeTests
 
     [Theory]
     [InlineData(false, "105,105,250,250", 2)]
-    [InlineData(true, "310,800", 4)]
+    [InlineData(true, "210,500", 2)]
     public Task OpenedLocalOnlyMember_HostValuesRemainActivationSensitive(bool loop, string expected, int calls)
     {
         // Box.g calls Outer's parameter `f`, so `g` and every property reading it through the
-        // opened `Box` are local-only: one host evaluation per activation (and per loop step),
-        // shared by the two property-style reads within one activation. (K1-08, September
+        // opened `Box` are local-only: one host evaluation per Outer activation,
+        // also shared across loop steps reading that same Box.g binding. (K1-08, September
         // 2026: this replaces a removed-provider shape whose `Make(x)` is now refused at the
         // open itself.)
         // `open` heads its algorithm's body, so the non-loop shape opens Make in Outer itself
@@ -483,7 +488,7 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("Outer(s) = {\n F(x) = {\n  P = Data() + s + x\n  P + P\n }\n [1, 1].map(F)*\n}\nOuter(1)", "204,404", 2)]
     [InlineData("F(n) = {\n P = Data() + n\n if(n == 0, P + P, P + P + F(n - 1))\n}\nF(2)", "1206", 3)]
     [InlineData("Step(n) = {\n P = Data() + n\n P + P - n\n}\nStep.repeat(3, 0)", "1200", 3)]
-    [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n Q(), Q()\n}\nOuter(1)", "202,402", 2)]
+    [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n Q(), Q()\n}\nOuter(1)", "202,202", 1)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n P, Q, P\n}\nOuter(1)", "101,202,101", 1)]
     [InlineData("Outer(x) = {\n A = {\n P = Data() + x\n P\n }\n if(true, A, 0), if(true, A, 0)\n}\nOuter(1)", "101,101", 1)]
     public Task LocalOnlyHostValues_RespectEveryBindingBoundary(string source, string expected, int calls)

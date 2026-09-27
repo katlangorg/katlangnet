@@ -80,16 +80,28 @@ public static partial class Evaluator
                 continue;
             }
 
-            // A parameter with a VALUE binding resolves to a wrapper that reads that value, so
-            // a VALUE slot never re-runs the argument's body. Its ALGORITHM-channel binding,
-            // when it has one, rides along for the slots that INVOKE their argument (callbacks
-            // and loop steps: ResolvedArgumentAlgorithm.InvokedAlgorithm). A parameter bound
-            // only on the value channel has no algorithm binding (NotAnAlgorithm) and carries
-            // none. Lean: resolveArgAlgExpr.
-            if (argExpr is Expr.Param(var name) && ParameterHasValue(name, ctx, valEnv))
+            // A NAME resolves to its value side: a wrapper that performs the ordinary value
+            // read of the written name, so a VALUE slot never re-runs a body.
+            //  * A parameter with a VALUE binding: the wrapper reads that bound value.
+            //  * A lexical property reference `A`: the wrapper is the ordinary property read
+            //    `A` — the zero-argument property access with its run cache — so every builtin
+            //    VALUE slot (`sum(A)`, `A.sum`, `if(c, A, B)`, a loop's initial state, `reduce`'s
+            //    initial accumulator) reads exactly the value the value-position `A` reads.
+            //    HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING: a builtin never
+            //    receives the property's algorithm as a value channel it could re-run.
+            // The named ALGORITHM rides along (ResolvedArgumentAlgorithm.Callable) for the
+            // slots that INVOKE their argument (callbacks and loop steps — an invocation is an
+            // explicit call, which never reads the cache, the `A` versus `A()` rule) and for
+            // the zero-argument value-demand law and signature classification, which judge
+            // the named callable (ResolvedArgumentAlgorithm.InvokedAlgorithm). A parameter
+            // bound only on the value channel has no algorithm binding (NotAnAlgorithm) and
+            // carries none; a genuine lookup failure propagates exactly as before.
+            // Lean: resolveArgAlgExpr.
+            if (argExpr is Expr.Resolve
+                || argExpr is Expr.Param(var name) && ParameterHasValue(name, ctx, valEnv))
             {
                 var callableR = ResolveAlg(argExpr, ctx);
-                if (callableR.IsError && callableR.Error is not EvalError.NotAnAlgorithm)
+                if (callableR.IsError && !IsLiftableError(callableR.Error))
                     return callableR.Error;
                 result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence)
                 {

@@ -351,7 +351,8 @@ public static partial class Evaluator
                 // reference through every derived ctx, so it is the run identity:
                 // entries can never be served across runs even when a host shares
                 // one cache instance between runs.
-                ctx.Budget),
+                ctx.Budget)
+            { DeclaringScope = resolvedAlgorithm.Parent },
             () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
     }
 
@@ -689,15 +690,20 @@ public static partial class Evaluator
             // algorithm unevaluated so it can be applied with bound parameters later;
             // only value-shaped arguments (no parameters) are materialized eagerly
             // (IsValueShapedArgument — the classification the fused filter-count
-            // pipeline shares).
-            if (arg is not null && !IsValueShapedArgument(arg))
+            // pipeline shares). The shape is the NAMED callable's
+            // (ResolvedArgumentAlgorithm.InvokedAlgorithm), never its value wrapper's: a
+            // named collecting-only callback (`map(xs, Only)`) stays unevaluated, while a
+            // named zero-parameter property is read through its value side — the ordinary
+            // property read, served from the run cache.
+            if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
             {
                 var item = new VariadicCallItem(
                     Value: null,
                     arg,
                     ValueError: null,
                     resolvedArg.PreparedValue,
-                    resolvedArg.Source);
+                    resolvedArg.Source,
+                    resolvedArg.Callable);
                 // Binding already knows this emitted slot's role. Demand a VALUE here,
                 // before later slots' eager effects, through the same once-only helper
                 // used below. A callback slot still carries the unexecuted algorithm.
@@ -759,12 +765,15 @@ public static partial class Evaluator
     /// <summary>
     /// Call-item assembly preserves callable arguments without entering their bodies.
     /// Once binding selects a VALUE position, report its zero-argument demand using
-    /// the original source, or preserve the failure of a valid value's body. Callback
-    /// positions never call this helper; retained resource limits remain authoritative.
+    /// the original source — judging the callable the item NAMES
+    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>), never its value wrapper — or
+    /// preserve the failure of a valid value's body. Callback positions never call this
+    /// helper; retained resource limits remain authoritative.
+    /// Lean: <c>sequenceBuiltinValueDemandError?</c>.
     /// </summary>
     private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item)
         => RetainResourceLimitForAlgorithmBinding(item.ValueError)
-            ?? (item.Algorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
+            ?? (item.NamedAlgorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
             ?? item.ValueError;
 
     /// <summary>
@@ -773,13 +782,15 @@ public static partial class Evaluator
     /// unevaluated (a CALLBACK slot must receive the algorithm, never a value — and
     /// eagerly evaluating a collecting-only callback such as <c>map(xs, Only)</c> would
     /// run its body an extra time), so the demand happens HERE, once the descriptor has
-    /// decided the slot is a value: an item the ONE law accepts
+    /// decided the slot is a value: an item whose NAMED callable
+    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>) the ONE law accepts
     /// (<see cref="AcceptsZeroArgumentValueDemand"/> — a collecting-only signature
     /// alongside every zero-parameter property) is evaluated through the shared demand
-    /// funnel, charged exactly as the eager value-shaped path charges it, and every other
-    /// item is returned untouched for <see cref="SequenceBuiltinValueDemandError"/> to
-    /// report. An item that was already evaluated, or whose evaluation already failed, is
-    /// never re-entered. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
+    /// funnel on its VALUE side — for a named property the ordinary property read with its
+    /// run cache — charged exactly as the eager value-shaped path charges it, and every
+    /// other item is returned untouched for <see cref="SequenceBuiltinValueDemandError"/>
+    /// to report. An item that was already evaluated, or whose evaluation already failed,
+    /// is never re-entered. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
     /// </summary>
     private static VariadicCallItem DemandSequenceBuiltinCallItemValue(
         VariadicCallItem item,
@@ -789,7 +800,7 @@ public static partial class Evaluator
         if (item.Value is not null
             || item.ValueError is not null
             || item.Algorithm is not { } algorithm
-            || !AcceptsZeroArgumentValueDemand(algorithm))
+            || !AcceptsZeroArgumentValueDemand(item.Callable ?? algorithm))
         {
             return item;
         }
@@ -936,6 +947,7 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
         Algorithm initialAlg,
+        Algorithm initialNamed,
         CountedResult? preparedInitial,
         Expr? initialSource,
         EvalCtx ctx,
@@ -948,9 +960,13 @@ public static partial class Evaluator
         // boundary — never by entering its body and reinterpreting the failure —
         // with reduce's dedicated hint, the same rejection the dotted
         // `Values.reduce(Add)` form reports for a visibly parameterized reducer.
-        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
-            return initialAlg.ParameterCount != 0
-                ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
+        // The law and the hint judge the callable the argument NAMES
+        // (<paramref name="initialNamed"/>); the accepted demand reads the VALUE side
+        // (<paramref name="initialAlg"/>), so a named property initial is its ordinary
+        // cached property read.
+        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialNamed) is { } rejection)
+            return initialNamed.ParameterCount != 0
+                ? ReduceInitialAccumulatorRequiresValueError(initialNamed)
                 : rejection;
 
         var initialR = preparedInitial is { } preparedValue
@@ -1905,6 +1921,7 @@ public static partial class Evaluator
                             bound.IterationItems,
                             stepR.Value,
                             initialR.Value.AlgorithmValue,
+                            initialR.Value.InvokedAlgorithm,
                             initialR.Value.PreparedValue,
                             initialR.Value.Source,
                             ctx,
@@ -1975,16 +1992,20 @@ public static partial class Evaluator
     /// Evaluate the ordinary-dot <c>string</c> intrinsic's algorithm-resolving receiver
     /// for its value (shared by the plain and counted dot-call twins — the intrinsic
     /// needs ONE value either way, so plain/counted behavior stays identical by
-    /// construction). Name-resolved receivers — a lexical <c>Resolve</c> or an
-    /// <c>AlgEnv</c>-bound <c>Param</c> — are the shapes that can re-enter recursively,
-    /// so they go through the depth-charged demand funnel, and a <c>Param</c> receiver
-    /// first honors its binding's retained resource-limit value error exactly like the
+    /// construction). HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING, so a
+    /// name-resolved receiver is READ exactly as a value position reads it: a lexical
+    /// <c>Resolve</c> through its binding's zero-argument property access (the run cache
+    /// and its charged dynamic-invocation boundary — <c>A.string</c> converts the value
+    /// <c>A</c> reads), a dot chain that <see cref="ResolveDotReceiver"/> navigated
+    /// structurally (<paramref name="receiverIsStructuralMember"/>) through the selected
+    /// member's structural property access (<c>Lib.Sub.string</c> converts the value
+    /// <c>Lib.Sub</c> reads), and a <c>Param</c> through the ordinary value-position
+    /// parameter read — its bound value when it has one, otherwise its algorithm-channel
+    /// demand through the depth-charged funnel. Those are the shapes that can re-enter
+    /// recursively, and each crosses a charged boundary. A <c>Param</c> receiver first
+    /// honors its binding's retained resource-limit value error exactly like the
     /// ordinary <c>Expr.Param</c> value paths (retention stays governed by the
     /// <c>IsResourceLimit</c> policy at the binding sites; this consumer only reads it).
-    /// A dot chain that <see cref="ResolveDotReceiver"/> navigated structurally
-    /// (<paramref name="receiverIsStructuralMember"/>) is such a name-resolved property
-    /// algorithm too — <c>Lib.Sub.string</c> re-enters <c>Sub</c>'s body exactly as
-    /// <c>Sub.string</c> would — so it takes the same charged funnel.
     /// Written receiver shapes (brace block, capture, dot-result wrapper) carry no name
     /// to cycle back through and their nesting is parser-bounded, so they stay on the
     /// uncharged written-syntax policy like every other block/capture evaluation.
@@ -1995,7 +2016,8 @@ public static partial class Evaluator
     /// <c>Inc(x)</c> is the property arity error, a navigated parameterized member
     /// the bare one, and a written parameterized block
     /// <see cref="EvalError.UnresolvedImplicitParams"/> — never <c>Unknown name: x</c>
-    /// from inside the receiver. Lean: the <c>string</c> arm of <c>evalDotCallCounted</c>.
+    /// from inside the receiver. Lean: the <c>string</c> arm of <c>evalDotCallCounted</c>
+    /// and <c>evalDotStringReceiverValue</c>.
     /// </summary>
     private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
         Expr target,
@@ -2013,23 +2035,102 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
             return rejection;
 
+        // The accepted receiver is READ exactly as a value position reads it: HOW A
+        // PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING, so `A.string` converts the
+        // very value `A` reads, `Obj.A.string` the value `Obj.A` reads, and `v.string` the
+        // value a parameter was bound to. Lean: evalDotStringReceiverValue.
         switch (target)
         {
             case Expr.Param(var name):
-                // The receiver is a PARAMETER read for its value: an output-less argument is
-                // that parameter's failure (never "Property 'a' has no defined output"),
-                // exactly as the value-position read `a` reports it.
-                return WithParameterContextOnMissingOutput(name, target.Span, EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv));
+                // The ordinary value-position PARAMETER read: its bound VALUE when it has one
+                // (a forwarded property value is never re-run through the parameter's
+                // algorithm channel), otherwise the algorithm-channel demand, whose
+                // output-less argument is that parameter's failure (never "Property 'a' has
+                // no defined output"), exactly as the value-position read `a` reports it.
+                return ProjectCountedValue(EvalParamCountedOf(target, name, ctx, valEnv));
 
-            case Expr.Resolve:
-                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
+            case Expr.Resolve(var name):
+                return EvalDotStringLexicalPropertyReceiver(target, name, ctx, valEnv);
 
-            case Expr.DotCall when receiverIsStructuralMember:
-                return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
+            case Expr.DotCall edge when receiverIsStructuralMember:
+                return EvalDotStringStructuralMemberReceiver(edge, targetAlg, ctx, valEnv);
 
             default:
                 return EvalZeroArgumentDemandOutput(targetAlg, ctx, valEnv);
         }
+    }
+
+    /// <summary>
+    /// A <c>.string</c> receiver that names a lexical property is that property's ordinary
+    /// zero-argument property access — the SAME binding <see cref="ResolveDotReceiver"/>
+    /// resolved, read through the run cache — so <c>A.string</c> converts the value
+    /// <c>A</c> reads and never re-runs A's body. The receiver is a builtin VALUE slot, so
+    /// the read happens inside one depth-only argument-evaluation level exactly as
+    /// <c>sum(A)</c>'s value channel is read: the argument level, then the property access's
+    /// own dynamic invocation — which also keeps a self-referential <c>A = A.string</c>
+    /// inside the calibrated depth envelope. Kept out of the receiver dispatch's own frame
+    /// (<c>.string</c> chains recurse through it).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Result> EvalDotStringLexicalPropertyReceiver(
+        Expr target,
+        string name,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (ctx.CallStack.Count == 0)
+            return new EvalError.UnknownName(name) { Span = target.Span };
+
+        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        if (resolvedR.IsError)
+            return AtSpanIfMissing(resolvedR.Error, target.Span);
+
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
+            return limitError;
+
+        using (level)
+        {
+            return ProjectCountedValue(EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
+        }
+    }
+
+    /// <summary>
+    /// A <c>.string</c> receiver that <see cref="ResolveDotReceiver"/> navigated to a
+    /// declared structural member is that member's structural zero-argument property
+    /// access — keyed by the container and the selected binding exactly as the member read
+    /// <c>Obj.A</c> in <see cref="EvalDotCallCounted"/> is — so <c>Obj.A.string</c> converts
+    /// the value <c>Obj.A</c> reads. The navigation is re-derived from the SAME receiver
+    /// resolution and member selection (its accessibility was already enforced there). Like
+    /// the lexical case, the read happens inside one depth-only argument-evaluation level.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Result> EvalDotStringStructuralMemberReceiver(
+        Expr.DotCall edge,
+        Algorithm targetAlg,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        var containerR = ResolveDotReceiver(edge.Target, ctx, out _);
+        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name) is { } member)
+        {
+            if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
+                return limitError;
+
+            using (level)
+            {
+                return ProjectCountedValue(EvalZeroArgPropertyAccessCounted(
+                    containerR.Value,
+                    member,
+                    ZeroArgPropertyAccessKind.CountedStructural,
+                    TryGetFlatBinderUserEquivalent(targetAlg) ?? targetAlg,
+                    ctx,
+                    valEnv));
+            }
+        }
+
+        // Unreachable while ResolveDotReceiver reported a structural member; demanding the
+        // resolved algorithm keeps the intrinsic total.
+        return EvalResolvedAlgOutputForValueDemand(targetAlg, ctx, valEnv);
     }
 
     /// <summary>
@@ -2056,7 +2157,10 @@ public static partial class Evaluator
             return EvalResult<CountedResult>.Ok(prepared);
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
-        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
+        // The law judges the callable the argument NAMES; the accepted demand evaluates
+        // the VALUE side, which for a named property is the ordinary property read — so
+        // the slot reads the property's cached value and never re-runs its body.
+        if (ZeroArgumentValueDemandError(arg.Source, arg.InvokedAlgorithm ?? algorithm) is { } rejection)
             return rejection;
 
         return BlameDemandedArgumentForMissingOutput(arg.Source, EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv));

@@ -234,23 +234,24 @@ public class DotCallValueBoundaryTests
     [Fact]
     public void BuiltinReceiver_IsDemandedLikeTheBuiltinsWrittenArgument()
     {
-        // A collection builtin's `collection` slot demands a NAMED receiver through
-        // the zero-argument value-demand law exactly as `count(A)` does — never
-        // through the property cache — so a random-backed property observes the
-        // same fresh draw in both spellings, while a parameterized receiver is the
-        // same collection-argument demand rejection.
+        // A collection builtin's `collection` slot judges a NAMED receiver by the
+        // zero-argument value-demand law exactly as `count(A)` does and then READS it
+        // through the property cache like any value position — how a property value is
+        // consumed does not affect caching — so a random-backed property observes the
+        // same one draw in both spellings, while a parameterized receiver is the same
+        // collection-argument demand rejection.
         var seeded = new RunOptions { RandomSeed = 7 };
         var dotted = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nR.sum", seeded));
         var direct = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum(R)", seeded));
         Assert.Equal(direct.ToDisplayString(), dotted.ToDisplayString());
 
         // PARENTHESES GROUP SYNTAX: the redundantly grouped spellings are the same
-        // direct demand — `(R).sum` IS `sum(R)` — so they agree with the bare
-        // spellings draw for draw (a fresh draw, never the cached property value).
+        // read — `(R).sum` IS `sum(R)` — so they agree with the bare spellings draw for
+        // draw: the builtin slot and the bare `R` read the one cached draw.
         var bare = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum(R) == R", seeded));
         var dottedGrouped = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\n(R).sum == R", seeded));
         var directGrouped = Assert.IsType<RunResult.Success>(KatLangEngine.Run("R = random(1, 1000000)\nsum((R)) == R", seeded));
-        Assert.Equal("false", bare.ToDisplayString());
+        Assert.Equal("true", bare.ToDisplayString());
         Assert.Equal(bare.ToDisplayString(), dottedGrouped.ToDisplayString());
         Assert.Equal(bare.ToDisplayString(), directGrouped.ToDisplayString());
 

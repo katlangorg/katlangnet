@@ -9,7 +9,10 @@ internal readonly record struct ZeroArgPropertyExecution(
     object ValueEnvironmentIdentity,
     object AlgorithmEnvironmentIdentity,
     object CountedParamEnvironmentIdentity,
-    object RunIdentity);
+    object RunIdentity)
+{
+    internal ScopeCtx? DeclaringScope { get; init; }
+}
 
 internal readonly record struct ZeroArgPropertyResult(
     Result Value,
@@ -48,9 +51,10 @@ internal interface IZeroArgPropertyResultCache
 ///   <item>A local-only binding (<see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>)
 ///   reads an input an enclosing owner's call binds, through the dynamically
 ///   threaded environments; its value is a function of the binding context, so the
-///   key carries the identities of the three environments at the access and the
+///   key carries the identities of the three environments at the DECLARING owner's entry and the
 ///   declaring scope. Two distinct binding contexts never share an
-///   entry, and within one activation the property reuses its entry.</item>
+///   entry, and consumers within one owning activation reuse its entry even through nested calls.
+///   Scopes without an activation retain the host environment fallback.</item>
 /// </list>
 /// Explicit calls (<c>A()</c>) never consult the cache on either side, and the run
 /// identity keeps entries from crossing runs even on a host-shared cache instance.
@@ -75,30 +79,38 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     internal static object RunWideEnvironmentIdentity { get; } = new();
 
     public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
-        => execution.Binding.Exposure == PropertyExposure.Exported
+    {
+        ParameterActivation? activation = null;
+        for (var scope = execution.Binding.Exposure == PropertyExposure.Exported ? null : execution.DeclaringScope;
+             scope is not null; scope = scope.Parent)
+        {
+            if (scope.Activation is { } found)
+            {
+                activation = found;
+                break;
+            }
+        }
+
+        return execution.Binding.Exposure == PropertyExposure.Exported
             ? new(
                 // Both spellings select the same exported declaration. Keep the
                 // original access kind on the execution for instrumentation only.
                 ZeroArgPropertyCacheAccessShape.Lexical,
-                StructuralOwnerIdentity.FromOwner(execution.Owner),
+                StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
                 execution.Binding,
                 RunWideEnvironmentIdentity,
                 RunWideEnvironmentIdentity,
                 RunWideEnvironmentIdentity,
                 execution.RunIdentity)
             : new(
-                GetAccessShape(execution.AccessKind),
-                StructuralOwnerIdentity.FromOwner(execution.Owner),
+                ZeroArgPropertyCacheAccessShape.Lexical,
+                StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
                 execution.Binding,
-                execution.ValueEnvironmentIdentity,
-                execution.AlgorithmEnvironmentIdentity,
-                execution.CountedParamEnvironmentIdentity,
+                activation?.ValueEnvironmentIdentity ?? execution.ValueEnvironmentIdentity,
+                activation?.AlgorithmEnvironmentIdentity ?? execution.AlgorithmEnvironmentIdentity,
+                activation?.CountedEnvironmentIdentity ?? execution.CountedParamEnvironmentIdentity,
                 execution.RunIdentity);
-
-    private static ZeroArgPropertyCacheAccessShape GetAccessShape(ZeroArgPropertyAccessKind accessKind)
-        => accessKind is ZeroArgPropertyAccessKind.Structural or ZeroArgPropertyAccessKind.CountedStructural
-            ? ZeroArgPropertyCacheAccessShape.Structural
-            : ZeroArgPropertyCacheAccessShape.Lexical;
+    }
 
 }
 
@@ -127,13 +139,15 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 internal sealed class StructuralOwnerIdentity
 {
     private readonly ScopeComponent[] _scopeChain;
+    private readonly object? _declaration;
 
-    private StructuralOwnerIdentity(ScopeComponent[] scopeChain)
+    private StructuralOwnerIdentity(ScopeComponent[] scopeChain, object? declaration = null)
     {
         _scopeChain = scopeChain;
+        _declaration = declaration;
     }
 
-    public static StructuralOwnerIdentity FromOwner(Algorithm owner)
+    public static StructuralOwnerIdentity FromOwner(Algorithm owner, bool includeDeclaration = false)
     {
         var scopeChain = new List<ScopeComponent>
         {
@@ -143,12 +157,16 @@ internal sealed class StructuralOwnerIdentity
         for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
             scopeChain.Add(new ScopeComponent(scope.Opens, scope.Properties));
 
-        return new StructuralOwnerIdentity([.. scopeChain]);
+        return new StructuralOwnerIdentity([.. scopeChain], includeDeclaration ? owner.Declaration : null);
     }
+
+    internal static StructuralOwnerIdentity FromPropertyOwner(Algorithm owner)
+        => FromOwner(owner, includeDeclaration: true);
 
     public override bool Equals(object? obj)
     {
         if (obj is not StructuralOwnerIdentity other
+            || !ReferenceEquals(_declaration, other._declaration)
             || _scopeChain.Length != other._scopeChain.Length)
         {
             return false;
@@ -184,6 +202,7 @@ internal sealed class StructuralOwnerIdentity
     public override int GetHashCode()
     {
         var hash = new HashCode();
+        hash.Add(_declaration is null ? 0 : RuntimeHelpers.GetHashCode(_declaration));
         hash.Add(_scopeChain.Length);
         foreach (var component in _scopeChain)
         {

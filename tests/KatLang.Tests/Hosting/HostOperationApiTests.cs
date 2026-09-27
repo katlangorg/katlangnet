@@ -439,8 +439,9 @@ public class HostOperationApiTests
     [Fact]
     public void BuiltinDirectCallArgument_StillInvokesHostOperation()
     {
-        // Builtin direct-call arguments bypass the property cache, but dispatch lives
-        // in the wrapper BODY, so the host operation is still invoked on that path.
+        // A builtin direct-call argument reads the property through the ordinary cached
+        // property access, and dispatch lives in the wrapper BODY, so the host operation is
+        // invoked exactly once on that path.
         var counter = new Counter();
         var options = new RunOptions
         {

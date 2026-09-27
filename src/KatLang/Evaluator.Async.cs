@@ -1716,7 +1716,8 @@ public static partial class Evaluator
                 ctx.AlgEnv,
                 ctx.CountedParamEnv,
                 // The budget is the run identity, exactly as on the synchronous seam.
-                ctx.Budget),
+                ctx.Budget)
+            { DeclaringScope = resolvedAlgorithm.Parent },
             () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
     }
 
@@ -2447,9 +2448,10 @@ public static partial class Evaluator
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
 
-        // The ONE zero-argument value-demand law decides before any body (or the
-        // argument level) is entered — see the synchronous twin.
-        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
+        // The ONE zero-argument value-demand law decides from the NAMED callable before
+        // any body (or the argument level) is entered; the demand reads the value side —
+        // see the synchronous twin.
+        if (ZeroArgumentValueDemandError(arg.Source, arg.InvokedAlgorithm ?? algorithm) is { } rejection)
             return rejection;
 
         return BlameDemandedArgumentForMissingOutput(
@@ -2532,15 +2534,16 @@ public static partial class Evaluator
             var arg = resolvedArg.Algorithm;
 
             // Callable callback arguments stay unevaluated — see the synchronous twin
-            // (the shared IsValueShapedArgument classification).
-            if (arg is not null && !IsValueShapedArgument(arg))
+            // (the shared IsValueShapedArgument classification of the NAMED callable).
+            if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
             {
                 var item = new VariadicCallItem(
                     Value: null,
                     arg,
                     ValueError: null,
                     resolvedArg.PreparedValue,
-                    resolvedArg.Source);
+                    resolvedArg.Source,
+                    resolvedArg.Callable);
                 items.Add(valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count)
                     ? await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false)
                     : item);
@@ -2601,7 +2604,7 @@ public static partial class Evaluator
         if (item.Value is not null
             || item.ValueError is not null
             || item.Algorithm is not { } algorithm
-            || !AcceptsZeroArgumentValueDemand(algorithm))
+            || !AcceptsZeroArgumentValueDemand(item.Callable ?? algorithm))
         {
             return item;
         }
@@ -2810,6 +2813,7 @@ public static partial class Evaluator
                         bound.IterationItems,
                         stepR.Value,
                         initialR.Value.AlgorithmValue,
+                        initialR.Value.InvokedAlgorithm,
                         initialR.Value.PreparedValue,
                         initialR.Value.Source,
                         ctx,
@@ -2955,16 +2959,18 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
         Algorithm initialAlg,
+        Algorithm initialNamed,
         CountedResult? preparedInitial,
         Expr? initialSource,
         EvalCtx ctx,
         ValEnv valEnv)
     {
         // A parameterized initial accumulator is rejected from its signature at this
-        // boundary, never by entering its body — see the synchronous twin.
-        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialAlg) is { } rejection)
-            return initialAlg.ParameterCount != 0
-                ? ReduceInitialAccumulatorRequiresValueError(initialAlg)
+        // boundary, never by entering its body; the law judges the NAMED callable and
+        // the demand reads the value side — see the synchronous twin.
+        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialNamed) is { } rejection)
+            return initialNamed.ParameterCount != 0
+                ? ReduceInitialAccumulatorRequiresValueError(initialNamed)
                 : rejection;
 
         var initialR = preparedInitial is { } preparedValue
@@ -3353,22 +3359,75 @@ public static partial class Evaluator
         if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
             return rejection;
 
+        // The accepted receiver is READ exactly as a value position reads it — see the
+        // synchronous twin.
         switch (target)
         {
             case Expr.Param(var name):
-                // MIRROR OF the synchronous twin: a parameter receiver's missing output is the
-                // parameter's failure.
-                return WithParameterContextOnMissingOutput(name, target.Span, await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false));
+                // MIRROR OF the synchronous twin: the ordinary value-position parameter read
+                // (its bound value first; a missing output is the parameter's failure).
+                return ProjectCountedValue(await EvalParamCountedAsync(name, target.Span, ctx, valEnv).ConfigureAwait(false));
 
-            case Expr.Resolve:
-                return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+            case Expr.Resolve(var name):
+                return await EvalDotStringLexicalPropertyReceiverAsync(target, name, ctx, valEnv).ConfigureAwait(false);
 
-            case Expr.DotCall when receiverIsStructuralMember:
-                return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+            case Expr.DotCall edge when receiverIsStructuralMember:
+                return await EvalDotStringStructuralMemberReceiverAsync(edge, targetAlg, ctx, valEnv).ConfigureAwait(false);
 
             default:
                 return await EvalZeroArgumentDemandOutputAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotStringLexicalPropertyReceiver"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> EvalDotStringLexicalPropertyReceiverAsync(
+        Expr target,
+        string name,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (ctx.CallStack.Count == 0)
+            return new EvalError.UnknownName(name) { Span = target.Span };
+
+        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        if (resolvedR.IsError)
+            return AtSpanIfMissing(resolvedR.Error, target.Span);
+
+        if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
+            return limitError;
+
+        using (level)
+        {
+            return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
+        }
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotStringStructuralMemberReceiver"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> EvalDotStringStructuralMemberReceiverAsync(
+        Expr.DotCall edge,
+        Algorithm targetAlg,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        var containerR = ResolveDotReceiver(edge.Target, ctx, out _);
+        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name) is { } member)
+        {
+            if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
+                return limitError;
+
+            using (level)
+            {
+                return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(
+                    containerR.Value,
+                    member,
+                    ZeroArgPropertyAccessKind.CountedStructural,
+                    TryGetFlatBinderUserEquivalent(targetAlg) ?? targetAlg,
+                    ctx,
+                    valEnv).ConfigureAwait(false));
+            }
+        }
+
+        return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
     }
 
     // ── Sequence-join twins ─────────────────────────────────────────────────
