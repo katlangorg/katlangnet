@@ -798,14 +798,34 @@ public sealed class Parser
     private void ReportError(DiagnosticCode code, string message, SourceSpan span)
         => _diagnostics.Report(code, message, span);
 
+    /// <summary>
+    /// The significant token before the current one — the reference of every physical-line
+    /// decision (<see cref="IsSamePhysicalLineAsPreviousToken"/>). At the start of the
+    /// document no significant token precedes, and the tokens the grammar skips must still
+    /// decide nothing: a comment is never the reference, so a leading comment changes no
+    /// continuation or stand-in decision. The reference is then the reported character a
+    /// missing operand would claim (the nearest one before the current token, see
+    /// <see cref="TakeReportedCharacterBeforeCurrent"/>), and without one the current token
+    /// itself — the start of the document is no line boundary.
+    /// </summary>
     private Token Previous
     {
         get
         {
-            var idx = Math.Max(0, _pos - 1);
-            while (idx > 0 && IsSkippedByGrammar(_tokens[idx].Kind))
-                idx--;
-            return _tokens[idx];
+            for (var idx = _pos - 1; idx >= 0; idx--)
+            {
+                if (!IsSkippedByGrammar(_tokens[idx].Kind))
+                    return _tokens[idx];
+            }
+
+            var current = NextSignificantIndex(_pos);
+            for (var idx = current - 1; idx >= 0; idx--)
+            {
+                if (_tokens[idx].Kind == TokenKind.Bad)
+                    return _tokens[idx];
+            }
+
+            return _tokens[current];
         }
     }
 

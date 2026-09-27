@@ -275,6 +275,43 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
             $"N={baseAllocation} bytes, 2N={doubleAllocation} bytes.");
     }
 
+    [Fact]
+    public void SemanticModel_TreatsTheSyntheticHelpersAsInertLeaves_AndGrowsLinearly()
+    {
+        // FZ-R3 (#14 fuzz campaign): the editor model analyzed every synthetic target helper as
+        // an ordinary nested algorithm, building an N-symbol scope frame per helper — O(N^2):
+        // 8,000 targets took 11.9 s and 10.7 GB in SemanticModelBuilder.Build while
+        // Parser.Parse stayed linear. The helper records nothing (spanless pattern, one
+        // spanless bound read), so the model visits only the root, the hoisted source, and the
+        // N target bodies — never a helper — and still declares exactly the N targets.
+        foreach (var n in new[] { 64, 128 })
+        {
+            var parse = SourceProvenance.ParseValid(WideSource(n, $"range(1, {n})"));
+            var observations = new FrontEndTraversalObservations();
+            var model = KatLang.Semantics.SemanticModelBuilder.Build(parse.Root, observations);
+            Assert.Equal(n + 2, observations.SemanticModelAlgorithmVisits);
+            Assert.Equal(n, model.Declarations.Count(d => d.Kind == KatLang.Semantics.OccurrenceKind.PropertyDefinition));
+            Assert.Equal(Enumerable.Range(0, n).Select(i => $"x{i}"), model.Declarations.Select(d => d.Name));
+        }
+
+        _ = MeasureModelAllocation(256); // JIT
+        var baseAllocation = MeasureModelAllocation(1000);
+        var doubleAllocation = MeasureModelAllocation(2000);
+        var ratio = (double)doubleAllocation / baseAllocation;
+        output.WriteLine($"semantic model allocation N=1000: {baseAllocation} bytes, 2N: {doubleAllocation} bytes ({ratio:F2}x)");
+        Assert.True(
+            ratio < 3.0,
+            $"semantic-model allocation for 2N targets grew {ratio:F2}x over N (expected ~2x linear; the quadratic path was ~4x).");
+
+        static long MeasureModelAllocation(int n)
+        {
+            var parse = Parser.Parse(WideSource(n, $"range(1, {n})"));
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            _ = KatLang.Semantics.SemanticModelBuilder.Build(parse);
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+    }
+
     private static void Warm() => _ = Parser.Parse(WideSource(256, "range(1, 256)"));
 
     private static long MeasureParseAllocation(int n)

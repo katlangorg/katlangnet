@@ -1369,15 +1369,22 @@ internal static class ImplicitArgumentResolver
                 Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations), memos),
             },
 
+            // Operator forms are never valid open targets (open-form validation
+            // rejects them: BadOpenForm), but the parser produces them in diagnostic
+            // recovery trees, where parameter detection has already elaborated their
+            // operands like a capture's rows. Their operands are resolved the same
+            // way — the transparent walk with a fresh empty signature map — so a
+            // block inside `open -{ ... }` is resolved exactly as one inside
+            // `open ({ ... }, 1)`.
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index
+                => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations), memos),
+
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
             // Grace cannot survive parameter detection, which runs first, so a
-            // host-supplied wrapper passes through untouched; and operator
-            // forms are never valid open targets — the evaluator's open-form
-            // validation rejects them (BadOpenForm) — so a host-built one
-            // passes through unprocessed like a leaf.
+            // host-supplied wrapper passes through untouched.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
-                or Expr.NativeCall or Expr.Grace or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => expr,
+                or Expr.NativeCall or Expr.Grace => expr,
         };
     }
 

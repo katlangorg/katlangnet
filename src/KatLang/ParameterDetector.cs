@@ -1375,13 +1375,23 @@ internal static class ParameterDetector
                 Args = new OutputBundle(call.Args.Select(argExpr => ProcessExpr(argExpr, openParentScope, memo)).ToList()),
             },
 
+            // Operator forms are never valid open targets — open-form validation
+            // rejects them (BadOpenForm) — but the PARSER still produces them in
+            // diagnostic recovery trees (`open -~x`, `open ~x + 1`, `open ~x < 1`,
+            // `open 1 + { ~k }`, `open x:~y`). Their operands are ordinary values,
+            // exactly like a capture's rows, so they take the transparent open-region
+            // walk's own arms (this node is already memoized by ProcessOpenExpr; its
+            // operands go through the memoized ProcessExpr): the node kind is kept
+            // (the rejection is unchanged) while every written Grace is consumed,
+            // nested blocks are elaborated, and dot-call fallbacks are normalized —
+            // the post-elaboration contract (DotCallElaborationInvariant) holds for
+            // recovery trees too.
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => ProcessExprCore(expr, openParentScope, memo),
+
             // Intentional leaves: name/literal leaves carry no nested algorithm
-            // to process (a bare Resolve IS the ordinary open-target form), and
-            // operator forms are never valid open targets — the evaluator's
-            // open-form validation rejects them (BadOpenForm) — so a host-built
-            // one passes through unprocessed like a leaf.
+            // to process (a bare Resolve IS the ordinary open-target form).
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
-                or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => expr,
+                or Expr.NativeCall => expr,
         };
     }
 

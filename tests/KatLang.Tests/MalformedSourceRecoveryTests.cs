@@ -491,6 +491,105 @@ public class MalformedSourceRecoveryTests
         }
     }
 
+    // ── The start of the document is no line boundary (FZ-R2) ──────────────
+    //
+    // `Previous` is the line reference of every continuation and stand-in decision. With no
+    // significant token before the current one it used to answer token 0 whatever that was,
+    // so a leading COMMENT decided: `$+` took the reported character as `+`'s operand while
+    // `# c` newline `$+` reported `Unexpected '+'`. Found by the #14 fuzz campaign's
+    // comment-prepend relation over raw text and minimized to two characters.
+
+    [Theory]
+    [InlineData("$+")]
+    [InlineData("!<")]
+    [InlineData("`:")]
+    [InlineData("&or")]
+    [InlineData("$/")]
+    [InlineData("$+ 1")]
+    [InlineData("$.F")]
+    [InlineData("$*")]
+    [InlineData("+")]
+    [InlineData("@\n$+")]
+    [InlineData("@\n+")]
+    [InlineData("@\n.F")]
+    public void LeadingComments_ChangeNoRecoveryDecision(string source)
+    {
+        var expected = ShiftedDiagnostics(Parser.Parse(source).Diagnostics, 0);
+        foreach (var prefix in new[] { "# c\n", "# one\n# two\n", "# c\n\n", "\n# c\n" })
+        {
+            var lines = prefix.Count(static c => c == '\n');
+            Assert.Equal(expected, ShiftedDiagnostics(Parser.Parse(prefix + source).Diagnostics, lines));
+        }
+    }
+
+    [Fact]
+    public void DocumentStart_StandInIsClaimedOnlyOnTheOperatorsOwnLine()
+    {
+        // With nothing before it, `$` stands in as `+`'s left operand (the end of input is
+        // then the missing right one), however many comments or reported-character lines
+        // precede it — but a reported character on an EARLIER line never becomes the left
+        // operand of a later line's operator.
+        foreach (var source in new[] { "$+", "# c\n$+", "@\n$+", "# c\n@\n$+" })
+        {
+            var diagnostics = Parser.Parse(source).Diagnostics;
+            Assert.All(diagnostics.SkipLast(1), d => Assert.Equal(DiagnosticCode.UnexpectedCharacter, d.Code));
+            Assert.Equal("Unexpected end of input.", diagnostics[^1].Message);
+        }
+
+        var crossLine = Parser.Parse("@\n+").Diagnostics;
+        Assert.Equal(2, crossLine.Count);
+        Assert.Equal(DiagnosticCode.UnexpectedCharacter, crossLine[0].Code);
+        Assert.Equal("Unexpected '+'.", crossLine[1].Message);
+    }
+
+    [Fact]
+    public void LeadingComment_OverSeededRawText_ChangesNoDiagnostic()
+    {
+        // The generalized relation that found FZ-R2: a prepended comment line shifts every
+        // diagnostic of an arbitrary (mostly malformed) document by exactly one line and
+        // changes nothing else. SplitMix64 over a fixed seed; the failing case index and the
+        // document are named on failure.
+        const ulong seed = 0x4B61744C616E6714UL;
+        const string alphabet = "abX_09 \t\n()[]{}.,:;=+-*/^<>!#'\"~@$`?&|\\e";
+        string[] words = ["not", "and", "or", "xor", "div", "mod", "open", "load", "true", "public", "if", "count", "Math.", "1e3", "2.5"];
+        var state = seed;
+        ulong Next()
+        {
+            var z = state += 0x9E3779B97F4A7C15UL;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+            return z ^ (z >> 31);
+        }
+
+        for (var caseIndex = 0; caseIndex < 600; caseIndex++)
+        {
+            var text = new System.Text.StringBuilder();
+            var length = (int)(Next() % 48);
+            for (var i = 0; i < length; i++)
+            {
+                if (Next() % 5 == 0)
+                    text.Append(words[Next() % (ulong)words.Length]);
+                else
+                    text.Append(alphabet[(int)(Next() % (ulong)alphabet.Length)]);
+            }
+
+            var source = text.ToString();
+            var expected = ShiftedDiagnostics(Parser.Parse(source).Diagnostics, 0);
+            var actual = ShiftedDiagnostics(Parser.Parse("# prepended\n" + source).Diagnostics, 1);
+            Assert.True(
+                expected.SequenceEqual(actual),
+                $"seed 0x{seed:X16} case {caseIndex}: a leading comment changed the diagnostics of\n{source}");
+        }
+    }
+
+    private static List<(DiagnosticCode Code, string Message, SourceSpan? Span)> ShiftedDiagnostics(
+        IReadOnlyList<Diagnostic> diagnostics, int lines)
+        => diagnostics
+            .Select(d => (d.Code, d.Message, d.Span is { } s
+                ? new SourceSpan(new SourcePosition(s.Start.Line - lines, s.Start.Column), new SourcePosition(s.End.Line - lines, s.End.Column))
+                : (SourceSpan?)null))
+            .ToList();
+
     private static string DeleteReportedCharacters(string source)
     {
         var text = new System.Text.StringBuilder(source);

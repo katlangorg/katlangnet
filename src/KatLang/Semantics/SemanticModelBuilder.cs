@@ -1237,7 +1237,9 @@ public static class SemanticModelBuilder
         /// argument bundles are exactly such subtrees (spanless reads of the caller's own bindings),
         /// and one bundle shared by K owners — K frames — is thereby never walked per owner. A name
         /// resolved through a lookup (a <see cref="Expr.Resolve"/>, a dot edge), a call, and a nested
-        /// algorithm are never inert. Memoized per node reference for the build.
+        /// algorithm are never inert — except the synthetic assignment-deconstruction helper, whose
+        /// spanless pattern and single spanless bound read record nothing (see the arm below).
+        /// Memoized per node reference for the build.
         /// </summary>
         private bool IsSemanticallyInert(Expr expr)
         {
@@ -1260,6 +1262,15 @@ public static class SemanticModelBuilder
                 Expr.ListLiteral list => IsSemanticallyInert(list.Items),
                 Expr.Capture capture => IsSemanticallyInert(capture.Body),
                 Expr.Grace grace => IsSemanticallyInert(grace.Inner),
+                // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is the one
+                // nested algorithm that records nothing: its N-capture pattern is spanless by
+                // construction (only the target PROPERTY names are source-backed declarations),
+                // it has no opens or properties, and its output is one spanless bound read. Every
+                // front-end pass treats it as an O(1) leaf for the same reason; analyzing it here
+                // built an N-symbol scope frame per helper — O(N^2) time and memory across a wide
+                // deconstruction's N sibling helpers for no occurrence, resolution, or scope.
+                Expr.AlgorithmExpr { Algorithm: Algorithm.User { AssignmentDeconstructionTarget: not null } helper }
+                    => helper.Opens.Count == 0 && helper.Properties.Count == 0 && IsSemanticallyInert(helper.Output),
                 Expr.Resolve or Expr.DotCall or Expr.Call or Expr.AlgorithmExpr => false,
                 Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall => true,
             };

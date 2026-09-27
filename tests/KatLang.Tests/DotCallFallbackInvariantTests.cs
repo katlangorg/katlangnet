@@ -292,6 +292,62 @@ public class DotCallFallbackInvariantTests
         Assert.Null(DotCallElaborationInvariant.CheckElaborated(recovery.Root));
     }
 
+    // ── 9b (FZ-R1): rejected OPERATOR-FORM open targets are elaborated too ──
+    //
+    // The parser keeps an operator-form open target in the recovery tree as the
+    // BadOpenForm it is. Parameter detection and implicit-argument resolution once
+    // passed Unary/Binary/Comparison/Index open targets through as "host-only" leaves,
+    // so a written Grace survived elaboration there — and so did whole unelaborated
+    // blocks and Grace-wrapped dot fallbacks. Found by the #14 fuzz campaign on raw
+    // text and minimized to `open~e<`.
+
+    [Theory]
+    [InlineData("open~e<")]
+    [InlineData("open -~x")]
+    [InlineData("open ~x + 1")]
+    [InlineData("open not ~x")]
+    [InlineData("open ~x == 1 == ~y")]
+    [InlineData("open ~x:0")]
+    [InlineData("open x:~y")]
+    [InlineData("open 1 + a.~b")]
+    [InlineData("open 1 + a~.b")]
+    [InlineData("open 1 + { ~k }")]
+    [InlineData("open 1 + [~x]")]
+    [InlineData("open 1 + F(~x)")]
+    [InlineData("open -{ X = ~y }")]
+    [InlineData("open [1 + ~x]")]
+    public void RejectedOperatorOpenTarget_RecoveryTreeSatisfiesThePhaseContract(string source)
+    {
+        var parse = SourceProvenance.ParseAllowingDiagnostics(source);
+        Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Code == DiagnosticCode.BadOpenForm);
+        var violation = DotCallElaborationInvariant.CheckElaborated(parse.Root);
+        Assert.True(violation is null, $"{source}: {violation?.Description}");
+    }
+
+    [Fact]
+    public void RejectedOperatorOpenTarget_ElaboratesItsOperandsExactlyLikeACaptureTargetsRows()
+    {
+        // The same block under a unary operator target and as a capture target's row: both
+        // are rejected targets whose operands are ordinary values, so detection (Grace
+        // consumed: K infers (b, a)) and resolution (the bare row `K` becomes the lifted
+        // call forwarding the block's own inferred inputs) must elaborate them identically.
+        const string block = "{ K = ~b - a\nK }";
+        var viaOperator = OpenTargetBlock($"open -{block}", target => Assert.IsType<Expr.Unary>(target).Operand);
+        var viaCapture = OpenTargetBlock($"open ({block}, 1)", target => Assert.IsType<Expr.Capture>(target).Body[0]);
+
+        var k = Assert.IsType<Algorithm.User>(Assert.Single(viaOperator.Properties).Value);
+        Assert.Equal(["b", "a"], k.Params);
+        Assert.Equal(LeanAstEncoder.EncodeAlgorithm(viaCapture), LeanAstEncoder.EncodeAlgorithm(viaOperator));
+
+        static Algorithm.User OpenTargetBlock(string source, Func<Expr, Expr> operand)
+        {
+            var parse = SourceProvenance.ParseAllowingDiagnostics(source);
+            Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Code == DiagnosticCode.BadOpenForm);
+            var target = Assert.Single(parse.Root.Opens);
+            return Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(operand(target)).Algorithm);
+        }
+    }
+
     // ── 10: the C# → Lean encoding never serializes a semantic null ─────────
 
     [Fact]
