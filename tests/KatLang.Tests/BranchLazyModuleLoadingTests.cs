@@ -428,6 +428,15 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal([1m], onlyFirst.Value);
     }
 
+    // Every wait in this file is bounded, so a regression that never reaches (or never leaves)
+    // the downloader — a placeholder that lost its region, a materialization that never starts —
+    // fails the test instead of hanging the suite. The bound is a hang guard, never a latency
+    // claim: the completions awaited here run as thread-pool work (SemaphoreSlim completes a
+    // cancelled wait by forcing a yield onto the pool, and xUnit's synchronization context keeps
+    // continuations off the test thread), while the timer enforcing the bound is queued ahead of
+    // them at high priority — so a tight bound fails spuriously on a loaded CI runner.
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// A downloader that suspends INSIDE the request until released and reports what it
     /// observed per URL: whether the request started, the token it was handed, and whether
@@ -461,11 +470,6 @@ public class BranchLazyModuleLoadingTests
         }
 
         public RunOptions Options => new() { DownloadCode = Download };
-
-        // Bounded: a regression that never reaches (or never leaves) the downloader — a
-        // placeholder that lost its region, a materialization that never starts — fails the
-        // test instead of hanging the suite.
-        private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
 
         public Task Started(string url) => For(url).Started.Task.WaitAsync(WaitLimit);
 
@@ -752,7 +756,7 @@ public class BranchLazyModuleLoadingTests
                 evaluationCancellation.Cancel();
 
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                () => pending.WaitAsync(WaitLimit));
             Assert.Equal(sourceCancellation.Token, error.CancellationToken);
             Assert.Equal(0, region.MaterializationAttempts);
             Assert.False(region.IsMaterialized);
@@ -864,7 +868,7 @@ public class BranchLazyModuleLoadingTests
                     ? new GatedSummaries(scope.Summaries, () =>
                 {
                     entered.SetResult();
-                    Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+                    Assert.True(release.Wait(WaitLimit));
                 }) : scope.Summaries,
                 scope.Parameters, scope.Algorithm);
         var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(GateDeclaringLevel(recorded)));
@@ -873,10 +877,10 @@ public class BranchLazyModuleLoadingTests
         downloader.Release(ModuleA, "public A = 1");
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(WaitLimit);
             cancellation.Cancel();
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                () => pending.WaitAsync(WaitLimit));
             Assert.Equal(cancellation.Token, error.CancellationToken);
         }
         finally
@@ -884,7 +888,7 @@ public class BranchLazyModuleLoadingTests
             release.Set();
         }
 
-        await region.Loader.MaterializationGate.WaitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await region.Loader.MaterializationGate.WaitAsync().WaitAsync(WaitLimit);
         region.Loader.MaterializationGate.Release();
         Assert.False(region.IsMaterialized);
         Assert.Equal(1, region.MaterializationAttempts);
@@ -1398,21 +1402,21 @@ public class BranchLazyModuleLoadingTests
         var run = RunFlat(parsed.Root, cancellation.Token);
         try
         {
-            await downloader.Started(ModuleA).WaitAsync(TimeSpan.FromSeconds(10));
+            await downloader.Started(ModuleA);
             cancellation.Cancel();
-            await downloader.Exited(ModuleA).WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+            await downloader.Exited(ModuleA);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(WaitLimit));
 
             // The evaluation leaves as soon as its own token is cancelled, while the abandoned
             // run still unwinds asynchronously; acquiring the gate proves the loader walk has
             // unwound. Cancel the WAIT itself on timeout so it cannot later steal the gate.
-            using var gateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var gateTimeout = new CancellationTokenSource(WaitLimit);
             await region.Loader.MaterializationGate.WaitAsync(gateTimeout.Token);
             region.Loader.MaterializationGate.Release();
 
             AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
             downloader.Release(ModuleA, "public A = 1");
-            Assert.Equal([1m], (await RunFlat(parsed.Root).WaitAsync(TimeSpan.FromSeconds(10))).Value);
+            Assert.Equal([1m], (await RunFlat(parsed.Root).WaitAsync(WaitLimit)).Value);
             AssertWalkContextAtElaborationDefaults(parsed, region, elaborationSink);
         }
         finally
