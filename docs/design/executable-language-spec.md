@@ -192,7 +192,7 @@ automatically enters the sweep. The recognized claim forms (shared grammar in
 - `**Result:** error — ...` — the source must parse cleanly and fail
   evaluation (`EvalFailure`/`NoProgramOutput`; a parse failure or a
   successful evaluation fails the sweep). A generic error label promises only
-  that classification. The tutorial's current three labels also name a
+  that classification. The tutorial's detailed error labels also name a
   specific failure family, so their complete source/prose inventory is pinned
   and checked through public `KatLangErrorCode` values (never rendered-message
   substrings) by
@@ -289,10 +289,12 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
    boundary is never erased — is the theorem side: the
    `makeCollectionListResult` pins in CoreTests plus
    `makeCollectionListResult_exact` in `KatLangArityLaws`.
-3. **Tutorial**: the `take` section's example fence is marked
-   `<!-- spec:take-family-tutorial -->` (the composite tutorial fence that
-   contains this program); editing the fence or its Results block without
-   updating the corpus fails `TutorialSpecTests`.
+3. **Tutorial**: a tutorial fence links to a case through a marker such as
+   `<!-- spec:take-single-survivor -->`; editing a linked fence or its result
+   claim without updating the corpus fails `TutorialSpecTests`. (The
+   learning-path tutorial introduces `take` in its collection-operations
+   overview and currently links neither this case nor the composite
+   `take-family-tutorial` case.)
 4. **Generator**: the case is flagged `IncludeInGeneratorPrompt`, so both
    prompt files' generated block teaches
    `take(((1, 2), (3, 4)), 1)` → `[(1, 2)]` with the exact-list
@@ -311,8 +313,11 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
   block remain hand-maintained.
 - Every tutorial fence with a `**Result(s):**` claim is engine-verified by
   the sweep (section 6a) or carries an explicit reviewed `spec:skip` reason;
-  only claim-less fences (syntax fragments, style demos, and the indented
-  Pitfalls illustrations with inline `# error:` comments) remain outside
-  mechanical output verification. Marker linkage (section 6) stays the
+  only claim-less fences remain outside mechanical output verification —
+  examples with nondeterministic output, such as random numbers, and
+  illustrations whose inline `# error:` comment describes a rejected
+  program. A claim-less fence that a spec marker links to a canonical case
+  (such as the tutorial's rejected same-line and clause-arity programs) is
+  still verified through that case (section 6). Marker linkage stays the
   stronger pin — it additionally ties an example to canonical raw structure,
   emitted count, and structured error identity.

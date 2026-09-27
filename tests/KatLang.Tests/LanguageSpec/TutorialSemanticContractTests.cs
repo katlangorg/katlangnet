@@ -11,7 +11,9 @@ namespace KatLang.Tests.LanguageSpec;
 /// structured error a rejected program reports — through the elaborated AST,
 /// the editor semantic model, and the public error codes, so a documented
 /// example can no longer print the right number for the wrong semantic reason.
-/// Every source here is either a tutorial example or its documented control.
+/// Most sources here are tutorial examples or their documented controls; the
+/// rest pin facts that earlier editions of the tutorial explained and that the
+/// language still guarantees.
 /// </summary>
 public class TutorialSemanticContractTests
 {
@@ -33,7 +35,7 @@ public class TutorialSemanticContractTests
     private static Property PropertyOf(Algorithm owner, string name) =>
         Assert.Single(owner.Properties, p => p.Name == name);
 
-    // ── Lexical ownership ("A Parameter Always Means This Call's Argument", "Parameters take part in the walk") ──
+    // ── Lexical ownership ("How Names Are Found", "Local Definitions") ──
 
     private const string BraceOwnedInner =
         "Outer(v) = {\n    Inner = v + 1\n    Inner\n}\n\nOuter(7)";
@@ -89,7 +91,7 @@ public class TutorialSemanticContractTests
         Assert.Equal("8\n8", Display(indented + "\nInner(7)"));
     }
 
-    // ── "Functions: Algorithms Without Properties": the label is property ownership, and owning properties never limits callability ──
+    // ── Property ownership (the earlier tutorial's "function" label): owning properties never limits callability ──
 
     private const string FunctionAndAlgorithm =
         "F(x) = (x + 1)^2\n\nG(x) = {\n    Y = x + 1\n    Y^2\n}\n\nF(3)\nG(3)";
@@ -123,7 +125,7 @@ public class TutorialSemanticContractTests
         Assert.Equal("16\n[4, 9]", Display(PropertyOwningCallback));
     }
 
-    // ── Visibility: private = not exported; structural access checks exposure only ──
+    // ── Visibility ("Public Members and open"): private = not exported; structural access checks exposure only ──
 
     private const string Library = "Lib = {\n    public Area = 4\n    Helper = Area / 2\n}";
 
@@ -218,6 +220,14 @@ public class TutorialSemanticContractTests
         RunFailure("F((x, y)) = x + y\nF((x, y, z)) = 0\n\nF([2, 3])", KatLangErrorCode.NoMatchingBranch);
         // The singleton pattern matches any ONE argument whole, never opening it.
         Assert.Equal("[2, 3]", Display("F((x)) = x\nF(z) = 0\n\nF([2, 3])"));
+
+        // A literal keeps even a single definition a clause, and the tutorial's shape-matching
+        // family likewise refuses the list spelling of a shape it accepts as a sequence.
+        Assert.Equal("5", Display("F((0, x)) = x\n\nF((0, 5))"));
+        RunFailure("F((0, x)) = x\n\nF([0, 5])", KatLangErrorCode.NoMatchingBranch);
+        const string area = "Area(('circle', r)) = pi * r ^ 2\nArea(('rect', w, h)) = w * h\n\n";
+        Assert.Equal("12", Display(area + "Area(('rect', 3, 4))"));
+        RunFailure(area + "Area(['rect', 3, 4])", KatLangErrorCode.NoMatchingBranch);
     }
 
     // ── Dot-call: structural member selection is not the lexical rewrite `B(A, C)` ──
@@ -251,7 +261,7 @@ public class TutorialSemanticContractTests
         RunFailure("B(a, c) = a * 100 + c\n(3, 4).B(5)", KatLangErrorCode.TypeMismatch);
     }
 
-    // ── "Dotted Receivers and Collecting Parameters": dot-call passes a value, spread opens a value ──
+    // ── Dot receivers and collecting parameters ("Values Stay Values", "Passing Items with *"): dot-call passes a value, spread opens a value ──
 
     [Fact]
     public void DottedReceiver_IsTheWrittenArgument_AndOnlyTheSpreadMarkerOpensIt()
@@ -296,7 +306,7 @@ public class TutorialSemanticContractTests
             "CollectMany(*items) = items\n(1, 2).CollectMany(3)\n[(1, 2)]*.CollectMany"));
     }
 
-    // ── "Calls Return One Value": the boundary, its two edge cases, and the consumers that are not boundaries ──
+    // ── "Several Outputs Become One Value": the call boundary, its two edge cases, and the consumers that are not boundaries ──
 
     [Fact]
     public void CallBoundary_ReturnsOneValue_NeverASilentEmptySequenceForAMissingOutput()
@@ -315,6 +325,93 @@ public class TutorialSemanticContractTests
         var captured = RunSuccess("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR");
         Assert.Single(captured.OutputRows);
         Assert.Equal("(1, 1)", captured.ToDisplayString());
+    }
+
+    // ── "Formulas That Use Formulas": forwarded inputs follow the formula's own names and are handed on by name ──
+
+    private const string ForwardingFormulas =
+        "Speed = distance / time\nKineticEnergy = mass * Speed ^ 2 / 2\n\nKineticEnergy(2, 10, 5)";
+
+    [Fact]
+    public void ForwardedParameters_FollowTheOwnNames_AndAreHandedOnByName()
+    {
+        // The documented signature is the inferred parameter list itself, not just the printed number.
+        var root = SourceProvenance.ParseValid(ForwardingFormulas).Root;
+        Assert.Equal(["distance", "time"], PropertyOf(root, "Speed").Value.Params);
+        Assert.Equal(["mass", "distance", "time"], PropertyOf(root, "KineticEnergy").Value.Params);
+        Assert.Equal("4", Display(ForwardingFormulas));
+
+        // Own names first, forwarded names after them — not the order in which the body reaches
+        // them: this body reaches Speed's inputs before it mentions `mass`, yet `mass` still comes
+        // first (as (distance, time, mass), the same call would compute 0.1).
+        const string speedFirst = "Speed = distance / time\nKineticEnergy = Speed ^ 2 * mass / 2\n\nKineticEnergy(2, 10, 5)";
+        Assert.Equal(["mass", "distance", "time"], PropertyOf(SourceProvenance.ParseValid(speedFirst).Root, "KineticEnergy").Value.Params);
+        Assert.Equal("4", Display(speedFirst));
+
+        // An explicit list hands the inputs on by NAME, not by position: declared in another order
+        // they still reach Speed's `distance` and `time` (matched by position, Speed would read 5
+        // as its distance, and the result would be 0.25) ...
+        Assert.Equal("4", Display(
+            "Speed = distance / time\nKineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2\n\nKineticEnergy(2, 10, 5)"));
+        Assert.Equal("4", Display(
+            "Speed = distance / time\nKineticEnergy(mass, time, distance) = Speed ^ 2 * mass / 2\n\nKineticEnergy(2, 5, 10)"));
+
+        // ... so renamed inputs, even with the right number of parameters, leave Speed without its inputs.
+        var renamed = RunFailure(
+            "Speed = distance / time\nKineticEnergy(m, d, t) = m * Speed ^ 2 / 2\n\nKineticEnergy(2, 10, 5)",
+            KatLangErrorCode.ArityMismatch);
+        Assert.Contains("'Speed'", renamed.Message);
+    }
+
+    // ── "Members Come First", "Callbacks Receive One Element": which names an inferred signature takes ──
+
+    [Fact]
+    public void InferredParameters_NameInsideBracesBelongsToTheBraces_AndAnUndefinedMemberOfAnInferredReceiverIsInferred()
+    {
+        // `factor` appears only inside the callback, so it is the callback's parameter, never Scale's ...
+        const string inferredScale = "Scale = values.map{n * factor}\n\nScale([1, 2, 3], 10)";
+        Assert.Equal(["values"], PropertyOf(SourceProvenance.ParseValid(inferredScale).Root, "Scale").Value.Params);
+        RunFailure(inferredScale, KatLangErrorCode.ArityMismatch);
+        RunFailure("Scale = values.map{n * factor}\n\nScale([1, 2, 3])", KatLangErrorCode.ArityMismatch);
+        // ... and once the outer list declares it, the name inside the braces is that parameter.
+        Assert.Equal("[10, 20, 30]", Display("Scale(values, factor) = values.map{n * factor}\n\nScale([1, 2, 3], 10)"));
+
+        // An inferred receiver might lack the member, so an otherwise undefined member name is inferred too ...
+        const string box = "Box = {\n    public V = 5\n}\n\n";
+        const string inferredArea = "Area = shape.V * 2\n" + box + "Area(Box)";
+        Assert.Equal(["shape", "V"], PropertyOf(SourceProvenance.ParseValid(inferredArea).Root, "Area").Value.Params);
+        RunFailure(inferredArea, KatLangErrorCode.ArityMismatch);
+        // ... but not when something named `V` is defined, nor under an explicit list, which settles
+        // only the signature (the next test shows that the dot rule is unchanged).
+        Assert.Equal(["shape"], PropertyOf(SourceProvenance.ParseValid("V = 3\nArea = shape.V * 2\n" + box + "Area(Box)").Root, "Area").Value.Params);
+        Assert.Equal("10", Display("Area(shape) = shape.V * 2\n" + box + "Area(Box)"));
+    }
+
+    [Fact]
+    public void ExplicitParameterList_KeepsTheMemberNameOutOfTheSignature_WithoutMakingTheDotMemberOnly()
+    {
+        // `V` is not a parameter of Area, yet `shape.V` keeps the ordinary dot rule: a receiver without
+        // the member falls back to the lexical `V` (`5.V` is `V(5)`, so `Area(5)` is 12, where a
+        // member-only dot would fail), and a receiver with the member still takes the member.
+        const string source =
+            "V(x) = x + 1\nArea(shape) = shape.V * 2\nBox = {\n    public V = 5\n}\n\nArea(5)\nArea(Box)";
+        Assert.Equal(["shape"], PropertyOf(SourceProvenance.ParseValid(source).Root, "Area").Value.Params);
+        Assert.Equal("12\n10", Display(source));
+    }
+
+    // ── "How Names Are Found", "Public Members and open": own definitions, then built-ins, then opened names ──
+
+    [Fact]
+    public void LookupOrder_OwnDefinitionsThenBuiltinNamesThenOpenedNames()
+    {
+        const string library = "Lib = {\n    public pi = 3\n    public Tau = 6\n}\n";
+
+        // An opened name never overrides a built-in one ...
+        Assert.Equal(Display("pi"), Display("open Lib\n" + library + "pi"));
+        // ... it only supplies a name that nothing else provides ...
+        Assert.Equal("6", Display("open Lib\n" + library + "Tau"));
+        // ... while a definition of your own takes precedence over the built-in name.
+        Assert.Equal("3\n8", Display("pi = 3\ncount(x) = x + 1\n\npi\ncount(7)"));
     }
 
     // ── Grace: the contract is the inferred parameter list, not a computed number ──

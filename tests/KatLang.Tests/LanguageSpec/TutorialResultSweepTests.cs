@@ -34,60 +34,32 @@ public class TutorialResultSweepTests
         Array.AsReadOnly<ReviewedDetailedError>(
             [
                 new(
-                    "Nothing = {}\nNothing()",
-                    "**Result:** error — `Nothing` has no defined output, so there is no value for the call to return (see [The Empty Sequence Value](#the-empty-sequence-value)).",
-                    KatLangErrorCode.MissingOutput),
+                    "1 / 0",
+                    "**Result:** error — division by zero.",
+                    KatLangErrorCode.DivisionByZero),
                 new(
-                    "A = {\n}\nA",
-                    "**Result:** error — `A` has no defined output.",
-                    KatLangErrorCode.MissingOutput),
-                new(
-                    "A = {\n}\nA == ()",
-                    "**Result:** error — `A` has no defined output.",
-                    KatLangErrorCode.MissingOutput),
-                new(
-                    "F(x) = x\nF()",
-                    "**Result:** error — `F(x)` expects one argument, and none was written.",
-                    KatLangErrorCode.ArityMismatch),
-                new(
-                    "count({})",
-                    "**Result:** error — the argument `{...}` has no defined output.",
-                    KatLangErrorCode.MissingOutput),
-                new(
-                    "Coll(*xs) = xs\nColl({})",
-                    "**Result:** error — the argument `{...}` has no defined output.",
-                    KatLangErrorCode.MissingOutput),
-                new(
-                    "Math.Ceiling(2.1)",
-                    "**Result:** error — `Math` has no member `Ceiling`, so the call fell back to a lexical `Ceiling(Math, 2.1)`; no such callable is visible, so `Ceiling` became an implicit parameter of the program, and the report names the receiver, explains the fallback, and suggests `Math.Ceil`.",
+                    "Total = 5\nTotl + 1",
+                    "**Result:** error — `Totl` is not defined, so it becomes a parameter of the program, which nothing supplies; the report suggests `Total`.",
                     KatLangErrorCode.UnresolvedImplicitParams),
                 new(
-                    "Lib = {\n    public Total = 1\n}\nTotal + 1",
-                    "**Result:** error — `Total` does not resolve at the root (write `open Lib` or `Lib.Total`); `Lib`'s own `Total` is not the problem and is not blamed.",
-                    KatLangErrorCode.UnresolvedImplicitParams),
+                    "if(1, 2, 3)",
+                    "**Result:** error — the condition `1` is a number, not a Boolean.",
+                    KatLangErrorCode.TypeMismatch),
                 new(
-                    "Head(first, *rest) = first\n\nHead()",
-                    "**Result:** error — `Head` needs one supplied value, so a call with none cannot bind it.",
+                    "Pair = 10, 20\nAdd(x, y) = x + y\n\nAdd(Pair)",
+                    "**Result:** error — `Pair` is one argument, but `Add` needs two.",
                     KatLangErrorCode.ArityMismatch),
                 new(
-                    "Inc(x) = x + 1\nif(true, Inc, 0)",
-                    "**Result:** error — `Inc` expects 1 parameter, but the selected branch demands it with 0 arguments; the report names `Inc` at its reference, exactly as writing `Inc` alone would.",
+                    "sum(1, 2, 3)",
+                    "**Result:** error — `sum` takes one collection, but three separate numbers were passed.",
                     KatLangErrorCode.ArityMismatch),
                 new(
-                    "A = q + 1\nAdd1(x) = x + 1\nF(x) = Add1(A)\n\nF(7)",
-                    "**Result:** error — `Add1`'s parameter `x` is bound to the callable `A`, and `A` still needs its implicit `q`, so demanding `x` as a value is an arity error.",
-                    KatLangErrorCode.ArityMismatch),
+                    "Grade(1) = 'excellent'\nGrade(2) = 'good'\n\nGrade(3)",
+                    "**Result:** error — no clause of `Grade` matches the argument `3`.",
+                    KatLangErrorCode.NoMatchingBranch),
                 new(
-                    "Inc(x) = x + 1\n\nApply(f) = {\n    Inner(f) = f(2)\n    Inner(5)\n}\n\nApply(Inc)",
-                    "**Result:** error — `Inner`'s parameter `f` is the value `5` at this call, so `f(2)` is not a call of a callable; the `Inc` that `Apply` holds under its own `f` is never consulted, and the program fails exactly as the standalone `Inner(5)` does.",
-                    KatLangErrorCode.NotAnAlgorithm),
-                new(
-                    "A = [1, 2, 3]\nA*.count",
-                    "**Result:** error — `A*.count` is the fluent supply chain, exactly `count(A*)`: the three items become three separate argument slots, and the fixed `count(collection)` signature reports an arity error.",
-                    KatLangErrorCode.ArityMismatch),
-                new(
-                    "Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\nOuter.Inner.X",
-                    "**Result:** error — `X` is local-only because it depends on the parameter `n` owned by `Outer`, and the root row is not inside `Outer`'s body; the member is still selected, and the report names it and the parameter it needs.",
+                    "Loan(principal, rate, years) = {\n    MonthlyRate = rate / 12\n    Months = years * 12\n    principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months)\n}\n\nLoan.MonthlyRate",
+                    "**Result:** error — `MonthlyRate` depends on the parameter `rate` of `Loan`, so it can be used only inside `Loan`.",
                     KatLangErrorCode.LocalOnlyProperty),
             ]);
 
@@ -161,8 +133,11 @@ public class TutorialResultSweepTests
     /// existing claim fails the ratchet below; the verified/skipped split is
     /// governed separately (partition identity + exact skip inventory), so
     /// converting a claim into a reviewed skip does not move this count.
+    /// Lowered from 180 to 104 (September 2026) by the reviewed rewrite that
+    /// turned the tutorial into a learning path and left reference-level edge
+    /// cases to the executable specification (<c>LanguageSpecCorpus</c>).
     /// </summary>
-    private const int MinimumResultBearingClaims = 180;
+    private const int MinimumResultBearingClaims = 104;
 
     /// <summary>
     /// Coarse parser-sanity floor on total source fences, NOT a coverage
@@ -173,7 +148,7 @@ public class TutorialResultSweepTests
     /// is deliberately loose — the one-claim-tight guarantee lives in
     /// <see cref="MinimumResultBearingClaims"/>.
     /// </summary>
-    private const int SourceFenceSanityFloor = 200;
+    private const int SourceFenceSanityFloor = 90;
 
     private static string AccountingSummary() =>
         $"tutorial sweep accounting: {TutorialCorpus.Examples.Count} source fences; "
@@ -248,7 +223,7 @@ public class TutorialResultSweepTests
                 "23\n16",
                 "module loading needs a host-configured network downloader; the URL and its outputs are illustrative"),
             new(
-                "`open`: Import Properties Directly",
+                "Loading External Algorithms",
                 """
                 open 'https://katlang.org/algorithm.kat'
 
@@ -296,8 +271,8 @@ public class TutorialResultSweepTests
 
     /// <summary>
     /// The ordinary error-claim contract is intentionally coarse (clean parse
-    /// plus evaluation failure). The current tutorial goes further: all three
-    /// labels name a specific failure family. Pin those complete detailed
+    /// plus evaluation failure). The current tutorial goes further: each of
+    /// its error labels names a specific failure family. Pin those complete detailed
     /// claims and check the public structured code, never rendered-message
     /// substrings. A future generic <c>**Result:** error</c> needs no entry;
     /// adding or rewriting detailed error prose is deliberately reviewed here.

@@ -1,5 +1,6 @@
 using KatLang.Semantics;
 using KatLang.Tests.LanguageSpec;
+using Xunit.Abstractions;
 
 namespace KatLang.Tests;
 
@@ -36,7 +37,7 @@ namespace KatLang.Tests;
 /// Sources here are malformed by design, so the raw syntax boundary and the permissive
 /// <see cref="SourceProvenance.ParseAllowingDiagnostics"/> path are used deliberately.
 /// </summary>
-public class MalformedSourceRecoveryTests
+public class MalformedSourceRecoveryTests(ITestOutputHelper output)
 {
     // `[Code] start-end message`, end exclusive.
     private static string Describe(Diagnostic diagnostic)
@@ -418,21 +419,30 @@ public class MalformedSourceRecoveryTests
     }
 
     /// <summary>
-    /// The law over every tutorial program the front end accepts (and the Lean encoding
-    /// covers): one reported character written at any token boundary adds the lexer's
-    /// diagnostic and changes nothing else — no other diagnostic, and the same elaborated
-    /// program. Excluded are the boundaries next to a `*` or `~` marker, whose attachment is
-    /// exact source adjacency (a character between a marker and its operand detaches it), and
-    /// the end of a comment, which the character would join.
+    /// The law over every executable-specification and tutorial program the front end
+    /// accepts (and the Lean encoding covers): one reported character written at any token
+    /// boundary adds the lexer's diagnostic and changes nothing else — no other diagnostic,
+    /// and the same elaborated program. Excluded are the boundaries next to a `*` or `~`
+    /// marker, whose attachment is exact source adjacency (a character between a marker and
+    /// its operand detaches it), and the end of a comment, which the character would join.
+    /// Both sources obey the same law, but only the executable specification carries the
+    /// floor against vacuity: tutorial programs add coverage on top of it, so shortening or
+    /// consolidating the tutorial for teaching reasons cannot fail this test.
     /// </summary>
     [Fact]
     public void ReportedCharacter_AtAnyTokenBoundaryOfAValidProgram_AddsOnlyTheLexerReport()
     {
-        var programs = 0;
-        var insertions = 0;
-        foreach (var example in TutorialCorpus.Examples)
+        int specificationPrograms = 0, specificationInsertions = 0, tutorialPrograms = 0, tutorialInsertions = 0;
+
+        // The specification comes first, so a tutorial fence repeating a specification program
+        // is checked once and counted as specification coverage; the tutorial contributes only
+        // programs the specification does not already contain.
+        var corpus = LanguageSpecCorpus.AllCases()
+            .Select(specCase => (specCase.Source, Origin: $"spec case {specCase.Id}", FromTutorial: false))
+            .Concat(TutorialCorpus.Examples.Select(example => (example.Source, Origin: $"tutorial.md fence at line {example.FenceLine}", FromTutorial: true)))
+            .DistinctBy(entry => entry.Source, StringComparer.Ordinal);
+        foreach (var (source, origin, fromTutorial) in corpus)
         {
-            var source = example.Source;
             var clean = Parser.Parse(source);
             if (clean.HasErrors)
                 continue;
@@ -447,14 +457,14 @@ public class MalformedSourceRecoveryTests
                 continue; // decimals and the like are outside the Lean encoding
             }
 
-            programs++;
+            var insertions = 0;
             var tokens = Lexer.Tokenize(source).Tokens;
             var cleanDiagnostics = clean.Diagnostics.Select(d => (d.Code, d.Message)).ToList();
             foreach (var point in TokenBoundaries(source, tokens))
             {
                 var variant = source.Insert(point, "@");
                 var parsed = Parser.Parse(variant);
-                var context = $"tutorial.md fence at line {example.FenceLine}, '@' at offset {point}: {variant.Replace("\n", "\\n", StringComparison.Ordinal)}";
+                var context = $"{origin}, '@' at offset {point}: {variant.Replace("\n", "\\n", StringComparison.Ordinal)}";
                 Assert.True(parsed.Diagnostics.Count(d => d.Code == DiagnosticCode.UnexpectedCharacter) == 1, context);
                 Assert.True(
                     cleanDiagnostics.SequenceEqual(parsed.Diagnostics
@@ -464,10 +474,27 @@ public class MalformedSourceRecoveryTests
                 Assert.True(expected == LeanAstEncoder.EncodeProgram(parsed.Root), context);
                 insertions++;
             }
+
+            if (fromTutorial)
+            {
+                tutorialPrograms++;
+                tutorialInsertions += insertions;
+            }
+            else
+            {
+                specificationPrograms++;
+                specificationInsertions += insertions;
+            }
         }
 
-        // A floor against vacuity (measured September 2026: 255 programs, 8,479 insertions).
-        Assert.True(programs >= 240 && insertions >= 8000, $"Only {programs} programs and {insertions} insertions were checked.");
+        var accounting = $"executable specification: {specificationPrograms} programs, {specificationInsertions} insertions; "
+            + $"tutorial programs the specification lacks: {tutorialPrograms} programs, {tutorialInsertions} insertions";
+        output.WriteLine(accounting);
+
+        // The floor against vacuity belongs to the executable specification alone (measured
+        // September 2026: 254 programs, 7,910 insertions; the tutorial added 70 programs with
+        // 2,341 insertions). Tutorial programs are held to the same law, but to no count.
+        Assert.True(specificationPrograms >= 240 && specificationInsertions >= 7500, $"Too few specification programs were checked — {accounting}.");
 
         static IEnumerable<int> TokenBoundaries(string source, IReadOnlyList<Token> tokens)
         {

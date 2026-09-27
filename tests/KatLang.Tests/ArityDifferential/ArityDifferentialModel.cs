@@ -186,7 +186,7 @@ public static class ReceiverLaws
         [ReceiverLaw.FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL] =
             "AGENTS.md: operand*.Member(...) lowers to Member(operand*, ...); C# parser fluent dot-chain lowering (spread receiver becomes the leading argument slot); KatLangArityLaws: spread_dot_receiver_is_ordinary_spread_argument",
         [ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES] =
-            "CoreArityAlgebra: capture, then bindArgs on one argument; tutorial spec spread-capture-count ((A*).count = 3); KatLangArityLaws: capture_spreadItems_of_list, dot_receiver_is_one_collected_item; StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply",
+            "CoreArityAlgebra: capture, then bindArgs on one argument; LanguageSpec case spread-capture-count ((A*).count = 3); KatLangArityLaws: capture_spreadItems_of_list, dot_receiver_is_one_collected_item; StarSyntaxTests.SpreadInsideAGroup_IsACaptureReceiver_NotAFluentSupply",
         [ReceiverLaw.DECONSTRUCTION_OPENS_LONE_STRUCTURE] =
             "CoreArityAlgebra: openLoneStructure/bindDeconstruct; CoreArityAlgebraProofs: deconstruct_fixed_single_sequence_opens, deconstruct_singleton_eq_args_items; KatLangArityLaws: deconstruct_fixed_single_list_opens, deconstruct_collecting_single_list_opens",
         [ReceiverLaw.DECONSTRUCTION_RHS_CAPTURE_BOUNDARY] =
@@ -196,7 +196,7 @@ public static class ReceiverLaws
         [ReceiverLaw.PROPERTY_CALL_EQUIVALENT_VALUE] =
             "AGENTS.md A vs A() cache rule (same value, cache bypass only); C# ZeroArgPropertyResultCacheTests.ExplicitZeroArgCallBypassesCache",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_INVOCATION_VALUE] =
-            "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial map contract (item is what S:i returns, nested values stay intact)",
+            "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial \"Callbacks Receive One Element\" (each element, a nested pair included, is passed whole)",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT] =
             "KatLang.lean evalUserCallbackCallCounted (the ONE ordinary counted binder bindCountedParameterPatternList over the supplied callback arguments; no row convention); CoreArityAlgebra: bindCallback; CoreArityAlgebraProofs: callback_is_the_ordinary_call, callback_element_is_one_ordinary_argument, callback_two_fixed_rejects_structured_element; CoreTests ExplicitValueOpening callbacksPassEachElementAsOneArgument / callbackBindingMatchesTheDirectCall; ExplicitValueOpeningTests",
         [ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY] =
@@ -208,9 +208,9 @@ public static class ReceiverLaws
         [ReceiverLaw.LOOP_STATE_SLOTS_ARE_NOT_A_VALUE_BOUNDARY] =
             "KatLang.lean evalAlgOutputSlots (flat mode expands spread rows into state slots) + loopStateResult; AGENTS.md non-value-boundary list",
         [ReceiverLaw.LOOP_PATTERNED_STEP_PACKS_TOPLEVEL_SPREAD] =
-            "KatLang.lean evalAlgOutputSlots preserveSequenceSpreadExpressionBoundaries branch; C# ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries; tutorial loop-step packed-slot exception",
+            "KatLang.lean evalAlgOutputSlots preserveSequenceSpreadExpressionBoundaries branch; C# ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries; docs/design/language-rules/sequences-lists-and-calls.md loop-step packed-slot exception",
         [ReceiverLaw.WHILE_LAST_SLOT_IS_CONTINUE_FLAG] =
-            "KatLang.lean splitContSlots; tutorial while pre-check semantics",
+            "KatLang.lean splitContSlots; tutorial \"Looping While a Condition Holds\" (a round whose condition is false is not kept)",
         [ReceiverLaw.COLLECT_SPREAD_ROUND_TRIP] =
             "CoreArityAlgebraProofs: items_collect (spread ∘ collect = id); KatLangArityLaws: spreadItems_collectSegment",
         [ReceiverLaw.CAPTURE_AND_COLLECT_ARE_DIFFERENT_OPERATIONS] =

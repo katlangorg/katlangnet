@@ -2656,7 +2656,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2, 3]\n[(1, 2)]\n[1, 2]",
             ExpectedRaw = "S[L[1, 2, 3], L[S[1, 2]], L[1, 2]]",
             ExpectedEmittedCount = 3,
-            Explanation = "The tutorial's `take` examples: a plain prefix list, the single-survivor case (the exact one-element list `[(1, 2)]`), and the dot-call form over a `range` list receiver.",
+            Explanation = "Three `take` examples (a composite fence from an earlier edition of the tutorial): a plain prefix list, the single-survivor case (the exact one-element list `[(1, 2)]`), and the dot-call form over a `range` list receiver.",
         },
         new()
         {
@@ -2667,7 +2667,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[3, 1, 2]\n[(1, 2), (3, 4)]\n[3, 1, 2]",
             ExpectedRaw = "S[L[3, 1, 2], L[S[1, 2], S[3, 4]], L[3, 1, 2]]",
             ExpectedEmittedCount = 3,
-            Explanation = "The tutorial's `distinct` examples: atom dedup, structural pair dedup, and the dot-call form over a captured multi-item body.",
+            Explanation = "Three `distinct` examples (a composite fence from an earlier edition of the tutorial): atom dedup, structural pair dedup, and the dot-call form over a captured multi-item body.",
         },
         new()
         {
@@ -4019,7 +4019,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "1.5",
             ExpectedRaw = "1.5",
             ExpectedEmittedCount = 1,
-            LeanExclusionReason = "Decimal mean: the C# runtime performs Decimal128 division and returns `1.5`; the Lean Int core uses `Int.tdiv` and returns `1` (documented model limitation, tutorial 'Average' section).",
+            LeanExclusionReason = "Decimal mean: the C# runtime performs Decimal128 division and returns `1.5`; the Lean Int core uses `Int.tdiv` and returns `1` (documented model limitation: the two-tier numeric bullet of src/KatLang/SEMANTIC-ALIGNMENT.md).",
             Explanation = "`avg` returns the decimal mean in the runtime; the Lean Int-core model truncates and is documented as a model limitation, not the runtime contract.",
         },
         new()
