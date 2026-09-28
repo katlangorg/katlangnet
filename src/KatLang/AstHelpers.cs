@@ -637,26 +637,4 @@ internal static class AstHelpers
     private static bool HasStructuralMemberOrConditionalBranchMember(Algorithm receiver, string name)
         => ElaboratedScopeLookup.TryLookupProperty(receiver, name) is not null
             || receiver.DefinesConditionalBranchProperty(name);
-
-    /// <summary>
-    /// Collapses a wrapper algorithm whose single output row is a scope-owning
-    /// algorithm expression into that algorithm (module elaboration's
-    /// single-block property-body promotion). A <see cref="Expr.Capture"/> body
-    /// never collapses — a captured value boundary is not algorithm identity.
-    /// A deconstruction source also keeps its written RHS boundary and provenance.
-    /// </summary>
-    internal static Algorithm UnwrapSingleBlockPropertyBody(this Algorithm algorithm)
-    {
-        if (algorithm is Algorithm.User
-            {
-                IsAssignmentDeconstructionSource: false,
-                Params.Count: 0, Opens.Count: 0, Properties.Count: 0,
-                Output: [Expr.AlgorithmExpr(var innerAlgorithm)]
-            })
-        {
-            return innerAlgorithm;
-        }
-
-        return algorithm;
-    }
 }

@@ -822,10 +822,10 @@ internal sealed partial class ModuleLoader
             foreach (var prop in user.Properties)
             {
                 var processedValue = ProcessAlgorithm(prop.Value, LoadContext.PropertyDef, depth + 1);
-                // Unwrap only algorithm-valued single-block property bodies. A plain
-                // sequence value such as (a, b) stays one captured value boundary,
-                // while load-elaborated modules become direct property values.
-                processedValue = processedValue.UnwrapSingleBlockPropertyBody();
+                // The one definition-body rule of both walks. It never merges here: this walk
+                // sees only load-free subtrees (a directive body is load-bearing and routes to
+                // the async twin), so every written body, `P = { { ... } }` included, is kept.
+                processedValue = MergeLoadDirectiveBody(prop.Value, processedValue);
                 newProperties.Add(prop.WithValue(processedValue));
             }
 
@@ -905,9 +905,9 @@ internal sealed partial class ModuleLoader
         foreach (var prop in user.Properties)
         {
             var processedValue = await RouteAlgorithmAsync(prop.Value, LoadContext.PropertyDef, depth + 1).ConfigureAwait(false);
-            // Unwrap only algorithm-valued single-block property bodies, exactly as in
-            // the synchronous walk.
-            processedValue = processedValue.UnwrapSingleBlockPropertyBody();
+            // The one definition-body rule, exactly as in the synchronous walk: only a body
+            // WRITTEN as exactly one load directive becomes the module spliced for it.
+            processedValue = MergeLoadDirectiveBody(prop.Value, processedValue);
             newProperties.Add(prop.WithValue(processedValue));
         }
 
@@ -973,6 +973,42 @@ internal sealed partial class ModuleLoader
         rewritesByDepth[effectiveDepth] = result;
         return result;
     }
+
+    /// <summary>
+    /// MOD-07's definition-body rule, the ONE place module elaboration changes a written
+    /// definition's shape: a body without parameters, an explicit parameter list, declarations
+    /// or opens, whose sole WRITTEN row is a
+    /// <c>load</c> directive — <c>P = load(u)</c>, and therefore <c>P = { load(u) }</c>, which
+    /// the parser's one definition-body merge (SYN-05) already made the same body — IS the
+    /// module the directive was replaced by, exactly as the parser makes <c>P = { module text }</c>
+    /// the block itself. <paramref name="written"/> is the definition's body as the walk received
+    /// it; <paramref name="elaborated"/> is that body after the walk.
+    /// <para>
+    /// The decision reads what was WRITTEN (the directive), never the elaborated shape alone
+    /// (PV-02): a written <c>P = { { ... } }</c> — whose single row is an ordinary block, load-free
+    /// or not, in the document or inside module text — was already merged once by the parser,
+    /// and merging it again because it LOOKS like a spliced module made merely configuring a
+    /// downloader change the members, signatures, and values of load-free source. Every other
+    /// body is returned as elaborated: a refused directive (kept as written, so its row is no
+    /// block), a deconstruction source (its right-hand side keeps its written boundary), and a
+    /// parameterized definition (<c>F(y) = load(u)</c> keeps the module as one nested block
+    /// output) behave exactly as before.
+    /// </para>
+    /// </summary>
+    private static Algorithm MergeLoadDirectiveBody(Algorithm written, Algorithm elaborated)
+        => written is Algorithm.User
+            {
+                IsAssignmentDeconstructionSource: false,
+                HasExplicitParameterList: false,
+                ParameterPatterns.Count: 0,
+                Opens.Count: 0,
+                Properties.Count: 0,
+                Output: [var writtenRow],
+            }
+            && writtenRow.TryGetUnresolvedLoadArguments(out _)
+            && elaborated is Algorithm.User { Output: [Expr.AlgorithmExpr(var module)] }
+                ? module
+                : elaborated;
 
     // ── B2c: deferred module regions ────────────────────────────────────────
 

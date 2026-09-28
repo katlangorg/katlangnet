@@ -688,6 +688,25 @@ public sealed class CliApplicationTests
         Assert.Contains("domain not allowed", result.TrimmedError);
     }
 
+    [Fact]
+    public async Task AllowLoading_DoesNotChangeTheMeaningOfLoadFreeSource()
+    {
+        // PV-02: --allow-loading hands KatLang a downloader, a capability only. The written
+        // inner block owns X, so A.X falls back to the lexical X(a) with or without it.
+        const string source = "X(a) = 100\nA = {\n    {\n        public X = 1\n        5\n    }\n}\nA.X\nA";
+        var downloader = new RecordingDownloader(Modules());
+
+        var withoutLoading = await Cli.InvokeWithDownloaderAsync(downloader.DownloadAsync, "eval", source);
+        var withLoading = await Cli.InvokeWithDownloaderAsync(
+            downloader.DownloadAsync, "eval", source, "--allow-loading");
+
+        Assert.Equal(Success, withoutLoading.ExitCode);
+        Assert.Equal(Success, withLoading.ExitCode);
+        Assert.Equal("100\n5", withoutLoading.TrimmedOutput);
+        Assert.Equal(withoutLoading.TrimmedOutput, withLoading.TrimmedOutput);
+        Assert.Empty(downloader.RequestedUrls);
+    }
+
     [Theory]
     [InlineData("http://katlang.org/x.kat", "only HTTPS URLs are allowed")]
     [InlineData("https://127.0.0.1/x.kat", "domain not allowed")]
