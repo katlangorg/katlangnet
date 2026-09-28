@@ -636,10 +636,38 @@ internal static class SequencePipelineOptimizer
     }
 
     /// <summary>
+    /// The verdict of a committed fused pipeline whose SOURCE slot failed — the mirror of
+    /// the generic call-item assembly of <c>filter(R, P)</c> in BOTH spellings (a dot
+    /// receiver is the ordinary first argument; dot-call passes a value). Assembly
+    /// evaluates the slots left to right and DEFERS the collection slot's ordinary failure
+    /// until binding, so the predicate's one eager attempt still runs and the source error
+    /// wins — unless that attempt reaches a resource limit. A resource limit is never
+    /// deferred (RESOURCE LIMITS ARE TERMINAL, <see cref="Evaluator.IsDeferrableEvaluationFailure"/>):
+    /// when the SOURCE reached one, the call ends at once and the predicate is never
+    /// attempted; when the ATTEMPT reaches one, it ends the call in place of the deferred
+    /// source error, attributed exactly as a predicate failure after a successful source.
+    /// </summary>
+    private static EvalError SourceFailureVerdict(
+        EvalError sourceError,
+        FilterCountPipelinePreparation preparation,
+        Evaluator.EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (!Evaluator.IsDeferrableEvaluationFailure(sourceError))
+            return sourceError;
+
+        var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
+        return predicateR.IsError && !Evaluator.IsDeferrableEvaluationFailure(predicateR.Error)
+            ? WithContext(preparation.Syntax, ctx, EvalResult<Evaluator.CountedResult>.Err(predicateR.Error)).Error
+            : sourceError;
+    }
+
+    /// <summary>
     /// The committed fused region. The caller holds the outer collection-argument
     /// depth level across source evaluation, the predicate's eager value attempt, and
     /// the later callbacks. No fallback is possible from here: source failures and a
-    /// sticky predicate limit are returned as optimized-path errors.
+    /// predicate attempt's resource limit (terminal, <see cref="SourceFailureVerdict"/>)
+    /// are returned as optimized-path errors.
     /// </summary>
     private static FilterCountRecognitionStatus TryCreateFilterCountPlan(
         FilterCountPipelinePreparation preparation,
@@ -665,13 +693,7 @@ internal static class SequencePipelineOptimizer
                     directRangeSource.Span));
             if (rangeR.IsError)
             {
-                // Call-item assembly evaluates ALL slots before inspecting the
-                // collection's retained error — in BOTH spellings, because a dot
-                // receiver is the ordinary first argument of `filter(R, P)` (dot-call
-                // passes a value). The source error still wins, including over a
-                // later sticky limit.
-                _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
-                result = rangeR.Error;
+                result = SourceFailureVerdict(rangeR.Error, preparation, ctx, valEnv);
                 return FilterCountRecognitionStatus.Error;
             }
 
@@ -689,10 +711,8 @@ internal static class SequencePipelineOptimizer
                 services.EvaluateDotReceiverIterationItems(preparation.Syntax.Source));
             if (sourceItemsR.IsError)
             {
-                // Same slot-assembly parity as the direct-range branch: the generic
-                // path prepares the predicate slot even after the receiver slot failed.
-                _ = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
-                result = sourceItemsR.Error;
+                // Same slot-assembly parity as the direct-range branch.
+                result = SourceFailureVerdict(sourceItemsR.Error, preparation, ctx, valEnv);
                 return FilterCountRecognitionStatus.Error;
             }
 
@@ -701,8 +721,8 @@ internal static class SequencePipelineOptimizer
                 preparation.DirectRangeFallbackReason);
         }
 
-        // Use the actual generic preparation: it owns eager evaluation, sticky
-        // failures and callable identity. A failure after commitment is terminal;
+        // Use the actual generic preparation: it owns eager evaluation, terminal
+        // resource limits and callable identity. A failure after commitment is terminal;
         // falling back here would evaluate the source and predicate a second time.
         var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
         if (predicateR.IsError)

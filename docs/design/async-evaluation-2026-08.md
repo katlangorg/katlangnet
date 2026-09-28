@@ -209,7 +209,8 @@ beyond the available headroom still returns a structured resource error.
   held-run incompleteness + correct resumption, cache-miss callback exactly-once/no-
   replay assertions, awaited host-exception identity + depth conservation, async
   deconstruction shared-bind reuse, concurrent sync/async lanes over one shared parsed
-  root, retained-resource-limit parity.
+  root, resource-limit parity (originally retained-resource-limit parity; since Q-02,
+  September 2026, a limit in an unused argument is terminal on both families).
 - `AsyncCancellationTests` — the Phase 1 matrix on the async surface: already-cancelled
   evaluation and source-processing tokens (canceled task, token identity, nothing
   evaluated), mid-run via the async seam, completion-edge, cancellation while genuinely

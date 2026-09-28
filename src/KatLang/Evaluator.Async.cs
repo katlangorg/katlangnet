@@ -2125,7 +2125,9 @@ public static partial class Evaluator
                 continue;
             }
 
-            if (maybeAlg is not null)
+            // An ORDINARY failure is retained beside the algorithm channel; a RESOURCE LIMIT is
+            // never deferred and fails the call now — see the synchronous twin.
+            if (maybeAlg is not null && IsDeferrableEvaluationFailure(evaluatedR.Error))
             {
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
@@ -2520,9 +2522,15 @@ public static partial class Evaluator
                     resolvedArg.PreparedValue,
                     resolvedArg.Source,
                     resolvedArg.Callable);
-                items.Add(valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count)
-                    ? await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false)
-                    : item);
+                if (valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count))
+                {
+                    item = await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false);
+                    // A resource limit the demand reached ends the call — see the synchronous twin.
+                    if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
+                        return demandFailure;
+                }
+
+                items.Add(item);
                 continue;
             }
 
@@ -2558,8 +2566,13 @@ public static partial class Evaluator
                 continue;
             }
 
-            // MIRROR OF BuildCallableCallItems: a named value-shaped argument's missing
-            // output is blamed on the property, never on the callee.
+            // MIRROR OF BuildCallableCallItems: a resource limit the eager attempt reached
+            // ends the call here (RESOURCE LIMITS ARE TERMINAL); an ordinary failure is
+            // retained, and a named value-shaped argument's missing output is blamed on the
+            // property, never on the callee.
+            if (!IsDeferrableEvaluationFailure(outputR.Error))
+                return outputR.Error;
+
             items.Add(new VariadicCallItem(
                 Value: null,
                 arg,

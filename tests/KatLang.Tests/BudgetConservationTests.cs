@@ -43,8 +43,15 @@ namespace KatLang.Tests;
 /// </summary>
 public class BudgetConservationTests
 {
+    /// <summary>
+    /// RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02 / PV-06): the ONE predicate every
+    /// deferral site consults refuses to defer a resource-limit failure — bare or wrapped in
+    /// context — and lets an ordinary failure be deferred under the site's own rule. (It
+    /// replaced the builtin adapters' "retain only resource limits" helper, which kept a
+    /// limit on the item and surfaced it later, after other slots had run.)
+    /// </summary>
     [Fact]
-    public void AlgorithmBinding_RetainsOnlyResourceLimitValueFailures()
+    public void ResourceLimitFailures_AreNeverDeferrable_OrdinaryFailuresAre()
     {
         var limit = new EvalError.EvaluationStepLimitExceeded(17)
         {
@@ -54,10 +61,11 @@ public class BudgetConservationTests
             new PropertyEvaluationContext("Probe"),
             limit);
 
-        Assert.Same(limit, Evaluator.RetainResourceLimitForAlgorithmBinding(limit));
-        Assert.Same(wrappedLimit, Evaluator.RetainResourceLimitForAlgorithmBinding(wrappedLimit));
-        Assert.Null(Evaluator.RetainResourceLimitForAlgorithmBinding(new EvalError.DivByZero()));
-        Assert.Null(Evaluator.RetainResourceLimitForAlgorithmBinding(null));
+        Assert.False(Evaluator.IsDeferrableEvaluationFailure(limit));
+        Assert.False(Evaluator.IsDeferrableEvaluationFailure(wrappedLimit));
+        Assert.True(Evaluator.IsDeferrableEvaluationFailure(new EvalError.DivByZero()));
+        Assert.True(Evaluator.IsDeferrableEvaluationFailure(
+            new EvalError.WithContext(new PropertyEvaluationContext("Probe"), new EvalError.DivByZero())));
     }
 
     // `f(k)` needs k + 1 nested invocations: f(k), f(k-1), ... f(0).
@@ -283,57 +291,58 @@ public class BudgetConservationTests
     /// <summary>
     /// Named regression for the defect this suite found. <c>TryEnterInvocation</c> charged
     /// its step BEFORE testing the depth ceiling, so a depth-REJECTED invocation still
-    /// consumed a step. That is normally invisible because the limit error ends the run —
-    /// but a resource-limit failure of a parameter's eager value evaluation is RETAINED on
-    /// the algorithm binding instead of raised, so a program that binds such a parameter
-    /// without demanding its value succeeds while having absorbed the refusal.
+    /// consumed a step. It was observable because a resource-limit failure of a
+    /// parameter's eager value evaluation used to be RETAINED on the algorithm binding, so
+    /// <c>G(A)</c> below — <c>A</c> recursing until <c>MaxDepth</c> refuses it, <c>G</c>
+    /// never reading it — SUCCEEDED with 10 while charged five steps for four invocations,
+    /// and <c>MaxSteps = 4</c> rejected it: a <c>MaxDepth</c> value deciding a
+    /// <c>MaxSteps</c> verdict.
     ///
-    /// <para>Here <c>G(A)</c> binds <c>A</c> whose value channel recurses until
-    /// <c>MaxDepth</c> refuses it, <c>G</c> never demands the value, and the run returns
-    /// 10 after exactly four dynamic invocations: <c>G(A)</c>, <c>A</c>, <c>A</c>,
-    /// <c>H()</c>. It was charged five steps, so <c>MaxSteps = 4</c> rejected a run that
-    /// performed four invocations — a <c>MaxDepth</c> value deciding a <c>MaxSteps</c>
-    /// verdict, the cross-talk <see cref="BudgetCrossTalkMatrixTests"/> forbids.</para>
+    /// <para>RESOURCE LIMITS ARE TERMINAL (Q-02 / PV-06): the refusal now ends the run.
+    /// The conservation invariant still holds on that path, and the counters stay an exact
+    /// record of the work actually performed — three admitted invocations (<c>G</c>, whose
+    /// argument assembly then entered <c>A</c> and <c>A</c> again), the refused fourth
+    /// charged nothing, and <c>H()</c> never ran. A step budget of four still reports the
+    /// depth verdict; a budget of three is exhausted by the admitted work, so the refused
+    /// enter reports the step ceiling, which it tests FIRST.</para>
     /// </summary>
     [Fact]
-    public void AbsorbedDepthRejection_DoesNotConsumeAStep()
+    public void RefusedDepthEnter_DoesNotConsumeAStep_AndEndsTheRun()
     {
         var ast = Ast("G(f) = 1\nA = A\nH = 9\nG(A) + H()");
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
         var (result, budget) = Evaluator.RunCountedObserved(ast, limits);
-        Assert.False(result.IsError);
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(result.Error));
         Assert.Equal(3, budget.PeakDepth);
 
-        // Four dynamic invocations were performed; the refused fifth is not one of them.
-        Assert.Equal(4L, budget.ConsumedSteps);
-        AssertConserved(budget, "run that absorbed a depth rejection");
+        // The admitted invocations are charged; the refused one is not.
+        Assert.Equal(3L, budget.ConsumedSteps);
+        AssertConserved(budget, "run that ended on a depth rejection");
 
-        // ... and the step budget that exactly covers the performed work must admit it.
-        Assert.False(Evaluator.Run(ast, limits with { MaxSteps = 4 }).IsError);
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(
+            Innermost(Evaluator.Run(ast, limits with { MaxSteps = 4 }).Error));
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
             Innermost(Evaluator.Run(ast, limits with { MaxSteps = 3 }).Error));
     }
 
     /// <summary>
-    /// The same retained-error path with two independently refused eager values. Each
-    /// refusal is non-mutating, so only the six admitted invocations are charged.
+    /// Two independently refusable eager values: the FIRST refusal ends the run, so the
+    /// second argument is never evaluated and no phantom step is charged for either.
     /// </summary>
     [Fact]
-    public void MultipleAbsorbedDepthRejections_ChargeNoPhantomSteps()
+    public void FirstRefusedDepthEnter_EndsTheRun_BeforeTheNextArgument()
     {
         var ast = Ast("G(f, g) = 1\nA = A\nB = B\nH = 9\nG(A, B) + H()");
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
         var (result, budget) = Evaluator.RunCountedObserved(ast, limits);
-        Assert.False(result.IsError);
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(result.Error));
         Assert.Equal(3, budget.PeakDepth);
-        Assert.Equal(6L, budget.ConsumedSteps);
-        AssertConserved(budget, "run that absorbed two independent depth rejections");
-
-        Assert.False(Evaluator.Run(ast, limits with { MaxSteps = 6 }).IsError);
-        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            Innermost(Evaluator.Run(ast, limits with { MaxSteps = 5 }).Error));
+        Assert.Equal(3L, budget.ConsumedSteps);
+        AssertConserved(budget, "run that ended on the first of two refusable arguments");
     }
 
     /// <summary>

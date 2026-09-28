@@ -642,7 +642,8 @@ public static partial class Evaluator
 
     /// <summary>
     /// Prepares a filter predicate through the generic call-item and suffix binding
-    /// helpers: one eager value attempt, sticky resource-limit retention, and the
+    /// helpers: one eager value attempt (a resource limit it reaches is the call's
+    /// terminal verdict, never a fall-through — RESOURCE LIMITS ARE TERMINAL), and the
     /// original callable identity. Used after fusion commits, with caller environments.
     /// A failed collection in a plain call still requires this attempt; its earlier
     /// error takes precedence over this result, just as in BindSequenceBuiltinArguments.
@@ -707,9 +708,16 @@ public static partial class Evaluator
                 // Binding already knows this emitted slot's role. Demand a VALUE here,
                 // before later slots' eager effects, through the same once-only helper
                 // used below. A callback slot still carries the unexecuted algorithm.
-                items.Add(valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count)
-                    ? DemandSequenceBuiltinCallItemValue(item, ctx, valEnv)
-                    : item);
+                if (valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count))
+                {
+                    item = DemandSequenceBuiltinCallItemValue(item, ctx, valEnv);
+                    // A resource limit the demand reached ends the call here, before any
+                    // later slot is evaluated (IsDeferrableEvaluationFailure, Q-02).
+                    if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
+                        return demandFailure;
+                }
+
+                items.Add(item);
                 continue;
             }
 
@@ -748,9 +756,17 @@ public static partial class Evaluator
                 continue;
             }
 
-            // A value-shaped NAMED argument with no output is that property's failure when a
-            // value position later demands it (BlameDemandedArgumentForMissingOutput), never
-            // the callee's; callback positions ignore the value error as before.
+            // RESOURCE LIMITS ARE TERMINAL (IsDeferrableEvaluationFailure, Q-02): a limit the
+            // eager attempt actually reached ends the call here, before any later argument is
+            // evaluated, and no arity verdict, earlier retained failure, or callback
+            // fall-through can replace or absorb it.
+            if (!IsDeferrableEvaluationFailure(outputR.Error))
+                return outputR.Error;
+
+            // An ORDINARY failure is retained on the item. A value-shaped NAMED argument with
+            // no output is that property's failure when a value position later demands it
+            // (BlameDemandedArgumentForMissingOutput), never the callee's; callback positions
+            // ignore the value error as before.
             items.Add(new VariadicCallItem(
                 Value: null,
                 arg,
@@ -768,13 +784,17 @@ public static partial class Evaluator
     /// the original source — judging the callable the item NAMES
     /// (<see cref="VariadicCallItem.NamedAlgorithm"/>), never its value wrapper — or
     /// preserve the failure of a valid value's body. Callback positions never call this
-    /// helper; retained resource limits remain authoritative. A parameter's established
-    /// failure takes precedence over classification of its independent callable channel.
+    /// helper. A resource limit the item's own demand reached is authoritative: it is the
+    /// demand's failure, never replaced by a classification of the callable channel
+    /// (RESOURCE LIMITS ARE TERMINAL — assembly already returns a limit its eager attempt
+    /// reaches, so here it can only come from this value position's own demand). A
+    /// parameter's established failure takes precedence over classification of its
+    /// independent callable channel.
     /// Lean: <c>sequenceBuiltinValueDemandError?</c>.
     /// </summary>
     private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item)
         => (item.Source is Expr.Param ? item.ValueError : null)
-            ?? RetainResourceLimitForAlgorithmBinding(item.ValueError)
+            ?? (item.ValueError is { } failure && !IsDeferrableEvaluationFailure(failure) ? failure : null)
             ?? (item.NamedAlgorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
             ?? item.ValueError;
 
@@ -833,18 +853,20 @@ public static partial class Evaluator
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
                 {
-                    // A resource-limit failure from the slot's eager value evaluation is
-                    // STICKY: the limit is a property of the run, and falling through to
-                    // the algorithm channel would re-run the same body — each active
+                    // A resource-limit failure of the slot's eager value evaluation never
+                    // reaches this fall-through: the limit is a property of the run, so
+                    // call-item assembly returns it the moment the attempt reaches it
+                    // (BuildCallableCallItems, IsDeferrableEvaluationFailure — RESOURCE
+                    // LIMITS ARE TERMINAL), and the fused filter-count pipeline applies the
+                    // same attempt through PrepareFilterPredicateArgument. This check is the
+                    // backstop that keeps any other producer from routing a limit into the
+                    // algorithm channel, where it would re-run the same body — each active
                     // level retrying once turns a failing self-referential argument
                     // (`A = xs.reduce(F, A)`) into work exponential in the depth limit.
-                    // Non-limit value errors keep the legacy fall-through, which is what
-                    // lets a genuine callback reference reach the algorithm channel. The
-                    // retention policy is the shared algorithm-binding one, and the fused
-                    // filter-count pipeline applies the same attempt-and-retain step
-                    // through PrepareFilterPredicateArgument.
-                    if (RetainResourceLimitForAlgorithmBinding(item.ValueError) is { } stickyLimit)
-                        return stickyLimit;
+                    // ORDINARY value errors keep the legacy fall-through, which is what lets
+                    // a genuine callback reference reach the algorithm channel.
+                    if (item.ValueError is { } failure && !IsDeferrableEvaluationFailure(failure))
+                        return failure;
 
                     var algorithm = item.Algorithm
                         ?? (item.PreparedValue is { } prepared

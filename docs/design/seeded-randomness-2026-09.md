@@ -183,7 +183,16 @@ For a given KatLang version: the same program (loaded module contents and any
 executed KatLang path produce the same random values on every supported
 platform. Synchronous versus asynchronous entry points, optimizer strategies
 (planned loops, fused sequence pipelines), and unrelated `EvaluationLimits` that
-do not change the program's actual control flow never alter the stream. A seed is
+do not change the program's actual control flow never alter the stream. A limit
+the run actually reaches is not a change of control flow that a successful run
+could observe: every resource-limit failure is terminal for the run
+(`docs/design/language-rules/evaluator-and-hosting.md` § Resource limits are
+terminal for the run, Q-02, September 2026), so a tighter limit can make a seeded
+run fail, but a seeded run that succeeds made exactly the draws of the same run
+under no limit. (Before that rule, a limit reached inside an argument the callee
+ignored was absorbed, and the run succeeded with a SHIFTED stream: the canonical
+`G({Deep(100) + randomInt(0, 1000)}, randomInt(0, 1000))` returned the first draw
+instead of the second.) A seed is
 a reproducible stream, not memoization: which calls execute and in what order is
 decided by the ordinary evaluation rules (left-to-right arguments, once-only
 written arguments, lazy `if` branches, the zero-argument property cache, explicit

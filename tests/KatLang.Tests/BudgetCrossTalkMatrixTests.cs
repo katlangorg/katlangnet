@@ -1503,8 +1503,9 @@ public class BudgetCrossTalkMatrixTests
     /// The value-shaped predicate defect over a NON-EMPTY source (K3-02 of the
     /// fused-pipeline review). The generic binding evaluates a value-shaped predicate —
     /// <c>(D)</c>, bare <c>D</c>, <c>{D}</c> — eagerly at the filter call boundary and
-    /// treats a resource-limit failure of that attempt as the call's verdict (the sticky
-    /// rule of <c>PrepareSequenceBuiltinSuffixArg</c>); a success or a non-limit failure
+    /// treats a resource-limit failure of that attempt as the call's verdict (the
+    /// terminal rule — once the sticky rule of <c>PrepareSequenceBuiltinSuffixArg</c>, now
+    /// applied at the attempt itself, RESOURCE LIMITS ARE TERMINAL); a success or a non-limit failure
     /// proceeds to the algorithm channel, where applying a zero-parameter algorithm to
     /// an item is an arity error. The fused pipeline resolved the predicate on the
     /// algorithm channel only, so below the attempt's depth it reported the ARITY error
@@ -1512,7 +1513,7 @@ public class BudgetCrossTalkMatrixTests
     /// included the attempt. Both strategies must agree on the complete structured error
     /// (kind, payload, context chain and spans) and on the operational counters at EVERY
     /// depth limit up to and past the attempt's need, and the fused path must reach that
-    /// agreement itself — a sticky limit is its terminal verdict, never a fallback.
+    /// agreement itself — a limit is its terminal verdict, never a fallback.
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter((D)).count")]

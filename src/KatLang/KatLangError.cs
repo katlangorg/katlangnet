@@ -61,7 +61,9 @@ public sealed class KatLangError
     /// (including source-processing limits, which are diagnostics, not
     /// evaluation outcomes) are never classified as resource limits, and host
     /// cancellation throws <see cref="OperationCanceledException"/> instead of
-    /// producing an error value at all.
+    /// producing an error value at all. An evaluation resource-limit failure is always the
+    /// run's own outcome: evaluation reached the limit and stopped there, and no argument the
+    /// program ignored could absorb it, so a run that succeeds never reached one.
     /// </summary>
     public bool IsResourceLimit => Source?.IsResourceLimit ?? false;
 

@@ -470,11 +470,14 @@ public class EvaluationCancellationTests
     // ── C. Cancellation is never retained as a binding error ─────────────────
 
     /// <summary>
-    /// THE retention trap. In this shape a RESOURCE-LIMIT failure of the eager argument
-    /// evaluation is retained on the binding and the run SUCCEEDS with 10
-    /// (<see cref="BudgetConservationTests.AbsorbedDepthRejection_DoesNotConsumeAStep"/>);
-    /// a cancellation observed during the same eager evaluation must instead escape as
-    /// <see cref="OperationCanceledException"/> — a cancelled run does not continue.
+    /// THE retention trap. In this shape an ORDINARY failure of the eager argument
+    /// evaluation would be retained on the binding (the callee never reads it), and a
+    /// RESOURCE-LIMIT failure is a terminal structured error (RESOURCE LIMITS ARE TERMINAL,
+    /// Q-02 — see <see cref="BudgetConservationTests.RefusedDepthEnter_DoesNotConsumeAStep_AndEndsTheRun"/>;
+    /// before that rule it too was retained and the run SUCCEEDED with 10). A cancellation
+    /// observed during the same eager evaluation is neither: it must escape as
+    /// <see cref="OperationCanceledException"/> — never retained, never an
+    /// <see cref="EvalError"/>, and a cancelled run does not continue.
     /// </summary>
     [Fact]
     public void CancellationDuringEagerArgumentEvaluation_EscapesInsteadOfBeingRetained()
@@ -482,10 +485,13 @@ public class EvaluationCancellationTests
         const string Program = "G(f) = 1\nA = A\nH = 9\nG(A) + H()";
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
-        // Control: the depth-limit refusal of A's eager value IS retained; the run
-        // completes with 10. This is the exact behavior cancellation must not share.
-        var retained = Evaluator.Run(Ast(Program), limits);
-        Assert.False(retained.IsError);
+        // Controls: an ORDINARY failure of the same slot is retained and the run completes
+        // with 10; the depth-limit refusal of A's eager value is the run's terminal
+        // structured verdict. Cancellation must behave like neither.
+        Assert.False(Evaluator.Run(Ast("G(f) = 1\nA = 1 / 0\nH = 9\nG(A) + H()"), limits).IsError);
+        var limited = Evaluator.Run(Ast(Program), limits);
+        Assert.True(limited.IsError);
+        Assert.True(limited.Error.IsResourceLimit);
 
         // Same program, same limits, but the token is cancelled while A's eager value
         // evaluation recurses (A = A reaches itself through the property cache).
