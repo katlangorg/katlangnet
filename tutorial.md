@@ -315,6 +315,8 @@ Roll == Roll
 
 `Roll() == Roll()`, by contrast, rolls twice and is `true` only when the two rolls happen to agree.
 
+The same rule covers an algorithm that has parameters but still works with no arguments: its name alone reads its cached value, and only `A()` evaluates it again (see [Using the Name Alone](#using-the-name-alone)).
+
 ### Displayed Decimal Places
 
 A property named `DisplayDecimals` sets how many decimal places the program's results show:
@@ -423,7 +425,7 @@ KineticEnergy(2, 10, 5)
 
 **Result:** `4`
 
-`KineticEnergy` uses `Speed`, which needs `distance` and `time`, so `KineticEnergy` takes them as well and hands them on to `Speed`. Its parameters are its own names first, followed by the ones it passes on: `KineticEnergy(mass, distance, time)`. The inputs are handed on **by name**, not by position, so an explicit parameter list must declare them under the same names: `KineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2` works, while in `KineticEnergy(m, d, t) = m * Speed ^ 2 / 2` nothing named `distance` or `time` is there to hand on, and calling it is an error.
+`KineticEnergy` uses `Speed`, which needs `distance` and `time`, so `KineticEnergy` takes them as well and hands them on to `Speed`. Only a formula that still needs inputs is handed them this way; one that works with no arguments is simply read, like a property (see [Using the Name Alone](#using-the-name-alone)). Its parameters are its own names first, followed by the ones it passes on: `KineticEnergy(mass, distance, time)`. The inputs are handed on **by name**, not by position, so an explicit parameter list must declare them under the same names: `KineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2` works, while in `KineticEnergy(m, d, t) = m * Speed ^ 2 / 2` nothing named `distance` or `time` is there to hand on, and calling it is an error.
 
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
@@ -1376,6 +1378,44 @@ Collect([1, 2])
 [[1, 2]]
 ```
 
+### Using the Name Alone
+
+If an algorithm works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters. Use `A()` when you want to evaluate it again and get a fresh value:
+
+```
+Roll(*bonus) = randomInt(1, 7) + bonus.sum
+Roll == Roll
+```
+
+**Result:** `true`
+
+`Roll` needs no argument — its collecting parameter `bonus` simply collects nothing — so `Roll` is read like a property: it is rolled once during the run, and both sides of `==` see that one roll. `Roll()` rolls again, and so does `Roll(2)`, which also adds a bonus.
+
+| You write | Meaning |
+|---|---|
+| `Roll` | The value: evaluated once, then reused |
+| `Roll()` | A fresh evaluation |
+| `Roll(2)` | A fresh evaluation with the argument `2` |
+
+The name alone means the value wherever it appears — in a formula, in a list, or as another name — so it never receives the arguments of the formula that uses it:
+
+```
+Count(*items) = items.count
+Size = Count
+Twice = Count + Count
+
+Size, Twice, Count(7, 8, 9)
+```
+
+**Results:**
+```
+0
+0
+3
+```
+
+`Size` is another name for the value `0`, and `Twice` adds that value to itself. To hand arguments on, call the algorithm explicitly (see [Forwarding Collected Arguments](#forwarding-collected-arguments)).
+
 ### Passing Items with `*`
 
 To pass a stored collection to `Mean`, spread it, so that its items become the arguments. `Mean(Data)` would pass one argument — the whole list — and the sum would fail on that one non-numeric item:
@@ -1440,7 +1480,7 @@ Forward([1, 2])
 [[1, 2]]
 ```
 
-`Forward` hands on exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list.
+`Forward` hands on exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list. The call must be written out: `Forward(*items) = Target` would read `Target`'s own value, `[]`, whatever `Forward` received (see [Using the Name Alone](#using-the-name-alone)).
 
 ### Values and Items at a Glance
 

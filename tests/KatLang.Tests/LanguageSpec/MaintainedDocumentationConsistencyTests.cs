@@ -64,6 +64,13 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bexported\s+(?:clause-style\s+)?APIs?\b", "public visibility called 'exported'" },
         // Indexing is zero-based (source line/column coordinates are 1-based, a different thing).
         { @"\b(?:one|1)-based\s+(?:index|indexing|selection)\b", "one-based indexing" },
+        // Q-03: implicit lifting follows zero-argument acceptance. A callable that works with no
+        // arguments is read by its bare name — an alias of it is a value read, never a
+        // manufactured collecting callable, and lifting never treats its collector like a
+        // required parameter.
+        { @"\baliases?\s+of\s+(?:a\s+)?collecting\s+callables?\s+(?:are|is)\s+(?:itself\s+)?collecting\b", "aliases of collecting callables are collecting (lifting before Q-03)" },
+        { @"\bunchanged\s+for\s+collecting\s+and\s+fixed\s+parameters\s+alike\b", "lifting unchanged for collecting parameters (before Q-03)" },
+        { @"`Alias = Cnt`[^.]*\belaborates\s+to\s+`Alias\(\*xs\)", "a bare alias elaborating to a forwarding callable (before Q-03)" },
     };
 
     [Theory]

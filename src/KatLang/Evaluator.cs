@@ -1214,6 +1214,11 @@ public static partial class Evaluator
     ///   <c>sum()</c> produces, so <see cref="ZeroArgumentValueDemandRejection"/>
     ///   deliberately does not intercept builtins.</item>
     /// </list>
+    /// The user-algorithm arm is the shared signature rule
+    /// <see cref="ParameterPattern.AcceptsZeroSuppliedSlots"/>, which the front end's
+    /// implicit lifting reads too (Q-03): a bare value reference to a callable this accepts
+    /// is never rewritten into a fresh forwarding call, so every such reference reaches this
+    /// law and the property cache.
     /// Lean: <c>Algorithm.acceptsZeroSuppliedArguments</c>.
     /// </summary>
     internal static bool AcceptsZeroSuppliedArguments(Algorithm algorithm)
@@ -1222,7 +1227,7 @@ public static partial class Evaluator
             Algorithm.Builtin => false,
             Algorithm.Conditional conditional =>
                 conditional.Branches.Any(static branch => branch.Pattern.TopLevelArity() == 0),
-            Algorithm.User user => ParameterPattern.MinimumSuppliedSlots(user.ParameterPatterns) == 0,
+            Algorithm.User user => ParameterPattern.AcceptsZeroSuppliedSlots(user.ParameterPatterns),
         };
 
     /// <summary>

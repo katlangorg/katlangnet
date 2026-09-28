@@ -58,7 +58,9 @@ public class ForwardedCallableChannelTests
         { "repeat step", "repeat(CountStep, 3, 9)", "Apply(g) = repeat(g, 3, 9)\nApply(CountStep)", "2" },
         { "while step", "while(SumWhile, 0)", "Apply(g) = while(g, 0)\nApply(SumWhile)", "2" },
         { "nested captured parameter", "[1, 2].map(Cnt)", "Outer(xs) = { Inner(g) = xs.map(g)\nInner(Cnt) }\nOuter([1, 2])", "[1, 1]" },
-        { "property alias", "G = Only\nmap([1], G)", "G = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "[[1]]" },
+        // A forwarding alias is written: since Q-03 the bare `G = Only` is a value demand of
+        // `Only` (a zero-parameter property), which a callback slot rejects by arity.
+        { "forwarding alias", "G(*xs) = Only(xs*)\nmap([1], G)", "G(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "[[1]]" },
         { "implicit parameters", "[1, 2].map(Cnt)", "Apply = xs.map(f)\nApply([1, 2], Cnt)", "[1, 1]" },
         { "two forwarding levels", "map([1, 2], Cnt)", "Apply(f, xs) = map(xs, f)\nTwice(f, xs) = Apply(f, xs)\nTwice(Cnt, [1, 2])", "[1, 1]" },
         { "control: never value-bound", "map([1, 2], Z)", "Apply(f, xs) = map(xs, f)\nApply(Z, [1, 2])", "[10, 10]" },
@@ -86,7 +88,7 @@ public class ForwardedCallableChannelTests
     [InlineData("[1, 2, 3].filter(Big).count", "Apply(f, xs) = xs.filter(f).count\nApply(Big, [1, 2, 3])", "2")]
     [InlineData("count(filter(range(1, 5), Big))", "Apply(f) = count(filter(range(1, 5), f))\nApply(Big)", "4")]
     [InlineData("range(1, 5).filter(Big).count", "Apply(f) = range(1, 5).filter(f).count\nApply(Big)", "4")]
-    [InlineData("Alias = Big\ncount(filter(range(1, 3), Alias))", "Alias = Big\nB(f) = count(filter(range(1, 3), f))\nA(g) = B(g)\nA(Alias)", "2")]
+    [InlineData("Alias(*xs) = Big(xs*)\ncount(filter(range(1, 3), Alias))", "Alias(*xs) = Big(xs*)\nB(f) = count(filter(range(1, 3), f))\nA(g) = B(g)\nA(Alias)", "2")]
     public void FusedFilterCount_InvokesTheForwardedPredicate(string direct, string forwarded, string expected)
     {
         foreach (var source in new[] { Callables + direct, Callables + forwarded })

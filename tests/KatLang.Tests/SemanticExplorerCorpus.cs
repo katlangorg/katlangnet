@@ -476,11 +476,19 @@ public static class SemanticExplorerCorpus
         Special("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = { A* }\nB == (1, 2, 3)"),
         Special("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)"),
         Special("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]"),
-        Special("implicitForwardOrdinarySource", "Target(*items) = items\nUse(items) = Target\nUse([1, 2])"),
+        // Target requires its `tag`, so Use forwards to it (a callee that works with no
+        // arguments is read as a value instead, Q-03: see the LanguageSpecCorpus case
+        // `zero-argument-callable-name-is-read-not-lifted`).
+        Special("implicitForwardOrdinarySource", "Target(tag, *items) = items\nUse(tag, items) = Target\nUse(0, [1, 2])"),
         Special("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)"),
         Special("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)"),
         Special("callbackMixedCollectingRowPattern", "F((first, *middle, last)) = middle\n[(1, 2, 3, 4)].map(F)"),
         Special("callbackCollectingElementIsOneArgument", "Cnt(*xs) = xs.count\nmap([(10, 7), [10, 7], 20], Cnt)"),
+        // Q-03 hostile review: a callable that accepts zero supplied arguments is a VALUE
+        // at a collector, so its failed read surfaces its own error, never the callable
+        // typeMismatch (callable-shaped is the zero-argument law's verdict, not "declares
+        // parameters").
+        Special("collectorZeroArgumentCallableFailureIsItsOwn", "Bad(*xs) = 1 / 0\nColl(*ys) = ys\nColl(Bad)"),
         Special("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*"),
         Special("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)"),
         Special("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)"),

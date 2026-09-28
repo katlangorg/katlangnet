@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 302
+- specification surface cases: 303
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 246
-- probe observations (C#-only by design): 882
+- Lean-guarded cases: 247
+- probe observations (C#-only by design): 894
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -400,9 +400,9 @@ def case_variadic_forwarding_list_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Forward" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.call (.resolve "Target") [(.sequenceSpread (.param "items"))])])] [(.call (.resolve "Forward") [.num 1, .num 2]), (.call (.resolve "Forward") [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_variadic_forwarding_list_spread == "ok raw=S[L[1, 2], L[L[1, 2]]] n=2"
 
--- implicit-forwarding-source-kind [variadic-calls]: Target(*items) = items \n Use(items) = Target \n UseVariadic(*items) = Target \n  \n Use([1, 2]) \n Use((1, 2)) \n UseVariadic(1, 2)
+-- implicit-forwarding-source-kind [variadic-calls]: Target(tag, *items) = items \n Use(tag, items) = Target \n UseVariadic(tag, *items) = Target \n  \n Use(0, [1, 2]) \n Use(0, (1, 2)) \n UseVariadic(0, 1, 2)
 def case_implicit_forwarding_source_kind : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [(.call (.resolve "Target") [.param "items"])]), privateProp "UseVariadic" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.call (.resolve "Target") [(.sequenceSpread (.param "items"))])])] [(.call (.resolve "Use") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Use") [(.capture [.num 1, .num 2])]), (.call (.resolve "UseVariadic") [.num 1, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["tag", "items"] [] [] [(.call (.resolve "Target") [.param "tag", .param "items"])]), privateProp "UseVariadic" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])])] [(.call (.resolve "Use") [.num 0, (.listLiteral [.num 1, .num 2])]), (.call (.resolve "Use") [.num 0, (.capture [.num 1, .num 2])]), (.call (.resolve "UseVariadic") [.num 0, .num 1, .num 2])])
 #guard obs case_implicit_forwarding_source_kind == "ok raw=S[L[L[1, 2]], L[S[1, 2]], L[1, 2]] n=3"
 
 -- variadic-receiver-distinction [variadic-calls]: Inspect(*items) = items \n A = [1, 2, 3] \n  \n Inspect(A) \n Inspect(A*)
@@ -1295,6 +1295,11 @@ def case_zero_argument_demand_follows_actual_call_arity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [.resolve "Only"])
 #guard obs case_zero_argument_demand_follows_actual_call_arity == "ok raw=L[] n=1"
 
+-- zero-argument-callable-name-is-read-not-lifted [variadic-calls]: Cnt(*xs) = xs.count \n Pair(*xs) = 10, 20 \n Alias = Cnt \n Twice(*items) = Cnt + Cnt \n  \n Cnt + 1, [Cnt], Cnt == Cnt, Pair:1 \n Alias, Alias() \n Twice(1, 2, 3)
+def case_zero_argument_callable_name_is_read_not_lifted : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Alias" (alg [] [] [] [.resolve "Cnt"]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
+#guard obs case_zero_argument_callable_name_is_read_not_lifted == "ok raw=S[1, L[0], true, 20, 0, 0, 0] n=7"
+
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
 def case_same_arity_user_if_keeps_user_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "if" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "if") [.num 1, .num 10, .num 20]), (.dotCall (.num 1) "if" (some [.num 10, .num 20]))])
@@ -1330,7 +1335,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 246 canonical Lean-guarded specification cases.
+-- 247 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1577,6 +1582,7 @@ def specCaseIds : List String := [
   "lazy-slot-demand-covers-every-builtin-value-slot",
   "dot-string-receiver-is-a-zero-argument-value-demand",
   "zero-argument-demand-follows-actual-call-arity",
+  "zero-argument-callable-name-is-read-not-lifted",
   "same-arity-user-if-keeps-user-identity",
   "parameter-named-if-carries-the-supplied-callable",
   "if-spread-builds-values-before-branch-selection",
@@ -1585,6 +1591,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 246
+#guard specCaseIds.length == 247
 
 end LanguageSpecCases

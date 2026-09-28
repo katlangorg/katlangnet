@@ -406,14 +406,30 @@ public class CallableSignatureTests
     {
         // The implicit forwarding synthesizes spread arguments, so a stream
         // supplied at the root (spread call) round-trips through the lifted
-        // callee — for the top-level variadic and the pattern callee alike.
+        // callee — for a variadic callee with a required parameter and the pattern
+        // callee alike. (A callee whose ONLY parameter is a top-level collector works
+        // with no arguments, so its bare name is its value, never forwarded: Q-03.)
+        AssertEval(
+            """
+            CountItems(tag, *items) = items.count
+            Use(tag, *values) = CountItems(tag, values*)
+            Use(0, (1, 2, 3)*)
+            """,
+            3);
+        AssertEval(
+            """
+            CountItems(tag, *items) = items.count
+            Use(tag, *items) = CountItems
+            Use(0, (1, 2, 3)*)
+            """,
+            3);
         AssertEval(
             """
             CountItems(*items) = items.count
             Use(*values) = CountItems
             Use((1, 2, 3)*)
             """,
-            3);
+            0);
 
         AssertEval(
             """

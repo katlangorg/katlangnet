@@ -373,7 +373,8 @@ public class ImplicitSignatureTemplateTests
     /// </summary>
     [Theory]
     [InlineData("G1 = a + b\nG2 = b - a\nA = G1 + G2\nB = G2 + G1\nA(1, 2), B(1, 2)", "4\n2")]
-    [InlineData("G1(*xs) = xs.count\nG2 = xs + 0\nA = G1 + 1\nB = G2 + 1\nA(5, 6), B(5)", "3\n6")]
+    // (G1 requires its `t`, so it lifts; a collecting-only G1 would be read as a value, Q-03.)
+    [InlineData("G1(t, *xs) = t + xs.count\nG2 = t + xs + 0\nA = G1 + 1\nB = G2 + 1\nA(0, 5, 6), B(0, 5)", "3\n6")]
     [InlineData("G1((p, q)) = p + q\nG2 = p + q\nA = G1 + 1\nB = G2 + 1\nA((1, 2)), B(1, 2)", "4\n4")]
     public void DifferentOrderKindOrShape_NeverShareATemplate(string source, string display)
     {
@@ -403,21 +404,25 @@ public class ImplicitSignatureTemplateTests
 
     /// <summary>
     /// Two OPEN owners reach one collecting callee with different forwarding SOURCES: A's <c>x</c> is
-    /// lifted from a collecting capture, so the callee's <c>*x</c> re-collects A's items (<c>C(x*)</c>),
-    /// while B's <c>x</c> is a fixed capture, forwarded as one argument (<c>C(x)</c>). Their bundles are
+    /// lifted from a collecting capture, so the callee's <c>*x</c> re-collects A's items (<c>C(t, x*)</c>),
+    /// while B's <c>x</c> is a fixed capture, forwarded as one argument (<c>C(t, x)</c>). Their bundles are
     /// different pure functions of their inputs and are never shared: a bundle key blind to the
     /// caller's binding kinds would hand B A's spread.
     /// </summary>
     [Fact]
     public void OwnersForwardingDifferently_NeverShareABundle()
     {
-        const string source = "G1(*x) = x.count\nG2(x) = 0\nC(*x) = x.count\nA = G1 + C\nB = G2 + C\nA(1, 2, 3), B((1, 2, 3))";
+        // Every callee requires its `t`, so each reference lifts (a callee that works with no
+        // arguments is read as a value instead, Q-03).
+        const string source = "G1(t, *x) = t + x.count\nG2(t, x) = 0\nC(t, *x) = x.count\nA = G1 + C\nB = G2 + C\nA(0, 1, 2, 3), B(0, (1, 2, 3))";
         var root = SourceProvenance.ParseValid(source).Root;
         var a = Assert.Single(CallsTo(Assert.Single(root.Properties, p => p.Name == "A").Value, "C"));
         var b = Assert.Single(CallsTo(Assert.Single(root.Properties, p => p.Name == "B").Value, "C"));
         Assert.NotSame(a.Args, b.Args);
-        Assert.IsType<Expr.SequenceSpread>(Assert.Single(a.Args));
-        Assert.IsType<Expr.Param>(Assert.Single(b.Args));
+        Assert.Equal(2, a.Args.Count);
+        Assert.Equal(2, b.Args.Count);
+        Assert.IsType<Expr.SequenceSpread>(a.Args[1]);
+        Assert.IsType<Expr.Param>(b.Args[1]);
         Assert.Equal("6\n1", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));
     }
 

@@ -20,9 +20,13 @@ namespace KatLang.Tests;
 /// still requires one supplied value and stays rejected, reporting that MINIMUM rather
 /// than its two declared captures.</para>
 ///
-/// <para>The rule changes ELIGIBILITY only. Cache policy, evaluation counts, laziness,
-/// the algorithm/callback channel, and the front end's value-context lifting decision are
-/// all unchanged — this suite pins each of those separately from the eligibility law.</para>
+/// <para>The rule changes ELIGIBILITY only. Cache policy, evaluation counts, laziness, and
+/// the algorithm/callback channel are unchanged — this suite pins each of those separately
+/// from the eligibility law. The front end's value-context LIFTING decision reads the same
+/// rule since Q-03 (September 28 2026): a callable that accepts zero supplied arguments is
+/// never lifted, so its bare reference is this demand in every position
+/// (<see cref="ValueContextLifting_FollowsZeroArgumentAcceptance"/>;
+/// <c>ZeroArgumentReferenceLiftingTests</c> pins the consequences).</para>
 /// </summary>
 public class ZeroArgumentDemandArityTests
 {
@@ -509,42 +513,40 @@ public class ZeroArgumentDemandArityTests
     }
 
     /// <summary>
-    /// The front end's value-context LIFTING decision is made BEFORE the evaluator's
-    /// demand law and is unchanged: an arithmetic operand, a list element, and a
-    /// registry-strict Math argument still lift the referenced callable's parameters into
-    /// the enclosing signature — for a collecting and a fixed parameter alike — instead of
-    /// demanding the callable in place. The lifted parameter keeps its KIND, so a lifted
-    /// COLLECTING parameter makes the root accept the empty supply (which is exactly what
-    /// the explicit-call spelling of the same row does), while a lifted FIXED one still
-    /// leaves the program with an argument nobody can supply.
+    /// The front end's value-context LIFTING decision reads THIS law (Q-03, September 28
+    /// 2026): an arithmetic operand, a list element, and a registry-strict Math argument
+    /// lift a referenced callable's parameters into the enclosing signature only when the
+    /// callable REQUIRES supplied arguments. A collecting-only callable accepts zero
+    /// supplied arguments, so its bare reference is never lifted — the root gains no
+    /// parameter and the reference stays the zero-argument value demand (the same value
+    /// the explicit call produces, from ONE cached evaluation) — while a FIXED parameter is
+    /// still lifted and still leaves the root with an argument nobody can supply. (Before
+    /// Q-03 the collecting callable was lifted too, to the fresh call <c>Only(xs*)</c>.)
     /// </summary>
     [Theory]
     [InlineData("Only + 1")]
     [InlineData("[Only]")]
     [InlineData("abs(Only)")]
-    public void ValueContextLifting_IsUnchanged(string row)
+    public void ValueContextLifting_FollowsZeroArgumentAcceptance(string row)
     {
         var collectingRoot = SourceProvenance.ParseValid($"Only(*xs) = xs\n{row}").Root;
         var fixedRoot = SourceProvenance.ParseValid(
             $"Inc(x) = x + 1\n{row.Replace("Only", "Inc", StringComparison.Ordinal)}").Root;
 
-        // Lifting happened in BOTH cases: the row's reference is not a bare name any more,
-        // and the root gained the callee's parameter with the callee's own kind.
-        var lifted = Assert.Single(collectingRoot.Parameters);
-        Assert.Equal("xs", lifted.Name);
-        Assert.Equal(ParameterKind.Collecting, lifted.Kind);
+        // The collecting-only callable is NOT lifted: the root gains nothing.
+        Assert.Empty(collectingRoot.Parameters);
 
+        // The fixed one IS lifted, with the callee's own kind, and still has an argument
+        // nobody can supply.
         var liftedFixed = Assert.Single(fixedRoot.Parameters);
         Assert.Equal("x", liftedFixed.Name);
         Assert.Equal(ParameterKind.Normal, liftedFixed.Kind);
-
-        // The fixed lift still has an argument nobody can supply.
         var fixedResult = Evaluator.Run(new Expr.AlgorithmExpr(fixedRoot));
         Assert.True(fixedResult.IsError);
         Assert.IsType<EvalError.UnresolvedImplicitParams>(Innermost(fixedResult.Error));
 
-        // The collecting lift accepts the empty supply, and the outcome is exactly the
-        // one the explicitly called spelling of the same row produces.
+        // The unlifted reference is the ordinary demand: the outcome is exactly the one the
+        // explicitly called spelling of the same row produces.
         var collecting = Evaluator.Run(new Expr.AlgorithmExpr(collectingRoot));
         var explicitCall = Eval($"Only(*xs) = xs\n{row.Replace("Only", "Only()", StringComparison.Ordinal)}");
         Assert.Equal(explicitCall.IsError, collecting.IsError);

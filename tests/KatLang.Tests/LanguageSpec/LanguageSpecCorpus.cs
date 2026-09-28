@@ -1174,22 +1174,27 @@ public static class LanguageSpecCorpus
         {
             Id = "implicit-forwarding-source-kind",
             Category = "variadic-calls",
-            Source = "Target(*items) = items\nUse(items) = Target\nUseVariadic(*items) = Target\n\nUse([1, 2])\nUse((1, 2))\nUseVariadic(1, 2)",
+            Source = "Target(tag, *items) = items\nUse(tag, items) = Target\nUseVariadic(tag, *items) = Target\n\nUse(0, [1, 2])\nUse(0, (1, 2))\nUseVariadic(0, 1, 2)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[[1, 2]]\n[(1, 2)]\n[1, 2]",
             ExpectedRaw = "S[L[L[1, 2]], L[S[1, 2]], L[1, 2]]",
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("Target(*items) = items\nUse(items) = Target\nUse(7)", "ok raw=L[7] n=1"),
-                new SpecProbe("Target(*items) = items\nUse(items) = Target(items)\nUse([1, 2])", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic([1, 2])", "ok raw=L[L[1, 2]] n=1"),
-                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic((1, 2))", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("Target(tag, *items) = items\nUse(tag, items) = Target\nUse(0, 7)", "ok raw=L[7] n=1"),
+                new SpecProbe("Target(tag, *items) = items\nUse(tag, items) = Target(tag, items)\nUse(0, [1, 2])", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(tag, *items) = items\nUseVariadic(tag, *items) = Target\nUseVariadic(0, [1, 2])", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(tag, *items) = items\nUseVariadic(tag, *items) = Target\nUseVariadic(0, (1, 2))", "ok raw=L[S[1, 2]] n=1"),
                 new SpecProbe("Target(first, *middle, last) = middle\nUse(first, *middle, last) = Target\nUse(1, 2, 3, 4)", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("Target(*a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(b, *a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
+                // A callee that works with NO arguments is never forwarded to (Q-03): its name
+                // alone reads its own zero-argument value, whatever the caller binds.
+                new SpecProbe("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", "ok raw=L[] n=1"),
+                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic(1, 2)", "ok raw=L[] n=1"),
+                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target(items*)\nUseVariadic(1, 2)", "ok raw=L[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply).",
+            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(tag, items) = Target` elaborates to `Target(tag, items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(tag, *items) = Target` elaborates to `Target(tag, items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply). Forwarding happens only into a callee that REQUIRES supplied arguments: a callee that works with no arguments, such as `Target(*items)` alone, is read as a value by its bare name (`[]` here), so forwarding to it is written explicitly (`Target(items*)`).",
         },
         new()
         {
@@ -1302,12 +1307,12 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Add(x, y) = x + y\nmap([(1, 2)], Add)", "err arity"),
                 new SpecProbe("Add(x, y) = x + y\nmap([[1, 2]], Add)", "err arity"),
                 new SpecProbe("Cnt(*xs) = xs.count\nmap([(1, 2)], Cnt), map([[1, 2]], Cnt)", "ok raw=S[L[1], L[1]] n=2"),
-                new SpecProbe("Cnt(*xs) = xs.count\nAlias = Cnt\nApply(f, xs) = map(xs, f)\nApply(Alias, [(10, 7), 20]), Apply(Alias, [[10, 7], 20])", "ok raw=S[L[1, 1], L[1, 1]] n=2"),
+                new SpecProbe("Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nApply(f, xs) = map(xs, f)\nApply(Alias, [(10, 7), 20]), Apply(Alias, [[10, 7], 20])", "ok raw=S[L[1, 1], L[1, 1]] n=2"),
                 new SpecProbe("IsPair(*xs) = xs.count == 2\nfilter([(1, 2), [1, 2]], IsPair)", "ok raw=L[] n=1"),
                 new SpecProbe("Acc(x, *acc) = acc\nreduce([9], Acc, (1, 2)), reduce([9], Acc, [1, 2])", "ok raw=S[L[S[1, 2]], L[L[1, 2]]] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern opens the element explicitly (`AddPair((x, y))`). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through aliases and forwarding too (`Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).",
+            Explanation = "THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern opens the element explicitly (`AddPair((x, y))`). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through a written forwarding alias and forwarding parameters too (`Alias(*xs) = Cnt(xs*)`, `Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).",
         },
         new()
         {
@@ -2604,13 +2609,15 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // Every invoking slot takes the callable: the plain map, filter (also fused
-                // with count), reduce, and repeat, and a property alias of the callable.
+                // with count), reduce, and repeat, and a written forwarding alias of the
+                // callable (a bare `G = Only` is a value read, so it is no callable, Q-03).
                 new SpecProbe("Cnt(*xs) = xs.count\nApply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])", "ok raw=L[1, 1] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])", "ok raw=2 n=1"),
                 new SpecProbe("SumAll(*xs) = xs.sum\nFold(f, xs) = xs.reduce(f, 0)\nFold(SumAll, [1, 2, 3])", "ok raw=6 n=1"),
                 new SpecProbe("CountStep(*s) = s.count + 1\nRun(g) = repeat(g, 3, 9)\nRun(CountStep)", "ok raw=2 n=1"),
-                new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
+                new SpecProbe("Only(*xs) = xs\nG(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
+                new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "err arity"),
                 // VALUE slots read the bound value: the collection and reduce's initial
                 // accumulator see the callable's zero-argument value.
                 new SpecProbe("Only(*xs) = xs\nSize(xs) = count(xs)\nSize(Only)", "ok raw=0 n=1"),
@@ -5007,6 +5014,37 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A callable may be read as a zero-argument value exactly when an ordinary call with no arguments can bind it. A collecting parameter requires no supplied argument, so `Only` and `Only()` both collect nothing and give `[]`; `Head(x, *rest)` still requires one supplied value, so both of its zero-argument spellings are the same arity error. Callback positions still receive the callable itself.",
+        },
+        new()
+        {
+            Id = "zero-argument-callable-name-is-read-not-lifted",
+            Category = "variadic-calls",
+            Source = "Cnt(*xs) = xs.count\nPair(*xs) = 10, 20\nAlias = Cnt\nTwice(*items) = Cnt + Cnt\n\nCnt + 1, [Cnt], Cnt == Cnt, Pair:1\nAlias, Alias()\nTwice(1, 2, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n[0]\ntrue\n20\n0\n0\n0",
+            ExpectedRaw = "S[1, L[0], true, 20, 0, 0, 0]",
+            ExpectedEmittedCount = 7,
+            Probes =
+            [
+                // A strict Math argument reads the same value (probes only: Math natives are
+                // a documented unmodeled gap in the Lean core, so the Lean-compared program
+                // above uses operator, comparison, list, and index positions).
+                new SpecProbe("Cnt(*xs) = xs.count\nabs(Cnt), Cnt.abs", "ok raw=S[0, 0] n=2"),
+                // The alias is a zero-parameter property holding Cnt's value: it takes no arguments.
+                new SpecProbe("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)", "err arity"),
+                // Forwarding to a callable that works with no arguments is written explicitly.
+                new SpecProbe("Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nAlias(1, 2)", "ok raw=2 n=1"),
+                new SpecProbe("Cnt(*xs) = xs.count\nTwice(*items) = Cnt(items*) + Cnt(items*)\nTwice(1, 2, 3)", "ok raw=6 n=1"),
+                // A callable that REQUIRES an argument still lifts and forwards.
+                new SpecProbe("Head(x, *rest) = x\nH = Head + 0\nH(5, 6)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nK = Inc * 2\nK(4)", "ok raw=10 n=1"),
+                // A closed parameter list never blocks such a read: it needs no argument.
+                new SpecProbe("Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)", "ok raw=5 n=1"),
+                // Selection and the builtin first/last read the same value.
+                new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair:0, last(Pair) == Pair:1", "ok raw=S[true, true] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name — as an operand or comparison operand, a list element, a Math argument, an index target, an alias, or inside a formula — is never rewritten into a forwarding call: `Alias = Cnt` is a zero-parameter property holding `0`, and `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. Forwarding to such a callable is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
         },
         new()
         {

@@ -369,15 +369,18 @@ public class ImplicitArgumentSharingTests
     /// <summary>
     /// The caller context is part of the bundle: a closed collecting caller forwards its own
     /// collected list (<c>ys*</c>) where an open caller lifts the callee's (<c>xs*</c>). Reusing one
-    /// bundle across the two regions would leave <c>B</c> reading a name it does not bind.
+    /// bundle across the two regions would leave <c>B</c> reading a name it does not bind. (The
+    /// callee's one grouped stream requires its slot, so it is forwarded to; a lone top-level
+    /// collector would work with no arguments and be read as a value instead, Q-03.)
     /// </summary>
     [Fact]
     public void Forwarding_ThatDiffersByCallerContext_IsNeverShared()
     {
-        const string source = "G(*xs) = xs.count\nA(*ys) = G + G\nB = G + G\nA(1, 2) + B(1, 2, 3)";
+        const string source = "G((*xs)) = xs.count\nA(*ys) = G + G\nB = G + G\nA(1, 2) + B((1, 2, 3))";
         var root = SourceProvenance.ParseValid(source).Root;
         Expr ForwardedIn(string property)
-            => Assert.Single(SharedArguments(Census.Of(Assert.Single(root.Properties, p => p.Name == property).Value), "G"));
+            => Assert.Single(Assert.IsType<Expr.Capture>(Assert.Single(
+                SharedArguments(Census.Of(Assert.Single(root.Properties, p => p.Name == property).Value), "G"))).Body);
         Assert.Equal(new Expr.SequenceSpread(new Expr.Param("ys")), ForwardedIn("A"));
         Assert.Equal(new Expr.SequenceSpread(new Expr.Param("xs")), ForwardedIn("B"));
         Assert.Equal("10", KatLangEngine.Run(source).ToDisplayString());

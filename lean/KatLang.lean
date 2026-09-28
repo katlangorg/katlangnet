@@ -2898,16 +2898,19 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
   (Result.listValue items, 1)
 
 /-- True when an argument's resolved algorithm meaning is genuinely
-    callable-shaped — a builtin, a conditional clause family, or an algorithm
-    declaring parameters/patterns — as opposed to a zero-parameter VALUE
-    property that merely resolved through the dual algorithm channel. Used to
-    decide whether a valueless argument bound by a collecting parameter gets the targeted
-    "collects values, but ... is a callable" diagnostic or surfaces its
-    genuine value-evaluation error. C#: `IsFunctionShapedAlgorithm`. -/
-def Algorithm.isFunctionShaped : Algorithm -> Bool
-  | .builtin _ => true
-  | .conditional _ _ _ _ => true
-  | a => !(Algorithm.params a).isEmpty || !(Algorithm.parameterPatterns a).isEmpty
+    callable-shaped: an ordinary call supplying ZERO arguments cannot bind it
+    (a builtin, a clause family without a zero-arity branch, or a signature that
+    requires a supplied slot). Declaring a parameter does not by itself make a
+    callable (Q-03): a zero-parameter property and any callable that accepts zero
+    supplied arguments, a collecting-only one included, are VALUES that merely
+    resolved through the dual algorithm channel, so the test is the zero-argument
+    law's own `acceptsZeroSuppliedArguments` (the rule the surface pass's
+    `liftsBareValueReference` also reads). Used to decide whether a valueless
+    argument bound by a collecting parameter gets the targeted "collects values,
+    but ... is a callable" diagnostic or surfaces its genuine value-evaluation
+    error. C#: `IsFunctionShapedAlgorithm`. -/
+def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
+  !a.acceptsZeroSuppliedArguments
 
 /-- Collect the item segment assigned to a collecting binding as ONE list value.
 
@@ -3959,6 +3962,12 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
     September 2026 rule widened, cache POLICY is unchanged, and `Only()` remains
     an ordinary call that bypasses the entry. A builtin never accepts, so it
     keeps flowing to its own arity rejection uncached, exactly as before.
+    Since Q-03 (2026-09-28) the surface pass reads the SAME rule when it decides
+    whether to lift a bare reference (`liftsBareValueReference`): it never
+    rewrites a reference to a callable this accepts into a fresh forwarding
+    call, so such a reference reaches this cache in EVERY position — an
+    operand, a list element, a selection target, a strict Math argument, an
+    alias row — and not only in the neutral ones.
     C#: the zero-argument property access path
     (`GetOrEvaluateZeroArgPropertyResult`), entered by callers only after the
     law accepted. -/
@@ -5075,13 +5084,15 @@ mutual
                     pure (value :: values)
                 | none =>
                     -- A collecting binding collects VALUES. A callable-shaped
-                    -- argument (builtin, clause family, or parameterized
-                    -- algorithm) has no value to collect — only fixed
+                    -- argument (one a zero-argument call cannot bind: a builtin,
+                    -- a clause family, or an algorithm that requires a supplied
+                    -- argument) has no value to collect — only fixed
                     -- parameters keep the dual algorithm channel — so name
                     -- the actual conflict instead of surfacing the argument's
-                    -- incidental value-evaluation error. A zero-parameter
-                    -- VALUE property whose body failed is NOT callable-shaped: its
-                    -- genuine evaluation error surfaces.
+                    -- incidental value-evaluation error. A VALUE — a zero-parameter
+                    -- property or any callable accepting zero supplied arguments,
+                    -- a collecting-only one included (Q-03) — whose evaluation
+                    -- failed is NOT callable-shaped: its genuine error surfaces.
                     -- C#: `BindParameterPatternList` (whose message also
                     -- names the collecting parameter).
                     match input.algorithm? with
@@ -7245,24 +7256,48 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
 /- **Implicit argument resolution** (surface syntax pass — runs after parameter
    detection):
 
-   When a property body contains a bare reference to a sibling property that has
-   parameters, the surface layer rewrites that reference into an explicit call,
-   passing the sibling's parameter-pattern captures as arguments (lifted into
-   the referencing property's own parameter-pattern list when they are not
-   already provided by the caller).
+   When a property body contains a bare value-position reference to a sibling
+   property that REQUIRES supplied arguments — one an ordinary call supplying
+   zero arguments could not bind (`liftsBareValueReference` below) — the
+   surface layer rewrites that reference into an explicit call, passing the
+   sibling's parameter-pattern captures as arguments (lifted into the
+   referencing property's own parameter-pattern list when they are not already
+   provided by the caller).
+
+   A reference to a sibling that ACCEPTS zero supplied arguments — no
+   parameters, or only a top-level collecting parameter such as `Roll(*xs)` —
+   is never rewritten, in any position (Q-03, decided 2026-09-28): declaring a
+   parameter does not by itself make a bare reference a call. It stays
+   `.resolve`, the zero-argument value demand that `zeroArgumentDemandError?`
+   accepts and `isCacheableZeroArgPropertyAlgorithm` sends through the property
+   cache, so `Roll == Roll` reads ONE value; only a written call (`Roll()`,
+   `Roll(args)`) evaluates afresh. Before the decision the surface pass lifted
+   every sibling that DECLARED a parameter, so a collecting-only sibling in an
+   operator, list, index, spread, strict-Math or alias position became the
+   fresh call `Roll(xs*)` and bypassed the cache that its neutral positions
+   read. The evaluator was never involved: it evaluates whichever tree the
+   surface pass produces, and the law `bare_reference_lifts_iff_not_cacheable`
+   (`KatLangArityLaws.lean`) states that an unlifted reference is always a
+   cacheable demand.
 
    Example:
      Surface:   `{ A = x + 1  B = A * 2 }`
      After detection: A.params = [x], B.params = []
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
 
+     Surface:   `{ A(*xs) = xs.count  B = A * 2 }`
+     After resolution: B.params = [], B.output = [Resolve(A) * 2]
+
    Recursive parameter patterns are preserved by this surface pass: lifting
-   `*items`, `(*items)`, or `((*history), previous)` keeps that shape
+   `x, *items`, `(*items)`, or `((*history), previous)` keeps that shape
    instead of reconstructing ordinary capture parameters from flattened names.
    A narrow forwarding rule also permits a bare helper reference with one
-   forwardable variadic supply to use a containing algorithm's single
-   top-level variadic supply by shape rather than by capture-name equality.
-   This is not a general positional parameter-matching rule.
+   forwardable variadic supply — a lone collector inside the helper's one
+   group, `H((*xs))` (a helper whose only parameter is a top-level collector
+   accepts zero supplied arguments and is never rewritten) — to use a
+   containing algorithm's single top-level variadic supply by shape rather
+   than by capture-name equality. This is not a general positional
+   parameter-matching rule.
 
    **Transitive ordering invariant**: Properties must be processed in dependency
    order. If property B references property A (even if A currently has zero
@@ -7289,6 +7324,29 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    is the one documented way two reaches of a node can observe different
    sibling signatures (the "sibling CYCLE" exception of the shared-DAG
    guarantee in `docs/design/language-rules/evaluator-and-hosting.md`). -/
+
+/-- **Implicit-lifting eligibility** (Q-03, decided 2026-09-28; surface syntax
+    support — the specification of the surface pass's one lifting decision).
+    A bare value-position reference is rewritten into an implicit forwarding
+    call exactly when its callee's lifting signature REQUIRES supplied
+    arguments: when `ParameterPattern.minimumSuppliedSlots` — the binder's own
+    arity rule, the very count `Algorithm.acceptsZeroSuppliedArguments` reads —
+    is nonzero. A signature that accepts zero supplied arguments (no pattern, or
+    only a top-level collecting capture) is never lifted: its reference stays
+    the cached zero-argument value demand. One predicate therefore decides both
+    halves, and they cannot disagree about a callable (see
+    `bare_reference_lifts_iff_not_cacheable`).
+
+    The argument is the callee's LIFTING signature, the list the surface pass
+    reads for a sibling (a user algorithm's `parameterPatterns`; a Math
+    function's registry signature, which always requires its arguments). A
+    clause family's lifting signature is empty, so a family reference is never
+    lifted — an open question of its own (PV-14 / Q-13), unchanged by this
+    rule. C#: `ImplicitArgumentResolver.RequiresSuppliedArguments` over
+    `CallableSignature.AcceptsZeroSuppliedArguments` /
+    `ParameterPattern.AcceptsZeroSuppliedSlots`. -/
+def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
+  ParameterPattern.minimumSuppliedSlots signature != 0
 
 -- Surface syntax support: while/repeat initial-state boundaries
 --------------------------------------------------------------------------------

@@ -283,8 +283,10 @@ public class ExplicitValueOpeningTests
     [InlineData("((1, 2), 3)")]
     public void Values_StayValues_ThroughReturnsStorageAndSelection(string value)
     {
+        // `Target` requires its `tag`, so the bare reference in `Use` is an implicit forwarding
+        // call (a callee accepting zero supplied arguments would be read instead, Q-03).
         var definitions = Coll + "V = " + value + "\nId(x) = x\n" +
-            "Stored = Id([V]*)\nTarget(*xs) = xs\nUse(xs) = Target\n";
+            "Stored = Id([V]*)\nTarget(tag, *xs) = xs\nUse(tag, xs) = Target\n";
         var one = "[" + value + "]";
         Assert.Equal(one, Display(definitions + "Coll([V]*)"));
         foreach (var expression in new[]
@@ -303,9 +305,9 @@ public class ExplicitValueOpeningTests
 
         // Implicit forwarding of an ordinary parameter passes one argument; repeated
         // property reads exercise the cached value too.
-        Assert.Equal(one, Display(definitions + "Use([V]*)"));
+        Assert.Equal(one, Display(definitions + "Use(0, [V]*)"));
         Assert.Equal(one + "\n" + one, Display(definitions + "Coll(Stored), Coll(Stored)"));
-        AssertStrategiesAgree(definitions + "Coll(Stored), Use([V]*), Coll(Stored, 9)");
+        AssertStrategiesAgree(definitions + "Coll(Stored), Use(0, [V]*), Coll(Stored, 9)");
     }
 
     // ── 5. Fixed parameters and mixed signatures ────────────────────────────
@@ -768,8 +770,11 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void AliasesAndForwarding_KeepTheCallbackLaw()
     {
+        // A forwarding alias of a callable that accepts zero supplied arguments is WRITTEN
+        // (`Alias(*xs) = Cnt(xs*)`): since Q-03 the bare `Alias = Cnt` is a value demand of
+        // `Cnt` (see the end of this test), never a manufactured forwarding callable.
         const string defs =
-            "Cnt(*xs) = xs.count\nAlias = Cnt\nApply(f, xs) = map(xs, f)\n" +
+            "Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nApply(f, xs) = map(xs, f)\n" +
             "Forward(g, xs) = Apply(g, xs)\nForward2(h, xs) = Forward(h, xs)\n" +
             "ApplyBlock(f, xs) = { map(xs, f) }\n";
         foreach (var input in new[] { "[(10, 7), 20]", "[[10, 7], 20]" })
@@ -793,6 +798,16 @@ public class ExplicitValueOpeningTests
         Assert.Equal("2", Display(defs + "Cnt((10, 7)*)"));
         Assert.Equal("2", Display(defs + "Cnt([10, 7]*)"));
         Assert.Equal("2", Display(defs + "Alias([10, 7]*)"));
+
+        // The BARE alias reads Cnt's zero-argument value and takes no arguments, so a
+        // callback slot that supplies one argument rejects it by the ordinary arity rule.
+        const string bare = "Cnt(*xs) = xs.count\nBare = Cnt\n";
+        Assert.Equal("0", Display(bare + "Bare"));
+        foreach (var call in new[] { "map([(10, 7), 20], Bare)", "Bare([10, 7])" })
+        {
+            var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(bare + call));
+            Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
+        }
     }
 
     // ── 13. Deconstruction and builtins keep their explicit structure views ──

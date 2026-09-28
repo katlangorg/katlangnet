@@ -197,29 +197,40 @@ public class ClosedListStrictValueDiagnosticTests
     [Fact]
     public void ForwardingBindingKinds_UseTheResolverGateRatherThanNameOnlyHeuristics()
     {
+        // The collecting destinations below belong to callees that REQUIRE a supplied argument
+        // (`t`, or the one grouped slot), so each is a forwarding candidate the gate decides; a
+        // callee that works with no arguments is never a candidate (see the end of this test).
+
         // fixed caller -> fixed destination
         AssertNotDiagnosed("Target(q) = q + 1\nF(q) = Math.Abs(Target)\nF(7)");
         // fixed caller -> collecting destination: one fixed value is forwarded unspread.
-        AssertNotDiagnosed("Target(*items) = items.sum\nF(items) = Math.Abs(Target)\nF(7)");
+        AssertNotDiagnosed("Target(t, *items) = items.sum\nF(t, items) = Math.Abs(Target)\nF(0, 7)");
         // collecting caller -> fixed destination: the collected list remains one value.
         AssertNotDiagnosed("Target(items) = items.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)");
         // collecting caller -> collecting destination: the caller's stream is forwarded by
-        // binding kind, even when the capture names differ.
-        AssertNotDiagnosed("Target(*xs) = xs.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)");
+        // binding kind (into the callee's one grouped stream), even when the capture names differ.
+        AssertNotDiagnosed("Target((*xs)) = xs.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)");
 
         AssertEval("Target(q) = q + 1\nF(q) = Math.Abs(Target)\nF(7)", 8);
-        AssertEval("Target(*items) = items.sum\nF(items) = Math.Abs(Target)\nF(7)", 7);
+        AssertEval("Target(t, *items) = items.sum\nF(t, items) = Math.Abs(Target)\nF(0, 7)", 7);
         AssertEval("Target(items) = items.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)", 3);
-        AssertEval("Target(*xs) = xs.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)", 3);
+        AssertEval("Target((*xs)) = xs.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)", 3);
 
         // A differently named fixed source cannot satisfy a collecting destination, and a
         // collecting source cannot be re-spread into a differently named fixed destination.
         Assert.Contains("'xs'", SingleBlocked(
-            "Target(*xs) = xs.sum\nF(items) = Math.Abs(Target)\nF(7)").Message,
+            "Target(t, *xs) = xs.sum\nF(t, items) = Math.Abs(Target)\nF(0, 7)").Message,
             StringComparison.Ordinal);
         Assert.Contains("'xs'", SingleBlocked(
             "Target(xs) = xs.sum\nF(*items) = Math.Abs(Target)\nF(1, 2)").Message,
             StringComparison.Ordinal);
+
+        // Q-03 (formerly PV-27): a callee that works with no arguments is never forwarded to,
+        // so nothing is blocked — its strict Math demand is its legal zero-argument value.
+        AssertNotDiagnosed("Target(*xs) = xs.sum\nF(items) = Math.Abs(Target)\nF(7)");
+        AssertEval("Target(*xs) = xs.sum\nF(items) = Math.Abs(Target)\nF(7)", 0);
+        AssertNotDiagnosed("Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)");
+        AssertEval("Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)", 5);
     }
 
     /// <summary>

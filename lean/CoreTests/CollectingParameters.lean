@@ -1783,6 +1783,45 @@ def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
 
 #guard restErroredValuePropertyArgumentSurfacesRealError
 
+-- Q-03: callable-shaped means "an ordinary zero-argument call cannot bind it" (the
+-- zero-argument law's own `acceptsZeroSuppliedArguments`), never "declares parameters".
+-- A collecting-only algorithm is a VALUE like a zero-parameter property (the surface
+-- pass reads it by its bare name, `liftsBareValueReference`), so its failed evaluation
+-- surfaces its genuine error instead of the callable diagnostic.
+#guard (alg [] [] [] [.num 1]).isFunctionShaped == false
+#guard (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 1]).isFunctionShaped == false
+#guard (algWithParameters [{ name := "x" }] [] [] [.num 1]).isFunctionShaped == true
+#guard (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.num 1]).isFunctionShaped == true
+
+def restErroredCollectingOnlyArgumentSurfacesRealError : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("Bad", algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.binary .div (.num 1) (.num 0)]),
+    ("G", algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])
+  ] [
+    .call (resolve "G") [resolve "Bad"]
+  ])) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+#guard restErroredCollectingOnlyArgumentSurfacesRealError
+
+-- A callable that REQUIRES a supplied argument stays callable-shaped: the targeted
+-- typeMismatch, exactly as for the builtin above.
+def restRequiringCallableArgumentReportsTypeMismatch : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [
+    ("Inc", algWithParameters [{ name := "x" }] [] [] [.binary .add (.param "x") (.num 1)]),
+    ("G", algWithParameters [{ name := "fs", kind := .collecting }] [] [] [.param "fs"])
+  ] [
+    .call (resolve "G") [resolve "Inc"]
+  ])) with
+  | Except.error err =>
+      innermostIsTypeMismatch
+        "A collecting parameter collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected."
+        err
+  | _ => false
+
+#guard restRequiringCallableArgumentReportsTypeMismatch
+
 def mixedVariadicBoundaryAlg : Algorithm :=
   algWithParameters [{ name := "first" }, { name := "rest", kind := .collecting }] [] [] [
     .dotCall (.param "first") "count" none,

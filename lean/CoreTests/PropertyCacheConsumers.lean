@@ -283,4 +283,73 @@ def parameterlessLocalOwnerCalls : Bool :=
 
 #guard parameterlessLocalOwnerCalls
 
+--------------------------------------------------------------------------------
+-- Implicit lifting follows zero-argument acceptance (Q-03, September 2026)
+--------------------------------------------------------------------------------
+-- If a callable works with no arguments, its bare name reads its cached value,
+-- even when it declares a collecting parameter; only a written call is fresh.
+-- The surface pass lifts a bare value reference ONLY when its callee requires
+-- supplied arguments (`liftsBareValueReference`, over the binder's own
+-- `minimumSuppliedSlots`), so `Twice = Only + Only` with a collecting-only
+-- `Only` elaborates to two BARE reads that ONE cached evaluation serves. The
+-- superseded elaboration of the same source, `TwiceLifted(*xs) = Only(xs*) +
+-- Only(xs*)`, ran Only's body twice and never touched its entry. Lean evaluates
+-- whichever tree the surface pass produces; these guards show the two trees'
+-- evaluation counts, which is exactly what Q-03 changed.
+
+open KatLang (liftsBareValueReference isCacheableZeroArgPropertyAlgorithm)
+
+-- The decision table: only a signature that REQUIRES a supplied slot lifts.
+#guard liftsBareValueReference [] == false
+#guard liftsBareValueReference [.capture { name := "xs", kind := .collecting }] == false
+#guard liftsBareValueReference [.capture { name := "x" }] == true
+#guard liftsBareValueReference
+  [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }] == true
+#guard liftsBareValueReference
+  [.capture { name := "rest", kind := .collecting }, .capture { name := "z" }] == true
+#guard liftsBareValueReference [.sequenceValue [.capture { name := "xs", kind := .collecting }]] == true
+
+/-- `Only(*xs) = Id(7)`: each evaluation opens its own binding context (the empty
+    supply it binds) plus `Id`'s. -/
+def q03OnlyAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.call (resolve "Id") [num 7]]
+
+/-- `Twice = Only + Only` as the surface pass elaborates it since Q-03: two bare reads. -/
+def q03TwiceAlg : Algorithm := alg [] [] [] [.binary .add (resolve "Only") (resolve "Only")]
+
+/-- The superseded elaboration of that same `Twice`: `TwiceLifted(*xs) = Only(xs*) + Only(xs*)`. -/
+def q03TwiceLiftedAlg : Algorithm :=
+  algWithParameters [{ name := "xs", kind := .collecting }] [] []
+    [.binary .add (.call (resolve "Only") [.sequenceSpread (param "xs")])
+                  (.call (resolve "Only") [.sequenceSpread (param "xs")])]
+
+def q03Root (out : List KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] []
+    [ ("Id", cacheIdAlg), ("Only", q03OnlyAlg), ("Twice", q03TwiceAlg)
+    , ("TwiceLifted", q03TwiceLiftedAlg) ]
+    out)
+
+/-- A successful run's value, the binding contexts it opened, and its `Only` entries. -/
+def q03Run (out : List KatLang.Expr) : Option (Result × Nat × Nat) :=
+  match runResultWithState (q03Root out) with
+  | .ok (value, state) =>
+      some (value, state.nextBindingContext - 1,
+            (state.zeroArgPropertyCache.filter (fun e => e.fst.propertyName == "Only")).length)
+  | .error _ => none
+
+-- `Only` accepts zero supplied arguments: the surface pass leaves its references
+-- unlifted, and the zero-argument demand law sends them through the cache.
+#guard liftsBareValueReference (Algorithm.parameterPatterns q03OnlyAlg) == false
+#guard isCacheableZeroArgPropertyAlgorithm q03OnlyAlg
+-- The Q-03 tree: 14 from ONE evaluation of Only (its binder and Id), one entry.
+#guard q03Run [resolve "Twice"] == some (.atom 14, 2, 1)
+-- The superseded tree: the same 14, but TwiceLifted's binder plus TWO fresh
+-- evaluations of Only (binder and Id each), and no entry at all.
+#guard q03Run [resolve "TwiceLifted"] == some (.atom 14, 5, 0)
+-- A bare read beside the formula shares that one evaluation.
+#guard q03Run [resolve "Only", resolve "Twice"] == some (.sequenceValue [.atom 7, .atom 14], 2, 1)
+-- The explicit call stays fresh and never touches the entry: `Only, Only(), Only`.
+#guard q03Run [resolve "Only", .call (resolve "Only") [], resolve "Only"]
+  == some (.sequenceValue [.atom 7, .atom 7, .atom 7], 4, 1)
+
 end KatLangTests

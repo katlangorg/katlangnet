@@ -894,6 +894,70 @@ theorem zero_argument_demand_rejects_group_with_one_required_slot
         [.sequenceValue [.capture { name := x }, .capture { name := y }]] op props out)
       = some (Error.withContext (CtxMsg.property propertyName) (Error.arityMismatch 1 0)) := rfl
 
+/-
+## Implicit-lifting eligibility follows zero-argument acceptance (Q-03, September 2026)
+
+The surface pass lifts a bare value-position reference into an implicit
+forwarding call exactly when the callee REQUIRES supplied arguments
+(`liftsBareValueReference`, over the same `minimumSuppliedSlots` the binder
+enforces). A callee that accepts zero supplied arguments — no parameter, or only
+a top-level collector — is never lifted: its reference stays the zero-argument
+value demand, which the property cache serves. The laws below pin the decision
+table and connect it to the evaluator: for a user algorithm, "lifted" and
+"cacheable demand" are exact complements, so a reference the front end leaves
+bare is always an accepted, cacheable demand.
+-/
+
+theorem lifting_skips_parameterless_signature :
+    liftsBareValueReference [] = false := rfl
+
+/-- `Roll(*xs)` works with no arguments, so its bare name is never lifted. -/
+theorem lifting_skips_collecting_only_signature (name : Ident) :
+    liftsBareValueReference [.capture { name := name, kind := .collecting }] = false := rfl
+
+/-- `Inc(x)` requires its argument, so its bare name still lifts. -/
+theorem lifting_keeps_required_parameter (x : Ident) :
+    liftsBareValueReference [.capture { name := x }] = true := rfl
+
+/-- `Head(x, *rest)` requires ONE supplied value beside the collector: it lifts. -/
+theorem lifting_keeps_required_prefix (x r : Ident) :
+    liftsBareValueReference
+      [.capture { name := x }, .capture { name := r, kind := .collecting }] = true := rfl
+
+/-- A group holding a collector, `H((*xs))`, is one required slot: it lifts. -/
+theorem lifting_keeps_grouped_collector (items : List ParameterPattern) :
+    liftsBareValueReference [.sequenceValue items] = true := rfl
+
+/-- THE Q-03 LAW. For a user algorithm, the front end lifts a bare value
+reference exactly when the property cache could NOT serve it as a zero-argument
+demand: lifting and cache eligibility are complements of ONE rule. -/
+theorem bare_reference_lifts_iff_not_cacheable
+    (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
+    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
+    liftsBareValueReference ps
+      = !isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) := rfl
+
+private theorem bool_true_of_not_eq_false {b : Bool} (h : (!b) = false) : b = true := by
+  revert h
+  cases b <;> decide
+
+/-- Consequently a reference the front end leaves bare is always a demand the
+zero-argument law ACCEPTS and the run cache serves — never a rejection, and
+never a fresh evaluation. -/
+theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
+    (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
+    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity)
+    (h : liftsBareValueReference ps = false) :
+    acceptsZeroArgumentValueDemand (Algorithm.mk p ps op pr out id) = true
+      ∧ isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = true := by
+  have hc : isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = true :=
+    bool_true_of_not_eq_false
+      ((bare_reference_lifts_iff_not_cacheable p ps op pr out id).symm.trans h)
+  refine ⟨?_, hc⟩
+  rw [zero_argument_value_demand_accepts_exactly_zero_supply_callables _
+    (fun b hb => by cases hb)]
+  exact hc
+
 /-- A FIXED parameter binds its one argument unchanged: `Id((1, 2))` binds
 the sequence whole. -/
 theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :

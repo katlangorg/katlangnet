@@ -156,7 +156,9 @@ public class CFullHostileReviewTests
     {
         var body = operation == "filter" ? "Observe(xs).count == 1" : "Observe(xs)";
         var call = operation == "reduce" ? "reduce(xs, f, [])" : $"{operation}(xs, f)";
-        var source = $"F(*xs) = {body}\nAlias = F\nApply(f, xs) = {call}\nForward(g, xs) = Apply(g, xs)\nForward(Alias, [(1, 2), (), [], [1, 2]])";
+        // The forwarding alias is written: since Q-03 a bare `Alias = F` would be a value
+        // demand of the zero-argument-accepting `F`, not a forwarding callable.
+        var source = $"F(*xs) = {body}\nAlias(*xs) = F(xs*)\nApply(f, xs) = {call}\nForward(g, xs) = Apply(g, xs)\nForward(Alias, [(1, 2), (), [], [1, 2]])";
         var syncSeen = new List<Result>();
         var syncOps = HostOperations.Create(HostOperation.Create("Observe", (args, _) =>
         {

@@ -224,8 +224,12 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Resolve_VariadicImplicitCall_NameMismatchForwardsCallerStreamAsSpreadWithoutLiftingCalleeName()
     {
+        // The callee's one parameter is a group holding a collector: it REQUIRES its one
+        // supplied slot, so the bare reference is a forwarding call (a lone top-level
+        // collector `CountItems(*items)` accepts zero supplied arguments and is read as a
+        // value instead — Q-03, see Resolve_ZeroArgumentVariadicHelper_IsNeverLifted).
         var source = """
-            CountItems(*items) = items.count
+            CountItems((*items)) = items.count
             Use(*values) = CountItems
             """;
         var root = Resolve(source);
@@ -239,19 +243,62 @@ public class ImplicitArgumentResolverTests
         var function = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("CountItems", function.Name);
 
-        // Variadic forwarding synthesizes a SPREAD argument (`CountItems(values*)`):
-        // the caller's collecting parameter holds one exact list, and the spread re-supplies its
-        // collected items so the callee's collecting parameter re-collects exactly them.
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        // Variadic forwarding BY SHAPE synthesizes the callee's group around a SPREAD argument
+        // (`CountItems((values*))`): the caller's collecting parameter holds one exact list, and
+        // the spread re-supplies its collected items so the group's collecting parameter
+        // re-collects exactly them.
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
         var param = Assert.IsType<Expr.Param>(spread.Operand);
         Assert.Equal("values", param.Name);
+    }
+
+    [Theory]
+    [InlineData("Use(*values) = CountItems")]
+    [InlineData("Use(*items) = CountItems")]
+    [InlineData("Use(items) = CountItems")]
+    [InlineData("Use = CountItems")]
+    [InlineData("Use = CountItems + 1")]
+    [InlineData("Use(*values) = Math.Abs(CountItems)")]
+    public void Resolve_ZeroArgumentVariadicHelper_IsNeverLifted(string use)
+    {
+        // Q-03: `CountItems(*items)` accepts zero supplied arguments, so its bare name is a
+        // property-style value demand wherever it stands and whatever the caller binds — by name
+        // or by shape. Nothing is lifted into `Use` and no call is synthesized.
+        var source = "CountItems(*items) = items.count\n" + use;
+        var written = SourceProvenance.ParseSyntaxValidRoot(source).Properties.Single(p => p.Name == "Use").Value;
+        var resolved = Resolve(source).Properties.Single(p => p.Name == "Use").Value;
+
+        Assert.Equal(written.Params, resolved.Params);
+        Assert.Empty(CallsTo(resolved, "CountItems"));
+    }
+
+    private static List<Expr.Call> CallsTo(Algorithm algorithm, string callee)
+    {
+        var collector = new CallCollector(callee);
+        collector.VisitAlgorithm(algorithm);
+        return collector.Calls;
+    }
+
+    private sealed class CallCollector(string callee) : AstWalker
+    {
+        public List<Expr.Call> Calls { get; } = [];
+
+        public override void VisitExpr(Expr expr)
+        {
+            if (expr is Expr.Call { Function: Expr.Resolve(var name) } call && name == callee)
+                Calls.Add(call);
+            base.VisitExpr(expr);
+        }
     }
 
     [Fact]
     public void Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper()
     {
+        // The helper REQUIRES its `first` argument, so it is a forwarding candidate that the
+        // closed list must refuse (a zero-argument helper is never a candidate at all, Q-03).
         var source = """
-            CountItems(*items) = items.count
+            CountItems(first, *items) = items.count
             Use(value) = CountItems
             """;
         var root = Resolve(source);
@@ -475,27 +522,28 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_SameNameTopLevelCollectingParameter_ForwardsCallerStream()
+    public void Eval_VariadicImplicitCall_SameNameCollectingParameter_ForwardsCallerStreamIntoARequiredCallee()
     {
         // The root spread supplies the three items, and the synthesized spread
         // forwarding re-supplies them to the callee's collecting binding.
         var source = """
-            CountValues(*values) = values.count
-            Use(*values) = CountValues
-            Use((1, 2, 3)*)
+            CountValues(tag, *values) = values.count
+            Use(tag, *values) = CountValues
+            Use(0, (1, 2, 3)*)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
-    public void Eval_VariadicImplicitCall_NameMismatchTopLevelCollectingParameter_ForwardsCallerStream()
+    public void Eval_ZeroArgumentVariadicCallee_IsReadNotForwarded()
     {
-        var source = """
-            CountItems(*items) = items.count
-            Use(*values) = CountItems
-            Use((1, 2, 3)*)
-            """;
-        AssertEval(source, 3);
+        // Q-03: a callee whose only parameter is a top-level collector works with no
+        // arguments, so the bare name is ITS zero-argument value (0) — never a forwarding
+        // call — whether the caller's collector has the same name or another one. The
+        // forwarding is written explicitly, and then it is the ordinary call.
+        AssertEval("CountValues(*values) = values.count\nUse(*values) = CountValues\nUse((1, 2, 3)*)", 0);
+        AssertEval("CountItems(*items) = items.count\nUse(*values) = CountItems\nUse((1, 2, 3)*)", 0);
+        AssertEval("CountItems(*items) = items.count\nUse(*values) = CountItems(values*)\nUse((1, 2, 3)*)", 3);
     }
 
     [Fact]
@@ -525,14 +573,15 @@ public class ImplicitArgumentResolverTests
     {
         // The implicit spread decision is made from the SOURCE binding kind:
         // `Use.items` is an ordinary fixed parameter, so the synthesized call
-        // is `Target(items)` — ONE argument, collected as one item whatever its
+        // is `Target(tag, items)` — ONE argument, collected as one item whatever its
         // value (the destination being collecting must not open it): a list, a
         // sequence, and a scalar alike — exactly as for the explicitly written
-        // `Target(items)`.
+        // `Target(tag, items)`. (`Target` requires its `tag`, so it is forwarded to at all:
+        // a callee that works with no arguments is read as a value instead, Q-03.)
         var source = """
-            Target(*items) = items
-            Use(items) = Target
-            Use([1, 2])
+            Target(tag, *items) = items
+            Use(tag, items) = Target
+            Use(0, [1, 2])
             """;
 
         var listResult = Assert.IsType<Result.ListValue>(EvalValue(source));
@@ -540,18 +589,18 @@ public class ImplicitArgumentResolverTests
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], element.Items, Result.ValueComparer);
 
         var sequenceSource = """
-            Target(*items) = items
-            Use(items) = Target
-            Use((1, 2))
+            Target(tag, *items) = items
+            Use(tag, items) = Target
+            Use(0, (1, 2))
             """;
         var sequenceList = Assert.IsType<Result.ListValue>(EvalValue(sequenceSource));
         var sequenceElement = Assert.IsType<Result.SequenceValue>(Assert.Single(sequenceList.Items));
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], sequenceElement.Items, Result.ValueComparer);
 
         var scalarSource = """
-            Target(*items) = items
-            Use(items) = Target
-            Use(7)
+            Target(tag, *items) = items
+            Use(tag, items) = Target
+            Use(0, 7)
             """;
         var scalarList = Assert.IsType<Result.ListValue>(EvalValue(scalarSource));
         Assert.Equal([new Result.Atom(7)], scalarList.Items, Result.ValueComparer);
@@ -563,13 +612,15 @@ public class ImplicitArgumentResolverTests
         // The synthesized implicit call passes the ordinary source parameter
         // as a bare Expr.Param — never wrapped in Expr.SequenceSpread.
         var root = Resolve("""
-            Target(*items) = items
-            Use(items) = Target
+            Target(tag, *items) = items
+            Use(tag, items) = Target
             """);
 
         var use = root.Properties.Single(p => p.Name == "Use").Value;
         var call = Assert.IsType<Expr.Call>(Assert.Single(use.Output));
-        var param = Assert.IsType<Expr.Param>(Assert.Single(call.Args));
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("tag", Assert.IsType<Expr.Param>(call.Args[0]).Name);
+        var param = Assert.IsType<Expr.Param>(call.Args[1]);
         Assert.Equal("items", param.Name);
     }
 
@@ -577,20 +628,20 @@ public class ImplicitArgumentResolverTests
     public void Eval_CollectingSourceParameter_ForwardsCollectedItemsAsSpread()
     {
         // Genuine variadic forwarding: the caller's own collected list is the source, so
-        // the synthesized call is `Target(items*)` and the collected items
+        // the synthesized call is `Target(tag, items*)` and the collected items
         // round-trip exactly (spread(collect(xs)) = xs).
         var source = """
-            Target(*items) = items
-            Use(*items) = Target
-            Use(1, 2)
+            Target(tag, *items) = items
+            Use(tag, *items) = Target
+            Use(0, 1, 2)
             """;
         var list = Assert.IsType<Result.ListValue>(EvalValue(source));
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], list.Items, Result.ValueComparer);
 
         var listArgSource = """
-            Target(*items) = items
-            Use(*items) = Target
-            Use([1, 2])
+            Target(tag, *items) = items
+            Use(tag, *items) = Target
+            Use(0, [1, 2])
             """;
         var outerList = Assert.IsType<Result.ListValue>(EvalValue(listArgSource));
         var innerList = Assert.IsType<Result.ListValue>(Assert.Single(outerList.Items));
@@ -606,7 +657,9 @@ public class ImplicitArgumentResolverTests
         // no supplied argument, so the unrewritten reference is an ordinary zero-argument
         // value demand that collects NOTHING: the result is 0. Had the resolver rewritten
         // `CountValues` into `CountValues(sequenceValue)` it would be 3 — that difference
-        // is what this case pins.
+        // is what this case pins. (Since Q-03 a callee that works with no arguments is never
+        // a forwarding candidate at all, so the reference stays this value read even when a
+        // caller parameter matches its name.)
         var result = Eval(
             """
             CountValues(*values) = values.count
@@ -770,6 +823,12 @@ public class ImplicitArgumentResolverTests
             case Expr.SequenceSpread spread:
                 AssertSameLiftingShape(spread.Operand, Assert.IsType<Expr.SequenceSpread>(actual).Operand);
                 break;
+            case Expr.Capture capture:
+                var actualCapture = Assert.IsType<Expr.Capture>(actual);
+                Assert.Equal(capture.Body.Count, actualCapture.Body.Count);
+                for (var i = 0; i < capture.Body.Count; i++)
+                    AssertSameLiftingShape(capture.Body[i], actualCapture.Body[i]);
+                break;
             case Expr.Call call:
                 var actualCall = Assert.IsType<Expr.Call>(actual);
                 AssertSameLiftingShape(call.Function, actualCall.Function);
@@ -783,26 +842,33 @@ public class ImplicitArgumentResolverTests
         }
     }
 
+    // The K1-03 forwarding tests below use callees that REQUIRE supplied arguments — a required
+    // `t` beside the collecting destination, or a group holding the collector — because only
+    // such a callee is lifted and forwarded to: a callee that works with no arguments (a lone
+    // `*xs`) is read as a value by its bare name (Q-03), so it could not exercise forwarding.
+
     [Fact]
     public void Resolve_MathArgument_FixedSourceIntoCollectingCallee_SynthesizesUnspreadArgument()
     {
         // K1-03. `K` binds `xs` as a FIXED parameter (lifted from `B(xs)`), so the collecting
-        // destination `A(*xs)` must receive ONE argument. Deciding the spread from the CALLEE's
-        // collecting kind -- the last resort an ERASED caller configuration always falls through
-        // to -- produced `A(xs*)` and silently turned a 1 into a 3.
+        // destination `A(t, *xs)` must receive ONE argument for it. Deciding the spread from the
+        // CALLEE's collecting kind -- the last resort an ERASED caller configuration always falls
+        // through to -- produced `A(t, xs*)` and silently turned a 1 into a 3.
         var root = Resolve("""
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, Math.Abs(A)
             """);
 
         var k = root.Properties.Single(p => p.Name == "K").Value;
-        Assert.Equal(["xs"], k.Params);
-        Assert.Equal(["xs"], k.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal(["xs", "t"], k.Params);
+        Assert.Equal(["xs", "t"], k.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
 
         var call = Assert.IsType<Expr.Call>(MathArgument(k.Output[1]));
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        var argument = Assert.Single(call.Args);
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("t", Assert.IsType<Expr.Param>(call.Args[0]).Name);
+        var argument = call.Args[1];
         Assert.IsNotType<Expr.SequenceSpread>(argument);
         Assert.Equal("xs", Assert.IsType<Expr.Param>(argument).Name);
     }
@@ -813,16 +879,17 @@ public class ImplicitArgumentResolverTests
         // The differential property: the Math wrapper is the ONLY difference between the two
         // programs, so the lifted inner call must be identical.
         var wrapped = Resolve("""
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, Math.Abs(A)
             """);
         var unwrapped = Resolve("""
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, A
             """);
 
+        Assert.IsType<Expr.Call>(unwrapped.Properties.Single(p => p.Name == "K").Value.Output[1]);
         AssertSameLiftingShape(
             unwrapped.Properties.Single(p => p.Name == "K").Value.Output[1],
             MathArgument(wrapped.Properties.Single(p => p.Name == "K").Value.Output[1]));
@@ -832,31 +899,31 @@ public class ImplicitArgumentResolverTests
     public void Eval_MathArgument_FixedSourceIntoCollectingCallee_AgreesWithUnwrappedValuePosition()
     {
         // End-to-end K1-03: `Math.Abs` is the identity on the correct result 1 (the
-        // forwarded `A(xs)` passes the sequence value as ONE argument, which the
+        // forwarded `A(t, xs)` passes the sequence value as ONE argument, which the
         // collector collects as one item), so any divergence from the unwrapped
         // control is a front-end divergence.
         AssertEval(
             """
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, Math.Abs(A)
-            K((1, 2, 3))
+            K((1, 2, 3), 0)
             """,
             1, 2, 3, 1);
         AssertEval(
             """
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, A
-            K((1, 2, 3))
+            K((1, 2, 3), 0)
             """,
             1, 2, 3, 1);
         AssertEval(
             """
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, Math.Abs(A)
-            K([1, 2, 3])
+            K([1, 2, 3], 0)
             """,
             1, 2, 3, 1);
     }
@@ -867,9 +934,10 @@ public class ImplicitArgumentResolverTests
         // K1-03's name half. `Use` declares `items`, never `xs`; forwarding under the CALLEE's
         // capture name synthesized a reference to a name the enclosing algorithm does not bind
         // (`Unknown name: xs` at runtime) and mis-marked `Use` as capturing an ancestor's
-        // parameter.
+        // parameter. The callee's one grouped stream is forwarded BY SHAPE from `Use`'s own
+        // collector: `Target((items*))`.
         var root = Resolve("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Math.Abs(Target)
             """);
 
@@ -880,7 +948,8 @@ public class ImplicitArgumentResolverTests
 
         var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(use.Value.Output)));
         Assert.Equal("Target", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
     }
 
@@ -888,14 +957,15 @@ public class ImplicitArgumentResolverTests
     public void Resolve_MathArgument_CollectingSourceNameMismatch_MatchesUnwrappedValuePosition()
     {
         var wrapped = Resolve("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Math.Abs(Target)
             """);
         var unwrapped = Resolve("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Target
             """);
 
+        Assert.IsType<Expr.Call>(PropertyOutputRow(unwrapped, "Use"));
         AssertSameLiftingShape(
             PropertyOutputRow(unwrapped, "Use"),
             MathArgument(PropertyOutputRow(wrapped, "Use")));
@@ -906,14 +976,14 @@ public class ImplicitArgumentResolverTests
     {
         AssertEval(
             """
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Math.Abs(Target)
             Use(1, 2, 3)
             """,
             3);
         AssertEval(
             """
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Target
             Use(1, 2, 3)
             """,
@@ -926,19 +996,21 @@ public class ImplicitArgumentResolverTests
         // The legal forwarding direction must survive the fix: a COLLECTING caller binding
         // still re-spreads into a collecting destination (spread(collect(xs)) = xs).
         var root = Resolve("""
-            Target(*items) = items.count
-            Use(*items) = Math.Abs(Target)
+            Target(t, *items) = items.count
+            Use(t, *items) = Math.Abs(Target)
             """);
 
         var call = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "Use")));
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        Assert.Equal(2, call.Args.Count);
+        Assert.Equal("t", Assert.IsType<Expr.Param>(call.Args[0]).Name);
+        var spread = Assert.IsType<Expr.SequenceSpread>(call.Args[1]);
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
 
         AssertEval(
             """
-            Target(*items) = items.count
-            Use(*items) = Math.Abs(Target)
-            Use(1, 2)
+            Target(t, *items) = items.count
+            Use(t, *items) = Math.Abs(Target)
+            Use(0, 1, 2)
             """,
             2);
     }
@@ -975,7 +1047,7 @@ public class ImplicitArgumentResolverTests
         // Both value-demanding spellings share one implementation: the prelude ALIAS call
         // `abs(...)` must carry the caller's configuration exactly like `Math.Abs(...)`.
         var root = Resolve("""
-            A(*xs) = xs.count
+            A(t, *xs) = xs.count
             B(xs) = xs
             K = B, abs(A)
             """);
@@ -985,7 +1057,8 @@ public class ImplicitArgumentResolverTests
 
         var lifted = Assert.IsType<Expr.Call>(Assert.Single(aliasCall.Args));
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(lifted.Function).Name);
-        var argument = Assert.Single(lifted.Args);
+        Assert.Equal(2, lifted.Args.Count);
+        var argument = lifted.Args[1];
         Assert.IsNotType<Expr.SequenceSpread>(argument);
         Assert.Equal("xs", Assert.IsType<Expr.Param>(argument).Name);
     }
@@ -996,8 +1069,10 @@ public class ImplicitArgumentResolverTests
         // K1-04, the Math-wrapped twin of
         // Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper. An explicit
         // parameter list is CLOSED; a strict-value Math wrapper is not an escape hatch from it.
+        // The helper REQUIRES its `first` argument, so its value can only come from a
+        // forwarding the closed list refuses — the front end rejects the position.
         var root = ResolveRejected("""
-            CountItems(*items) = items.count
+            CountItems(first, *items) = items.count
             Use(value) = Math.Abs(CountItems)
             """);
 
@@ -1007,6 +1082,30 @@ public class ImplicitArgumentResolverTests
 
         var resolve = Assert.IsType<Expr.Resolve>(MathArgument(Assert.Single(use.Output)));
         Assert.Equal("CountItems", resolve.Name);
+    }
+
+    [Fact]
+    public void Resolve_MathArgument_ClosedExplicitParameterList_ReadsAZeroArgumentHelperAsAValue()
+    {
+        // Q-03 (formerly PV-27): a helper that works with no arguments is never a forwarding
+        // candidate, so a closed list has nothing to refuse — the strict Math position demands
+        // its zero-argument value, which is legal, and the front end accepts the program.
+        var root = Resolve("""
+            CountItems(*items) = items.count
+            Use(value) = Math.Abs(CountItems)
+            """);
+
+        var use = root.Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["value"], use.Params);
+        Assert.Equal("CountItems", Assert.IsType<Expr.Resolve>(MathArgument(Assert.Single(use.Output))).Name);
+
+        AssertEval(
+            """
+            CountItems(*items) = items.count
+            Use(value) = Math.Abs(CountItems) + value
+            Use(5)
+            """,
+            5);
     }
 
     [Fact]
@@ -1180,25 +1279,27 @@ public class ImplicitArgumentResolverTests
             var root = Resolve(source);
 
             var fixedCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "FixedCaller")));
-            var fixedArgument = Assert.Single(fixedCall.Args);
+            Assert.Equal(2, fixedCall.Args.Count);
+            var fixedArgument = fixedCall.Args[1];
             Assert.IsNotType<Expr.SequenceSpread>(fixedArgument);
             Assert.Equal("zs", Assert.IsType<Expr.Param>(fixedArgument).Name);
 
             var collectingCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "CollectingCaller")));
-            var collectingSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(collectingCall.Args));
+            Assert.Equal(2, collectingCall.Args.Count);
+            var collectingSpread = Assert.IsType<Expr.SequenceSpread>(collectingCall.Args[1]);
             Assert.Equal("zs", Assert.IsType<Expr.Param>(collectingSpread.Operand).Name);
         }
 
         AssertBothCallers("""
-            Target(*zs) = zs.count
-            FixedCaller(zs) = Math.Abs(Target)
-            CollectingCaller(*zs) = Math.Abs(Target)
+            Target(t, *zs) = zs.count
+            FixedCaller(t, zs) = Math.Abs(Target)
+            CollectingCaller(t, *zs) = Math.Abs(Target)
             """);
 
         AssertBothCallers("""
-            Target(*zs) = zs.count
-            CollectingCaller(*zs) = Math.Abs(Target)
-            FixedCaller(zs) = Math.Abs(Target)
+            Target(t, *zs) = zs.count
+            CollectingCaller(t, *zs) = Math.Abs(Target)
+            FixedCaller(t, zs) = Math.Abs(Target)
             """);
     }
 
@@ -1210,10 +1311,10 @@ public class ImplicitArgumentResolverTests
         // collecting caller re-supplies its three collected items.
         AssertEval(
             """
-            Target(*zs) = zs.count
-            FixedCaller(zs) = Math.Abs(Target)
-            CollectingCaller(*zs) = Math.Abs(Target)
-            FixedCaller([1, 2, 3]), FixedCaller((1, 2, 3)), CollectingCaller(1, 2, 3)
+            Target(t, *zs) = zs.count
+            FixedCaller(t, zs) = Math.Abs(Target)
+            CollectingCaller(t, *zs) = Math.Abs(Target)
+            FixedCaller(0, [1, 2, 3]), FixedCaller(0, (1, 2, 3)), CollectingCaller(0, 1, 2, 3)
             """,
             1, 1, 3);
     }
@@ -1222,7 +1323,8 @@ public class ImplicitArgumentResolverTests
     public void Resolve_MathArgument_DifferentCallerNames_ForwardTheirOwnName()
     {
         // Two callers spell the same callee capture differently; each rewritten call must use
-        // its OWN caller name, in both declaration orders.
+        // its OWN caller name, in both declaration orders (forwarding by shape into the
+        // callee's one grouped stream).
         static void AssertBothNames(string source)
         {
             var root = Resolve(source);
@@ -1230,19 +1332,20 @@ public class ImplicitArgumentResolverTests
             foreach (var (property, expectedName) in new[] { ("UseItems", "items"), ("UseValues", "values") })
             {
                 var call = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, property)));
-                var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+                var group = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
+                var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
                 Assert.Equal(expectedName, Assert.IsType<Expr.Param>(spread.Operand).Name);
             }
         }
 
         AssertBothNames("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             UseItems(*items) = Math.Abs(Target)
             UseValues(*values) = Math.Abs(Target)
             """);
 
         AssertBothNames("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             UseValues(*values) = Math.Abs(Target)
             UseItems(*items) = Math.Abs(Target)
             """);
@@ -1290,7 +1393,7 @@ public class ImplicitArgumentResolverTests
         // region's rewrite memo may unify them. Pre-fix the two sub-contexts rewrote under
         // different configurations and produced `Target(items*)` and `Target(xs*)`.
         var scope = (Algorithm.User)SourceProvenance.ParseValid("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = 0
             """).Root;
 
@@ -1319,7 +1422,8 @@ public class ImplicitArgumentResolverTests
 
         var call = Assert.IsType<Expr.Call>(valueRow);
         Assert.Equal("Target", Assert.IsType<Expr.Resolve>(call.Function).Name);
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
 
         // Same node reference in, same rewritten node out: the region's memo unifies the two
@@ -1335,9 +1439,9 @@ public class ImplicitArgumentResolverTests
         // across algorithms (or keyed structurally rather than per region) would serve the
         // first caller's rewrite to the second.
         var scope = (Algorithm.User)SourceProvenance.ParseValid("""
-            Target(*zs) = zs.count
-            FixedCaller(zs) = 0
-            CollectingCaller(*zs) = 0
+            Target(t, *zs) = zs.count
+            FixedCaller(t, zs) = 0
+            CollectingCaller(t, *zs) = 0
             """).Root;
 
         var shared = new Expr.Resolve("Target");
@@ -1360,12 +1464,14 @@ public class ImplicitArgumentResolverTests
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
 
         var fixedCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(resolved, "FixedCaller")));
-        var fixedArgument = Assert.Single(fixedCall.Args);
+        Assert.Equal(2, fixedCall.Args.Count);
+        var fixedArgument = fixedCall.Args[1];
         Assert.IsNotType<Expr.SequenceSpread>(fixedArgument);
         Assert.Equal("zs", Assert.IsType<Expr.Param>(fixedArgument).Name);
 
         var collectingCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(resolved, "CollectingCaller")));
-        var collectingSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(collectingCall.Args));
+        Assert.Equal(2, collectingCall.Args.Count);
+        var collectingSpread = Assert.IsType<Expr.SequenceSpread>(collectingCall.Args[1]);
         Assert.Equal("zs", Assert.IsType<Expr.Param>(collectingSpread.Operand).Name);
     }
 
@@ -1373,19 +1479,20 @@ public class ImplicitArgumentResolverTests
     public void Resolve_MathArgument_NestedExplicitAlgorithmUsesItsOwnFixedContext()
     {
         var root = Resolve("""
-            Target(*value) = value.count
+            Target(t, *value) = value.count
             Outer(*outer) = {
-              Inner(value) = Math.Abs(Target)
-              Inner
+              Inner(t, value) = Math.Abs(Target)
+              Inner(0, outer)
             }
             """);
 
         var outer = root.Properties.Single(property => property.Name == "Outer").Value;
         var inner = outer.Properties.Single(property => property.Name == "Inner").Value;
-        Assert.Equal(["value"], inner.Params);
+        Assert.Equal(["t", "value"], inner.Params);
 
         var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(inner.Output)));
-        var argument = Assert.Single(call.Args);
+        Assert.Equal(2, call.Args.Count);
+        var argument = call.Args[1];
         Assert.IsNotType<Expr.SequenceSpread>(argument);
         Assert.Equal("value", Assert.IsType<Expr.Param>(argument).Name);
     }
@@ -1394,18 +1501,19 @@ public class ImplicitArgumentResolverTests
     public void Resolve_NestedValueDemandingCallsCarryOneCallerContext()
     {
         var root = Resolve("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Math.Abs(abs(Target))
             """);
 
         var aliasCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "Use")));
         Assert.Equal("abs", Assert.IsType<Expr.Resolve>(aliasCall.Function).Name);
         var targetCall = Assert.IsType<Expr.Call>(Assert.Single(aliasCall.Args));
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(targetCall.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
 
         AssertEval("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = Math.Abs(abs(Target))
             Use(1, 2, 3)
             """, 3);
@@ -1417,7 +1525,7 @@ public class ImplicitArgumentResolverTests
     public void Resolve_NonUnaryMathArgument_CanonicalAndAliasCarryCallerContext(string expression)
     {
         var root = Resolve($$"""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = {{expression}}
             """);
 
@@ -1428,7 +1536,8 @@ public class ImplicitArgumentResolverTests
             Expr.Call { Args: { } args } => Assert.IsType<Expr.Call>(args[0]),
             _ => throw new Xunit.Sdk.XunitException($"Expected a Math call, got {mathCall}"),
         };
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(targetCall.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
     }
 
@@ -1464,7 +1573,7 @@ public class ImplicitArgumentResolverTests
     public void Resolve_SharedArgumentBundleAcrossMathSpellingsPreservesSharedRewrite()
     {
         var parsed = (Algorithm.User)Resolve("""
-            Target(*xs) = xs.count
+            Target((*xs)) = xs.count
             Use(*items) = 0
             """);
         var sharedResolve = new Expr.Resolve("Target");
@@ -1491,19 +1600,23 @@ public class ImplicitArgumentResolverTests
 
         Assert.Same(canonicalArgument, aliasArgument);
         var targetCall = Assert.IsType<Expr.Call>(canonicalArgument);
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(targetCall.Args));
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(targetCall.Args));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
     }
 
     [Fact]
     public async Task Eval_MathArgumentRewrite_AgreesAcrossSyncGenericAndSuspendingTwin()
     {
+        // `Target` requires its `t`, so both Math arguments are genuine forwarding rewrites:
+        // the fixed caller forwards `Target(t, xs)` (one collected item) and the collecting
+        // caller `Target(t, xs*)` (three).
         const string source = """
             Seed = 0
-            Target(*xs) = xs.count
-            Fixed(xs) = Math.Abs(Target)
-            Collecting(*items) = abs(Target)
-            Fixed((1, 2, 3)) + Seed, Collecting(1, 2, 3)
+            Target(t, *xs) = t + xs.count
+            Fixed(t, xs) = Math.Abs(Target)
+            Collecting(t, *xs) = abs(Target)
+            Fixed(0, (1, 2, 3)) + Seed, Collecting(0, 1, 2, 3)
             """;
         var ast = new Expr.AlgorithmExpr(Resolve(source));
         var syncDefault = Evaluator.RunCounted(ast);
@@ -1513,6 +1626,7 @@ public class ImplicitArgumentResolverTests
         var asyncTwin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
             pendingAsyncTwin);
 
+        Assert.Equal("ok raw=S[1, 3] n=2", AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncDefault));
         Assert.Equal(
             AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncDefault),
             AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(syncGeneric));

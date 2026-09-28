@@ -9,7 +9,8 @@ public class LiftedParameterOwnershipTests
         // A generated v(x) must revert to the written value reference when v becomes bound.
         { "v = x + 99\nOuter = { Inner = v\nNeed(v) = v\nInner + Need }\nOuter(2, 7)", "x,v", "x", "14" },
         { "v = x + 99\nOuter = { Inner = v\nNeed((v, w)) = v + w\nInner + Need }\nOuter(2, (7, 3))", "x,v,w", "x", "17" },
-        { "v = 99\nNeed(*v) = v.count\nOuter = { Inner = v.count\nInner + Need }\nOuter(7, 8)", "v", "", "4" },
+        // (Need requires `q`, so it lifts; a collecting-only Need would be read, Q-03.)
+        { "v = 99\nNeed(q, *v) = v.count\nOuter = { Inner = v.count\nInner + Need }\nOuter(0, 7, 8)", "q,v", "", "4" },
         // Written call arguments survive; only the callee binding changes.
         { "v(x) = 99\nNeed(v) = 0\nOuter = { Inner = v(1)\nInner + Need }\nOuter({x + 1})", "v", "", "2" },
         { "v = { Member = 99 }\nMember(x) = x + 1\nNeed(v) = 0\nOuter = { Inner = v.Member\nInner + Need }\nOuter(7)", "v", "", "8" },
@@ -31,8 +32,8 @@ public class LiftedParameterOwnershipTests
         Assert.Equal(outerParameters, string.Join(",", outer.Params));
         if (outerParameters == "x,v,w")
             Assert.IsType<SequenceValueParameterPattern>(outer.ParameterPatterns[1]);
-        if (source.Contains("Need(*v)", StringComparison.Ordinal))
-            Assert.Equal(ParameterKind.Collecting, Assert.IsType<CaptureParameterPattern>(Assert.Single(outer.ParameterPatterns)).Kind);
+        if (source.Contains("Need(q, *v)", StringComparison.Ordinal))
+            Assert.Equal(ParameterKind.Collecting, Assert.IsType<CaptureParameterPattern>(outer.ParameterPatterns[1]).Kind);
         var inner = outer.Properties.SingleOrDefault(p => p.Name == "Inner");
         if (inner is not null)
             Assert.Equal(innerParameters, string.Join(",", inner.Value.Params));

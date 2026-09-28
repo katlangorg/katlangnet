@@ -507,6 +507,22 @@ public closed record ParameterPattern
     internal static int MinimumSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)
         => patterns.Count - (HasCollectingCaptureAtCurrentLevel(patterns) ? 1 : 0);
 
+    /// <summary>
+    /// Whether an ORDINARY call supplying ZERO argument slots can bind a parameter-pattern
+    /// list: its <see cref="MinimumSuppliedSlots"/> is zero — no top-level pattern, or only a
+    /// top-level collecting capture. This is the ONE zero-supply rule for a signature, read
+    /// by BOTH halves of the language that must never disagree about it (Q-03, September
+    /// 2026): the evaluator's zero-argument value demand and property-cache eligibility
+    /// (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/> for a user algorithm), and the
+    /// front end's implicit-lifting decision (<see cref="CallableSignature.AcceptsZeroSuppliedArguments"/>,
+    /// read by <see cref="ImplicitArgumentResolver"/>): a bare value reference to a callable
+    /// this accepts is a cached property-style read, never a fresh forwarding call.
+    /// Lean: <c>ParameterPattern.minimumSuppliedSlots … == 0</c>
+    /// (<c>Algorithm.acceptsZeroSuppliedArguments</c>, <c>liftsBareValueReference</c>).
+    /// </summary>
+    internal static bool AcceptsZeroSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)
+        => MinimumSuppliedSlots(patterns) == 0;
+
     public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
     {
         // Iterative per-level scan: patterns are host-constructible to arbitrary

@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2298
+- surface corpus cases: 2299
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2256
+- Lean-representable surface cases: 2257
 - internal-node cases: 14
-- total generated guards: 2270 case guards + 2 count guards
+- total generated guards: 2271 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -10904,9 +10904,9 @@ def case_special__listCollectingCollectsExactList : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [(.comparison (.resolve "rest") [{ op := .eq, operand := (.listLiteral [.num 2, .num 3]) }])])
 #guard obs case_special__listCollectingCollectsExactList == "ok raw=true n=1"
 
--- special__implicitForwardOrdinarySource: Target(*items) = items \n Use(items) = Target \n Use([1, 2])
+-- special__implicitForwardOrdinarySource: Target(tag, *items) = items \n Use(tag, items) = Target \n Use(0, [1, 2])
 def case_special__implicitForwardOrdinarySource : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["items"] [] [] [(.call (.resolve "Target") [.param "items"])])] [(.call (.resolve "Use") [(.listLiteral [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Use" (alg ["tag", "items"] [] [] [(.call (.resolve "Target") [.param "tag", .param "items"])])] [(.call (.resolve "Use") [.num 0, (.listLiteral [.num 1, .num 2])])])
 #guard obs case_special__implicitForwardOrdinarySource == "ok raw=L[L[1, 2]] n=1"
 
 -- special__callbackSingleCollectingMap: Collect(*items) = items \n [7].map(Collect)
@@ -10928,6 +10928,11 @@ def case_special__callbackMixedCollectingRowPattern : Expr :=
 def case_special__callbackCollectingElementIsOneArgument : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 10, .num 7]), (.listLiteral [.num 10, .num 7]), .num 20]), .resolve "Cnt"])])
 #guard obs case_special__callbackCollectingElementIsOneArgument == "ok raw=L[1, 1, 1] n=1"
+
+-- special__collectorZeroArgumentCallableFailureIsItsOwn: Bad(*xs) = 1 / 0 \n Coll(*ys) = ys \n Coll(Bad)
+def case_special__collectorZeroArgumentCallableFailureIsItsOwn : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.param "ys"])] [(.call (.resolve "Coll") [.resolve "Bad"])])
+#guard obs case_special__collectorZeroArgumentCallableFailureIsItsOwn == "err div0"
 
 -- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9)*
 def case_special__listInSeqSpreadKeepsList : Expr :=
@@ -11374,7 +11379,7 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 2256 differential cases.
+-- 2257 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -13549,6 +13554,7 @@ def surfaceCaseIds : List String := [
   "special__callbackMixedCollectingRow",
   "special__callbackMixedCollectingRowPattern",
   "special__callbackCollectingElementIsOneArgument",
+  "special__collectorZeroArgumentCallableFailureIsItsOwn",
   "special__listInSeqSpreadKeepsList",
   "special__listFixedCallBoundary",
   "special__listCollectingSpreadCall",
@@ -13639,7 +13645,7 @@ def surfaceCaseIds : List String := [
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback"
 ]
-#guard surfaceCaseIds.length == 2256
+#guard surfaceCaseIds.length == 2257
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -13741,5 +13747,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2270 case guards (2256 surface + 14 internal-node).
+-- Total: 2271 case guards (2257 surface + 14 internal-node).
 end SemanticExplorerCases

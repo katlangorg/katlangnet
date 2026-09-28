@@ -76,10 +76,12 @@ public class ImplicitArgumentSharingHostileReviewTests
     [InlineData(true)]
     public void SameNamesAndCallee_FixedAndCollectingCallersHaveDifferentForwarding(bool reverse)
     {
-        const string fixedCaller = "A(xs) = G + G";
-        const string collectingCaller = "B(*xs) = G + G";
-        var source = "G(*xs) = xs.count\n" + (reverse
-            ? collectingCaller + "\n" + fixedCaller : fixedCaller + "\n" + collectingCaller) + "\nA([1,2]), B(1,2)";
+        // `G` requires its `t`, so both callers forward to it (a callee that works with no
+        // arguments is read as a value instead, Q-03).
+        const string fixedCaller = "A(t, xs) = G + G";
+        const string collectingCaller = "B(t, *xs) = G + G";
+        var source = "G(t, *xs) = xs.count\n" + (reverse
+            ? collectingCaller + "\n" + fixedCaller : fixedCaller + "\n" + collectingCaller) + "\nA(0, [1,2]), B(0, 1,2)";
         var parsed = Parser.Parse(source);
         Assert.Empty(parsed.Diagnostics);
         OutputBundle Args(string name)
@@ -92,8 +94,8 @@ public class ImplicitArgumentSharingHostileReviewTests
         var ordinary = Args("A");
         var collecting = Args("B");
         Assert.NotSame(ordinary, collecting);
-        Assert.Equal(new Expr.Param("xs"), Assert.Single(ordinary));
-        Assert.Equal(new Expr.SequenceSpread(new Expr.Param("xs")), Assert.Single(collecting));
+        Assert.Equal([new Expr.Param("t"), new Expr.Param("xs")], ordinary);
+        Assert.Equal([new Expr.Param("t"), new Expr.SequenceSpread(new Expr.Param("xs"))], collecting);
         Assert.Equal("2\n4", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));
     }
 

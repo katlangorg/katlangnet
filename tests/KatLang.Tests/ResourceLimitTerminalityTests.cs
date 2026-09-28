@@ -191,14 +191,20 @@ public class ResourceLimitTerminalityTests
     /// <summary>
     /// Runs <paramref name="source"/> on every route and requires each to agree with the
     /// synchronous engine — outcome kind, value, error codes, and the exact host-call log (so
-    /// the exact effects performed before a terminal failure). Returns the oracle.
+    /// the exact effects performed before a terminal failure). Returns the oracle. With
+    /// <paramref name="twinMayReachHostStackFirst"/>, a twin route may instead stop at the
+    /// host-stack backstop (<see cref="IsTwinHostStackBackstop"/>).
     /// </summary>
-    private static async Task<Observation> OnEveryRouteAsync(string source, long? seed = null, EvaluationLimits? limits = null)
+    private static async Task<Observation> OnEveryRouteAsync(
+        string source, long? seed = null, EvaluationLimits? limits = null, bool twinMayReachHostStackFirst = false)
     {
         var oracle = await ObserveAsync(Route.EngineSync, source, seed, limits);
         foreach (var route in Routes.Skip(1))
         {
             var observation = await ObserveAsync(route, source, seed, limits);
+            if (twinMayReachHostStackFirst && IsTwinHostStackBackstop(route, oracle, observation))
+                continue;
+
             Assert.True(
                 oracle.Kind == observation.Kind
                     && oracle.Value == observation.Value
@@ -210,6 +216,74 @@ public class ResourceLimitTerminalityTests
         }
 
         return oracle;
+    }
+
+    /// <summary>
+    /// Whether a twin route stopped at the host-stack backstop where the oracle stopped at a
+    /// configured depth or step budget, and is otherwise the same terminal outcome. This
+    /// exception is enabled only for the recursive depth/step probes; shallow collection and
+    /// string probes keep exact verdict equality. The async twin's frames
+    /// are larger than the calibrated synchronous frames, and a suspended twin resumes on a
+    /// thread-pool stack, so a deep recursion on a twin route can exhaust the host stack BEFORE
+    /// the budget does. Measured on a Windows Debug build (September 2026): a <c>Deep</c> level
+    /// costs about 54 KB of stack on the twin against 29 KB synchronously, so the resumed twin's
+    /// 1.5 MB thread-pool stack is spent after 25 to 30 steps of <c>Deep(100)</c>, while the
+    /// oracle reaches its 40-step budget. WHERE a limit fires is not part of the law: it promises
+    /// that the run stops after exactly the effects that preceded the limit, and never a
+    /// different success (evaluator-and-hosting.md § Resource limits are terminal for the run;
+    /// PV-07). So on a twin route that backstop is accepted in place of the oracle's verdict
+    /// when it is equally terminal and performed exactly the oracle's effects; any other
+    /// difference, on any route, still fails.
+    /// </summary>
+    private static bool IsTwinHostStackBackstop(Route route, Observation oracle, Observation observation)
+        => route is Route.EngineAsyncTwin or Route.ForcedTwin
+            && oracle is { Kind: "err", Value: null, IsResourceLimit: true,
+                Codes: [nameof(KatLangErrorCode.EvaluationDepthExceeded) or nameof(KatLangErrorCode.EvaluationStepLimitExceeded)] }
+            && observation is { Kind: "err", Value: null, IsResourceLimit: true, Codes: [nameof(KatLangErrorCode.EvaluationStackExhausted)] }
+            && observation.HostCalls.SequenceEqual(oracle.HostCalls);
+
+    [Fact]
+    public void TwinHostStackException_OnlyAdmitsDepthOrStepOracleOnTwinRoutes()
+    {
+        // A stack verdict must not hide a regression in a shallow collection/string probe.
+        // Exercise every error code and route, including ordinary errors and preflight limits.
+        var stack = new Observation("err", null, [nameof(KatLangErrorCode.EvaluationStackExhausted)], ["trace(1)"])
+        {
+            IsResourceLimit = true,
+        };
+        foreach (var route in Routes)
+        foreach (var code in Enum.GetValues<KatLangErrorCode>())
+        {
+            var oracle = new Observation("err", null, [code.ToString()], ["trace(1)"]) { IsResourceLimit = true };
+            var expected = (route == Route.EngineAsyncTwin || route == Route.ForcedTwin)
+                && (code == KatLangErrorCode.EvaluationDepthExceeded || code == KatLangErrorCode.EvaluationStepLimitExceeded);
+            Assert.True(expected == IsTwinHostStackBackstop(route, oracle, stack), $"{route}, {code}");
+        }
+    }
+
+    [Fact]
+    public void TwinHostStackException_RejectsDifferentEffectsAndNonterminalObservations()
+    {
+        var oracle = new Observation("err", null, [nameof(KatLangErrorCode.EvaluationStepLimitExceeded)], ["trace(1)", "trace(2)"])
+        {
+            IsResourceLimit = true,
+        };
+        var stack = oracle with { Codes = [nameof(KatLangErrorCode.EvaluationStackExhausted)] };
+        Assert.True(IsTwinHostStackBackstop(Route.ForcedTwin, oracle, stack));
+        foreach (var changed in new[]
+        {
+            stack with { HostCalls = ["trace(1)"] },
+            stack with { HostCalls = ["trace(2)", "trace(1)"] },
+            stack with { HostCalls = ["trace(1)", "trace(2)", "trace(9)"] },
+            stack with { Kind = "ok" },
+            stack with { Value = "7" },
+            stack with { IsResourceLimit = false },
+            stack with { Codes = [] },
+            stack with { Codes = [nameof(KatLangErrorCode.EvaluationStackExhausted), nameof(KatLangErrorCode.DivisionByZero)] },
+        })
+            Assert.False(IsTwinHostStackBackstop(Route.ForcedTwin, oracle, changed), changed.ToString());
+        Assert.False(IsTwinHostStackBackstop(Route.ForcedTwin, oracle with { Kind = "ok" }, stack));
+        Assert.False(IsTwinHostStackBackstop(Route.ForcedTwin, oracle with { IsResourceLimit = false }, stack));
     }
 
     private static void AssertTerminal(Observation observation, KatLangErrorCode code, params string[] hostCalls)
@@ -595,6 +669,10 @@ public class ResourceLimitTerminalityTests
     /// reached inside an argument: <c>AstDepthLimitExceeded</c> is the pre-evaluation
     /// structural preflight, and <c>DisplayLengthLimitExceeded</c> is rendering state after a
     /// successful run. The host-stack backstop is pinned separately on a controlled stack.)
+    /// The synchronous oracle pins each budget's own kind. On the async twin routes the
+    /// <c>Deep(100)</c> recursion may exhaust the host stack before the budget (for <c>steps</c>
+    /// on a Windows Debug build it does); that stop is equally terminal, so it is accepted
+    /// there when it performed exactly the oracle's effects (<see cref="IsTwinHostStackBackstop"/>).
     /// </summary>
     [Theory]
     [InlineData("depth")]
@@ -609,7 +687,9 @@ public class ResourceLimitTerminalityTests
         foreach (var callee in new[] { "G(x, y) = y", "G(x, y) = x + y" })
         {
             AssertTerminal(
-                await OnEveryRouteAsync($"{DeepDefinition}{callee}\nG({{{failing}}}, trace(2))", limits: limits),
+                await OnEveryRouteAsync(
+                    $"{DeepDefinition}{callee}\nG({{{failing}}}, trace(2))", limits: limits,
+                    twinMayReachHostStackFirst: kind is "depth" or "steps"),
                 code,
                 "trace(1)");
         }

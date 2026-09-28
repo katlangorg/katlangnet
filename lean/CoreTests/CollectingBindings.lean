@@ -560,8 +560,12 @@ def restOnlyReducerCollectsElementAndAccumulatorSlots : Bool :=
 -- (`Use(items) = Target(items)`) — collected exactly for a list, a sequence,
 -- and a scalar alike — while a collecting parameter forwarded WITH spread
 -- re-supplies its collected items (`Use(*items) = Target(items*)`). The
--- front-end resolver synthesizes exactly these two elaborated forms from the
--- source binding kind.
+-- front-end resolver synthesizes these two elaborated forms from the source
+-- binding kind for a callee that REQUIRES supplied arguments (`Target(tag,
+-- *items)` gives `Target(tag, items)` / `Target(tag, items*)`); for a callee
+-- that works with no arguments, such as this collecting-only `Target`, a bare
+-- reference is its cached value (Q-03, `liftsBareValueReference`), so both
+-- forms are written explicitly, as here.
 def forwardingElaborationKindsObservable : Bool :=
   let useOrdinary : Algorithm := alg ["items"] [] [] [
     .call (resolve "Target") [.param "items"]

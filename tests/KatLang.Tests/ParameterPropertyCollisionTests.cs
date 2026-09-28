@@ -16,7 +16,8 @@ public class ParameterPropertyCollisionTests
         // A parameter of Need is lifted into Outer's COMPLETED signature.
         { "Need(v) = v\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 6 },
         { "Need((v, w)) = v + w\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 7 },
-        { "Need(*v) = v.count\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 7 },
+        // (A collecting destination lifts only from a callee that requires an argument, Q-03.)
+        { "Need(q, *v) = v.count\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 10 },
         { "Need(v) = v\nv = 5\nNeed + 1", 2, 1, 1, 6 },
         // Hoisted deconstruction targets remain properties of the written owner.
         { "Outer(v) = {\n    v, w = 5, 6\n    w\n}\n0", 2, 5, 1, 7 },
@@ -45,6 +46,17 @@ public class ParameterPropertyCollisionTests
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
         Assert.Equal(KatLangErrorCode.ParameterPropertyCollision, Assert.Single(failure.Errors).Code);
         Assert.Equal(parsed.Diagnostics, Parser.Parse(source).Diagnostics);
+    }
+
+    [Fact]
+    public void ZeroArgumentCallee_LiftsNothing_SoNoCollisionArises()
+    {
+        // Q-03: `Need(*v)` works with no arguments, so `Need` inside Outer is a value read
+        // and lifts no `v` that could collide with Outer's own property `v`.
+        const string source = "Need(*v) = v.count\nOuter = {\n    v = 5\n    Need\n}\nOuter";
+        var parsed = SourceProvenance.ParseValid(source);
+        Assert.Empty(parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Params);
+        Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 
     [Fact]

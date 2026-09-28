@@ -716,7 +716,7 @@ def structuralPatternsOpenSequencesAndListsAlike : Bool :=
 #guard structuralPatternsOpenSequencesAndListsAlike
 
 -- ALIASES AND FORWARDING change neither the callable nor the supply: with
--- `Cnt(*xs) = xs.count`, `Alias = Cnt`, `Apply(f, xs) = map(xs, f)`,
+-- `Cnt(*xs) = xs.count`, `Alias(*xs) = Cnt(xs*)`, `Apply(f, xs) = map(xs, f)`,
 -- `Forward(g, xs) = Apply(g, xs)`, `Forward2(h, xs) = Forward(h, xs)` and a
 -- nested-capture spelling `ApplyBlock(f, xs) = { map(xs, f) }`, every path
 -- passes each element as ONE argument — a sequence element and a list element
@@ -724,9 +724,12 @@ def structuralPatternsOpenSequencesAndListsAlike : Bool :=
 -- and `Cnt([10, 7])` are 1) and only the explicit spread supplies the
 -- element's items (`Cnt((10, 7)*)`, `Cnt([10, 7]*)` are 2).
 def aliasesAndForwardingKeepTheCallbackLaw : Bool :=
-  -- `Alias = Cnt` elaborates to the implicit forwarding `Alias(*xs) = Cnt(xs*)`
-  -- (the front end forwards a collecting capture into a collecting callee
-  -- through the explicit spread), so the forwarding law is part of the path.
+  -- The forwarding alias is WRITTEN, `Alias(*xs) = Cnt(xs*)` (the collecting
+  -- capture forwarded into the collecting callee through the explicit spread),
+  -- so the forwarding law is part of the path. Since Q-03 a bare `Alias = Cnt`
+  -- is not this callable: `Cnt` works with no arguments, so the surface pass
+  -- leaves the reference unlifted and `Alias` is a zero-parameter property
+  -- holding Cnt's cached value (`liftsBareValueReference`).
   let aliasAlg : Algorithm := algWithParameters [{ name := "xs", kind := .collecting }] [] []
     [.call (resolve "Cnt") [sequenceSpread (.param "xs")]]
   let applyAlg : Algorithm := alg ["f", "xs"] [] [] [.call (resolve "map") [.param "xs", .param "f"]]

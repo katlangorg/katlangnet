@@ -86,7 +86,7 @@ public class Fe3HostileReviewTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task TemplateOwners_HaveIndependentPropertyCaches_AndExplicitCallsBypass(bool async)
+    public async Task TemplateOwners_AreIndependentCallables_AndEveryCallIsFresh(bool async)
     {
         var events = new List<string>();
         var gates = Enumerable.Range(0, 4).Select(_ => new TaskCompletionSource<Result>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
@@ -108,14 +108,18 @@ public class Fe3HostileReviewTests
                 return result;
             }, "owner"))
             : HostOperations.Create(HostOperation.Create("Tick", (values, _) => Tick(values), "owner"));
-        // A collector accepts an empty supply, so both a shared nonempty template and
-        // zero-argument property caching are exercised on the real parsed program.
-        const string source = "G(*xs) = xs.count\nA = G + Tick(10)\nB = G + Tick(20)\nA, B, A, B, A(), B(), A, B";
+        // Two owners of one shared nonempty template are two callables: every explicit call is
+        // fresh. Since Q-03 an owner LIFTS only from a callee that requires a supplied argument,
+        // so a lifting owner always requires one itself — a shared template's owners are called,
+        // never property-cached (a collecting-only `G` would be read as a value, lifting nothing).
+        // Each owner's `Tick` runs once per call, and the calls are independent.
+        const string source = "G(t, *xs) = t + xs.count\nA = G + Tick(10)\nB = G + Tick(20)\nA(0), B(0), A(0, 5), B(0, 5, 6)";
         var options = new RunOptions { HostOperations = operations, EvaluationCancellationToken = cancellation.Token };
         var parsed = async ? await Parser.ParseAsync(source, options) : Parser.Parse(source, options);
         Assert.Empty(parsed.Diagnostics);
         Assert.Same(parsed.Root.Properties.Single(p => p.Name == "A").Value.ParameterPatterns,
             parsed.Root.Properties.Single(p => p.Name == "B").Value.ParameterPatterns);
+        Assert.Equal(["t", "xs"], parsed.Root.Properties.Single(p => p.Name == "A").Value.Params);
         var run = async ? KatLangEngine.RunAsync(source, options) : Task.FromResult(KatLangEngine.Run(source, options));
         if (async)
             for (var i = 0; i < 4; i++)
@@ -124,7 +128,7 @@ public class Fe3HostileReviewTests
                 Assert.False(run.IsCompleted);
                 gates[i].SetResult(new Result.Atom(0));
             }
-        Assert.Equal("1\n2\n1\n2\n3\n4\n1\n2", (await run).ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.Equal("1\n2\n4\n6", (await run).ToDisplayString().ReplaceLineEndings("\n"));
         Assert.Equal(["10", "20", "10", "20"], events);
     }
 

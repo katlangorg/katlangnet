@@ -273,23 +273,30 @@ public class CollectingBindingTests
     // caller-side binding is itself a collecting binding's exact list. An ordinary source
     // parameter always forwards as ONE argument, even into a collecting destination —
     // which collects it as one item, a sequence and a list alike.
+    //
+    // Forwarding happens only into a callee that REQUIRES supplied arguments (Q-03), so these
+    // callees carry a required `tag` beside their collecting destination; a callee whose only
+    // parameter is a top-level collector is read as a value instead (see
+    // ImplicitForwarding_ZeroArgumentCallee_IsReadNotForwarded).
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceParameterIsOneArgument()
     {
-        const string defs = "Target(*items) = items\nUse(items) = Target\n";
-        AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
-        AssertCollects(defs + "Use((1, 2))", List(Seq(Atom(1), Atom(2))));
-        AssertCollects(defs + "Use(7)", List(Atom(7)));
-        AssertCollects("Target(*items) = items\nUse(items, z) = Target\nUse((1, 2), 3)", List(Seq(Atom(1), Atom(2))));
+        const string defs = "Target(tag, *items) = items\nUse(tag, items) = Target\n";
+        AssertCollects(defs + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));
+        AssertCollects(defs + "Use(0, (1, 2))", List(Seq(Atom(1), Atom(2))));
+        AssertCollects(defs + "Use(0, 7)", List(Atom(7)));
+        AssertCollects(
+            "Target(tag, *items) = items\nUse(tag, items, z) = Target\nUse(0, (1, 2), 3)",
+            List(Seq(Atom(1), Atom(2))));
     }
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceAgreesWithExplicitForm()
     {
-        const string implicitForm = "Target(*items) = items\nUse(items) = Target\n";
-        const string explicitForm = "Target(*items) = items\nUse(items) = Target(items)\n";
-        foreach (var call in new[] { "Use([1, 2])", "Use((1, 2))", "Use(7)" })
+        const string implicitForm = "Target(tag, *items) = items\nUse(tag, items) = Target\n";
+        const string explicitForm = "Target(tag, *items) = items\nUse(tag, items) = Target(tag, items)\n";
+        foreach (var call in new[] { "Use(0, [1, 2])", "Use(0, (1, 2))", "Use(0, 7)" })
         {
             AssertSemanticallyEqual(
                 EvaluateAllModes(explicitForm + call),
@@ -300,15 +307,15 @@ public class CollectingBindingTests
     [Fact]
     public void ImplicitForwarding_CollectingSourceSpreadsAndAgreesWithExplicitForm()
     {
-        const string implicitForm = "Target(*items) = items\nUse(*items) = Target\n";
-        const string explicitForm = "Target(*items) = items\nUse(*items) = Target(items*)\n";
+        const string implicitForm = "Target(tag, *items) = items\nUse(tag, *items) = Target\n";
+        const string explicitForm = "Target(tag, *items) = items\nUse(tag, *items) = Target(tag, items*)\n";
 
-        AssertCollects(implicitForm + "Use()", List());
-        AssertCollects(implicitForm + "Use(7)", List(Atom(7)));
-        AssertCollects(implicitForm + "Use(1, 2)", List(Atom(1), Atom(2)));
-        AssertCollects(implicitForm + "Use([1, 2])", List(List(Atom(1), Atom(2))));
+        AssertCollects(implicitForm + "Use(0)", List());
+        AssertCollects(implicitForm + "Use(0, 7)", List(Atom(7)));
+        AssertCollects(implicitForm + "Use(0, 1, 2)", List(Atom(1), Atom(2)));
+        AssertCollects(implicitForm + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));
 
-        foreach (var call in new[] { "Use()", "Use(7)", "Use(1, 2)", "Use([1, 2])" })
+        foreach (var call in new[] { "Use(0)", "Use(0, 7)", "Use(0, 1, 2)", "Use(0, [1, 2])" })
         {
             AssertSemanticallyEqual(
                 EvaluateAllModes(explicitForm + call),
@@ -319,11 +326,33 @@ public class CollectingBindingTests
     [Fact]
     public void ImplicitForwarding_LiftedCollectingParameterForwardsAsSpread()
     {
-        // With no explicit caller parameters, the callee's collecting parameter is lifted as a
-        // caller collecting parameter, so the lifted source legitimately forwards as spread.
-        const string defs = "Target(*items) = items\nUse = Target\n";
-        AssertCollects(defs + "Use(1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
-        AssertCollects(defs + "Use([1, 2])", List(List(Atom(1), Atom(2))));
+        // With no explicit caller parameters, the callee's parameters are lifted as copies of
+        // its own patterns, so its collecting parameter becomes a caller collecting parameter
+        // and the lifted source legitimately forwards as spread.
+        const string defs = "Target(tag, *items) = items\nUse = Target\n";
+        AssertCollects(defs + "Use(0, 1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
+        AssertCollects(defs + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));
+    }
+
+    [Fact]
+    public void ImplicitForwarding_ZeroArgumentCallee_IsReadNotForwarded()
+    {
+        // Q-03: a callee whose only parameter is a top-level collector accepts zero supplied
+        // arguments, so its bare name is a property-style value demand — its own collected
+        // empty list — and never a forwarding call, whatever the caller binds: a same-named
+        // collecting parameter, a same-named fixed one, or nothing (an alias).
+        AssertCollects("Target(*items) = items\nUse(*items) = Target\nUse(1, 2)", List());
+        AssertCollects("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", List());
+        AssertCollects("Target(*items) = items\nUse = Target\nUse", List());
+
+        // Forwarding is written explicitly, and then it is the ordinary call.
+        AssertCollects("Target(*items) = items\nUse(*items) = Target(items*)\nUse(1, 2)", List(Atom(1), Atom(2)));
+        AssertCollects("Target(*items) = items\nUse(items) = Target(items)\nUse([1, 2])", List(List(Atom(1), Atom(2))));
+
+        // The alias is a zero-parameter property: it takes no arguments.
+        var aliasCall = KatLangEngine.Run("Target(*items) = items\nUse = Target\nUse(1, 2)");
+        var failure = Assert.IsType<RunResult.EvalFailure>(aliasCall);
+        Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
     }
 
     [Fact]
@@ -342,7 +371,7 @@ public class CollectingBindingTests
         // Caller `a` is a nested FIXED pattern name; destination `*a` is a
         // collecting binding. The list-valued source must remain one argument.
         AssertCollects(
-            "Target(*a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))",
+            "Target(b, *a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))",
             List(List(Atom(1), Atom(2))));
     }
 
@@ -350,7 +379,7 @@ public class CollectingBindingTests
     public void ImplicitForwarding_NestedCollectingSourceForwardsItsCollectedItems()
     {
         AssertCollects(
-            "Target(*r) = r\nUse((first, *r)) = Target\nUse((1, 2, 3))",
+            "Target(first, *r) = r\nUse((first, *r)) = Target\nUse((1, 2, 3))",
             List(Atom(2), Atom(3)));
     }
 
@@ -381,10 +410,10 @@ public class CollectingBindingTests
         // Every later dependency forwards from that source kind; destination
         // kinds never overwrite it or make dictionary order observable.
         AssertCollects(
-            "Fixed(items) = items\nVariadic(*items) = items\nUse = Fixed, Variadic\nUse([1, 2])",
+            "Fixed(items) = items\nVariadic(tag, *items) = items\nUse = Fixed, Variadic\nUse([1, 2], 0)",
             Seq(List(Atom(1), Atom(2)), List(List(Atom(1), Atom(2)))));
         AssertCollects(
-            "Variadic(*items) = items\nFixed(items) = items\nUse = Variadic, Fixed\nUse([1, 2])",
+            "Variadic(tag, *items) = items\nFixed(items) = items\nUse = Variadic, Fixed\nUse(0, [1, 2])",
             Seq(
                 List(List(Atom(1), Atom(2))),
                 List(List(Atom(1), Atom(2)))));

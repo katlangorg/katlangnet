@@ -26,21 +26,26 @@ public class ConditionalBranchElaborationTests
         var items = new Pattern.Bind("items");
         var collectedItems = items with { ParameterKind = ParameterKind.Collecting };
         Pattern.SequenceValue Group(params Pattern[] patterns) => new(patterns);
+        // The callee's one parameter is a GROUP holding the collector, so it REQUIRES its one
+        // supplied slot and is lifted/forwarded; a lone top-level collector (`Target(*items)`)
+        // accepts zero supplied arguments and is never lifted (Q-03), so it could not exercise
+        // the branch-binder forwarding source at all. The synthesized argument is therefore the
+        // group's capture of the forwarded binding.
         var (branchPattern, ordinaryPattern, argument) = shape switch
         {
-            "flat" => ((Pattern)rest, (Pattern)rest, "(.sequenceSpread (.param \"rest\"))"),
-            "literal-flat" => (Group(new Pattern.LitInt(0), rest), rest, "(.sequenceSpread (.param \"rest\"))"),
+            "flat" => ((Pattern)rest, (Pattern)rest, "(.capture [(.sequenceSpread (.param \"rest\"))])"),
+            "literal-flat" => (Group(new Pattern.LitInt(0), rest), rest, "(.capture [(.sequenceSpread (.param \"rest\"))])"),
             "literal-group" => (Group(new Pattern.LitInt(0), Group(new Pattern.LitString("tag"), rest)),
                 Group(Group(rest)), null),
             "literal-empty-group" => (Group(Group(new Pattern.LitInt(0)), rest), Group(Group(), rest), null),
             "named-group" => (Group(new Pattern.LitInt(0), Group(new Pattern.LitString("tag"), collectedItems)),
-                Group(Group(collectedItems)), "(.sequenceSpread (.param \"items\"))"),
-            "repeated" => (Group(new Pattern.LitInt(0), items, items), Group(items, items), ".param \"items\""),
-            "deep" => (Group(new Pattern.LitInt(0), Group(Group(items))), Group(Group(Group(items))), ".param \"items\""),
+                Group(Group(collectedItems)), "(.capture [(.sequenceSpread (.param \"items\"))])"),
+            "repeated" => (Group(new Pattern.LitInt(0), items, items), Group(items, items), "(.capture [.param \"items\"])"),
+            "deep" => (Group(new Pattern.LitInt(0), Group(Group(items))), Group(Group(Group(items))), "(.capture [.param \"items\"])"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         var body = Body(SourceProvenance.ParseSyntaxValidRoot(strict ? "Math.Abs(Target)" : "Target").Output.ToArray());
-        var root = SourceProvenance.ParseSyntaxValidRoot("Target(*items) = items");
+        var root = SourceProvenance.ParseSyntaxValidRoot("Target((*items)) = items");
         root = root with
         {
             Properties =
@@ -532,7 +537,10 @@ public class ConditionalBranchElaborationTests
     public void HostBranch_EmptyGroup_PreservesExplicitListForwarding(bool strict)
     {
         var expression = strict ? "Math.Abs(Target)" : "Target";
-        var root = SourceProvenance.ParseSyntaxValidRoot("Target(*items) = items");
+        // A grouped collector REQUIRES its one slot, so the reference is a forwarding candidate
+        // the closed branch pattern must block; a lone top-level collector would accept zero
+        // supplied arguments and never be lifted at all (Q-03).
+        var root = SourceProvenance.ParseSyntaxValidRoot("Target((*items)) = items");
         var pattern = new Pattern.SequenceValue(
         [
             new Pattern.SequenceValue([]),

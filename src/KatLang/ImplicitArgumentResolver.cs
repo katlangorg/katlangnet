@@ -3,9 +3,12 @@ using System.Collections.Immutable;
 namespace KatLang;
 
 /// <summary>
-/// Rewrites bare references to algorithms with parameters into explicit <see cref="Expr.Call"/> nodes,
-/// lifting their parameters into the enclosing algorithm's <see cref="Algorithm.User.Parameters"/> list.
-/// Must run after <see cref="ParameterDetector"/>.
+/// Rewrites bare value-position references to algorithms that REQUIRE supplied arguments into
+/// explicit <see cref="Expr.Call"/> nodes, lifting their parameters into the enclosing algorithm's
+/// <see cref="Algorithm.User.Parameters"/> list. A reference to an algorithm that accepts zero
+/// supplied arguments — no parameters, or only a top-level collecting parameter — is never
+/// rewritten: it stays a property-style value demand, which reads the property cache (Q-03, see
+/// <see cref="RequiresSuppliedArguments"/>). Must run after <see cref="ParameterDetector"/>.
 ///
 /// <para><b>Internal by design (v0.8.187):</b> this is ONE stage of the authoritative
 /// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API — its
@@ -19,8 +22,9 @@ internal static class ImplicitArgumentResolver
 {
     /// <summary>
     /// Processes a root algorithm, resolving all implicit arguments throughout the tree.
-    /// Returns a new AST where every bare reference to an algorithm with parameters
-    /// has been rewritten into an explicit call with lifted parameters.
+    /// Returns a new AST where every bare value-position reference to an algorithm that
+    /// requires supplied arguments has been rewritten into an explicit call with lifted
+    /// parameters.
     ///
     /// <para><b>Host-AST contract:</b> the root may be a preconstructed (host-built)
     /// AST. A non-recursive structural preflight runs BEFORE this pass's recursive
@@ -1388,6 +1392,13 @@ internal static class ImplicitArgumentResolver
         };
     }
 
+    /// <summary>
+    /// A bare ROOT output row naming a callable that requires supplied arguments stays an
+    /// unlifted reference, so evaluation reports the callable's own zero-argument demand
+    /// rejection at the reference instead of lifting its parameters into the never-called
+    /// root. A callable that accepts zero supplied arguments is never lifted anywhere
+    /// (<see cref="RequiresSuppliedArguments"/>), so it needs no preservation.
+    /// </summary>
     private static bool ShouldPreserveBareRootResolve(
         Expr expr,
         SignatureMap paramMap,
@@ -1395,7 +1406,32 @@ internal static class ImplicitArgumentResolver
         => isRoot
             && expr is Expr.Resolve(var name)
             && paramMap.TryGetValue(name, out var ps)
-            && ps.Parameters.Count > 0;
+            && RequiresSuppliedArguments(ps);
+
+    /// <summary>
+    /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted by
+    /// every liftable arm — a bare property reference (<see cref="CollectImplicitDepsCore"/>,
+    /// <see cref="RewriteBareReference"/>), a bare Math alias, and the bare canonical
+    /// <c>Math.X</c> shape (<see cref="TryGetBareBuiltinCallableSignature"/>) — and by root-row
+    /// preservation (<see cref="ShouldPreserveBareRootResolve"/>): a bare value-position
+    /// reference lifts to an implicit forwarding call ONLY when its callee REQUIRES supplied
+    /// arguments, that is, when an ordinary call supplying zero arguments could NOT bind it.
+    ///
+    /// <para>A callee that accepts zero supplied arguments — no parameters, or only a top-level
+    /// collecting parameter such as <c>Roll(*xs)</c> — is NEVER lifted, whatever position it
+    /// stands in (an operator or comparison operand, a list element, an index target, a spread
+    /// operand, a strict Math argument, an alias row, a block body): declaring a parameter does
+    /// not by itself make a bare reference a call. The reference stays a property-style value
+    /// demand, which the evaluator accepts (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/>
+    /// reads the SAME rule, <see cref="ParameterPattern.AcceptsZeroSuppliedSlots"/>) and serves
+    /// from the property cache, so <c>Roll == Roll</c> reads ONE value; only a written call
+    /// (<c>Roll()</c>, <c>Roll(args)</c>) evaluates afresh. Lifting had judged "declares any
+    /// parameter" before, so a collecting-only callee in a lifting position became the fresh
+    /// call <c>Roll(xs*)</c> and bypassed the cache (PV-03).</para>
+    /// Lean: <c>liftsBareValueReference</c>.
+    /// </summary>
+    private static bool RequiresSuppliedArguments(CallableSignature signature)
+        => !signature.AcceptsZeroSuppliedArguments;
 
     /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
     private readonly record struct LiftedSignature(
@@ -1556,13 +1592,19 @@ internal static class ImplicitArgumentResolver
         return false;
     }
 
+    /// <summary>
+    /// The callee half of forwarding by shape: a callee whose whole parameter list is ONE
+    /// sequence-value group holding a lone collecting capture (<c>H((*xs))</c>), which requires
+    /// its one supplied slot. A callee whose whole list is a lone TOP-LEVEL collector
+    /// (<c>H(*xs)</c>) accepts zero supplied arguments and is therefore never lifted (Q-03,
+    /// <see cref="RequiresSuppliedArguments"/>), so it never reaches forwarding at all: a bare
+    /// reference to it is a cached value read, and forwarding its caller's items is written
+    /// explicitly (<c>H(items*)</c>).
+    /// </summary>
     private static bool TryGetSingleForwardableCalleeStream(
         IReadOnlyList<ParameterPattern> patterns,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CaptureParameterPattern? capture)
     {
-        if (TryGetSingleTopLevelCollectingCapture(patterns, out capture))
-            return true;
-
         if (patterns.Count == 1
             && patterns[0] is SequenceValueParameterPattern { Items.Count: 1 } group
             && group.Items[0] is CaptureParameterPattern { Kind: ParameterKind.Collecting } groupedCollecting)
@@ -1641,9 +1683,10 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// The CLOSED-explicit-parameter-list gate, in one place: inside an algorithm that wrote
-    /// its own parameter list, a bare parameterized reference may lift only when every capture
-    /// the synthesized argument list would need is already declared by that list (or is the
-    /// caller's own forwarded collecting stream). Lifting anything else would invent a
+    /// its own parameter list, a bare reference to a callable that requires supplied arguments
+    /// (the only kind that is ever lifted, <see cref="RequiresSuppliedArguments"/>) may lift
+    /// only when every capture the synthesized argument list would need is already declared by
+    /// that list (or is the caller's own forwarded collecting stream). Lifting anything else would invent a
     /// parameter the programmer never wrote — and, worse, silently bind an ancestor's.
     ///
     /// <para>Every liftable arm of <see cref="RewriteImplicitCallsCore"/> consults THIS
@@ -1661,11 +1704,13 @@ internal static class ImplicitArgumentResolver
     /// <summary>
     /// Reports a STATICALLY IMPOSSIBLE strict value demand: a registry-proven
     /// value-demanding consumer requires this reference's produced value, the reference
-    /// resolves to a callable with implicit parameters, and
+    /// resolves to a callable that REQUIRES supplied arguments, and
     /// <see cref="ClosedListBlocksLifting"/> just refused the forwarding that would supply
     /// them. Nothing later in the pipeline can rescue such a position — evaluation would
     /// demand the value with zero arguments and fail — so the front end says so, naming
-    /// what the programmer can act on.
+    /// what the programmer can act on. A callable that accepts zero supplied arguments
+    /// (a collecting-only <c>Cnt(*ys)</c>) never reaches this report: it is never lifted, so
+    /// nothing is blocked and its demand is legal (Q-03; formerly PV-27).
     ///
     /// <para>Called ONLY from the arms that already decided to leave the reference bare,
     /// and only while <c>inStrictValueDemand</c> holds. Both halves matter: outside a
@@ -1867,11 +1912,12 @@ internal static class ImplicitArgumentResolver
             out var forwardedCallerName);
 
         // TryGetSingleCollectingForwarding succeeds only when the callee shape
-        // contains exactly one capture: either a lone top-level collector or a
-        // lone collector inside one sequence-value group. Consequently there is
-        // no second callee capture to discriminate here; when forwarding is
-        // active, every reachable capture is the forwarded capture. Expressing
-        // that invariant directly avoids an equivalent && -> || mutant.
+        // contains exactly one capture: a lone collector inside one sequence-value
+        // group (a lone TOP-LEVEL collector accepts zero supplied arguments and is
+        // never lifted, Q-03). Consequently there is no second callee capture to
+        // discriminate here; when forwarding is active, every reachable capture is
+        // the forwarded capture. Expressing that invariant directly avoids an
+        // equivalent && -> || mutant.
         string MapCaptureName(CaptureParameterPattern capture)
             => forwardedCalleeName is not null ? forwardedCallerName! : capture.Name;
 
@@ -1923,8 +1969,10 @@ internal static class ImplicitArgumentResolver
             .ToList();
 
     /// <summary>
-    /// Collects implicit dependencies from an expression: bare <see cref="Expr.Resolve"/> nodes
-    /// pointing to algorithms with parameters in the visible scope.
+    /// Collects implicit dependencies from an expression: bare value-position
+    /// <see cref="Expr.Resolve"/> nodes pointing to visible algorithms that REQUIRE supplied
+    /// arguments (<see cref="RequiresSuppliedArguments"/>). A reference to an algorithm that
+    /// accepts zero supplied arguments contributes nothing: it is read, never forwarded.
     /// </summary>
     private static void CollectImplicitDeps(
         Expr expr,
@@ -1971,10 +2019,11 @@ internal static class ImplicitArgumentResolver
 
                 if (paramMap.TryGetValue(name, out var ps))
                 {
-                    if (ps.Parameters.Count > 0 && seen.Add(name))
+                    if (RequiresSuppliedArguments(ps) && seen.Add(name))
                         deps.Add((name, ps));
                 }
                 else if (expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
+                    && RequiresSuppliedArguments(bareAliasFacts.Signature)
                     && seen.Add(bareAliasFacts.CanonicalKey))
                 {
                     // A bare Math ALIAS in value position lifts exactly like the
@@ -2220,7 +2269,7 @@ internal static class ImplicitArgumentResolver
             },
 
             // A bare argumentless builtin dot shape in value position (`Math.Pow`) lifts
-            // like a bare param-bearing property reference.
+            // like a bare reference to a property that requires supplied arguments.
             Expr.DotCall { Args: null } bareDotCall
                 when !inCallPosition
                     && TryGetBareBuiltinCallableSignature(bareDotCall, paramMap, out var bareBuiltinKey, out var builtinSignature)
@@ -2252,10 +2301,12 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// The bare-reference arm of <see cref="RewriteImplicitCallsCore"/>: a value-position
-    /// reference to a param-bearing property — or to a registry-proven Math alias — lifts to
-    /// an explicit implicit-argument call unless the caller's closed explicit parameter list
-    /// blocks the forwarding (reported only under strict value demand). Every other bare
-    /// reference stays bare.
+    /// reference to a property that REQUIRES supplied arguments — or to a registry-proven Math
+    /// alias — lifts to an explicit implicit-argument call unless the caller's closed explicit
+    /// parameter list blocks the forwarding (reported only under strict value demand). Every
+    /// other bare reference stays bare — in particular one to a callable that accepts zero
+    /// supplied arguments, which is a cached property-style value demand however many
+    /// (optional or collecting) parameters it declares (<see cref="RequiresSuppliedArguments"/>).
     /// </summary>
     private static Expr RewriteBareReference(
         Expr expr,
@@ -2268,7 +2319,7 @@ internal static class ImplicitArgumentResolver
     {
         if (!inCallPosition
             && paramMap.TryGetValue(name, out var ps)
-            && ps.Parameters.Count > 0)
+            && RequiresSuppliedArguments(ps))
         {
             if (ClosedListBlocksLifting(context, ps.ParameterPatterns, memos))
             {
@@ -2285,10 +2336,12 @@ internal static class ImplicitArgumentResolver
         }
 
         // Bare Math ALIAS in value position: lift exactly like the bare
-        // canonical `Math.X` arm, from the same registry facts.
+        // canonical `Math.X` arm, from the same registry facts and under the
+        // same eligibility rule (every Math function requires its arguments).
         // The constant (`pi`) carries no facts and stays a bare reference.
         if (!inCallPosition
-            && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts))
+            && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
+            && RequiresSuppliedArguments(bareAliasFacts.Signature))
         {
             if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns, memos))
             {
@@ -2433,8 +2486,10 @@ internal static class ImplicitArgumentResolver
     /// <summary>
     /// Processes an argument bundle whose consumer is VALUE-DEMANDING: each
     /// slot is an ordinary value position, so bare references to callables
-    /// with parameters lift to implicit calls exactly as they would in any
-    /// other value position (binary operands, output rows). This is the
+    /// that require supplied arguments lift to implicit calls exactly as they
+    /// would in any other value position (binary operands, output rows), and a
+    /// callable that accepts zero supplied arguments stays a cached value read
+    /// (<see cref="RequiresSuppliedArguments"/>). This is the
     /// deliberate counterpart of <see cref="ProcessArgumentBundle"/>:
     /// ordinary call arguments stay NEUTRAL (no lifting) because an arbitrary
     /// callee may consume an argument on the higher-order algorithm channel,
@@ -2493,7 +2548,7 @@ internal static class ImplicitArgumentResolver
         // is the argumentless canonical shape, classified by the shared helper.
         if (expr is Expr.DotCall { Args: null } dotCall
             && dotCall.TryGetRegistryProvenCanonicalMathFacts(paramMap.ContainsKey, out var facts)
-            && facts.Signature.Parameters.Count > 0)
+            && RequiresSuppliedArguments(facts.Signature))
         {
             // The canonical spelling and its prelude alias use the SAME
             // descriptor-projected identity and signature. Do not reconstruct

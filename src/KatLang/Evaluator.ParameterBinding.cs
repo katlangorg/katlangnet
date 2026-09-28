@@ -572,21 +572,20 @@ public static partial class Evaluator
 
     /// <summary>
     /// True when an argument's resolved algorithm meaning is genuinely
-    /// callable-shaped — a builtin, a conditional clause family, or an
-    /// algorithm declaring parameters/patterns — as opposed to a
-    /// zero-parameter VALUE property that merely resolved through the dual
-    /// algorithm channel. Used to decide whether a valueless argument
-    /// bound by a collecting parameter gets the targeted "collects values, but ... is a callable"
-    /// diagnostic or surfaces its genuine value-evaluation error.
+    /// callable-shaped: an ordinary call supplying ZERO arguments cannot bind it
+    /// (a builtin, a clause family without a zero-arity branch, or a signature
+    /// that requires a supplied slot). Declaring a parameter does not by itself
+    /// make a callable (Q-03): a zero-parameter property and any callable that
+    /// accepts zero supplied arguments, a collecting-only one included, are
+    /// VALUES that merely resolved through the dual algorithm channel, so the
+    /// test is the zero-argument law's own <see cref="AcceptsZeroSuppliedArguments"/>
+    /// (the rule implicit lifting also reads). Used to decide whether a valueless
+    /// argument bound by a collecting parameter gets the targeted "collects values,
+    /// but ... is a callable" diagnostic or surfaces its genuine value-evaluation error.
     /// Lean: <c>Algorithm.isFunctionShaped</c>.
     /// </summary>
     private static bool IsFunctionShapedAlgorithm(Algorithm algorithm)
-        => algorithm switch
-        {
-            Algorithm.Builtin => true,
-            Algorithm.Conditional => true,
-            Algorithm.User user => user.ParameterCount > 0 || user.ParameterPatterns.Count > 0,
-        };
+        => !AcceptsZeroSuppliedArguments(algorithm);
 
     private static EvalResult<CollectingCapture> CreateCollectingCapture(
         EvalCtx ctx,
@@ -933,11 +932,13 @@ public static partial class Evaluator
             if (input.Value is null)
             {
                 // A collecting binding collects VALUES. A callable-shaped argument
-                // (a builtin, a clause family, or a parameterized algorithm)
-                // has no value to collect — only fixed parameters keep the
-                // dual algorithm channel — so name the actual conflict instead
-                // of surfacing the argument's incidental value-evaluation
-                // error. A zero-parameter VALUE property whose body failed is
+                // (one a zero-argument call cannot bind: a builtin, a clause family,
+                // or an algorithm that requires a supplied argument) has no value to
+                // collect — only fixed parameters keep the dual algorithm channel — so
+                // name the actual conflict instead of surfacing the argument's
+                // incidental value-evaluation error. A VALUE — a zero-parameter
+                // property or any callable accepting zero supplied arguments, a
+                // collecting-only one included (Q-03) — whose evaluation failed is
                 // NOT callable-shaped: its genuine evaluation error surfaces.
                 if (input.Algorithm is { } algorithm && IsFunctionShapedAlgorithm(algorithm))
                 {

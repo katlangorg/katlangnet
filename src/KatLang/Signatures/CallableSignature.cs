@@ -157,6 +157,17 @@ internal sealed record CallableSignature
     public bool AcceptsItemCount(int itemCount)
         => ArityFacts.AcceptsArgumentCount(itemCount);
 
+    /// <summary>
+    /// Whether an ORDINARY call supplying ZERO arguments can bind this signature — the shared
+    /// signature rule <see cref="ParameterPattern.AcceptsZeroSuppliedSlots"/>, the very rule
+    /// <see cref="Evaluator.AcceptsZeroSuppliedArguments"/> applies to a user algorithm's
+    /// stored patterns. Implicit lifting reads it (Q-03): a bare value reference to a callable
+    /// whose signature accepts zero supplied arguments is a property-style value demand, never
+    /// rewritten into a fresh forwarding call. A clause family's lifting signature is empty
+    /// (<see cref="FromAlgorithm"/>), so a family is never lifted either way.
+    /// </summary>
+    public bool AcceptsZeroSuppliedArguments => ParameterPattern.AcceptsZeroSuppliedSlots(ParameterPatterns);
+
     public static CallableSignature FromAlgorithm(string name, Algorithm algorithm)
         => algorithm switch
         {

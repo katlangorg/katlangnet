@@ -739,7 +739,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Free identifiers in property bodies become implicit parameters unless they resolve to properties, built-ins, or opened names, but only for algorithms without an explicit parameter list.
 - If an algorithm has an explicit parameter list, that list is closed. Names not declared in the parameter pattern must resolve from the surrounding scope; otherwise they are reported as unresolved. Implicit parameters are inferred only for algorithms without an explicit parameter list.
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
-- For implicit-parameter algorithms, parameters lift transitively through referenced properties.
+- For implicit-parameter algorithms, parameters lift transitively through referenced properties. Only a referenced callable that REQUIRES supplied arguments lifts: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears (an operand, a list element, a Math argument, an alias), so hand arguments on to it with an explicit call (`Count(items*)`).
 
 Teaching contrast:
 
@@ -760,7 +760,7 @@ Core rules:
 - `Name((*values)) = body` is different: it consumes exactly one sequence-value argument slot, opens it during binding, and collects its immediate top-level contents.
 - Normal parameters before `*values` bind from the front; normal parameters after it bind from the back, and the collecting parameter then collects the remaining middle arguments EXACTLY (possibly none). With `Scale(*values, factor) = values.map{n * factor}` and `Arg = 1, 2, 3`, `Scale(Arg*, 10)`, `Arg*.Scale(10)` (the spread receiver's items become the leading call arguments), and `Scale(1, 2, 3, 10)` bind `values = [1, 2, 3]`; `Scale(Arg, 10)` and `Arg.Scale(10)` bind `values = [(1, 2, 3)]` and `Scale([1, 2, 3], 10)` binds `values = [[1, 2, 3]]` (the numeric callback then fails on that one element — spread the argument when the helper needs its items), and `Scale(Arg, 4, 10)` binds `values = [(1, 2, 3), 4]`. Collection builtins are separate ordinary fixed-arity callables with one `collection` argument plus fixed controls.
 - Nested sequence values remain intact; sibling grouped values are not auto-flattened. With `Arg = (1, 2), (3, 4)` and `Many(*values) = values.count`, `Many(Arg*)` is `2` — the spread opens `Arg` into the item supply, keeping its two grouped values as siblings — while `Many(Arg)` is `1` (the one argument `Arg`, collected whole) and `Many(Arg, 0)` is `2` with `values = [((1, 2), (3, 4)), 0]`.
-- Forwarding a collected list is ordinary spread: `Forward(*items) = items*.Target` — equivalently `Forward(*items) = Target(items*)` — re-supplies exactly the collected items; passing `items` without the spread star passes the whole list as one argument. Inside a helper body, pass the collected list unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)`), never spread into it (`sum(values*)` is an arity error).
+- Forwarding a collected list is ordinary spread: `Forward(*items) = items*.Target` — equivalently `Forward(*items) = Target(items*)` — re-supplies exactly the collected items; passing `items` without the spread star passes the whole list as one argument. Always write the forwarding call: a bare `Target` in `Forward(*items) = Target` reads `Target`'s own zero-argument value (`[]`), never the caller's items. Inside a helper body, pass the collected list unspread to a collection builtin as its one collection argument (`values.sum`, `count(values)`), never spread into it (`sum(values*)` is an arity error).
 - A normal parameter remains one ordinary argument boundary, but sequence builtins applied later may destructure that returned value. With `Collect(list) = list` and `Arg = 1, 2, 3`, `Arg.Collect.count` is `3` because `count` opens the returned sequence value one level.
 - Collecting parameters are explicit only. Use at most one per sibling pattern level, and never combine with grace `~`.
 
@@ -1291,6 +1291,7 @@ BETTER — specific branch first:
 
 - A property that accepts zero supplied arguments, read without parentheses as `Fun`, reuses its first successful result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing algorithm) shares its first successfully completed result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. Recursive reads already in progress can finish with their own results but do not replace the first successful entry. The cached value belongs to the resolved property, never to its name: a property that shadows another one with the same name is a different property with its own cached value. How the value is consumed does not matter: a builtin operation in either spelling (`sum(A)`, `A.sum`, `count(A)`, `if(c, A, B)`, `A.string`, a loop's starting state, `reduce`'s starting accumulator), a user algorithm's argument (and the parameter it binds, however far it is forwarded), a selection, a list element, and a callback body that reads `A` all receive the ONE cached value, so a random- or host-backed `A` is drawn once per run no matter how many consumers read it. Only an explicit invocation evaluates the body again: `A()`, calling an algorithm that was passed along (`f()`), or a builtin that calls its argument as a callback or loop step.
 - ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so `Only(*xs) = xs` makes `Only` and `Only()` both the empty list `[]`, and the bare name works in every zero-argument value position — an output row, an `if` branch, a collection builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses (`Only`, `(Only)`, `((Only))` agree). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and a grouped parameter such as `P((x, y))` each need at least one supplied value, so both `Head()` and a bare `Head` are the same arity error, and a group's one-item fallback binds ONE value rather than accepting none. Where a callable is consumed as an ALGORITHM — a `map`/`filter` callback, a loop step, a higher-order argument — it is still the callable (`map((1, 2), Only)` is `[[1], [2]]`), also when it is passed on through a parameter: with `Apply(f, xs) = xs.map(f)`, `Apply(Only, [1, 2])` is `[[1], [2]]` (filter, reduce, and while/repeat steps alike), while a value position that reads the parameter, such as `count(f)`, reads the zero-argument value `[]`. The two value spellings keep their established operational difference: bare `Only` is a property-style read that reuses its cached value, while `Only()` is an explicit call that runs the body each time.
+- If a callable works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters; use `Fun()` to evaluate it again and get a fresh value. This holds in EVERY position — an operator or comparison operand, a list element, a selection (`Pair:0` and `first(Pair)` read the same value), a spread, a Math argument, a formula, an alias — so with `Roll(*bonus) = randomInt(1, 7) + bonus.sum`, `Roll == Roll` is `true`. An alias `Alias = Count` of such a callable is a zero-parameter property holding `Count`'s value, not a forwarding helper; write `Alias(*items) = Count(items*)` when a forwarding helper is wanted. Only a callable that REQUIRES an argument (`Inc(x)`, `Head(first, *rest)`) is turned into an implicit call where its bare name appears.
 - An explicit zero-parameter call, such as `Fun()`, bypasses the zero-argument cache for that property itself. It does not recursively force nested property references to bypass their caches. To request fresh nested values, write the nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
 
 ## Math Usage
@@ -1550,7 +1551,7 @@ Repeated parameter names use one order-independent compatibility rule: all suppl
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (103 of the 302-case canonical language specification,
+Verified reference examples (104 of the 303-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1848,15 +1849,15 @@ Regenerate this block from the repo root with:
     [1, 2]
     [[1, 2]]
 
-[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(items) = Target` elaborates to `Target(items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(*items) = Target` elaborates to `Target(items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply).
+[implicit-forwarding-source-kind] Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(tag, items) = Target` elaborates to `Target(tag, items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(tag, *items) = Target` elaborates to `Target(tag, items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply). Forwarding happens only into a callee that REQUIRES supplied arguments: a callee that works with no arguments, such as `Target(*items)` alone, is read as a value by its bare name (`[]` here), so forwarding to it is written explicitly (`Target(items*)`).
 
-    Target(*items) = items
-    Use(items) = Target
-    UseVariadic(*items) = Target
+    Target(tag, *items) = items
+    Use(tag, items) = Target
+    UseVariadic(tag, *items) = Target
 
-    Use([1, 2])
-    Use((1, 2))
-    UseVariadic(1, 2)
+    Use(0, [1, 2])
+    Use(0, (1, 2))
+    UseVariadic(0, 1, 2)
 
   Displays:
     [[1, 2]]
@@ -1907,7 +1908,7 @@ Regenerate this block from the repo root with:
     1
     2
 
-[callback-element-is-one-argument] THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern opens the element explicitly (`AddPair((x, y))`). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through aliases and forwarding too (`Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).
+[callback-element-is-one-argument] THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern opens the element explicitly (`AddPair((x, y))`). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through a written forwarding alias and forwarding parameters too (`Alias(*xs) = Cnt(xs*)`, `Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).
 
     AddPair((x, y)) = x + y
 
@@ -2674,5 +2675,25 @@ Regenerate this block from the repo root with:
 
   Displays:
     []
+
+[zero-argument-callable-name-is-read-not-lifted] If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name — as an operand or comparison operand, a list element, a Math argument, an index target, an alias, or inside a formula — is never rewritten into a forwarding call: `Alias = Cnt` is a zero-parameter property holding `0`, and `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. Forwarding to such a callable is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).
+
+    Cnt(*xs) = xs.count
+    Pair(*xs) = 10, 20
+    Alias = Cnt
+    Twice(*items) = Cnt + Cnt
+
+    Cnt + 1, [Cnt], Cnt == Cnt, Pair:1
+    Alias, Alias()
+    Twice(1, 2, 3)
+
+  Displays:
+    1
+    [0]
+    true
+    20
+    0
+    0
+    0
 
 === END GENERATED: katlang-spec-examples ===
