@@ -1322,14 +1322,14 @@ theorem repeated_name_success_callables_agree (names : List Ident)
     (contributions : List ParameterPatternBindings) (name : Ident)
     (success : repeatedNameFailure names contributions = none) (member : name ∈ names)
     (left right : Algorithm)
-    (hl : left ∈ contributions.filterMap (fun c => lookupAssoc name c.algEnv))
-    (hr : right ∈ contributions.filterMap (fun c => lookupAssoc name c.algEnv)) :
+    (hl : left ∈ contributions.filterMap (fun c => c.algEnv.lookup name))
+    (hr : right ∈ contributions.filterMap (fun c => c.algEnv.lookup name)) :
     sameRepeatedCallableIdentity left right = true := by
   have h := repeated_name_success_has_no_callable_identity_conflict names contributions success
   have hn : repeatedNameCallableIdentityConflict name contributions = false := by
     simpa using (List.any_eq_false.mp h) name member
   unfold repeatedNameCallableIdentityConflict at hn
-  have ha : (contributions.filterMap (fun c => lookupAssoc name c.algEnv)).any
+  have ha : (contributions.filterMap (fun c => c.algEnv.lookup name)).any
       (fun right => !sameRepeatedCallableIdentity left right) = false := by
     simpa using (List.any_eq_false.mp hn) left hl
   have hp := (List.any_eq_false.mp ha) right hr
@@ -1431,8 +1431,8 @@ theorem repeated_name_complete_binding_is_permutation_invariant
       (lookupAssoc name (mergeFirstOccurrences contributions).countedParamEnv)
       (lookupAssoc name (mergeFirstOccurrences permuted).countedParamEnv) ∧
     RepeatedBindingChannelAgreement sameRepeatedCallableIdentity
-      (lookupAssoc name (mergeFirstOccurrences contributions).algEnv)
-      (lookupAssoc name (mergeFirstOccurrences permuted).algEnv) := by
+      ((mergeFirstOccurrences contributions).algEnv.lookup name)
+      ((mergeFirstOccurrences permuted).algEnv.lookup name) := by
   have compatible :
       names.any (fun n => repeatedNameValueConflict n contributions) = false ∧
       names.any (fun n => repeatedNameCountedConflict n contributions) = false ∧
@@ -1453,11 +1453,17 @@ theorem repeated_name_complete_binding_is_permutation_invariant
     apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
     have h := (List.any_eq_false.mp compatible.2.1) name member
     simpa [repeatedNameCountedConflict] using h
-  · rw [repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl contributions,
-        repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl permuted]
+  · -- The algorithm channel is compared by the callable it binds (`AlgEnv.lookup`, the
+    -- projection an invocation reads). A slot's recorded value failure is observable
+    -- only when no contribution binds a value, and then at most one contribution binds
+    -- the algorithm channel at all (two or more must each carry a value).
+    simp only [AlgEnv.lookup]
+    rw [repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl contributions,
+        repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl permuted,
+        ← List.head?_map, ← List.head?_map, List.map_filterMap, List.map_filterMap]
     apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
     have h := (List.any_eq_false.mp compatible.2.2) name member
-    simpa [repeatedNameCallableIdentityConflict] using h
+    simpa [repeatedNameCallableIdentityConflict, AlgEnv.lookup] using h
 
 -- The canonical instances — `P(f, f, f)` rejects `(Inc, 5, A)` in all six permutations,
 -- `(A, A, 5)` binds in all six, and distinct callable identities reject — are
@@ -2257,3 +2263,37 @@ theorem asBool_pair_none (a b : Result) :
 /-- Booleans are not numbers: the numeric view of a Boolean value is empty,
 so no arithmetic or ordering operator can ever read one as `0`/`1`. -/
 theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
+
+/-! ## At-most-once argument value evaluation (Q-01, September 2026)
+
+Within one call, a written argument slot is evaluated at most once for its
+value; if that evaluation fails, the failure is the parameter's value outcome
+for the whole activation. The two laws below pin the binder half of that rule
+over the real `bindParameterPattern`: a slot's algorithm channel is always bound
+TOGETHER with the outcome of its one value evaluation (`slotAlgorithmBinding`),
+so no failure is ever dropped and no value read can re-derive the parameter's
+value from the algorithm. The read half — the `.param` arm of `evalCounted`
+reports `AlgBinding.valueFailure?` and never evaluates the algorithm — lives in
+the partial evaluator and is pinned by `CoreTests/ArgumentValueOutcome.lean`. -/
+
+/-- A written slot whose one value evaluation FAILED binds its algorithm channel
+together with that failure, and binds no value. -/
+theorem failed_slot_binds_its_failure_beside_the_algorithm_channel
+    (name : Ident) (a : Algorithm) (err : Error) :
+    runEvalM (bindParameterPattern (.capture { name := name })
+      { algorithm? := some a, error? := some err } true)
+      = .ok { argEnv := [], countedParamEnv := [],
+              algEnv := [(name, { algorithm := a, valueFailure? := some err })] } := by
+  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM]
+  rfl
+
+/-- A written slot whose one value evaluation SUCCEEDED binds that value and an
+algorithm channel that records no failure: the value tier holds the outcome. -/
+theorem valued_slot_binds_its_value_and_no_failure
+    (name : Ident) (a : Algorithm) (v : Result) :
+    runEvalM (bindParameterPattern (.capture { name := name })
+      { value? := some v, algorithm? := some a } true)
+      = .ok { argEnv := [(name, v)], countedParamEnv := [],
+              algEnv := [(name, { algorithm := a, valueFailure? := none })] } := by
+  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM]
+  rfl

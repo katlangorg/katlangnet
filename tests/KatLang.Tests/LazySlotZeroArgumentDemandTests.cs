@@ -438,23 +438,22 @@ public class LazySlotZeroArgumentDemandTests
     }
 
     [Fact]
-    public void AlgorithmChannelParameterInASlot_IsTheParameterArmsBareRejection()
+    public void AlgorithmChannelParameterInASlot_KeepsTheOriginalPropertyFailure()
     {
-        // `Apply(Inc)` binds `g` only on the algorithm channel; demanding it in the
-        // slot is the same bare arity mismatch as reading `g` in value position —
-        // no property context, and never the callee's own `x`. The span is the
-        // `g` reference inside `if(true, g, 0)`.
+        // `Apply(Inc)` records the failure of the written property argument. The
+        // builtin reads that outcome, retaining Inc's context and argument span;
+        // rechecking g's callable signature would invent a different failure.
         var error = FailingError(Inc + "Apply(g) = if(true, g, 0)\nApply(Inc)");
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(1, arity.Expected);
         Assert.Equal(0, arity.Actual);
-        Assert.Equal(["while evaluating call to Apply", "while evaluating call to if"], ContextChain(error));
+        Assert.Equal(["while evaluating call to Apply", "while evaluating call to if", "while evaluating property Inc"], ContextChain(error));
 
         var rendered = KatLangError.FromEvalError(error);
-        Assert.Contains("Expected 1 parameter, but was called with 0 arguments.", rendered.Message);
+        Assert.Contains("'Inc' expects 1 parameter, but was called with 0 arguments", rendered.Message);
         Assert.DoesNotContain("Unknown name", rendered.Message);
-        Assert.Equal(2, Assert.NotNull(rendered.Span).Start.Line);
-        Assert.Equal(21, Assert.NotNull(rendered.Span).Start.Column);
+        Assert.Equal(3, Assert.NotNull(rendered.Span).Start.Line);
+        Assert.Equal(7, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     [Fact]
@@ -472,7 +471,7 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void DotStringReceiverShapes_FollowTheSameLaw()
     {
-        // An algorithm-channel parameter receiver: the bare rejection.
+        // An algorithm-channel parameter receiver: its recorded property rejection.
         var parameter = FailingError(Inc + "F(g) = g.string\nF(Inc)");
         Assert.Equal(1, Assert.IsType<EvalError.ArityMismatch>(Innermost(parameter)).Expected);
         Assert.DoesNotContain("Unknown name", KatLangError.FromEvalError(parameter).Message);

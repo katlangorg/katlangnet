@@ -422,10 +422,13 @@ public static partial class Evaluator
     /// Dual-view lookup order (Lean: <c>evalCounted</c> Param(x)):
     /// 1. Counted callback-param env (the callback item / collecting binding as bound)
     /// 2. ValEnv (ordinary value meaning)
-    /// 3. AlgEnv fallback (algorithm meaning): the ONE zero-argument value-demand
-    ///    law (<see cref="ZeroArgumentValueDemandRejection"/>) — a 0-param
-    ///    algorithm auto-evaluates (thunk semantics), a parameterized one is the
-    ///    bare arityMismatch (it needs an explicit call).
+    /// 3. AlgEnv: a parameter found only on the algorithm channel is one whose written
+    ///    argument slot FAILED its one value evaluation, and that failure — recorded on
+    ///    the binding (<see cref="SlotAlgorithmBinding"/>) — is its value outcome.
+    ///    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): the read reuses
+    ///    the outcome and never evaluates the algorithm channel, so a failure cannot heal,
+    ///    the argument's effects and random draws never repeat, and every read of the
+    ///    parameter in one activation observes the same outcome.
     /// </summary>
     // Frame-size discipline for the two name dispatches of the Eval / EvalCounted spines: the
     // expression's span (a 20-byte value as SourceSpan?) is read in these small non-inlined
@@ -454,26 +457,27 @@ public static partial class Evaluator
         if (val is not null)
             return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
 
-        var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
-        if (algBinding is { } bound)
-        {
-            if (bound.ValueError is { } stickyLimit)
-                return AtSpanIfMissing(stickyLimit, span);
-            var algBound = bound.Algorithm;
-            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
-                return rejection;
-
-            var valueR = WithParameterContextOnMissingOutput(name, span, EvalResolvedAlgOutputForValueDemand(algBound, ctx, valEnv));
-            return valueR.IsError
-                ? valueR.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-        }
+        if (LookupAlgBinding(ctx.AlgEnv, name) is { } bound)
+            return ParameterSlotFailure(name, span, bound.ValueError);
 
         return new EvalError.UnknownName(name) { Span = span };
     }
 
     /// <summary>
-    /// A parameter bound on the algorithm channel whose value demand finds no output is
+    /// The value outcome of a parameter whose written argument slot FAILED its one value
+    /// evaluation: that recorded failure (<see cref="SlotAlgorithmBinding"/>), reported the
+    /// way a value-position read reports a parameter's failure — an output-less argument is
+    /// the PARAMETER's failure (<see cref="WithParameterContextOnMissingOutput"/>), and the
+    /// read's location is attached only when the failure carries none. This is never an
+    /// evaluation (AT-MOST-ONCE ARGUMENT VALUE EVALUATION); <see cref="EvalError.BadArity"/>
+    /// is the binders' own default should a valueless binding carry no failure.
+    /// Lean: the <c>.param</c> arm of <c>evalCounted</c>.
+    /// </summary>
+    private static EvalError ParameterSlotFailure(string name, SourceSpan? span, EvalError? slotFailure)
+        => WithParameterContextOnMissingOutput(name, span, EvalResult<Result>.Err(slotFailure ?? new EvalError.BadArity())).Error;
+
+    /// <summary>
+    /// A parameter whose value is demanded and whose argument supplied no output is
     /// reported as that PARAMETER's failure (the argument the caller supplied has no
     /// output), so the enclosing call context never reads as if the callee itself had
     /// none. Any other outcome keeps the plain span attachment.

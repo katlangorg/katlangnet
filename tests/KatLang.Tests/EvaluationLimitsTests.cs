@@ -367,14 +367,38 @@ public class EvaluationLimitsTests
     [Theory]
     [InlineData("F(v) = v.string\nF({1 / 0})")]
     [InlineData("F(v) = { v.string* }\nF({1 / 0})")]
-    public void DotStringSemanticErrorParamDemand_ChargesDepthWithoutSteps(string source)
+    public void DotStringFailedParamDemand_ReusesTheSlotFailure_WithoutReentry(string source)
     {
-        // The brace argument has an algorithm channel, but its eager value-channel
-        // attempt fails with a NON-resource semantic error. Nothing is sticky, and
-        // written brace evaluation itself consumes no dynamic depth, so the only way
-        // to reach PeakDepth 2 is for the Param receiver's `.string` demand to use the
-        // shared depth-only re-entry funnel. The spread spelling reaches the plain
+        // AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01): the brace argument has an algorithm
+        // channel, and its one value evaluation fails with a NON-resource semantic error at
+        // assembly. That failure is the parameter's value outcome, so the Param receiver's
+        // `.string` demand reports it WITHOUT re-entering the brace body: the only depth is
+        // F's own invocation, and even MaxDepth = 1 still reports the division error. (Before
+        // Q-01 the demand re-entered the body through a depth-only funnel: PeakDepth 2, and
+        // MaxDepth = 1 reported the depth limit.) The spread spelling reaches the plain
         // dot-call twin; the other spelling reaches the counted twin.
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+
+        var (demanded, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = 1 });
+        Assert.True(demanded.IsError);
+        Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
+        Assert.Equal(1, budget.PeakDepth);
+        Assert.Equal(1, budget.ConsumedSteps);
+    }
+
+    [Theory]
+    [InlineData("Bad = 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)")]
+    [InlineData("Bad = 1 / 0\nG(w) = w*\nF(v) = G(v)\nF(Bad)")]
+    public void FailedArgumentForwardedThroughAParameter_IsNeverReentered(string source)
+    {
+        // The failing property argument is evaluated ONCE, as F's slot (the property access
+        // at depth 2). Forwarding `v` into G's slot and reading `w` reuse that recorded
+        // failure — neither re-enters Bad's body — so the profile is F's invocation (depth 1),
+        // the one property access and G's invocation (both at depth 2): exactly three steps
+        // and no deeper entry. (Before Q-01 the forwarded demand re-evaluated the thunk at
+        // depth 3.)
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
         var (demanded, budget) = Evaluator.RunCountedObserved(
@@ -383,60 +407,15 @@ public class EvaluationLimitsTests
         Assert.True(demanded.IsError);
         Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
         Assert.Equal(2, budget.PeakDepth);
-        Assert.Equal(1, budget.ConsumedSteps);
-
-        // One level less makes the Param receiver's demand boundary fail before
-        // re-entering the brace body. Without that charge this reports DivByZero.
-        var (limited, _) = Evaluator.RunCountedObserved(
-            expr,
-            new EvaluationLimits { MaxDepth = 1 });
-        Assert.True(limited.IsError);
-        Assert.Equal(
-            1,
-            Assert.IsType<EvalError.EvaluationDepthExceeded>(limited.Error).Limit);
-    }
-
-    [Theory]
-    [InlineData("Bad = 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)")]
-    [InlineData("Bad = 1 / 0\nG(w) = w*\nF(v) = G(v)\nF(Bad)")]
-    public void SemanticErrorThunkDemand_ChargesArgumentEvaluationDepthWithoutSteps(string source)
-    {
-        // Pins the EvalResolvedAlgOutputForValueDemand charge in isolation: a
-        // SEMANTIC value-channel error is never retained, so the forwarded demand
-        // genuinely re-evaluates the thunk instead of being sticky-short-circuited.
-        // The demanded thunk is the deepest budget entry (F invocation 1,
-        // G invocation 2, demanded thunk 3 — the
-        // property access also peaks at 2), and it contributes NO step (exactly 3:
-        // property access plus the two invocations).
-        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
-
-        var (demanded, budget) = Evaluator.RunCountedObserved(
-            expr,
-            new EvaluationLimits { MaxDepth = 3 });
-        Assert.True(demanded.IsError);
-        Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
-        Assert.Equal(3, budget.PeakDepth);
         Assert.Equal(3, budget.ConsumedSteps);
-
-        // One level less and the thunk charge itself is the failing entry, so the
-        // depth kind pre-empts the body's division error. Removing the charge makes
-        // this run report DivByZero instead.
-        var (limited, _) = Evaluator.RunCountedObserved(
-            expr,
-            new EvaluationLimits { MaxDepth = 2 });
-        Assert.True(limited.IsError);
-        Assert.Equal(
-            2,
-            Assert.IsType<EvalError.EvaluationDepthExceeded>(limited.Error).Limit);
     }
 
     [Fact]
-    public void SemanticErrorThunkDemands_BalanceDepthAcrossRows()
+    public void FailedArgumentForwardedToSeveralRows_IsNeverReentered()
     {
-        // Each of the three G(v) rows re-evaluates the semantic-error thunk once
-        // during its argument assembly (charge, error, exit). A leaked enter would
-        // accumulate: PeakDepth would grow past 3 with the row index instead of
-        // staying at the one-thunk profile.
+        // Each of the three G(v) rows forwards the parameter whose slot failed; each reads the
+        // recorded failure (G ignores it), so no row re-enters Bad's body: the depth stays at
+        // the one-call profile and the steps are F, the one property access, and three G calls.
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
             "Bad = 1 / 0\nG(w) = 0\nF(v) = G(v), G(v), G(v)\nF(Bad)").Root);
         var (result, budget) = Evaluator.RunCountedObserved(
@@ -444,7 +423,7 @@ public class EvaluationLimitsTests
             new EvaluationLimits { MaxDepth = 24 });
 
         Assert.False(result.IsError);
-        Assert.Equal(3, budget.PeakDepth);
+        Assert.Equal(2, budget.PeakDepth);
         Assert.Equal(5, budget.ConsumedSteps);
     }
 

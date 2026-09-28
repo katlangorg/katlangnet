@@ -395,6 +395,21 @@ KeepFirst(42, 999)
 
 Inferred parameters keep short formulas short; explicit lists document the inputs of larger algorithms. Many later examples use an explicit list because they need one — for example, to call with an order other than the order of first appearance, or because a name written after a dot or inside braces is not inferred the way you might expect (see [Members Come First](#members-come-first) and [Callbacks Receive One Element](#callbacks-receive-one-element)).
 
+### Each Argument Is Evaluated At Most Once
+
+Each call argument is evaluated at most once for its value. If the corresponding parameter is read multiple times, those reads reuse the same argument outcome and do not re-evaluate the original argument expression:
+
+```
+Double(x) = x + x
+Double(randomInt(1, 7)) mod 2
+```
+
+**Result:** `0`
+
+The die is rolled once, so `x + x` is always even. The same holds when evaluating an argument fails: every read of the parameter reports that same failure, and reading the parameter again never evaluates the argument again, so it cannot turn the failure into a value.
+
+An argument that a lazy builtin does not select may never be evaluated. Explicitly calling a callable parameter is a separate invocation; it does not replace the outcome reused by value reads.
+
 ### Formulas That Use Formulas
 
 A formula can use another formula that still needs inputs. KatLang then passes those inputs along, and they become parameters of the formula that uses it:

@@ -768,11 +768,13 @@ public static partial class Evaluator
     /// the original source — judging the callable the item NAMES
     /// (<see cref="VariadicCallItem.NamedAlgorithm"/>), never its value wrapper — or
     /// preserve the failure of a valid value's body. Callback positions never call this
-    /// helper; retained resource limits remain authoritative.
+    /// helper; retained resource limits remain authoritative. A parameter's established
+    /// failure takes precedence over classification of its independent callable channel.
     /// Lean: <c>sequenceBuiltinValueDemandError?</c>.
     /// </summary>
     private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item)
-        => RetainResourceLimitForAlgorithmBinding(item.ValueError)
+        => (item.Source is Expr.Param ? item.ValueError : null)
+            ?? RetainResourceLimitForAlgorithmBinding(item.ValueError)
             ?? (item.NamedAlgorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
             ?? item.ValueError;
 
@@ -797,6 +799,10 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (item.Value is null && item.ValueError is null
+            && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
+            return item with { ValueError = slotFailure };
+
         if (item.Value is not null
             || item.ValueError is not null
             || item.Algorithm is not { } algorithm
@@ -953,6 +959,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (preparedInitial is null && ParameterValueFailure(initialSource, ctx, valEnv) is { } slotFailure)
+            return slotFailure;
+
         // The initial accumulator is a written VALUE slot: when call-item assembly
         // already evaluated it (a value-shaped argument), that result IS the slot's
         // value — evaluating the algorithm channel again would run the body twice.
@@ -1963,16 +1972,13 @@ public static partial class Evaluator
 
     /// <summary>
     /// Evaluate an algorithm body demanded for its VALUE outside the dynamic-invocation
-    /// chokepoints: a zero-parameter <c>AlgEnv</c> thunk demanded from parameter value
-    /// position (both <c>Expr.Param</c> twins), or the ordinary-dot <c>string</c>
-    /// intrinsic's name-resolved receiver. Each re-enters an algorithm body, so it uses
-    /// the same depth-only charge as builtin argument evaluation; left uncharged, a
-    /// demand-time re-entry recurses outside every budget chokepoint (exponential
-    /// dual-channel retry for <c>F(v) = v.string; x = F(x)</c>, an uncatchable process
-    /// <see cref="StackOverflowException"/> for <c>A = A.string</c>). In particular, a
-    /// value-channel failure may still retain this algorithm for the established
-    /// dual-channel fallback; charging each re-entry keeps that fallback bounded by
-    /// the deterministic evaluator depth limit.
+    /// chokepoints — the ordinary-dot <c>string</c> intrinsic's structurally resolved
+    /// receiver fallback. It re-enters an algorithm body, so it uses the same depth-only
+    /// charge as builtin argument evaluation; left uncharged, a demand-time re-entry would
+    /// recurse outside every budget chokepoint. A PARAMETER's value is never demanded
+    /// through this funnel: its value outcome is established once, at argument assembly,
+    /// and every read reuses it (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
+    /// <see cref="EvalParamCounted"/>).
     /// </summary>
     private static EvalResult<Result> EvalResolvedAlgOutputForValueDemand(
         Algorithm algorithm,
@@ -2000,15 +2006,13 @@ public static partial class Evaluator
     /// structurally (<paramref name="receiverIsStructuralMember"/>) through the selected
     /// member's structural property access (<c>Lib.Sub.string</c> converts the value
     /// <c>Lib.Sub</c> reads), and a <c>Param</c> through the ordinary value-position
-    /// parameter read — its bound value when it has one, otherwise its algorithm-channel
-    /// demand through the depth-charged funnel. Those are the shapes that can re-enter
-    /// recursively, and each crosses a charged boundary. A <c>Param</c> receiver first
-    /// honors its binding's retained resource-limit value error exactly like the
-    /// ordinary <c>Expr.Param</c> value paths (retention stays governed by the
-    /// <c>IsResourceLimit</c> policy at the binding sites; this consumer only reads it).
-    /// Written receiver shapes (brace block, capture, dot-result wrapper) carry no name
-    /// to cycle back through and their nesting is parser-bounded, so they stay on the
-    /// uncharged written-syntax policy like every other block/capture evaluation.
+    /// parameter read — its bound value, or the failure its argument slot established,
+    /// which that read reports before anything else (AT-MOST-ONCE ARGUMENT VALUE
+    /// EVALUATION: a parameter's value is never re-derived from its algorithm channel).
+    /// The name-resolved shapes that can re-enter recursively each cross a charged
+    /// boundary. Written receiver shapes (brace block, capture, dot-result wrapper) carry
+    /// no name to cycle back through and their nesting is parser-bounded, so they stay on
+    /// the uncharged written-syntax policy like every other block/capture evaluation.
     /// Whatever the shape, the receiver is demanded for its VALUE with zero
     /// arguments, so the ONE zero-argument value-demand law
     /// (<see cref="ZeroArgumentValueDemandError"/>) decides from the resolved
@@ -2026,10 +2030,13 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // A PARAMETER receiver's value outcome was established at binding: a parameter whose
+        // argument slot FAILED its one value evaluation reports that failure first, before the
+        // law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
         if (target is Expr.Param(var paramName)
-            && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
+            && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
         {
-            return AtSpanIfMissing(stickyLimit, target.Span);
+            return ParameterSlotFailure(paramName, target.Span, slotFailure);
         }
 
         if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
@@ -2134,7 +2141,8 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Demand a builtin argument slot for its VALUE with zero explicit arguments. The
+    /// Demand a builtin argument slot for its VALUE with zero explicit arguments. An
+    /// already-bound parameter first reports its established failure. Otherwise the
     /// ONE zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
     /// decides from the resolved algorithm's effective signature BEFORE any body is
     /// entered — and before the depth-only argument level is entered, exactly as the
@@ -2155,6 +2163,8 @@ public static partial class Evaluator
     {
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
+        if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
+            return slotFailure;
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
         // The law judges the callable the argument NAMES; the accepted demand evaluates

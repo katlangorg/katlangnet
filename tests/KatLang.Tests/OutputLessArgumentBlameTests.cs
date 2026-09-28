@@ -423,22 +423,21 @@ public class OutputLessArgumentBlameTests
     }
 
     /// <summary>
-    /// CHARACTERIZATION, deliberately unchanged by F5: a FIXED parameter binds its
-    /// argument on the algorithm channel and drops the retained non-resource-limit value
-    /// error, so the demand inside the callee re-derives it — which re-runs an effectful
-    /// argument body. That is the pre-existing consequence of the lazy binding and of
-    /// "failed properties are never cached", not of the blame rule; changing it would
-    /// change observable host-effect counts, so this fix leaves it exactly as it was.
+    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a FIXED parameter binds
+    /// its argument's algorithm channel together with the failure the slot's one value
+    /// evaluation raised, so the demand inside the callee reports that failure and never
+    /// re-runs the effectful argument body — exactly as the collector and builtin paths,
+    /// which surface the retained failure, always did. (Before Q-01 the fixed path dropped
+    /// the failure and re-derived it: effects <c>["1", "1"]</c>, pinned here as a
+    /// characterization.)
     /// </summary>
     [Fact]
-    public void FixedParameterDemand_ReDerivesTheArgument_AsBefore()
+    public void FixedParameterDemand_ReusesTheSlotsFailure_TheArgumentRunsOnce()
     {
         var (error, effects) = RunWithEffects("P = if(effect(1) == 1, { }, 2)\n" + Fixed1 + "\nF(P)");
         Assert.NotNull(error);
-        Assert.Equal(["1", "1"], effects);
+        Assert.Equal(["1"], effects);
 
-        // The collector and builtin paths surface the RETAINED failure instead, so they
-        // evaluate it once.
         var (collectorError, collectorEffects) = RunWithEffects("P = if(effect(1) == 1, { }, 2)\n" + Collector + "\nColl(P)");
         Assert.NotNull(collectorError);
         Assert.Equal(["1"], collectorEffects);

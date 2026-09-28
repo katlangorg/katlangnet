@@ -3505,6 +3505,29 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "argument-value-outcome-is-final",
+            Category = "errors",
+            Source = "Plus(f, x) = f + x\nPlus({x + 1}, 5)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unresolvedImplicitParams",
+            Probes =
+            [
+                new SpecProbe("Apply(f, x) = f(x)\nApply({x + 1}, 5)", "ok raw=6 n=1"),
+                new SpecProbe("Only(g) = g\nOnly({x + 1})", "err unresolvedImplicitParams"),
+                new SpecProbe("G(v) = sum(v)\nG({x + 1})", "err unresolvedImplicitParams"),
+                new SpecProbe("G(v) = if(true, v, 0)\nG({x + 1})", "err unresolvedImplicitParams"),
+                new SpecProbe("G(v) = reduce([1], {e + a}, v)\nG({x + 1})", "err unresolvedImplicitParams"),
+                new SpecProbe("Inc(y) = y + 1\nPlus(f, x) = f + x\nPlus(Inc, 5)", "err arity"),
+                new SpecProbe("F(0) = 1\nF(n) = n\nApply(f) = f\nApply(F)", "err branch"),
+                new SpecProbe("Bad = 1 / 0\nPair(x) = x, x\nPair(Bad)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nFirst(x, y) = x\nFirst(1, Bad)", "ok raw=1 n=1"),
+                new SpecProbe("Bad = 1 / 0\nSecond(x, y) = y\nSecond(1, Bad)", "err div0"),
+                new SpecProbe("Box = { public X = 5 }\nMember(o) = o.X\nMember(Box)", "ok raw=5 n=1"),
+            ],
+            Explanation = "Each argument of a call is evaluated at most once for its value: if that evaluation succeeds, that is the parameter's value, and if it fails, that is the parameter's failure. Reading the parameter never evaluates the argument again, so every read reports the same outcome and a failure can never turn into a value. The brace algorithm `{x + 1}` cannot be evaluated as a value — its `x` is not supplied — so reading `f` as a value reports exactly that failure (`unresolvedImplicitParams`), while calling `f(x)` still runs the algorithm (`Apply({x + 1}, 5)` is 6), and structural access through the parameter still reaches the argument's members (`Member(Box)` is 5). A failing argument nobody reads is not an error (`First(1, Bad)` is 1).",
+        },
+        new()
+        {
             Id = "scalar-op-rejects-sequence",
             Category = "errors",
             Source = "(1, 2) + 1",

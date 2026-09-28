@@ -815,13 +815,11 @@ public static partial class Evaluator
                     if (input.Value is not null)
                         valueBindings.Add((capture.Name, input.Value));
 
+                    // AT-MOST-ONCE ARGUMENT VALUE EVALUATION: a slot whose value evaluation
+                    // failed keeps that failure as the parameter's value outcome, beside the
+                    // algorithm channel; it is never re-derived from the algorithm.
                     if (allowAlgorithmBindings && input.Algorithm is not null)
-                    {
-                        algorithmBindings.Add((
-                            capture.Name,
-                            input.Algorithm,
-                            RetainResourceLimitForAlgorithmBinding(input.ValueError)));
-                    }
+                        algorithmBindings.Add(SlotAlgorithmBinding(capture.Name, input.Algorithm, input.Value, input.ValueError));
 
                     if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
                         return SurfacedSlotValueError(input);
@@ -1602,7 +1600,9 @@ public static partial class Evaluator
             if (maybeAlg is not null)
             {
                 // The failure is RETAINED, not raised: an argument nobody demands is not an
-                // error (`F(x, y) = x` called as `F(1, { })` is 1). The written expression
+                // error (`F(x, y) = x` called as `F(1, { })` is 1). It is the slot's
+                // established value outcome — every later value demand reports it and none
+                // evaluates the slot again (SlotAlgorithmBinding). The written expression
                 // travels with it so the demand that does surface it can blame the argument.
                 inputs.Add(new ParameterPatternInput(
                     Value: null,
@@ -1756,8 +1756,41 @@ public static partial class Evaluator
         IEnumerable<string> shadowedNames)
         => WithCountedParameterEnvironments(ctx, countedBindings, shadowedNames.ToArray());
 
+    /// <summary>
+    /// The retention policy of the BUILTIN argument adapters (a collection builtin's call
+    /// item, a callback suffix argument): only a resource-limit failure of the item's own
+    /// eager value attempt is sticky there. User-call PARAMETERS do not use this policy:
+    /// every failure of a written slot is the parameter's value outcome
+    /// (<see cref="SlotAlgorithmBinding"/>).
+    /// </summary>
     internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
         => valueError is { IsResourceLimit: true } ? valueError : null;
+
+    /// <summary>
+    /// The algorithm-channel binding one written argument slot contributes — the ONE
+    /// constructor every user-call binder uses (<see cref="BindParameterPattern"/>,
+    /// <see cref="BindFlatFixedUserCallArguments"/> and its async twin).
+    ///
+    /// <para>AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): within one call,
+    /// a written argument slot is evaluated at most once for its value, at assembly
+    /// (<see cref="BuildCallArgumentInputs"/>). If that evaluation succeeds, that is its
+    /// value, bound on the value tier. If it fails — an ordinary error or a resource limit
+    /// alike — that is its failure, recorded HERE beside the algorithm channel the same slot
+    /// supplies, and it is the parameter's value outcome for the whole activation: every
+    /// value read of the parameter (<see cref="EvalParamCounted"/>, a builtin value slot, the
+    /// <c>.string</c> receiver) reports it, and none evaluates the algorithm again. The
+    /// algorithm channel stays available for invocation, structural member access, and
+    /// forwarding. A slot that has a value records no failure;
+    /// <see cref="EvalError.BadArity"/> is the binders' own default for a valueless slot that
+    /// carries no error.</para>
+    /// Lean: <c>slotAlgorithmBinding</c>.
+    /// </summary>
+    private static (string Name, Algorithm Value, EvalError? ValueError) SlotAlgorithmBinding(
+        string name,
+        Algorithm algorithm,
+        Result? value,
+        EvalError? valueError)
+        => (name, algorithm, value is null ? valueError ?? new EvalError.BadArity() : null);
 
     private static EvalResult<UserCallEnvironments> BindFlatFixedUserCallArguments(
         Algorithm callee,
@@ -1800,13 +1833,10 @@ public static partial class Evaluator
             }
 
             var slot = slots[i];
+            // A slot whose one value evaluation failed binds its algorithm channel WITH
+            // that failure, the parameter's value outcome for this activation.
             if (slot.Algorithm is not null)
-            {
-                algBindings.Add((
-                    parameterNames[i],
-                    slot.Algorithm,
-                    RetainResourceLimitForAlgorithmBinding(slot.ValueError)));
-            }
+                algBindings.Add(SlotAlgorithmBinding(parameterNames[i], slot.Algorithm, slot.Value, slot.ValueError));
 
             if (slot.Value is not null)
             {

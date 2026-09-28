@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 301
+- specification surface cases: 302
 - excluded parse-level cases (Lean has no surface parser): 38
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 245
-- probe observations (C#-only by design): 871
+- Lean-guarded cases: 246
+- probe observations (C#-only by design): 882
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1035,6 +1035,11 @@ def case_output_less_argument_is_not_an_omitted_argument : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "Coll") [(.algorithmExpr (alg [] [] [] []))])])
 #guard obs case_output_less_argument_is_not_an_omitted_argument == "err missingOutput"
 
+-- argument-value-outcome-is-final [errors]: Plus(f, x) = f + x \n Plus({x + 1}, 5)
+def case_argument_value_outcome_is_final : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Plus" (alg ["f", "x"] [] [] [(.binary .add (.param "f") (.param "x"))])] [(.call (.resolve "Plus") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])), .num 5])])
+#guard obs case_argument_value_outcome_is_final == "err unresolvedImplicitParams"
+
 -- scalar-op-rejects-sequence [errors]: (1, 2) + 1
 def case_scalar_op_rejects_sequence : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .add (.capture [.num 1, .num 2]) (.num 1))])
@@ -1325,7 +1330,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 245 canonical Lean-guarded specification cases.
+-- 246 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1520,6 +1525,7 @@ def specCaseIds : List String := [
   "missing-output-not-a-value",
   "missing-output-as-builtin-arg",
   "output-less-argument-is-not-an-omitted-argument",
+  "argument-value-outcome-is-final",
   "scalar-op-rejects-sequence",
   "empty-sequence-is-not-an-operator-identity",
   "order-rejects-non-numeric",
@@ -1579,6 +1585,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 245
+#guard specCaseIds.length == 246
 
 end LanguageSpecCases

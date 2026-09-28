@@ -1372,14 +1372,43 @@ def lookupAssoc {A} (k : Ident) : Assoc Ident A -> Option A
 
 abbrev ValEnv := Assoc Ident Result
 
-/-- Algorithm environment: maps parameter names to algorithms.
+/-- One parameter's ALGORITHM-channel binding, together with the VALUE outcome
+    its written argument slot established when that outcome is a FAILURE.
+
+    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): within one
+    call, a written argument slot is evaluated at most once for its value. If
+    that evaluation succeeds, that is its value, held by the value tier
+    (`ValEnv`). If it fails, that is its failure, recorded here beside the
+    algorithm channel the same slot supplies; a slot that fails without an
+    algorithm channel fails the call at assembly (`collectVariadicCallItems`).
+    A value read of the parameter reuses that established outcome and never
+    evaluates `algorithm` again (the `.param` arm of `evalCounted`,
+    `resolveArgAlgExpr`, `evalDotCallCounted`'s `string` arm). The algorithm
+    channel remains what it is for: invocation (`f(x)`, an invoking builtin
+    slot), structural member access, and forwarding. Possessing it never
+    licenses recomputing a value that the slot has already established.
+    `valueFailure?` is `none` exactly when the value tier holds the
+    parameter's value. C#: the `ValueError` element of an `AlgEnv` entry. -/
+structure AlgBinding where
+  algorithm : Algorithm
+  valueFailure? : Option Error := none
+  deriving Repr
+
+/-- Algorithm environment: maps parameter names to algorithm-channel bindings.
     Used for higher-order algorithm parameters — when a caller passes an
     algorithm as an argument, the callee can invoke it by name.
     Parallel to ValEnv (which maps names to Results). -/
-abbrev AlgEnv := Assoc Ident Algorithm
+abbrev AlgEnv := Assoc Ident AlgBinding
 
 namespace AlgEnv
+  /-- The algorithm a name is bound to on the algorithm channel: what an
+      invocation, a structural member access, or a forwarded argument uses. -/
   def lookup (env : AlgEnv) (x : Ident) : Option Algorithm :=
+    (lookupAssoc x env).map AlgBinding.algorithm
+
+  /-- The complete algorithm-channel binding of a name, including the failure
+      its slot's value evaluation established (`AlgBinding.valueFailure?`). -/
+  def lookupBinding (env : AlgEnv) (x : Ident) : Option AlgBinding :=
     lookupAssoc x env
 
   /-- Remove the named bindings from an INHERITED algorithm environment — the
@@ -2300,6 +2329,28 @@ def parameterContext (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Eval
       let parameterCtx := { ctx with algEnv := activation.algorithms, countedParamEnv := activation.counted }
       pure (parameterCtx, activation.values)
 
+/-- The failure a parameter's written argument slot established as the
+    parameter's VALUE outcome (`AlgBinding.valueFailure?`), read in the
+    parameter's own binding context exactly as the `.param` arm of
+    `evalCounted` reads it: `none` when the parameter has a value (a value
+    binding always wins, as in that read) or no failed algorithm-channel
+    binding. C#: `Evaluator.ParameterValueFailure`. -/
+def parameterValueFailure? (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option Error) := do
+  let (parameterCtx, values) <- parameterContext name ctx env
+  if (parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome then
+    pure none
+  else
+    pure ((parameterCtx.algEnv.lookupBinding name).bind AlgBinding.valueFailure?)
+
+/-- A builtin value boundary reads a parameter's established failure before
+    classifying its independent callable channel. This never evaluates a body.
+    C#: the expression overload of `ParameterValueFailure`. -/
+def argumentParameterValueFailure? (source? : Option Expr) (ctx : EvalCtx)
+    (env : ValEnv) : EvalM (Option Error) :=
+  match source? with
+  | some (.param name) => parameterValueFailure? name ctx env
+  | _ => pure none
+
 /-- THE member-accessibility law, applied AFTER a member has been selected — by structural
     dot access (`evalDotCallCounted`, `resolveDotReceiver`), by a dotted `open` path step
     (`resolveAlgForOpen`), and by an `open`-provided name (`lookupOpenProperties`); direct
@@ -2482,18 +2533,6 @@ def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
   else
     pure (ps.zip vs)
 
-/-- Bind algorithm-typed parameters: zip parameter names with algorithms.
-    Only includes entries where the argument resolved to an algorithm.
-    Result entries are skipped (they go through bindParams / ValEnv). -/
-def bindAlgParams (ps : List Ident) (algs : List (Option Algorithm)) : AlgEnv :=
-  match ps, algs with
-  | [], _ => []
-  | _, [] => []
-  | p::ps', a::as' =>
-    match a with
-    | some alg => (p, alg) :: bindAlgParams ps' as'
-    | none     => bindAlgParams ps' as'
-
 structure FlatFixedCallSlot where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
@@ -2533,6 +2572,22 @@ structure ParameterPatternInput where
   algorithm? : Option Algorithm := none
   error? : Option Error := none
   deriving Repr
+
+/-- The algorithm-channel binding one written argument slot contributes: its
+    algorithm and, when the slot has no value, the failure its ONE value
+    evaluation established (`badArity`, the binders' own default, should a
+    valueless slot carry none). Every user-call binder builds its algorithm
+    channel through this function (`bindParameterPattern`,
+    `bindFlatFixedUserCall`), so no binder can drop a slot's failure and leave
+    the parameter's value to be re-derived from the algorithm later
+    (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `AlgBinding`).
+    C#: `Evaluator.SlotAlgorithmBinding`. -/
+def slotAlgorithmBinding (value? : Option Result) (error? : Option Error)
+    (algorithm : Algorithm) : AlgBinding :=
+  { algorithm := algorithm,
+    valueFailure? := match value? with
+      | some _ => none
+      | none => some (error?.getD Error.badArity) }
 
 structure ParameterPatternBindings where
   argEnv : ValEnv := []
@@ -2587,7 +2642,7 @@ def repeatedNameCountedConflict (name : Ident) (contributions : List ParameterPa
     because repeated-bind equality compares values and an algorithm-only
     argument has none. -/
 def repeatedNameAlgorithmConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
-  let carriers := contributions.filter (fun contribution => (lookupAssoc name contribution.algEnv).isSome)
+  let carriers := contributions.filter (fun contribution => (contribution.algEnv.lookup name).isSome)
   2 ≤ carriers.length && carriers.any (fun contribution => (lookupAssoc name contribution.argEnv).isNone)
 
 /-- Callable identity includes its declaration and the captured lexical activation chain.
@@ -2608,7 +2663,7 @@ def sameRepeatedCallableIdentity (left right : Algorithm) : Bool :=
 /-- Equal values are insufficient when selecting either callable can change an invocation.
     All callable contributions must have the same identity, even for just two occurrences. -/
 def repeatedNameCallableIdentityConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
-  let algorithms := contributions.filterMap (fun contribution => lookupAssoc name contribution.algEnv)
+  let algorithms := contributions.filterMap (fun contribution => contribution.algEnv.lookup name)
   algorithms.any (fun first => algorithms.any (fun second => !sameRepeatedCallableIdentity first second))
 
 /-- REPEATED-NAME BINDING IS ORDER-INDEPENDENT (September 2026). The failure,
@@ -3126,7 +3181,9 @@ structure ResolvedArgumentAlgorithm where
       a wrapper that performs the ordinary value read of the written name) and
       keeps the named algorithm here: a parameter bound on BOTH channels (the
       wrapper reads the bound value, so a VALUE slot never re-runs the
-      argument's body), and a lexical property reference `A` (the wrapper is the
+      argument's body), a parameter whose argument slot FAILED its one value
+      evaluation (the wrapper reports that failure — AT-MOST-ONCE ARGUMENT VALUE
+      EVALUATION), and a lexical property reference `A` (the wrapper is the
       ordinary property read `A` — the zero-argument property access with its run
       cache — so a VALUE slot never re-runs the property's body: HOW A PROPERTY
       VALUE IS CONSUMED DOES NOT AFFECT CACHING, and `sum(A)` reads exactly the
@@ -3541,11 +3598,14 @@ end CtxMsg
 /-- The ONE zero-argument value-demand law (its rejection half), keyed by the
     written shape that names the demanded algorithm. It is consulted BEFORE an
     algorithm's body is entered wherever a resolved algorithm is demanded for its
-    VALUE with zero explicit arguments: the value-position `param` / `resolve` /
+    VALUE with zero explicit arguments: the value-position `resolve` /
     `algorithmExpr` arms of `evalCounted`, every lazy builtin VALUE slot (the `if`
     condition and branches, `while`/`repeat` initial state, the `repeat` count,
     `atoms`, `range` — `evalArgumentValueCounted`), and the ordinary-dot `string`
-    intrinsic's receiver.
+    intrinsic's receiver. The value-position `param` arm does NOT consult it: a
+    parameter's value outcome was established when its argument slot was
+    evaluated — through this law, at the written argument — and the read reuses
+    that outcome (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `AlgBinding`).
 
     ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
     callable may satisfy a zero-argument value demand exactly when an ordinary
@@ -4024,11 +4084,14 @@ def internalSequenceBuiltinSuffixArgMetadataError
 /-- After binding chooses a VALUE position, apply the shared demand rejection to
     an unevaluated callable using its written source — judging the callable the
     item NAMES (`CallableCallItem.named?`), never its value wrapper. Preserve a
-    valid value's body error; callback positions never consult this helper. -/
+    valid value's body error; callback positions never consult this helper. A
+    parameter's established failure precedes callable classification. -/
 def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
-  match item.named? with
-  | some alg => (zeroArgumentDemandError? item.source? alg).or item.error?
-  | none => item.error?
+  match item.source?, item.error? with
+  | some (.param _), some err => some err
+  | _, _ => match item.named? with
+    | some alg => (zeroArgumentDemandError? item.source? alg).or item.error?
+    | none => item.error?
 
 def prepareSequenceBuiltinSuffixArgItem
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor)
@@ -4749,9 +4812,13 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
 /-- Resolve one builtin argument expression to its algorithm, paired with the
     named ALGORITHM-channel identity when the argument is a name resolved to its
     value side (`ResolvedArgumentAlgorithm.callable?`):
-    * a parameter with a value binding resolves to a wrapper that reads that
-      value, so a VALUE slot never re-runs the argument's body. A parameter bound
-      only on the value channel has no algorithm binding (`resolveAlg` reports
+    * a parameter resolves to a wrapper that performs the ordinary parameter
+      read whenever its VALUE outcome is established — its value, or the
+      failure its written argument slot's one value evaluation raised
+      (`AlgBinding.valueFailure?`) — so a VALUE slot reads that outcome and never
+      re-runs the argument's body, and a failed argument cannot heal in a builtin
+      slot (AT-MOST-ONCE ARGUMENT VALUE EVALUATION). A parameter bound only on
+      the value channel has no algorithm binding (`resolveAlg` reports
       `notAnAlgorithm`), so it carries none;
     * a lexical property reference `A` resolves to a wrapper that performs the
       ordinary property read `A` — the zero-argument property access with its
@@ -4771,7 +4838,8 @@ def resolveArgAlgExpr (e : Expr) (ctx : EvalCtx) (env : ValEnv)
   let shouldUseValueSide <- match e with
     | .param name => do
         let (parameterCtx, values) <- parameterContext name ctx env
-        pure ((parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome)
+        pure ((parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome
+          || ((parameterCtx.algEnv.lookupBinding name).bind AlgBinding.valueFailure?).isSome)
     | .resolve _ => pure true
     | _ => pure false
   if shouldWrapArgExprAsValue e || zeroDeclarationBlockValueSlot e then
@@ -4887,10 +4955,13 @@ mutual
             let argEnv := match input.value? with
               | some value => [(parameter.name, value)]
               | none => []
+            -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION: a slot whose value evaluation
+            -- failed keeps that failure as the parameter's value outcome, beside the
+            -- algorithm channel; it is never re-derived from the algorithm.
             let algEnv :=
               if allowAlgorithmBindings then
                 match input.algorithm? with
-                | some algorithm => [(parameter.name, algorithm)]
+                | some algorithm => [(parameter.name, slotAlgorithmBinding input.value? input.error? algorithm)]
                 | none => []
               else []
             if input.value?.isNone && (input.algorithm?.isNone || !allowAlgorithmBindings) then
@@ -5387,7 +5458,9 @@ mutual
       body. Laziness is untouched: a slot is demanded only when the builtin
       selects it. C#: `EvalResolvedArgumentCounted`. -/
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    if let some err <- argumentParameterValueFailure? arg.source? ctx env then
+      throw err
     match zeroArgumentDemandError? arg.source? arg.invoked with
     | some err => .error err
     | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
@@ -5583,6 +5656,8 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem := do
     match item.value?, item.error?, item.algorithm? with
     | none, none, some alg =>
+        if let some err <- argumentParameterValueFailure? item.source? ctx env then
+          return { item with error? := some err }
         if acceptsZeroArgumentValueDemand (item.callable?.getD alg) then
           match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
           | .ok counted => pure { item with value? := some counted.fst }
@@ -5671,6 +5746,8 @@ mutual
   partial def evalReduceCounted (collection : List CountedResult)
       (stepAlg : Algorithm) (initial : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    if let some err <- argumentParameterValueFailure? initial.source? ctx env then
+      throw err
     -- The initial accumulator is a VALUE slot: a parameterized algorithm there is
     -- rejected from its signature at this boundary — never by entering its body
     -- and reinterpreting the failure — with reduce's dedicated hint, the same
@@ -6162,9 +6239,12 @@ mutual
             pure (p :: valueParams, values, algBindings)
         | p :: ps, slot :: rest => do
             let (valueParams, values, algBindings) <- collect ps rest
+            -- A slot whose one value evaluation failed binds its algorithm channel
+            -- WITH that failure, the parameter's value outcome for this activation
+            -- (AT-MOST-ONCE ARGUMENT VALUE EVALUATION; `slotAlgorithmBinding`).
             let algBindings :=
               match slot.algorithm? with
-              | some alg => (p, alg) :: algBindings
+              | some alg => (p, slotAlgorithmBinding slot.value? slot.error? alg) :: algBindings
               | none => algBindings
             match slot.value? with
             | some value => pure (p :: valueParams, value :: values, algBindings)
@@ -6186,12 +6266,17 @@ mutual
       - ordinary eager value evaluation for ValEnv
 
       If both succeed, the parameter gets both meanings. If only one succeeds,
-      only that view is bound. A parameter bound only through `AlgEnv` still
-      SHADOWS the caller's inherited value environment (`ValEnv.shadow`, the
-      value-tier counterpart of `CountedParamEnv.shadow`), so a value-position
-      read of that parameter reaches its algorithm binding — the ordinary
-      zero-argument value demand or its arity error — instead of silently
-      answering with a same-named caller value. Symmetrically, a parameter
+      only that view is bound. The value evaluation happens ONCE per written
+      slot, and its outcome is final for the activation: a slot whose value
+      evaluation failed binds its algorithm channel together with that failure
+      (`slotAlgorithmBinding`), so every value read of the parameter reports the
+      same failure and none re-evaluates the algorithm (AT-MOST-ONCE ARGUMENT
+      VALUE EVALUATION, `AlgBinding`). A parameter bound only through `AlgEnv`
+      still SHADOWS the caller's inherited value environment (`ValEnv.shadow`,
+      the value-tier counterpart of `CountedParamEnv.shadow`), so a
+      value-position read of that parameter reaches its algorithm binding —
+      and the failure recorded there — instead of silently answering with a
+      same-named caller value. Symmetrically, a parameter
       bound only through `ValEnv` SHADOWS the caller's inherited algorithm
       environment (`AlgEnv.shadow`, applied together with the counted tier by
       `EvalCtx.bindParameters`), so a call-position read of that parameter
@@ -6395,9 +6480,9 @@ mutual
         property access of the member it selects, so `Obj.A.string` converts the
         very value `Obj.A` reads;
       * a parameter is the ordinary value-position parameter read — its bound
-        value when it has one — so a forwarded property value is never re-run
-        through the parameter's algorithm channel (`F(v) = v.string` converts the
-        value `F(A)` passed);
+        value, or the failure its argument slot established — so a forwarded
+        property value is never re-run through the parameter's algorithm channel
+        (`F(v) = v.string` converts the value `F(A)` passed);
       * every other receiver shape (a written block, a capture, a dot result) is
         its resolved algorithm's zero-argument demand, as before.
       C#: `EvalDotStringReceiverAlgOutput`. -/
@@ -6484,7 +6569,17 @@ mutual
         -- The accepted receiver is then READ like a value position reads it
         -- (`evalDotStringReceiverValue`): a named property through its cached
         -- property access, a parameter through its bound value.
+        -- A PARAMETER receiver's value outcome was established at binding, so a
+        -- parameter whose argument slot FAILED its one value evaluation reports
+        -- that failure first, before the law judges its algorithm channel
+        -- (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `parameterValueFailure?`).
         -- C#: `EvalDotStringReceiverAlgOutput`.
+        match target with
+        | .param x =>
+            match <- parameterValueFailure? x ctx env with
+            | some err => .error err
+            | none => pure ()
+        | _ => pure ()
         match zeroArgumentDemandError? (some target) targetAlg with
         | some err => .error err
         | none => pure ()
@@ -6816,13 +6911,17 @@ mutual
             match env.lookup x with
             | some v => pure (v, Result.valueCount v)
             | none =>
-                match ctx.algEnv.lookup x with
-                | some alg =>
-                    match zeroArgumentDemandError? (some e) alg with
-                    | some err => .error err
-                    | none => do
-                        let value <- evalZeroArgumentDemandOutput alg ctx env
-                        pure (value, Result.valueCount value)
+                -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a
+                -- parameter found only on the algorithm channel is one whose written
+                -- argument slot FAILED its one value evaluation, and that failure is
+                -- the parameter's value outcome for the whole activation. The read
+                -- reuses it and never evaluates the algorithm channel, so a failure
+                -- cannot heal, the argument's work is never repeated, and every read
+                -- of the parameter observes the same outcome. The algorithm channel
+                -- serves invocation and navigation (`resolveAlg (.param x)`), never
+                -- this value read.
+                match ctx.algEnv.lookupBinding x with
+                | some binding => .error (binding.valueFailure?.getD Error.badArity)
                 | none => .error (Error.unknownName x)
     | .sequenceConstruct _ _ =>
       evalSequenceConstructCounted e ctx env

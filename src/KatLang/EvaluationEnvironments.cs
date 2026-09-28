@@ -11,12 +11,14 @@
 global using ValEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Result Value)>;
 
-// Lean: abbrev AlgEnv := Assoc Ident Algorithm
+// Lean: abbrev AlgEnv := Assoc Ident AlgBinding
 //
-// C# additionally retains ValueError: the resource-limit failure of an
-// argument's eager value channel, observed only if the parameter is later
-// demanded as a value. Lean has no execution-budget model, so it has no
-// corresponding element.
+// ValueError is Lean's AlgBinding.valueFailure?: the failure (ordinary or
+// resource-limit) that the parameter's written argument slot established as
+// its VALUE outcome when its one value evaluation failed, null when the
+// parameter has a value. A value read reports it and never evaluates the
+// algorithm again (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
+// Evaluator.SlotAlgorithmBinding).
 global using AlgEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Algorithm Value, KatLang.EvalError? ValueError)>;
 

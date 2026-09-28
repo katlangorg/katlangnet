@@ -482,7 +482,11 @@ def conditionalCollectionArgumentFails : Bool :=
 #guard conditionalCollectionArgumentFails
 
 -- A conditional bound as a higher-order argument fails when referenced as a
--- bare zero-argument thunk inside the callee body.
+-- bare zero-argument value inside the callee body. AT-MOST-ONCE ARGUMENT VALUE
+-- EVALUATION (Q-01): the argument slot `F` was evaluated for its value once, at
+-- the call, and failed there (`noMatchingBranch "F"`, named after the property
+-- the caller wrote); reading the parameter `f` reports THAT failure instead of
+-- re-judging the algorithm channel under the parameter's name.
 def conditionalHigherOrderThunkReferenceFails : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("F", valueAccessConditionalAlg),
@@ -490,7 +494,7 @@ def conditionalHigherOrderThunkReferenceFails : Bool :=
   ] [
     .call (resolve "Apply") [resolve "F"]
   ])) with
-  | Except.error err => innermostIsNoMatchingBranch "f" err
+  | Except.error err => innermostIsNoMatchingBranch "F" err
   | _ => false
 
 #guard conditionalHigherOrderThunkReferenceFails

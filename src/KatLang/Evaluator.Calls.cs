@@ -82,7 +82,10 @@ public static partial class Evaluator
 
             // A NAME resolves to its value side: a wrapper that performs the ordinary value
             // read of the written name, so a VALUE slot never re-runs a body.
-            //  * A parameter with a VALUE binding: the wrapper reads that bound value.
+            //  * A parameter whose VALUE outcome is established: the wrapper reads it — the
+            //    bound value, or the failure its written argument slot's one value evaluation
+            //    raised (AT-MOST-ONCE ARGUMENT VALUE EVALUATION), so a failed argument can
+            //    neither run again nor heal in a builtin slot.
             //  * A lexical property reference `A`: the wrapper is the ordinary property read
             //    `A` — the zero-argument property access with its run cache — so every builtin
             //    VALUE slot (`sum(A)`, `A.sum`, `if(c, A, B)`, a loop's initial state, `reduce`'s
@@ -98,7 +101,7 @@ public static partial class Evaluator
             // carries none; a genuine lookup failure propagates exactly as before.
             // Lean: resolveArgAlgExpr.
             if (argExpr is Expr.Resolve
-                || argExpr is Expr.Param(var name) && ParameterHasValue(name, ctx, valEnv))
+                || argExpr is Expr.Param(var name) && ParameterHasValueOutcome(name, ctx, valEnv))
             {
                 var callableR = ResolveAlg(argExpr, ctx);
                 if (callableR.IsError && !IsLiftableError(callableR.Error))

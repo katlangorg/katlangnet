@@ -1285,11 +1285,15 @@ public static partial class Evaluator
     /// The ONE zero-argument value-demand law (its rejection half). It is consulted
     /// BEFORE an algorithm's body is entered wherever a resolved algorithm is
     /// demanded for its VALUE with zero explicit arguments: the value-position
-    /// <c>Param</c>/<c>Resolve</c>/<c>AlgorithmExpr</c> arms (both dispatch twins),
+    /// <c>Resolve</c>/<c>AlgorithmExpr</c> arms (both dispatch twins),
     /// every lazy builtin VALUE slot (<see cref="EvalResolvedArgumentCounted"/>: the
     /// <c>if</c> condition and branches, <c>while</c>/<c>repeat</c> initial state,
     /// the <c>repeat</c> count, <c>atoms</c>, <c>range</c>), and the ordinary-dot
     /// <c>string</c> intrinsic's receiver (<see cref="EvalDotStringReceiverAlgOutput"/>).
+    /// The value-position <c>Param</c> read does NOT consult it: a parameter's value outcome
+    /// was established when its argument slot was evaluated (through this law, at the
+    /// written argument), and the read reuses that outcome (AT-MOST-ONCE ARGUMENT VALUE
+    /// EVALUATION, <see cref="EvalParamCounted"/>).
     ///
     /// <para>ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
     /// callable may satisfy a zero-argument value demand exactly when an ordinary call

@@ -88,12 +88,13 @@ public class AsyncExpressionDispatchTests
     }
 
     /// <summary>
-    /// NativeCall is an explicit async case because its declared-argument reads
-    /// are ordinary <c>Expr.Param</c> value reads, and an argument bound on the
-    /// ALGORITHM channel makes one of those reads re-enter an algorithm body. A
-    /// native whose arguments are ordinary bound values evaluates nothing, so it
-    /// still touches no property-cache seam; the algorithm-channel case is
-    /// pinned by <see cref="NativeArgumentAlgorithmDemand_RoutesThroughTheAsyncSeam"/>.
+    /// NativeCall is an explicit async case because a HOST operation's native call can
+    /// suspend. Its declared-argument reads are ordinary <c>Expr.Param</c> value reads, which
+    /// evaluate NOTHING: a parameter's value outcome — its value, or the failure its argument
+    /// slot established — was fixed at argument assembly (AT-MOST-ONCE ARGUMENT VALUE
+    /// EVALUATION). A native whose arguments are ordinary bound values therefore touches no
+    /// property-cache seam; the failed-slot case is pinned by
+    /// <see cref="NativeArgumentFailedSlot_ReadEvaluatesNothingOnTheAsyncSeam"/>.
     /// </summary>
     [Fact]
     public async Task NativeCallWithValueBoundArguments_TouchesNoSeam()
@@ -118,18 +119,17 @@ public class AsyncExpressionDispatchTests
     }
 
     /// <summary>
-    /// The recursive NativeCall child position: a Math member argument that
-    /// binds only on the ALGORITHM channel makes the wrapper's declared-argument
-    /// read demand that algorithm's value, which must run on the ASYNC seam. A
-    /// NativeCall silently delegated to synchronous evaluation would reach the
-    /// SYNCHRONOUS seam member instead and fail the counters.
+    /// A Math member argument whose value evaluation FAILS binds Math.Sqrt's `x` on the
+    /// algorithm channel together with that failure (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
+    /// The argument slot's one evaluation — the access of `Wrapped` and, inside it, of `P` —
+    /// runs on the ASYNC seam; the wrapper's declared-argument read then reports the
+    /// recorded failure and re-enters nothing, so exactly those two accesses happen, with the
+    /// synchronous outcome and counters. (Before Q-01 the read re-entered `Wrapped`'s body, a
+    /// third access.)
     /// </summary>
     [Fact]
-    public async Task NativeArgumentAlgorithmDemand_RoutesThroughTheAsyncSeam()
+    public async Task NativeArgumentFailedSlot_ReadEvaluatesNothingOnTheAsyncSeam()
     {
-        // `Wrapped` binds Math.Sqrt's `x` on the algorithm channel only (its own
-        // value evaluation fails), so the wrapper body demands its value, which
-        // re-enters `Wrapped`'s body through the zero-argument property seam.
         var ast = new Expr.AlgorithmExpr(
             KatLang.Tests.SourceProvenance.ParseValid(
                 """
@@ -139,6 +139,7 @@ public class AsyncExpressionDispatchTests
                 """).Root);
 
         var (sync, syncBudget) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+        Assert.True(sync.IsError);
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var (async, asyncBudget) = await AsyncEvaluationHarness.Complete(
@@ -150,7 +151,7 @@ public class AsyncExpressionDispatchTests
         Assert.Equal(syncBudget.MaterializedItems, asyncBudget.MaterializedItems);
         Assert.Equal(syncBudget.MaterializedStringChars, asyncBudget.MaterializedStringChars);
         Assert.Equal(0, cache.SyncAccesses);
-        Assert.True(cache.AsyncAccesses > 0);
+        Assert.Equal(2, cache.AsyncAccesses);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }
 
@@ -189,8 +190,14 @@ public class AsyncExpressionDispatchTests
         }
     }
 
+    /// <summary>
+    /// Cancellation requested during the argument slot's ONE evaluation escapes as
+    /// <see cref="OperationCanceledException"/> — it is never recorded as the slot's failure —
+    /// and a request timed for a would-be third access never fires, because the native read of
+    /// the failed parameter re-demands nothing (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
+    /// </summary>
     [Fact]
-    public async Task NativeArgumentAlgorithmDemand_ObservesCancellationDuringRedemand()
+    public async Task NativeArgumentFailedSlot_CancellationOnlyDuringTheOneEvaluation()
     {
         var ast = new Expr.AlgorithmExpr(
             KatLang.Tests.SourceProvenance.ParseValid(
@@ -199,18 +206,33 @@ public class AsyncExpressionDispatchTests
                 Wrapped = P + 1 / 0
                 Math.Sqrt(Wrapped)
                 """).Root);
-        using var cancellation = new CancellationTokenSource();
-        var cache = new CancellingAsyncZeroArgPropertyResultCache(
-            cancelAtAccess: 3,
-            cancellation);
 
-        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-            await Evaluator.RunCountedAsync(
-                ast, cache, limits: null, cancellationToken: cancellation.Token));
+        using (var cancellation = new CancellationTokenSource())
+        {
+            var cache = new CancellingAsyncZeroArgPropertyResultCache(cancelAtAccess: 2, cancellation);
+            var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await Evaluator.RunCountedAsync(
+                    ast, cache, limits: null, cancellationToken: cancellation.Token));
 
-        Assert.Equal(cancellation.Token, thrown.CancellationToken);
-        Assert.True(cache.AsyncAccesses >= 3);
-        Assert.Equal(0, cache.ObservedBudget!.CurrentDepth);
+            Assert.Equal(cancellation.Token, thrown.CancellationToken);
+            Assert.Equal(2, cache.AsyncAccesses);
+            Assert.Equal(0, cache.ObservedBudget!.CurrentDepth);
+        }
+
+        using (var cancellation = new CancellationTokenSource())
+        {
+            var cache = new CancellingAsyncZeroArgPropertyResultCache(cancelAtAccess: 3, cancellation);
+            var result = await Evaluator.RunCountedAsync(
+                ast, cache, limits: null, cancellationToken: cancellation.Token);
+
+            Assert.True(result.IsError);
+            Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
+            Assert.False(cancellation.IsCancellationRequested);
+            Assert.Equal(2, cache.AsyncAccesses);
+        }
+
+        static EvalError Innermost(EvalError error)
+            => error is EvalError.WithContext(_, var inner) ? Innermost(inner) : error;
     }
 
     // ── Recursive child positions route through the ASYNC seam ──────────────
@@ -292,36 +314,29 @@ public class AsyncExpressionDispatchTests
     }
 
     /// <summary>
-    /// Param is not structurally composite (its fields are names, not expressions), but
-    /// its AlgEnv branch DEMANDS a bound zero-parameter algorithm's output — a recursive
-    /// child evaluation awaited directly from the dispatch arm. The surface route is a
-    /// semantically erroring eager argument (a semantic value-channel error is never
-    /// retained on the binding, so the forwarded demand re-evaluates the thunk — pinned
-    /// by <c>EvaluationLimitsTests</c>); the demand's re-evaluation must route the
-    /// thunk's property access through the ASYNC seam even though the run ends in the
-    /// synchronous error. Plain <c>Eval</c>'s Param case reproduces the same lookups, so
-    /// a Param arm silently delegated to synchronous evaluation would return the correct
-    /// error — only the seam counters expose the synchronous child evaluation.
+    /// Param is not structurally composite (its fields are names, not expressions), and since
+    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01) its value read evaluates NOTHING: a
+    /// parameter found only on the algorithm channel is one whose argument slot failed, and
+    /// the read reports that recorded failure. The argument slot's ONE evaluation still runs
+    /// on the ASYNC seam (the accesses of `Bad` and `P`); forwarding `v` into G and reading
+    /// `w` add no access, so the run makes exactly those two seam accesses and ends in the
+    /// synchronous error. (Before Q-01 the forwarded demand re-evaluated the thunk, a third
+    /// access.)
     /// </summary>
     [Fact]
-    public async Task Param_AlgorithmBoundValueDemand_RoutesThroughTheAsyncSeam()
+    public async Task Param_FailedSlotValueRead_EvaluatesNothingOnTheAsyncSeam()
     {
-        // Eager argument evaluation accesses Bad (miss) and P, fails semantically, and
-        // leaves an algorithm-only binding; w's value demand inside G re-evaluates the
-        // thunk, accessing P again through the seam before reproducing the error.
         var ast = AsyncEvaluationHarness.Ast("P = 5\nBad = P + 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)");
 
         var sync = Evaluator.RunCounted(ast);
-        Assert.True(sync.IsError, "expected the demanded thunk to reproduce the semantic error");
+        Assert.True(sync.IsError, "expected the slot's recorded failure");
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var async = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedAsync(ast, cache));
 
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
-        Assert.True(
-            cache.AsyncAccesses >= 3,
-            "expected the eager accesses AND the re-demanded thunk's property access to reach the async seam");
+        Assert.Equal(2, cache.AsyncAccesses);
         Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
     }

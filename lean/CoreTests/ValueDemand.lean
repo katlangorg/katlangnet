@@ -116,16 +116,16 @@ def emptyListRow (row : KatLang.Expr) : Bool :=
 #guard emptyListRow (.call (resolve "if") [.boolLiteral true, resolve "Collect", .num 0])
 #guard emptyListRow (.call (resolve "if") [.boolLiteral true, .call (resolve "Collect") [], .num 0])
 
--- `ApplyInIf(Inc)`: an algorithm-channel parameter in the slot reports the
--- parameter arm's bare arity rejection (no property context) — the same report
--- as reading `g` in value position.
-def parameterSlotRejectsBare : Bool :=
+-- `ApplyInIf(Inc)`: the slot already recorded Inc's property-shaped arity
+-- failure. A builtin value boundary preserves that outcome, including its
+-- context, exactly as reading `g` directly does (Q-01).
+def parameterSlotKeepsOriginalFailure : Bool :=
   match runResult (valueDemandRoot [.call (resolve "ApplyInIf") [resolve "Inc"]]) with
   | Except.error err =>
-      innermostIsArityMismatch 1 0 err && !(hasContext "while evaluating property Inc" err)
+      innermostIsArityMismatch 1 0 err && hasContext "while evaluating property Inc" err
         && !(innermostIsUnknownName "x" err)
   | _ => false
-#guard parameterSlotRejectsBare
+#guard parameterSlotKeepsOriginalFailure
 
 -- `if(true, {x + 1}, 0)` with the block's `x` an (unresolved) parameter: a written
 -- brace block reports `unresolvedImplicitParams`, as it does in value position.

@@ -724,42 +724,19 @@ public static partial class Evaluator
 
     // ── Main dispatch twin ──────────────────────────────────────────────────
 
-    /// <summary>MIRROR OF <see cref="EvalParamCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
+    /// <summary>
+    /// MIRROR OF <see cref="EvalParamCounted"/> — identical by construction. A parameter
+    /// read evaluates NOTHING: its value outcome — the bound value, or the failure its
+    /// written argument slot's one value evaluation established — was fixed at argument
+    /// assembly (AT-MOST-ONCE ARGUMENT VALUE EVALUATION), so the read has no child
+    /// evaluation to route through the async seam and never suspends.
+    /// </summary>
+    private static ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
         string name,
         SourceSpan? span,
         EvalCtx ctx,
         ValEnv valEnv)
-    {
-        ctx = ParameterContext(name, ctx, ref valEnv);
-        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-        if (counted is not null)
-            return EvalResult<CountedResult>.Ok(counted.Value);
-
-        var val = LookupVal(valEnv, name);
-        if (val is not null)
-            return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
-
-        var algBinding = LookupAlgBinding(ctx.AlgEnv, name);
-        if (algBinding is { } bound)
-        {
-            if (bound.ValueError is { } stickyLimit)
-                return AtSpanIfMissing(stickyLimit, span);
-            var algBound = bound.Algorithm;
-            if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Parameter, name, span, algBound) is { } rejection)
-                return rejection;
-
-            var valueR = WithParameterContextOnMissingOutput(
-                name,
-                span,
-                await EvalResolvedAlgOutputForValueDemandAsync(algBound, ctx, valEnv).ConfigureAwait(false));
-            return valueR.IsError
-                ? valueR.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, valueR.Value.ValueCount()));
-        }
-
-        return new EvalError.UnknownName(name) { Span = span };
-    }
+        => new(EvalParamCounted(name, span, ctx, valEnv));
 
     /// <summary>MIRROR OF <see cref="LookupNativeArgument"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> LookupNativeArgumentAsync(
@@ -2273,13 +2250,10 @@ public static partial class Evaluator
             }
 
             var slot = slots[i];
+            // A slot whose one value evaluation failed binds its algorithm channel WITH
+            // that failure, the parameter's value outcome for this activation.
             if (slot.Algorithm is not null)
-            {
-                algBindings.Add((
-                    parameterNames[i],
-                    slot.Algorithm,
-                    RetainResourceLimitForAlgorithmBinding(slot.ValueError)));
-            }
+                algBindings.Add(SlotAlgorithmBinding(parameterNames[i], slot.Algorithm, slot.Value, slot.ValueError));
 
             if (slot.Value is not null)
             {
@@ -2445,6 +2419,8 @@ public static partial class Evaluator
     {
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
+        if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
+            return slotFailure;
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
 
@@ -2601,6 +2577,10 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (item.Value is null && item.ValueError is null
+            && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
+            return item with { ValueError = slotFailure };
+
         if (item.Value is not null
             || item.ValueError is not null
             || item.Algorithm is not { } algorithm
@@ -2965,6 +2945,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (preparedInitial is null && ParameterValueFailure(initialSource, ctx, valEnv) is { } slotFailure)
+            return slotFailure;
+
         // A parameterized initial accumulator is rejected from its signature at this
         // boundary, never by entering its body; the law judges the NAMED callable and
         // the demand reads the value side — see the synchronous twin.
@@ -3348,10 +3331,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // A PARAMETER receiver whose argument slot FAILED its one value evaluation reports
+        // that recorded failure first — see the synchronous twin.
         if (target is Expr.Param(var paramName)
-            && LookupAlgBinding(ctx.AlgEnv, paramName) is { ValueError: { } stickyLimit })
+            && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
         {
-            return AtSpanIfMissing(stickyLimit, target.Span);
+            return ParameterSlotFailure(paramName, target.Span, slotFailure);
         }
 
         // The receiver is demanded for its VALUE with zero arguments — see the

@@ -33,6 +33,7 @@ public class LeanCoreTestsCompositionTests
         "SelectionValueBoundary",
         "ExplicitValueOpening",
         "PropertyCacheConsumers",
+        "ArgumentValueOutcome",
     ];
 
     [Fact]

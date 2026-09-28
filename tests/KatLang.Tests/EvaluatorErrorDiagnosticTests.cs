@@ -103,9 +103,33 @@ public class EvaluatorErrorDiagnosticTests
     /// <see cref="EvalError.MissingOutput"/>), so Lean is untouched.
     /// </summary>
     [Fact]
-    public void Eval_MissingOutput_OfAnArgumentReadThroughAParameter_BlamesTheParameter()
+    public void Eval_MissingOutput_OfANamedArgumentReadThroughAParameter_BlamesTheArgumentsProperty()
     {
+        // AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01): the argument slot `NoOut` was
+        // evaluated once, at the call, through the ordinary property read — which failed as
+        // THE PROPERTY's missing output. Reading `a` reports that established failure; it no
+        // longer re-runs NoOut's raw algorithm and re-frames the result as the parameter's.
+        // The callee is still never blamed.
         var result = EvalFull("NoOut = { X = 1 }\nF(a) = a + 1\nF(NoOut)");
+        Assert.True(result.IsError);
+        AssertInnermostMissingOutput(result.Error);
+
+        var call = Assert.IsType<EvalError.WithContext>(result.Error);
+        Assert.Equal("F", Assert.IsType<CallContext>(call.ErrorContext).CalleeDescription);
+        var property = Assert.IsType<EvalError.WithContext>(call.Inner);
+        Assert.Equal("NoOut", Assert.IsType<PropertyEvaluationContext>(property.ErrorContext).PropertyName);
+
+        var message = KatLangError.FromEvalError(result.Error).Message;
+        Assert.StartsWith("while evaluating call to F: Property 'NoOut' has no defined output", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cannot call 'F'", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Eval_MissingOutput_OfAnUnnamedArgumentReadThroughAParameter_BlamesTheParameter()
+    {
+        // A written block has no name of its own to blame, so the demand that surfaces its
+        // recorded failure — the read of `a` — blames the parameter (F5).
+        var result = EvalFull("F(a) = a + 1\nF({ X = 1 })");
         Assert.True(result.IsError);
         AssertInnermostMissingOutput(result.Error);
 
@@ -140,10 +164,12 @@ public class EvaluatorErrorDiagnosticTests
     }
 
     /// <summary>
-    /// Final hostile pass (September 2026): the same blame when the demanded argument is read
-    /// through a PARAMETER — a builtin value slot (`F(a) = sum(a)`), the reduce initial
-    /// accumulator, and the `.string` receiver — reports the parameter, never the builtin and
-    /// never "Property 'a' has no defined output".
+    /// Final hostile pass (September 2026), restated by AT-MOST-ONCE ARGUMENT VALUE EVALUATION
+    /// (Q-01): when the named argument is read through a PARAMETER — a builtin value slot
+    /// (`F(a) = sum(a)`), the reduce initial accumulator, and the `.string` receiver — the
+    /// report is the failure the argument slot established, the property's missing output,
+    /// exactly as the direct `sum(NoOut)` reports it. It never blames the builtin, and never
+    /// names the parameter as a property ("Property 'a'").
     /// </summary>
     [Theory]
     [InlineData("NoOut = { X = 1 }\nF(a) = sum(a)\nF(NoOut)")]
@@ -152,7 +178,36 @@ public class EvaluatorErrorDiagnosticTests
     [InlineData("NoOut = { X = 1 }\nStep(acc, x) = acc + x\nF(a) = reduce((1, 2), Step, a)\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nF(a) = a.string\nF(NoOut)")]
     [InlineData("NoOut = { X = 1 }\nF(a) = a.string()\nF(NoOut)")]
-    public void Eval_MissingOutput_OfAnArgumentReadThroughAParameterInAValueSlot_BlamesTheParameter(string source)
+    public void Eval_MissingOutput_OfANamedArgumentReadThroughAParameterInAValueSlot_BlamesTheArgumentsProperty(string source)
+    {
+        var result = EvalFull(source);
+        Assert.True(result.IsError);
+        AssertInnermostMissingOutput(result.Error);
+
+        var contexts = new List<ErrorContext>();
+        for (var error = result.Error; error is EvalError.WithContext context; error = context.Inner)
+            contexts.Add(context.ErrorContext);
+        Assert.Contains(contexts, c => c is PropertyEvaluationContext { PropertyName: "NoOut" });
+        Assert.DoesNotContain(contexts, c => c is PropertyEvaluationContext { PropertyName: "a" });
+
+        var message = KatLangError.FromEvalError(result.Error).Message;
+        Assert.Contains("Property 'NoOut' has no defined output", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cannot call 'sum'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cannot call 'count'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cannot call 'reduce'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Property 'a'", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The unnamed counterpart keeps the parameter blame in every value slot: a written block
+    /// argument has no name of its own, so the demand that surfaces its recorded failure blames
+    /// the parameter it was read through (F5).
+    /// </summary>
+    [Theory]
+    [InlineData("F(a) = sum(a)\nF({ X = 1 })")]
+    [InlineData("F(a) = if(true, a, 0)\nF({ X = 1 })")]
+    [InlineData("F(a) = a.string\nF({ X = 1 })")]
+    public void Eval_MissingOutput_OfAnUnnamedArgumentReadThroughAParameterInAValueSlot_BlamesTheParameter(string source)
     {
         var result = EvalFull(source);
         Assert.True(result.IsError);
@@ -166,10 +221,6 @@ public class EvaluatorErrorDiagnosticTests
 
         var message = KatLangError.FromEvalError(result.Error).Message;
         Assert.Contains("Parameter 'a' has no defined output", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Cannot call 'sum'", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Cannot call 'count'", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Cannot call 'reduce'", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Property 'a'", message, StringComparison.Ordinal);
     }
 
     [Fact]
