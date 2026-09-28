@@ -210,7 +210,10 @@ public sealed class RunOptions
     /// explicit <c>A()</c> re-evaluation) decide which calls execute. Synchronous versus
     /// asynchronous entry points, optimizer strategies, and unrelated
     /// <see cref="EvaluationLimits"/> settings that do not change the program's actual
-    /// control flow never alter the stream. Host-operation results are the host's
+    /// control flow never alter the stream. A limit the run actually reaches ends the run
+    /// (every resource-limit failure is terminal), so a tighter limit can make a seeded run
+    /// fail, but a seeded run that succeeds has made exactly the draws of the same run under
+    /// no limit — a limit never shifts the stream of a successful run. Host-operation results are the host's
     /// responsibility and outside this guarantee. The exact stream may change in a future
     /// KatLang version when the generator, a sampling algorithm, or evaluation semantics
     /// deliberately change (release-noted); it is NOT promised across versions, and

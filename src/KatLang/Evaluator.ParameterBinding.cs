@@ -1597,10 +1597,10 @@ public static partial class Evaluator
                 continue;
             }
 
-            if (maybeAlg is not null)
+            if (maybeAlg is not null && IsDeferrableEvaluationFailure(evaluatedR.Error))
             {
-                // The failure is RETAINED, not raised: an argument nobody demands is not an
-                // error (`F(x, y) = x` called as `F(1, { })` is 1). It is the slot's
+                // An ORDINARY failure is RETAINED, not raised: an argument nobody demands is
+                // not an error (`F(x, y) = x` called as `F(1, { })` is 1). It is the slot's
                 // established value outcome — every later value demand reports it and none
                 // evaluates the slot again (SlotAlgorithmBinding). The written expression
                 // travels with it so the demand that does surface it can blame the argument.
@@ -1614,8 +1614,10 @@ public static partial class Evaluator
                 continue;
             }
 
-            // No algorithm channel to defer behind: this slot can only fail the call, so
-            // blame the written argument here (F5).
+            // No algorithm channel to defer behind, or a RESOURCE LIMIT, which is never
+            // deferred (IsDeferrableEvaluationFailure): this slot fails the call NOW, before
+            // any later slot is evaluated and before the callee runs. Blame the written
+            // argument (F5; a resource limit passes through the blame unchanged).
             return BlameWrittenArgumentSlot(argExpr, evaluatedR.Error);
         }
 
@@ -1757,14 +1759,29 @@ public static partial class Evaluator
         => WithCountedParameterEnvironments(ctx, countedBindings, shadowedNames.ToArray());
 
     /// <summary>
-    /// The retention policy of the BUILTIN argument adapters (a collection builtin's call
-    /// item, a callback suffix argument): only a resource-limit failure of the item's own
-    /// eager value attempt is sticky there. User-call PARAMETERS do not use this policy:
-    /// every failure of a written slot is the parameter's value outcome
-    /// (<see cref="SlotAlgorithmBinding"/>).
+    /// RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02 / PV-06, September 2026) — the ONE
+    /// decision of every evaluation site that could otherwise DEFER a failure it actually
+    /// encountered instead of raising it. Such a site may defer an ORDINARY failure under
+    /// its own rule: user-call argument assembly records it beside the slot's algorithm
+    /// channel as the parameter's value outcome (<see cref="BuildCallArgumentInputs"/>,
+    /// <see cref="SlotAlgorithmBinding"/>), the builtin argument adapter keeps an eager
+    /// item's failure behind the arity verdict and the callback fall-through
+    /// (<see cref="BuildCallableCallItems"/>), and the fused filter-count pipeline mirrors
+    /// that adapter. A resource-limit failure (<see cref="EvalError.IsResourceLimit"/>) is
+    /// never deferrable: the limit is a property of the RUN, not a latent value of one slot,
+    /// so the site returns it at once and nothing after it runs — no later argument, callee
+    /// body, consumer, random draw, or host operation. An unused parameter, a retained
+    /// algorithm channel, a deferred value demand, forwarding, or consumer choice therefore
+    /// cannot absorb it. (Before this rule a limit reached inside an argument the callee
+    /// never read was retained and dropped, so the run SUCCEEDED after partial evaluation,
+    /// with random draws and host effects shifted by where the limit struck: a lower limit
+    /// changed one successful value into another, and the value depended on the route and
+    /// the host stack.) A resource limit may stop a run; it never redefines the value of a
+    /// run that succeeds. Laziness is untouched: an argument the language does not evaluate
+    /// — an unselected <c>if</c> branch, an invoking callback slot — reaches no limit.
+    /// No Lean counterpart: Lean models no resource limits.
     /// </summary>
-    internal static EvalError? RetainResourceLimitForAlgorithmBinding(EvalError? valueError)
-        => valueError is { IsResourceLimit: true } ? valueError : null;
+    internal static bool IsDeferrableEvaluationFailure(EvalError failure) => !failure.IsResourceLimit;
 
     /// <summary>
     /// The algorithm-channel binding one written argument slot contributes — the ONE
@@ -1774,15 +1791,16 @@ public static partial class Evaluator
     /// <para>AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): within one call,
     /// a written argument slot is evaluated at most once for its value, at assembly
     /// (<see cref="BuildCallArgumentInputs"/>). If that evaluation succeeds, that is its
-    /// value, bound on the value tier. If it fails — an ordinary error or a resource limit
-    /// alike — that is its failure, recorded HERE beside the algorithm channel the same slot
-    /// supplies, and it is the parameter's value outcome for the whole activation: every
-    /// value read of the parameter (<see cref="EvalParamCounted"/>, a builtin value slot, the
-    /// <c>.string</c> receiver) reports it, and none evaluates the algorithm again. The
-    /// algorithm channel stays available for invocation, structural member access, and
-    /// forwarding. A slot that has a value records no failure;
-    /// <see cref="EvalError.BadArity"/> is the binders' own default for a valueless slot that
-    /// carries no error.</para>
+    /// value, bound on the value tier. If it fails with an ORDINARY error, that is its
+    /// failure, recorded HERE beside the algorithm channel the same slot supplies, and it is
+    /// the parameter's value outcome for the whole activation: every value read of the
+    /// parameter (<see cref="EvalParamCounted"/>, a builtin value slot, the <c>.string</c>
+    /// receiver) reports it, and none evaluates the algorithm again. A resource-limit
+    /// failure never reaches this binding: assembly returns it, ending the call and the run
+    /// (<see cref="IsDeferrableEvaluationFailure"/>, Q-02). The algorithm channel stays
+    /// available for invocation, structural member access, and forwarding. A slot that has a
+    /// value records no failure; <see cref="EvalError.BadArity"/> is the binders' own default
+    /// for a valueless slot that carries no error.</para>
     /// Lean: <c>slotAlgorithmBinding</c>.
     /// </summary>
     private static (string Name, Algorithm Value, EvalError? ValueError) SlotAlgorithmBinding(

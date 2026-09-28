@@ -34,6 +34,21 @@ namespace KatLang;
 ///   and the output formatters.</item>
 /// </list>
 ///
+/// <para><b>A limit may stop a run; it never redefines one.</b> Every resource-limit failure
+/// (<see cref="EvalError.IsResourceLimit"/>) that evaluation actually reaches is terminal for the
+/// run: nothing is evaluated after it — no later argument, callee body, random draw, or host
+/// operation — and no argument the program ignores, callee that never reads a parameter, or
+/// builtin verdict absorbs it. A run that completes under a limit is therefore exactly the run
+/// without it: configuring a tighter limit can make a run fail earlier, but it can never change
+/// the value, the random draws, or the host operations of a run that still succeeds. WHERE a
+/// limit fires is not part of this guarantee: the host-stack backstop depends on the thread,
+/// build, and entry point (see <see cref="MaxDepth"/>), and configuring an opt-in budget such as
+/// <see cref="MaxSteps"/> can change which internal evaluation strategy runs, so different
+/// configurations or entry points may disagree on WHETHER a run stops — never on the value of a
+/// run that completes. Limits do not make evaluation eager: an argument the language does not
+/// evaluate (an unselected <c>if</c> branch, a callback that is never invoked) reaches no
+/// limit.</para>
+///
 /// <para>Host cancellation and wall-clock timeouts are a third, different concept.
 /// They are host policy rather than deterministic semantic budgets, and are not
 /// part of this type.</para>

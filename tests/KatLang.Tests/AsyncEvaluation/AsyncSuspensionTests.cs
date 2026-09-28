@@ -219,7 +219,8 @@ public class AsyncSuspensionTests
     public async Task SuspendingRun_ErrorOutcomes_MatchTheSynchronousErrors()
     {
         // Error equivalence under genuine suspension, including an error raised INSIDE
-        // a suspended-and-resumed callback and a retained resource-limit binding.
+        // a suspended-and-resumed callback. (A resource limit in an unused argument is
+        // pinned by SuspendingRun_ResourceLimitInAnUnusedArgument_IsTerminalLikeTheSynchronousRun.)
         var cases = new[]
         {
             "A = 0\n1 / A",
@@ -240,13 +241,17 @@ public class AsyncSuspensionTests
         }
     }
 
-    [Fact]
-    public async Task SuspendingRun_RetainedResourceLimitBindings_MatchTheSynchronousOutcome()
+    [Theory]
+    [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nUse(x) = 42\nUse(Deep(500))")]
+    [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nUse(x) = 42\nUse({Deep(500)})")]
+    [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nD = Deep(500)\nUse(x) = 42\nUse(D)")]
+    public async Task SuspendingRun_ResourceLimitInAnUnusedArgument_IsTerminalLikeTheSynchronousRun(string source)
     {
-        // A parameter's eager value evaluation failing on a resource limit is RETAINED
-        // on the binding and the run continues — that retention must survive the async
-        // twin path identically, and cancellation semantics must stay separate from it.
-        const string source = "Deep(0) = 0\nDeep(n) = Deep(n - 1)\nUse(x) = 42\nUse(Deep(500))";
+        // A parameter's eager value evaluation failing on a resource limit ends the run —
+        // whether the slot has no algorithm channel (a call), or has one (a brace block, a
+        // named property) that an ORDINARY failure would be retained beside (RESOURCE LIMITS
+        // ARE TERMINAL, Q-02). The genuinely suspending async twin reaches the same verdict
+        // as the synchronous run; cancellation semantics stay separate from it.
         var limits = new EvaluationLimits { MaxDepth = 16 };
         var ast = AsyncEvaluationHarness.Ast(source);
 
@@ -254,6 +259,7 @@ public class AsyncSuspensionTests
         var async = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedAsync(ast, new SuspendingAsyncZeroArgPropertyResultCache(), limits));
 
+        Assert.Equal("err evaluationDepthExceeded", AsyncEvaluationHarness.NeutralOf(sync));
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
     }
 }

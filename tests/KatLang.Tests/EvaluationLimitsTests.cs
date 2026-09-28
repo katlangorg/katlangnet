@@ -235,9 +235,10 @@ public class EvaluationLimitsTests
         // The builtin-argument twin, indirected through a charged user call so the
         // step budget observes each level. The reduce initial accumulator once
         // retried a depth-failed eager argument evaluation through the algorithm
-        // channel (2^depth work); the resource-limit error is now sticky
-        // (PrepareSequenceBuiltinSuffixArg), so the run stays linear and the depth
-        // kind wins under a linear step budget.
+        // channel (2^depth work); the resource-limit error then became sticky
+        // (PrepareSequenceBuiltinSuffixArg) and is now terminal at the eager attempt
+        // itself (BuildCallableCallItems, RESOURCE LIMITS ARE TERMINAL, Q-02), so the
+        // run stays linear and the depth kind wins under a linear step budget.
         var error = ErrorOf(
             "Add(a, b) = a + b\nG(x) = A\nA = [1, 2].reduce(Add, G(1))\nA",
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 96 });
@@ -250,10 +251,12 @@ public class EvaluationLimitsTests
     public void AlgEnvThunkRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
     {
         // The ordinary F body reaches EvalCounted(Param); the spread body reaches the
-        // plain Eval(Param) twin while evaluating the spread operand. In both cases, the
-        // failed value-channel attempt is retained for the established algorithm-channel
-        // fallback. Every zero-parameter AlgEnv re-entry must therefore consume depth or
-        // the retries grow exponentially.
+        // plain Eval(Param) twin while evaluating the spread operand. x's argument slot
+        // is x itself, so every level re-enters it until MaxDepth; the refusal is
+        // terminal at the innermost slot's assembly (RESOURCE LIMITS ARE TERMINAL, Q-02 —
+        // it was once retained for an algorithm-channel fallback, which is why every
+        // zero-parameter AlgEnv re-entry must consume depth: the retries grew
+        // exponentially), so the work stays linear.
         const int maxDepth = 24;
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
         var (result, budget) = Evaluator.RunCountedObserved(
@@ -271,8 +274,14 @@ public class EvaluationLimitsTests
     }
 
     [Fact]
-    public void UnusedAlgEnvThunkArgument_RemainsLazyAndCheap()
+    public void UnusedSelfReferentialArgument_ReachesTheDepthLimit_WhichIsTerminal()
     {
+        // F never reads v, but a user-call argument is evaluated at assembly (CALL-02), and
+        // x's argument slot is x itself: every level evaluates the slot again, and the
+        // recursion reaches MaxDepth. That limit was once RETAINED beside v's algorithm
+        // channel and dropped because F ignores v, so the innermost F returned 0 and the run
+        // SUCCEEDED with a value manufactured by the limit. RESOURCE LIMITS ARE TERMINAL
+        // (Q-02 / PV-06): the depth failure now ends the run — and the work stays linear.
         const int maxDepth = 24;
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
             "F(v) = 0\nx = F(x)\nx").Root);
@@ -280,8 +289,11 @@ public class EvaluationLimitsTests
             expr,
             new EvaluationLimits { MaxDepth = maxDepth });
 
-        Assert.False(result.IsError);
-        Assert.Equal(new Result.Atom(0), result.Value.Value);
+        Assert.True(result.IsError);
+        Assert.Equal(
+            maxDepth,
+            Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
+        Assert.Equal(maxDepth, budget.PeakDepth);
         Assert.True(
             budget.ConsumedSteps <= 2L * maxDepth,
             $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
@@ -294,10 +306,11 @@ public class EvaluationLimitsTests
     {
         // The ordinary-dot `string` intrinsic evaluates an algorithm-resolving
         // receiver for its value, so an AlgEnv-bound Param receiver is the same
-        // demand funnel as a bare `v`: the retained resource-limit error must
-        // short-circuit the demand (a depth charge alone leaves the retry tree
-        // exponential). The plain body reaches the counted dot-call twin; the
-        // spread body reaches the plain twin through the spread operand.
+        // demand funnel as a bare `v`: a resource-limit error must never be retried
+        // through the receiver (a depth charge alone leaves the retry tree exponential)
+        // — it is terminal at the slot that reached it (RESOURCE LIMITS ARE TERMINAL,
+        // Q-02). The plain body reaches the counted dot-call twin; the spread body
+        // reaches the plain twin through the spread operand.
         const int maxDepth = 24;
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
         var (result, budget) = Evaluator.RunCountedObserved(
@@ -429,37 +442,69 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("Double(n) = n * 2\nApply(f, x) = f(x)\nApply(Double, 3)", "6")]
-    [InlineData("Big = range(1, 200000)\nUse(f, x) = x\nUse(Big, 3)", "3")]
-    [InlineData("Deep = Deep\nUse(f, x) = x\nUse(Deep, 3)", "3")]
-    [InlineData("Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)", "5")]
+    [InlineData("Bad = 1 / 0\nUse(f, x) = x\nUse(Bad, 3)", "3")]
+    [InlineData("Bad = 1 / 0\nG(w) = 5\nF(v) = G(v)\nF(Bad)", "5")]
     public void DualChannelFallback_PreservedUnderDemandDepthAccounting(string source, string expected)
     {
-        // Higher-order dispatch, unused resource-failing arguments (the per-collection
-        // ceiling and the depth limit alike), and sticky forwarding through an
-        // intermediate callee keep their pre-accounting results.
+        // Higher-order dispatch, an unused argument whose ORDINARY failure is retained beside
+        // its algorithm channel, and that failure forwarded through an intermediate callee
+        // keep their pre-accounting results.
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.False(result.IsError);
         Assert.Equal([decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture)], result.Value);
     }
 
+    [Theory]
+    [InlineData("Big = range(1, 200000)\nUse(f, x) = x\nUse(Big, 3)", typeof(EvalError.CollectionSizeLimitExceeded))]
+    [InlineData("Deep = Deep\nUse(f, x) = x\nUse(Deep, 3)", typeof(EvalError.EvaluationDepthExceeded))]
+    [InlineData("Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)", typeof(EvalError.EvaluationDepthExceeded))]
+    public void UnusedResourceFailingArgument_IsTerminal(string source, Type expected)
+    {
+        // RESOURCE LIMITS ARE TERMINAL (Q-02 / PV-06): these arguments ARE evaluated at
+        // assembly (CALL-02) and reach the per-collection ceiling or the depth limit. The
+        // limit used to be retained beside the unused parameter's algorithm channel — and
+        // forwarded "stickily" through an intermediate callee — so the run succeeded with 3
+        // and 5 after partial evaluation. It now ends the run, whether or not anything reads
+        // the parameter.
+        var result = Evaluator.RunFlat(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.True(result.IsError);
+        Assert.True(result.Error.IsResourceLimit);
+        Assert.IsType(expected, Innermost(result.Error));
+    }
+
     private static EvalError Innermost(EvalError error)
         => error is EvalError.WithContext(_, var inner) ? Innermost(inner) : error;
 
-    [Theory]
-    [InlineData("F(v) = 0\nA = F(A)\nA")]
-    [InlineData("Bad = 1 / 0\nF(v) = 0\nF(Bad)")]
-    public void UnusedResolveArgument_IsNeverEvaluated(string source)
+    [Fact]
+    public void UnusedResolveArgument_WithAnOrdinaryFailure_StaysLatentAndCheap()
     {
-        // The lazy negative control: F never demands its parameter, so a
-        // resolve-shaped argument — even a self-referential or failing one — is
-        // never evaluated and the call is cheap. (Call-shaped argument slots are
-        // different: written call slots are assembled eagerly.)
+        // F never demands its parameter, and the resolve-shaped argument's ORDINARY failure
+        // is retained beside its algorithm channel as the parameter's value outcome, so the
+        // call succeeds. The argument IS evaluated — once, at assembly (CALL-02, CALL-06) —
+        // it is the failure that stays latent.
         var result = Evaluator.RunFlat(
-            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Bad = 1 / 0\nF(v) = 0\nF(Bad)").Root),
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
         Assert.False(result.IsError);
         Assert.Equal([0m], result.Value);
+    }
+
+    [Fact]
+    public void UnusedSelfReferentialResolveArgument_IsTerminalAtTheLimit()
+    {
+        // The same shape whose argument recurses into itself: each level's slot evaluates A
+        // again until MaxDepth refuses it. (The former comment called this argument "never
+        // evaluated"; it was evaluated to the limit, and the limit was absorbed.) RESOURCE
+        // LIMITS ARE TERMINAL (Q-02 / PV-06): the depth failure ends the run, and the work up
+        // to it stays within the linear step budget, so the DEPTH verdict — not the step
+        // verdict — is what fails.
+        var result = Evaluator.RunFlat(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("F(v) = 0\nA = F(A)\nA").Root),
+            new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(result.Error));
     }
 
     // ── Budget unit invariants ───────────────────────────────────────────────

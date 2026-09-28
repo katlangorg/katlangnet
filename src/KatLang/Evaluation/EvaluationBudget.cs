@@ -114,10 +114,12 @@ internal sealed class EvaluationBudget
     /// framework's fast non-cancellable path.
     ///
     /// <para>Cancellation is HOST DEMAND, not a language outcome. It deliberately throws
-    /// instead of returning an <see cref="EvalError"/>: a resource-limit error from a
+    /// instead of returning an <see cref="EvalError"/>: an ordinary failure of a
     /// parameter's eager value evaluation is RETAINED on the binding and the run
-    /// continues, so a cancellation modeled as an error could be absorbed into a value
-    /// and the cancelled run would keep running. The throw happens BEFORE any counter
+    /// continues (only a resource-limit failure is terminal —
+    /// <c>Evaluator.IsDeferrableEvaluationFailure</c>), so a cancellation modeled as an
+    /// error could be deferred like an ordinary failure, or classified into the run's
+    /// verdict, and the cancelled run would keep running. The throw happens BEFORE any counter
     /// mutation at every chokepoint, so a cancelled checkpoint is non-mutating exactly
     /// like a rejected enter — the scoped depth protocol stays conserved, admitted
     /// levels unwind through their ordinary <c>finally</c> releases, and an uncancelled
@@ -189,13 +191,12 @@ internal sealed class EvaluationBudget
         // non-mutating in the cumulative step counter exactly as it is in depth — the
         // invocation did not happen, and steps count dynamic invocations and loop
         // iterations only. Charging the step first instead would count an invocation the
-        // depth (or stack) ceiling refused, which is observable whenever the refusal is
-        // absorbed and the run continues: a resource-limit failure of a parameter's eager
-        // value evaluation is retained on the algorithm binding rather than raised, so a
-        // program that binds such a parameter without demanding its value SUCCEEDS while
-        // having consumed one step per refused invocation. That made a lower MaxDepth
-        // consume more steps than the work performed and flipped an unrelated MaxSteps
-        // verdict — the cross-talk BudgetCrossTalkMatrixTests forbids.
+        // depth (or stack) ceiling refused. (That was once observable as a flipped
+        // MaxSteps verdict, because a resource-limit failure of a parameter's eager value
+        // evaluation used to be retained and the run continued; every resource-limit
+        // failure is now terminal for the run — Evaluator.IsDeferrableEvaluationFailure —
+        // so the refusal ends the run, and the counters it leaves stay an exact record of
+        // the work actually performed.)
         //
         // The step ceiling is still tested FIRST, so when both are exhausted the reported
         // limit is unchanged.
@@ -210,7 +211,10 @@ internal sealed class EvaluationBudget
         // smallest supported stack (see EvaluationLimits.MaxSupportedDepth). This probe
         // is the machine-dependent backstop that keeps the failure structured: it can
         // only stop evaluation EARLIER than the deterministic limit, never later, so it
-        // cannot change the result of any run that stays within host stack headroom.
+        // cannot change the result of any run that stays within host stack headroom. Like
+        // every resource limit it is terminal for the run where it fires, so a run the
+        // backstop stops FAILS; where it fires is machine- and route-dependent, but it
+        // can never turn one successful value into another.
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 

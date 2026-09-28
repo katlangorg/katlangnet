@@ -13,12 +13,14 @@ global using ValEnv =
 
 // Lean: abbrev AlgEnv := Assoc Ident AlgBinding
 //
-// ValueError is Lean's AlgBinding.valueFailure?: the failure (ordinary or
-// resource-limit) that the parameter's written argument slot established as
-// its VALUE outcome when its one value evaluation failed, null when the
-// parameter has a value. A value read reports it and never evaluates the
-// algorithm again (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
-// Evaluator.SlotAlgorithmBinding).
+// ValueError is Lean's AlgBinding.valueFailure?: the ORDINARY failure that the
+// parameter's written argument slot established as its VALUE outcome when its
+// one value evaluation failed, null when the parameter has a value. A value
+// read reports it and never evaluates the algorithm again (AT-MOST-ONCE
+// ARGUMENT VALUE EVALUATION, Evaluator.SlotAlgorithmBinding). It is never a
+// resource limit: a limit the slot's evaluation reaches ends the call and the
+// run at assembly (RESOURCE LIMITS ARE TERMINAL,
+// Evaluator.IsDeferrableEvaluationFailure).
 global using AlgEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Algorithm Value, KatLang.EvalError? ValueError)>;
 

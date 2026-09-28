@@ -695,17 +695,23 @@ public class ArgumentValueOutcomeTests
     }
 
     /// <summary>
-    /// A resource-limit failure of a slot is its outcome too: every read reports it (the
-    /// synchronous routes agree on the depth verdict; the async twin's host-stack headroom is
-    /// a separate, documented difference).
+    /// A resource-limit failure of a slot is NOT a recorded outcome for a later read: it is
+    /// terminal at assembly (RESOURCE LIMITS ARE TERMINAL, Q-02 / PV-06), so a callee that
+    /// reads the parameter and one that ignores or merely forwards it fail alike — before any
+    /// read. Only ORDINARY failures are the latent, once-established outcomes of this suite.
+    /// (The synchronous routes agree on the depth verdict; the async twin's host-stack
+    /// headroom is a separate, documented difference, PV-07.)
     /// </summary>
     [Fact]
-    public void ResourceLimitFailureOfASlot_IsTheParameterOutcome()
+    public void ResourceLimitFailureOfASlot_IsTerminalAtAssembly()
     {
         foreach (var source in new[]
         {
             "Deep = Deep\nPair(x) = x, x\nPair(Deep)",
             "Deep = Deep\nS(v) = sum(v), v\nS(Deep)",
+            // Unused and forwarded: before Q-02 the limit was retained and dropped, and
+            // this run SUCCEEDED with 5.
+            "Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)",
         })
         {
             var result = KatLangEngine.Run(source);
@@ -713,8 +719,8 @@ public class ArgumentValueOutcomeTests
             Assert.Equal(KatLangErrorCode.EvaluationDepthExceeded, Assert.Single(failure.Errors).Code);
         }
 
-        // An unused one still is not an error.
-        Assert.Equal("5", Assert.IsType<RunResult.Success>(KatLangEngine.Run("Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)")).ToDisplayString());
+        // The ORDINARY-failure control: an unused one still is not an error.
+        Assert.Equal("5", Assert.IsType<RunResult.Success>(KatLangEngine.Run("Bad = 1 / 0\nG(w) = 5\nF(v) = G(v)\nF(Bad)")).ToDisplayString());
     }
 
     // ── 5. The laws, as metamorphic relations over argument expressions and readers ──
