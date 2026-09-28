@@ -57,9 +57,10 @@ public sealed class KatLangError
     /// turn a successful evaluation into a <see cref="RunResult.EvalFailure"/>.
     /// Delegates to the one authoritative classifier,
     /// <see cref="EvalError.IsResourceLimit"/>, so it resolves through
-    /// contextual wrappers and never inspects message text. Front-end errors
-    /// (including source-processing limits, which are diagnostics, not
-    /// evaluation outcomes) are never classified as resource limits, and host
+    /// contextual wrappers and never inspects message text. Source-processing refusals
+    /// are not classified as resource limits: eager refusals are front-end diagnostics;
+    /// refusals during deferred module materialization are evaluation-time load errors.
+    /// Whether the latter should be terminal resource failures remains undecided (Q-71). Host
     /// cancellation throws <see cref="OperationCanceledException"/> instead of
     /// producing an error value at all. An evaluation resource-limit failure is always the
     /// run's own outcome: evaluation reached the limit and stopped there, and no argument the
