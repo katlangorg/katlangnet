@@ -47,10 +47,14 @@ public class BranchLazyModuleLoadingTests
         => new((ModuleA, "public A = 1"), (ModuleB, "public B = 2"), (ModuleC, "public C = 3"));
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LiftedParameterOwnership_CompletesBothDeferredAndEnclosingOwners(bool liftInsideLoadedBody)
+    [InlineData(false, 99)]
+    [InlineData(true, 106)]
+    public async Task ForwardedParameter_NeverRebindsADeferredModuleName(bool liftInsideLoadedBody, int expected)
     {
+        // Q-04: forwarding hands Need a new `v` of Outer's, but the written `v` the opened module
+        // provides keeps that binding — in the eager tree and in the materialized deferred body
+        // alike, whether the forwarding owner encloses the region or is inside it. (Formerly the
+        // ownership-completion pass rebound it to Outer's forwarded parameter: 14 in both.)
         var modules = new CountingModules((ModuleA, "public v = 99"));
         var body = $"Inner = {{ open '{ModuleA}'\nv }}\nNeed = v\nInner + Need";
         var source = liftInsideLoadedBody
@@ -62,11 +66,51 @@ public class BranchLazyModuleLoadingTests
         var result = await Evaluator.RunCountedAsync(new Expr.AlgorithmExpr(parsed.Root),
             new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache());
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
-        Assert.Equal([14m], result.Value.Value.ToAtoms());
+        Assert.Equal([(Decimal128)expected], result.Value.Value.ToAtoms());
         Assert.Equal(1, modules[ModuleA]);
     }
 
     private static string Display(RunResult result) => result.ToDisplayString().ReplaceLineEndings("\n");
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeferredForwarding_ReusesAncestorBindingKind_AfterDownloadSuspends(bool collecting)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var module = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var downloads = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = async (_, token) =>
+            {
+                downloads++;
+                entered.SetResult();
+                return await module.Task.WaitAsync(token);
+            },
+        };
+        var parameter = collecting ? "*items" : "items";
+        var arguments = collecting ? "(1, 2), [3], ()" : "[(1, 2), [3], ()]";
+        var source = $"Target(tag, *items) = items\nOuter(tag, {parameter}) = {{\n F(0) = 0\n F(n) = {{\n  open '{ModuleA}'\n  G(q) = Target\n  G(n)\n }}\n F(1)\n}}\nOuter(0, {arguments})";
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal(0, downloads);
+
+        var evaluation = Evaluator.RunCountedAsync(new Expr.AlgorithmExpr(parsed.Root),
+            new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.False(evaluation.IsCompleted);
+        module.SetResult("public Unrelated = 123");
+        var result = await evaluation.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
+        Assert.Equal(1, downloads);
+
+        // The deferred resolver re-keys the saved enclosing bindings in its new run.
+        // Its closed G(q) adds nothing and forwards the same supply as this written call.
+        var written = $"Target(tag, *items) = items\nOuter(tag, {parameter}) = Target(tag, items{(collecting ? "*" : "")})\nOuter(0, {arguments})";
+        var expected = Assert.IsType<RunResult.Success>(KatLangEngine.Run(written));
+        Assert.Equal(expected.Value, result.Value.Value, Result.ValueComparer);
+    }
 
     private static int LineOf(string source, string fragment)
     {

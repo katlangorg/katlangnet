@@ -414,7 +414,7 @@ Examples:
 
 # 5. Parameters and grace
 
-Free identifiers in property bodies become implicit parameters unless they resolve to properties, builtins, or opened names, but only for algorithms without an explicit parameter list. Explicit parameter lists are closed; unresolved names outside the pattern are errors, not extra callable parameters. A referenced formula that still REQUIRES inputs hands them on (its parameters lift into the formula that uses it); one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears, so hand arguments on to it with an explicit call (`Count(items*)`).
+Free identifiers in property bodies become implicit parameters unless they resolve to properties, builtins, or opened names, but only for algorithms without an explicit parameter list. Explicit parameter lists are closed; unresolved names outside the pattern are errors, not extra callable parameters. A referenced formula that still REQUIRES inputs gets them handed on by automatic parameter forwarding: they become parameters of the formula that uses it, unless that formula already has parameters of those names — its own or an enclosing algorithm's, a branch binder included — which are then handed on instead, adding nothing. Forwarding hands on parameters only and never changes what a written name refers to: a property, opened name, or builtin with a matching name is never handed on. One that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears, so hand arguments on to it with an explicit call (`Count(items*)`).
 
 Implicit parameter order is first appearance, left-to-right, depth-first:
     Sub = a - b
@@ -914,7 +914,7 @@ Each algorithm may have at most one `open` declaration. Multiple open targets us
 1. the owner walk: this algorithm, then each enclosing one outward, ending at the prelude. A scope owns both the parameters it binds (written, inferred, or bound by its branch pattern) and the properties it declares; the first owner that declares the name decides, and a property may not have the same name as a completed parameter of that or any enclosing lexical algorithm.
 2. opened public properties
 
-Completed parameters include later implicit forwarding captures; properties matching parameters of the same or any enclosing lexical algorithm are declaration errors even when unused. Every owned name wins over an opened name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope alike. If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference or open only one provider:
+Parameters include the ones automatic parameter forwarding adds; properties matching parameters of the same or any enclosing lexical algorithm are declaration errors even when unused. Every owned name wins over an opened name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope alike. If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference or open only one provider:
     open A, B
     X                    # error: Ambiguous open 'X': provided by A, B
 Prefer a qualified reference such as `A.X`, or open only the provider you need.
@@ -1080,7 +1080,7 @@ Repeated parameter names use one order-independent compatibility rule: all suppl
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (104 of the 303-case canonical language specification,
+Verified reference examples (105 of the 307-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2060,6 +2060,19 @@ Regenerate this block from the repo root with:
     F(7)
 
   Fails with an evaluation error (arity).
+
+[forwarding-reuses-a-captured-ancestor-parameter] Automatic parameter forwarding must not change what an existing name refers to. G uses A, which needs y, and the y written in G already denotes F's parameter, so forwarding hands A that same binding: G takes no parameter of its own, and G is 3 * 1000 + (3 + 1) whoever reads it — H(100) included, since H's own y is unrelated. Forwarding reuses parameter bindings only (the body's own, or an enclosing owner's parameter or clause binder) and adds a new parameter only when none exists. (Before the Q-04 decision G received its own y, the written y followed it, and the program gave 100101.)
+
+    A = y + 1
+    F(y) = {
+        G = y * 1000 + A
+        H(y) = G
+        H(100)
+    }
+    F(3)
+
+  Displays:
+    3004
 
 [ownership-captured-parameter-beats-outer-property] Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.
 

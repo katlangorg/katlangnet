@@ -21,9 +21,10 @@ public class OwnershipConformanceTests
         ["nearer-property"] = new("v = 99\nOuter(v) = { Mid = { v = 5\nInner = v\nInner }\nMid }\nOuter(7)", "Outer/Mid/Inner", "5"),
         ["nearest-parameter"] = new("v = 99\nOuter(v) = { Mid(v) = { Inner = v\nInner }\nMid(7) }\nOuter(20)", "Outer/Mid/Inner", "7"),
         ["inferred-later-row"] = new("Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nInner, v }\nOuter(7)", "Outer/Inner", "(7, 7)"),
-        ["lifted-later-reference"] = new("Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nNeed = v\nInner + Need }\nOuter(7)", "Outer/Inner", "14"),
-        ["lifted-collision"] = new("Need(v) = v\nOuter = { v = 5\nInner = v\nNeed + Inner }\nOuter(7)", "Outer/Inner", ""),
-        ["lifted-ancestor-collision"] = new("Need(v) = v\nOuter = { Mid = { v = 5\nInner = v\nInner }\nNeed + Mid }\n0", "Outer/Mid/Inner", ""),
+        // Q-04: Outer's forwarded `v` owns no written name, so Inner's `v` stays the opened Lib.v.
+        ["forwarded-owns-no-later-reference"] = new("Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nNeed = v\nInner + Need }\nOuter(7)", "Outer/Inner", "106"),
+        ["forwarded-collision"] = new("Need(v) = v\nOuter = { v = 5\nInner = v\nNeed + Inner }\nOuter(7)", "Outer/Inner", ""),
+        ["forwarded-ancestor-collision"] = new("Need(v) = v\nOuter = { Mid = { v = 5\nInner = v\nInner }\nNeed + Mid }\n0", "Outer/Mid/Inner", ""),
         ["inferred-ancestor-collision"] = new("Outer = { Inner = { v = 5\nv }\nv }\n0", "Outer/Inner", ""),
         ["collecting-collision"] = new("Outer(*v) = { v = 5\nInner = v\nInner }\nOuter(7, 20)", "Outer/Inner", ""),
         ["branch-binder"] = new("v = 99\nF(0) = 0\nF(v) = { v = 5\nInner = v\nInner }\nF(7)", "F/@1/Inner", "7"),
@@ -43,9 +44,14 @@ public class OwnershipConformanceTests
         foreach (var line in table.Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(line => !string.IsNullOrWhiteSpace(line)))
         {
             // Deliberately a small, fail-closed data grammar, not a Lean parser.
-            var match = Regex.Match(line.Trim(), "^\\(\"([a-z-]+)\", \\[([0-3, ]+)\\], \\.(parameter|property) ([0-9]+), (true|false)\\),?$");
+            var match = Regex.Match(line.Trim(), "^\\(\"([a-z-]+)\", \\[([0-7, ]+)\\], \\.(?:(none)|(parameter|property) ([0-9]+)), (true|false)\\),?$");
             Assert.True(match.Success, $"Unrecognized ownership conformance row: {line}");
-            rows.Add(match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value, int.Parse(match.Groups[4].Value), bool.Parse(match.Groups[5].Value));
+            rows.Add(
+                match.Groups[1].Value,
+                match.Groups[2].Value,
+                match.Groups[3].Success ? "none" : match.Groups[4].Value,
+                match.Groups[3].Success ? -1 : int.Parse(match.Groups[5].Value),
+                bool.Parse(match.Groups[6].Value));
         }
         Assert.Equal(Sources.Keys.Order(), rows.Select(row => (string)row[0]).Order());
         return rows;
@@ -63,8 +69,11 @@ public class OwnershipConformanceTests
             Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(parsed.Diagnostics).Code);
         var levels = OwnerChain(parsed.Root, test.Path);
         Assert.Equal(masks.Split(',').Select(int.Parse), levels.Select(level =>
-            (level.ParameterNames.Contains("v") ? 1 : 0) + (level.Algorithm.Properties.Any(p => p.Name == "v") ? 2 : 0)));
+            (level.ParameterNames.Contains("v") ? 1 : 0)
+                + (level.Algorithm.Properties.Any(p => p.Name == "v") ? 2 : 0)
+                + (level.ForwardedNames.Contains("v") ? 4 : 0)));
 
+        // The owner walk sees NAME-RESOLUTION parameters only: a forwarded parameter owns no name (Q-04).
         var scopes = new ElaboratedPropertyScope[levels.Count];
         var parameters = ParameterOwnership.Empty;
         ElaboratedPropertyScope? parent = null;
@@ -76,10 +85,27 @@ public class OwnershipConformanceTests
         }
 
         var selected = ElaboratedScopeLookup.SelectOwnedDeclaration(scopes[0], "v", parameters);
+        var reference = Assert.Single(levels[0].Algorithm.Output);
+        var model = SemanticModelBuilder.Build(parsed.Root);
+        var site = Assert.NotNull(reference.Span);
+        if (kind == "none")
+        {
+            // Nothing owned: the written name stays a lexical reference the opens decide, and the
+            // editor resolves it to the one opened member that provides it.
+            Assert.Equal(OwnedDeclarationKind.None, selected.Kind);
+            Assert.Equal("v", Assert.IsType<Expr.Resolve>(reference).Name);
+            var opened = Assert.Single(ElaboratedScopeLookup.LookupLexicalPropertyMatches(scopes[0], "v"));
+            var openedResolution = model.FindResolutionAt(site.Start);
+            Assert.NotNull(openedResolution);
+            Assert.Equal(IdentifierClassification.PropertyReference, openedResolution.Classification);
+            Assert.Equal(opened.Property.DeclarationSpans.Single(), openedResolution.ResolvedDeclaration?.Span);
+            Assert.Equal(test.Display, Assert.IsType<RunResult.Success>(KatLangEngine.Run(test.Source)).ToDisplayString());
+            return;
+        }
+
         Assert.Equal(kind == "parameter" ? OwnedDeclarationKind.Parameter : OwnedDeclarationKind.Property, selected.Kind);
         Assert.Same(scopes[ownerIndex], selected.OwnerScope);
         var decidingOwner = levels[ownerIndex];
-        var reference = Assert.Single(levels[0].Algorithm.Output);
         SourceSpan? declaration;
         IdentifierClassification classification;
         if (kind == "parameter")
@@ -109,8 +135,6 @@ public class OwnershipConformanceTests
             classification = IdentifierClassification.PropertyReference;
         }
 
-        var model = SemanticModelBuilder.Build(parsed.Root);
-        var site = Assert.NotNull(reference.Span);
         var resolution = model.FindResolutionAt(site.Start);
         Assert.NotNull(resolution);
         Assert.Equal(classification, resolution.Classification);
@@ -138,7 +162,16 @@ public class OwnershipConformanceTests
 
     private sealed record Level(Algorithm Algorithm, Pattern? Binder = null)
     {
-        public IEnumerable<string> ParameterNames => Binder?.BoundNames() ?? Algorithm.Params;
+        /// <summary>The names NAME RESOLUTION binds at this level: its binders, or its written/inferred parameters.</summary>
+        public IEnumerable<string> ParameterNames => Binder?.BoundNames()
+            ?? (Algorithm is Algorithm.User user
+                ? ParameterPattern.FlattenCaptures(user.NameResolutionParameterPatterns).Select(static p => p.Name)
+                : Algorithm.Params);
+
+        /// <summary>The names AUTOMATIC FORWARDING added to this level (Q-04): they own no written name.</summary>
+        public IEnumerable<string> ForwardedNames => Binder is null && Algorithm is Algorithm.User { ForwardingParameterStart: { } start } user
+            ? ParameterPattern.FlattenCaptures(user.ParameterPatterns.Skip(start)).Select(static p => p.Name)
+            : [];
     }
 
     private static List<Level> OwnerChain(Algorithm root, string path)

@@ -123,10 +123,10 @@ internal sealed class DeferredModuleRegion
     /// </summary>
     internal SourceSpan? ImportSite { get; }
 
-    /// <summary>Installed by parameter detection on its output view of the placeholder (replaced when ownership completion re-detects).</summary>
+    /// <summary>Installed by parameter detection on its output view of the placeholder.</summary>
     internal ParameterDetector.DeferredBranchContext? Detection { get; private init; }
 
-    /// <summary>Installed by implicit-argument resolution on its output view (replaced by the signature-preserving re-resolution).</summary>
+    /// <summary>Installed by implicit-argument resolution on its output view.</summary>
     internal ImplicitArgumentResolver.DeferredBranchContext? Resolution { get; private init; }
 
     /// <summary>Installed by property-exposure resolution on its output view — the last eager pass, so the tree's final region carries every context.</summary>
@@ -325,34 +325,16 @@ internal sealed class DeferredModuleRegion
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var observations = Loader.TraversalObservations;
-                    var origins = new ImplicitArgumentResolver.ResolutionOrigins();
-                    // Detection and resolution report into STAGES committed once ownership
-                    // completion has decided they stand, exactly as the eager pipeline does.
-                    // Every demand-time pass starts from the import site the region recorded:
-                    // a diagnostic raised against module content — which carries no source
+                    // Name resolution, then automatic parameter forwarding, exactly as the eager
+                    // pipeline runs them (Q-04: forwarding never re-selects a binding). Every
+                    // demand-time pass starts from the import site the region recorded: a
+                    // diagnostic raised against module content — which carries no source
                     // location — is positioned at the site the current document wrote.
-                    var parameterDiagnostics = diagnostics.CreateStage();
                     var detected = ParameterDetector.ElaborateDeferredBranch(
-                        loaded, Detection!, parameterDiagnostics, observations, origins.Grace, ImportSite);
+                        loaded, Detection!, diagnostics, observations, ImportSite);
                     cancellationToken.ThrowIfCancellationRequested();
-                    var implicitDiagnostics = diagnostics.CreateStage();
                     var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                        detected, Resolution!, implicitDiagnostics, observations, origins, importSite: ImportSite);
-                    if (origins.HasLiftedParameters)
-                    {
-                        var completed = ParameterDetector.CompleteOwnership(
-                            resolved, origins, branchContext: Detection!, observations: observations, importSite: ImportSite,
-                            diagnostics: diagnostics.CreateStage());
-                        if (completed.Changed)
-                        {
-                            parameterDiagnostics = completed.Diagnostics;
-                            implicitDiagnostics = diagnostics.CreateStage();
-                            resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                                completed.Root, Resolution!, implicitDiagnostics, observations, preserveSignatures: true, importSite: ImportSite);
-                        }
-                    }
-                    diagnostics.AddRange(parameterDiagnostics);
-                    diagnostics.AddRange(implicitDiagnostics);
+                        detected, Resolution!, diagnostics, observations, importSite: ImportSite);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!diagnostics.HasReportedErrors)
                     {

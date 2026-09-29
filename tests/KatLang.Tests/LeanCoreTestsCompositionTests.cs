@@ -34,6 +34,7 @@ public class LeanCoreTestsCompositionTests
         "ExplicitValueOpening",
         "PropertyCacheConsumers",
         "ArgumentValueOutcome",
+        "ForwardingBindings",
     ];
 
     [Fact]

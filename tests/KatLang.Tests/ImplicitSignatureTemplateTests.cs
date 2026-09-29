@@ -14,7 +14,7 @@ namespace KatLang.Tests;
 ///
 /// <para>These pins count the representation (reference identity) and the work (the per-pass
 /// observation counters), prove owner identity is never collapsed (declarations, activations,
-/// ownership completion through each owner's own layer, blame, editor metadata), and prove that
+/// forwarded names that no written name denotes, blame, editor metadata), and prove that
 /// runtime behavior — randomness, host operations, genuine async suspension, planned loops — is
 /// exactly the written form's.</para>
 /// </summary>
@@ -83,7 +83,6 @@ public class ImplicitSignatureTemplateTests
 
     private sealed record PassObservations(
         FrontEndTraversalObservations Resolve,
-        FrontEndTraversalObservations Completion,
         FrontEndTraversalObservations Collision,
         FrontEndTraversalObservations OpenProviders,
         FrontEndTraversalObservations Exposure,
@@ -93,16 +92,11 @@ public class ImplicitSignatureTemplateTests
     private static PassObservations ObservePasses(string source)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax, graceOrigins: origins.Grace);
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
         Assert.Empty(detectorDiagnostics);
-        var observed = new PassObservations(new(), new(), new(), new(), new(), new(), new());
+        var observed = new PassObservations(new(), new(), new(), new(), new(), new());
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics, origins);
-        Assert.True(origins.HasLiftedParameters);
-        var completed = ParameterDetector.CompleteOwnership(resolved, origins, observations: observed.Completion);
-        Assert.False(completed.Changed);
-        Assert.Empty(completed.Diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved) { TraversalObservations = observed.Collision }
             .VisitAlgorithm(resolved);
         OpenProviderValidator.Validate(resolved, diagnostics, (HostOperations?)null, observed.OpenProviders);
@@ -205,9 +199,10 @@ public class ImplicitSignatureTemplateTests
 
     /// <summary>
     /// Every pass that was K × L-shaped for many owners of one wide callee is now bounded by a linear
-    /// function of K and L — ownership completion, declaration validation, exposure and its summary
-    /// channel, the structural preflight, and the editor model's own FE-3 work — with and without an
-    /// owner-local parameter per owner.
+    /// function of K and L — declaration validation, exposure and its summary channel, the structural
+    /// preflight, and the editor model's own FE-3 work — with and without an owner-local parameter
+    /// per owner. (Ownership completion, formerly measured here too, no longer exists: automatic
+    /// forwarding never re-selects a binding, Q-04.)
     /// </summary>
     [Theory]
     [InlineData(64, 64, false)]
@@ -221,9 +216,6 @@ public class ImplicitSignatureTemplateTests
         var observed = ObservePasses(ownParameter ? OwnersWithOwnParameter(owners, width) : Owners(owners, width));
         long Linear(int factor) => (long)factor * (owners + width) + 64;
 
-        // Ownership completion extends by one template layer per owner, never L entries per owner.
-        Assert.Equal(owners, observed.Completion.ContextTemplateLayers);
-        Assert.InRange(observed.Completion.ContextEntriesWritten, 0, Linear(4));
         // Declaration validation: one layer for the shared tail under the one enclosing context.
         Assert.Equal(1, observed.Collision.ContextTemplateLayers);
         Assert.InRange(observed.Collision.ContextEntriesWritten, 0, Linear(4));
@@ -262,8 +254,9 @@ public class ImplicitSignatureTemplateTests
 
     /// <summary>
     /// Owners nested in K DISTINCT enclosing contexts (each parent owns a parameter of its own) still
-    /// cost one template layer per context: ownership completion and declaration validation never write
-    /// the template's L names per context.
+    /// cost one template layer per context: declaration validation never writes the template's L names
+    /// per context, and the resolver's reuse test against each parent's own parameter (Q-04) costs
+    /// that parameter, never the template's width.
     /// </summary>
     [Theory]
     [InlineData(64, 64)]
@@ -274,8 +267,6 @@ public class ImplicitSignatureTemplateTests
             + string.Concat(Enumerable.Range(0, owners).Select(i => $"B{i} = {{\n    A = abs(G)\n    A + w{i}\n}}\n")) + "1";
         var observed = ObservePasses(source);
         long Linear(int factor) => (long)factor * (owners + width) + 64;
-        Assert.Equal(2L * owners, observed.Completion.ContextTemplateLayers);
-        Assert.InRange(observed.Completion.ContextEntriesWritten, 0, Linear(4));
         Assert.Equal(owners + 1L, observed.Collision.ContextTemplateLayers);
         Assert.InRange(observed.Collision.ContextEntriesWritten, 0, Linear(4));
         Assert.InRange(observed.Collision.ContextNamesCanonicalized, 0, Linear(4));
@@ -336,20 +327,32 @@ public class ImplicitSignatureTemplateTests
     }
 
     /// <summary>
-    /// A closed branch body inside each owner reads a name only the owner's LIFTED signature binds:
-    /// ownership completion resolves it through the owner's own template layer — A's to A's
-    /// argument, B's to B's — so a layer is never answered by another owner of the same template.
+    /// A closed branch body inside each owner writes a name only the owner's LIFTED signature
+    /// binds. A forwarded parameter is never what a written name denotes (Q-04), so the name stays
+    /// undeclared in both owners — neither owner's forwarded parameters answer it, its own or another's.
     /// </summary>
     [Fact]
-    public void LiftedNameReadInsideTheOwner_BindsToThatOwner()
+    public void ForwardedTemplateName_IsNeverWhatAWrittenNameDenotes()
     {
-        var source = $"G = {Names("v", 10, " + ")}\nA = {{\n    F(0) = v0\n    F(n) = n\n    F(0) + abs(G)\n}}\n"
+        // Q-04: A and B receive G's names only so that they can hand them on to G. A name written
+        // in a closed branch body is name resolution's: `v0` and `v1` are undeclared there, never
+        // the owner's forwarded parameters (formerly the ownership-completion pass bound them,
+        // giving 56 and 75).
+        var reading = $"G = {Names("v", 10, " + ")}\nA = {{\n    F(0) = v0\n    F(n) = n\n    F(0) + abs(G)\n}}\n"
             + $"B = {{\n    F(0) = v1 * 10\n    F(n) = n\n    F(0) + abs(G)\n}}\nA({Arguments(10, 1)}), B({Arguments(10, 1)})";
+        var diagnostics = SourceProvenance.ExpectFrontEndError(reading);
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.UndeclaredIdentifier, d.Code));
+
+        // Owners that read nothing forwarded still share the one template.
+        var source = $"G = {Names("v", 10, " + ")}\nA = {{\n    F(0) = 5\n    F(n) = n\n    F(0) + abs(G)\n}}\n"
+            + $"B = {{\n    F(0) = 20\n    F(n) = n\n    F(0) + abs(G)\n}}\nA({Arguments(10, 1)}), B({Arguments(10, 1)})";
         var parsed = SourceProvenance.ParseValid(source);
         var a = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "A").Value);
         var b = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "B").Value);
         Assert.Same(a.ParameterPatterns, b.ParameterPatterns);
-        Assert.Equal("56\n75", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.Equal(0, a.ForwardingParameterStart);
+        Assert.Equal("60\n75", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));
     }
 
     /// <summary>The same spelling in two owners is two owner-local captures over one shared tail.</summary>
@@ -610,8 +613,10 @@ public class ImplicitSignatureTemplateTests
 
     /// <summary>A composed owner's completion inside its body lists its own head and the shared tail, as implicit parameters.</summary>
     [Fact]
-    public void EditorModel_CompletionInsideAnOwner_ListsItsOwnParameters()
+    public void EditorModel_CompletionInsideAnOwner_ListsItsOwnParameters_NeverItsForwardedOnes()
     {
+        // Q-04: the forwarded v0..v9 are handed on to G; no name written in A or B denotes them,
+        // so completion offers only each owner's own inferred parameter.
         var source = $"G = {Names("v", 10, " + ")}\nA = {{\n    abs(G) + x\n}}\nB = {{\n    abs(G) * y\n}}\nA(1, {Arguments(10)}) + B(2, {Arguments(10)})";
         var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(source).Parsed);
         var insideA = model.GetVisibleSymbolsAt(new SourcePosition(3, 6)).Where(s => s.Classification is IdentifierClassification.ImplicitParameterReference).Select(s => s.Name).ToHashSet();
@@ -620,8 +625,8 @@ public class ImplicitSignatureTemplateTests
         Assert.DoesNotContain("y", insideA);
         Assert.Contains("y", insideB);
         Assert.DoesNotContain("x", insideB);
-        Assert.All(Enumerable.Range(0, 10), j => Assert.Contains($"v{j}", insideA));
-        Assert.All(Enumerable.Range(0, 10), j => Assert.Contains($"v{j}", insideB));
+        Assert.All(Enumerable.Range(0, 10), j => Assert.DoesNotContain($"v{j}", insideA));
+        Assert.All(Enumerable.Range(0, 10), j => Assert.DoesNotContain($"v{j}", insideB));
     }
 
     /// <summary>A lazily composed signature text is the eager one: equal values, equal hashes, equal text.</summary>

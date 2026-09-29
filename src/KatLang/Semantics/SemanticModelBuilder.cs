@@ -484,9 +484,17 @@ public static class SemanticModelBuilder
             // An inferred signature that is a shared implicit-signature template (FE-3) declares only
             // implicit parameters: its table is a pure function of the template names, built once
             // per template and shared by every owner frame over it (each frame is still its own
-            // level — owner identity lives in the frame chain, never in the symbols).
+            // level — owner identity lives in the frame chain, never in the symbols). A signature
+            // automatic forwarding completed (Q-04) declares only its NAME-RESOLUTION prefix here:
+            // a forwarded parameter is handed on to the callee that needed it and is never what a
+            // written name in this scope denotes, so it is neither offered nor resolved to.
             if (extraParameters is null
-                && algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns: ImplicitSignatureTemplate template })
+                && algorithm is Algorithm.User
+                {
+                    HasExplicitParameterList: false,
+                    ForwardingParameterStart: null,
+                    ParameterPatterns: ImplicitSignatureTemplate template,
+                })
             {
                 return new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, ownsDeferredModuleOpen);
             }
@@ -545,7 +553,10 @@ public static class SemanticModelBuilder
                     IdentifierClassification.ExplicitParameterDefinition);
             }
 
-            foreach (var parameterName in algorithm.Params)
+            var nameResolutionParameters = algorithm is Algorithm.User { ForwardingParameterStart: not null } forwarding
+                ? ParameterPattern.FlattenCaptures(forwarding.NameResolutionParameterPatterns).Select(static parameter => parameter.Name)
+                : algorithm.Params;
+            foreach (var parameterName in nameResolutionParameters)
             {
                 if (parameterSymbols.ContainsKey(parameterName) || recoveryPlaceholderNames.Contains(parameterName))
                     continue;

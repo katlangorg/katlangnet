@@ -242,6 +242,8 @@ public class LanguageSpecRunnerTests
             "ownership-same-owner-later-property-rejected",
             "ownership-branch-binder-property-collision",
             "ownership-lifted-parameter-property-collision",
+            // Q-04: a forwarded parameter never gives a closed body's written name a meaning.
+            "forwarded-parameter-names-nothing-in-a-closed-body",
             // Static-open ownership (SYN-03 / F2): a parameter-owned open head is a
             // front-end rejection, so these are parse-level by construction.
             "ownership-open-target-parameter-rejected",

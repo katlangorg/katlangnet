@@ -61,6 +61,12 @@ internal sealed class ParameterPropertyCollisionValidator(
     /// </summary>
     internal sealed class ParameterBindings
     {
+        /// <summary>
+        /// The smallest template that extends by a LAYER; a narrower one is written as entries (a few
+        /// writes are cheaper than a layer every later lookup must consult).
+        /// </summary>
+        internal const int TemplateLayerMinimum = 8;
+
         internal static readonly ParameterBindings Empty = new(
             ImmutableDictionary.Create<string, SourceSpan?>(StringComparer.Ordinal), below: null, template: null);
 
@@ -308,7 +314,7 @@ internal sealed class ParameterPropertyCollisionValidator(
         // signature's owner-local head by entries above that layer (disjoint names, so the order of
         // the two writes cannot change a first-declaration span).
         if (parameterPatterns is ImplicitSignatureTemplate template
-            && (template.Tail ?? template).Facts.CaptureCount >= ParameterOwnership.TemplateLayerMinimum)
+            && (template.Tail ?? template).Facts.CaptureCount >= ParameterBindings.TemplateLayerMinimum)
         {
             var layered = ExtendByLayer(_parameters, template.Tail ?? template);
             return template.IsComposed

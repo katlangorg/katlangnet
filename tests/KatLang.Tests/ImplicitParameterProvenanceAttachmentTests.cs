@@ -161,36 +161,36 @@ public class ImplicitParameterProvenanceAttachmentTests
     // ── B. The shared update reaches every view, lifted callers included ─────
 
     [Fact]
-    public void OwnershipCompletionForget_ReachesTheLiftedCallersAndTheirErrors()
+    public void SharedNote_ReachesTheLiftedCallersAndTheirErrors_WithTheReceiverClaimIntact()
     {
-        // `Lib.Dubel(4)` is promoted inside Inner with the receiver known through the
-        // open; ownership completion then binds Inner's `Lib` to Outer's captured
-        // parameter, and the finalizer forgets the receiver claim on the ONE note that
-        // Inner, Outer (which lifted Dubel), and the root (which lifted it again) share.
+        // `Lib.Dubel(4)` is promoted inside Inner with the receiver known through the open.
+        // Outer receives a forwarded `Lib` for Need, but automatic forwarding never re-selects
+        // a written binding (Q-04), so Inner's receiver stays the opened Providers.Lib and the ONE
+        // note that Inner, Outer (which lifted Dubel), and the root (which lifted it again) share
+        // keeps its receiver claim. (Formerly the ownership-completion pass rebound the receiver
+        // to Outer's parameter and the finalizer had to forget the claim.)
         const string source = "Providers = { public Lib = { public Double(x) = x * 2 } }\n"
             + "Outer = { Inner = { open Providers\nLib.Dubel(4) }\nNeed = Lib\nInner + Need }\nOuter + 1";
         var root = SourceProvenance.ParseValid(source).Root;
         var outer = PropertyValue(root, "Outer");
         var inner = PropertyValue(outer, "Inner");
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(inner.Output));
-        Assert.IsType<Expr.Param>(edge.Target);
+        Assert.IsType<Expr.Resolve>(edge.Target);
 
         var note = Parameter(inner, "Dubel").InferredProvenance;
         Assert.NotNull(note);
         Assert.Same(note, edge.InferredFallbackProvenance);
         Assert.Same(note, Parameter(outer, "Dubel").InferredProvenance);
         Assert.Same(note, Parameter(root, "Dubel").InferredProvenance);
-        Assert.Null(note.DotMemberOrigin);
-        Assert.Null(note.SuggestedName);
+        Assert.Equal("Lib", note.DotMemberOrigin?.ReceiverDescription);
+        Assert.Equal("Lib.Double", note.SuggestedName);
 
         // The root's own report — built from the ROOT's declarations, two lifts away
-        // from the edge — observes the forgotten claim.
+        // from the edge — carries the very same note, claim included.
         var error = Fail(root);
         var unresolved = Assert.IsType<EvalError.UnresolvedImplicitParams>(Innermost(error));
         Assert.Contains("Dubel", unresolved.ParamNames);
-        Assert.Contains(Notes(error), reported => ReferenceEquals(reported, note));
-        Assert.All(Notes(error), reported => Assert.Null(reported.DotMemberOrigin));
-        Assert.DoesNotContain("was not found on", KatLangError.FromEvalError(error).Message, StringComparison.Ordinal);
+        Assert.Contains(Notes(error), reported => ReferenceEquals(reported, note) && reported.DotMemberOrigin is not null);
     }
 
     [Fact]

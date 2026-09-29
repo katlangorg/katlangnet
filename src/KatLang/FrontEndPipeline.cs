@@ -261,8 +261,8 @@ internal static class FrontEndPipeline
 
     /// <summary>
     /// The complete elaboration of a load-elaborated root: the structural gate, parameter
-    /// detection, implicit-argument resolution, ownership completion, the declaration and open
-    /// validators, and exposure resolution. Every parse result's root is produced here (or is
+    /// detection (name resolution), implicit-argument resolution (automatic parameter forwarding),
+    /// the declaration and open validators, and exposure resolution. Every parse result's root is produced here (or is
     /// the empty placeholder root of a rejected source), so a published root is ALWAYS an
     /// elaborated tree — never raw syntax.
     /// <para>
@@ -327,11 +327,16 @@ internal static class FrontEndPipeline
         // configuration's extended semantic prelude), so referencing one never turns
         // it into an implicit parameter — the front-end half of the same name-level
         // agreement the built-in Math module relies on.
-        // Detection and resolution report into STAGES of the operation's bag: ownership
-        // completion may replace both, so they are committed only once they stand.
-        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
-        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.DetectPrevalidated(
-            loadElaboratedRoot, hostOperations, graceOrigins: origins.Grace, diagnostics: passDiagnostics.CreateStage());
+        // NAME RESOLUTION and AUTOMATIC PARAMETER FORWARDING are two separate operations
+        // (Q-04, decided September 28 2026): detection decides what every written name
+        // denotes, and implicit-argument resolution then forwards, to each referenced callee,
+        // the parameter bindings those decisions established — adding a forwarded parameter
+        // only where none exists. Forwarding never feeds back into name resolution: a
+        // parameter it adds is never what a written name refers to, so no binding is
+        // re-selected once signatures are complete (the former ownership-completion pass
+        // re-selected them, which is how adding a reference could rebind a written name).
+        var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
+            loadElaboratedRoot, hostOperations, diagnostics: passDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -341,26 +346,8 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        var implicitDiagnostics = passDiagnostics.CreateStage();
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-            parameterizedRoot, observations: null, implicitDiagnostics, origins);
-        if (origins.HasLiftedParameters)
-        {
-            var completed = ParameterDetector.CompleteOwnership(
-                implicitResolvedRoot, origins, hostOperations, diagnostics: passDiagnostics.CreateStage());
-            if (completed.Changed)
-            {
-                // A completed enclosing signature can change an earlier nested binding.
-                // Rebuild forwarding and its diagnostics from written expressions with
-                // those signatures fixed; inference and Grace ordering are not replayed.
-                parameterDiagnostics = completed.Diagnostics;
-                implicitDiagnostics = passDiagnostics.CreateStage();
-                implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-                    completed.Root, diagnostics: implicitDiagnostics, preserveSignatures: true);
-            }
-        }
-        passDiagnostics.AddRange(parameterDiagnostics);
-        passDiagnostics.AddRange(implicitDiagnostics);
+            parameterizedRoot, observations: null, passDiagnostics);
 
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
         // The open PROVIDER rule needs completed signatures (an inferred parameter list is
@@ -382,8 +369,7 @@ internal static class FrontEndPipeline
     /// <summary>
     /// The program root after elaboration, as the <see cref="Algorithm.User"/> it is by
     /// construction: the parser's root is a user algorithm and every pass (module loading,
-    /// parameter detection, implicit-argument resolution, ownership completion, exposure
-    /// resolution) returns the variant it was given — a builtin as itself, a family as a
+    /// parameter detection, implicit-argument resolution, exposure resolution) returns the variant it was given — a builtin as itself, a family as a
     /// family, a user algorithm as a user algorithm. The passes are total over the hierarchy
     /// for the NESTED algorithms they rewrite, so their entry points are base-typed and the
     /// type system states the root invariant here, once, with a fail-loud guard for the

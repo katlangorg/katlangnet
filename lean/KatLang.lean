@@ -7133,17 +7133,24 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
 /-- One level of the surface layer's ordered OWNER CHAIN for a bare-name
     occurrence: the scopes enclosing that occurrence, innermost first.
 
-    `parameters` are the parameter BINDINGS the level owns — an algorithm's
-    written and inferred parameters (including parameters later lifted through
-    implicit forwarding), or a conditional branch body's pattern binders.
-    The chain contains COMPLETE declarations: selection is applied after signature
-    completion, retaining the discovered parameter lists, pattern shapes, and Grace
-    order. A changed selection requires rebuilding forwarding and closed-input
-    diagnostics from the written expressions, not inferring additional names from
-    a newly available receiver fallback. `properties` are the property names the level declares. Both are
-    OWNED declarations; `opens` are deliberately absent, because they are not
-    owned by the level and keep the separate later fallback policy of
-    `lookupLexicalProperty`.
+    `parameters` are the parameter BINDINGS the level owns by NAME RESOLUTION —
+    an algorithm's written and inferred parameters, or a conditional branch
+    body's pattern binders. `properties` are the property names the level
+    declares. Both are OWNED declarations; `opens` are deliberately absent,
+    because they are not owned by the level and keep the separate later fallback
+    policy of `lookupLexicalProperty`.
+
+    `forwarded` are the parameters AUTOMATIC PARAMETER FORWARDING added to the
+    level (Q-04, decided 2026-09-28): parameters the level receives only so that
+    it can hand them on to a referenced callee that needs them, because no
+    parameter binding of that name was available (`forwardingSource` below).
+    They complete the level's signature for its callers — and a property of the
+    same name still conflicts with them (`conflictingOwnedNames`) — but they are
+    NEVER what a written name denotes: the owner walk does not consult them, so
+    automatic forwarding cannot change what an existing name refers to. (Before
+    the decision the surface layer re-selected every binding against the
+    completed signatures, so a lifted parameter captured same-named written
+    references — PV-01.)
 
     A `ScopeCtx` cannot serve as this chain: it carries `props` but no
     parameters, since by the time an `Algorithm` exists every ancestor-parameter
@@ -7156,19 +7163,26 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
 structure OwnerLevel where
   parameters : List Ident
   properties : List Ident
+  forwarded : List Ident := []
   deriving Repr, DecidableEq
 
+/-- Every parameter the level's callers bind: its name-resolution parameters and the
+    ones automatic forwarding added (the completed signature). -/
+def OwnerLevel.signature (level : OwnerLevel) : List Ident :=
+  level.parameters ++ level.forwarded
+
 /-- Surface declaration validity, checked after parameter-signature completion and
-    before evaluation. Each property whose name is bound by this or an enclosing owner is a
-    declaration error, regardless of visibility or reference order. Pattern binders
-    belong to their branch body. Open targets are not declarations and never conflict,
-    but their HEAD name obeys the same owner chain (`elaborateOpenHead`). The surface
-    layer reports each written conflicting declaration at its source name.
+    before evaluation. Each property whose name is bound by this or an enclosing owner's
+    completed signature — forwarded parameters included — is a declaration error,
+    regardless of visibility or reference order. Pattern binders belong to their branch
+    body. Open targets are not declarations and never conflict, but their HEAD name obeys
+    the same owner chain (`elaborateOpenHead`). The surface layer reports each written
+    conflicting declaration at its source name.
     C#: ParameterPropertyCollisionValidator. This is a front-end validity boundary;
     raw/recovery AST evaluation and lookup do not substitute for this check. -/
 def conflictingOwnedNames (owner : OwnerLevel) (ancestors : List OwnerLevel := []) : List Ident :=
   owner.properties.filter fun name =>
-    owner.parameters.contains name || ancestors.any (fun outer => outer.parameters.contains name)
+    owner.signature.contains name || ancestors.any (fun outer => outer.signature.contains name)
 
 def validOwnedDeclarations : List OwnerLevel -> Bool
   | [] => true
@@ -7230,9 +7244,10 @@ def elaboratesToParameter (chain : List OwnerLevel) (name : Ident) : Bool :=
     the HEAD of a static open target (`Lib` in `open Lib` or `open Lib.Sub`)
     is a bare-name occurrence like any other, so the surface layer classifies
     it with the SAME owner walk. When the nearest established binding is a
-    parameter — written, inferred, lifted, collecting, grouped, a branch
-    binder, or any of these captured from an enclosing owner — that parameter
-    owns the name and the head elaborates to `.param`, exactly as every other
+    parameter — written, inferred, collecting, grouped, a branch binder, or any
+    of these captured from an enclosing owner (never one automatic forwarding
+    added: `OwnerLevel.forwarded` owns no name) — that parameter owns the name
+    and the head elaborates to `.param`, exactly as every other
     parameter-owned occurrence does. A `.param` head is NOT an open form
     (`Expr.openForm?` maps it to `none`), so open resolution rejects the
     target with `badOpenForm` and can never reach a farther same-named
@@ -7260,9 +7275,15 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    property that REQUIRES supplied arguments — one an ordinary call supplying
    zero arguments could not bind (`liftsBareValueReference` below) — the
    surface layer rewrites that reference into an explicit call, passing the
-   sibling's parameter-pattern captures as arguments (lifted into the
-   referencing property's own parameter-pattern list when they are not already
-   provided by the caller).
+   sibling's parameter-pattern captures as arguments. Each argument is the
+   PARAMETER binding the referencing body can already reach under that name —
+   its own, or an enclosing owner's captured parameter or branch binder — and
+   only a name no parameter binding supplies is lifted into the referencing
+   property's own parameter-pattern list, as a FORWARDED parameter that no
+   written name denotes (`forwardingSource` below; Q-04, decided 2026-09-28:
+   automatic parameter forwarding must not change what an existing name refers
+   to). Properties, opened names and builtins are never forwarded as
+   parameters.
 
    A reference to a sibling that ACCEPTS zero supplied arguments — no
    parameters, or only a top-level collecting parameter such as `Roll(*xs)` —
@@ -7284,6 +7305,10 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
      Surface:   `{ A = x + 1  B = A * 2 }`
      After detection: A.params = [x], B.params = []
      After resolution: B.params = [x], B.output = [Call(A, [Param(x)]) * 2]
+
+     Surface:   `{ A = x + 1  F(x) = { B = A * 2  B } }`
+     After resolution: B.params = [], B.output = [Call(A, [Param(x)]) * 2]
+       (the `x` is F's: B reuses the captured parameter instead of lifting its own)
 
      Surface:   `{ A(*xs) = xs.count  B = A * 2 }`
      After resolution: B.params = [], B.output = [Resolve(A) * 2]
@@ -7347,6 +7372,70 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
     `ParameterPattern.AcceptsZeroSuppliedSlots`. -/
 def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
   ParameterPattern.minimumSuppliedSlots signature != 0
+
+/-- Where AUTOMATIC PARAMETER FORWARDING takes the argument for one callee parameter
+    (Q-04, decided 2026-09-28): see `forwardingSource`. -/
+inductive ForwardingSource where
+  /-- The referencing body binds the name itself: a written or inferred parameter, or
+      its branch binder. -/
+  | ownParameter
+  /-- An enclosing owner binds it (at chain level `level`, a clause-branch binder
+      included): forwarding hands the callee THAT binding. -/
+  | capturedParameter (level : Nat)
+  /-- No parameter binding exists and the body infers its parameters: it receives a new
+      FORWARDED parameter of that name (`OwnerLevel.forwarded`). -/
+  | forwardedParameter
+  /-- No parameter binding exists and the body's inputs are CLOSED (a written parameter
+      list or a branch pattern): nothing is forwarded. -/
+  | unavailable
+  deriving Repr, DecidableEq
+
+/-- **Automatic parameter forwarding** (Q-04, decided 2026-09-28; surface syntax
+    support — the specification of the surface pass's one forwarding decision).
+    THE LAW: automatic parameter forwarding must not change what an existing name
+    refers to. Forwarding therefore reuses PARAMETER bindings only: when a lifted
+    reference forwards a callee parameter `name` from the referencing body — level 0
+    of `chain`, the body's name-resolution owner chain, innermost first — the argument
+    is the binding the owner walk (`selectOwnedDeclaration`) gives a WRITTEN occurrence
+    of `name` there, if that binding is a parameter: the body's own
+    (`.ownParameter`), or an accessible captured parameter of an enclosing owner, a
+    clause-branch binder included (`.capturedParameter`). Properties, opened names,
+    module members and prelude builtins are never forwarded as parameters: when the
+    walk finds a property, or nothing, an inferring body (`inferring = true`) receives a
+    new forwarded parameter and a closed body gets nothing. So a body never acquires a
+    parameter that would capture a name it already reads from an enclosing owner — the
+    former rule, which lifted every callee parameter the body did not bind itself and
+    then re-selected the written references against the completed signature, made
+    `A = y + 1` / `F(y) = { G = y * 1000 + A ⏎ H(y) = G ⏎ H(100) }` / `F(3)` give 100101
+    where the inlined helper gives 3004 (PV-01) — and a forwarded parameter is never
+    what a written name denotes (`OwnerLevel.forwarded`; the owner walk does not read
+    it). C#: `ImplicitArgumentResolver.ForwardableParameters` (the enclosing parameter
+    bindings), `LiftSignature`, `MissingClosedListForwardingNames`,
+    `BuildImplicitCallArguments`; laws in `KatLangArityLaws.lean`, guards in
+    `CoreTests/ForwardingBindings.lean`. -/
+def forwardingSource (chain : List OwnerLevel) (inferring : Bool) (name : Ident) : ForwardingSource :=
+  match selectOwnedDeclaration chain name with
+  | .parameter 0 => .ownParameter
+  | .parameter (level + 1) => .capturedParameter (level + 1)
+  | _ => if inferring then .forwardedParameter else .unavailable
+
+/-- The chain level whose parameter binding a forwarding reuses, if it reuses one. -/
+def ForwardingSource.reusedLevel? : ForwardingSource -> Option Nat
+  | .ownParameter => some 0
+  | .capturedParameter level => some level
+  | .forwardedParameter => none
+  | .unavailable => none
+
+/-- The chain level whose parameter the owner walk selected, if it selected one. -/
+def OwnedDeclaration.parameterLevel? : OwnedDeclaration -> Option Nat
+  | .parameter level => some level
+  | .property _ => Option.none
+  | .none => Option.none
+
+/-- The chain once forwarding added a parameter `name` to the referencing body. -/
+def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
+  | [], _ => []
+  | level :: outer, name => { level with forwarded := level.forwarded ++ [name] } :: outer
 
 -- Surface syntax support: while/repeat initial-state boundaries
 --------------------------------------------------------------------------------

@@ -110,9 +110,10 @@ public class Fe3HostileReviewTests
             : HostOperations.Create(HostOperation.Create("Tick", (values, _) => Tick(values), "owner"));
         // Two owners of one shared nonempty template are two callables: every explicit call is
         // fresh. Since Q-03 an owner LIFTS only from a callee that requires a supplied argument,
-        // so a lifting owner always requires one itself — a shared template's owners are called,
-        // never property-cached (a collecting-only `G` would be read as a value, lifting nothing).
-        // Each owner's `Tick` runs once per call, and the calls are independent.
+        // so a root-level lifting owner, which has no enclosing parameter binding to reuse (Q-04),
+        // requires one itself — a shared template's owners are called, never property-cached (a
+        // collecting-only `G` would be read as a value, lifting nothing). Each owner's `Tick`
+        // runs once per call, and the calls are independent.
         const string source = "G(t, *xs) = t + xs.count\nA = G + Tick(10)\nB = G + Tick(20)\nA(0), B(0), A(0, 5), B(0, 5, 6)";
         var options = new RunOptions { HostOperations = operations, EvaluationCancellationToken = cancellation.Token };
         var parsed = async ? await Parser.ParseAsync(source, options) : Parser.Parse(source, options);
@@ -199,30 +200,91 @@ public class Fe3HostileReviewTests
         Assert.Equal(baseline.PropertyInfos.Select(p => p.GetDisplaySignature(PropertyCallStyle.Dot)), model.PropertyInfos.Select(p => p.GetDisplaySignature(PropertyCallStyle.Dot)));
     }
 
+    /// <summary>
+    /// The collision validator is the one context that meets completed (lifted) signatures, and it
+    /// extends a context by ONE layer for a shared template of at least
+    /// <c>TemplateLayerMinimum</c> names — entries otherwise, and a composed signature's owner-local
+    /// head as entries ABOVE its layer (FE-3). Whatever the mix, its lookup must answer exactly like a
+    /// nearest-declaration dictionary: a property collides iff a parameter of its own or an enclosing
+    /// owner has its name, and the report names the NEAREST such declaration. (Until Q-04 this test
+    /// pinned the same law for the detector's parameter-ownership map, which no longer layers: detection
+    /// runs before any signature is lifted.)
+    /// </summary>
     [Theory]
     [InlineData(7)]
     [InlineData(8)]
     [InlineData(9)]
-    public void OwnershipLayers_MatchNearestOwnerDictionary(int width)
+    public void CollisionBindingLayers_MatchNearestDeclarationDictionary(int width)
     {
+        const int levels = 16;
         var interner = new ImplicitSignatureTemplateInterner(null);
-        var ownership = ParameterOwnership.Empty;
-        ElaboratedPropertyScope? parent = null;
-        var expected = new Dictionary<string, ElaboratedPropertyScope>(StringComparer.Ordinal);
-        var levels = new List<ElaboratedPropertyScope>();
-        for (var depth = 0; depth < 16; depth++)
+        var visible = new Dictionary<string, SourceSpan>(StringComparer.Ordinal);
+        var signatures = new IReadOnlyList<ParameterPattern>[levels];
+        var probes = new List<(int Level, string Name, SourceSpan Span, SourceSpan? Nearest)>();
+        for (var level = 0; level < levels; level++)
         {
-            var patterns = interner.InternFlat(Enumerable.Range(0, width).Select(i => (ParameterPattern)new CaptureParameterPattern($"p{depth + i}")).ToArray());
-            var owner = Body() with { ParameterPatterns = patterns };
-            parent = ElaboratedScopeLookup.CreateScope(owner, parent);
-            levels.Add(parent);
-            ownership = ownership.ExtendSignature(parent, patterns);
-            foreach (var name in owner.Params) expected[name] = parent;
-            if (depth % 2 == 0) { ownership = ownership.Extend(parent, ["p0"]); expected["p0"] = parent; }
-            foreach (var name in expected.Keys.Append("missing"))
-                foreach (var level in levels)
-                    Assert.Equal(expected.TryGetValue(name, out var winner) && ReferenceEquals(winner, level), ownership.DeclaresParameter(level, name));
+            // Level `level` declares p{level}..p{level + width - 1} (overlapping the enclosing levels'
+            // names) as a shared template; an even level also declares `q` as a composed head.
+            var tailCaptures = Enumerable.Range(0, width)
+                .Select(i => new CaptureParameterPattern($"p{level + i}", new SourceSpan(100 + level, 1 + i, 100 + level, 2 + i)))
+                .ToArray();
+            var tail = interner.InternFlat(tailCaptures);
+            foreach (var capture in tailCaptures)
+                visible[capture.Name] = capture.Parameter.Span!.Value;
+            if (level % 2 == 0)
+            {
+                var head = new CaptureParameterPattern("q", new SourceSpan(300 + level, 1, 300 + level, 2));
+                signatures[level] = ImplicitSignatureTemplate.Compose([interner.Freeze(head)], tail);
+                visible["q"] = head.Parameter.Span!.Value;
+            }
+            else
+            {
+                signatures[level] = tail;
+            }
+
+            // A property for every name visible here, plus two that are not: the next level's first
+            // new name and a name nothing declares.
+            var names = visible.Keys.Append($"p{level + width}").Append("missing").ToArray();
+            for (var k = 0; k < names.Length; k++)
+            {
+                SourceSpan? nearest = visible.TryGetValue(names[k], out var span) ? span : null;
+                probes.Add((level, names[k], new SourceSpan(1000 + level, 1 + k, 1000 + level, 2 + k), nearest));
+            }
         }
+
+        Algorithm.User? inner = null;
+        for (var level = levels - 1; level >= 0; level--)
+        {
+            var properties = probes
+                .Where(probe => probe.Level == level)
+                .Select(probe => new Property(probe.Name, Body(new Expr.Num(0))) { DeclarationSpans = [probe.Span] })
+                .ToList();
+            if (inner is not null)
+                properties.Add(new Property($"N{level}", inner));
+            inner = Body() with { ParameterPatterns = signatures[level], Properties = properties };
+        }
+
+        var diagnostics = new DiagnosticBag();
+        var observed = new FrontEndTraversalObservations();
+        new ParameterPropertyCollisionValidator(diagnostics) { TraversalObservations = observed }.VisitAlgorithm(inner!);
+
+        Assert.Equal(width >= ParameterPropertyCollisionValidator.ParameterBindings.TemplateLayerMinimum ? levels : 0, observed.ContextTemplateLayers);
+        Assert.All(diagnostics, diagnostic => Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code));
+        var reported = diagnostics.ToDictionary(diagnostic => diagnostic.Span!.Value, diagnostic => diagnostic.Message);
+        foreach (var probe in probes)
+        {
+            if (probe.Nearest is { } declared)
+            {
+                Assert.True(reported.TryGetValue(probe.Span, out var message), $"'{probe.Name}' at level {probe.Level} was not reported.");
+                Assert.EndsWith($"The parameter is declared at line {declared.Start.Line}, column {declared.Start.Column}.", message);
+            }
+            else
+            {
+                Assert.False(reported.ContainsKey(probe.Span), $"'{probe.Name}' at level {probe.Level} was reported.");
+            }
+        }
+
+        Assert.Equal(probes.Count(probe => probe.Nearest is not null), diagnostics.Count);
     }
 
     private sealed class SlowReach : AstWalker

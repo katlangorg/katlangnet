@@ -197,14 +197,11 @@ public class ImplicitArgumentSharingTests
     private static PassObservations ObservePasses(string source)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var origins = new ImplicitArgumentResolver.ResolutionOrigins();
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax, graceOrigins: origins.Grace);
+        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
         Assert.Empty(detectorDiagnostics);
         var observed = new PassObservations(new(), new(), new(), new(), new(), new(), new(), new());
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics, origins);
-        if (origins.HasLiftedParameters)
-            Assert.False(ParameterDetector.CompleteOwnership(resolved, origins).Changed);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved) { TraversalObservations = observed.Collision }
             .VisitAlgorithm(resolved);
         OpenProviderValidator.Validate(resolved, diagnostics, (HostOperations?)null, observed.OpenProviders);

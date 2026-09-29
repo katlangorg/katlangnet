@@ -4364,25 +4364,109 @@ public static class LanguageSpecCorpus
             Source = "Need(v) = v\nOuter = { v = 5\nInner = v\nNeed + Inner }\nOuter(7)",
             Outcome = SpecOutcome.ParseError,
             ExpectedDiagnosticCode = DiagnosticCode.ParameterPropertyCollision,
-            Explanation = "Using Need completes Outer's signature with v. Its property v then conflicts with that parameter, so the front end rejects the declaration even though v was not in Outer's initially inferred signature.",
+            Explanation = "A property is never forwarded as a parameter, so Need's v is not supplied by Outer's property v: Outer receives a forwarded parameter v, and that parameter conflicts with the same-named property, so the front end rejects the declaration even though v was not in Outer's initially inferred signature.",
         },
         new()
         {
-            Id = "ownership-later-lifted-parameter-beats-inner-open",
+            Id = "forwarded-parameter-leaves-an-opened-reference",
             Category = "name-resolution",
             Source = "Lib = { public v = 99 }\nOuter = {\n    Inner = { open Lib\n        v\n    }\n    Need = v\n    Inner + Need\n}\nOuter(7)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "14",
-            ExpectedRaw = "14",
+            ExpectedDisplay = "106",
+            ExpectedRaw = "106",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                // Forwarding Need completes Outer's signature before final binding selection.
-                new SpecProbe("Need(v) = v\nOuter = { F(0) = 0\nF(n) = v\nF(1) + Need }\nOuter(7)", "ok raw=14 n=1"),
-                // The original bare v must not retain the synthesized v(x) call.
-                new SpecProbe("v = x + 99\nOuter = { Inner = v\nNeed(v) = v\nInner + Need }\nOuter(2, 7)", "ok raw=14 n=1"),
+                // A reference to a PROPERTY keeps it (and its own forwarding) the same way.
+                new SpecProbe("v = x + 99\nOuter = { Inner = v\nNeed(v) = v\nInner + Need }\nOuter(2, 7)", "ok raw=108 n=1"),
+                new SpecProbe("v = 99\nNeed(v) = v\nOuter = { Inner = v\n  Inner + Need }\nOuter(7)", "ok raw=106 n=1"),
+                // An opened name written directly in the forwarding owner stays the opened name.
+                new SpecProbe("Lib = { public v = 99 }\nNeed(v) = v\nOuter = {\n    open Lib\n    v + Need\n}\nOuter(7)", "ok raw=106 n=1"),
             ],
-            Explanation = "Established parameters include those lifted by implicit argument resolution: referencing Need supplies v to Outer's completed signature. The earlier nested v therefore selects Outer's parameter before Inner's open and both terms read 7. Completion preserves the inferred signatures and ordering, then rebuilds forwarding and closed-input diagnostics for the selected bindings.",
+            Explanation = "Automatic parameter forwarding must not change what an existing name refers to. Need requires v, and no parameter binding named v is available in Outer, so Outer receives a new forwarded parameter v for Need (7). The v written inside Inner was resolved to the opened Lib.v (99) before forwarding, and a forwarded parameter is never what a written name denotes, so it stays 99: 99 + 7. (Before the Q-04 decision the forwarded parameter captured every same-named reference in Outer, and both terms read 7.)",
+        },
+        new()
+        {
+            Id = "forwarded-parameter-names-nothing-in-a-closed-body",
+            Category = "name-resolution",
+            Source = "Need(v) = v\nOuter = { F(0) = 0\nF(n) = v\nF(1) + Need }\nOuter(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            Explanation = "A forwarded parameter exists only for the callee that needed it: Outer receives v for Need, but the v written in the closed branch body is resolved by name resolution alone, which finds nothing, so it stays undeclared. (Before the Q-04 decision the forwarded parameter gave it a meaning after the fact.)",
+        },
+        new()
+        {
+            Id = "forwarding-reuses-a-captured-ancestor-parameter",
+            Category = "name-resolution",
+            Source = "A = y + 1\nF(y) = {\n    G = y * 1000 + A\n    H(y) = G\n    H(100)\n}\nF(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3004",
+            ExpectedRaw = "3004",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Extracting part of an expression into a property keeps every binding: the inlined helper.
+                new SpecProbe("F(y) = {\n    G = y * 1000 + (y + 1)\n    H(y) = G\n    H(100)\n}\nF(3)", "ok raw=3004 n=1"),
+                // A helper that reuses the enclosing parameter is an ordinary zero-parameter property.
+                new SpecProbe("Area = width * height\nReport(width, height) = {\n    Doubled = Area * 2\n    if(width > 1, Doubled, 0)\n}\nReport(3, 4)", "ok raw=24 n=1"),
+                // A clause-branch binder is reused like any parameter.
+                new SpecProbe("A = n * 10\nF(0) = 0\nF(n) = {\n    G = n * 100 + A\n    H(n) = G\n    H(9)\n}\nF(2)", "ok raw=220 n=1"),
+                // A closed parameter list forwards the captured ancestor parameter too.
+                new SpecProbe("A = y + 1\nG = {\n  F(x) = A\n  F(1) + y\n}\nG(10)", "ok raw=21 n=1"),
+                // Explicit shadowing stays intentional.
+                new SpecProbe("A = y + 1\nOuter(y) = {\n    Inner(y) = A * 2\n    Inner(10) + y\n}\nOuter(3)", "ok raw=25 n=1"),
+                // A genuinely unbound dependency is still forwarded as a new parameter.
+                new SpecProbe("A = y + 1\nF = {\n    G = A * 2\n    G\n}\nF(5)", "ok raw=12 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Automatic parameter forwarding must not change what an existing name refers to. G uses A, which needs y, and the y written in G already denotes F's parameter, so forwarding hands A that same binding: G takes no parameter of its own, and G is 3 * 1000 + (3 + 1) whoever reads it — H(100) included, since H's own y is unrelated. Forwarding reuses parameter bindings only (the body's own, or an enclosing owner's parameter or clause binder) and adds a new parameter only when none exists. (Before the Q-04 decision G received its own y, the written y followed it, and the program gave 100101.)",
+        },
+        new()
+        {
+            Id = "forwarding-never-supplies-a-property-an-open-or-a-builtin",
+            Category = "name-resolution",
+            Source = "v = 99\nNeed(v) = v\nOuter = Need + 1\nOuter(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Parameter names that match prelude builtins remain parameters to forward.
+                new SpecProbe("Clamp(x, min, max) = if(x < min, min, if(x > max, max, x))\nSafe = Clamp + 0\nSafe(15, 0, 10)", "ok raw=10 n=1"),
+                // ... and a written call of the builtin keeps calling the builtin.
+                new SpecProbe("NeedMin(min) = min + 1\nSafe = NeedMin + min((3, 4))\nSafe(10)", "ok raw=14 n=1"),
+                // An opened member of the same name is not forwarded either.
+                new SpecProbe("Lib = { public v = 99 }\nNeed(v) = v\nOuter = {\n    open Lib\n    Need + 1\n}\nOuter(7)", "ok raw=8 n=1"),
+            ],
+            Explanation = "Automatic forwarding reuses parameter bindings only; properties, opened names and builtins are not forwarded as parameters. The root property v = 99 does not satisfy Need's parameter v, so Outer still receives its own forwarded parameter v, and Outer(7) is Need(7) + 1. An unrelated property elsewhere can therefore never turn a parameterized formula into a zero-parameter one.",
+        },
+        new()
+        {
+            Id = "forwarding-reused-binding-kind-preserves-values",
+            Category = "name-resolution",
+            Source = """
+                Target(tag, *items) = items
+                Collected(tag, *items) = {
+                    G(q) = Target
+                    G(99)
+                }
+                Fixed(tag, items) = {
+                    G(q) = Target
+                    G(99)
+                }
+                Head(x, *rest) = x + rest.count
+                Partial(x) = {
+                    H = Head
+                    [H, H(10, 20)]
+                }
+                [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
+                """,
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[(1, 2), [3], ()], [[(1, 2), [3], ()]], [4, 6]]",
+            ExpectedRaw = "L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Automatic parameter forwarding reuses the enclosing binding's kind. Both closed G(q) bodies reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items.",
         },
         new()
         {

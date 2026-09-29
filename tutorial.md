@@ -427,6 +427,21 @@ KineticEnergy(2, 10, 5)
 
 `KineticEnergy` uses `Speed`, which needs `distance` and `time`, so `KineticEnergy` takes them as well and hands them on to `Speed`. Only a formula that still needs inputs is handed them this way; one that works with no arguments is simply read, like a property (see [Using the Name Alone](#using-the-name-alone)). Its parameters are its own names first, followed by the ones it passes on: `KineticEnergy(mass, distance, time)`. The inputs are handed on **by name**, not by position, so an explicit parameter list must declare them under the same names: `KineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2` works, while in `KineticEnergy(m, d, t) = m * Speed ^ 2 / 2` nothing named `distance` or `time` is there to hand on, and calling it is an error.
 
+This is **automatic parameter forwarding**, and it never changes what a name you wrote refers to. It hands on parameters only. When the formula is used inside an algorithm that already has a parameter of the needed name — its own, or one of an algorithm around it — that parameter is handed on, and nothing new is added:
+
+```
+Area = width * height
+Report(width, height) = {
+    Doubled = Area * 2
+    Doubled + 1
+}
+Report(3, 4)
+```
+
+**Result:** `25`
+
+`Doubled` uses `Area`, which needs `width` and `height`. `Doubled` is written inside `Report`, whose parameters have those names, so `Area` receives Report's `width` and `height`, and `Doubled` needs no inputs of its own: it is an ordinary property of `Report`. A new parameter is added only when no parameter of the needed name is available, and never to an algorithm with an explicit parameter list. Properties, opened names, and builtins are not handed on as parameters, even when their names match: with `v = 99` and `Need(v) = v`, the formula `Outer = Need + 1` still takes its own `v`, so `Outer(7)` is `8`.
+
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
 

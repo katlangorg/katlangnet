@@ -958,6 +958,94 @@ theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
     (fun b hb => by cases hb)]
   exact hc
 
+/-
+## Automatic parameter forwarding preserves existing bindings (Q-04, decided 2026-09-28)
+
+THE LAW: automatic parameter forwarding must not change what an existing name refers
+to. `forwardingSource` (KatLang.lean) is the surface pass's one forwarding decision;
+these laws pin its two halves over arbitrary owner chains: forwarding reuses exactly
+the PARAMETER binding a written occurrence of the name would denote (and nothing else:
+never a property, an opened name, or a builtin), and the parameter it adds when no
+binding exists changes the binding of no written name.
+-/
+
+/-- Forwarding reuses EXACTLY the parameter binding the owner walk gives a written
+occurrence of the name at the referencing body — the same level, and only when that
+binding is a parameter. -/
+theorem forwarding_reuses_exactly_the_written_parameter_binding
+    (chain : List OwnerLevel) (inferring : Bool) (name : Ident) :
+    (forwardingSource chain inferring name).reusedLevel?
+      = (selectOwnedDeclaration chain name).parameterLevel? := by
+  unfold forwardingSource
+  cases h : selectOwnedDeclaration chain name with
+  | none => cases inferring <;> rfl
+  | property level => cases inferring <;> rfl
+  | parameter level => cases level <;> rfl
+
+/-- A same-named PROPERTY — a property of an enclosing owner, the root, or the prelude
+(a builtin) — is never forwarded as a parameter: the body gets a new forwarded
+parameter when it infers its inputs, and nothing when they are closed. -/
+theorem forwarding_never_supplies_a_property
+    (chain : List OwnerLevel) (inferring : Bool) (name : Ident) (level : Nat)
+    (h : selectOwnedDeclaration chain name = .property level) :
+    forwardingSource chain inferring name
+      = if inferring then .forwardedParameter else .unavailable := by
+  unfold forwardingSource
+  rw [h]
+
+/-- A name the owner walk does not find at all — an opened or module-provided name, or
+one nothing declares — is not forwarded from anywhere either. -/
+theorem forwarding_never_supplies_an_undeclared_name
+    (chain : List OwnerLevel) (inferring : Bool) (name : Ident)
+    (h : selectOwnedDeclaration chain name = .none) :
+    forwardingSource chain inferring name
+      = if inferring then .forwardedParameter else .unavailable := by
+  unfold forwardingSource
+  rw [h]
+
+/-- A new forwarded parameter is created only for a name no written parameter
+occurrence at the body could denote: never one that would capture an existing
+reference to an enclosing parameter. -/
+theorem fresh_forwarded_parameter_only_without_a_parameter_binding
+    (chain : List OwnerLevel) (inferring : Bool) (name : Ident)
+    (h : forwardingSource chain inferring name = .forwardedParameter) :
+    elaboratesToParameter chain name = false := by
+  unfold forwardingSource at h
+  unfold elaboratesToParameter
+  cases hs : selectOwnedDeclaration chain name with
+  | none => rfl
+  | property level => rfl
+  | parameter level =>
+    rw [hs] at h
+    cases level <;> simp at h
+
+private theorem select_from_ignores_forwarded (i : Nat) (level : OwnerLevel) (outer : List OwnerLevel)
+    (forwarded : List Ident) (m : Ident) :
+    selectOwnedDeclarationFrom i ({ level with forwarded := forwarded } :: outer) m
+      = selectOwnedDeclarationFrom i (level :: outer) m := by
+  simp [selectOwnedDeclarationFrom]
+
+/-- THE BINDING-PRESERVATION LAW. Adding the parameter forwarding creates changes the
+binding of NO name: every written occurrence, of that name or any other, selects
+exactly what it selected before. (The superseded rule added the lifted name to the
+body's name-resolution parameters instead; `CoreTests/ForwardingBindings.lean` keeps
+the witness of the rebinding that caused.) -/
+theorem forwarded_parameter_changes_no_written_binding
+    (chain : List OwnerLevel) (name m : Ident) :
+    selectOwnedDeclaration (forwardParameter chain name) m = selectOwnedDeclaration chain m := by
+  cases chain with
+  | nil => rfl
+  | cons level outer =>
+    unfold forwardParameter selectOwnedDeclaration
+    exact select_from_ignores_forwarded 0 level outer _ m
+
+/-- The declaration-validity rule still sees a forwarded parameter: a property of the
+same owner, or of a body nested in it, that shares its name is the ordinary
+parameter/property collision. -/
+theorem forwarded_parameter_still_conflicts_with_a_same_named_property (name : Ident) :
+    conflictingOwnedNames { parameters := [], properties := [name], forwarded := [name] } = [name] := by
+  simp [conflictingOwnedNames, OwnerLevel.signature]
+
 /-- A FIXED parameter binds its one argument unchanged: `Id((1, 2))` binds
 the sequence whole. -/
 theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :

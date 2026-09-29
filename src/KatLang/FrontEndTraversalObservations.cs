@@ -257,9 +257,11 @@ internal sealed class FrontEndTraversalObservations
 
     /// <summary>
     /// Shared implicit-signature templates added to a persistent context as ONE layer instead of one
-    /// entry per name (FE-3) — the detector's parameter-ownership map and the collision validator's
-    /// declaration bindings: an owner whose completed signature is an L-wide shared template costs one
-    /// layer, never L <see cref="ContextEntriesWritten"/>.
+    /// entry per name (FE-3) — the collision validator's declaration bindings, the one context that
+    /// sees completed signatures (detection runs before automatic parameter forwarding, so its
+    /// parameter-ownership map never meets a lifted template): an owner whose completed signature is an
+    /// L-wide shared template costs one layer per enclosing context, never L
+    /// <see cref="ContextEntriesWritten"/>.
     /// </summary>
     public long ContextTemplateLayers { get; private set; }
 

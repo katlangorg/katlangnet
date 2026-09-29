@@ -396,7 +396,7 @@ If ANY checklist item fails, fix the output before emitting it.
 ## Open Visibility, Ambiguity, and Load
 
 - Place the single `open` declaration before all property definitions and output — even when opening a sibling library defined later in the same algorithm (the forward reference resolves). An `open` after any property or output is a parse error.
-- `open` imports public properties from the target. Ownership-first lookup applies: the owner walk first (each enclosing scope outward, where a scope owns both the parameters it binds and the properties it declares, and a property may not have the same name as a completed parameter of that or any enclosing lexical algorithm), then opened public properties. Every owned name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope — wins over an opened name.
+- `open` imports public properties from the target. Ownership-first lookup applies: the owner walk first (each enclosing scope outward, where a scope owns both the parameters it binds and the properties it declares, and a property may not have the same name as a parameter — written, inferred, or added by automatic parameter forwarding — of that or any enclosing lexical algorithm), then opened public properties. Every owned name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope — wins over an opened name.
 - If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference (`A.X`) or open only the provider you need:
 
       open A, B
@@ -739,7 +739,8 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Free identifiers in property bodies become implicit parameters unless they resolve to properties, built-ins, or opened names, but only for algorithms without an explicit parameter list.
 - If an algorithm has an explicit parameter list, that list is closed. Names not declared in the parameter pattern must resolve from the surrounding scope; otherwise they are reported as unresolved. Implicit parameters are inferred only for algorithms without an explicit parameter list.
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
-- For implicit-parameter algorithms, parameters lift transitively through referenced properties. Only a referenced callable that REQUIRES supplied arguments lifts: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears (an operand, a list element, a Math argument, an alias), so hand arguments on to it with an explicit call (`Count(items*)`).
+- For implicit-parameter algorithms, parameters are handed on transitively through referenced properties (automatic parameter forwarding). Only a referenced callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears (an operand, a list element, a Math argument, an alias), so hand arguments on to it with an explicit call (`Count(items*)`).
+- Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
 
 Teaching contrast:
 
@@ -1551,7 +1552,7 @@ Repeated parameter names use one order-independent compatibility rule: all suppl
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (104 of the 303-case canonical language specification,
+Verified reference examples (105 of the 307-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2531,6 +2532,19 @@ Regenerate this block from the repo root with:
     F(7)
 
   Fails with an evaluation error (arity).
+
+[forwarding-reuses-a-captured-ancestor-parameter] Automatic parameter forwarding must not change what an existing name refers to. G uses A, which needs y, and the y written in G already denotes F's parameter, so forwarding hands A that same binding: G takes no parameter of its own, and G is 3 * 1000 + (3 + 1) whoever reads it — H(100) included, since H's own y is unrelated. Forwarding reuses parameter bindings only (the body's own, or an enclosing owner's parameter or clause binder) and adds a new parameter only when none exists. (Before the Q-04 decision G received its own y, the written y followed it, and the program gave 100101.)
+
+    A = y + 1
+    F(y) = {
+        G = y * 1000 + A
+        H(y) = G
+        H(100)
+    }
+    F(3)
+
+  Displays:
+    3004
 
 [ownership-captured-parameter-beats-outer-property] Name resolution searches outward by owning scope. `Inner` is nested inside `Outer`, which binds the parameter `v`, so the walk stops there; the root property `v = 99` belongs to a farther owner and is never reached. A parameter therefore means the same thing written directly in its algorithm's body and written inside a body nested in it.
 

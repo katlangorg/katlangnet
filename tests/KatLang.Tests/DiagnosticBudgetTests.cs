@@ -133,38 +133,26 @@ public class DiagnosticBudgetTests
         Assert.Equal(3, bag.Count);
     }
 
-    [Theory]
-    [InlineData(3, 0, 2)]
-    [InlineData(3, 0, 5)]
-    [InlineData(3, 2, 2)]
-    [InlineData(3, 3, 1)]
-    [InlineData(3, 5, 5)]
-    [InlineData(1, 0, 1)]
-    [InlineData(1, 1, 3)]
-    [InlineData(5, 2, 3)]
-    public void Bag_CommittedStage_IsIndistinguishableFromDirectReports(int capacity, int before, int staged)
+    [Fact]
+    public void Bag_Stage_HasTheParentCapacity_AndNeverReachesTheParent()
     {
-        var reports = Enumerable.Range(0, before + staged)
-            .Select(i => new Diagnostic($"d{i}", DiagnosticSeverity.Error, new SourceSpan(i + 1, 1, i + 1, 2))
-            {
-                Code = i % 2 == 0 ? DiagnosticCode.UnexpectedToken : DiagnosticCode.DuplicateProperty,
-            })
-            .ToArray();
-
-        var direct = new DiagnosticBag(capacity);
-        direct.AddRange(reports);
-
-        var parent = new DiagnosticBag(capacity);
-        parent.AddRange(reports.Take(before));
+        // A stage holds a WITHHELD list (a provisional elaboration's passes): bounded exactly like
+        // the operation's own list, and never committed into it.
+        var parent = new DiagnosticBag(2);
+        parent.Report(DiagnosticCode.UnexpectedToken, "p0", null);
         var stage = parent.CreateStage();
-        stage.AddRange(reports.Skip(before));
-        parent.AddRange(stage);
+        for (var i = 0; i < 5; i++)
+            stage.Report(DiagnosticCode.UndeclaredIdentifier, $"s{i}", null);
 
-        Assert.Equal(direct.ToArray(), parent.ToArray());
-        Assert.Equal(direct.ReportedCount, parent.ReportedCount);
-        Assert.Equal(direct.ReportedErrorCount, parent.ReportedErrorCount);
-        Assert.Equal(direct.IsTruncated, parent.IsTruncated);
-        Assert.Equal(direct.HasReported(DiagnosticCode.DuplicateProperty), parent.HasReported(DiagnosticCode.DuplicateProperty));
+        Assert.Equal(parent.Capacity, stage.Capacity);
+        Assert.Equal(["s0", "s1"], stage.Take(2).Select(d => d.Message));
+        AssertMarker(stage[^1], 2);
+        Assert.Equal(5, stage.ReportedCount);
+
+        Assert.Equal(["p0"], parent.Select(d => d.Message));
+        Assert.Equal(1, parent.ReportedCount);
+        Assert.False(parent.IsTruncated);
+        Assert.False(parent.HasReported(DiagnosticCode.UndeclaredIdentifier));
     }
 
     [Fact]
@@ -204,11 +192,10 @@ public class DiagnosticBudgetTests
     }
 
     [Fact]
-    public void Bag_RejectsANonPositiveCapacity_AndCommittingItself()
+    public void Bag_RejectsANonPositiveCapacity()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new DiagnosticBag(0));
-        var bag = new DiagnosticBag(1);
-        Assert.Throws<InvalidOperationException>(() => bag.AddRange(bag));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DiagnosticBag(-1));
     }
 
     // ── B. The law through the front end ────────────────────────────────────

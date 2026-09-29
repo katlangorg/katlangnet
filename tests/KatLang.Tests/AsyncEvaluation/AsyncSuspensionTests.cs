@@ -59,7 +59,10 @@ public class AsyncSuspensionTests
         // its captured parameter read executes after resumption. The Param read
         // itself does not use the property cache.
         { "captured-parameter-ownership", "v = 99\nOuter(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)" },
-        { "lifted-parameter-ownership", "Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nNeed = v\nInner + Need }\nOuter(7)" },
+        // Automatic forwarding: `Outer` receives a forwarded `v` for `Need`, which never
+        // rebinds the `v` written in `Inner` (Q-04) — that one stays the opened `Lib.v`,
+        // a property read through the seam after `Inner`'s own suspension.
+        { "forwarded-parameter-leaves-opened-reference", "Lib = { public v = 99 }\nOuter = { Inner = { open Lib\nv }\nNeed = v\nInner + Need }\nOuter(7)" },
     };
 
     [Theory]
@@ -82,14 +85,21 @@ public class AsyncSuspensionTests
         Assert.True(cache.AsyncAccesses > 0);
         Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(cache.AsyncAccesses, cache.ThreadHops.Count);
-        if (caseId is "captured-parameter-ownership" or "lifted-parameter-ownership")
+        if (caseId is "captured-parameter-ownership")
         {
-            // Outer(7) is an explicit call; Inner is the only property access.
-            // Need(v) is synthesized forwarding in the lifted case. Neither the
-            // shadowed root v nor the opened v must ever reach this seam.
+            // Outer(7) is an explicit call; Inner is the only property access. The
+            // shadowed root v must never reach this seam.
             Assert.Equal(1, cache.AsyncAccesses);
-            Assert.Equal(caseId == "captured-parameter-ownership" ? "ok raw=8 n=1" : "ok raw=14 n=1",
-                AsyncEvaluationHarness.NeutralOf(async));
+            Assert.Equal("ok raw=8 n=1", AsyncEvaluationHarness.NeutralOf(async));
+        }
+        else if (caseId is "forwarded-parameter-leaves-opened-reference")
+        {
+            // Outer(7) is an explicit call and Need(v) synthesized forwarding (a call), so
+            // exactly two property reads suspend: Inner, and the opened Lib.v that Inner's
+            // written v still denotes (99 + 7). Before Q-04 the forwarded parameter rebound
+            // that v, which then never reached this seam (one access, 14).
+            Assert.Equal(2, cache.AsyncAccesses);
+            Assert.Equal("ok raw=106 n=1", AsyncEvaluationHarness.NeutralOf(async));
         }
     }
 

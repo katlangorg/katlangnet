@@ -27,12 +27,10 @@ namespace KatLang;
 /// too. The budget therefore changes which diagnostics are STORED and nothing else: the tree,
 /// module loading, and every decision are identical at any capacity.</para>
 ///
-/// <para><b>Stages.</b> A pass whose diagnostics may still be discarded and replaced (parameter
-/// detection and implicit-argument resolution before ownership completion) reports into a STAGE
-/// bag of the same capacity (<see cref="CreateStage"/>). Committing it
-/// (<see cref="AddRange(DiagnosticBag)"/>) appends its diagnostics exactly as if they had been
-/// reported here — its dropped reports included — so the prefix law holds for the final list,
-/// and a live stage never stores more than one list could.</para>
+/// <para><b>Stages.</b> A list that is WITHHELD — every pass of a provisional elaboration, whose
+/// diagnostics may depend on a missing module (see <see cref="FrontEndPipeline"/>) — goes to a
+/// STAGE bag of the same capacity (<see cref="CreateStage"/>), so it never stores more than one
+/// list could. A stage is never committed: nothing it holds reaches the operation's list.</para>
 ///
 /// <para><b>Payload.</b> Every stored message is at most <see cref="MaxRetainedMessageLength"/>
 /// UTF-16 code units (a longer one keeps its surrogate-safe prefix and the <c>…</c> marker), so a
@@ -103,7 +101,7 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    /// <summary>A stage bag of the same capacity, committed later with <see cref="AddRange(DiagnosticBag)"/>.</summary>
+    /// <summary>A stage bag of the same capacity, for a withheld list (see the class documentation).</summary>
     internal DiagnosticBag CreateStage() => new(Capacity);
 
     /// <summary>Whether a diagnostic of <paramref name="code"/> was reported, stored or dropped.</summary>
@@ -142,58 +140,6 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     {
         if (CountReport(code, DiagnosticSeverity.Error))
             _stored.Add(new Diagnostic(BoundMessage(formatMessage(state)), DiagnosticSeverity.Error, span) { Code = code });
-    }
-
-    /// <summary>Reports each diagnostic in order.</summary>
-    internal void AddRange(IEnumerable<Diagnostic> diagnostics)
-    {
-        foreach (var diagnostic in diagnostics)
-            Add(diagnostic);
-    }
-
-    /// <summary>
-    /// Commits a stage: its stored diagnostics are reported here in order, and its dropped
-    /// reports are counted here, exactly as if the stage had reported to this bag directly.
-    /// </summary>
-    internal void AddRange(DiagnosticBag stage)
-    {
-        ArgumentNullException.ThrowIfNull(stage);
-        if (ReferenceEquals(stage, this))
-            throw new InvalidOperationException("A diagnostic bag cannot commit itself.");
-
-        var storedOrdinary = stage._stored.Count - (stage._truncated ? 1 : 0);
-        long storedErrors = 0;
-        for (var index = 0; index < storedOrdinary; index++)
-        {
-            var diagnostic = stage._stored[index];
-            if (diagnostic.Severity == DiagnosticSeverity.Error)
-                storedErrors++;
-            Add(diagnostic);
-        }
-
-        _reportedCodes |= stage._reportedCodes;
-        if (stage._reportedOtherCodes is { } otherCodes)
-            (_reportedOtherCodes ??= []).UnionWith(otherCodes);
-
-        var droppedErrors = stage._reportedErrors - storedErrors;
-        CountDropped(stage._reported - storedOrdinary, droppedErrors, stage.DroppedSeverity(droppedErrors));
-    }
-
-    // The most severe severity the stage dropped: its marker carries it (see CountReport).
-    private DiagnosticSeverity? DroppedSeverity(long droppedErrors)
-        => droppedErrors > 0
-            ? DiagnosticSeverity.Error
-            : _truncated ? _stored[^1].Severity : null;
-
-    private void CountDropped(long dropped, long droppedErrors, DiagnosticSeverity? droppedSeverity)
-    {
-        if (dropped <= 0)
-            return;
-
-        _reported += dropped;
-        _reportedErrors += droppedErrors;
-        if (_reported > Capacity)
-            MarkTruncated(droppedSeverity ?? DiagnosticSeverity.Error);
     }
 
     // Counts one report and says whether it is stored. A report past the capacity truncates the

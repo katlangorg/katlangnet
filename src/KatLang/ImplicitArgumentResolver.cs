@@ -3,12 +3,25 @@ using System.Collections.Immutable;
 namespace KatLang;
 
 /// <summary>
-/// Rewrites bare value-position references to algorithms that REQUIRE supplied arguments into
-/// explicit <see cref="Expr.Call"/> nodes, lifting their parameters into the enclosing algorithm's
-/// <see cref="Algorithm.User.Parameters"/> list. A reference to an algorithm that accepts zero
-/// supplied arguments — no parameters, or only a top-level collecting parameter — is never
-/// rewritten: it stays a property-style value demand, which reads the property cache (Q-03, see
-/// <see cref="RequiresSuppliedArguments"/>). Must run after <see cref="ParameterDetector"/>.
+/// AUTOMATIC PARAMETER FORWARDING: rewrites bare value-position references to algorithms that
+/// REQUIRE supplied arguments into explicit <see cref="Expr.Call"/> nodes whose arguments hand on
+/// the callee's parameters. A reference to an algorithm that accepts zero supplied arguments — no
+/// parameters, or only a top-level collecting parameter — is never rewritten: it stays a
+/// property-style value demand, which reads the property cache (Q-03, see
+/// <see cref="RequiresSuppliedArguments"/>). Must run after <see cref="ParameterDetector"/>, which
+/// is NAME RESOLUTION: every written name is decided there, and this pass never re-selects one.
+///
+/// <para><b>Forwarding preserves existing bindings (Q-04, decided September 28 2026).</b>
+/// Automatic parameter forwarding must not change what an existing name refers to, so each
+/// callee parameter is supplied by a PARAMETER binding only: the referencing algorithm's own
+/// (written, inferred), or — through <see cref="ForwardableParameters"/> — the enclosing
+/// parameter binding a written reference of that name already denotes (an ancestor's captured
+/// parameter or a clause-branch binder). Properties, opened names, module members and prelude
+/// builtins are never forwarded as parameters. Only when no parameter binding exists does an
+/// inferring algorithm receive a new parameter, appended to its
+/// <see cref="Algorithm.User.ParameterPatterns"/> and marked
+/// (<see cref="Algorithm.User.ForwardingParameterStart"/>): it completes the signature for
+/// callers and is never what a written name denotes. A closed parameter list receives nothing.</para>
 ///
 /// <para><b>Internal by design (v0.8.187):</b> this is ONE stage of the authoritative
 /// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API — its
@@ -76,30 +89,17 @@ internal static class ImplicitArgumentResolver
     internal static Algorithm ResolvePrevalidated(
         Algorithm root,
         FrontEndTraversalObservations? observations = null,
-        DiagnosticBag? diagnostics = null,
-        ResolutionOrigins? origins = null,
-        bool preserveSignatures = false)
+        DiagnosticBag? diagnostics = null)
     {
         return ProcessAlgorithm(
             root,
             parentParamMap: SignatureMap.Empty(observations),
+            ForwardableParameters.None,
             isRoot: true,
             observations,
             diagnostics,
             branchContext: null,
-            new ResolutionRun(origins, preserveSignatures) { Observations = observations });
-    }
-
-    /// <summary>
-    /// Run-local source origins for the ownership completion boundary. A synthesized call
-    /// is not a written call: if a later lifted parameter changes its binding (or a strict
-    /// consumer's binding), forwarding must be rebuilt from the original expression.
-    /// </summary>
-    internal sealed class ResolutionOrigins
-    {
-        public ParameterDetector.GraceOrigins Grace { get; } = new();
-        public bool HasLiftedParameters;
-        public Dictionary<Expr, Expr> ImplicitCalls { get; } = new(ReferenceEqualityComparer.Instance);
+            new ResolutionRun { Observations = observations });
     }
 
     /// <summary>
@@ -111,11 +111,8 @@ internal static class ImplicitArgumentResolver
     /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
     /// garbage afterwards — never static, never ambient.
     /// </summary>
-    private sealed class ResolutionRun(ResolutionOrigins? origins = null, bool preserveSignatures = false, SourceSpan? importSite = null)
+    private sealed class ResolutionRun(SourceSpan? importSite = null)
     {
-        public readonly ResolutionOrigins? Origins = origins;
-        public readonly bool PreserveSignatures = preserveSignatures;
-
         /// <summary>
         /// The import site of the module content the walk is currently inside (see
         /// <see cref="KatLang.ImportSite"/>): where a refused strict-value forwarding inside
@@ -143,11 +140,6 @@ internal static class ImplicitArgumentResolver
             public void Dispose() => run.ImportSite = saved;
         }
 
-        public Expr RecordImplicitCall(Expr rewritten, Expr original)
-        {
-            Origins?.ImplicitCalls.Add(rewritten, original);
-            return rewritten;
-        }
         /// <summary>
         /// Nested algorithms rewritten so far, by <see cref="AlgorithmRegionKey"/>. A family's
         /// NAME only words a branch body's blocked strict-value diagnostics, so a second
@@ -196,6 +188,55 @@ internal static class ImplicitArgumentResolver
 
         private Dictionary<IReadOnlyList<ParameterPattern>, IReadOnlySet<string>>? _calleeNames;
 
+        /// <summary>
+        /// The COLLECTING capture names of each callee pattern list (at any pattern level), by list
+        /// reference — usually none or one, so a question about them costs O(1) per reference.
+        /// </summary>
+        public IReadOnlyList<string> CollectingCaptureNamesOf(IReadOnlyList<ParameterPattern> patterns)
+        {
+            _collectingCaptureNames ??= new(ReferenceEqualityComparer.Instance);
+            if (!_collectingCaptureNames.TryGetValue(patterns, out var names))
+            {
+                IReadOnlyList<ParameterDeclaration> captures = patterns is ImplicitSignatureTemplate template
+                    ? template.Facts.Captures
+                    : ParameterPattern.FlattenCaptures(patterns);
+                names = captures
+                    .Where(static capture => capture.Kind == ParameterKind.Collecting)
+                    .Select(static capture => capture.Name)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                _collectingCaptureNames.Add(patterns, names);
+            }
+
+            return names;
+        }
+
+        private Dictionary<IReadOnlyList<ParameterPattern>, IReadOnlyList<string>>? _collectingCaptureNames;
+
+        /// <summary>
+        /// Q-04: whether the lifted TAIL shares a capture name with the enclosing parameter bindings a
+        /// forwarding owner reuses, by (bindings, tail) reference: the owners of one body share one
+        /// bindings instance, so K siblings lifting one L-wide tail under W bindings pay one
+        /// min(L, W) test, never K.
+        /// </summary>
+        public bool TailMeetsForwardable(ImplicitSignatureTemplate tail, ForwardableParameters forwardable)
+        {
+            _tailMeetsForwardable ??= new();
+            var key = (forwardable, tail);
+            if (!_tailMeetsForwardable.TryGetValue(key, out var meets))
+            {
+                var names = tail.Facts.NameSet;
+                meets = names.Count <= forwardable.Count
+                    ? names.Any(forwardable.Binds)
+                    : forwardable.BoundNames.Any(names.Contains);
+                _tailMeetsForwardable.Add(key, meets);
+            }
+
+            return meets;
+        }
+
+        private Dictionary<(ForwardableParameters, ImplicitSignatureTemplate), bool>? _tailMeetsForwardable;
+
         public readonly NameSetInterner ReferenceNameSets = new();
         public readonly SignatureFootprints Footprints = new();
         public readonly BranchContextInterner BranchContexts = new();
@@ -206,14 +247,19 @@ internal static class ImplicitArgumentResolver
     /// REFERENCE; the <see cref="SignatureFootprints"/> projection of the signatures its FREE reference
     /// names see in the visible map (every signature the rewrite can read — the subtree's own
     /// bindings shadow the map, open targets use fresh maps, stored dot-edge fallbacks are
-    /// never rewritten); for a conditional branch body the closed binder specification the
-    /// pattern imposes, by CONTENT (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>);
-    /// and the reporting mode. Two reaches with equal keys observe identical inputs, whatever
-    /// path led to them and whatever else the property loop rewrote in between.
+    /// never rewritten); the enclosing PARAMETER bindings its forwarding may reuse (Q-04: the
+    /// canonical <see cref="ForwardableParameters"/> content, names and collecting names — a
+    /// synthesized argument carries only a binding's spelling and kind, never its owner); for a
+    /// conditional branch body the closed binder specification the pattern imposes, by CONTENT
+    /// (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>); and the reporting mode. Two
+    /// reaches with equal keys observe identical inputs, whatever path led to them and whatever
+    /// else the property loop rewrote in between.
     /// </summary>
     private sealed record AlgorithmRegionKey(
         Algorithm Node,
         CanonicalNameSet Snapshot,
+        CanonicalNameSet ForwardableNames,
+        CanonicalNameSet ForwardableCollectingNames,
         int? ClosedSpecification,
         bool ReportsDiagnostics)
     {
@@ -221,6 +267,8 @@ internal static class ImplicitArgumentResolver
             => other is not null
                 && ReferenceEquals(Node, other.Node)
                 && Snapshot.Equals(other.Snapshot)
+                && ForwardableNames.Equals(other.ForwardableNames)
+                && ForwardableCollectingNames.Equals(other.ForwardableCollectingNames)
                 && ClosedSpecification == other.ClosedSpecification
                 && ReportsDiagnostics == other.ReportsDiagnostics;
 
@@ -228,6 +276,8 @@ internal static class ImplicitArgumentResolver
             => HashCode.Combine(
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Node),
                 Snapshot.GetHashCode(),
+                ForwardableNames.GetHashCode(),
+                ForwardableCollectingNames.GetHashCode(),
                 ClosedSpecification,
                 ReportsDiagnostics);
     }
@@ -293,6 +343,155 @@ internal static class ImplicitArgumentResolver
             _entries = _entries.SetItem(name, signature);
             Version = new(_entries, Version, [name]);
             _observations?.RecordContextEntryWritten();
+        }
+    }
+
+    /// <summary>
+    /// Q-04 (decided September 28 2026): the PARAMETER bindings automatic parameter forwarding may
+    /// reuse inside one body — the answer to "which EXISTING parameter binding can satisfy this
+    /// callee parameter?", kept separate from ordinary name resolution on purpose.
+    ///
+    /// <para>It holds, for every name, the parameter binding the owner walk
+    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>) would select for a WRITTEN
+    /// parameter occurrence of that name here: a parameter that an enclosing owner's name
+    /// resolution established — written, inferred, a clause-branch binder, or an inferred name of
+    /// the never-called root — nearest owner winning, and never a name a NEARER level declares as a
+    /// property (the nearer declaration decides; only invalid source or the root's phantom exemption
+    /// reach that case). Forwarding therefore hands a callee exactly the binding an existing written
+    /// reference of the name already denotes, instead of adding a same-named parameter to the
+    /// referencing body that would shadow it: automatic forwarding never changes what an existing
+    /// name refers to. Properties, opened names, module members, and prelude builtins are
+    /// deliberately absent — they are not forwarded as parameters — and so are the parameters
+    /// forwarding itself adds (<see cref="Algorithm.User.ForwardingParameterStart"/>): they exist
+    /// only for the callee that needed them.</para>
+    ///
+    /// <para>PERSISTENT and CANONICAL (FE-1): a body extends its parent's bindings by what it adds,
+    /// so K nested bodies under a W-binding owner cost O(K + W); <see cref="Names"/> and
+    /// <see cref="CollectingNames"/> are canonical name-set ids of the run's interner, so two
+    /// derivations of equal bindings key the resolver's region memo alike.</para>
+    /// </summary>
+    internal sealed class ForwardableParameters
+    {
+        private readonly ImmutableDictionary<string, ParameterKind> _kinds;
+        private readonly NameSetInterner? _interner;
+
+        private ForwardableParameters(
+            ImmutableDictionary<string, ParameterKind> kinds,
+            NameSetInterner? interner,
+            CanonicalNameSet names,
+            CanonicalNameSet collectingNames)
+        {
+            _kinds = kinds;
+            _interner = interner;
+            Names = names;
+            CollectingNames = collectingNames;
+        }
+
+        /// <summary>No parameter binding to reuse (the program root's body, an open-target region).</summary>
+        public static ForwardableParameters None { get; } = new(
+            ImmutableDictionary.Create<string, ParameterKind>(StringComparer.Ordinal),
+            interner: null,
+            NameSetInterner.Empty,
+            NameSetInterner.Empty);
+
+        /// <summary>The bound names (canonical set of the run's interner).</summary>
+        public CanonicalNameSet Names { get; }
+
+        /// <summary>The bound names whose binding is a collecting binding (canonical set).</summary>
+        public CanonicalNameSet CollectingNames { get; }
+
+        public bool IsEmpty => _kinds.IsEmpty;
+
+        public int Count => _kinds.Count;
+
+        public IEnumerable<string> BoundNames => _kinds.Keys;
+
+        public bool Binds(string name) => _kinds.ContainsKey(name);
+
+        /// <summary>The binding kind of <paramref name="name"/> when an enclosing parameter binds it.</summary>
+        public bool TryGetKind(string name, out ParameterKind kind) => _kinds.TryGetValue(name, out kind);
+
+        /// <summary>
+        /// The bindings a body's OWN forwarding may reuse: these, minus every name the body
+        /// declares as a property (a nearer declaration decides the owner walk). The same instance
+        /// when the body declares none of the bound names.
+        /// </summary>
+        public ForwardableParameters WithoutProperties(IReadOnlyList<Property> properties, NameSetInterner interner)
+        {
+            if (_kinds.IsEmpty || properties.Count == 0)
+                return this;
+
+            List<string>? shadowed = null;
+            foreach (var property in properties)
+            {
+                if (_kinds.ContainsKey(property.Name))
+                    (shadowed ??= []).Add(property.Name);
+            }
+
+            if (shadowed is null)
+                return this;
+
+            var removed = interner.With(NameSetInterner.Empty, shadowed);
+            var rebased = Rebase(interner);
+            return new(
+                rebased._kinds.RemoveRange(shadowed),
+                interner,
+                interner.Except(rebased.Names, removed),
+                interner.Except(rebased.CollectingNames, removed));
+        }
+
+        /// <summary>
+        /// The bindings a body's NESTED bodies may reuse: these plus the body's own name-resolution
+        /// parameter bindings, which replace same-named outer ones (the nearest owner wins); the first
+        /// capture of a repeated name decides its kind, as it does for a caller's own signature.
+        /// The same instance when the body binds no parameter.
+        /// </summary>
+        public ForwardableParameters WithParameters(IEnumerable<ParameterDeclaration> parameters, NameSetInterner interner)
+        {
+            HashSet<string>? own = null;
+            List<string>? collecting = null;
+            List<string>? ordinary = null;
+            foreach (var parameter in parameters)
+            {
+                own ??= new HashSet<string>(StringComparer.Ordinal);
+                if (own.Add(parameter.Name))
+                    (parameter.Kind == ParameterKind.Collecting ? collecting ??= [] : ordinary ??= []).Add(parameter.Name);
+            }
+
+            if (own is null)
+                return this;
+
+            var rebased = Rebase(interner);
+            var kinds = rebased._kinds.ToBuilder();
+            foreach (var name in ordinary ?? [])
+                kinds[name] = ParameterKind.Normal;
+            foreach (var name in collecting ?? [])
+                kinds[name] = ParameterKind.Collecting;
+
+            var collectingNames = rebased.CollectingNames;
+            if (ordinary is not null)
+                collectingNames = interner.Except(collectingNames, interner.With(NameSetInterner.Empty, ordinary));
+            if (collecting is not null)
+                collectingNames = interner.With(collectingNames, collecting);
+            return new(kinds.ToImmutable(), interner, interner.With(rebased.Names, own), collectingNames);
+        }
+
+        /// <summary>
+        /// These bindings with their canonical keys interned by <paramref name="interner"/>: a snapshot
+        /// recorded by one resolution run (a deferred branch's context) is re-keyed once by the run
+        /// that reads it, so region keys never compare ids of two different interners.
+        /// </summary>
+        public ForwardableParameters Rebase(NameSetInterner interner)
+        {
+            if (ReferenceEquals(_interner, interner) || _kinds.IsEmpty)
+                return this;
+
+            var collecting = _kinds.Where(static entry => entry.Value == ParameterKind.Collecting).Select(static entry => entry.Key);
+            return new(
+                _kinds,
+                interner,
+                interner.With(NameSetInterner.Empty, _kinds.Keys),
+                interner.With(NameSetInterner.Empty, collecting));
         }
     }
 
@@ -595,6 +794,22 @@ internal static class ImplicitArgumentResolver
         /// context (a written explicit list or a branch pattern), whose bundles stay region-local.
         /// </summary>
         public IReadOnlyList<ParameterPattern>? FinalSignature { get; init; }
+
+        /// <summary>
+        /// Q-04: the ENCLOSING parameter bindings this owner's forwarding reuses for a callee
+        /// capture its own parameters do not bind — the source of that capture's synthesized
+        /// argument and, for a re-spread decision, of its binding kind. A name they bind is never
+        /// lifted into an open owner and is never missing from a closed one.
+        /// </summary>
+        public ForwardableParameters Forwardable { get; init; } = ForwardableParameters.None;
+
+        /// <summary>
+        /// The forwarding SOURCE kind of <paramref name="name"/>: the owner's own binding (its
+        /// signature, lifted captures included), else the enclosing parameter binding forwarding
+        /// reuses, else none (the name is about to be lifted as a copy of the callee's capture).
+        /// </summary>
+        public bool TryGetSourceBindingKind(string name, out ParameterKind kind)
+            => SourceBindingKinds.TryGetValue(name, out kind) || Forwardable.TryGetKind(name, out kind);
     }
 
     /// <summary>
@@ -664,6 +879,14 @@ internal static class ImplicitArgumentResolver
 
         /// <summary>The resolution this region belongs to (its algorithm region memo).</summary>
         public readonly ResolutionRun Run = run;
+
+        /// <summary>
+        /// Q-04: the enclosing parameter bindings a block written in this region's rows may reuse
+        /// for its own forwarding — the region owner's forwardable bindings plus its own
+        /// name-resolution parameters (<see cref="ForwardableParameters.None"/> for an open-target
+        /// region, whose targets are rooted at the prelude).
+        /// </summary>
+        public ForwardableParameters NestedForwarding { get; init; } = ForwardableParameters.None;
 
         /// <summary>
         /// Non-null only for a conditional branch body's own output-rewrite region: the
@@ -746,14 +969,14 @@ internal static class ImplicitArgumentResolver
             if (!ReferenceEquals(_missingForwardingNamesContext, context))
             {
                 Observations?.RecordResolverForwardingVerdict();
-                return MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames);
+                return MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames, context.Forwardable);
             }
 
             _missingForwardingNames ??= new(ReferenceEqualityComparer.Instance);
             if (!_missingForwardingNames.TryGetValue(calleePatterns, out var missing))
             {
                 Observations?.RecordResolverForwardingVerdict();
-                missing = MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames);
+                missing = MissingClosedListForwardingNames(calleePatterns, context.CallerParameterPatterns, closedParameterNames, context.Forwardable);
                 _missingForwardingNames.Add(calleePatterns, missing);
             }
 
@@ -782,8 +1005,11 @@ internal static class ImplicitArgumentResolver
             if (!_implicitArguments.TryGetValue(calleePatterns, out var arguments))
             {
                 // FE-3: an OPEN context shares the bundle with every owner whose forwarding inputs are
-                // identical (SharedBundleKey); a closed context keeps the region-local FE-2 bundle.
-                if (context.FinalSignature is { } finalSignature)
+                // identical (SharedBundleKey); a closed context keeps the region-local FE-2 bundle, and
+                // so does a bundle whose re-spread decision reads an ENCLOSING binding's kind (Q-04) —
+                // an input the shared key does not carry.
+                if (context.FinalSignature is { } finalSignature
+                    && !ReadsForwardableBindingKind(calleePatterns, context))
                 {
                     var key = SharedBundleKeyOf(calleePatterns, context, finalSignature);
                     Run.SharedBundles ??= new();
@@ -802,6 +1028,26 @@ internal static class ImplicitArgumentResolver
             }
 
             return arguments;
+        }
+
+        /// <summary>
+        /// Q-04: whether a synthesized bundle for this callee reads the KIND of an enclosing binding
+        /// its owner's forwarding reuses — only a COLLECTING callee capture decides a re-spread, and
+        /// only when the owner itself does not bind its name. Such a bundle depends on the enclosing
+        /// bindings, which <see cref="SharedBundleKey"/> does not carry, so it stays region-local.
+        /// </summary>
+        private bool ReadsForwardableBindingKind(IReadOnlyList<ParameterPattern> calleePatterns, ImplicitRewriteContext context)
+        {
+            if (context.Forwardable.IsEmpty)
+                return false;
+
+            foreach (var name in Run.CollectingCaptureNamesOf(calleePatterns))
+            {
+                if (!context.SourceBindingKinds.ContainsKey(name) && context.Forwardable.Binds(name))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -850,7 +1096,15 @@ internal static class ImplicitArgumentResolver
             {
                 // These inputs forward the callee's own kinds unchanged. The local head
                 // and shared tail are independent, including collecting/grouped patterns.
-                var tailContext = context with { CallerParameterPatterns = [], SourceBindingKinds = tail.Facts.BindingKinds, FinalSignature = tail };
+                // Every tail name is the owner's own lifted capture, so the tail bundle reads
+                // no enclosing binding (Q-04) and stays shareable by every owner.
+                var tailContext = context with
+                {
+                    CallerParameterPatterns = [],
+                    SourceBindingKinds = tail.Facts.BindingKinds,
+                    FinalSignature = tail,
+                    Forwardable = ForwardableParameters.None,
+                };
                 var tailKey = SharedBundleKeyOf(tail, tailContext, tail);
                 Run.SharedBundles ??= new();
                 if (!Run.SharedBundles.TryGetValue(tailKey, out var tailArguments))
@@ -858,21 +1112,21 @@ internal static class ImplicitArgumentResolver
                     tailArguments = BuildImplicitArgumentBundle(tail, tailContext);
                     Run.SharedBundles.Add(tailKey, tailArguments);
                 }
-                var head = BuildImplicitCallArguments(composed.Head, [], context.SourceBindingKinds);
+                var head = BuildImplicitCallArguments(composed.Head, [], context.SourceBindingKinds, context.Forwardable);
                 Observations?.RecordImplicitArgumentBundleBuilt(head.Count);
                 return OutputBundle.Prepend(head, tailArguments);
             }
             var arguments = OutputBundle.From(BuildImplicitCallArguments(
-                calleePatterns, context.CallerParameterPatterns, context.SourceBindingKinds));
+                calleePatterns, context.CallerParameterPatterns, context.SourceBindingKinds, context.Forwardable));
             Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
             return arguments;
         }
 
-        /// <summary>One lifted reference's own call edge: its origin entry, observed once per reference.</summary>
-        public Expr SynthesizedImplicitCall(Expr call, Expr original)
+        /// <summary>One lifted reference's own call edge, observed once per reference.</summary>
+        public Expr SynthesizedImplicitCall(Expr call)
         {
             Observations?.RecordImplicitCallSynthesized();
-            return Run.RecordImplicitCall(call, original);
+            return call;
         }
 
         public Dictionary<Expr, Expr> RewriteMapFor(bool inCallPosition)
@@ -925,9 +1179,15 @@ internal static class ImplicitArgumentResolver
     /// <see cref="AlgorithmRegionKey"/>, sharing preserved in the output, and a branch body's
     /// family-worded diagnostics replayed for every further family that shares it.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="forwardable"/> is what the algorithm's enclosing owners bind as PARAMETERS by
+    /// name resolution (Q-04): the bindings its automatic forwarding may reuse instead of lifting a
+    /// same-named parameter of its own.
+    /// </remarks>
     private static Algorithm ProcessAlgorithm(
         Algorithm alg,
         SignatureMap parentParamMap,
+        ForwardableParameters forwardable,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -937,7 +1197,7 @@ internal static class ImplicitArgumentResolver
             Algorithm.Builtin => alg,
 
             Algorithm.Conditional conditional => ProcessConditionalProperty(
-                conditional, "<anonymous>", parentParamMap, observations, diagnostics, run),
+                conditional, "<anonymous>", parentParamMap, forwardable, observations, diagnostics, run),
 
             // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
             // leaf: its output is a single bound Param (rewritten by ParameterDetector), it has no
@@ -948,7 +1208,7 @@ internal static class ImplicitArgumentResolver
             Algorithm.User { AssignmentDeconstructionTarget: not null } => alg,
 
             Algorithm.User user => ProcessUserAlgorithmRegion(
-                user, parentParamMap, isRoot, observations, diagnostics, branchContext, run),
+                user, parentParamMap, forwardable, isRoot, observations, diagnostics, branchContext, run),
         };
 
     /// <summary>
@@ -958,6 +1218,7 @@ internal static class ImplicitArgumentResolver
     private static Algorithm.User ProcessUserAlgorithmRegion(
         Algorithm.User alg,
         SignatureMap parentParamMap,
+        ForwardableParameters forwardable,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -966,11 +1227,14 @@ internal static class ImplicitArgumentResolver
     {
         // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
         if (isRoot)
-            return ProcessUserAlgorithm(alg, parentParamMap, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
+            return ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
 
+        forwardable = forwardable.Rebase(run.ReferenceNameSets);
         var regionKey = new AlgorithmRegionKey(
             alg,
             run.Footprints.Capture(FreeReferenceNames(alg, run), run.ReferenceNameSets, parentParamMap.Version, observations),
+            forwardable.Names,
+            forwardable.CollectingNames,
             branchContext is null ? null : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
             ReportsDiagnostics: diagnostics is not null);
         var regions = run.AlgorithmRegions ??= new();
@@ -989,7 +1253,7 @@ internal static class ImplicitArgumentResolver
         var diagnosticTemplates = branchContext is not null && diagnostics is not null
             ? new List<BlockedForwardingTemplate>()
             : null;
-        var rewritten = ProcessUserAlgorithm(alg, parentParamMap, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
+        var rewritten = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
         // Admitted only after the whole body completed (acyclic by the structural preflight).
         regions[regionKey] = new AlgorithmRegion(rewritten, diagnosticTemplates);
         return rewritten;
@@ -998,6 +1262,7 @@ internal static class ImplicitArgumentResolver
     private static Algorithm.User ProcessUserAlgorithm(
         Algorithm.User alg,
         SignatureMap parentParamMap,
+        ForwardableParameters forwardable,
         bool isRoot,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
@@ -1006,6 +1271,19 @@ internal static class ImplicitArgumentResolver
         List<BlockedForwardingTemplate>? diagnosticTemplates)
     {
         var newOpens = ProcessOpenExprs(alg.Opens, observations, run);
+
+        // Q-04: the enclosing PARAMETER bindings this body's own forwarding reuses — those its
+        // owners established, minus any name this body declares as a property (the nearer
+        // declaration decides) — and, for every body nested in this one (property values, branch
+        // bodies, and blocks written in its rows), those plus this body's own name-resolution
+        // parameters: its written or inferred ones, or a branch body's binders. Never the
+        // parameters forwarding itself adds below: they exist only for the callee that needed them.
+        var ownForwarding = forwardable.WithoutProperties(alg.Properties, run.ReferenceNameSets);
+        var nestedForwarding = ownForwarding.WithParameters(
+            branchContext is null
+                ? ParameterPattern.FlattenCaptures(alg.NameResolutionParameterPatterns)
+                : ParameterPattern.FlattenCaptures(BranchBinderParameterPatterns(branchContext.Pattern)),
+            run.ReferenceNameSets);
 
         // Build local param map
         var localParamMap = BuildPropertyParamMap(alg.Properties);
@@ -1047,7 +1325,7 @@ internal static class ImplicitArgumentResolver
             else if (prop.Value is Algorithm.Conditional condAlg)
             {
                 processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
-                    condAlg, prop.Name, visibleParamMap, observations, diagnostics, run));
+                    condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run));
             }
             else
             {
@@ -1063,7 +1341,7 @@ internal static class ImplicitArgumentResolver
                 using (run.EnterImportSite(ImportSite.OfProperty(prop)))
                 {
                     processedBody = ProcessAlgorithm(
-                        prop.Value, visibleParamMap, isRoot: false, observations, diagnostics, branchContext: null, run);
+                        prop.Value, visibleParamMap, nestedForwarding, isRoot: false, observations, diagnostics, branchContext: null, run);
                 }
 
                 // Update param maps with the processed, potentially augmented signature.
@@ -1082,6 +1360,7 @@ internal static class ImplicitArgumentResolver
         var walkMemos = new ResolverWalkMemos(run, observations, diagnostics)
         {
             BranchDiagnosticTemplates = diagnosticTemplates,
+            NestedForwarding = nestedForwarding,
         };
 
         if (alg.HasExplicitParameterList || branchContext is not null)
@@ -1103,7 +1382,10 @@ internal static class ImplicitArgumentResolver
                 closedPatterns,
                 BuildSourceBindingKinds(closedPatterns),
                 ClosedParameterNames: closedParameterNames,
-                branchContext?.BranchName);
+                branchContext?.BranchName)
+            {
+                Forwardable = ownForwarding,
+            };
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
             {
@@ -1135,7 +1417,7 @@ internal static class ImplicitArgumentResolver
         var deps = new List<(string Name, CallableSignature Signature)>();
         var seen = new HashSet<string>();
         var depsMemo = new DepsWalkMemo(observations);
-        foreach (var expr in run.PreserveSignatures ? [] : AstHelpers.WrittenRows(
+        foreach (var expr in AstHelpers.WrittenRows(
             alg, isRoot ? expr => !ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot: true) : null))
         {
             CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false, depsMemo);
@@ -1143,23 +1425,24 @@ internal static class ImplicitArgumentResolver
 
         // Compute lifted parameter patterns: existing patterns first, then new
         // dependency captures with their recursive shape preserved — as a SHARED
-        // signature template (FE-3, see LiftSignature).
-        var lifting = LiftSignature(alg.ParameterPatterns, deps, run);
-        if (lifting.Lifted && run.Origins is { } origins)
-            origins.HasLiftedParameters = true;
+        // signature template (FE-3, see LiftSignature). A capture an enclosing
+        // parameter binding supplies is reused, never lifted (Q-04).
+        var lifting = LiftSignature(alg.ParameterPatterns, deps, ownForwarding, run);
         var finalPatterns = lifting.Patterns;
 
         // Rewrite output expressions. Source binding kinds come from the
         // LIFTED pattern list: a callee name missing from the original caller
         // parameters binds through the capture lifted above (possibly by an
         // earlier dependency with a different kind), and that lifted capture
-        // is the forwarding source.
+        // is the forwarding source — or, for a name an enclosing parameter
+        // binding supplies, that reused binding (Q-04).
         var liftedContext = new ImplicitRewriteContext(
             alg.ParameterPatterns,
             lifting.SourceBindingKinds,
             ClosedParameterNames: null)
         {
             FinalSignature = finalPatterns,
+            Forwardable = ownForwarding,
         };
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
@@ -1181,10 +1464,14 @@ internal static class ImplicitArgumentResolver
             expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, inCallPosition: false, walkMemos));
 
         // Lean: withParameterPatterns on the rewritten body — the lifted list replaces the
-        // stored channel; Parameters/Params follow it.
+        // stored channel; Parameters/Params follow it. The patterns forwarding appended are
+        // marked (Q-04): they complete the signature for callers, and no written name ever
+        // denotes them.
         return alg with
         {
             ParameterPatterns = finalPatterns,
+            ForwardingParameterStart = alg.ForwardingParameterStart
+                ?? (lifting.Lifted ? alg.ParameterPatterns.Count : null),
             Opens = newOpens,
             Properties = newProperties,
             Output = rewrittenOutput,
@@ -1213,6 +1500,7 @@ internal static class ImplicitArgumentResolver
         Algorithm.Conditional conditional,
         string propertyName,
         SignatureMap parentParamMap,
+        ForwardableParameters forwardable,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
         ResolutionRun run)
@@ -1228,7 +1516,8 @@ internal static class ImplicitArgumentResolver
                 // refusals against names a deferred module provides). This pass's output view
                 // of the placeholder carries the region forked with the visible signature map
                 // as it stands HERE — a snapshot, since the property loop keeps extending the
-                // map — one view per family occurrence.
+                // map — and the enclosing parameter bindings forwarding may reuse (Q-04), one
+                // view per family occurrence.
                 branches.Add(branch with
                 {
                     Body = branch.Body with
@@ -1236,19 +1525,21 @@ internal static class ImplicitArgumentResolver
                         DeferredRegion = region.WithResolution(new DeferredBranchContext(
                             parentParamMap.Snapshot,
                             propertyName,
-                            branch.Pattern)),
+                            branch.Pattern,
+                            forwardable)),
                     },
                 });
                 continue;
             }
 
             // M4: the body is rewritten through the run's region memo — once per (body,
-            // free-name signature snapshot, closed binder specification, reporting mode). A
-            // body shared by several families under one region is rewritten once (sharing
-            // preserved in the output) and only its blocked-forwarding diagnostics, the one
-            // thing that names THIS family, are re-issued for the later families.
+            // free-name signature snapshot, forwardable parameter bindings, closed binder
+            // specification, reporting mode). A body shared by several families under one
+            // region is rewritten once (sharing preserved in the output) and only its
+            // blocked-forwarding diagnostics, the one thing that names THIS family, are
+            // re-issued for the later families.
             var body = ProcessAlgorithm(
-                branch.Body, parentParamMap, isRoot: false, observations, diagnostics,
+                branch.Body, parentParamMap, forwardable, isRoot: false, observations, diagnostics,
                 new ConditionalBranchContext(propertyName, branch.Pattern), run);
             branches.Add(branch with { Body = body });
         }
@@ -1288,7 +1579,8 @@ internal static class ImplicitArgumentResolver
     internal sealed record DeferredBranchContext(
         ImmutableDictionary<string, CallableSignature> ParentParamMap,
         string BranchName,
-        Pattern Pattern);
+        Pattern Pattern,
+        ForwardableParameters Forwardable);
 
     /// <summary>
     /// Demand-time implicit-argument resolution of a deferred region's DETECTED body: the
@@ -1299,17 +1591,20 @@ internal static class ImplicitArgumentResolver
         DeferredBranchContext context,
         DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
-        ResolutionOrigins? origins = null,
-        bool preserveSignatures = false,
         SourceSpan? importSite = null)
-        => ProcessAlgorithm(
+    {
+        var run = new ResolutionRun(importSite) { Observations = observations };
+        return ProcessAlgorithm(
             detectedBody,
             SignatureMap.FromSnapshot(context.ParentParamMap, observations),
+            // The eager run recorded these bindings; this run keys them with its own interner.
+            context.Forwardable.Rebase(run.ReferenceNameSets),
             isRoot: false,
             observations,
             diagnostics,
             new ConditionalBranchContext(context.BranchName, context.Pattern),
-            new ResolutionRun(origins, preserveSignatures, importSite) { Observations = observations });
+            run);
+    }
 
     private static Expr ProcessOpenExpr(Expr expr, ResolverWalkMemos memos)
     {
@@ -1453,10 +1748,20 @@ internal static class ImplicitArgumentResolver
     /// the head (<see cref="ImplicitSignatureTemplate.Compose"/>). When an own name IS lifted, the
     /// owner's order is genuinely its own (its capture stays first and the lifted one is filtered),
     /// so that signature is merged per owner exactly as before and held as an immutable template.</para>
+    ///
+    /// <para>Q-04 (decided September 28 2026): a dependency capture that an ENCLOSING parameter
+    /// binding already supplies (<paramref name="forwardable"/> — the binding a written reference of
+    /// that name here already denotes) is never lifted: forwarding reuses that exact binding, and
+    /// adding a same-named parameter to this owner would make every existing reference of the name
+    /// inside it denote the new parameter instead. Only a genuinely unbound dependency becomes a new
+    /// (forwarded) parameter. When the lifted tail meets such a binding the signature is merged per
+    /// owner, like an owner whose own name is lifted; otherwise the shared templates are used as
+    /// before.</para>
     /// </summary>
     private static LiftedSignature LiftSignature(
         IReadOnlyList<ParameterPattern> own,
         List<(string Name, CallableSignature Signature)> deps,
+        ForwardableParameters forwardable,
         ResolutionRun run)
     {
         // A dependency whose whole shape the owner's own single collecting stream forwards
@@ -1471,6 +1776,16 @@ internal static class ImplicitArgumentResolver
         var tail = included is null ? null : run.Templates.LiftedTail(included, MergeLiftedTail);
         if (tail is null)
             return new(own, SourceBindingKindsOf(own), Lifted: false);
+
+        if (!forwardable.IsEmpty && run.TailMeetsForwardable(tail, forwardable))
+        {
+            var reused = MergeOwnerSignature(own, included!, forwardable);
+            if (reused is null)
+                return new(own, SourceBindingKindsOf(own), Lifted: false);
+            var reusedDistinct = run.Templates.InternFlat(reused);
+            run.Observations?.RecordOwnerSignatureMaterialized(reused.Length);
+            return new(reusedDistinct, reusedDistinct.Facts.BindingKinds, Lifted: true);
+        }
 
         var tailNames = tail.Facts.NameSet;
         var disjoint = true;
@@ -1490,7 +1805,7 @@ internal static class ImplicitArgumentResolver
             return new(signature, signature.Facts.BindingKinds, Lifted: true);
         }
 
-        var merged = MergeOwnerSignature(own, included!);
+        var merged = MergeOwnerSignature(own, included!, ForwardableParameters.None);
         if (merged is null)
             return new(own, SourceBindingKindsOf(own), Lifted: false);
         var distinct = run.Templates.InternFlat(merged);
@@ -1515,29 +1830,33 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// One owner's merge when an own name is also lifted: exactly the pre-FE-3 loop (own patterns,
-    /// then each dependency's missing captures). Null when nothing is lifted.
+    /// One owner's merge when an own name is also lifted, or (Q-04) when an enclosing parameter
+    /// binding supplies a dependency capture: exactly the pre-FE-3 loop (own patterns, then each
+    /// dependency's captures that neither the owner nor <paramref name="forwardable"/> binds).
+    /// Null when nothing is lifted.
     /// </summary>
     private static ParameterPattern[]? MergeOwnerSignature(
         IReadOnlyList<ParameterPattern> own,
-        IReadOnlyList<IReadOnlyList<ParameterPattern>> dependencies)
+        IReadOnlyList<IReadOnlyList<ParameterPattern>> dependencies,
+        ForwardableParameters forwardable)
     {
         var existing = new HashSet<string>(ParameterPattern.EnumerateCaptures(own).Select(static capture => capture.Name), StringComparer.Ordinal);
         var merged = new List<ParameterPattern>(own);
         var ownCount = merged.Count;
         foreach (var dependency in dependencies)
-            AppendMissingPatterns(dependency, existing, merged);
+            AppendMissingPatterns(dependency, existing, merged, forwardable);
         return merged.Count == ownCount ? null : merged.ToArray();
     }
 
     private static void AppendMissingPatterns(
         IReadOnlyList<ParameterPattern> patterns,
         HashSet<string> existing,
-        List<ParameterPattern> merged)
+        List<ParameterPattern> merged,
+        ForwardableParameters? forwardable = null)
     {
         foreach (var pattern in patterns)
         {
-            var missingPattern = MissingCapturePattern(pattern, existing);
+            var missingPattern = MissingCapturePattern(pattern, existing, forwardable ?? ForwardableParameters.None);
             if (missingPattern is null)
                 continue;
 
@@ -1549,22 +1868,25 @@ internal static class ImplicitArgumentResolver
 
     private static ParameterPattern? MissingCapturePattern(
         ParameterPattern pattern,
-        IReadOnlySet<string> existingParams)
+        IReadOnlySet<string> existingParams,
+        ForwardableParameters forwardable)
         => pattern switch
         {
-            CaptureParameterPattern capture => existingParams.Contains(capture.Name) ? null : capture,
-            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existingParams),
+            CaptureParameterPattern capture
+                => existingParams.Contains(capture.Name) || forwardable.Binds(capture.Name) ? null : capture,
+            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existingParams, forwardable),
         };
 
     private static SequenceValueParameterPattern? MissingGroupCapturePattern(
         SequenceValueParameterPattern group,
-        IReadOnlySet<string> existingParams)
+        IReadOnlySet<string> existingParams,
+        ForwardableParameters forwardable)
     {
         var missingItems = new List<ParameterPattern>(group.Items.Count);
         var unchanged = true;
         foreach (var item in group.Items)
         {
-            var missingItem = MissingCapturePattern(item, existingParams);
+            var missingItem = MissingCapturePattern(item, existingParams, forwardable);
             unchanged &= ReferenceEquals(missingItem, item);
             if (missingItem is not null)
                 missingItems.Add(missingItem);
@@ -1650,6 +1972,9 @@ internal static class ImplicitArgumentResolver
     /// names blamed for its absence therefore cannot drift apart: the caller's own forwarded
     /// collecting stream satisfies EVERY capture (so it yields no names at all), and otherwise a
     /// capture is missing exactly when the closed list does not declare it.
+    /// <para>Q-04: a capture an ENCLOSING parameter binding supplies (<paramref name="forwardable"/>,
+    /// the bindings a written reference of that name in the closed body already denotes) is never
+    /// missing — forwarding reuses that binding, exactly as it does for an inferring owner.</para>
     /// <para>Order is <see cref="ParameterPattern.FlattenCaptures"/> order — the callee's
     /// own declaration order — deduplicated first-occurrence-wins, so a diagnostic built
     /// from it is stable and never hash-ordered.</para>
@@ -1657,7 +1982,8 @@ internal static class ImplicitArgumentResolver
     private static IReadOnlyList<string> MissingClosedListForwardingNames(
         IReadOnlyList<ParameterPattern> calleePatterns,
         IReadOnlyList<ParameterPattern> callerPatterns,
-        IReadOnlySet<string> existingParameterNames)
+        IReadOnlySet<string> existingParameterNames,
+        ForwardableParameters forwardable)
     {
         // A single forwarded collecting stream re-supplies the callee's whole parameter
         // shape by binding KIND, not by name, so nothing is missing even though the names
@@ -1670,7 +1996,7 @@ internal static class ImplicitArgumentResolver
         HashSet<string>? seen = null;
         foreach (var capture in ParameterPattern.FlattenCaptures(calleePatterns))
         {
-            if (existingParameterNames.Contains(capture.Name))
+            if (existingParameterNames.Contains(capture.Name) || forwardable.Binds(capture.Name))
                 continue;
 
             seen ??= new(StringComparer.Ordinal);
@@ -1685,9 +2011,10 @@ internal static class ImplicitArgumentResolver
     /// The CLOSED-explicit-parameter-list gate, in one place: inside an algorithm that wrote
     /// its own parameter list, a bare reference to a callable that requires supplied arguments
     /// (the only kind that is ever lifted, <see cref="RequiresSuppliedArguments"/>) may lift
-    /// only when every capture the synthesized argument list would need is already declared by
-    /// that list (or is the caller's own forwarded collecting stream). Lifting anything else would invent a
-    /// parameter the programmer never wrote — and, worse, silently bind an ancestor's.
+    /// only when every capture the synthesized argument list would need is supplied by an
+    /// existing parameter binding: declared by that list, the caller's own forwarded collecting
+    /// stream, or (Q-04) an enclosing parameter binding a written reference of the name there
+    /// already denotes. Lifting anything else would invent a parameter the programmer never wrote.
     ///
     /// <para>Every liftable arm of <see cref="RewriteImplicitCallsCore"/> consults THIS
     /// helper with the region's <see cref="ImplicitRewriteContext"/>, so no expression
@@ -1894,16 +2221,20 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// The synthesized forwarding arguments of a lifted call: one slot per callee parameter pattern,
-    /// in the callee's declaration order. A PURE function of its three inputs — the region memo
+    /// in the callee's declaration order. A PURE function of its inputs — the region memo
     /// <see cref="ResolverWalkMemos.ImplicitArguments"/> shares one result between every lifted
     /// reference to the callee in a rewrite region (FE-2) — so it reads nothing about the reference
-    /// site: its nodes are spanless, name only the caller's own bindings, and carry no occurrence
-    /// identity.
+    /// site: its nodes are spanless, name only bindings the caller can already reach (its own
+    /// parameters, lifted captures included, and — Q-04 — the enclosing parameter bindings
+    /// <paramref name="forwardable"/> it reuses), and carry no occurrence identity. A reused
+    /// enclosing binding is read through the ordinary captured-parameter read, so the callee receives
+    /// the very binding an existing written reference of that name denotes.
     /// </summary>
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(
         IReadOnlyList<ParameterPattern> calleePatterns,
         IReadOnlyList<ParameterPattern> callerPatterns,
-        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds)
+        IReadOnlyDictionary<string, ParameterKind> sourceBindingKinds,
+        ForwardableParameters forwardable)
     {
         TryGetSingleCollectingForwarding(
             callerPatterns,
@@ -1925,13 +2256,19 @@ internal static class ImplicitArgumentResolver
         // SOURCE binding is itself a collecting binding's exact list: then
         // `callee(rest*)` re-supplies exactly the collected items
         // (spread(collect(xs)) = xs). An ordinary source binding always
-        // forwards as ONE argument, even into a collecting destination. A name
-        // absent from the caller's bindings is about to be lifted as a copy
-        // of the callee's own pattern, so its source kind IS the callee kind.
+        // forwards as ONE argument, even into a collecting destination. The
+        // source is the caller's own binding, else the enclosing parameter
+        // binding it reuses (Q-04); a name bound by neither is about to be
+        // lifted as a copy of the callee's own pattern, so its source kind IS
+        // the callee kind.
         bool ForwardAsSpread(CaptureParameterPattern calleeCapture)
-            => sourceBindingKinds.TryGetValue(MapCaptureName(calleeCapture), out var sourceKind)
-                ? sourceKind == ParameterKind.Collecting
-                : calleeCapture.Kind == ParameterKind.Collecting;
+        {
+            var sourceName = MapCaptureName(calleeCapture);
+            return sourceBindingKinds.TryGetValue(sourceName, out var sourceKind)
+                || forwardable.TryGetKind(sourceName, out sourceKind)
+                    ? sourceKind == ParameterKind.Collecting
+                    : calleeCapture.Kind == ParameterKind.Collecting;
+        }
 
         return calleePatterns
             .Select(pattern => BuildPatternArgument(pattern, MapCaptureName, ForwardAsSpread))
@@ -2332,7 +2669,7 @@ internal static class ImplicitArgumentResolver
             // and its callee name are this reference's own.
             var implicitArgs = memos.ImplicitArguments(ps.ParameterPatterns, context);
             return memos.SynthesizedImplicitCall(
-                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span }, expr);
+                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span });
         }
 
         // Bare Math ALIAS in value position: lift exactly like the bare
@@ -2356,7 +2693,7 @@ internal static class ImplicitArgumentResolver
 
             var aliasArgs = memos.ImplicitArguments(bareAliasFacts.Signature.ParameterPatterns, context);
             return memos.SynthesizedImplicitCall(
-                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span }, expr);
+                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span });
         }
 
         return expr;
@@ -2444,7 +2781,7 @@ internal static class ImplicitArgumentResolver
         {
             Target = RewriteImplicitCalls(bareDotCall.Target, paramMap, context, inCallPosition: true, memos),
             Args = liftedDotArgs,
-        }, bareDotCall);
+        });
     }
 
     /// <summary>
@@ -2476,7 +2813,7 @@ internal static class ImplicitArgumentResolver
         {
             using var site = memos.Run.EnterImportSite(importSite);
             processed = ProcessAlgorithm(
-                alg, paramMap, isRoot: false, memos.Observations, memos.Diagnostics, branchContext: null, memos.Run);
+                alg, paramMap, memos.NestedForwarding, isRoot: false, memos.Observations, memos.Diagnostics, branchContext: null, memos.Run);
             memos.Algorithms[alg] = processed;
         }
 

@@ -108,14 +108,19 @@ def chainBranchBinder : List OwnerLevel :=
 #guard selectOwnedDeclaration [] "v" == OwnedDeclaration.none
 
 -- Hand-written conformance inputs, also read by OwnershipConformanceTests.cs.
--- A mask projects ONE spelling at each real owner: 0 = neither declaration,
--- 1 = parameter, 2 = property, 3 = both. Unrelated names and opens cannot affect
--- this selection. The C# test checks these masks against actual elaboration
--- contexts, then checks the selected owner, property/binder identity, executable
--- node and editor queries. Expectations are NOT obtained from C# selection or
--- from evaluation of an already elaborated AST.
+-- A mask projects ONE spelling at each real owner, as bits: 1 = a name-resolution
+-- parameter, 2 = a property, 4 = a parameter AUTOMATIC FORWARDING added (Q-04,
+-- `OwnerLevel.forwarded`, which owns no written name but still collides with a
+-- property). Unrelated names and opens cannot affect this selection. The C# test
+-- checks these masks against actual elaboration contexts, then checks the selected
+-- owner, property/binder identity, executable node and editor queries.
+-- Expectations are NOT obtained from C# selection or from evaluation of an already
+-- elaborated AST.
 -- The final field is SOURCE VALIDITY. Selection remains defined for invalid
 -- recovery trees, but those trees must never be evaluated as valid source.
+-- The three `forwarded-*` rows were the `lifted-*` rows before the Q-04 decision:
+-- the lifted parameter then owned the reference (masks [0, 1, 0], [0, 3, 0] and
+-- [0, 2, 1, 0]; the first selected `.parameter 1` where it now selects nothing).
 def ownershipConformanceInputs : List (String × List Nat × OwnedDeclaration × Bool) := [
   ("captured", [0, 1, 2], .parameter 1, true),
   ("same-owner-nested", [0, 3, 0], .parameter 1, false),
@@ -123,9 +128,9 @@ def ownershipConformanceInputs : List (String × List Nat × OwnedDeclaration ×
   ("nearer-property", [0, 2, 1, 2], .property 1, false),
   ("nearest-parameter", [0, 1, 1, 2], .parameter 1, true),
   ("inferred-later-row", [0, 1, 0], .parameter 1, true),
-  ("lifted-later-reference", [0, 1, 0], .parameter 1, true),
-  ("lifted-collision", [0, 3, 0], .parameter 1, false),
-  ("lifted-ancestor-collision", [0, 2, 1, 0], .property 1, false),
+  ("forwarded-owns-no-later-reference", [0, 4, 0], .none, true),
+  ("forwarded-collision", [0, 6, 0], .property 1, false),
+  ("forwarded-ancestor-collision", [0, 2, 4, 0], .property 1, false),
   ("inferred-ancestor-collision", [2, 1, 0], .property 0, false),
   ("collecting-collision", [0, 3, 0], .parameter 1, false),
   ("branch-binder", [0, 3, 2], .parameter 1, false),
@@ -137,13 +142,14 @@ def ownershipConformanceInputs : List (String × List Nat × OwnedDeclaration ×
 ]
 
 def ownershipMaskLevel (mask : Nat) : OwnerLevel :=
-  level (if mask % 2 == 1 then ["v"] else [])
-        (if mask / 2 == 1 then ["v"] else [])
+  { parameters := if mask % 2 == 1 then ["v"] else []
+    properties := if (mask / 2) % 2 == 1 then ["v"] else []
+    forwarded := if mask / 4 == 1 then ["v"] else [] }
 
 #guard ownershipConformanceInputs.length == 17
 #guard ownershipConformanceInputs.all fun (_, masks, expected, valid) =>
   validOwnedDeclarations (masks.map ownershipMaskLevel) == valid &&
-  masks.all (· < 4) &&
+  masks.all (· < 8) &&
   selectOwnedDeclaration (masks.map ownershipMaskLevel) "v" == expected &&
   elaboratesToParameter (masks.map ownershipMaskLevel) "v" ==
     (match expected with | .parameter _ => true | _ => false)

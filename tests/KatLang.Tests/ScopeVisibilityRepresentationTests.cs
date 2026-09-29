@@ -241,15 +241,16 @@ public class ScopeVisibilityRepresentationTests
     }
 
     /// <summary>
-    /// FE-3 integration: K owners lift one W-wide callee (one shared implicit-signature template),
-    /// and each also nests a property lifting the same callee. The template table is applied once
-    /// per parent tree, and not at all where the tree already holds it (the nested owner), so the
-    /// visibility work stays linear while owner identity and parameter symbols are shared exactly.
+    /// FE-3 integration, under Q-04: K owners lift one W-wide callee (one shared implicit-signature
+    /// template), and each also nests a property lifting the same callee. Those W names are FORWARDED
+    /// parameters — handed on to the callee, never what a written name in an owner denotes — so no
+    /// scope offers them, while each owner's own inferred parameter stays visible; the visibility work
+    /// stays linear in K + W.
     /// </summary>
     [Theory]
     [InlineData(64, 64)]
     [InlineData(128, 256)]
-    public void TemplateOwners_ShareTheParameterLayer(int owners, int width)
+    public void TemplateOwners_ForwardedNamesStayOutOfEveryScope(int owners, int width)
     {
         var source = $"G = {Names("v", width)}\n"
             + string.Concat(Enumerable.Range(0, owners).Select(i => $"B{i} = {{\n    P = G\n    P, w{i}\n}}\n"))
@@ -258,13 +259,12 @@ public class ScopeVisibilityRepresentationTests
         var model = Model(source, observations);
         var census = Census(model);
 
-        Assert.InRange(observations.ScopeVisibilityLayerChanges, width, 4L * (owners + width) + 16);
-        Assert.InRange(census.Symbols, width + owners, 3L * (width + owners) + 8);
+        Assert.InRange(observations.ScopeVisibilityLayerChanges, owners, 4L * (owners + width) + 16);
+        Assert.InRange(census.Symbols, owners, 3L * (width + owners) + 8);
         var ownerScopes = model.ScopeVisibilities.Where(scope => scope.View?.Find("P") is not null).ToList();
         Assert.True(ownerScopes.Count >= owners);
-        var v0 = ownerScopes[0].View!.Find("v0")!;
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, v0.Classification);
-        Assert.All(ownerScopes, scope => Assert.Same(v0, scope.View!.Find("v0")));
+        Assert.All(ownerScopes, scope => Assert.Null(scope.View!.Find("v0")));
+        Assert.Contains(ownerScopes, scope => scope.View!.Find("w0") is { Classification: IdentifierClassification.ImplicitParameterReference });
     }
 
     /// <summary>
@@ -564,14 +564,30 @@ public class ScopeVisibilityRepresentationTests
         var oBody = Assert.IsType<Algorithm.User>(o.Value);
         var n = Assert.Single(oBody.Properties, property => property.Name == "N");
         var nBody = Assert.IsType<Algorithm.User>(n.Value);
-        var dBody = Assert.IsType<Algorithm.User>(Assert.Single(nBody.Properties, property => property.Name == "D").Value);
+        var dProperty = Assert.Single(nBody.Properties, property => property.Name == "D");
+        var dBody = Assert.IsType<Algorithm.User>(dProperty.Value);
         Assert.Same(oBody.ParameterPatterns, dBody.ParameterPatterns);
+        // Forwarding appended every one of these template parameters (Q-04), so the parsed tree
+        // offers none of them. The host tree below declares them as NAME-RESOLUTION parameters —
+        // the one shape whose template table the scope view applies — to keep exercising the
+        // layer's re-application below an override.
+        Assert.Equal(0, oBody.ForwardingParameterStart);
+        Assert.Equal(0, dBody.ForwardingParameterStart);
         var rebound = nBody with
         {
             ParameterPatterns = [new CaptureParameterPattern(new ParameterDeclaration("u", n.DeclarationSpans[0]))],
             HasExplicitParameterList = true,
+            ForwardingParameterStart = null,
+            Properties = [dProperty with { Value = dBody with { ForwardingParameterStart = null } }],
         };
-        var hostO = o with { Value = oBody with { Properties = [.. oBody.Properties.Select(property => ReferenceEquals(property, n) ? n with { Value = rebound } : property)] } };
+        var hostO = o with
+        {
+            Value = oBody with
+            {
+                ForwardingParameterStart = null,
+                Properties = [.. oBody.Properties.Select(property => ReferenceEquals(property, n) ? n with { Value = rebound } : property)],
+            },
+        };
         var hostRoot = root with { Properties = [.. root.Properties.Select(property => ReferenceEquals(property, o) ? hostO : property)] };
 
         AssertMatchesEagerReference(hostRoot);

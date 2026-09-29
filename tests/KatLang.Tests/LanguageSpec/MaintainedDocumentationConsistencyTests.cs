@@ -71,6 +71,10 @@ public class MaintainedDocumentationConsistencyTests
         { @"\baliases?\s+of\s+(?:a\s+)?collecting\s+callables?\s+(?:are|is)\s+(?:itself\s+)?collecting\b", "aliases of collecting callables are collecting (lifting before Q-03)" },
         { @"\bunchanged\s+for\s+collecting\s+and\s+fixed\s+parameters\s+alike\b", "lifting unchanged for collecting parameters (before Q-03)" },
         { @"`Alias = Cnt`[^.]*\belaborates\s+to\s+`Alias\(\*xs\)", "a bare alias elaborating to a forwarding callable (before Q-03)" },
+        // Q-04: automatic parameter forwarding must not change what an existing name refers to. A
+        // forwarded parameter belongs to the call interface only; it never joins the parameters
+        // a written name can denote, so "completed" signatures no longer re-own written names.
+        { @"\bcomplet(?:e|ed)\s+(?:owner\s+)?(?:signatures?|parameters?)\s+include\s+(?:later\s+)?(?:implicit\s+)?forwarding\s+captures\b", "forwarded parameters owning written names (ownership completion before Q-04)" },
     };
 
     [Theory]

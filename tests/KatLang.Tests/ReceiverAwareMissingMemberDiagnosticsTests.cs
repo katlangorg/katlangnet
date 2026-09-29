@@ -479,18 +479,24 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
             $"Lib = {{ public Double(x) = x * 2 }}\nLib.{typo}(4)").PlainError).SuggestedName);
 
     [Fact]
-    public void OwnershipCompletion_DoesNotRetainAFormerlyKnownReceiverOrigin()
+    public void ForwardedEnclosingParameter_NeverRebindsTheKnownReceiver_SoItsOriginIsKept()
     {
+        // Q-04: Outer receives a forwarded `Lib` for Need, but the written receiver `Lib` inside
+        // Inner keeps denoting the opened Providers.Lib (forwarding never re-selects a binding), so
+        // the receiver stays statically known and the promotion note keeps its dot-member origin.
+        // Formerly the ownership-completion pass rebound the receiver to Outer's forwarded
+        // parameter and the finalizer had to forget the origin.
         const string source = "Providers = { public Lib = { public Double(x) = x * 2 } }\n"
             + "Outer = { Inner = { open Providers\nLib.Dubel(4) }\nNeed = Lib\nInner + Need }\nOuter";
         var root = SourceProvenance.ParseValid(source).Root;
         var outer = Assert.Single(root.Properties, property => property.Name == "Outer").Value;
+        Assert.Equal(["Dubel", "Lib"], outer.Params);
         var inner = Assert.Single(outer.Properties, property => property.Name == "Inner").Value;
-        Assert.IsType<Expr.Param>(Assert.IsType<Expr.DotCall>(Assert.Single(inner.Output)).Target);
+        Assert.Equal("Lib", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.DotCall>(Assert.Single(inner.Output)).Target).Name);
         var note = Assert.Single(inner.Parameters).InferredProvenance!;
         Assert.Equal("Dubel", note.Name);
-        Assert.Null(note.DotMemberOrigin);
-        Assert.Null(note.SuggestedName);
+        Assert.Equal("Lib", note.DotMemberOrigin?.ReceiverDescription);
+        Assert.Equal("Lib.Double", note.SuggestedName);
     }
 
     [Theory]

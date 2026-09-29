@@ -1967,6 +1967,40 @@ public closed record Algorithm
         /// </summary>
         public bool HasExplicitParameterList { get; init; }
 
+        private readonly RuntimeStateSlot<int?> _forwardingParameterStart;
+
+        /// <summary>
+        /// Q-04 (decided September 28 2026): the index of the first <see cref="ParameterPatterns"/>
+        /// entry that AUTOMATIC PARAMETER FORWARDING appended — a parameter the owner receives only
+        /// so that it can hand it on to a referenced callee that needs it (implicit lifting) — or
+        /// null when forwarding appended none. The patterns before it are the ones NAME RESOLUTION
+        /// established (written, or inferred from the body's own unresolved names); only those can
+        /// be what a written name denotes (<see cref="NameResolutionParameterPatterns"/>).
+        /// A forwarded parameter is an ordinary parameter of the owner for every CALLER — arity,
+        /// order, binding, activation — but it never changes what an existing name refers to: a
+        /// written name keeps the binding name resolution gave it, however its owner's signature
+        /// was completed afterwards. Set only by <see cref="ImplicitArgumentResolver"/>; a front-end
+        /// fact with no Lean counterpart (Lean's tree is already elaborated), carried in an
+        /// equality-transparent slot so every <c>with</c> copy keeps it and record equality stays
+        /// the structural identity.
+        /// </summary>
+        internal int? ForwardingParameterStart
+        {
+            get => _forwardingParameterStart.Value;
+            init => _forwardingParameterStart = new(value);
+        }
+
+        /// <summary>
+        /// The <see cref="ParameterPatterns"/> NAME RESOLUTION established — every pattern before
+        /// <see cref="ForwardingParameterStart"/>, or all of them when forwarding appended none.
+        /// These are the parameter bindings a written name in this body (or in a body nested in
+        /// it) can denote, and the ones automatic forwarding in a nested body may reuse.
+        /// </summary>
+        internal IReadOnlyList<ParameterPattern> NameResolutionParameterPatterns
+            => ForwardingParameterStart is { } start && start < ParameterPatterns.Count
+                ? ParameterPatterns.Take(start).ToArray()
+                : ParameterPatterns;
+
         /// <summary>
         /// Check whether the property list contains duplicate property names.
         /// Returns the first duplicate name found, or null if all names are unique.

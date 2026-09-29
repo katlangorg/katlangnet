@@ -49,7 +49,8 @@ public class StaticOpenOwnershipTests
         { "grouped", LibSeven + "F((Lib, w)) = {\n    open Lib\n    X\n}\nF((1, 2))", "Lib", 5, 10, 4, 4, IdentifierClassification.ExplicitParameterReference },
         { "branch-binder", LibSeven + "F(0) = 0\nF(Lib) = {\n    open Lib\n    X\n}\nF(5)", "Lib", 6, 10, 5, 3, IdentifierClassification.ConditionalBinderReference },
         { "inferred", "F = {\n    open Lib\n    Lib.X\n}\nF(3)", "Lib", 2, 10, 0, 0, IdentifierClassification.ImplicitParameterReference },
-        { "lifted", "G = Lib.X\nF = {\n    open Lib\n    G\n}\nF(3)", "Lib", 3, 10, 0, 0, IdentifierClassification.ImplicitParameterReference },
+        // (A parameter automatic forwarding adds — `G = Lib.X` / `F = { open Lib  G }` — owns no
+        // head: see ForwardedParameter_NeverOwnsAnOpenHead.)
         // G. farther same-named declarations of other kinds: an OPENED member, an ENCLOSING property
         { "opened-farther-declaration", "Libs = {\n    public Lib = {\n        public X = 7\n    }\n}\nF(Lib) = {\n    open Libs, Lib\n    X\n}\nF(3)", "Lib", 7, 16, 6, 3, IdentifierClassification.ExplicitParameterReference },
         { "enclosing-farther-property", "Outer = {\n    Lib = {\n        public X = 7\n    }\n    F(Lib) = {\n        open Lib\n        X\n    }\n    F(3)\n}\nOuter", "Lib", 6, 14, 5, 7, IdentifierClassification.ExplicitParameterReference },
@@ -273,21 +274,43 @@ public class StaticOpenOwnershipTests
     // ── reporting discipline ──────────────────────────────────────────────────
 
     [Fact]
-    public void Rejection_IsReportedExactlyOnce_WhicheverRunProducesIt()
+    public void Rejection_IsReportedExactlyOnce_WhicheverPassProducesIt()
     {
-        // Discovery only (explicit list), the post-inference pass (inferred), and the
-        // completion run that replaces the discovery diagnostics (lifted): one report each.
+        // The written parameter list (explicit) and the post-inference pass (inferred): one report each.
         foreach (var source in new[]
         {
             OtherEight + "F(Lib) = {\n    open Lib\n    X\n}\nF(Other)",
             "F = {\n    open Lib\n    Lib.X\n}\nF(3)",
-            "G = Lib.X\nF = {\n    open Lib\n    G\n}\nF(3)",
         })
         {
             var diagnostics = SourceProvenance.ExpectFrontEndError(source);
             Assert.Equal(DiagnosticCode.OpenTargetIsParameter, diagnostics[0].Code);
             Assert.Single(diagnostics, d => d.Code == DiagnosticCode.OpenTargetIsParameter);
             Assert.Equal(diagnostics, Parser.Parse(source).Diagnostics);
+        }
+    }
+
+    [Theory]
+    [InlineData("G = Lib.X\nF = {\n    open Lib\n    G\n}\nF(3)", DiagnosticCode.UnresolvedOpenTarget)]
+    [InlineData("Lib = { public X = 7 }\nG(Lib) = 0\nF = {\n    open Lib\n    X + G\n}\nF(3)", null)]
+    public void ForwardedParameter_NeverOwnsAnOpenHead(string source, DiagnosticCode? expected)
+    {
+        // Q-04: F receives a forwarded `Lib` only so that it can hand it on to G. A written open
+        // head is name resolution's, decided before forwarding: an unresolved head stays unresolved
+        // (never "a parameter cannot be opened"), and a head that named the root `Lib` keeps it.
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var f = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
+        Assert.Contains("Lib", f.Params);
+        Assert.IsType<Expr.Resolve>(Assert.Single(f.Opens));
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Code == DiagnosticCode.OpenTargetIsParameter);
+        if (expected is { } code)
+        {
+            Assert.Contains(parsed.Diagnostics, d => d.Code == code);
+        }
+        else
+        {
+            Assert.Empty(parsed.Diagnostics);
+            Assert.Equal("7", KatLangEngine.Run(source).ToDisplayString());
         }
     }
 

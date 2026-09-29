@@ -132,9 +132,10 @@ internal sealed class ImplicitParameterProvenance
     }
 
     /// <summary>
-    /// Ownership completion can replace an opened receiver with a captured
-    /// parameter. Drop the now-unproven report on this shared note, including
-    /// copies lifted into callers; no executable node or signature changes.
+    /// The finalizer found that the recorded receiver is no longer the statically known
+    /// member provider of the completed tree (exposure revealed another provider, or the
+    /// fallback is no longer certain). Drop the now-unproven report on this shared note,
+    /// including copies lifted into callers; no executable node or signature changes.
     /// </summary>
     internal void ForgetDotMemberOrigin()
     {
@@ -196,7 +197,7 @@ internal sealed class NameSuggestion
 
     private bool IsReceiverMember { get; }
 
-    // A completed owner may select a different receiver than the one the note
+    // The completed tree may name a different receiver than the one the note
     // was recorded against. A spelling from that former receiver must also be a
     // declared member of the finally selected one (declared, not exported: the
     // structural surface selects by declaration).
@@ -215,9 +216,10 @@ internal sealed class NameSuggestion
 }
 
 /// <summary>
-/// Revalidates only diagnostic metadata against the completed tree. A final
-/// owner may bind a former opened receiver as a parameter, or exposure may
-/// reveal a different opened provider. First-occurrence notes are shared with
+/// Revalidates only diagnostic metadata against the completed tree: exposure may
+/// reveal a different opened provider. (Automatic parameter forwarding never
+/// re-selects a written receiver, Q-04, so a receiver name keeps the binding
+/// name resolution recorded.) First-occurrence notes are shared with
 /// lifted captures, so invalidation reaches every caller without changing any
 /// executable node. Reads each dot edge's own carried note
 /// (<see cref="Expr.DotCall.InferredFallbackProvenance"/>) — the ONE place a

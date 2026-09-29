@@ -82,15 +82,15 @@ internal static class ParameterDetector
     /// implicit parameter — the front-end half of the runtime prelude's name-level
     /// agreement.</para>
     ///
-    /// <para>Diagnostics go to <paramref name="diagnostics"/> — the pipeline passes a STAGE of the
-    /// operation's bag (<see cref="DiagnosticBag.CreateStage"/>), committed only once ownership
-    /// completion has decided whether these reports stand — or to a fresh bag.</para>
+    /// <para>Diagnostics go to <paramref name="diagnostics"/> — the operation's bag — or to a
+    /// fresh bag. Detection is NAME RESOLUTION, and its verdicts are final: automatic parameter
+    /// forwarding (<see cref="ImplicitArgumentResolver"/>) runs afterwards and never re-selects a
+    /// binding (Q-04, decided September 28 2026), so nothing replaces these reports.</para>
     /// </summary>
     internal static (Algorithm Root, DiagnosticBag Diagnostics) DetectPrevalidated(
         Algorithm root,
         HostOperations? hostOperations = null,
         FrontEndTraversalObservations? observations = null,
-        GraceOrigins? graceOrigins = null,
         DiagnosticBag? diagnostics = null)
     {
         diagnostics ??= new DiagnosticBag();
@@ -104,54 +104,8 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root, GraceOrigins = graceOrigins });
+            new DetectionRun { ProgramRoot = root });
         return (processed, diagnostics);
-    }
-
-    /// <summary>
-    /// Selects bindings once implicit forwarding has completed the owner signatures.
-    /// Retains those signatures and their ordering/pattern/provenance metadata exactly;
-    /// this is selection of established bindings, not another inference pass. Restoring
-    /// synthesized calls lets the resolver rebuild forwarding under the selected bindings.
-    /// Uses the ordinary region memos and owner construction, including deferred branches.
-    /// The caller has already applied the pipeline's structural preflight. Diagnostics go to
-    /// <paramref name="diagnostics"/> (a stage of the operation's bag) or to a fresh bag.
-    /// </summary>
-    internal static (Algorithm Root, DiagnosticBag Diagnostics, bool Changed) CompleteOwnership(
-        Algorithm root,
-        ImplicitArgumentResolver.ResolutionOrigins origins,
-        HostOperations? hostOperations = null,
-        DeferredBranchContext? branchContext = null,
-        FrontEndTraversalObservations? observations = null,
-        SourceSpan? importSite = null,
-        DiagnosticBag? diagnostics = null)
-    {
-        diagnostics ??= new DiagnosticBag();
-        var run = new DetectionRun
-        {
-            ImplicitCallOrigins = origins.ImplicitCalls,
-            GraceOrigins = origins.Grace,
-            ImportSite = importSite,
-            // A whole-program completion re-enters at the program root; a deferred branch
-            // completion re-enters at that branch body, which is a nested (called) owner.
-            ProgramRoot = branchContext is null ? root : null,
-        };
-        Algorithm processed;
-        if (branchContext is not null)
-        {
-            processed = ProcessConditionalBranchBody(
-                root, branchContext.ParentScope, new HashSet<string>(branchContext.BinderNames),
-                branchContext.BranchName, branchContext.CapturedParameters, diagnostics, observations, run);
-        }
-        else
-        {
-            var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-            processed = ProcessAlgorithm(
-                root,
-                ElaboratedScopeLookup.CreateScope(prelude, observations: observations, memberIndexes: new OpenMemberIndexCache(observations)),
-                ParameterOwnership.Empty, diagnostics, observations, run);
-        }
-        return (processed, diagnostics, run.OwnershipChanged);
     }
 
     private static Algorithm ProcessAlgorithm(
@@ -198,39 +152,35 @@ internal static class ParameterDetector
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
 
-        // ONE projection of the written/inferred signature serves every read below. A completed
-        // signature that is a shared implicit-signature template (FE-3) — only a completion run
-        // sees one — is read through the template's facts and extends the ownership map by one
-        // layer: nothing here copies its L names per owner.
-        var signatureTemplate = run.ImplicitCallOrigins is not null
-            ? alg.ParameterPatterns as ImplicitSignatureTemplate
-            : null;
-        var parameterNames = signatureTemplate?.Facts.Names ?? alg.Params;
-        var paramNames = signatureTemplate is null ? new HashSet<string>(parameterNames) : null;
-        var paramOrder = signatureTemplate is null ? new List<string>(parameterNames) : null;
-        IReadOnlySet<string> ownParameterNames = (IReadOnlySet<string>?)paramNames ?? signatureTemplate!.Facts.NameSet;
+        // ONE projection of the written/inferred signature serves every read below. Detection is
+        // NAME RESOLUTION and runs before automatic parameter forwarding (Q-04), so every
+        // parameter it sees here was written or inferred — never one forwarding appended.
+        var parameterNames = alg.Params;
+        var paramNames = new HashSet<string>(parameterNames);
+        var paramOrder = new List<string>(parameterNames);
+        IReadOnlySet<string> ownParameterNames = paramNames;
         var graceWeights = new Dictionary<string, int>();
         var hasExplicitParameterList = alg.HasExplicitParameterList;
 
-        // The program root is never called: its signature (unresolved root names, and names
-        // forwarding lifted into it) binds nothing, so this level is recorded as the
-        // never-called owner of its bindings (see ParameterOwnership) — reference
-        // classification still captures them, callable-binding decisions never do.
+        // The program root is never called: its signature (unresolved root names) binds
+        // nothing, so this level is recorded as the never-called owner of its bindings (see
+        // ParameterOwnership) — reference classification still captures them, callable-binding
+        // decisions never do.
         var isProgramRoot = ReferenceEquals(alg, run.ProgramRoot);
 
         // The parameter bindings in force while this body's OWN rows are collected: the
         // inherited ones plus this algorithm's written parameters, all owned by THIS level.
         // Ordinary nested algorithms close over already-known outer params: those rewrite to
         // Expr.Param but must not become new local params.
-        var boundParameters = ExtendOwnSignature(capturedParameters, scope, alg, signatureTemplate, parameterNames, isProgramRoot, observations);
+        var boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
 
         // Static-open ownership (F2): the head name of every open target is classified by the
         // SAME owner walk as every other bare-name occurrence, against the bindings established
         // BEFORE this body's rows are read — written parameters, captured ancestor parameters
-        // and binders, and on a completion run the completed signature. A parameter-owned head
-        // is not an open target: it elaborates to Expr.Param and is reported, and the scope is
-        // rebuilt over the corrected list so a farther same-named declaration can never provide
-        // names through it — not to the closed-list check, not to inference, not to the editor.
+        // and binders. A parameter-owned head is not an open target: it elaborates to Expr.Param
+        // and is reported, and the scope is rebuilt over the corrected list so a farther
+        // same-named declaration can never provide names through it — not to the closed-list
+        // check, not to inference, not to the editor.
         var ownedOpens = ClassifyOpenTargetHeads(
             newOpens, scope, boundParameters, diagnostics, run, reclassifyParameterHeads: true);
         if (!ReferenceEquals(ownedOpens, newOpens))
@@ -238,7 +188,7 @@ internal static class ParameterDetector
             newOpens = ownedOpens;
             algWithProcessedOpens = alg with { Opens = newOpens };
             scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
-            boundParameters = ExtendOwnSignature(capturedParameters, scope, alg, signatureTemplate, parameterNames, isProgramRoot, observations);
+            boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
         }
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
@@ -251,17 +201,17 @@ internal static class ParameterDetector
         {
             ReportUndeclaredExplicitParameterNames(writtenRows, scope, boundParameters, diagnostics, run, observations);
         }
-        else if (run.ImplicitCallOrigins is null)
+        else
         {
             provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
             CollectFreeParams(
-                writtenRows, scope, boundParameters, paramNames!, paramOrder!, graceWeights,
+                writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
                 FreeNameCollection.ImplicitSignature,
                 provenanceRecorder,
                 new FreeNameWalkMemo(observations));
 
             if (graceWeights.Count > 0)
-                ApplyGraceReordering(paramOrder!, graceWeights);
+                ApplyGraceReordering(paramOrder, graceWeights);
         }
 
         // The bindings in force inside this body: every inferred parameter is now known, and
@@ -269,8 +219,8 @@ internal static class ParameterDetector
         // body's own rows and every nested descent, because a nested body sees exactly the
         // same bindings with exactly the same owners.
         // Collection only adds names; Grace changes their order, not this map's contents.
-        // Reuse the established map when no names were inferred, including completion runs.
-        var bodyParameters = paramOrder is null || paramOrder.Count == parameterNames.Count
+        // Reuse the established map when no names were inferred.
+        var bodyParameters = paramOrder.Count == parameterNames.Count
             ? boundParameters
             : capturedParameters.Extend(scope, paramOrder, isProgramRoot, observations);
 
@@ -352,7 +302,7 @@ internal static class ParameterDetector
         // this level's Grace-effect policy (F10): under a closed explicit list nothing
         // is inferred, so no marker can reorder anything; otherwise a marker is
         // effective exactly on the names this level binds as its own parameters
-        // (paramNames — the inferred signature, retained on a completion run).
+        // (paramNames — the inferred signature).
         var rewriteMemo = new RewriteWalkMemo(
             run,
             observations,
@@ -369,36 +319,13 @@ internal static class ParameterDetector
 
         // Lean: withParams on the processed body — the merged pattern list keeps every written
         // or earlier-inferred pattern and appends a fresh capture per newly inferred name.
-        var parameterized = run.ImplicitCallOrigins is null
-            ? algWithProcessedOpens with
-            {
-                ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder!, provenanceRecorder?.Provenance),
-            }
-            : algWithProcessedOpens;
-        return parameterized with
+        return algWithProcessedOpens with
         {
+            ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
             Properties = newProperties,
             Output = rewrittenOutput,
         };
     }
-
-    /// <summary>
-    /// The ownership map inside one owner's body: the inherited bindings plus the owner's own
-    /// parameters, all owned by its level. A completed shared implicit-signature template (FE-3)
-    /// extends by one template layer (<see cref="ParameterOwnership.ExtendSignature"/>); every other
-    /// signature writes its names as before.
-    /// </summary>
-    private static ParameterOwnership ExtendOwnSignature(
-        ParameterOwnership capturedParameters,
-        ElaboratedPropertyScope scope,
-        Algorithm.User alg,
-        ImplicitSignatureTemplate? signatureTemplate,
-        IReadOnlyList<string> parameterNames,
-        bool isProgramRoot,
-        FrontEndTraversalObservations? observations)
-        => signatureTemplate is not null
-            ? capturedParameters.ExtendSignature(scope, alg.ParameterPatterns, isProgramRoot, observations)
-            : capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
 
     /// <summary>
     /// Elaborates one clause family (a property whose value is an
@@ -454,10 +381,6 @@ internal static class ParameterDetector
             var binderNames = run.BranchContexts.NamesOf(branch.Pattern).Names;
             if (branch.Body.DeferredRegion is { } region)
             {
-                // Even a body with no provisional reference to the lifted name must carry
-                // the completed owner chain: its loaded source may reference it later.
-                if (run.ImplicitCallOrigins is not null)
-                    run.OwnershipChanged = true;
                 // B2c: a deferred module region. The body's modules — and with them its full
                 // elaboration and every diagnostic that could depend on their members — wait
                 // for the branch to be selected. Eagerly the body is elaborated PROVISIONALLY:
@@ -530,7 +453,6 @@ internal static class ParameterDetector
         DeferredBranchContext context,
         DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
-        GraceOrigins? graceOrigins = null,
         SourceSpan? importSite = null)
         => ProcessConditionalBranchBody(
             loadedBody,
@@ -540,7 +462,7 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun { GraceOrigins = graceOrigins, ImportSite = importSite });
+            new DetectionRun { ImportSite = importSite });
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -671,16 +593,6 @@ internal static class ParameterDetector
     private readonly record struct KnownReceiverMember(Algorithm Algorithm, Expr ReceiverExpr, string MemberName, Expr.DotCall Edge);
 
     /// <summary>
-    /// Diagnostic source survives only between the two detection passes, never on the
-    /// executable AST. Resolve/Param leaves retain identity through implicit resolution;
-    /// a lifted call is restored to that leaf through ResolutionOrigins.ImplicitCalls.
-    /// </summary>
-    internal sealed class GraceOrigins
-    {
-        public readonly Dictionary<Expr, Expr.Grace> Occurrences = new(ReferenceEqualityComparer.Instance);
-    }
-
-    /// <summary>
     /// Run-scoped state of ONE detection (a <see cref="DetectPrevalidated"/> or
     /// <see cref="ElaborateDeferredBranch"/> call), threaded through every algorithm-processing
     /// path so a node reached through several paths of a shared (acyclic) host tree is
@@ -689,12 +601,6 @@ internal static class ParameterDetector
     /// </summary>
     private sealed class DetectionRun
     {
-        // Non-null only at the completion boundary. Read-only for this run; every memo is
-        // still local to its ownership region, so shared nodes cannot reuse another owner's
-        // selection. Existing Param nodes retain their classification.
-        public IReadOnlyDictionary<Expr, Expr>? ImplicitCallOrigins;
-        public GraceOrigins? GraceOrigins;
-        public bool OwnershipChanged;
         /// <summary>
         /// The PROGRAM ROOT this run entered at (by reference), or null for a run that enters
         /// at a nested owner (a deferred branch body). The root is never called, so its
@@ -754,29 +660,11 @@ internal static class ParameterDetector
 
             while (pending.TryPop(out var map))
             {
-                // A template layer (FE-3) adds its template's whole name set: canonicalized once per
-                // template and combined by the interner's memoized union, never re-read per layer.
-                set = map.AddedTemplate is { } template
-                    ? interner.Union(set, TemplateNames(interner, template))
-                    : interner.With(set, map.AddedNames);
+                set = interner.With(set, map.AddedNames);
                 canonical.Add(map, set);
             }
 
             return set.Id;
-        }
-
-        private Dictionary<ImplicitSignatureTemplate, CanonicalNameSet>? _templateNameSets;
-
-        private CanonicalNameSet TemplateNames(NameSetInterner interner, ImplicitSignatureTemplate template)
-        {
-            _templateNameSets ??= new(ReferenceEqualityComparer.Instance);
-            if (!_templateNameSets.TryGetValue(template, out var names))
-            {
-                names = interner.With(NameSetInterner.Empty, template.Facts.Names);
-                _templateNameSets.Add(template, names);
-            }
-
-            return names;
         }
 
         /// <summary>
@@ -954,8 +842,7 @@ internal static class ParameterDetector
 
         /// <summary>
         /// The names the region's algorithm binds as ITS OWN parameters — for an
-        /// implicit-signature body exactly the names its collection inferred (on a
-        /// completion run, the retained signature). Grace is effective on precisely
+        /// implicit-signature body exactly the names its collection inferred. Grace is effective on precisely
         /// these occurrences, because they are the ones the collection reordered.
         /// </summary>
         public readonly IReadOnlySet<string>? OwnParameterNames = ownParameterNames;
@@ -1125,13 +1012,11 @@ internal static class ParameterDetector
     /// resolves is reported by evaluation as the unresolved root input it is, not as a
     /// parameter that cannot be opened).</para>
     ///
-    /// <para><paramref name="reclassifyParameterHeads"/> re-verifies heads an EARLIER run
-    /// already elaborated to <see cref="Expr.Param"/> (a completion run re-enters on the
-    /// discovery run's tree, and the pipeline keeps only the latest run's diagnostics): a head
-    /// the completed bindings still own as a parameter is reported again, and one they no
-    /// longer own is restored to its written <see cref="Expr.Resolve"/>. The same region's
-    /// second pass (after inference added names) passes <c>false</c>, so a head classified by
-    /// the first pass is never reported twice within one run.</para>
+    /// <para><paramref name="reclassifyParameterHeads"/> also verifies heads the INPUT already
+    /// carries as <see cref="Expr.Param"/> (a host-built tree): a head the bindings own as a
+    /// parameter is reported, and one they do not own is restored to an <see cref="Expr.Resolve"/>.
+    /// The same region's second pass (after inference added names) passes <c>false</c>, so a head
+    /// classified by the first pass is never reported twice within one run.</para>
     ///
     /// <para>Returns the same list instance when nothing changed. A shared open-target node
     /// reached twice within one list rewrites once and is reported once (reference-identity
@@ -1188,10 +1073,7 @@ internal static class ParameterDetector
                     if (rewrites is null || !rewrites.TryGetValue(open, out var memoized))
                     {
                         if (head is Expr.Resolve)
-                        {
                             rewritten = ReplaceOpenTargetHead(open, new Expr.Param(headName) { Span = head.Span });
-                            run.OwnershipChanged = true;
-                        }
 
                         diagnostics?.Add(CreateOpenTargetIsParameterDiagnostic(open, headName, head.Span ?? open.Span ?? run.ImportSite));
                         if (opens.Count > 1)
@@ -1204,13 +1086,12 @@ internal static class ParameterDetector
                 }
                 else if (head is Expr.Param)
                 {
-                    // A parameter head of an earlier run that the completed bindings no longer
-                    // own: restore the written lexical reference (same span) and let ordinary
+                    // A parameter head the input already carries (a host-built tree) that no
+                    // binding owns: restore the lexical reference (same span) and let ordinary
                     // open resolution decide.
                     if (rewrites is null || !rewrites.TryGetValue(open, out var memoized))
                     {
                         rewritten = ReplaceOpenTargetHead(open, new Expr.Resolve(headName) { Span = head.Span });
-                        run.OwnershipChanged = true;
                         if (opens.Count > 1)
                             (rewrites ??= new(ReferenceEqualityComparer.Instance))[open] = rewritten;
                     }
@@ -2240,11 +2121,6 @@ internal static class ParameterDetector
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
-        if (memo.Run.ImplicitCallOrigins?.TryGetValue(expr, out var original) == true)
-            expr = original;
-        if (memo.Run.ImplicitCallOrigins is not null
-            && memo.Run.GraceOrigins?.Occurrences.TryGetValue(expr, out var sourceGrace) == true)
-            ReportIneffectiveGrace(sourceGrace, sourceGrace.UnwrapGraceOperand(), null, scope, parameters, memo);
         return expr switch
         {
             Expr.Grace grace => RewriteGrace(grace, scope, parameters, memo),
@@ -2349,21 +2225,16 @@ internal static class ParameterDetector
     }
 
     private static Expr RewriteResolveAsParam(string name, SourceSpan? span, RewriteWalkMemo memo)
-    {
-        memo.Run.OwnershipChanged = true;
-        return new Expr.Param(name) { Span = span };
-    }
+        => new Expr.Param(name) { Span = span };
 
     /// <summary>
     /// The Grace arm of <see cref="RewriteParamsCore"/>. Ordinary collection consumed the
     /// weight of an EFFECTIVE marker — one on a bare name this level inferred as its own
     /// parameter. A marker that could not reorder anything is reported here (F10,
-    /// <see cref="ReportIneffectiveGrace"/>): this pass runs on every detection run, so
-    /// the report survives ownership completion, which replays rewriting but never
-    /// inference. The wrapper is stripped either way; stacked wrappers on the one
-    /// occurrence are unwrapped together so the occurrence is examined — and reported —
-    /// exactly once. (In a conditional body the parser already diagnosed Grace; that
-    /// region's policy strips it for recovery without a second report.)
+    /// <see cref="ReportIneffectiveGrace"/>). The wrapper is stripped either way; stacked
+    /// wrappers on the one occurrence are unwrapped together so the occurrence is examined —
+    /// and reported — exactly once. (In a conditional body the parser already diagnosed Grace;
+    /// that region's policy strips it for recovery without a second report.)
     /// </summary>
     private static Expr RewriteGrace(
         Expr.Grace grace,
@@ -2373,18 +2244,7 @@ internal static class ParameterDetector
     {
         var gracedCore = grace.UnwrapGraceOperand();
         ReportIneffectiveGrace(grace, gracedCore, memberEdge: null, scope, parameters, memo);
-        var rewrittenGrace = RewriteParams(gracedCore, scope, parameters, memo);
-        if (memo.Run.ImplicitCallOrigins is null
-            && memo.Run.GraceOrigins is { } origins
-            && gracedCore is Expr.Resolve)
-        {
-            // Keep this written occurrence distinct from an ungraced reference
-            // sharing its operand in a host DAG. Repeated reaches of the Grace
-            // node still reuse this copy through the ordinary rewrite memo.
-            rewrittenGrace = rewrittenGrace with { };
-            origins.Occurrences.Add(rewrittenGrace, grace);
-        }
-        return rewrittenGrace;
+        return RewriteParams(gracedCore, scope, parameters, memo);
     }
 
     /// <summary>
@@ -2420,10 +2280,7 @@ internal static class ParameterDetector
         // graced receiver (`a~.t`) is an ordinary bare-name occurrence and takes
         // the Grace arm through the Target rewrite below.
         var fallback = dotCall.EffectiveLexicalFallback;
-        var memberGrace = fallback as Expr.Grace;
-        if (memberGrace is null && memo.Run.GraceOrigins is { } graceOrigins)
-            graceOrigins.Occurrences.TryGetValue(fallback, out memberGrace);
-        if (memberGrace is not null)
+        if (fallback is Expr.Grace memberGrace)
         {
             var memberCore = memberGrace.UnwrapGraceOperand();
             ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
@@ -2431,9 +2288,8 @@ internal static class ParameterDetector
 
         // The promotion note this collection recorded for the edge's fallback
         // occurrence travels on the rewritten edge, so the post-exposure
-        // finalizer can re-examine the edge against the completed tree. A
-        // completion run records nothing and keeps the note the input edge
-        // already carries.
+        // finalizer can re-examine the edge against the completed tree. An edge
+        // this collection recorded nothing for keeps the note it already carries.
         return dotCall with
         {
             Target = RewriteParams(dotCall.Target, scope, parameters, memo),

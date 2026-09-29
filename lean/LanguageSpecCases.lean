@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 303
-- excluded parse-level cases (Lean has no surface parser): 38
+- specification surface cases: 307
+- excluded parse-level cases (Lean has no surface parser): 39
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 247
-- probe observations (C#-only by design): 894
+- Lean-guarded cases: 250
+- probe observations (C#-only by design): 904
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1205,10 +1205,25 @@ def case_ancestor_callable_visible_without_same_named_parameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["f"]) (alg ["x"] [] [] [(.call (.param "f") [.param "x"])])) with requiredOwnerDepths := some [("f", some 0)] }] [(.call (.resolve "Inner") [.num 5])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_ancestor_callable_visible_without_same_named_parameter == "ok raw=6 n=1"
 
--- ownership-later-lifted-parameter-beats-inner-open [name-resolution]: Lib = { public v = 99 } \n Outer = { \n     Inner = { open Lib \n         v \n     } \n     Need = v \n     Inner + Need \n } \n Outer(7)
-def case_ownership_later_lifted_parameter_beats_inner_open : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [.resolve "Lib"] [] [.param "v"])) with requiredOwnerDepths := some [("v", some 0)] }, privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
-#guard obs case_ownership_later_lifted_parameter_beats_inner_open == "ok raw=14 n=1"
+-- forwarded-parameter-leaves-an-opened-reference [name-resolution]: Lib = { public v = 99 } \n Outer = { \n     Inner = { open Lib \n         v \n     } \n     Need = v \n     Inner + Need \n } \n Outer(7)
+def case_forwarded_parameter_leaves_an_opened_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [privateProp "Inner" (alg [] [.resolve "Lib"] [] [.resolve "v"]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_forwarded_parameter_leaves_an_opened_reference == "ok raw=106 n=1"
+
+-- forwarding-reuses-a-captured-ancestor-parameter [name-resolution]: A = y + 1 \n F(y) = { \n     G = y * 1000 + A \n     H(y) = G \n     H(100) \n } \n F(3)
+def case_forwarding_reuses_a_captured_ancestor_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.num 1000)) (.call (.resolve "A") [.param "y"]))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "H" (.localCapturedAncestorParams ["y"]) (alg ["y"] [] [] [.resolve "G"])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "H") [.num 100])])] [(.call (.resolve "F") [.num 3])])
+#guard obs case_forwarding_reuses_a_captured_ancestor_parameter == "ok raw=3004 n=1"
+
+-- forwarding-never-supplies-a-property-an-open-or-a-builtin [name-resolution]: v = 99 \n Need(v) = v \n Outer = Need + 1 \n Outer(7)
+def case_forwarding_never_supplies_a_property_an_open_or_a_builtin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [] [(.binary .add (.call (.resolve "Need") [.param "v"]) (.num 1))]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_forwarding_never_supplies_a_property_an_open_or_a_builtin == "ok raw=8 n=1"
+
+-- forwarding-reused-binding-kind-preserves-values [name-resolution]: Target(tag, *items) = items \n Collected(tag, *items) = { \n     G(q) = Target \n     G(99) \n } \n Fixed(tag, items) = { \n     G(q) = Target \n     G(99) \n } \n Head(x, *rest) = x + rest.count \n Partial(x) = { \n     H = Head \n     [H, H(10, 20)] \n } \n [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
+def case_forwarding_reused_binding_kind_preserves_values : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Collected" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Fixed" (alg ["tag", "items"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.call (.resolve "Target") [.param "tag", .param "items"])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.binary .add (.param "x") (.dotCall (.param "rest") "count" none))]), privateProp "Partial" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (algWithParameters [{ name := "rest", kind := .collecting }] [] [] [(.call (.resolve "Head") [.param "x", (.sequenceSpread (.param "rest"))])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.listLiteral [.resolve "H", (.call (.resolve "H") [.num 10, .num 20])])])] [(.listLiteral [(.call (.resolve "Collected") [.num 0, (.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)]), (.call (.resolve "Fixed") [.num 0, (.listLiteral [(.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)])]), (.call (.resolve "Partial") [.num 4])])])
+#guard obs case_forwarding_reused_binding_kind_preserves_values == "ok raw=L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]] n=1"
 
 -- ownership-captured-parameter-beats-outer-property [name-resolution]: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
 def case_ownership_captured_parameter_beats_outer_property : Expr :=
@@ -1335,7 +1350,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 247 canonical Lean-guarded specification cases.
+-- 250 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1564,7 +1579,10 @@ def specCaseIds : List String := [
   "value-parameter-shadowing-through-nested-scope",
   "value-binder-parameter-shadowing",
   "ancestor-callable-visible-without-same-named-parameter",
-  "ownership-later-lifted-parameter-beats-inner-open",
+  "forwarded-parameter-leaves-an-opened-reference",
+  "forwarding-reuses-a-captured-ancestor-parameter",
+  "forwarding-never-supplies-a-property-an-open-or-a-builtin",
+  "forwarding-reused-binding-kind-preserves-values",
   "ownership-captured-parameter-beats-outer-property",
   "ownership-nearest-enclosing-parameter-wins",
   "ownership-parameter-beats-prelude-alias",
@@ -1591,6 +1609,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 247
+#guard specCaseIds.length == 250
 
 end LanguageSpecCases

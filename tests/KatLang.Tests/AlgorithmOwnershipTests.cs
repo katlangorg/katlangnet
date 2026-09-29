@@ -351,9 +351,6 @@ public class AlgorithmOwnershipTests
             Assert.IsType(root.GetType(), detected);
             var resolved = ImplicitArgumentResolver.Resolve(detected);
             Assert.IsType(root.GetType(), resolved);
-            var origins = new ImplicitArgumentResolver.ResolutionOrigins();
-            var completed = ParameterDetector.CompleteOwnership(resolved, origins, hostOperations: null);
-            Assert.IsType(root.GetType(), completed.Root);
             var exposed = PropertyExposureResolver.Resolve(resolved);
             Assert.IsType(root.GetType(), exposed);
         }

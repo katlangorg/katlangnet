@@ -8,23 +8,34 @@ public class StaticOpenOwnershipBoundaryTests
     [Theory]
     [InlineData("")]
     [InlineData("Lib = { public X = 7 }\n")]
-    public void CompletedEnclosingParameter_RemovesEarlierStaticProvider(string farther)
+    public void ForwardedEnclosingParameter_NeverTakesOverAStaticOpenHead(string farther)
     {
+        // Q-04: Outer receives a forwarded `Lib` only for Need. The written head of Inner's
+        // `open Lib` keeps what name resolution gave it — the root `Lib` when there is one, and
+        // nothing (an unresolved open target) when there is none. Formerly the ownership-completion
+        // pass made the head Outer's forwarded parameter (OpenTargetIsParameter in both).
         const string body = "Need(Lib) = 0\nOuter = {\n    Inner(q) = {\n        open Lib\n        X\n    }\n    Inner(1) + Need\n}\nOuter(3)";
         var parsed = Parser.Parse(farther + body);
         Assert.Equal(
-            new[] { DiagnosticCode.OpenTargetIsParameter, DiagnosticCode.UndeclaredIdentifier },
+            farther.Length == 0
+                ? new[] { DiagnosticCode.UndeclaredIdentifier, DiagnosticCode.UnresolvedOpenTarget }
+                : [],
             parsed.Diagnostics.Select(d => d.Code));
         var outer = parsed.Root.Properties.Single(p => p.Name == "Outer").Value;
         Assert.Equal(["Lib"], outer.Params);
         var inner = outer.Properties.Single(p => p.Name == "Inner").Value;
-        Assert.Equal("Lib", Assert.IsType<Expr.Param>(Assert.Single(inner.Opens)).Name);
+        Assert.Equal("Lib", Assert.IsType<Expr.Resolve>(Assert.Single(inner.Opens)).Name);
         var line = farther.Length == 0 ? 4 : 5;
         var model = SemanticModelBuilder.Build(parsed);
         var resolution = Assert.IsType<IdentifierResolution>(model.FindResolutionAt(new SourcePosition(line, 14)));
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, resolution.Classification);
-        Assert.Null(model.FindPropertyAt(new SourcePosition(line, 14)));
-        Assert.Null(resolution.ResolvedProperty);
+        Assert.Equal(
+            farther.Length == 0 ? IdentifierClassification.Unresolved : IdentifierClassification.OpenTarget,
+            resolution.Classification);
+        if (farther.Length > 0)
+        {
+            Assert.Equal(new SourcePosition(1, 1), resolution.ResolvedDeclaration!.Span.Start);
+            Assert.Equal("7", KatLangEngine.Run(farther + body).ToDisplayString());
+        }
     }
 
     [Fact]
@@ -153,10 +164,13 @@ public class StaticOpenOwnershipBoundaryTests
     }
 
     [Theory]
-    [InlineData("Lib", true)]
-    [InlineData("q", false)]
-    public async Task DeferredBranch_InheritsCompletedOwnerBindings(string liftedName, bool rejected)
+    [InlineData("Lib")]
+    [InlineData("q")]
+    public async Task DeferredBranch_KeepsNameResolutionBindings_WhateverForwardingAdds(string liftedName)
     {
+        // Q-04: forwarding gives Outer a new parameter named after Need's; the deferred branch's
+        // written `open …, Lib` head keeps the root `Lib` either way (formerly a forwarded `Lib`
+        // took the head over at materialization and the selected branch was OpenTargetIsParameter).
         var calls = 0;
         var options = new RunOptions
         {
@@ -170,18 +184,8 @@ public class StaticOpenOwnershipBoundaryTests
         var source = "Lib = { public X = 7 }\nNeed(" + liftedName + ") = 0\nOuter = {\nF(0) = 0\nF(n) = {\nopen 'https://katlang.org/review.kat', Lib\nTouch() + X\n}\nF(1) + Need\n}\nOuter(3)";
         Assert.Empty((await Parser.ParseAsync(source, options)).Diagnostics);
         var result = await KatLangEngine.RunAsync(source, options);
-        if (rejected)
-        {
-            var errors = Assert.IsType<RunResult.EvalFailure>(result).Errors;
-            Assert.Equal(KatLangErrorCode.OpenTargetIsParameter, errors[0].Code);
-            Assert.Single(errors, e => e.Code == KatLangErrorCode.OpenTargetIsParameter);
-            Assert.Equal(0, calls);
-        }
-        else
-        {
-            Assert.Equal("8", Assert.IsType<RunResult.Success>(result).ToDisplayString());
-            Assert.Equal(1, calls);
-        }
+        Assert.Equal("8", Assert.IsType<RunResult.Success>(result).ToDisplayString());
+        Assert.Equal(1, calls);
     }
 
     [Theory]

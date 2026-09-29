@@ -1109,12 +1109,16 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotSynthesizeAncestorParameter()
+    public void Resolve_MathArgument_ClosedExplicitParameterList_ForwardsTheCapturedAncestorParameter()
     {
-        // The audit's K1-04 repro. `F`'s explicit list is `(x)`, and `y` appears nowhere in
-        // F's source: lifting `A` there synthesized `A(Expr.Param("y"))`, which bound the
-        // enclosing `G`'s parameter at runtime and additionally corrupted F's exposure.
-        var root = ResolveRejected("""
+        // The audit's K1-04 repro, under the Q-04 decision (September 28 2026). `F`'s explicit
+        // list is `(x)`, but G's rows use `y`, so a `y` written in F already denotes G's parameter:
+        // automatic forwarding reuses that captured ancestor binding for `A`, exactly as it does in
+        // an inferring body, and adds nothing to F's closed list. (Before the decision the closed
+        // list refused the forwarding and the program was a front-end error; K1-04 had observed
+        // the same forwarding produced by a degenerate caller configuration that the unwrapped
+        // control did NOT share — both spellings now agree, see the next test.)
+        var root = Resolve("""
             A = y + 1
             G = {
               F(x) = Math.Abs(A)
@@ -1122,23 +1126,23 @@ public class ImplicitArgumentResolverTests
             }
             """);
 
-        var f = root.Properties.Single(p => p.Name == "G").Value.Properties.Single(p => p.Name == "F");
+        var g = root.Properties.Single(p => p.Name == "G").Value;
+        var f = g.Properties.Single(p => p.Name == "F");
 
+        Assert.Equal(["y"], g.Params);
         Assert.Equal(["x"], f.Value.Params);
-        Assert.DoesNotContain("y", f.Value.Params);
-        Assert.Equal(PropertyExposure.Exported, f.Exposure);
+        // F reads G's `y`, so it is local to G's activation.
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, f.Exposure);
 
-        var resolve = Assert.IsType<Expr.Resolve>(MathArgument(Assert.Single(f.Value.Output)));
-        Assert.Equal("A", resolve.Name);
-
-        // No invented Expr.Param anywhere inside F -- `y` least of all.
-        Assert.Empty(ParamNamesIn(f.Value));
+        var call = Assert.IsType<Expr.Call>(MathArgument(Assert.Single(f.Value.Output)));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        Assert.Equal("y", Assert.IsType<Expr.Param>(Assert.Single(call.Args)).Name);
     }
 
     [Fact]
     public void Resolve_MathArgument_ClosedExplicitParameterList_MatchesUnwrappedValuePosition()
     {
-        var wrapped = ResolveRejected("""
+        var wrapped = Resolve("""
             A = y + 1
             G = {
               F(x) = Math.Abs(A)
@@ -1163,36 +1167,19 @@ public class ImplicitArgumentResolverTests
         Assert.Equal(NestedF(unwrapped).Value.Params, NestedF(wrapped).Value.Params);
     }
 
-    [Fact]
-    public void Eval_MathArgument_ClosedExplicitParameterList_NoLongerBindsUndeclaredAncestorParameter()
+    [Theory]
+    [InlineData("F(x) = Math.Abs(A)")]
+    [InlineData("F(x) = A")]
+    public void Eval_ClosedExplicitParameterList_ReadsTheCapturedAncestorParameter(string f)
     {
-        // Pre-fix this printed 21, by binding `G`'s `y = 10` into a parameter `F` never
-        // declared. The front end no longer synthesizes that reference, so the invented
-        // ancestor binding is gone.
-        //
-        // THREE layers now stand behind that, and this test asserts the innermost one — the
-        // rewrite — independently of the outer two, so a regression in either cannot hide it.
-        // (1) The front end REJECTS this source outright: `A` is required as a value by a
-        // registry-proven strict consumer and `F`'s closed list cannot supply `y`. (2) Were
-        // checking bypassed, the evaluator's dual-view shadowing makes the bare reference a
-        // value-demand failure rather than an ancestor capture. (3) Underneath both, the
-        // resolver's own output must simply never contain the invented parameter — which is
-        // what this evaluates the elaborated tree to confirm: 21 is impossible.
-        var source = """
-            A = y + 1
-            G = {
-              F(x) = Math.Abs(A)
-              F(1) + y
-            }
-            G(10)
-            """;
-
-        var rejectedRoot = ResolveRejected(source);
-        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(rejectedRoot));
-
-        Assert.False(
-            !result.IsError && result.Value.SequenceEqual<Decimal128>([21]),
-            "The closed explicit parameter list of F must not acquire the ancestor parameter y.");
+        // Q-04: `A`'s `y` is G's `y` (10) — the binding a `y` written in F denotes — so F(1) is
+        // |10 + 1| = 11 and G(10) is 21, whether or not a strict Math consumer wraps the reference.
+        // F's own closed list is unchanged: forwarding reuses the ancestor binding, it never adds
+        // a parameter F did not write.
+        var source = $"A = y + 1\nG = {{\n  {f}\n  F(1) + y\n}}\nG(10)";
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
+        Assert.Equal<Decimal128>([21], result.Value);
     }
 
     [Theory]

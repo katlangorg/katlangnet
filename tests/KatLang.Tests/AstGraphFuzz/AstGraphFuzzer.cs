@@ -271,12 +271,11 @@ public static class AstGraphFuzzer
         };
 
     /// <summary>
-    /// A Grace marker and its operand are never shared by reference. The front end reports
-    /// an ineffective marker once per marker NODE and records marker origins per OPERAND
-    /// node (<c>ParameterDetector.ReportIneffectiveGrace</c> / <c>GraceOrigins</c>), so a
-    /// marker reachable from two parents, or two markers over one shared operand, would
-    /// elaborate differently from the clone, where every occurrence is its own node and
-    /// reports once. That is a documented property of markers, not a sharing defect, so
+    /// A Grace marker and its operand are never shared by reference. The front end treats
+    /// Grace per NODE — it reports an ineffective marker once per marker node in a region
+    /// (<c>ParameterDetector.ReportIneffectiveGrace</c>) — so a marker reachable from two
+    /// parents, or two markers over one shared operand, need not elaborate like the clone,
+    /// where every occurrence is its own node and reports once. That is a documented property of markers, not a sharing defect, so
     /// the generator keeps each marker and its operand single-occurrence in the expanded
     /// tree: a second edge to ANY subtree containing a marker (or to its operand) is
     /// redirected to leaf 0, exactly like the occurrence-budget fallback. Leaf 0 is never

@@ -149,12 +149,12 @@ public class GraceEffectivenessTests
     }
 
     [Fact]
-    public void CompletionRun_ReportsEachOccurrenceExactlyOnce()
+    public void LiftingOwner_ReportsEachOccurrenceExactlyOnce()
     {
         // `Need = v` gives Need an implicit parameter that Q's bare `Need` read lifts
-        // into Q's own signature, which drives the ownership completion run. The
-        // completion replays rewriting but never inference, so the report must live
-        // in the rewrite pass — and be issued exactly once.
+        // into Q's own signature as a forwarded parameter. Forwarding re-runs no name
+        // resolution (Q-04: the former ownership-completion replay is gone), so the
+        // report lives in the detector's rewrite pass — and is issued exactly once.
         var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("Need = v\nQ = {\n    X = 1\n    ~X + Need\n}\nQ(1)"));
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.StartsWith("Grace has no effect on 'X' because it already resolves to a property", diagnostic.Message, StringComparison.Ordinal);
@@ -183,15 +183,16 @@ public class GraceEffectivenessTests
         => AssertIneffective(source, name, reason);
 
     [Fact]
-    public void CompletionThatChangesOwnership_RevalidatesGraceAgainstTheFinalOwner()
+    public void ForwardedEnclosingParameter_LeavesTheGracedBindingAndItsReason()
     {
-        // Lifting Need's v into Outer replaces Inner's opened-property binding with
-        // the enclosing parameter. Completion must keep the error and update its reason.
+        // Q-04: Outer receives a forwarded `v` for Need, but Inner's graced `v` keeps the
+        // opened-property binding name resolution gave it — forwarding never re-selects a binding
+        // (formerly the ownership-completion pass rebound it and re-worded the reason).
         const string source = "Lib = { public v = 99 }\nOuter = {\nInner = { open Lib\n~v }\nNeed = v\nInner + Need\n}\nOuter(7)";
-        AssertIneffective(source, "v", "it already resolves to a parameter of an enclosing algorithm",
+        AssertIneffective(source, "v", "it already resolves to an opened property",
             new SourceSpan(4, 1, 4, 3));
         var model = SemanticModelBuilder.Build(Parser.Parse(source));
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference,
+        Assert.Equal(IdentifierClassification.PropertyReference,
             model.FindResolutionAt(new SourcePosition(4, 2))!.Classification);
     }
 
@@ -226,14 +227,14 @@ public class GraceEffectivenessTests
     }
 
     [Fact]
-    public async Task LoadedModule_GraceValidationUsesCompletedOwnership()
+    public async Task LoadedModule_GraceValidationUsesTheNameResolutionBinding()
     {
         const string module = "Lib = { public v = 99 }\nOuter = {\nInner = { open Lib\n~v }\nNeed = v\nInner + Need\n}\nOuter(7)";
         var options = new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(module) };
         var parsed = await Parser.ParseAsync("M = load('https://katlang.org/grace.kat')\nM", options);
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.Contains("parameter of an enclosing algorithm", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("an opened property", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -251,7 +252,7 @@ public class GraceEffectivenessTests
         var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source + "F(1)", options));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.InvalidGraceMarker, error.Code);
-        Assert.Contains("parameter of an enclosing algorithm", error.Message, StringComparison.Ordinal);
+        Assert.Contains("an opened property", error.Message, StringComparison.Ordinal);
         // The marker sits on the module's line 4, which is no position in this document:
         // the report is positioned at the import site, the declaring `M` of the branch body.
         Assert.Equal(new SourceSpan(2, 10, 2, 11), error.Span);

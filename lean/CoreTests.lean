@@ -26,3 +26,4 @@ import CoreTests.SelectionValueBoundary
 import CoreTests.ExplicitValueOpening
 import CoreTests.PropertyCacheConsumers
 import CoreTests.ArgumentValueOutcome
+import CoreTests.ForwardingBindings
