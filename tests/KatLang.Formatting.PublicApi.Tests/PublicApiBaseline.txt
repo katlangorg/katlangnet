@@ -297,7 +297,6 @@ public enum KatLang.DiagnosticCode : int
   IllegalInOpen = 44
   UnresolvedOpenTarget = 45
   DiagnosticCountExceeded = 46
-  RepeatedParameterNotForwardable = 47
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1406,7 +1405,6 @@ public enum KatLang.KatLangErrorCode : int
   InvalidNumberLiteral = 66
   UnresolvedOpenTarget = 67
   DiagnosticCountExceeded = 68
-  RepeatedParameterNotForwardable = 69
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

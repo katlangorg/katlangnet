@@ -7330,17 +7330,16 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    (`KatLangArityLaws.lean`) states that an unlifted reference is always a
    cacheable demand.
 
-   A reference to a sibling whose parameter patterns REPEAT a binding name
-   (`P(x, x)`, `P((x, a), x)`) is not rewritten either, and it is not a value
-   read: the surface pass REFUSES it with a front-end error (Q-72, decided
-   2026-09-29; `refusesImplicitForwarding` and `bareValueReferenceTreatment`
-   below). Forwarding supplies arguments BY NAME, so it would feed every
-   occurrence of the repeated name from one binding — `Alias = P` became
-   `Alias(x) = P(x, x)` — and repeated occurrences are independently supplied
-   inputs whose compatibility the binder checks (Q-05). The program writes the
-   call (`Alias(a, b) = P(a, b)`, or `Same(x) = P(x, x)` to supply one value to
-   both); the evaluator never sees a refused reference, because a front-end
-   error blocks evaluation.
+   Forwarding is by BINDING NAME, regardless of how many times a name occurs
+   in the sibling's parameter patterns (decided 2026-09-29, reversing the same
+   day's Q-72 refusal): the referencing body receives ONE parameter per name
+   (first occurrence first, skipping names already bound, inside a group too),
+   and the rewritten call supplies that one binding to every occurrence —
+   `P(x, x) = x` / `Some = P` becomes `Some(x) = P(x, x)`, exactly as
+   `H = F + G` with `F(x)` and `G(x)` becomes `H(x) = F(x) + G(x)`. The
+   evaluator binds `P`'s two slots as it binds any call: both read the same
+   caller binding, so nothing is merged — the repeated-name constraint of
+   `bindParameterPattern` (Q-05) concerns independently supplied arguments.
 
    Example:
      Surface:   `{ A = x + 1  B = A * 2 }`
@@ -7410,74 +7409,9 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
     lifted — an open question of its own (PV-14 / Q-13), unchanged by this
     rule. C#: `ImplicitArgumentResolver.RequiresSuppliedArguments` over
     `CallableSignature.AcceptsZeroSuppliedArguments` /
-    `ParameterPattern.AcceptsZeroSuppliedSlots`.
-
-    Since Q-72 (2026-09-29) this is the ARITY half of the decision: a reference
-    it accepts is a CALL demand rather than a value read, and that call demand
-    is lifted unless the callee repeats a parameter name, which the surface pass
-    refuses instead (`bareValueReferenceTreatment`). The value-read half — and
-    with it `bare_reference_lifts_iff_not_cacheable` — is unchanged. -/
+    `ParameterPattern.AcceptsZeroSuppliedSlots`. -/
 def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
   ParameterPattern.minimumSuppliedSlots signature != 0
-
-/-- **Repeated-name forwarding refusal** (Q-72, decided 2026-09-29; surface
-    syntax support — the specification of a C# front-end rule, which Lean states
-    but does not execute: Lean models no signature construction). A callee whose
-    parameter patterns REPEAT a binding name — two captures of the flattened
-    signature share a name, at any nesting depth, a collecting capture included
-    (`P(x, x)`, `P((x, a), x)`, `P((x, y), (z, x))`, `P((x, *rest), x)`) — never
-    takes part in implicit parameter forwarding.
-
-    Each occurrence of a repeated name is an INDEPENDENTLY supplied argument
-    whose compatibility the binder checks at call time (Q-05:
-    `bindParameterPattern` reads `ParameterPattern.repeatsAtLevel`), while
-    forwarding supplies arguments BY NAME (`forwardingSource` decides per name):
-    it would feed every occurrence from ONE binding, so `P(x, x) = x` /
-    `Alias = P` became `Alias(x) = P(x, x)` — an alias of a different arity whose
-    equality constraint held by construction. THE INVARIANT: repeated occurrences
-    represent independently supplied inputs whose compatibility is checked at
-    binding time; no implicit transformation may collapse those occurrences into
-    one input unless the source explicitly supplies that same input to each
-    occurrence.
-
-    The surface pass therefore leaves such a reference unlifted and reports it
-    (C# `DiagnosticCode.RepeatedParameterNotForwardable`) in open and closed
-    bodies alike — an existing same-named binding never feeds the occurrences
-    either (`Q(x) = P` is refused, never `Q(x) = P(x, x)`) — and the program
-    writes the call: `Alias(a, b) = P(a, b)`, or `Same(x) = P(x, x)` to supply one
-    value to both. The rule reads only the callee's OWN signature, so by-name
-    sharing ACROSS callees is untouched (`H = F + G` with `F(x)` and `G(x)` still
-    infers `H(x)`). The evaluator is unaffected: it evaluates whichever tree the
-    surface pass produces, and a refused reference never reaches it. C#:
-    `ImplicitArgumentResolver.RefusesImplicitForwarding` over
-    `CallableSignature.RepeatedParameterName`. -/
-def refusesImplicitForwarding (signature : List ParameterPattern) : Bool :=
-  ParameterPattern.hasRepeatedCaptureNames signature
-
-/-- What the surface pass does with a bare value-position reference to a callee
-    of the given LIFTING signature (Q-03 with Q-72). -/
-inductive BareValueReferenceTreatment where
-  /-- The callee accepts zero supplied arguments: the reference stays `.resolve`,
-      the cached zero-argument value demand (Q-03). -/
-  | read
-  /-- The callee requires supplied arguments and binds every capture name once:
-      the reference becomes the implicit forwarding call (`forwardingSource`). -/
-  | lift
-  /-- The callee requires supplied arguments and repeats a capture name: the
-      reference is left unlifted and reported as a front-end error (Q-72). -/
-  | refuse
-  deriving Repr, DecidableEq
-
-/-- The surface pass's ONE decision for a bare value-position reference: read,
-    lift, or refuse (see `liftsBareValueReference` and `refusesImplicitForwarding`;
-    the arity half decides first, so a callable that accepts zero supplied
-    arguments is read whatever its names). C#: the arms of
-    `ImplicitArgumentResolver.CollectImplicitDepsCore` and `RewriteBareReference`,
-    in that order. -/
-def bareValueReferenceTreatment (signature : List ParameterPattern) : BareValueReferenceTreatment :=
-  if liftsBareValueReference signature then
-    if refusesImplicitForwarding signature then .refuse else .lift
-  else .read
 
 /-- Where AUTOMATIC PARAMETER FORWARDING takes the argument for one callee parameter
     (Q-04, decided 2026-09-28): see `forwardingSource`. -/
@@ -7520,10 +7454,16 @@ inductive ForwardingSource where
     `BuildImplicitCallArguments`; laws in `KatLangArityLaws.lean`, guards in
     `CoreTests/ForwardingBindings.lean`.
 
-    Deciding per NAME is deciding per capture occurrence only because a lifted
-    callee binds each name once: a callee that repeats a parameter name is never
-    lifted (`bareValueReferenceTreatment`, Q-72), so this decision is never asked
-    to feed several independently supplied occurrences from one binding. -/
+    IMPLICIT FORWARDING IS BY BINDING NAME, regardless of how many times the name
+    occurs in the callee's parameter patterns: every capture occurrence of `name`
+    receives the one source this function returns, so a callee that repeats a
+    name (`P(x, x)`, `P((x, a), x)`) receives the caller's ONE binding at every
+    occurrence — `Some = P` is `Some(x) = P(x, x)` — the rule by-name sharing
+    ACROSS callees already follows (`H = F + G` is `H(x) = F(x) + G(x)`). Each
+    occurrence is then an ordinary argument slot reading that binding; the
+    binder's repeated-name constraint (Q-05) concerns independently supplied
+    arguments and merges nothing. (Decided 2026-09-29, reversing the same day's
+    Q-72 refusal of such callees; Lean models no signature construction.) -/
 def forwardingSource (chain : List OwnerLevel) (inferring : Bool) (name : Ident) : ForwardingSource :=
   match selectOwnedDeclaration chain name with
   | .parameter 0 => .ownParameter

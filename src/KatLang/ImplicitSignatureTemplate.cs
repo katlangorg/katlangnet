@@ -127,16 +127,8 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
             _tail = template._tail?.Facts;
             _headCaptures = [.. ParameterPattern.FlattenCaptures(template._items)];
             _headFirstCapture = new Dictionary<string, ParameterDeclaration>(_headCaptures.Length, StringComparer.Ordinal);
-            string? headRepeatedName = null;
             foreach (var capture in _headCaptures)
-            {
-                if (!_headFirstCapture.TryAdd(capture.Name, capture))
-                    headRepeatedName ??= capture.Name;
-            }
-
-            // Head and tail names are disjoint (Compose's contract), so a repeated name lies
-            // inside the head or inside the tail, and the tail answers from its own facts.
-            FirstRepeatedName = headRepeatedName ?? _tail?.FirstRepeatedName;
+                _headFirstCapture.TryAdd(capture.Name, capture);
             CaptureCount = _headCaptures.Length + (_tail?.CaptureCount ?? 0);
             var headCollecting = 0;
             foreach (var pattern in template._items)
@@ -161,14 +153,6 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
 
         /// <summary>The number of captures (Lean: <c>(patterns.flatMap captures).length</c>).</summary>
         public int CaptureCount { get; }
-
-        /// <summary>
-        /// The first capture name, left to right, that an earlier capture already binds, or null
-        /// when the names are distinct (<see cref="CallableSignature.RepeatedParameterName"/>).
-        /// A lifted tail never repeats a name (the merge skips present names), so only an owner's
-        /// own written head can; this costs the head, never the shared tail's width per owner.
-        /// </summary>
-        public string? FirstRepeatedName { get; }
 
         /// <summary>Top-level collecting captures (the binder's movable collector count).</summary>
         public int TopLevelCollectingCount { get; }

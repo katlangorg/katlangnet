@@ -3,8 +3,7 @@ import CoreTests.Common
 
 namespace KatLangTests
 open KatLang (alg algWithParameterPatterns algPrivate runResultM Algorithm Error Result EvalState
-  ParameterPattern ParameterPatternInput ParameterPatternBindings
-  bareValueReferenceTreatment BareValueReferenceTreatment)
+  ParameterPattern ParameterPatternInput ParameterPatternBindings)
 open KatLang (resolve param num)
 
 --------------------------------------------------------------------------------
@@ -95,6 +94,32 @@ def rnSameAlg : Algorithm := alg ["x"] [] [] [.call (resolve "P") [param "x", pa
 /-- `NW(p, q) = N(p, q)`: an explicit wrapper of the nested repetition. -/
 def rnNWAlg : Algorithm := alg ["p", "q"] [] [] [.call (resolve "N") [param "p", param "q"]]
 
+/-- `Some = P`, as the front end elaborates it: forwarding is by binding name, so the ONE
+    caller binding `x` is supplied to both occurrences, `Some(x) = P(x, x)` — the very tree of
+    the written `Same`. -/
+def rnSomeAlg : Algorithm := alg ["x"] [] [] [.call (resolve "P") [param "x", param "x"]]
+
+/-- `SomeN = N`, elaborated: `SomeN(x, (y)) = N(x, (x, y))` — one binding per name, the group
+    keeping its shape for the name that is new there. -/
+def rnSomeNAlg : Algorithm :=
+  algWithParameterPatterns [rnCap "x", .sequenceValue [rnCap "y"]] [] []
+    [.call (resolve "N") [param "x", .capture [param "x", param "y"]]]
+
+/-- `SomeC = C`, elaborated: `SomeC(x, *r) = C(x, r*, x)` — the repeated `x` supplied from one
+    binding, the collector re-spread because its SOURCE binding collects (FWD-02). -/
+def rnSomeCAlg : Algorithm :=
+  algWithParameterPatterns [rnCap "x", rnColl "r"] [] []
+    [.call (resolve "C") [param "x", .sequenceSpread (param "r"), param "x"]]
+
+/-- `G((x, x)) = x` and the elaborated `SomeG((x)) = G((x, x))`. Deduplicating
+    names preserves the caller's sequence-value pattern, including its value opening. -/
+def rnGAlg : Algorithm :=
+  algWithParameterPatterns [.sequenceValue [rnCap "x", rnCap "x"]] [] [] [param "x"]
+
+def rnSomeGAlg : Algorithm :=
+  algWithParameterPatterns [.sequenceValue [rnCap "x"]] [] []
+    [.call (resolve "G") [.capture [param "x", param "x"]]]
+
 /-- `E(x, x) = true` / `E(x, y) = false`: a clause family. -/
 def rnEAlg : Algorithm :=
   Algorithm.elaborateClauseGroup [
@@ -108,7 +133,9 @@ def rnRoot (out : List KatLang.Expr) : KatLang.Expr :=
     [ ("Id", rnIdAlg), ("Bad", rnBadAlg), ("Missing", rnMissingAlg), ("A", rnAAlg), ("B", rnBAlg)
     , ("Inc", rnIncAlg), ("P", rnPAlg), ("PC", rnPCAlg), ("PF", rnPFAlg), ("T", rnTAlg)
     , ("N", rnNAlg), ("C", rnCAlg), ("Q2", rnQ2Alg), ("Fwd", rnFwdAlg), ("E", rnEAlg)
-    , ("Same", rnSameAlg), ("NW", rnNWAlg), ("Suffix", rnSuffixAlg), ("Prefix", rnPrefixAlg) ]
+    , ("Same", rnSameAlg), ("NW", rnNWAlg), ("Suffix", rnSuffixAlg), ("Prefix", rnPrefixAlg)
+    , ("Some", rnSomeAlg), ("SomeN", rnSomeNAlg), ("SomeC", rnSomeCAlg)
+    , ("G", rnGAlg), ("SomeG", rnSomeGAlg) ]
     out)
 
 /-- The outcome of a run AND the binding contexts it opened, kept for a FAILED run too. -/
@@ -272,49 +299,63 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
   | _ => false
 
 --------------------------------------------------------------------------------
--- No implicit forwarding into a repeated-name callee (Q-72, decided 2026-09-29)
+-- Implicit forwarding is by binding name (decided 2026-09-29; reverses Q-72)
 --------------------------------------------------------------------------------
--- The C# front end REFUSES a bare value-position reference to a callee whose own
--- parameter patterns repeat a binding name (`DiagnosticCode.RepeatedParameterNotForwardable`):
--- forwarding supplies arguments by NAME and would feed every occurrence from one
--- binding (`Alias = P` became `Alias(x) = P(x, x)`). Lean models no signature
--- construction; it specifies the decision (`bareValueReferenceTreatment`, laws in
--- `KatLangArityLaws.lean`), and the evaluator never sees a refused reference, since a
--- front-end error blocks evaluation. What IS evaluable is the written call the
--- refusal asks for, pinned here beside the Q-05 guards it relies on.
+-- Implicit forwarding supplies the caller's ONE binding of a name to EVERY
+-- occurrence of that name in the callee's parameter patterns, exactly as it
+-- shares one binding across callees (`H = F + G` is `H(x) = F(x) + G(x)`). Lean
+-- models no signature construction; it evaluates the ELABORATED forwarding trees
+-- (`rnSomeAlg`, `rnSomeNAlg`, `rnSomeCAlg`), and the Lean programs of the
+-- `implicit-forwarding-is-by-binding-name` spec cases are derived from the C#
+-- elaboration. Each occurrence is an ordinary argument slot reading the one
+-- binding, so the occurrences agree by construction on a value, and a
+-- callable-only or failed argument is its own failure: nothing is merged. (The
+-- Q-72 decision had refused such references with a front-end error; that
+-- refusal is removed.)
 
--- 15. The decision table: repeated names at any depth, across groups, beside a
---     collector, or three times refuse; distinct names lift; a callable that accepts
---     zero supplied arguments is read whatever it declares.
-#guard bareValueReferenceTreatment [rnCap "x", rnCap "x"] == .refuse
-#guard bareValueReferenceTreatment [.sequenceValue [rnCap "x", rnCap "a"], rnCap "x"] == .refuse
-#guard bareValueReferenceTreatment
-  [.sequenceValue [rnCap "x", rnCap "y"], .sequenceValue [rnCap "z", rnCap "x"]] == .refuse
-#guard bareValueReferenceTreatment [.sequenceValue [rnCap "x", rnColl "rest"], rnCap "x"] == .refuse
-#guard bareValueReferenceTreatment [rnCap "x", rnColl "r", rnCap "x"] == .refuse
-#guard bareValueReferenceTreatment [rnCap "x", rnCap "x", rnCap "x"] == .refuse
-#guard bareValueReferenceTreatment [rnCap "x", .sequenceValue [rnCap "x", rnCap "y"]] == .refuse
-#guard bareValueReferenceTreatment [rnCap "x", rnCap "y"] == .lift
-#guard bareValueReferenceTreatment [.sequenceValue [rnCap "x", rnCap "a"], rnCap "y"] == .lift
-#guard bareValueReferenceTreatment [rnCap "x", rnColl "rest"] == .lift
-#guard bareValueReferenceTreatment [.sequenceValue [rnColl "xs"]] == .lift
-#guard bareValueReferenceTreatment [rnColl "xs"] == .read
-#guard bareValueReferenceTreatment [] == .read
+-- 15. The forwarded alias is the written same-binding call, observation for
+--     observation: the value, the failures, and the binding contexts (Some binds —
+--     one context — then P binds — one more; a failed argument never lets P bind).
+#guard rnSucceedsWith [rnCall "Some" [num 7]] (.atom 7)
+#guard rnContexts [rnCall "Some" [num 7]] == 2
+#guard rnContexts [rnCall "Some" [num 7]] == rnContexts [rnCall "Same" [num 7]]
+#guard rnFailsWith innermostIsDivByZero [rnCall "Some" [resolve "Bad"]]
+#guard rnContexts [rnCall "Some" [resolve "Bad"]] == rnContexts [rnCall "Same" [resolve "Bad"]]
+#guard rnFailsWith rnIncFailure [rnCall "Some" [resolve "Inc"]]
+#guard rnSucceedsWith [rnCall "Some" [.listLiteral [num 1]]] (.listValue [.atom 1])
+-- One binding name is one caller parameter: two arguments are an arity error ...
+#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "Some" [num 7, num 7]]
+-- ... while the direct call still supplies independent arguments (Q-05).
+#guard rnFailsWith innermostIsBadArity [rnCall "P" [num 7, num 8]]
 
--- 16. The written forms evaluate as ordinary calls. A wrapper with its OWN parameters
---     keeps P's two independently supplied arguments (`Fwd(a, b) = P(a, b)`, section
---     10): equal values match, unequal values are P's own `badArity`. A wrapper that
---     WRITES one value into both occurrences (`Same(x) = P(x, x)`) supplies that same
---     input to each explicitly: it binds (one context), P binds (one more), and a
---     failed argument is its own recorded failure. A nested repetition's wrapper
---     (`NW(p, q) = N(p, q)`) keeps N's constraint across the group.
+-- 16. A nested repetition and a collector forward by name too: one binding for `x`,
+--     the group keeping its shape for `y`, the collector re-spread by its kind.
+#guard rnSucceedsWith [rnCall "SomeN" [num 7, num 8]] (.atom 8)
+#guard rnFailsWith innermostIsDivByZero [rnCall "SomeN" [resolve "Bad", num 8]]
+#guard rnFailsWith rnIncFailure [rnCall "SomeN" [resolve "Inc", num 8]]
+#guard rnSucceedsWith [rnCall "SomeC" [num 7, num 9]] (.atom 7)
+#guard rnFailsWith innermostIsDivByZero [rnCall "SomeC" [resolve "Bad", num 9]]
+
+-- 17. Who supplies the occurrences decides what is checked. A wrapper with its OWN
+--     two parameters keeps P's arguments independent (`Fwd(a, b) = P(a, b)`, section
+--     10): equal values match, unequal values are P's own `badArity`. Writing one
+--     binding into both occurrences (`Same(x) = P(x, x)`) is what forwarding does. A
+--     nested repetition's wrapper (`NW(p, q) = N(p, q)`) keeps N's constraint.
 #guard rnSucceedsWith [rnCall "Fwd" [num 7, num 7]] (.atom 7)
 #guard rnFailsWith innermostIsBadArity [rnCall "Fwd" [num 7, num 8]]
 #guard rnSucceedsWith [rnCall "Same" [num 7]] (.atom 7)
-#guard rnContexts [rnCall "Same" [num 7]] == 2
 #guard rnFailsWith innermostIsDivByZero [rnCall "Same" [resolve "Bad"]]
 #guard rnFailsWith rnIncFailure [rnCall "Same" [resolve "Inc"]]
 #guard rnSucceedsWith [rnCall "NW" [num 7, .capture [num 7, num 8]]] (.atom 8)
 #guard rnFailsWith innermostIsBadArity [rnCall "NW" [num 6, .capture [num 7, num 8]]]
+
+-- 18. The surviving one-name group is a real pattern boundary. These guards
+--     evaluate the tree; C# tests separately pin that inference produces it.
+#guard rnSucceedsWith [rnCall "SomeG" [num 7]] (.atom 7)
+#guard rnSucceedsWith [rnCall "SomeG" [.listLiteral [num 7]]] (.atom 7)
+#guard rnSucceedsWith [rnCall "SomeG" [.listLiteral [.capture [num 7, num 8]]]]
+  (.sequenceValue [.atom 7, .atom 8])
+#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "SomeG" [.capture [num 7, num 8]]]
+#guard rnFailsWith (innermostIsArityMismatch 1 0) [rnCall "SomeG" [.listLiteral []]]
 
 end KatLangTests

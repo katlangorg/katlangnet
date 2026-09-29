@@ -282,9 +282,6 @@ public class LanguageSpecRunnerTests
             // `not` below the comparisons (September 2026): a `not` where a tighter
             // operand is required is a parser precedence diagnostic.
             "not-cannot-be-a-tighter-operand",
-            // Q-72 (September 2026): implicit forwarding into a callable that repeats a
-            // parameter name is a front-end refusal, parse-level by construction.
-            "repeated-name-callee-is-never-forwarded-implicitly",
         ];
         string[] expectedModelDivergences =
         [

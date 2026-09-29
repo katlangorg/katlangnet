@@ -177,10 +177,6 @@ public class DiagnosticCodeTests
         { "open-target-missing-member", "Lib = { public S = 1 }\nA = {\n    open Lib.Missing\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "open-target-private-step", "Lib = { Sub = { public X = 1 } }\nA = {\n    open Lib.Sub\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "load-elaboration-unavailable", "open 'https://katlang.org/lib.kat'\n1", DiagnosticCode.LoadElaborationUnavailable },
-        { "repeated-parameter-alias", "P(x, x) = x\nAlias = P\nAlias(7)", DiagnosticCode.RepeatedParameterNotForwardable },
-        { "repeated-parameter-operand", "P(x, x) = x\nD = P + 1\nD(7)", DiagnosticCode.RepeatedParameterNotForwardable },
-        { "repeated-parameter-closed-list", "P(x, x) = x\nQ(x) = P\nQ(7)", DiagnosticCode.RepeatedParameterNotForwardable },
-        { "repeated-parameter-nested", "P((x, a), x) = a\nAlias = P\nAlias((7, 8))", DiagnosticCode.RepeatedParameterNotForwardable },
     };
 
     [Theory]

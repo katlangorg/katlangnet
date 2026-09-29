@@ -442,35 +442,28 @@ Report(3, 4)
 
 `Doubled` uses `Area`, which needs `width` and `height`. `Doubled` is written inside `Report`, whose parameters have those names, so `Area` receives Report's `width` and `height`, and `Doubled` needs no inputs of its own: it is an ordinary property of `Report`. A new parameter is added only when no parameter of the needed name is available, and never to an algorithm with an explicit parameter list. Properties, opened names, and builtins are not handed on as parameters, even when their names match: with `v = 99` and `Need(v) = v`, the formula `Outer = Need + 1` still takes its own `v`, so `Outer(7)` is `8`.
 
-A formula whose parameter list repeats a name is never handed inputs this way. The two `x` of `Common(x, x) = x` are two separate arguments that must be equal (see [Equal Arguments](#equal-arguments)); handing inputs on by name would feed both from one input, so the check could never fail. Using such a formula without arguments where its inputs would be handed on is therefore an error, reported at its name:
+Because inputs are handed on by name, one name is always one input, however many times it appears. Two formulas that both need `x` share one `x`, and so do the two places where one formula's parameter list names `x`:
 
-<!-- spec:repeated-name-callee-is-never-forwarded-implicitly -->
+<!-- spec:implicit-forwarding-is-by-binding-name -->
 ```
+F(x) = x + 1
+G(x) = x * 2
+H = F + G
+
 Common(x, x) = x
-Alias = Common
+Some = Common
 
-Alias(7, 7)
-```
-
-Write the call instead. A wrapper with parameters of its own keeps the two arguments separate, and a wrapper that passes one input to both does so visibly:
-
-<!-- spec:repeated-name-callee-is-called-explicitly -->
-```
-Common(x, x) = x
-Both(a, b) = Common(a, b)
-Twice(v) = Common(v, v)
-
-Both(7, 7)
-Twice(8)
+H(3)
+Some(7)
 ```
 
 **Results:**
 ```
+10
 7
-8
 ```
 
-`Both(7, 8)` is an error, exactly like `Common(7, 8)`. The rule is about handing inputs on automatically only: calling `Common` with its arguments, or passing `Common` itself to another function, works as usual.
+`H = F + G` means `H(x) = F(x) + G(x)`, and in the same way `Some = Common` means `Some(x) = Common(x, x)`: `Some` takes one input and hands it to both places where `Common` names `x`, so `Some` is called with one argument. Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error.
 
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
@@ -1809,7 +1802,7 @@ Same(Inc, 1)
 
 A callable that accepts zero arguments can supply its value through the ordinary cached read.
 
-Because each occurrence is an argument of its own, a function that repeats a parameter name never has its inputs handed on automatically; write the call (see [Formulas That Use Formulas](#formulas-that-use-formulas)).
+The check is about arguments that are supplied separately. When one input is handed on to both places, as `Some = Common` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own.
 
 ### Rules for Clauses
 

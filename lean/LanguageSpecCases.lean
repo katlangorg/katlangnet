@@ -15,10 +15,10 @@ not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
 - specification surface cases: 310
-- excluded parse-level cases (Lean has no surface parser): 40
+- excluded parse-level cases (Lean has no surface parser): 39
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 252
-- probe observations (C#-only by design): 919
+- Lean-guarded cases: 253
+- probe observations (C#-only by design): 927
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -485,10 +485,15 @@ def case_repeated_equal_values_require_one_callable_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 5]), privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "P") [.resolve "A", .resolve "B"])])
 #guard obs case_repeated_equal_values_require_one_callable_identity == "err type"
 
--- repeated-name-callee-is-called-explicitly [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n  \n Both(7, 7) \n Twice(8)
-def case_repeated_name_callee_is_called_explicitly : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8])])
-#guard obs case_repeated_name_callee_is_called_explicitly == "ok raw=S[7, 8] n=2"
+-- implicit-forwarding-is-by-binding-name [variadic-calls]: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n Common(x, x) = x \n Some = Common \n  \n H(3) \n Some(7)
+def case_implicit_forwarding_is_by_binding_name : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "F") [.param "x"]) (.call (.resolve "G") [.param "x"]))]), privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "H") [.num 3]), (.call (.resolve "Some") [.num 7])])
+#guard obs case_implicit_forwarding_is_by_binding_name == "ok raw=S[10, 7] n=2"
+
+-- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9)
+def case_repeated_name_wrapper_keeps_independent_arguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9])])
+#guard obs case_repeated_name_wrapper_keeps_independent_arguments == "ok raw=S[7, 8, 9] n=3"
 
 -- repeated-callable-success-preserves-both-channels [variadic-calls]: B(*xs) = 5 + xs.count \n P(f, f, f, f, f) = [f, f(1), map([7], f)] \n P(B, 5, B, 5, 5) \n P(5, B, 5, 5, B)
 def case_repeated_callable_success_preserves_both_channels : Expr :=
@@ -1360,7 +1365,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 252 canonical Lean-guarded specification cases.
+-- 253 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1445,7 +1450,8 @@ def specCaseIds : List String := [
   "repeated-name-binding-is-order-independent",
   "repeated-name-is-a-constraint-not-a-merge",
   "repeated-equal-values-require-one-callable-identity",
-  "repeated-name-callee-is-called-explicitly",
+  "implicit-forwarding-is-by-binding-name",
+  "repeated-name-wrapper-keeps-independent-arguments",
   "repeated-callable-success-preserves-both-channels",
   "repeated-genuine-aliases-preserve-complete-binding",
   "repeated-callable-identity-includes-captured-activation",
@@ -1621,6 +1627,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 252
+#guard specCaseIds.length == 253
 
 end LanguageSpecCases

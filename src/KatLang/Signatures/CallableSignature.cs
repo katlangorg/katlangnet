@@ -84,19 +84,6 @@ internal sealed record CallableSignature
     public CallableArityFacts ArityFacts => _derived.Value.ArityFacts(this);
 
     /// <summary>
-    /// The first parameter name, left to right over the flattened captures, that an EARLIER
-    /// capture of this signature already binds — at any nesting depth, a collecting capture
-    /// included (<c>P(x, x)</c>, <c>P((x, a), x)</c>, <c>P((x, y), (z, x))</c>,
-    /// <c>P((x, *rest), x)</c>) — or null when every capture name is distinct. The captures of
-    /// ONE parameter list bind in one activation, so a repeated name is one binding constrained
-    /// by several independently supplied arguments (PAT-09); names of different callables never
-    /// meet here. Implicit lifting reads it (Q-72): such a callee never takes part in implicit
-    /// forwarding. Computed once per signature; a shared implicit-signature template answers
-    /// from its own facts (FE-3), never by rescanning its width per owner.
-    /// </summary>
-    public string? RepeatedParameterName => _derived.Value.RepeatedParameterName(this);
-
-    /// <summary>
     /// The lazily derived facts of one signature, published atomically (a signature may be read
     /// concurrently — the builtin registry's are process-wide). Each is a pure function of the
     /// signature's stored inputs, so racing initializers compute equal values.
@@ -110,7 +97,6 @@ internal sealed record CallableSignature
         private IReadOnlyList<string>? _parameterNames;
         private string? _displayText = displayText;
         private CallableArityFacts? _arityFacts;
-        private System.Runtime.CompilerServices.StrongBox<string?>? _repeatedParameterName;
 
         public IReadOnlyList<CallableParameter> Parameters(CallableSignature signature)
         {
@@ -157,30 +143,6 @@ internal sealed record CallableSignature
                 return computed;
             computed = CallableSignatureDiagnostics.GetArityFacts(signature);
             return Interlocked.CompareExchange(ref _arityFacts, computed, null) ?? computed;
-        }
-
-        public string? RepeatedParameterName(CallableSignature signature)
-        {
-            var computed = Volatile.Read(ref _repeatedParameterName);
-            if (computed is not null)
-                return computed.Value;
-            computed = new(signature.ParameterPatterns is ImplicitSignatureTemplate template
-                ? template.Facts.FirstRepeatedName
-                : FindRepeatedParameterName(signature.ParameterPatterns));
-            return (Interlocked.CompareExchange(ref _repeatedParameterName, computed, null) ?? computed).Value;
-        }
-
-        private static string? FindRepeatedParameterName(IReadOnlyList<ParameterPattern> patterns)
-        {
-            HashSet<string>? seen = null;
-            foreach (var capture in ParameterPattern.EnumerateCaptures(patterns))
-            {
-                seen ??= new(StringComparer.Ordinal);
-                if (!seen.Add(capture.Name))
-                    return capture.Name;
-            }
-
-            return null;
         }
     }
 

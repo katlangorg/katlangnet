@@ -82,12 +82,14 @@ public class MaintainedDocumentationConsistencyTests
         { @"\btwo\s+algorithm-channel\s+bindings\s+only\s+when\s+(?:each|both)\s+carr(?:y|ies)\s+a\s+value\b", "valueless repeated contributions accepted beside values (before Q-05)" },
         { @"\balgorithm-only\s+repeat(?:s|ed\s+names?)?\b", "an algorithm-only repeated-name verdict (before Q-05)" },
         { @"P\(5,\s*Inc\)`?\s+binds\b", "a value spliced with another argument's callable (before Q-05)" },
-        // Q-72: a callable whose parameter patterns repeat a name never takes part in implicit
-        // forwarding. Forwarding by name would feed every occurrence from one binding, so a bare
-        // alias is refused and an existing same-named binding never feeds the occurrences.
-        { @"`Alias\s*=\s*P`[^.]*\belaborates\s+to\s+`Alias\(x\)\s*=\s*P\(x,\s*x\)", "a repeated-name callee's alias lifted to one forwarded parameter (before Q-72)" },
-        { @"`Q\(x\)\s*=\s*P`\s+is\s+`Q\(x\)\s*=\s*P\(x,\s*x\)", "an existing binding fed to every repeated occurrence (before Q-72)" },
-        { @"\bQ-72\b[^.\n]*\b(?:undecided|pending)\b", "Q-72 described as undecided" },
+        // Implicit forwarding is by binding name, regardless of how many times that name occurs in
+        // a callee's parameter patterns (September 29 2026, reversing the Q-72 refusal of the same
+        // day): a callee that repeats a name lifts like any callee — one caller binding per name,
+        // supplied to every occurrence — and no front-end diagnostic refuses it.
+        { @"\bRepeatedParameterNotForwardable\b", "the removed repeated-name forwarding refusal diagnostic (Q-72, reversed)" },
+        { @"\bcannot\s+be\s+forwarded\s+implicitly\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
+        { @"\bno\s+implicit\s+forwarding\s+into\s+a\s+repeated-name\s+callee\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
+        { @"\bnever\s+(?:takes?|participates?)\s+(?:part\s+)?in\s+implicit\s+(?:parameter\s+)?(?:forwarding|lifting)\b", "a callee excluded from implicit forwarding (Q-72, reversed)" },
     };
 
     [Theory]

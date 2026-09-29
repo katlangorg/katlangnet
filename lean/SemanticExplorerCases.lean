@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2309
+- surface corpus cases: 2319
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2267
+- Lean-representable surface cases: 2277
 - internal-node cases: 14
-- total generated guards: 2281 case guards + 2 count guards
+- total generated guards: 2291 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -11429,7 +11429,57 @@ def case_special__repeatedNameAccompanyingChannel : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "P" (alg ["f", "f"] [] [] [.param "f", (.call (.param "f") [])])] [(.call (.resolve "P") [.num 5, .resolve "A"])])
 #guard obs case_special__repeatedNameAccompanyingChannel == "ok raw=S[5, 5] n=1"
 
--- 2267 differential cases.
+-- special__forwardByNameAlias: P(x, x) = x \n Some = P \n Some(7)
+def case_special__forwardByNameAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+#guard obs case_special__forwardByNameAlias == "ok raw=7 n=1"
+
+-- special__forwardByNameThreeOccurrences: P(x, x, x) = x \n Some = P \n Some(7)
+def case_special__forwardByNameThreeOccurrences : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "P") [.param "x", .param "x", .param "x"])]), privateProp "P" (alg ["x", "x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+#guard obs case_special__forwardByNameThreeOccurrences == "ok raw=7 n=1"
+
+-- special__forwardByNameNestedGroup: P((x, a), x) = a \n Some = P \n Some((7, 8))
+def case_special__forwardByNameNestedGroup : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.call (.resolve "P") [(.capture [.param "x", .param "a"]), .param "x"])]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }], .capture { name := "x" }] [] [] [.param "a"])] [(.call (.resolve "Some") [(.capture [.num 7, .num 8])])])
+#guard obs case_special__forwardByNameNestedGroup == "ok raw=8 n=1"
+
+-- special__forwardByNameAcrossGroup: P(x, (x, a)) = a \n Some = P \n Some(7, 8)
+def case_special__forwardByNameAcrossGroup : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "a" }]] [] [] [(.call (.resolve "P") [.param "x", (.capture [.param "x", .param "a"])])]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [.param "a"])] [(.call (.resolve "Some") [.num 7, .num 8])])
+#guard obs case_special__forwardByNameAcrossGroup == "ok raw=8 n=1"
+
+-- special__forwardByNameInsideOneGroup: P((x, x)) = x \n Some = P \n Some(7)
+def case_special__forwardByNameInsideOneGroup : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }]] [] [] [(.call (.resolve "P") [(.capture [.param "x", .param "x"])])]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+#guard obs case_special__forwardByNameInsideOneGroup == "ok raw=7 n=1"
+
+-- special__forwardByNameBesideCollector: P(x, *rest, x) = rest \n Some = P \n Some(7, 1, 2)
+def case_special__forwardByNameBesideCollector : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.call (.resolve "P") [.param "x", (.sequenceSpread (.param "rest")), .param "x"])]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "rest"])] [(.call (.resolve "Some") [.num 7, .num 1, .num 2])])
+#guard obs case_special__forwardByNameBesideCollector == "ok raw=L[1, 2] n=1"
+
+-- special__forwardByNameClosedList: P(x, x) = x \n Q(x) = P \n Q(7)
+def case_special__forwardByNameClosedList : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Q" (alg ["x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])])] [(.call (.resolve "Q") [.num 7])])
+#guard obs case_special__forwardByNameClosedList == "ok raw=7 n=1"
+
+-- special__forwardByNameAcrossCallees: P(x, x) = x \n F(x) = x + 1 \n H = P + F \n H(3)
+def case_special__forwardByNameAcrossCallees : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "P") [.param "x", .param "x"]) (.call (.resolve "F") [.param "x"]))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [.num 3])])
+#guard obs case_special__forwardByNameAcrossCallees == "ok raw=7 n=1"
+
+-- special__forwardByNameFailedArgument: Bad = 1 / 0 \n P(x, x) = x \n Some = P \n Some(Bad)
+def case_special__forwardByNameFailedArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.resolve "Bad"])])
+#guard obs case_special__forwardByNameFailedArgument == "err div0"
+
+-- special__forwardByNameCallableArgument: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Some = P \n Some(Inc)
+def case_special__forwardByNameCallableArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "Some") [.resolve "Inc"])])
+#guard obs case_special__forwardByNameCallableArgument == "err arity"
+
+-- 2277 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -13703,9 +13753,19 @@ def surfaceCaseIds : List String := [
   "special__repeatedNameForwardedCallable",
   "special__repeatedNameDotReceiverFailed",
   "special__repeatedNameValuelessBeforeVerdict",
-  "special__repeatedNameAccompanyingChannel"
+  "special__repeatedNameAccompanyingChannel",
+  "special__forwardByNameAlias",
+  "special__forwardByNameThreeOccurrences",
+  "special__forwardByNameNestedGroup",
+  "special__forwardByNameAcrossGroup",
+  "special__forwardByNameInsideOneGroup",
+  "special__forwardByNameBesideCollector",
+  "special__forwardByNameClosedList",
+  "special__forwardByNameAcrossCallees",
+  "special__forwardByNameFailedArgument",
+  "special__forwardByNameCallableArgument"
 ]
-#guard surfaceCaseIds.length == 2267
+#guard surfaceCaseIds.length == 2277
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -13807,5 +13867,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2281 case guards (2267 surface + 14 internal-node).
+-- Total: 2291 case guards (2277 surface + 14 internal-node).
 end SemanticExplorerCases

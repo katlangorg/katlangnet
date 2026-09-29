@@ -363,34 +363,47 @@ public class TutorialSemanticContractTests
         Assert.Contains("'Speed'", renamed.Message);
     }
 
-    // ── "Formulas That Use Formulas": a formula that repeats a parameter name is never handed inputs (Q-72) ──
+    // ── "Formulas That Use Formulas" and "Equal Arguments": one name is one input, however often it appears ──
 
     private const string RepeatedNameFormula = "Common(x, x) = x\n";
 
     [Fact]
-    public void RepeatedNameFormula_IsNeverHandedInputs_AndItsWrittenCallsKeepTheConstraint()
+    public void OneNameIsOneInput_WithinAndAcrossFormulas_WhileSeparateArgumentsMustBeEqual()
     {
-        // The alias is refused at `Common` — a front-end rule, so nothing runs — and the error names
-        // the repeated parameter (formerly `Alias(x) = Common(x, x)`: one input fed to both slots).
-        var refusal = FrontEndRejection(
-            RepeatedNameFormula + "Alias = Common\n\nAlias(7, 7)",
-            DiagnosticCode.RepeatedParameterNotForwardable, KatLangErrorCode.RepeatedParameterNotForwardable);
-        Assert.Equal(new SourceSpan(2, 9, 2, 15), refusal.Span);
-        Assert.Contains("repeats 'x'", refusal.Message);
+        // "`H = F + G` means `H(x) = F(x) + G(x)`": one input `x`, handed to both formulas.
+        var composed = SourceProvenance.ParseValid("F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nH(3)").Root;
+        var h = Assert.IsType<Algorithm.User>(PropertyOf(composed, "H").Value);
+        Assert.Equal(["x"], h.Params);
+        var sum = Assert.IsType<Expr.Binary>(Assert.Single(h.Output));
+        Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(Assert.IsType<Expr.Call>(sum.Left).Args)).Name);
+        Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(Assert.IsType<Expr.Call>(sum.Right).Args)).Name);
+        Assert.Equal("10", Display("F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nH(3)"));
 
-        // "`Both(7, 8)` is an error, exactly like `Common(7, 8)`": the wrapper's two parameters are
-        // two independently supplied arguments, so Common still checks them.
-        const string both = RepeatedNameFormula + "Both(a, b) = Common(a, b)\n\n";
-        var wrapped = RunFailure(both + "Both(7, 8)", KatLangErrorCode.ArityMismatch);
+        // "in the same way `Some = Common` means `Some(x) = Common(x, x)`: `Some` takes one input and
+        // hands it to both places where `Common` names `x`, so `Some` is called with one argument".
+        var some = Assert.IsType<Algorithm.User>(
+            PropertyOf(SourceProvenance.ParseValid(RepeatedNameFormula + "Some = Common\n\nSome(7)").Root, "Some").Value);
+        Assert.Equal(["x"], some.Params);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(some.Output));
+        Assert.Equal(["x", "x"], call.Args.Select(static argument => Assert.IsType<Expr.Param>(argument).Name));
+        Assert.Equal("7", Display(RepeatedNameFormula + "Some = Common\n\nSome(7)"));
+        RunFailure(RepeatedNameFormula + "Some = Common\n\nSome(7, 7)", KatLangErrorCode.ArityMismatch);
+
+        // "`Common(7, 8)` supplies two separate arguments, and two arguments for the same name must
+        // be equal, so it is an error" — and a wrapper with two parameters of its own keeps them
+        // separate, so it fails exactly like the direct call.
         var direct = RunFailure(RepeatedNameFormula + "\nCommon(7, 8)", KatLangErrorCode.ArityMismatch);
+        var wrapped = RunFailure(RepeatedNameFormula + "Both(a, b) = Common(a, b)\n\nBoth(7, 8)", KatLangErrorCode.ArityMismatch);
         Assert.Equal("while evaluating call to Both: " + direct.Message, wrapped.Message);
-        Assert.Equal(["a", "b"], PropertyOf(SourceProvenance.ParseValid(both + "Both(7, 7)").Root, "Both").Value.Params);
 
-        // "`Twice(v) = Common(v, v)` passes one input to both": the source writes it.
-        Assert.Equal("8", Display(RepeatedNameFormula + "Twice(v) = Common(v, v)\n\nTwice(8)"));
+        // "both places receive that same input, so they cannot differ — and if that input fails, or
+        // is a function that needs arguments, the error is that input's own".
+        var failing = RunFailure("Bad = 1 / 0\n" + RepeatedNameFormula + "Some = Common\n\nSome(Bad)", KatLangErrorCode.DivisionByZero);
+        Assert.Contains("while evaluating call to Some:", failing.Message);
+        var callable = RunFailure("Inc(y) = y + 1\n" + RepeatedNameFormula + "Some = Common\n\nSome(Inc)", KatLangErrorCode.ArityMismatch);
+        Assert.Contains("Property 'Inc' expects 1 parameter, but was called with 0 arguments.", callable.Message);
 
-        // "calling `Common` with its arguments, or passing `Common` itself to another function,
-        // works as usual".
+        // Calling `Common` with its arguments, or passing `Common` itself to another function, is unchanged.
         Assert.Equal("7", Display(RepeatedNameFormula + "\nCommon(7, 7)"));
         Assert.Equal("5", Display(RepeatedNameFormula + "Apply(f) = f(5, 5)\n\nApply(Common)"));
     }

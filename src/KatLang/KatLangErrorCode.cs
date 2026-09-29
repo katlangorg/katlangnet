@@ -288,11 +288,4 @@ public enum KatLangErrorCode
     /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> allows one list to keep.
     /// </summary>
     DiagnosticCountExceeded = 68,
-
-    /// <summary>
-    /// Front-end <see cref="DiagnosticCode.RepeatedParameterNotForwardable"/>: a bare
-    /// reference would implicitly forward arguments to a callable whose parameter patterns
-    /// repeat a binding name; the call must be written explicitly.
-    /// </summary>
-    RepeatedParameterNotForwardable = 69,
 }

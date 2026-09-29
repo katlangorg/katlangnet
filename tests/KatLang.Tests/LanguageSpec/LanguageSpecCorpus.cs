@@ -1571,39 +1571,55 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "repeated-name-callee-is-never-forwarded-implicitly",
+            Id = "implicit-forwarding-is-by-binding-name",
             Category = "variadic-calls",
-            Source = "Common(x, x) = x\nAlias = Common\n\nAlias(7, 7)",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "its arguments cannot be forwarded implicitly: its parameter list repeats 'x'",
-            ExpectedDiagnosticCode = DiagnosticCode.RepeatedParameterNotForwardable,
-            IncludeInGeneratorPrompt = true,
-            Notes = "Q-72 (decided 2026-09-29): a front-end refusal, parse-level by construction. Lean specifies the decision (`bareValueReferenceTreatment`, `refusesImplicitForwarding`) but models no signature construction, and a rejected parse has no elaborated Lean program; the written forms are the Lean-derived case `repeated-name-callee-is-called-explicitly`. Formerly `Alias = Common` elaborated to `Alias(x) = Common(x, x)`, so `Alias(7, 7)` was an arity error and `Alias(7)` was 7.",
-            Explanation = "Automatic parameter forwarding supplies arguments by name, so for a callable whose parameter list repeats a name it would feed every occurrence from ONE binding: `Alias = Common` would take one argument and pass it to both of Common's slots, and Common's equality check would hold by construction. A bare reference to such a callable is therefore rejected wherever its arguments would be forwarded implicitly: an alias row, an operand, a list element, a Math argument, a block row, and inside a written parameter list (`Q(x) = Common`) alike. Write the call instead: `Both(a, b) = Common(a, b)` keeps two independently supplied arguments, and `Twice(v) = Common(v, v)` supplies one value to both on purpose. Passing Common itself (`Apply(Common)`) and calling it (`Common(7, 7)`) are unaffected.",
-        },
-        new()
-        {
-            Id = "repeated-name-callee-is-called-explicitly",
-            Category = "variadic-calls",
-            Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\n\nBoth(7, 7)\nTwice(8)",
+            Source = "F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nCommon(x, x) = x\nSome = Common\n\nH(3)\nSome(7)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "7\n8",
-            ExpectedRaw = "S[7, 8]",
+            ExpectedDisplay = "10\n7",
+            ExpectedRaw = "S[10, 7]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                // The wrapper keeps P's two independently supplied arguments: unequal values
-                // are P's own failure, and a failed argument is its own error.
+                // One binding name is one caller parameter: Some takes one argument.
+                new SpecProbe("Common(x, x) = x\nSome = Common\nSome(7, 7)", "err arity"),
+                // The direct call supplies two independent arguments, which must be equal (Q-05).
+                new SpecProbe("Common(x, x) = x\nCommon(7, 8)", "err arity"),
+                // Three occurrences, a nested group, and a written parameter list that binds the name.
+                new SpecProbe("P(x, x, x) = x\nSome = P\nSome(7)", "ok raw=7 n=1"),
+                new SpecProbe("P((x, a), x) = a\nSome = P\nSome((7, 8))", "ok raw=8 n=1"),
+                new SpecProbe("P(x, x) = x\nQ(x) = P\nQ(7)", "ok raw=7 n=1"),
+                // The one binding is the caller's argument, whatever it is: a failing or
+                // callable-only argument is still its own error (Q-05), never repaired or spliced.
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)", "err div0"),
+                new SpecProbe("Inc(y) = y + 1\nP(x, x) = x\nSome = P\nSome(Inc)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Implicit forwarding is by binding name, regardless of how many times that name occurs in a callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Some = Common` is `Some(x) = Common(x, x)`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Some(7)` is 7, and Some takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error.",
+        },
+        new()
+        {
+            Id = "repeated-name-wrapper-keeps-independent-arguments",
+            Category = "variadic-calls",
+            Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\nSome = Common\n\nBoth(7, 7)\nTwice(8)\nSome(9)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n8\n9",
+            ExpectedRaw = "S[7, 8, 9]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Two independently supplied arguments: unequal values are the callee's own
+                // failure, and a failed argument is its own error.
                 new SpecProbe("P(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(7, 8)", "err arity"),
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(Bad, 7)", "err div0"),
+                // One binding supplied to both occurrences, written or forwarded implicitly.
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSame(x) = P(x, x)\nSame(Bad)", "err div0"),
-                // A nested repetition, and an alias of the written wrapper (whose names are
-                // distinct), lift and call as ordinary callables do.
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)", "err div0"),
+                // A nested repetition, and an alias of a wrapper whose own names are distinct.
                 new SpecProbe("P((x, a), x) = a\nW(p, q) = P(p, q)\nW((7, 8), 7)", "ok raw=8 n=1"),
                 new SpecProbe("P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)", "ok raw=5 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "The written forms of a repeated-name callable are ordinary calls. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one value into both occurrences, so `Twice(8)` is 8. An alias of a wrapper whose own parameter names are distinct lifts like any alias.",
+            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and `Some = Common` forwards one binding by name in exactly the same way, so `Twice(8)` is 8 and `Some(9)` is 9. An alias of a wrapper whose own parameter names are distinct lifts both of its parameters.",
         },
         new()
         {

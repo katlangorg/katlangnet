@@ -55,11 +55,13 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     [InlineData("P(Pick, 10)")]
     [InlineData("P(10, Pick)")]
     [InlineData("Same(Pick)")]
+    [InlineData("Alias(Pick)")]
     [InlineData("Wrap(Pick, 10)")]
     public async Task RepeatedNames_CannotHealASeededFailure(string call)
     {
+        // `Alias = P` forwards by binding name: `Alias(x) = P(x, x)`, exactly the written `Same`.
         const string source = "Pick = [10, 20]:(trace(randomInt(0, 3)))\nP(x, x) = x\n"
-            + "Same(a) = P(a, a)\nWrap(a, b) = { Inner = P(a, b)\nInner }\n";
+            + "Same(a) = P(a, a)\nAlias = P\nWrap(a, b) = { Inner = P(a, b)\nInner }\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call, seed: 4);
         Assert.StartsWith("err BadIndex:", result.Outcome);
         Assert.Equal(["trace(2)"], result.HostCalls);
@@ -72,11 +74,13 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     [InlineData("P(Each, 7)", "err DivisionByZero:", new[] { "trace(1)" })]
     [InlineData("P(7, Each)", "err DivisionByZero:", new[] { "trace(1)" })]
     [InlineData("Same(Each)", "err DivisionByZero:", new[] { "trace(1)" })]
+    [InlineData("Alias(Bad)", "err DivisionByZero:", new[] { "tick#1" })]
+    [InlineData("Alias(Each)", "err DivisionByZero:", new[] { "trace(1)" })]
     public async Task RetainedFailures_FromStatefulBodiesAndCallbacks_AreNotRetried(
         string call, string prefix, string[] effects)
     {
         const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
-            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\n";
+            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nAlias = P\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
         Assert.StartsWith(prefix, result.Outcome);
         Assert.Equal(effects, result.HostCalls);
@@ -101,39 +105,20 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         Assert.Equal(["trace(5)", "trace(5)"], different.HostCalls);
     }
 
+    // Implicit forwarding is by binding name: each further nested repetition lifts ONE caller
+    // binding per name (group shapes kept for the names that are new there), and the explicit
+    // wrapper with independent parameters stays an ordinary call.
     [Theory]
-    [InlineData(64)]
-    [InlineData(2048)]
-    public void RepetitionDetection_IsIterativeLinearAndCached(int depth)
+    [InlineData("P(((x)), x) = x", "((x))", new[] { "x" })]
+    [InlineData("P(x, (a, x)) = a", "x, (a)", new[] { "x", "a" })]
+    [InlineData("P((x, a), (x, b)) = a + b", "(x, a), (b)", new[] { "x", "a", "b" })]
+    public void AdditionalNestedShapes_ForwardOneBindingPerNameAndExplicitCallsRemainLegal(
+        string declaration, string lifted, string[] names)
     {
-        var lists = new List<CountingPatterns>();
-        ParameterPattern nested = new CaptureParameterPattern("x");
-        for (var i = 0; i < depth; i++)
-        {
-            var children = new CountingPatterns([nested]);
-            lists.Add(children);
-            nested = new SequenceValueParameterPattern(children);
-        }
-        var signature = CallableSignature.FromAlgorithm("P",
-            new Algorithm.User(null, [new CaptureParameterPattern("x"), nested], [], [], []));
-        Assert.Equal("x", signature.RepeatedParameterName);
-        var reads = lists.Sum(list => list.Reads);
-        Assert.InRange(reads, depth, depth * 3);
-        for (var i = 0; i < 100; i++)
-            Assert.Equal("x", signature.RepeatedParameterName);
-        Assert.Equal(reads, lists.Sum(list => list.Reads));
-    }
-
-    [Theory]
-    [InlineData("P(((x)), x) = x")]
-    [InlineData("P(x, (a, x)) = a")]
-    [InlineData("P((x, a), (x, b)) = a + b")]
-    public void AdditionalNestedShapes_AreRefusedAndExplicitCallsRemainLegal(string declaration)
-    {
-        var parsed = Parser.Parse(declaration + "\nAlias = P\n0");
-        Assert.Equal(DiagnosticCode.RepeatedParameterNotForwardable, Assert.Single(parsed.Diagnostics).Code);
+        var parsed = SourceProvenance.ParseValid(declaration + "\nAlias = P\n0");
         var alias = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Alias").Value);
-        Assert.Empty(alias.Params);
+        Assert.Equal(lifted, string.Join(", ", alias.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+        Assert.Equal(names, alias.Params);
         SourceProvenance.ParseValid(declaration + "\nW(a, b) = P(a, b)\n0");
     }
 

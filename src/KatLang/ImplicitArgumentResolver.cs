@@ -1142,20 +1142,6 @@ internal static class ImplicitArgumentResolver
             StrictValueDiagnosticVisits ??= new(ReferenceEqualityComparer.Instance);
             return StrictValueDiagnosticVisits.Add(expr);
         }
-
-        /// <summary>
-        /// References already reported as <see cref="DiagnosticCode.RepeatedParameterNotForwardable"/>
-        /// in this region (Q-72). The report does not depend on strict value demand, so a node
-        /// rewritten neutrally and later re-walked for its strict-value observation reaches the
-        /// refusal twice; this set keeps the report to one per written occurrence per region.
-        /// </summary>
-        public HashSet<Expr>? RepeatedParameterReports;
-
-        public bool TryBeginRepeatedParameterReport(Expr reference)
-        {
-            RepeatedParameterReports ??= new(ReferenceEqualityComparer.Instance);
-            return RepeatedParameterReports.Add(reference);
-        }
     }
 
     /// <summary>
@@ -1742,35 +1728,6 @@ internal static class ImplicitArgumentResolver
     private static bool RequiresSuppliedArguments(CallableSignature signature)
         => !signature.AcceptsZeroSuppliedArguments;
 
-    /// <summary>
-    /// THE repeated-name forwarding refusal (Q-72, decided September 29 2026): a callable whose
-    /// parameter patterns repeat a binding name (<see cref="CallableSignature.RepeatedParameterName"/>
-    /// — <c>P(x, x)</c>, <c>P((x, a), x)</c>, <c>P((x, *rest), x)</c>, at any depth) never takes part
-    /// in implicit parameter forwarding. Each occurrence of a repeated name is an INDEPENDENTLY
-    /// supplied argument whose compatibility the binder checks at call time (Q-05, PAT-09), while
-    /// forwarding supplies arguments BY NAME: it would feed every occurrence from ONE binding (the
-    /// lifted signature merges names, <see cref="LiftSignature"/>; the synthesized call passes the
-    /// name's binding to each occurrence, <see cref="BuildImplicitCallArguments"/>), manufacturing a
-    /// constraint that holds by construction and an owner whose arity is not the callee's
-    /// (<c>Alias = P</c> became <c>Alias(x) = P(x, x)</c>). No implicit transformation may collapse
-    /// independent occurrences into one input unless the source supplies that same input to each,
-    /// so the front end refuses rather than choosing a multiplicity: the dependency walk
-    /// (<see cref="CollectImplicitDepsCore"/>) lifts nothing from such a reference, and the rewrite
-    /// (<see cref="RewriteBareReference"/>) leaves it bare and reports
-    /// <see cref="DiagnosticCode.RepeatedParameterNotForwardable"/> — BEFORE the closed-list gate, so
-    /// an existing same-named binding never feeds the repeated occurrences either
-    /// (<c>Q(x) = P</c> is refused, never <c>Q(x) = P(x, x)</c>). The rule reads only the callee's
-    /// own signature: ordinary by-name sharing ACROSS callees (<c>H = F + G</c> with <c>F(x)</c>,
-    /// <c>G(x)</c> infers <c>H(x)</c>) and a callable that accepts zero supplied arguments
-    /// (never lifted, <see cref="RequiresSuppliedArguments"/>) are untouched, and a bare ROOT output
-    /// row stays the callable's own zero-argument demand (<see cref="ShouldPreserveBareRootResolve"/>).
-    /// Only a user or host-built property can repeat a name: the Math registry's signatures and host
-    /// operations declare distinct parameter names, so the alias and canonical <c>Math.X</c> arms need
-    /// no refusal.
-    /// </summary>
-    private static bool RefusesImplicitForwarding(CallableSignature signature)
-        => signature.RepeatedParameterName is not null;
-
     /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
     private readonly record struct LiftedSignature(
         IReadOnlyList<ParameterPattern> Patterns,
@@ -1891,6 +1848,17 @@ internal static class ImplicitArgumentResolver
         return merged.Count == ownCount ? null : merged.ToArray();
     }
 
+    /// <summary>
+    /// IMPLICIT FORWARDING IS BY BINDING NAME, regardless of how many times a name occurs in a
+    /// callee's parameter patterns: the merge walks the captures left to right — across dependencies,
+    /// across one dependency's patterns, and inside a group alike — and keeps a capture only when no
+    /// earlier capture (the owner's own, an earlier dependency's, or an earlier one of the same
+    /// pattern) and no reused enclosing binding already binds its name. So one binding name is ONE
+    /// caller parameter: <c>P(x, x)</c> lifts <c>x</c> once exactly as <c>H = F + G</c> with
+    /// <c>F(x)</c> and <c>G(x)</c> does, and <c>P((x, x))</c> lifts the group <c>(x)</c>, never a
+    /// caller pattern that repeats <c>x</c>. The synthesized call supplies the one binding to every
+    /// occurrence (<see cref="BuildImplicitCallArguments"/>).
+    /// </summary>
     private static void AppendMissingPatterns(
         IReadOnlyList<ParameterPattern> patterns,
         HashSet<string> existing,
@@ -1900,36 +1868,37 @@ internal static class ImplicitArgumentResolver
         foreach (var pattern in patterns)
         {
             var missingPattern = MissingCapturePattern(pattern, existing, forwardable ?? ForwardableParameters.None);
-            if (missingPattern is null)
-                continue;
-
-            merged.Add(missingPattern);
-            foreach (var capture in missingPattern.Captures)
-                existing.Add(capture.Name);
+            if (missingPattern is not null)
+                merged.Add(missingPattern);
         }
     }
 
+    /// <summary>
+    /// The part of <paramref name="pattern"/> whose captures no earlier capture binds, recording
+    /// each kept capture's name in <paramref name="existing"/> as it is kept, so a later occurrence
+    /// of the name — in this very pattern too — is skipped.
+    /// </summary>
     private static ParameterPattern? MissingCapturePattern(
         ParameterPattern pattern,
-        IReadOnlySet<string> existingParams,
+        HashSet<string> existing,
         ForwardableParameters forwardable)
         => pattern switch
         {
             CaptureParameterPattern capture
-                => existingParams.Contains(capture.Name) || forwardable.Binds(capture.Name) ? null : capture,
-            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existingParams, forwardable),
+                => forwardable.Binds(capture.Name) || !existing.Add(capture.Name) ? null : capture,
+            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existing, forwardable),
         };
 
     private static SequenceValueParameterPattern? MissingGroupCapturePattern(
         SequenceValueParameterPattern group,
-        IReadOnlySet<string> existingParams,
+        HashSet<string> existing,
         ForwardableParameters forwardable)
     {
         var missingItems = new List<ParameterPattern>(group.Items.Count);
         var unchanged = true;
         foreach (var item in group.Items)
         {
-            var missingItem = MissingCapturePattern(item, existingParams, forwardable);
+            var missingItem = MissingCapturePattern(item, existing, forwardable);
             unchanged &= ReferenceEquals(missingItem, item);
             if (missingItem is not null)
                 missingItems.Add(missingItem);
@@ -2166,50 +2135,6 @@ internal static class ImplicitArgumentResolver
                 + $"call '{referenceDisplayName}' with explicit arguments, or remove the explicit parameter list.");
     }
 
-    /// <summary>
-    /// Reports a bare reference that <see cref="RefusesImplicitForwarding"/> left unlifted
-    /// (<see cref="DiagnosticCode.RepeatedParameterNotForwardable"/>), at the reference — or at the
-    /// import site for imported content — once per written occurrence per rewrite region
-    /// (<see cref="ResolverWalkMemos.TryBeginRepeatedParameterReport"/>: a region's strict-value
-    /// re-walk of an already rewritten node re-enters this arm and must not report again). The
-    /// wording names no family, so a branch body shared by several families reports it once, in the
-    /// region that rewrote it, like every other report that does not word the family.
-    /// </summary>
-    private static void ReportRepeatedParameterNotForwardable(
-        Expr reference,
-        string referenceDisplayName,
-        CallableSignature signature,
-        ResolverWalkMemos memos)
-    {
-        if (memos.Diagnostics is not { } diagnostics
-            || signature.RepeatedParameterName is not { } repeatedName
-            || !memos.TryBeginRepeatedParameterReport(reference))
-        {
-            return;
-        }
-
-        diagnostics.Add(new Diagnostic(
-            FormatRepeatedParameterNotForwardable(referenceDisplayName, repeatedName),
-            DiagnosticSeverity.Error,
-            reference.Span ?? memos.Run.ImportSite)
-        {
-            Code = DiagnosticCode.RepeatedParameterNotForwardable,
-        });
-    }
-
-    private static string FormatRepeatedParameterNotForwardable(string referenceDisplayName, string repeatedName)
-    {
-        // Echoes are bounded like every per-reference report (ExprNameRenderer's name bound).
-        referenceDisplayName = ExprNameRenderer.BoundName(referenceDisplayName);
-        repeatedName = ExprNameRenderer.BoundName(repeatedName);
-        return string.Join(
-            Environment.NewLine,
-            $"'{referenceDisplayName}' is used here without arguments, but its arguments cannot be forwarded implicitly: "
-                + $"its parameter list repeats '{repeatedName}'.",
-            "Each occurrence of a repeated parameter takes its own argument, so implicit forwarding cannot supply them. "
-                + $"Call '{referenceDisplayName}' with explicit arguments instead, for example in a wrapper that declares its own parameters.");
-    }
-
     // `'a'`, `'a' and 'b'`, `'a', 'b', and 'c'` — rendered within the rendered-name bound, reading
     // only the names it shows; text that fits is exactly the unbounded spelling.
     private static string FormatQuotedNameList(IReadOnlyList<string> values)
@@ -2315,7 +2240,11 @@ internal static class ImplicitArgumentResolver
     /// parameters, lifted captures included, and — Q-04 — the enclosing parameter bindings
     /// <paramref name="forwardable"/> it reuses), and carry no occurrence identity. A reused
     /// enclosing binding is read through the ordinary captured-parameter read, so the callee receives
-    /// the very binding an existing written reference of that name denotes.
+    /// the very binding an existing written reference of that name denotes. Forwarding is BY BINDING
+    /// NAME: every callee capture receives the caller's binding of its name, so a name the callee
+    /// repeats (<c>P(x, x)</c>, <c>P((x, a), x)</c>) receives that one binding at every occurrence —
+    /// exactly the call <c>P(x, x)</c> a programmer would write — and the callee's binder then checks
+    /// the occurrences as the ordinary independently evaluated argument slots they are (Q-05).
     /// </summary>
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(
         IReadOnlyList<ParameterPattern> calleePatterns,
@@ -2443,9 +2372,7 @@ internal static class ImplicitArgumentResolver
 
                 if (paramMap.TryGetValue(name, out var ps))
                 {
-                    // Q-72: a callee that repeats a parameter name is never forwarded, so it
-                    // contributes no dependency (the rewrite below reports the reference).
-                    if (RequiresSuppliedArguments(ps) && !RefusesImplicitForwarding(ps) && seen.Add(name))
+                    if (RequiresSuppliedArguments(ps) && seen.Add(name))
                         deps.Add((name, ps));
                 }
                 else if (expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
@@ -2747,14 +2674,6 @@ internal static class ImplicitArgumentResolver
             && paramMap.TryGetValue(name, out var ps)
             && RequiresSuppliedArguments(ps))
         {
-            // Q-72: refused before any forwarding decision, in open and closed bodies alike —
-            // even where the caller's bindings could name every repeated capture (`Q(x) = P`).
-            if (RefusesImplicitForwarding(ps))
-            {
-                ReportRepeatedParameterNotForwardable(expr, name, ps, memos);
-                return expr;
-            }
-
             if (ClosedListBlocksLifting(context, ps.ParameterPatterns, memos))
             {
                 if (inStrictValueDemand)

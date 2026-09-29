@@ -297,7 +297,6 @@ Before emitting code, verify silently:
 - Any explicit parameters or same-name clause branches appear on enclosing algorithm definitions.
 - Any algorithm that declares explicit parameters also defines output.
 - No implicit parameter, branch binder, or helper placeholder shadows a builtin/prelude algorithm name.
-- A callable whose parameter list repeats a name is called with written arguments wherever its value is needed — never used bare in a formula, an alias, or under a written parameter list (passing it as a callback is fine).
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
 - Nested property bodies use `{ ... }`; `( ... )` cannot contain declarations; simple property bodies are not wrapped.
@@ -742,7 +741,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
 - For implicit-parameter algorithms, parameters are handed on transitively through referenced properties (automatic parameter forwarding). Only a referenced callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears (an operand, a list element, a Math argument, an alias), so hand arguments on to it with an explicit call (`Count(items*)`).
 - Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
-- Never rely on automatic parameter forwarding into a callable whose parameter list repeats a name (`Common(x, x)`, `P((x, a), x)`): each occurrence is its own argument that must equal the others, so a bare `Common` in a formula, an alias (`Alias = Common`), or a written parameter list (`Q(x) = Common`) is rejected before anything runs. Write the call: `Both(a, b) = Common(a, b)` keeps the arguments independent, and `Twice(v) = Common(v, v)` passes one value to both on purpose.
+- Automatic parameter forwarding is by binding name: one name is one input, however many times a callee's parameter list uses it. `Common(x, x) = x` / `Some = Common` means `Some(x) = Common(x, x)` and takes ONE argument, exactly as `H = F + G` with `F(x)` and `G(x)` means `H(x) = F(x) + G(x)`. To pass two separate values that must be equal, write the call with two parameters: `Both(a, b) = Common(a, b)` (`Both(7, 8)` fails like `Common(7, 8)`).
 
 Teaching contrast:
 
@@ -1975,27 +1974,37 @@ Regenerate this block from the repo root with:
 
   Fails with an evaluation error (type).
 
-[repeated-name-callee-is-never-forwarded-implicitly] Automatic parameter forwarding supplies arguments by name, so for a callable whose parameter list repeats a name it would feed every occurrence from ONE binding: `Alias = Common` would take one argument and pass it to both of Common's slots, and Common's equality check would hold by construction. A bare reference to such a callable is therefore rejected wherever its arguments would be forwarded implicitly: an alias row, an operand, a list element, a Math argument, a block row, and inside a written parameter list (`Q(x) = Common`) alike. Write the call instead: `Both(a, b) = Common(a, b)` keeps two independently supplied arguments, and `Twice(v) = Common(v, v)` supplies one value to both on purpose. Passing Common itself (`Apply(Common)`) and calling it (`Common(7, 7)`) are unaffected.
+[implicit-forwarding-is-by-binding-name] Implicit forwarding is by binding name, regardless of how many times that name occurs in a callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Some = Common` is `Some(x) = Common(x, x)`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Some(7)` is 7, and Some takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error.
+
+    F(x) = x + 1
+    G(x) = x * 2
+    H = F + G
 
     Common(x, x) = x
-    Alias = Common
+    Some = Common
 
-    Alias(7, 7)
+    H(3)
+    Some(7)
 
-  Rejected by the parser: "its arguments cannot be forwarded implicitly: its parameter list repeats 'x' ..."
+  Displays:
+    10
+    7
 
-[repeated-name-callee-is-called-explicitly] The written forms of a repeated-name callable are ordinary calls. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one value into both occurrences, so `Twice(8)` is 8. An alias of a wrapper whose own parameter names are distinct lifts like any alias.
+[repeated-name-wrapper-keeps-independent-arguments] Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and `Some = Common` forwards one binding by name in exactly the same way, so `Twice(8)` is 8 and `Some(9)` is 9. An alias of a wrapper whose own parameter names are distinct lifts both of its parameters.
 
     Common(x, x) = x
     Both(a, b) = Common(a, b)
     Twice(v) = Common(v, v)
+    Some = Common
 
     Both(7, 7)
     Twice(8)
+    Some(9)
 
   Displays:
     7
     8
+    9
 
 [repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.
 

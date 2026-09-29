@@ -730,6 +730,22 @@ public static class SemanticExplorerCorpus
         Special("repeatedNameDotReceiverFailed", "Bad = 1 / 0\nQ(x, x) = x\nBad.Q(7)"),
         Special("repeatedNameValuelessBeforeVerdict", "Bad = 1 / 0\nQ2(x, x, y, y) = 0\nQ2(Bad, 7, 1, 2)"),
         Special("repeatedNameAccompanyingChannel", "A = 5\nP(f, f) = f, f()\nP(5, A)"),
+        // Implicit forwarding is by binding name (September 29 2026, reversing the Q-72 refusal):
+        // a callee that repeats a name — at the top level, inside one group, across groups, beside
+        // a collector, under a closed list that binds it — receives the caller's ONE binding at every
+        // occurrence (`Some = P` is `Some(x) = P(x, x)`), exactly as a name shared across callees
+        // does; a failed or callable-only argument stays its own failure. Pinned against Lean on the
+        // elaborated trees.
+        Special("forwardByNameAlias", "P(x, x) = x\nSome = P\nSome(7)"),
+        Special("forwardByNameThreeOccurrences", "P(x, x, x) = x\nSome = P\nSome(7)"),
+        Special("forwardByNameNestedGroup", "P((x, a), x) = a\nSome = P\nSome((7, 8))"),
+        Special("forwardByNameAcrossGroup", "P(x, (x, a)) = a\nSome = P\nSome(7, 8)"),
+        Special("forwardByNameInsideOneGroup", "P((x, x)) = x\nSome = P\nSome(7)"),
+        Special("forwardByNameBesideCollector", "P(x, *rest, x) = rest\nSome = P\nSome(7, 1, 2)"),
+        Special("forwardByNameClosedList", "P(x, x) = x\nQ(x) = P\nQ(7)"),
+        Special("forwardByNameAcrossCallees", "P(x, x) = x\nF(x) = x + 1\nH = P + F\nH(3)"),
+        Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)"),
+        Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = P\nSome(Inc)"),
     ];
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------
