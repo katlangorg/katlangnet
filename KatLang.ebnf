@@ -11,6 +11,15 @@ Program         = Algorithm ;
 
 Algorithm       = { AlgorithmItem } ;
 AlgorithmItem   = OpenDeclaration | PropertyDefinition | DeconstructionDefinition | ClauseDefinition | OutputLine ;
+                  (* A body has at most one OpenDeclaration, and it is the
+                     body's import preamble: it precedes every property,
+                     deconstruction, and clause definition and every output
+                     line of that body (P(a) = a declares a property exactly
+                     as P = a does, so an open after either is misplaced). A
+                     second or misplaced open is reported
+                     (InvalidOpenDeclaration) and recovered in place. Each
+                     nested brace body, a clause body included, has its own
+                     preamble. *)
 
 ExpressionAlgorithm = { OutputLine } ;
                   (* Delimiter model: each delimiter has one role.
@@ -66,10 +75,17 @@ ValidatedOpenExpression = ? an Expression not starting with a string token and s
                      open (M.N), open ((M.N)), open (M).N, open (M.N).P,
                      open ({ public X = 1 }), open ({ public N = {} }.N),
                      and open (load('url')) reach the same forms as their
-                     ungrouped counterparts. A dot receiver still has to
-                     resolve to an openable algorithm at evaluation time;
-                     passing the outer-form check alone does not establish it
-                     (e.g. open (A, B).N passes that parser check). The head
+                     ungrouped counterparts. The constraints apply ALL the
+                     way down a dotted path: the head of its receiver chain
+                     must itself be a bare resolve, a brace algorithm, or a
+                     direct unresolved load call, so open 5.N, open F(1).N,
+                     open (A, B).N, open [A].N, and open ('url').N are
+                     rejected at their head exactly like open 5, open F(1),
+                     open (A, B), open [A], and open ('url'). Every written
+                     target must also resolve statically — a missing,
+                     private, or branch-only step is rejected whether the
+                     path starts at a name, a brace algorithm, or a loaded
+                     module (UnresolvedOpenTarget). The head
                      name of a bare or dotted target is classified by the
                      front end through ordinary lexical ownership: when the
                      nearest binding is a parameter of the opening algorithm
@@ -87,7 +103,8 @@ ValidatedOpenExpression = ? an Expression not starting with a string token and s
                      open (A*.N) are rejected. String sugar applies only when
                      the target starts with the bare string token, which is
                      consumed alone: open 'url'.N is a target-list error,
-                     while open ('url').N passes the outer dot-form check.
+                     and open ('url').N is a string-literal head, not an
+                     open form.
                      Declarations inside parentheses remain illegal; they
                      belong to brace algorithms. *)
 

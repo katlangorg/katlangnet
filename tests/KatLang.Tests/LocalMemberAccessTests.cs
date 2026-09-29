@@ -296,7 +296,8 @@ public class LocalMemberAccessTests
 
     [Theory]
     [InlineData("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    Inner.X\n}\n\nOuter.Inner.X")]
-    [InlineData("Outer(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\n\nopen Outer.Inner\nX")]
+    // (The open is the root body's preamble, so it precedes the clause definition it names.)
+    [InlineData("open Outer.Inner\nOuter(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\n\nX")]
     // A live binding of the same name in an unrelated algorithm never counts: the rule is lexical.
     [InlineData("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    G(7)\n}\nG(n) = Outer.Inner.X\n\nOuter(5)")]
     // Handing the container out on the algorithm channel to a body outside Outer.

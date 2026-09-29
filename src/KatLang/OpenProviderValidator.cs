@@ -7,12 +7,14 @@ namespace KatLang;
 /// provider (<c>Lib = { public X = 1  p + 1 }</c>, whose output row makes <c>p</c> Lib's
 /// own parameter) is refused exactly like an explicit <c>Lib(p)</c> — and before exposure
 /// resolution, which it does not depend on. Targets resolve through the shared static
-/// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>): the head by the
-/// direct lexical chain, dotted steps through public members, an inline block by itself; a
-/// written name path that resolves to nothing is <see cref="DiagnosticCode.UnresolvedOpenTarget"/>
+/// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>): a name head by the
+/// direct lexical chain, an inline block head (a written <c>{ … }</c> or a loaded module) by
+/// itself, and dotted steps through public members; a written target that resolves to nothing,
+/// whatever its head, is <see cref="DiagnosticCode.UnresolvedOpenTarget"/>
 /// here (a parameter-owned head is parameter detection's <see cref="DiagnosticCode.OpenTargetIsParameter"/>,
-/// an illegal target shape the parser's <see cref="DiagnosticCode.BadOpenForm"/>), so open validity
-/// never depends on whether a lookup happens to consult the target.
+/// an illegal target shape — at any depth of its receiver chain — the parser's
+/// <see cref="DiagnosticCode.BadOpenForm"/>), so open validity never depends on whether a lookup
+/// happens to consult the target.
 /// Only the RESOLVED provider is judged — a parameterized head of a dotted target is
 /// navigated by identity, and a member of it that captures the head's parameter is the
 /// separate accessibility question decided at each access. The evaluator applies the same
@@ -287,30 +289,47 @@ internal sealed class OpenProviderValidator : AstWalker
     }
 
     /// <summary>
-    /// Why a written name path provides no algorithm — the step at which the static
-    /// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>) fails, named the way
-    /// the evaluator's open resolution fails there: a head no enclosing declaration or prelude
-    /// member provides (an open head never resolves through another open), a member its
-    /// receiver lacks, declares privately (open paths select public members), or declares only
-    /// inside a conditional branch (a family exposes no members). Null for every target this
-    /// rule does not own: a parameter-owned head (parameter detection reported
-    /// <see cref="DiagnosticCode.OpenTargetIsParameter"/>), an inline block, and the shapes the
-    /// parser rejects as <see cref="DiagnosticCode.BadOpenForm"/>.
+    /// Why a written open target provides no algorithm — the step at which the static
+    /// resolution (<see cref="ElaboratedScopeLookup.ResolveOpenTarget"/>) fails, walked over
+    /// the SAME decomposition (<see cref="AstHelpers.OpenTargetHead(Expr, out IReadOnlyList{string})"/>)
+    /// and named the way the evaluator's open resolution fails there: a name head no enclosing
+    /// declaration or prelude member provides (an open head never resolves through another
+    /// open), or a dotted step — from a name head or an inline block head alike (a written
+    /// <c>{ … }</c> or a loaded module) — that names a member its receiver lacks, declares
+    /// privately (open paths select public members), or declares only inside a conditional
+    /// branch (a family exposes no members). Null for every target this rule does not own: a
+    /// parameter-owned head (parameter detection reported
+    /// <see cref="DiagnosticCode.OpenTargetIsParameter"/>), a bare inline block (it is its own
+    /// provider), and the shapes the parser rejects as <see cref="DiagnosticCode.BadOpenForm"/>.
     /// </summary>
     private string? DescribeUnresolvedTarget(Expr target)
     {
-        if (!PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps))
-            return null;
-
+        var headExpr = target.OpenTargetHead(out var steps);
         var description = Evaluator.OpenExprName(target);
-        if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(_scope, head) is not { } headHit)
+        Algorithm receiver;
+        string receiverDescription;
+        switch (headExpr)
         {
-            return $"'{description}' cannot be opened because no property named '{head}' is visible here; " +
-                "the first name of an open target resolves through the enclosing declarations and the prelude, never through another open.";
+            case Expr.Resolve(var head):
+                if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(_scope, head) is not { } headHit)
+                {
+                    return $"'{description}' cannot be opened because no property named '{head}' is visible here; " +
+                        "the first name of an open target resolves through the enclosing declarations and the prelude, never through another open.";
+                }
+
+                receiver = headHit.Property.Value;
+                receiverDescription = head;
+                break;
+
+            case Expr.AlgorithmExpr(var block):
+                receiver = block;
+                receiverDescription = Evaluator.OpenExprName(headExpr);
+                break;
+
+            default:
+                return null;
         }
 
-        var receiver = headHit.Property.Value;
-        var receiverDescription = head;
         foreach (var step in steps)
         {
             if (ElaboratedScopeLookup.TryLookupPublicProperty(receiver, step) is { } member)
@@ -331,16 +350,8 @@ internal sealed class OpenProviderValidator : AstWalker
         return null;
     }
 
-    /// <summary>The bare head of a dotted core open form (`open A.B.C` → `A`), or null for any other target.</summary>
+    /// <summary>The bare name head of a dotted core open form (`open A.B.C` → `A`), or null for any other target.</summary>
     private static Expr? DottedHead(Expr target)
-    {
-        if (target is not Expr.DotCall { } dotted || !dotted.IsCoreOpenForm())
-            return null;
-
-        Expr head = dotted;
-        while (head is Expr.DotCall inner)
-            head = inner.Target;
-        return head is Expr.Resolve ? head : null;
-    }
+        => target is Expr.DotCall { Args: null } && target.OpenTargetHead() is Expr.Resolve head ? head : null;
 
 }

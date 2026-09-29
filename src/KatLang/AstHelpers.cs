@@ -205,6 +205,51 @@ internal static class AstHelpers
             or Expr.DotCall { Args: null };
 
     /// <summary>
+    /// The HEAD of an open target's receiver chain: the target itself, or — for an
+    /// argumentless dotted path — its innermost receiver (<c>open A.B.C</c> → <c>A</c>,
+    /// <c>open { … }.S</c> → the block). Lean's <c>resolveAlgForOpen</c> recurses through
+    /// exactly these edges, so an open target is an open form ALL the way down: the head
+    /// must itself name an algorithm — a name, a <c>{ … }</c> block, or (before load
+    /// elaboration) a <c>load</c> module. Iterative over the dot spine; an argument-bearing
+    /// edge is not an open form and stops the descent (it is then the head).
+    /// </summary>
+    internal static Expr OpenTargetHead(this Expr target)
+    {
+        while (target is Expr.DotCall { Args: null } step)
+            target = step.Target;
+        return target;
+    }
+
+    /// <summary>
+    /// The ONE decomposition of an open target (MOD-02/MOD-03) into its head
+    /// (<see cref="OpenTargetHead(Expr)"/>) and its dotted member names in written order, shared
+    /// by open-target deduplication and every static consumer — the parser's form check,
+    /// static resolution and its diagnostics, parameter detection, and dependency analysis —
+    /// so no consumer can accept, resolve, or charge a head another rejects or ignores. A name head resolves through the
+    /// direct lexical chain and an inline block (a written <c>{ … }</c> or a loaded module) is
+    /// the provider itself; each step then selects a public member.
+    /// </summary>
+    internal static Expr OpenTargetHead(this Expr target, out IReadOnlyList<string> steps)
+    {
+        List<string>? reversed = null;
+        while (target is Expr.DotCall { Args: null } step)
+        {
+            (reversed ??= []).Add(step.Name);
+            target = step.Target;
+        }
+
+        if (reversed is null)
+        {
+            steps = [];
+            return target;
+        }
+
+        reversed.Reverse();
+        steps = reversed;
+        return target;
+    }
+
+    /// <summary>
     /// Whether this edge selects the independently established dot-only
     /// <c>.string</c> value intrinsic. Grace composed with dot syntax shares
     /// it: <c>x~.string</c> and <c>x.~string</c> build the SAME ordinary dot

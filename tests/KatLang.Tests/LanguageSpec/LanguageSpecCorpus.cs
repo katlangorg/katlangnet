@@ -2198,8 +2198,9 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "localOnlyProperty",
             Probes =
             [
-                // The open channel refuses the same member from outside its owner.
-                new SpecProbe("Outer(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\nopen Outer.Inner\nX", "err localOnlyProperty"),
+                // The open channel refuses the same member from outside its owner (the open is
+                // the body's preamble, so it precedes the clause definition it names).
+                new SpecProbe("open Outer.Inner\nOuter(n) = {\n    public Inner = {\n        public X = n\n    }\n    Inner.X\n}\nX", "err localOnlyProperty"),
                 // A live but unrelated binding of the same name never counts: the rule is lexical.
                 new SpecProbe("Outer(n) = {\n    Inner = {\n        public X = n\n    }\n    G(7)\n}\nG(n) = Outer.Inner.X\nOuter(5)", "err localOnlyProperty"),
                 new SpecProbe("Apply(f) = f.X\nOuter(n) = {\n    Inner = { public X = n }\n    Apply(Inner)\n}\nOuter(5)", "err localOnlyProperty"),
@@ -2259,7 +2260,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Lib = {\n    public Sub = {\n        public Q(y) = y + 1\n    }\n}\nQ(x) = 99\nLib.Sub.Q(5)", "ok raw=6 n=1"),
                 new SpecProbe("Lib = {\n    public Sub = {\n        public Q = 1\n    }\n}\nOuter = {\n    Q(x) = 99\n    Lib.Sub.Q\n}\nOuter", "ok raw=1 n=1"),
                 new SpecProbe("Lib(p) = {\n public Mid(q) = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nLib.Mid.Sub.X", "ok raw=10 n=1"),
-                new SpecProbe("Lib(p) = {\n public Mid = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nopen Lib.Mid.Sub\nX", "ok raw=10 n=1"),
+                new SpecProbe("open Lib.Mid.Sub\nLib(p) = {\n public Mid = {\n public Sub = { public X = 10 }\n q\n }\n p\n}\nX", "ok raw=10 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.",
@@ -2332,6 +2333,76 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "`open` consumes algorithm identity, and a capture is a value boundary that never exposes the identity of what it encloses: `open (M, M)` — a group of several slots — is rejected at parse time, as is `open (M*)`. Redundant parentheses are not a capture: parentheses group syntax, so `open (M)` and `open ((M))` are exactly `open M`, and parentheses around a brace block normalize away too, so `open ({ ... })` still opens the block.",
+        },
+        new()
+        {
+            Id = "open-target-head-must-name-an-algorithm",
+            Category = "access-boundaries",
+            Source = "open F(1).Y\nF(x) = {\n    public Y = x\n}\nY",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Invalid open form: 'call' is not allowed in open declarations.",
+            ExpectedDiagnosticCode = DiagnosticCode.BadOpenForm,
+            Probes =
+            [
+                // Every legal head, under dotted steps: a name and a `{ ... }` block.
+                new SpecProbe("open Lib.S\nLib = {\n    public S = {\n        public Q = 3\n    }\n}\nQ", "ok raw=3 n=1"),
+                new SpecProbe("open { public S = { public Q = 3 } }.S\nQ", "ok raw=3 n=1"),
+                new SpecProbe("open { public S = { public T = { public Q = 4 } } }.S.T\nQ", "ok raw=4 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Constitution PV-11 (September 2026): the parser checked only the OUTER node of a target, so `open 5.N` or `open F(1).N` passed the front end; the evaluators refuse such a head only when some lookup consults the level (Lean `resolveAlgForOpen` recurses through the receiver), so a program failed after its effects had run, or not at all. Every static consumer now reads the one decomposition `AstHelpers.OpenTargetHead`.",
+            Explanation = "An open target names an algorithm all the way down: the first part of a dotted path must itself be a name, a `{ ... }` block, or a `load` module, exactly like a bare target. `open F(1).Y`, `open 5.N`, `open (A, B).N` and `open [A].N` are rejected at that first part like `open F(1)`, `open 5`, `open (A, B)` and `open [A]`, whether or not any name is ever looked up through them. `open` never calls or evaluates anything, so open a path that starts at a declared algorithm (`open Lib.S`) or at an inline block.",
+        },
+        new()
+        {
+            Id = "inline-headed-open-paths-keep-distinct-providers",
+            Category = "name-resolution",
+            Source = "open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S\nX",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "ambiguousOpen",
+            Probes =
+            [
+                new SpecProbe("open { public S = { public X = 7 } }.S, { public S = { public X = 5 } }.S\nX", "err ambiguousOpen"),
+                new SpecProbe("open { public S = { public Y = 5 } }.S, { public S = { public X = 7 } }.S\nX", "ok raw=7 n=1"),
+                new SpecProbe("open { public S = { X = 5 } }.S, { public S = { public X = 7 } }.S\nX", "ok raw=7 n=1"),
+                new SpecProbe("open Lib.S, (Lib).S\nLib = { public S = { public X = 7 } }\nX", "ok raw=7 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Each inline open target is a separate provider, including a dotted path starting at a brace block or loaded module. Two such targets that provide X are ambiguous, even when both paths have the same member names. A diagnostic abbreviation such as `{...}.S` never identifies a provider. Repeating a name-headed path such as `open Lib.S, Lib.S` still deduplicates by its complete name.",
+        },
+        new()
+        {
+            Id = "open-inline-headed-path-must-resolve",
+            Category = "name-resolution",
+            Source = "A = {\n    open { public X = 1 }.Nope\n    X\n}\nA(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'{...}.Nope' cannot be opened because '{...}' has no property named 'Nope'.",
+            ExpectedDiagnosticCode = DiagnosticCode.UnresolvedOpenTarget,
+            Probes =
+            [
+                new SpecProbe("A = {\n    open { public S = { public X = 1 } }.S\n    X\n}\nA", "ok raw=1 n=1"),
+            ],
+            Notes = "Constitution PV-11 (September 2026): the static resolution described failures of name-headed paths only, so a path starting at a `{ ... }` block or a loaded module with a missing, private, or branch-only step was dropped silently and the names only it could provide were promoted to implicit parameters — here `X` became `A`'s parameter and `A(5)` ran as 5, and `open load('url').Shwn` did the same while `Lib = load('url')` / `open Lib.Shwn` was refused.",
+            Explanation = "Every written open target must resolve, whatever its first part: the dotted steps of a path that starts at a `{ ... }` block or a loaded module select public members exactly as they do after a name, so a missing, private, or branch-only step is an unresolved open target. It is never dropped, and the names it would have provided are never turned into implicit parameters.",
+        },
+        new()
+        {
+            Id = "open-after-clause-definition-rejected",
+            Category = "parser-layout",
+            Source = "P(a) = a\nopen Lib\nLib = {\n    public X = 4\n}\nP(X)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'open' declaration must appear before any properties or output expressions.",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidOpenDeclaration,
+            Probes =
+            [
+                new SpecProbe("open Lib\nP(a) = a\nLib = {\n    public X = 4\n}\nP(X)", "ok raw=4 n=1"),
+                new SpecProbe("open Lib\nP(0) = 0\nP(n) = n + X\nLib = {\n    public X = 4\n}\nP(1)", "ok raw=5 n=1"),
+                // A clause body is a body of its own, with its own preamble.
+                new SpecProbe("P(0) = {\n    open Lib\n    X\n}\nP(n) = n\nLib = {\n    public X = 4\n}\nP(0)", "ok raw=4 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Constitution PV-25 (September 2026): clause definitions are buffered in their families until the body ends, and the placement check counted only properties and output rows, so an `open` after `P(a) = a` — or between two clauses of one family — was accepted while an `open` after `P = a` was refused.",
+            Explanation = "A body's one `open` declaration is its import preamble: it comes before every declaration and output row of that body, clause definitions included — `P(a) = a` declares a property exactly as `P = a` does. Move the `open` to the top of the body; each nested `{ ... }` body, a clause body included, has its own preamble.",
         },
         new()
         {
@@ -3404,6 +3475,23 @@ public static class LanguageSpecCorpus
             ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
             IncludeInGeneratorPrompt = true,
             Explanation = "An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there can reorder nothing: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).",
+        },
+        new()
+        {
+            Id = "grace-in-branch-deconstruction-rejected",
+            Category = "parser-layout",
+            Source = "F(0) = 0\nF(n) = {\n    a, b = (~n, 1)\n    a + b\n}\nF(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Grace is not allowed in conditional branch bodies for 'F'.",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            Probes =
+            [
+                new SpecProbe("F(0) = 0\nF(n) = {\n    a, b = (n, 1)\n    a + b\n}\nF(5)", "ok raw=6 n=1"),
+                // A property nested in the branch is a level of its own that infers `(x, y)`.
+                new SpecProbe("F(0) = 0\nF(n) = {\n    P = {\n        a, b = (y, ~x)\n        a / b\n    }\n    P(2, 10) + n\n}\nF(1)", "ok raw=6 n=1"),
+            ],
+            Notes = "Constitution PV-49 (September 2026): assignment deconstruction hoists its right-hand side into a synthetic source whose rows are rows of the enclosing body, and the parser's branch Grace scan read only the branch's output rows, so the marker was silently accepted in a family branch while the same body under a single clause was refused. The scan now covers every written row (`AstHelpers.WrittenRows`).",
+            Explanation = "A conditional branch infers nothing — its head is the complete input specification — so Grace can reorder nothing anywhere in the rows the branch writes, and a deconstruction's right-hand side is one of those rows: `a, b = (~n, 1)` in a family branch is rejected exactly like the same marker in a branch output row. Drop the marker. Grace stays valid where a level really infers, such as a property nested in the branch.",
         },
         new()
         {
@@ -4914,6 +5002,25 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = {\n  Helper = 6\n  Helper\n}\nF(n) = n\nF(1)", "ok raw=6 n=1"),
             ],
             Explanation = "Exposure through an inline open ends at the branch that wrote it: `F(1)` resolves through its own lookup chain, which never contains the first branch's open list, so its `Helper` is an undeclared identifier under the closed branch-pattern rule — the same diagnostic any other unbound name in a branch body receives.",
+        },
+        new()
+        {
+            Id = "conditional-branch-inline-open-does-not-shadow-an-enclosing-open-in-sibling-branches",
+            Category = "conditionals",
+            Source = "open Lib\nLib = {\n  public Helper = 7\n}\nF(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(1) = Helper\nF(n) = n\n\nF(0), F(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n7\n2",
+            ExpectedRaw = "S[5, 7, 2]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Clause order decides nothing about open resolution.
+                new SpecProbe("open Lib\nLib = {\n  public Helper = 7\n}\nF(1) = Helper\nF(0) = {\n  open {\n    public Helper = 5\n  }\n  Helper\n}\nF(n) = n\n\nF(0), F(1), F(2)", "ok raw=S[5, 7, 2] n=3"),
+                // A branch-local named target is resolved from its own branch, even for a single literal clause.
+                new SpecProbe("open Lib\nLib = {\n  public Y = 9\n}\nF(0) = {\n  open L\n  L = {\n    public H = 1\n  }\n  Y\n}\n\nF(0)", "ok raw=9 n=1"),
+            ],
+            Notes = "Constitution PV-24 (September 2026): Lean's `Algorithm.elaborateClauseGroup` copied branch 0's opens onto the family, whose scope is the parent level of every selected branch, so through that helper this program gave `5, 5, 2` (and `5, 7, 2` with the clauses swapped), and the branch-local `open L` failed. C# builds the family with no opens, and Lean now does too; this case's program is derived from the C# elaboration and evaluated by Lean, and `CoreTests/Conditionals.lean` pins the helper on the same programs.",
+            Explanation = "An open written in one clause provides its names to that branch body and its nested scopes only. The sibling branch `F(1) = Helper` never sees branch 0's inline open, so its `Helper` is the one the enclosing `open Lib` provides — in whatever order the clauses are written.",
         },
         new()
         {

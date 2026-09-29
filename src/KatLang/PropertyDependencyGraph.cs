@@ -1555,10 +1555,10 @@ internal static class PropertyDependencyGraphBuilder
     /// <summary>
     /// The candidates this level's <c>open</c> targets contribute to an escaping reference, in
     /// declaration order with the evaluator's dedup rule (<see cref="Evaluator.OpenTargetDedupKey"/>).
-    /// A target whose head is this level's own property (or an inline block) is settled in
-    /// place: it is a candidate exactly when it publicly provides the reference's head, and
-    /// then carries the charged member seed, relative to this level's parent. A target whose
-    /// head is declared farther out is carried unresolved.
+    /// A target whose head is this level's own property (or an inline block, bare or as the
+    /// head of a dotted path) is settled in place: it is a candidate exactly when it publicly
+    /// provides the reference's head, and then carries the charged member seed, relative to
+    /// this level's parent. A target whose head is declared farther out is carried unresolved.
     /// </summary>
     private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level, int providerLevel)
     {
@@ -1571,27 +1571,26 @@ internal static class PropertyDependencyGraphBuilder
             if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
                 continue;
 
-            if (target is Expr.AlgorithmExpr(var block))
+            // The ONE open-target decomposition (AstHelpers.OpenTargetHead): an inline block
+            // head is its own provider, a name head is settled here or carried outward, and
+            // every other head (a parameter-owned head, F2; an illegal or recovery shape)
+            // provides nothing.
+            switch (target.OpenTargetHead(out var steps))
             {
-                // An inline target is wired to the prelude: nothing outside it can be
-                // referenced, so only its own requirement names survive.
-                if (TryChargeProvidedMember(block, pending, level.Memos) is { } inlineSeed)
-                    yield return new ResolvedOpenCandidate(new SummarySeed(inlineSeed.RequiredAncestorOwnedParameterNames,
-                        ownerQualifiedParameters: inlineSeed.OwnerQualifiedParameters), providerLevel);
-                continue;
+                case Expr.AlgorithmExpr(var block):
+                    if (TryChargeInlineOpenProvider(block, steps, pending, level.Memos) is { } inlineSeed)
+                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel);
+                    break;
+
+                case Expr.Resolve(var head) when !level.LocalPropertySummaries.ContainsKey(head):
+                    yield return new UnresolvedOpenCandidate(head, steps, providerLevel);
+                    break;
+
+                case Expr.Resolve(var head):
+                    if (TryResolveLocalHeadCandidate(head, steps, pending, level, providerLevel) is { } candidate)
+                        yield return candidate;
+                    break;
             }
-
-            if (!TryGetOpenTargetPath(target, out var head, out var steps))
-                continue;
-
-            if (!level.LocalPropertySummaries.ContainsKey(head))
-            {
-                yield return new UnresolvedOpenCandidate(head, steps, providerLevel);
-                continue;
-            }
-
-            if (TryResolveLocalHeadCandidate(head, steps, pending, level, providerLevel) is { } candidate)
-                yield return candidate;
         }
     }
 
@@ -1738,31 +1737,49 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// The lexical head and dotted public steps of a named <c>open</c> target (<c>open A</c>,
-    /// <c>open A.B.C</c>); false for inline, parameter-owned (an <see cref="Expr.Param"/> head
-    /// provides nothing, F2), and illegal target shapes.
+    /// The seed an INLINE open target — an inline block (<c>open { … }</c>, or a loaded module
+    /// once load elaboration made it one), bare or as the head of a dotted path
+    /// (<c>open { … }.S</c>, <c>open load('url').S</c>): the <paramref name="block"/> head and
+    /// the <paramref name="steps"/> of the ONE open-target decomposition
+    /// (<see cref="AstHelpers.OpenTargetHead(Expr, out IReadOnlyList{string})"/>) — contributes
+    /// for an opened reference, or null when its provider does not publicly provide the
+    /// reference's head (or a public step is missing, so it provides nothing). The block is
+    /// wired to the prelude — the evaluator's <c>WireOpenBlockToGlobalScope</c> — so nothing
+    /// outside it can be referenced: only its own requirement names survive. A dotted path is
+    /// charged like a named one (<see cref="TryResolveLocalHeadCandidate"/>): the navigated
+    /// steps' requirements plus the provided member's, brought back through the navigated
+    /// nodes to the block's own region.
     /// </summary>
-    internal static bool TryGetOpenTargetPath(Expr target, out string head, out IReadOnlyList<string> steps)
+    internal static SummarySeed? TryChargeInlineOpenProvider(
+        Algorithm block,
+        IReadOnlyList<string> steps,
+        PendingReference pending,
+        SummaryWalkMemos memos)
     {
-        var reversed = new List<string>();
-        var current = target;
-        while (current is Expr.DotCall { Args: null } edge && edge.IsCoreOpenForm())
+        SummarySeed charged;
+        if (steps.Count == 0)
         {
-            reversed.Add(edge.Name);
-            current = edge.Target;
+            if (TryChargeProvidedMember(block, pending, memos) is not { } blockSeed)
+                return null;
+            charged = blockSeed;
+        }
+        else
+        {
+            var (providerSeed, providerNavigated) = ChargePath(block, PublicSteps(steps), memos);
+            if (providerNavigated < steps.Count
+                || NavigateNode(block, steps) is not { } provider
+                || TryChargeProvidedMember(provider, pending, memos) is not { } memberSeed)
+            {
+                return null;
+            }
+
+            charged = ExpandThroughNodes(memberSeed, NodePath(block, steps), memos);
+            charged.UnionWith(providerSeed);
         }
 
-        if (current is Expr.Resolve(var name))
-        {
-            reversed.Reverse();
-            head = name;
-            steps = reversed;
-            return true;
-        }
-
-        head = string.Empty;
-        steps = [];
-        return false;
+        return new SummarySeed(
+            charged.RequiredAncestorOwnedParameterNames,
+            ownerQualifiedParameters: charged.OwnerQualifiedParameters);
     }
 
     /// <summary>
@@ -1805,7 +1822,8 @@ internal static class PropertyDependencyGraphBuilder
     /// <summary>
     /// The opens walk of a level: a named target charges the navigated provider path
     /// (<c>open A</c> needs only A's identity; <c>open A.B</c> charges the
-    /// requirements of the navigated member <c>B</c>), and
+    /// requirements of the navigated member <c>B</c>), an inline-headed target charges
+    /// nothing (its block is wired to the prelude), and
     /// any other (illegal, recovery) shape walks as an ordinary expression. An open target is
     /// not a call, so no lexical fallback is ever charged for it.
     /// </summary>
@@ -1818,19 +1836,24 @@ internal static class PropertyDependencyGraphBuilder
         var seed = new SummarySeed();
         foreach (var target in opens)
         {
-            if (TryGetOpenTargetPath(target, out var head, out var steps))
+            switch (target.OpenTargetHead(out var steps))
             {
-                if (steps.Count > 0)
-                    seed.UnionWith(new SummarySeed(pendingReferences: [new PendingReference(head, steps, [])]));
-                continue;
+                case Expr.Resolve(var head):
+                    if (steps.Count > 0)
+                        seed.UnionWith(new SummarySeed(pendingReferences: [new PendingReference(head, steps, [])]));
+                    break;
+
+                // An inline provider is also an identity, never an evaluated output, and so is
+                // a dotted path navigated from one: the block is wired to the prelude, so neither
+                // it nor any member reached from it can require anything of the opener's chain.
+                // Provider signature/form validity is checked independently.
+                case Expr.AlgorithmExpr:
+                    break;
+
+                default:
+                    seed.UnionWith(CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext: false));
+                    break;
             }
-
-            // An inline provider is also an identity, never an evaluated output.
-            // Provider signature/form validity is checked independently.
-            if (target is Expr.AlgorithmExpr)
-                continue;
-
-            seed.UnionWith(CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext: false));
         }
 
         return seed;

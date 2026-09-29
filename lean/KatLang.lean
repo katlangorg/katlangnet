@@ -1907,25 +1907,30 @@ namespace Algorithm
       ordinary parameter shapes such as `PairSum((x, y)) = x + y`, while keeping
       multi-clause and literal/mixed families conditional.
 
-      Opens handling (descriptive, relied on by the front-end): the
-      conditional's own opens list is taken from the FIRST branch's body, and
-      every branch body also keeps its own opens.  Surface clause bodies are
-      expressions, so in practice all clause bodies of a family carry the same
-      (usually empty) opens; the front-end does not produce families whose
-      branch bodies declare differing opens. -/
+      Opens are BRANCH-OWNED: every branch body keeps its own opens, and the
+      family itself owns none (`opens := []` in both conditional arms). An
+      `open` written in one clause provides its names to that branch body and
+      its nested scopes only (MOD-05): the family scope is the parent level of
+      EVERY selected branch (`wireSelectedBranchBody` installs `callee.opens`
+      there), so copying one branch's opens onto the family would leak them
+      into every sibling branch — and re-resolve a copied named target such as
+      a branch-local `open L` from the family's scope, where `L` is not
+      visible. Clause bodies are brace blocks and may each declare their own
+      opens, so branch opens routinely differ. C#: `Algorithm.ElaborateClauseGroup`
+      (`Opens: []`). -/
   def elaborateClauseGroup : List CondBranch -> Algorithm
     | [branch] =>
         match clauseGroupDefinitionKind [branch] with
         | .ordinary patterns => branch.body.withParameterPatterns patterns
         | .conditional =>
-            .conditional (parent branch.body) (opens branch.body) [{
+            .conditional (parent branch.body) [] [{
               pattern := branch.pattern
               body := branch.body.withParams []
             }]
     | branches =>
         .conditional
           (branches.head?.map (fun branch => parent branch.body) |>.join)
-          (branches.head?.map (fun branch => opens branch.body) |>.getD [])
+          []
           (branches.map (fun branch => {
             pattern := branch.pattern
             body := branch.body.withParams []
@@ -3314,13 +3319,18 @@ inductive OpenForm where
 
 def Expr.openForm? : Expr -> Option OpenForm
   | .algorithmExpr a => some (.algorithmExpr a)
-  -- A capture is a value boundary, not algorithm/namespace identity, so
-  -- `open (M)` is NOT an open form: it is rejected by open-form validation
-  -- with badOpenForm, exactly like a spread-marked target.
+  -- A capture is a value boundary, not algorithm/namespace identity, so a
+  -- surviving capture (`open (M, N)`, `open (M*)`) is NOT an open form: it is
+  -- rejected by open-form validation with badOpenForm, exactly like a
+  -- spread-marked target. (A redundant group is no capture: the C# parser
+  -- erases it, so `open (M)` IS `open M`.)
   | .resolve n       => some (.resolve n)
   -- Only argumentless dot paths are open forms. The C# front end rejects a
   -- Grace-marked open target such as `open A~.B` before Lean encoding; valid
   -- graced dot sources otherwise encode as the same dotMember as ordinary dot.
+  -- This classifies the OUTER node; `resolveAlgForOpen` recurses through the
+  -- receiver, so a path whose head is no open form (`open 5.N`) is rejected
+  -- there. The C# front end refuses such a head statically (`BadOpenForm`).
   | .dotMember o n _ none => some (.dotCall o n)
   | _                => none          -- capture, argument-bearing dot forms, call, and all other forms are rejected
 
@@ -4520,9 +4530,10 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   | .algorithmExpr a => pure (wireOpenBlockToGlobalScope ctx a)
   -- A capture is a value boundary, never algorithm/namespace identity:
   -- `open` consumes algorithm identity, so a captured target such as
-  -- `open (M)` is not openable. Top-level capture targets are already
+  -- `open (M, N)` is not openable. Top-level capture targets are already
   -- rejected by resolveAllOpens' open-form validation; this arm is reached
-  -- through dotted-path recursion (`open (X).B`) and prebuilt ASTs.
+  -- through dotted-path recursion (`open (X, Y).B`) and prebuilt ASTs — the
+  -- C# front end refuses such a head statically (`BadOpenForm`).
   | .capture _ => throw (Error.badOpenForm "captured value groups cannot be opened")
   | .resolve n =>
     match ctx.callStack with
@@ -4588,16 +4599,22 @@ def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   else
     pure provider
 
+/-- The head of an argumentless open path. An argument-bearing edge stops the walk,
+    just as it stops open resolution. C#: `AstHelpers.OpenTargetHead`. -/
+def Expr.openTargetHead : Expr → Expr
+  | .dotMember receiver _ _ none => receiver.openTargetHead
+  | e => e
+
 /-- Resolve all opens of an algorithm upfront.
     Deduplicates named opens by `openExprName` (first occurrence wins) to
-    avoid repeated resolution and spurious ambiguity.  Inline blocks are never
-    deduplicated (each gets a unique positional key).
+    avoid repeated resolution and spurious ambiguity. Inline block heads, including
+    dotted paths from them, are never deduplicated (each gets a unique positional key).
     Validates all open expressions first for fail-fast diagnostics. -/
 def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) := do
   let rawOpens := Algorithm.opens a
   -- Deduplicate by key (first occurrence wins); inline blocks use positional keys
   let tagged := rawOpens.mapIdx (fun idx e =>
-    let key := match e with
+    let key := match e.openTargetHead with
       | .algorithmExpr _ => s!"(inline#{idx})"   -- * unique per original position, never deduped
       | .capture _        => s!"(inline#{idx})"
       | _                 => openExprName e
@@ -7186,10 +7203,13 @@ end
     OPEN TARGETS: `lookupLexical` resolves the level's opens lazily, and a target
     that resolves to nothing fails that resolution. The surface layer never lets
     such a failure reach promotion: it refuses every `open` target that resolves
-    to nothing — an unknown head, a missing member, a non-public path step — as a
-    static diagnostic (C# `DiagnosticCode.UnresolvedOpenTarget`), so in an
-    accepted program this probe only ever sees resolvable targets, and its
-    `.error` arm reports genuine lookup failures such as an ambiguous open.
+    to nothing — an unknown head, a missing member, a non-public path step, from
+    a name head or an inline block or module head alike — as a static diagnostic
+    (C# `DiagnosticCode.UnresolvedOpenTarget`), and a dotted path whose head is
+    not itself an open form (`open 5.N`, which `resolveAlgForOpen` rejects through
+    its receiver recursion) as C# `DiagnosticCode.BadOpenForm`, so in an accepted
+    program this probe only ever sees resolvable targets, and its `.error` arm
+    reports genuine lookup failures such as an ambiguous open.
 
     NOTE: This function is used only for ordinary algorithms without an explicit
     parameter-pattern list.  Explicit ordinary algorithms and conditional branch

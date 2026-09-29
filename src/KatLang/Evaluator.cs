@@ -806,9 +806,9 @@ public static partial class Evaluator
     /// (<c>ElaboratedPropertyScope.GetResolvedOpenProviders</c>), so both views
     /// deduplicate targets by the same relation. An INLINE target
     /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by
-    /// its written position, so two structurally identical inline blocks are never
-    /// merged. A named resolve or dotted path uses its COMPLETE spelling, so
-    /// repeating one spelling is ONE provider (first occurrence wins; ordinal
+    /// its written position, including when it heads a dotted path, so two
+    /// structurally identical inline blocks are never merged. A name-headed path uses
+    /// its COMPLETE spelling, so repeating one spelling is ONE provider (first occurrence wins; ordinal
     /// comparison). Diagnostic rendering is bounded and must never decide this
     /// identity: distinct long names can have the same abbreviated display.
     /// Invalid host/recovery forms retain their bounded diagnostic key; validation
@@ -818,25 +818,11 @@ public static partial class Evaluator
     /// </summary>
     internal static string OpenTargetDedupKey(Expr openExpr, int index)
     {
-        if (openExpr is Expr.AlgorithmExpr or Expr.Capture)
+        var head = openExpr.OpenTargetHead(out var steps);
+        if (head is Expr.AlgorithmExpr or Expr.Capture)
             return $"(inline#{index})";
-        if (openExpr is Expr.Resolve(var name))
-            return name;
-
-        // Iterative and linear in the written path, including long components.
-        // No record equality or diagnostic renderer participates in the key.
-        var steps = new Stack<string>();
-        var head = openExpr;
-        while (head is Expr.DotCall { Args: null } edge)
-        {
-            steps.Push(edge.Name);
-            head = edge.Target;
-        }
         if (head is Expr.Resolve(var headName))
-        {
-            steps.Push(headName);
-            return string.Join(".", steps);
-        }
+            return steps.Count == 0 ? headName : headName + "." + string.Join(".", steps);
         return OpenExprName(openExpr);
     }
 

@@ -389,13 +389,13 @@ If ANY checklist item fails, fix the output before emitting it.
 
 ## Program Structure
 
-- At most one `open` declaration, before all properties and outputs.
+- At most one `open` declaration, before all properties (clause definitions included) and outputs.
 - Output is written as bare expression rows. Prefer trailing output expressions (definitions first, output last).
 - Use `public` only when the task needs a property to be visible through `open` (`open` imports only public members).
 
 ## Open Visibility, Ambiguity, and Load
 
-- Place the single `open` declaration before all property definitions and output — even when opening a sibling library defined later in the same algorithm (the forward reference resolves). An `open` after any property or output is a parse error.
+- Place the single `open` declaration before all property definitions and output — clause definitions such as `P(x) = ...` included — even when opening a sibling library defined later in the same algorithm (the forward reference resolves). An `open` after any property, clause definition, or output is a parse error. Every open target names an algorithm all the way down: a dotted target starts at a declared algorithm or an inline `{ ... }` block (never `open F(1).X` or `open 5.X`), and every dotted step must be a public member.
 - `open` imports public properties from the target. Ownership-first lookup applies: the owner walk first (each enclosing scope outward, where a scope owns both the parameters it binds and the properties it declares, and a property may not have the same name as a parameter — written, inferred, or added by automatic parameter forwarding — of that or any enclosing lexical algorithm), then opened public properties. Every owned name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope — wins over an opened name.
 - If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference (`A.X`) or open only the provider you need:
 
@@ -1554,7 +1554,7 @@ Repeated parameter names use one order-independent compatibility rule over indep
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (108 of the 311-case canonical language specification,
+Verified reference examples (111 of the 317-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2208,6 +2208,34 @@ Regenerate this block from the repo root with:
     R
 
   Rejected by the parser: "a parenthesized group is a captured value, not an algorithm ..."
+
+[open-target-head-must-name-an-algorithm] An open target names an algorithm all the way down: the first part of a dotted path must itself be a name, a `{ ... }` block, or a `load` module, exactly like a bare target. `open F(1).Y`, `open 5.N`, `open (A, B).N` and `open [A].N` are rejected at that first part like `open F(1)`, `open 5`, `open (A, B)` and `open [A]`, whether or not any name is ever looked up through them. `open` never calls or evaluates anything, so open a path that starts at a declared algorithm (`open Lib.S`) or at an inline block.
+
+    open F(1).Y
+    F(x) = {
+        public Y = x
+    }
+    Y
+
+  Rejected by the parser: "Invalid open form: 'call' is not allowed in open declarations. ..."
+
+[inline-headed-open-paths-keep-distinct-providers] Each inline open target is a separate provider, including a dotted path starting at a brace block or loaded module. Two such targets that provide X are ambiguous, even when both paths have the same member names. A diagnostic abbreviation such as `{...}.S` never identifies a provider. Repeating a name-headed path such as `open Lib.S, Lib.S` still deduplicates by its complete name.
+
+    open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S
+    X
+
+  Fails with an evaluation error (ambiguousOpen).
+
+[open-after-clause-definition-rejected] A body's one `open` declaration is its import preamble: it comes before every declaration and output row of that body, clause definitions included — `P(a) = a` declares a property exactly as `P = a` does. Move the `open` to the top of the body; each nested `{ ... }` body, a clause body included, has its own preamble.
+
+    P(a) = a
+    open Lib
+    Lib = {
+        public X = 4
+    }
+    P(X)
+
+  Rejected by the parser: "'open' declaration must appear before any properties or output expressions. ..."
 
 [dot-call-structural-member-is-not-a-lexical-rewrite] Dot syntax is property-first. `Obj` declares its own `B`, so `Obj.B(5)` calls that member with the one argument `5` and injects no receiver; the visible two-parameter `B(a, c)` is never considered, although `B(Obj, 5)` is a well-formed two-argument call. Only a receiver WITHOUT the member takes the lexical fallback, where `A.B(C)` allocates arguments like `B(A, C)` with the receiver as one ordinary leading argument — `3.B(5)` is `B(3, 5)`.
 

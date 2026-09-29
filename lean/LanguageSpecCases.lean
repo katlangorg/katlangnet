@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 311
-- excluded parse-level cases (Lean has no surface parser): 39
+- specification surface cases: 317
+- excluded parse-level cases (Lean has no surface parser): 43
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 254
-- probe observations (C#-only by design): 938
+- Lean-guarded cases: 256
+- probe observations (C#-only by design): 953
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -700,6 +700,11 @@ def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
 #guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
 
+-- inline-headed-open-paths-keep-distinct-providers [name-resolution]: open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S \n X
+def case_inline_headed_open_paths_keep_distinct_providers : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])] [])) "S" none), (.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] [])] [])) "S" none)] [] [.resolve "X"])
+#guard obs case_inline_headed_open_paths_keep_distinct_providers == "err ambiguousOpen"
+
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment, Increment))
 def case_capture_suppresses_higher_order_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [(.capture [.resolve "Increment", .resolve "Increment"])])])
@@ -1280,6 +1285,11 @@ def case_conditional_branch_inline_open_exposes_members_to_the_branch : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [(.algorithmExpr (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 5])] []))] [] [.resolve "Helper"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_inline_open_exposes_members_to_the_branch == "ok raw=5 n=1"
 
+-- conditional-branch-inline-open-does-not-shadow-an-enclosing-open-in-sibling-branches [conditionals]: open Lib \n Lib = { \n   public Helper = 7 \n } \n F(0) = { \n   open { \n     public Helper = 5 \n   } \n   Helper \n } \n F(1) = Helper \n F(n) = n \n  \n F(0), F(1), F(2)
+def case_conditional_branch_inline_open_does_not_shadow_an_enclosing_open_in_sibling_branches : Expr :=
+  .algorithmExpr (alg [] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 7])] []), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [(.algorithmExpr (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 5])] []))] [] [.resolve "Helper"])⟩, ⟨.litInt 1, (alg [] [] [] [.resolve "Helper"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0]), (.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_conditional_branch_inline_open_does_not_shadow_an_enclosing_open_in_sibling_branches == "ok raw=S[5, 7, 2] n=3"
+
 -- conditional-branch-local-library-is-openable-within-the-branch [conditionals]: F(0) = { \n   Lib = { \n     public X = 1 \n   } \n   G = { \n     open Lib \n     X \n   } \n   G \n } \n F(n) = n \n  \n F(0)
 def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
@@ -1370,7 +1380,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 254 canonical Lean-guarded specification cases.
+-- 256 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1498,6 +1508,7 @@ def specCaseIds : List String := [
   "dot-chain-extension-fallback-composes",
   "dot-chain-nested-structural-members",
   "dot-chain-local-only-member-is-not-a-fallback",
+  "inline-headed-open-paths-keep-distinct-providers",
   "capture-suppresses-higher-order-identity",
   "capture-suppresses-structural-members",
   "output-dotted-access-ordinary",
@@ -1614,6 +1625,7 @@ def specCaseIds : List String := [
   "clause-family-nested-in-branch-body-binds-its-own-binders",
   "conditional-branch-pattern-is-a-closed-input-specification",
   "conditional-branch-inline-open-exposes-members-to-the-branch",
+  "conditional-branch-inline-open-does-not-shadow-an-enclosing-open-in-sibling-branches",
   "conditional-branch-local-library-is-openable-within-the-branch",
   "builtin-callable-is-an-ordinary-prelude-binding",
   "no-arity-based-callable-selection",
@@ -1633,6 +1645,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 254
+#guard specCaseIds.length == 256
 
 end LanguageSpecCases

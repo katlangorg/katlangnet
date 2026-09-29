@@ -628,4 +628,131 @@ def nestedUnusedConditionalIsStillValidated : Bool :=
 
 #guard nestedUnusedConditionalIsStillValidated
 
+--------------------------------------------------------------------------------
+-- Clause-family opens are BRANCH-OWNED (MOD-05; constitution PV-24).
+-- `Algorithm.elaborateClauseGroup` gives the family no opens (`opens := []`): an
+-- `open` written in one clause provides its names to that branch body and its
+-- nested scopes only. The family scope is the parent level of EVERY selected
+-- branch (`wireSelectedBranchBody`), so a copy of branch 0's opens on the family
+-- leaked into every sibling — `F(1) = Helper` read branch 0's inline `Helper`
+-- (5) instead of the enclosing `open Lib` (7), and a branch-local named target
+-- was re-resolved from the family's scope. Each program below is the one the C#
+-- front end accepts (`Algorithm.ElaborateClauseGroup`, `Opens: []`), and the
+-- elaborated family must evaluate exactly like the C#-shaped `.conditional none []`
+-- family, in every clause order.
+--------------------------------------------------------------------------------
+
+-- F(0) = { open { public Helper = 5 }  Helper }
+def branchOpenInlineBranch : CondBranch :=
+  ⟨ .litInt 0,
+    alg [] [.algorithmExpr (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 5])] [])] []
+      [resolve "Helper"] ⟩
+
+-- F(1) = Helper
+def branchOpenSiblingBranch : CondBranch := ⟨ .litInt 1, alg [] [] [] [resolve "Helper"] ⟩
+
+-- F(n) = n
+def branchOpenBinderBranch : CondBranch := ⟨ .bind "n", alg [] [] [] [.param "n"] ⟩
+
+-- open Lib / Lib = { public Helper = 7 } / F… / F(0), F(1), F(2)
+def branchOpenProgram (family : Algorithm) : KatLang.Expr :=
+  .algorithmExpr (alg [] [resolve "Lib"]
+    [privateProp "Lib" (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 7])] []),
+     privateProp "F" family]
+    [.call (resolve "F") [.num 0], .call (resolve "F") [.num 1], .call (resolve "F") [.num 2]])
+
+def branchOpenFamily : Algorithm :=
+  Algorithm.elaborateClauseGroup [branchOpenInlineBranch, branchOpenSiblingBranch, branchOpenBinderBranch]
+
+-- The family owns no opens, and every branch body keeps exactly its own.
+def elaboratedFamilyOwnsNoOpens : Bool :=
+  match branchOpenFamily with
+  | .conditional _ [] [b0, b1, b2] _ =>
+      (Algorithm.opens b0.body).length == 1
+        && (Algorithm.opens b1.body).isEmpty
+        && (Algorithm.opens b2.body).isEmpty
+  | _ => false
+
+#guard elaboratedFamilyOwnsNoOpens
+
+-- A single literal clause (the conditional single-branch arm) owns no opens either.
+#guard (Algorithm.opens (Algorithm.elaborateClauseGroup [branchOpenInlineBranch])).isEmpty
+
+-- The sibling branch reads the ENCLOSING open (7), never branch 0's inline open (5).
+def siblingBranchReadsEnclosingOpenNotBranchOpen : Bool :=
+  match runFlat (branchOpenProgram branchOpenFamily) with
+  | Except.ok [5, 7, 2] => true
+  | _ => false
+
+#guard siblingBranchReadsEnclosingOpenNotBranchOpen
+
+-- …exactly like the C#-shaped family the front end builds.
+def csharpShapedFamilyAgreesOnBranchOpens : Bool :=
+  match runFlat (branchOpenProgram
+      (.conditional none [] [branchOpenInlineBranch, branchOpenSiblingBranch, branchOpenBinderBranch])) with
+  | Except.ok [5, 7, 2] => true
+  | _ => false
+
+#guard csharpShapedFamilyAgreesOnBranchOpens
+
+-- Clause order decides nothing about open resolution: writing the sibling first
+-- (whose own opens are empty) gives the same program meaning.
+def branchOpenResolutionIgnoresClauseOrder : Bool :=
+  match runFlat (branchOpenProgram (Algorithm.elaborateClauseGroup
+      [branchOpenSiblingBranch, branchOpenInlineBranch, branchOpenBinderBranch])) with
+  | Except.ok [5, 7, 2] => true
+  | _ => false
+
+#guard branchOpenResolutionIgnoresClauseOrder
+
+-- Without the enclosing open, the sibling's `Helper` names nothing: branch 0's
+-- inline open never reaches it (the C# front end rejects this program statically
+-- as an undeclared branch identifier; the evaluator fails the same way).
+def siblingBranchDoesNotSeeBranchOpen : Bool :=
+  match runResult (.algorithmExpr (alg [] [] [privateProp "F" branchOpenFamily]
+      [.call (resolve "F") [.num 1]])) with
+  | Except.error err => innermostIsUnknownName "Helper" err
+  | _ => false
+
+#guard siblingBranchDoesNotSeeBranchOpen
+
+-- A branch-local named target stays owned by its branch: `open L` resolves `L`
+-- from the branch body that declares it, even for a single literal clause.
+-- open Lib / Lib = { public Y = 9 } / F(0) = { open L  L = { public H = 1 }  Y } / F(0)
+def branchLocalNamedOpenStaysInItsBranch : Bool :=
+  let family := Algorithm.elaborateClauseGroup [⟨ .litInt 0,
+    alg [] [resolve "L"] [privateProp "L" (alg [] [] [publicProp "H" (alg [] [] [] [.num 1])] [])]
+      [resolve "Y"] ⟩]
+  match runFlat (.algorithmExpr (alg [] [resolve "Lib"]
+      [privateProp "Lib" (alg [] [] [publicProp "Y" (alg [] [] [] [.num 9])] []),
+       privateProp "F" family]
+      [.call (resolve "F") [.num 0]])) with
+  | Except.ok [9] => true
+  | _ => false
+
+#guard branchLocalNamedOpenStaysInItsBranch
+
+-- All six orders of three disjoint heads: local opens in two different branches,
+-- the enclosing open in the third, and a nested body in every branch.
+def branchOpenNestedBody : Algorithm := alg [] [] [] [.algorithmExpr (alg [] [] [] [resolve "Helper"])]
+def branchOpenNestedInline : CondBranch := ⟨ .litInt 0,
+  alg [] [.algorithmExpr (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 5])] [])] []
+    (Algorithm.output branchOpenNestedBody) ⟩
+def branchOpenNestedOuter : CondBranch := ⟨ .litInt 1, branchOpenNestedBody ⟩
+def branchOpenNestedNamed : CondBranch := ⟨ .litInt 2,
+  alg [] [resolve "Local"]
+    [privateProp "Local" (alg [] [] [publicProp "Helper" (alg [] [] [] [.num 9])] [])]
+    (Algorithm.output branchOpenNestedBody) ⟩
+
+def branchOpenAllOrders : List (List CondBranch) :=
+  let a := branchOpenNestedInline
+  let b := branchOpenNestedOuter
+  let c := branchOpenNestedNamed
+  [[a, b, c], [a, c, b], [b, a, c], [b, c, a], [c, a, b], [c, b, a]]
+
+#guard branchOpenAllOrders.all (fun branches =>
+  match runFlat (branchOpenProgram (Algorithm.elaborateClauseGroup branches)) with
+  | .ok [5, 7, 9] => true
+  | _ => false)
+
 end KatLangTests

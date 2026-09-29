@@ -96,6 +96,11 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bcallback\s+fall-?through\b", "a builtin callback slot's value fall-through (before PV-19)" },
         { @"\bcallback\s+slot'?s\s+eager\b", "an eager value attempt in a builtin callback slot (before PV-19)" },
         { @"`?initial`?\s+shares\s+the\s+algorithm\s+metadata\s+kind", "reduce's initial as an algorithm-kind slot (before PV-05)" },
+        // PV-11: an open target is an open form ALL the way down — the head of a dotted path is
+        // validated like a bare target — so no parser check "passes" a target by its outer node.
+        { @"\bpass(?:es|ing)\s+(?:that|the)\s+(?:parser|outer(?:[- ]dot)?[- ]form)\s+check\b", "an open target validated by its outer node only (before PV-11)" },
+        // PV-24: clause-family opens are branch-owned; a family owns no opens of its own.
+        { @"\bopens\s+list\s+is\s+taken\s+from\s+the\s+first\s+branch", "a clause family owning its first branch's opens (before PV-24)" },
     };
 
     [Theory]

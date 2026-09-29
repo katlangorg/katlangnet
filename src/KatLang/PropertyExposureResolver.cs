@@ -731,23 +731,32 @@ internal static class PropertyExposureResolver
                         if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
                             continue;
 
-                        if (target is Expr.AlgorithmExpr(var block))
+                        // The ONE open-target decomposition (AstHelpers.OpenTargetHead).
+                        switch (target.OpenTargetHead(out var steps))
                         {
-                            // An inline target is wired to the prelude: nothing outside it can
-                            // be referenced, so only its own requirement names survive.
-                            var inlineSeed = PropertyDependencyGraphBuilder.TryChargeProvidedMember(block, pending, memos);
-                            var inlineCharge = inlineSeed is null
-                                ? default
-                                : sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
-                                    .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners)));
+                            case Expr.AlgorithmExpr(var block):
+                            {
+                                // An inline target — a block, bare or as the head of a dotted path —
+                                // is wired to the prelude: nothing outside it can be referenced, so
+                                // only its own requirement names survive.
+                                var inlineSeed = PropertyDependencyGraphBuilder.TryChargeInlineOpenProvider(block, steps, pending, memos);
+                                var inlineCharge = inlineSeed is null
+                                    ? default
+                                    : sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
+                                        .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners)));
 
-                            group.Offer((inlineSeed is not null, inlineCharge));
-                            continue;
+                                group.Offer((inlineSeed is not null, inlineCharge));
+                                break;
+                            }
+
+                            case Expr.Resolve(var head):
+                                group.Offer(TryProvide(current, head, steps, pending, site, boundOwners));
+                                break;
+
+                            default:
+                                group.Offer(default);
+                                break;
                         }
-
-                        group.Offer(PropertyDependencyGraphBuilder.TryGetOpenTargetPath(target, out var head, out var steps)
-                            ? TryProvide(current, head, steps, pending, site, boundOwners)
-                            : default);
                     }
 
                     if (group.Decides(sets, ref result))

@@ -131,12 +131,14 @@ public class DiagnosticCodeTests
         { "open-declaration-in-parens", "(open Math)", DiagnosticCode.DeclarationInParentheses },
         { "second-open-declaration", "open Math\nopen Math\n1", DiagnosticCode.InvalidOpenDeclaration },
         { "open-after-property", "A = 1\nopen Math\n1", DiagnosticCode.InvalidOpenDeclaration },
+        { "open-after-clause-definition", "P(a) = a\nopen Math\n1", DiagnosticCode.InvalidOpenDeclaration },
         { "public-open", "public open Math\n1", DiagnosticCode.InvalidOpenDeclaration },
         { "open-in-expression", "x = open\nx", DiagnosticCode.InvalidOpenDeclaration },
         { "open-targets-missing-comma", "open Math Physics\n1", DiagnosticCode.InvalidOpenTargetList },
         { "open-targets-semicolon", "open Math ; Physics\n1", DiagnosticCode.InvalidOpenTargetList },
         { "open-target-on-next-line", "open\nMath", DiagnosticCode.InvalidOpenTargetList },
         { "open-form-number", "open 5\n1", DiagnosticCode.BadOpenForm },
+        { "open-form-number-head", "open 5.N\n1", DiagnosticCode.BadOpenForm },
         { "open-form-capture", "M = {\n public C = 5\n}\nR = {\n open (M, M)\n C\n}\nR", DiagnosticCode.BadOpenForm },
         { "open-form-grace", "M = {public C = 1}\nR = {\n open ~M\n C\n}\nR", DiagnosticCode.BadOpenForm },
         { "open-form-call-dot", "M = {public C = {public D = 1}}\nR = {\n open M.C(1)\n 2\n}\nR", DiagnosticCode.BadOpenForm },
@@ -176,6 +178,7 @@ public class DiagnosticCodeTests
         { "open-target-unknown-head", "open Nope\n1", DiagnosticCode.UnresolvedOpenTarget },
         { "open-target-missing-member", "Lib = { public S = 1 }\nA = {\n    open Lib.Missing\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "open-target-private-step", "Lib = { Sub = { public X = 1 } }\nA = {\n    open Lib.Sub\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
+        { "open-target-block-head-missing-member", "A = {\n    open { public S = 1 }.Missing\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "load-elaboration-unavailable", "open 'https://katlang.org/lib.kat'\n1", DiagnosticCode.LoadElaborationUnavailable },
     };
 

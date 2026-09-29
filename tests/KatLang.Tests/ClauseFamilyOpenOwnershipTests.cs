@@ -65,6 +65,58 @@ public class ClauseFamilyOpenOwnershipTests
         Assert.Single(conditional.Branches[0].Body.Opens);                 // branch keeps ownership
     }
 
+    // ── Sibling branches never see another branch's opens (MOD-05) ───────────
+    // The family scope is the parent level of EVERY selected branch, so a family-level copy
+    // of clause 0's opens reached each sibling. Lean's `Algorithm.elaborateClauseGroup` kept
+    // that copy until the constitution's PV-24 — `F(1)` below read branch 0's inline `Helper`
+    // (5) instead of the enclosing `open Lib` (7), in one clause order only — and
+    // CoreTests/Conditionals.lean now pins the Lean side on these very programs.
+    private const string EnclosingLibrary = "open Lib\nLib = {\n    public Helper = 7\n}\n";
+    private const string InlineOpenClause = "F(0) = {\n    open {\n        public Helper = 5\n    }\n    Helper\n}\n";
+
+    [Theory]
+    [InlineData(0, 1, 2)]
+    [InlineData(0, 2, 1)]
+    [InlineData(1, 0, 2)]
+    [InlineData(1, 2, 0)]
+    [InlineData(2, 0, 1)]
+    [InlineData(2, 1, 0)]
+    public void ThreeDisjointClauses_KeepLocalAndEnclosingOpens_InEveryPermutation(int a, int b, int c)
+    {
+        string[] clauses =
+        [
+            "F(0) = {\n open { public Helper = 5 }\n { Helper }\n}\n",
+            "F(1) = { { Helper } }\n",
+            "F(2) = {\n open Local\n Local = { public Helper = 9 }\n { Helper }\n}\n",
+        ];
+        var source = EnclosingLibrary + clauses[a] + clauses[b] + clauses[c] + "F(0), F(1), F(2)";
+        var family = Assert.IsType<Algorithm.Conditional>(
+            SourceProvenance.ParseValid(source).Root.Properties.Single(p => p.Name == "F").Value);
+        Assert.Empty(family.Opens);
+        Assert.Equal(3, family.Branches.Count);
+        Assert.Equal("5\n7\n9", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString().Replace("\r\n", "\n"));
+    }
+
+    [Theory]
+    [InlineData(EnclosingLibrary + InlineOpenClause + "F(1) = Helper\nF(n) = n\nF(0), F(1), F(2)")]
+    [InlineData(EnclosingLibrary + "F(1) = Helper\n" + InlineOpenClause + "F(n) = n\nF(0), F(1), F(2)")]
+    public void SiblingBranch_ReadsTheEnclosingOpen_NeverAnotherBranchsOpen_InEveryClauseOrder(string source)
+    {
+        var family = Assert.IsType<Algorithm.Conditional>(
+            SourceProvenance.ParseValid(source).Root.Properties.Single(p => p.Name == "F").Value);
+        Assert.Empty(family.Opens);
+        Assert.Equal("5\n7\n2", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString().Replace("\r\n", "\n"));
+    }
+
+    [Fact]
+    public void SingleLiteralClause_BranchLocalNamedOpen_ResolvesInItsOwnBranch()
+    {
+        // A copied `open L` would be re-resolved from the family's scope, where the branch's
+        // own `L` is not visible.
+        const string source = "open Lib\nLib = {\n    public Y = 9\n}\nF(0) = {\n    open L\n    L = {\n        public H = 1\n    }\n    Y\n}\nF(0)";
+        Assert.Equal("9", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+    }
+
     // ── Valid-program semantics preserved ────────────────────────────────────
     // Under the delimiter model, a clause body that owns an open is written as
     // a brace block (`{ ... }` is the scoped algorithm form); parentheses no

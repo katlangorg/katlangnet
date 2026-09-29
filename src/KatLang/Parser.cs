@@ -1437,7 +1437,12 @@ public sealed class Parser
                         DiagnosticCode.InvalidOpenDeclaration,
                         "Only one 'open' declaration is allowed per algorithm.");
                 }
-                if (properties.Count > 0 || output.Count > 0)
+                // The one open list is the body's import preamble (MOD-01): it precedes every
+                // declaration and output row of the body. Clause definitions are buffered in
+                // their families until the body ends, so they are counted here explicitly —
+                // `P(a) = a` declares a property exactly as `P = a` does, and an `open` after
+                // either, or between two clauses of one family, is equally misplaced.
+                if (properties.Count > 0 || output.Count > 0 || clauseGroupsInSourceOrder.Count > 0)
                 {
                     ReportError(
                         DiagnosticCode.InvalidOpenDeclaration,
@@ -1560,10 +1565,14 @@ public sealed class Parser
                 }
             }
 
-            // Validate no Grace operators in true conditional branch bodies.
+            // Validate no Grace operators in true conditional branch bodies: a branch infers
+            // nothing (its head is its complete input specification), so no marker in any row
+            // it WRITES can reorder anything — hoisted deconstruction right-hand sides included
+            // (AstHelpers.WrittenRows, the same rows the detector's branch region rewrites
+            // under GraceEffectPolicy.NotReported, which relies on this scan).
             foreach (var branch in condAlg.Branches)
             {
-                if (FindGraceSpan(branch.Body.Output) is { } graceSpan)
+                if (FindGraceSpan(AstHelpers.WrittenRows(branch.Body)) is { } graceSpan)
                 {
                     ReportError(
                         DiagnosticCode.InvalidGraceMarker,
@@ -3525,26 +3534,36 @@ public sealed class Parser
     /// DotCall(obj, name, null) is the canonical form for dotted paths in opens.
     /// Rejects DotCall with args as invalid.
     /// Lean: Expr.openForm? — only Block, Resolve, and argumentless DotCall
-    /// are open forms; everything else is rejected.
+    /// are open forms; everything else is rejected — and resolveAlgForOpen
+    /// recurses through a dotted path's receiver, so the form is checked ALL the
+    /// way down: the head of the receiver chain must itself be an open form.
     /// </summary>
     private void NormalizeAndValidateOpenForms(List<Expr> exprs)
     {
         for (var i = 0; i < exprs.Count; i++)
             exprs[i] = NormalizeOpenExpr(exprs[i]);
 
+        // An open target is an open form all the way down (MOD-02): for a dotted path the
+        // HEAD of its receiver chain must name an algorithm too — a name, a `{ ... }` block,
+        // or a `load` module — so `open 5.N`, `open F(1).N`, `open (A, B).N` and
+        // `open [A].N` are as invalid as `open 5`, `open F(1)`, `open (A, B)` and `open [A]`,
+        // and are reported at the offending head. Normalization already reported and
+        // recovered every argument-bearing edge and Grace marker, so every step between
+        // the target and its head is an argumentless dot edge.
         foreach (var expr in exprs)
         {
-            if (expr is Expr.Capture)
+            var head = expr.OpenTargetHead();
+            if (head is Expr.Capture)
             {
                 // A surviving multi-slot or spread group is a VALUE boundary, not an
                 // algorithm: `open` consumes algorithm/namespace identity, and
                 // a capture never exposes the identity of what it encloses.
-                ReportOpenFormError(CapturedOpenTargetDiagnostic, expr);
+                ReportOpenFormError(CapturedOpenTargetDiagnostic, head);
             }
-            else if (!IsOpenForm(expr))
+            else if (!IsOpenForm(head))
             {
-                var kind = OpenExprKind(expr);
-                ReportOpenFormError($"Invalid open form: '{kind}' is not allowed in open declarations.", expr);
+                var kind = OpenExprKind(head);
+                ReportOpenFormError($"Invalid open form: '{kind}' is not allowed in open declarations.", head);
             }
         }
     }

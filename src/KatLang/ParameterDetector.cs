@@ -866,7 +866,9 @@ internal static class ParameterDetector
     {
         /// <summary>
         /// A conditional branch body: the parser already rejects every written Grace in
-        /// it, so the detector strips the marker for recovery without a second report.
+        /// the rows it writes — its output rows and its hoisted deconstruction right-hand
+        /// sides alike (<see cref="AstHelpers.WrittenRows"/>, exactly the rows this region
+        /// rewrites) — so the detector strips the marker for recovery without a second report.
         /// </summary>
         NotReported,
 
@@ -1040,7 +1042,7 @@ internal static class ParameterDetector
         for (var i = 0; i < opens.Count; i++)
         {
             var open = opens[i];
-            var head = OpenTargetHead(open);
+            var head = open.OpenTargetHead();
             // A new Expr variant must be classified here as a lexical open head or an
             // intentional no-head form (a skipped name-like head would be a bypass).
             string? headName = head switch
@@ -1116,22 +1118,9 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// The lexical head of a core open form: the target itself for a bare name, or the
-    /// innermost receiver of an argumentless dot path (<c>Root</c> in <c>Root.Sub.Leaf</c>).
-    /// Iterative over the dot spine; an argument-bearing edge is not an open form and stops
-    /// the descent (the edge itself is then returned and classified as no head).
-    /// </summary>
-    private static Expr OpenTargetHead(Expr open)
-    {
-        while (open is Expr.DotCall { Args: null } dotCall)
-            open = dotCall.Target;
-        return open;
-    }
-
-    /// <summary>
     /// Rebuilds the argumentless dot spine of <paramref name="open"/> over a new head,
     /// keeping every stored dot-edge fact (member span, fallback identity, span) and
-    /// allocating only the spine. Iterative, mirroring <see cref="OpenTargetHead"/>.
+    /// allocating only the spine. Iterative, mirroring <see cref="AstHelpers.OpenTargetHead(Expr)"/>.
     /// </summary>
     private static Expr ReplaceOpenTargetHead(Expr open, Expr newHead)
     {

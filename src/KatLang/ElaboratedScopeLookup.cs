@@ -556,17 +556,34 @@ internal static class ElaboratedScopeLookup
     }
 
     /// <summary>
-    /// The static target of one open expression, or null when it provides nothing.
-    /// A bare <see cref="Expr.Resolve"/> head resolves through the direct property
-    /// chain (local properties, then the parent chain — the evaluator's
-    /// <c>LookupLexicalDirect</c>), which is sound only because parameter detection
-    /// has already classified every head by ownership: a head the owner walk found
-    /// parameter-owned is an <see cref="Expr.Param"/> by the time any scope is built
-    /// over the list, and a parameter provides nothing (static-open ownership, F2).
+    /// The static target of one open expression, or null when it provides nothing: the
+    /// target's head (<see cref="ResolveOpenTargetHead"/>) followed by each dotted step's
+    /// PUBLIC member — the evaluator's <c>ResolveAlgForOpen</c> / Lean
+    /// <c>resolveAlgForOpen</c> recursion, read through the ONE open-target decomposition
+    /// (<see cref="AstHelpers.OpenTargetHead(Expr, out IReadOnlyList{string})"/>), so a
+    /// name-headed and a block-headed path resolve by the same rule.
     /// </summary>
     public static Algorithm? ResolveOpenTarget(ElaboratedPropertyScope scope, Expr openExpr)
     {
-        switch (openExpr)
+        var receiver = ResolveOpenTargetHead(scope, openExpr.OpenTargetHead(out var steps));
+        for (var i = 0; receiver is not null && i < steps.Count; i++)
+            receiver = TryLookupPublicProperty(receiver, steps[i], scope.Observations)?.Property.Value;
+        return receiver;
+    }
+
+    /// <summary>
+    /// The algorithm an open target's HEAD (<see cref="AstHelpers.OpenTargetHead(Expr)"/>)
+    /// denotes, or null when it provides nothing. A bare <see cref="Expr.Resolve"/> head
+    /// resolves through the direct property chain (local properties, then the parent chain —
+    /// the evaluator's <c>LookupLexicalDirect</c>), which is sound only because parameter
+    /// detection has already classified every head by ownership: a head the owner walk found
+    /// parameter-owned is an <see cref="Expr.Param"/> by the time any scope is built over the
+    /// list, and a parameter provides nothing (static-open ownership, F2). An inline block (a
+    /// written <c>{ … }</c> or a loaded module) is the provider itself.
+    /// </summary>
+    internal static Algorithm? ResolveOpenTargetHead(ElaboratedPropertyScope scope, Expr head)
+    {
+        switch (head)
         {
             case Expr.Resolve(var name):
                 return TryLookupDirectLexicalProperty(scope, name)?.Property.Value;
@@ -576,27 +593,6 @@ internal static class ElaboratedScopeLookup
                 // not an open form, never a provider, and never a reason to look farther
                 // outward for a same-named property.
                 return null;
-
-            case Expr.DotCall dotCall when dotCall.IsCoreOpenForm():
-            {
-                var targetAlgorithm = ResolveOpenTarget(scope, dotCall.Target);
-                return targetAlgorithm is null
-                    ? null
-                    : TryLookupPublicProperty(targetAlgorithm, dotCall.Name, scope.Observations)?.Property.Value;
-            }
-
-            case Expr.SequenceSpread(var operand):
-            {
-                _ = operand;
-                return null;
-            }
-
-            case Expr.SequenceConstruct(var left, var right):
-            {
-                _ = left;
-                _ = right;
-                return null;
-            }
 
             case Expr.AlgorithmExpr(var algorithm):
                 return algorithm;
@@ -614,6 +610,8 @@ internal static class ElaboratedScopeLookup
                     Properties: [], Output: OutputBundle.Empty);
 
             default:
+                // A spread, a join, a call (an unresolved `load` included), a literal, an
+                // argument-bearing dot edge, or any other shape: not an open form.
                 return null;
         }
     }

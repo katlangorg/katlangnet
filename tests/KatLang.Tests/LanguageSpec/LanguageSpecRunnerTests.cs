@@ -236,6 +236,13 @@ public class LanguageSpecRunnerTests
             "negative-index-literal-rejected",
             "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",
+            // Constitution PV-11 / PV-25 / PV-49 (September 2026): open-target heads and
+            // steps, open placement after clause definitions, and Grace in a branch
+            // deconstruction are front-end rejections, parse-level by construction.
+            "open-target-head-must-name-an-algorithm",
+            "open-inline-headed-path-must-resolve",
+            "open-after-clause-definition-rejected",
+            "grace-in-branch-deconstruction-rejected",
             "ownership-same-owner-parameter-beats-property",
             "ownership-nearer-property-beats-outer-parameter",
             "ownership-same-owner-nested-reference-rejected",

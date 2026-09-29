@@ -721,4 +721,47 @@ def familyOwnedOpenStaticSurface (captures : Bool) : Bool :=
 #guard familyOwnedOpenStaticSurface false
 #guard familyOwnedOpenStaticSurface true
 
+-- PV-11 hostile review: a dotted path keeps its anonymous head's identity. Using
+-- the diagnostic spelling `{...}.S` as a key discarded the second provider.
+def inlineDottedOpen (deep : Bool) (members : List KatLang.PropDef) : Expr :=
+  let provider := alg [] [] members []
+  if deep then
+    Expr.dotCall (Expr.dotCall (.algorithmExpr (alg [] []
+      [publicProp "S" (alg [] [] [publicProp "T" provider] [])] [])) "S" none) "T" none
+  else
+    Expr.dotCall (.algorithmExpr (alg [] [] [publicProp "S" provider] [])) "S" none
+
+def inlineDottedOpensStayDistinct (deep reverse sameValue : Bool) : Bool :=
+  let a := inlineDottedOpen deep [publicProp "X" (alg [] [] [] [.num 5])]
+  let b := inlineDottedOpen deep [publicProp "X" (alg [] [] [] [.num (if sameValue then 5 else 7)])]
+  let targets := if reverse then [b, a] else [a, b]
+  match runResult (.algorithmExpr (alg [] targets [] [.resolve "X"])) with
+  | .error err => innermostIsAmbiguousOpen "X" err
+  | _ => false
+
+#guard [false, true].all (fun deep => [false, true].all (fun reverse =>
+  [false, true].all (inlineDottedOpensStayDistinct deep reverse)))
+
+-- A missing/private member of the first target cannot hide the second target's
+-- public member. Both are present even when the first contributes no lookup hit.
+def inlineDottedLaterMemberSurvives (privateFirst reverse : Bool) : Bool :=
+  let a := inlineDottedOpen true
+    [if privateFirst then privateProp "X" (alg [] [] [] [.num 5])
+     else publicProp "Y" (alg [] [] [] [.num 5])]
+  let b := inlineDottedOpen true [publicProp "X" (alg [] [] [] [.num 7])]
+  match runResult (.algorithmExpr (alg [] (if reverse then [b, a] else [a, b]) [] [.resolve "X"])) with
+  | .ok (.atom 7) => true
+  | _ => false
+
+#guard [false, true].all (fun privateFirst => [false, true].all (inlineDottedLaterMemberSurvives privateFirst))
+
+def namedDottedOpenStillDeduplicates : Bool :=
+  let target := Expr.dotCall (.resolve "Lib") "S" none
+  let lib := alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] [])] []
+  match runResult (.algorithmExpr (alg [] [target, target] [privateProp "Lib" lib] [.resolve "X"])) with
+  | .ok (.atom 7) => true
+  | _ => false
+
+#guard namedDottedOpenStillDeduplicates
+
 end KatLangTests

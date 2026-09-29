@@ -2007,7 +2007,8 @@ Lib.Helper
 
 After `open Lib`, `Area` could be used on its own, but `Helper` could not. A few rules keep `open` predictable:
 
-- `open` comes first in its algorithm, before any definitions and output rows. An algorithm has one `open` declaration, which may list several targets: `open Geometry, Physics`.
+- `open` comes first in its algorithm, before any definitions (clause definitions such as `P(x) = ...` included) and output rows. An algorithm has one `open` declaration, which may list several targets: `open Geometry, Physics`.
+- An open target names an algorithm: a name, a dotted path of public members such as `open Geometry.Shapes`, or a `{ ... }` block. Every part must exist, so a misspelled target is reported even if nothing is ever looked up through it.
 - Opened names never override other names. Your own definitions and the built-in names are found first, and `open` is consulted only for a name that neither provides. If two opened targets provide the same name, using that name is an error.
 - `open Math` makes the members of `Math` available under their own names, such as `Sqrt(16)` and `Pi`.
 

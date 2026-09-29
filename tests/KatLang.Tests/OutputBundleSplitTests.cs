@@ -550,14 +550,18 @@ public class OutputBundleSplitTests
     [InlineData("(M*).N")]
     [InlineData("1.N")]
     [InlineData("('url').N")]
-    public void OpenTargetOuterFormAcceptance_DoesNotPromiseAnOpenableReceiver(string target)
+    public void OpenTargetHead_MustItselfBeAnOpenForm_AtSyntaxPhase(string target)
     {
-        // Parse-time open validation checks the outer DotCall. Resolving its
-        // receiver is a later operation, so the grammar must not claim these
-        // are parser rejections or normalize a genuine receiver capture away
-        // (a redundant group around the receiver IS the receiver: `(M).N` is `M.N`).
+        // An open target is an open form ALL the way down (constitution PV-11, MOD-02; Lean
+        // `resolveAlgForOpen` recurses through the receiver): the head of a dotted path — a
+        // genuine receiver capture, a spread capture, a literal, a parenthesized string — is
+        // rejected at the head exactly like the bare head. Parse-time validation used to check
+        // only the outer DotCall and left the receiver to evaluation, which refused it only when
+        // some lookup consulted the level. Recovery still keeps the written structure: a
+        // genuine receiver capture is never normalized away (a redundant group around the
+        // receiver IS the receiver: `(M).N` is `M.N`).
         var parsed = Parser.ParseSyntax("open " + target);
-        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.BadOpenForm, Assert.Single(parsed.Diagnostics).Code);
         var dot = Assert.IsType<Expr.DotCall>(Assert.Single(parsed.Root.Opens));
         Assert.Null(dot.Args);
         Assert.True(dot.Target is Expr.Capture or Expr.Num or Expr.StringLiteral);
