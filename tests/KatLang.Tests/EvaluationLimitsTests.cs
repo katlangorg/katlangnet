@@ -236,9 +236,11 @@ public class EvaluationLimitsTests
         // step budget observes each level. The reduce initial accumulator once
         // retried a depth-failed eager argument evaluation through the algorithm
         // channel (2^depth work); the resource-limit error then became sticky
-        // (PrepareSequenceBuiltinSuffixArg) and is now terminal at the eager attempt
-        // itself (BuildCallableCallItems, RESOURCE LIMITS ARE TERMINAL, Q-02), so the
-        // run stays linear and the depth kind wins under a linear step budget.
+        // (PrepareSequenceBuiltinSuffixArg), was made terminal at the eager attempt
+        // itself (BuildCallableCallItems, RESOURCE LIMITS ARE TERMINAL, Q-02), and
+        // `initial` is now an ordinary VALUE slot demanded once, whatever its failure
+        // (PV-05), so the run stays linear and the depth kind wins under a linear step
+        // budget.
         var error = ErrorOf(
             "Add(a, b) = a + b\nG(x) = A\nA = [1, 2].reduce(Add, G(1))\nA",
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 96 });

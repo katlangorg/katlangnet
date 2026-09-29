@@ -2527,3 +2527,87 @@ theorem repeated_capture_success_requires_every_value
           rw [repeated_capture_valueless_second_fails_with_its_own_outcome v₁ a₁? a₂? e₁? e₂?] at success
           cases success
       | some v₂ => exact ⟨rfl, rfl⟩
+
+/-! ## Builtin call assembly respects argument roles (PV-05 / PV-19 / PV-20, September 2026)
+
+A collection builtin's argument adapter handles each written slot by the ROLE its
+position has in the builtin's metadata (`SequenceBuiltinMetadata.slotRole`): a VALUE
+slot is demanded once and its outcome — one value or one failure — is final; a
+CALLBACK slot carries its algorithm and is invoked by the builtin, never evaluated
+merely because it was supplied; and a spread slot is supply assembly whose failure is
+the call's failure. The laws below pin the metadata half and the binding half over the
+real definitions. The assembly itself lives in the partial evaluator
+(`collectSequenceCallableCallItems`) and is pinned by
+`CoreTests/BuiltinArgumentRoles.lean`. -/
+
+/-- The `collection` parameter is a VALUE slot of every collection builtin. -/
+theorem collection_position_is_a_value_slot (metadata : SequenceBuiltinMetadata) :
+    metadata.slotRole 0 = .value := by
+  simp [SequenceBuiltinMetadata.slotRole]
+
+/-- A control position is a CALLBACK exactly when its descriptor is an algorithm control;
+every other control is a VALUE slot. -/
+theorem control_position_role_follows_its_kind
+    (metadata : SequenceBuiltinMetadata) (index : Nat) (descriptor : SequenceBuiltinSuffixArgDescriptor)
+    (h : metadata.suffixArgs[index]? = some descriptor) :
+    metadata.slotRole (index + 1)
+      = if descriptor.kind == .algorithm then .callback else .value := by
+  simp [SequenceBuiltinMetadata.slotRole, h]
+
+/-- A position past the fixed signature is SURPLUS: supplying it is an arity error. -/
+theorem position_past_the_signature_is_surplus
+    (metadata : SequenceBuiltinMetadata) (slot : Nat) (h : metadata.suffixArgs.length < slot) :
+    metadata.slotRole slot = .surplus := by
+  have hne : slot ≠ 0 := by omega
+  have hnone : metadata.suffixArgs[slot - 1]? = none := by
+    simp
+    omega
+  simp [SequenceBuiltinMetadata.slotRole, hne, hnone]
+
+/-- `reduce`'s `initial` is an ordinary VALUE slot (HO-04), its reducer a CALLBACK. -/
+theorem reduce_initial_is_a_value_slot :
+    (sequenceBuiltinMetadata? .reduceBuiltin).map (·.slotRole 2) = some .value := by
+  rfl
+
+theorem reduce_reducer_is_a_callback_slot :
+    (sequenceBuiltinMetadata? .reduceBuiltin).map (·.slotRole 1) = some .callback := by
+  rfl
+
+theorem map_mapper_is_a_callback_slot :
+    (sequenceBuiltinMetadata? .mapBuiltin).map (·.slotRole 1) = some .callback := by
+  rfl
+
+theorem filter_predicate_is_a_callback_slot :
+    (sequenceBuiltinMetadata? .filterBuiltin).map (·.slotRole 1) = some .callback := by
+  rfl
+
+/-- A CALLBACK control binds the item's algorithm channel and the callable it names, and
+nothing else: the item's value and any value failure are never consulted, because a
+callback slot is never value-evaluated (CALL-03). -/
+theorem callback_control_binds_only_the_algorithm_channel
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
+    (alg : Algorithm) (hk : descriptor.kind = .algorithm) (ha : item.algorithm? = some alg) :
+    runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor item)
+      = .ok (.algorithm alg item.callable?) := by
+  simp [prepareSequenceBuiltinSuffixArgItem, hk, ha, runEvalM]
+  rfl
+
+/-- A VALUE control binds the one value its demand established. -/
+theorem value_control_binds_its_established_value
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
+    (v : Result) (hk : descriptor.kind = .value) (hv : item.value? = some v) :
+    runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor item) = .ok (.value v) := by
+  simp [prepareSequenceBuiltinSuffixArgItem, hk, hv, runEvalM]
+  rfl
+
+/-- A VALUE control whose one evaluation FAILED reports that failure: binding never
+evaluates the slot again, so a failure cannot be retried into a different outcome
+(PV-05 — `reduce`'s `initial` included). -/
+theorem value_control_reports_its_recorded_failure
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (err : Error)
+    (hk : descriptor.kind = .value) :
+    runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor { error? := some err })
+      = .error err := by
+  cases b <;>
+    simp [prepareSequenceBuiltinSuffixArgItem, hk, sequenceBuiltinValueDemandErrorWith?,
+      CallableCallItem.named?, runEvalM] <;> rfl

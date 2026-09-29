@@ -630,95 +630,126 @@ public static partial class Evaluator
         IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
-    /// <summary>Only arguments without callback parameters are eagerly value-evaluated.</summary>
+    /// <summary>
+    /// A value-position argument is evaluated eagerly at assembly when it declares no
+    /// callback parameters; a callable-shaped one is demanded through the ONE
+    /// zero-argument law instead (<see cref="DemandSequenceBuiltinCallItemValue"/>).
+    /// </summary>
     private static bool IsValueShapedArgument(Algorithm argument)
         => argument is not Algorithm.Conditional && argument.ParameterPatterns.Count == 0;
 
-    // The collection occupies slot zero; suffix descriptors classify the remaining
-    // bound slots. Surplus arguments are not value positions of this signature.
-    private static bool IsSequenceBuiltinValueSlot(SequenceBuiltinMetadata metadata, int slot)
-        => slot == 0 || slot <= metadata.SuffixArgs.Count
-            && metadata.SuffixArgs[slot - 1].Kind != SequenceBuiltinSuffixArgKind.Algorithm;
+    /// <summary>
+    /// The call item of an argument that assembly does not evaluate: its value-side
+    /// algorithm, its prepared value (if any), its written source, and the callable it
+    /// NAMES. A CALLBACK position always receives this item (CALL-03 — supplying a
+    /// callback evaluates nothing); a callable-shaped VALUE item starts from it before
+    /// its zero-argument demand.
+    /// </summary>
+    private static VariadicCallItem UnevaluatedCallItem(ResolvedArgumentAlgorithm resolvedArg)
+        => new(
+            Value: null,
+            resolvedArg.Algorithm,
+            ValueError: null,
+            resolvedArg.PreparedValue,
+            resolvedArg.Source,
+            resolvedArg.Callable);
 
     /// <summary>
-    /// Prepares a filter predicate through the generic call-item and suffix binding
-    /// helpers: one eager value attempt (a resource limit it reaches is the call's
-    /// terminal verdict, never a fall-through — RESOURCE LIMITS ARE TERMINAL), and the
-    /// original callable identity. Used after fusion commits, with caller environments.
-    /// A failed collection in a plain call still requires this attempt; its earlier
-    /// error takes precedence over this result, just as in BindSequenceBuiltinArguments.
-    /// The predicate keeps its algorithm-channel binding
-    /// (<see cref="ResolvedArgumentAlgorithm.Callable"/>), so a callable forwarded through a
-    /// parameter is invoked exactly as the generic filter invokes it.
+    /// Prepares a filter predicate exactly as the generic filter binds its CALLBACK slot:
+    /// the unevaluated call item (a callback slot is never value-evaluated merely because it
+    /// was supplied, CALL-03) through the ONE suffix preparation, keeping the original
+    /// callable identity. Used after fusion commits, with caller environments. The predicate
+    /// keeps its algorithm-channel binding (<see cref="ResolvedArgumentAlgorithm.Callable"/>),
+    /// so a callable forwarded through a parameter is invoked exactly as the generic filter
+    /// invokes it. Evaluates nothing: an unused predicate runs no effect, draws nothing and
+    /// cannot fail or recurse.
     /// </summary>
     internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
         ResolvedArgumentAlgorithm predicate,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var itemsR = BuildCallableCallItems(
-            [predicate with { SpreadsSequence = false }],
-            ctx,
-            valEnv);
-        if (itemsR.IsError) return itemsR.Error;
-
         var descriptor = BuiltinRegistry.GetBuiltin(BuiltinId.@filter).SequenceMetadata!.Value.SuffixArgs[0];
-        var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, itemsR.Value[0], ctx, valEnv);
+        var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, UnevaluatedCallItem(predicate), ctx, valEnv);
         if (preparedR.IsError) return preparedR.Error;
         return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
             ? EvalResult<Algorithm>.Ok(callback.InvokedAlgorithm)
             : throw new InvalidOperationException("The filter predicate must be an algorithm argument.");
     }
 
+    /// <summary>
+    /// Collection-builtin argument assembly (CALL-03): the written slots, left to right, each
+    /// handled by the ROLE its position has in the builtin's metadata
+    /// (<see cref="SequenceBuiltinMetadata.SlotRole"/>), before the arity check and before
+    /// binding.
+    /// <list type="bullet">
+    ///   <item>A SPREAD slot is supply assembly: its operand is demanded NOW and supplies
+    ///   exactly its spread items, which take the roles of the positions they land on. Its
+    ///   failure — of any kind — is the CALL's failure, returned here, before any later slot
+    ///   and before the arity check; it is never one phantom supplied item (SUP-01, SUP-02,
+    ///   CALL-04). So <c>take(Bad*)</c> is <c>Bad</c>'s failure, not an arity error, and
+    ///   <c>map([], Bad*)</c> fails although <c>map</c> would never invoke a callback: the
+    ///   spread law of every call.</item>
+    ///   <item>A CALLBACK slot carries its algorithm and is never value-evaluated here: the
+    ///   builtin INVOKES it per element (HO-04). An unused callback runs no body, so it has no
+    ///   effect, draws nothing, cannot fail and cannot recurse (<c>map([], A)</c> never reads
+    ///   <c>A</c>, exactly as <c>repeat(A, 0, 5)</c> never runs <c>A</c>).</item>
+    ///   <item>A VALUE slot is demanded ONCE, here, in written order. An ORDINARY failure is
+    ///   retained on the item as that slot's final outcome — reported when binding reads the
+    ///   slot, after the arity check — and nothing evaluates the slot again, so no read
+    ///   retries it (<c>reduce</c>'s <c>initial</c> included).</item>
+    ///   <item>A SURPLUS slot (beyond the signature) gets a value slot's eager attempt but is
+    ///   never demanded through the zero-argument law; the call reports its arity error after
+    ///   every written item was prepared.</item>
+    /// </list>
+    /// A callable-shaped argument (one that declares parameters, or a clause family) is never
+    /// evaluated standalone: its parameters are unbound at this collection point, so evaluating
+    /// its body would resolve those parameter names against the surrounding scope (when a
+    /// sibling argument shares a parameter name and was deferred as a self-referential thunk,
+    /// that stray lookup re-enters the same builtin call and never settles). In a VALUE
+    /// position it is demanded through the ONE zero-argument law
+    /// (<see cref="DemandSequenceBuiltinCallItemValue"/>). The shape is the NAMED callable's
+    /// (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), never its value wrapper's;
+    /// a named zero-parameter property is read through its value side — the ordinary property
+    /// read, served from the run cache. RESOURCE LIMITS ARE TERMINAL
+    /// (<see cref="IsDeferrableEvaluationFailure"/>, Q-02): a limit any evaluation here
+    /// reaches ends the call at once. Lean: <c>collectSequenceCallableCallItems</c>.
+    /// </summary>
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
         ValEnv valEnv,
-        SequenceBuiltinMetadata? valueSlots = null)
+        SequenceBuiltinMetadata metadata)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
         {
             var arg = resolvedArg.Algorithm;
 
-            // A callback argument (a callable that declares parameters) is applied
-            // per element by the consuming sequence builtin, never used as a value
-            // here. Its parameters are unbound at this collection point, so evaluating
-            // its body standalone would resolve those parameter names against the
-            // surrounding scope. When a sibling argument shares a parameter name and
-            // was deferred as a self-referential thunk, that stray lookup re-enters the
-            // same builtin call and recurses without ever settling on a value. Keep the
-            // algorithm unevaluated so it can be applied with bound parameters later;
-            // only value-shaped arguments (no parameters) are materialized eagerly
-            // (IsValueShapedArgument — the classification the fused filter-count
-            // pipeline shares). The shape is the NAMED callable's
-            // (ResolvedArgumentAlgorithm.InvokedAlgorithm), never its value wrapper's: a
-            // named collecting-only callback (`map(xs, Only)`) stays unevaluated, while a
-            // named zero-parameter property is read through its value side — the ordinary
-            // property read, served from the run cache.
-            if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
+            if (!resolvedArg.SpreadsSequence)
             {
-                var item = new VariadicCallItem(
-                    Value: null,
-                    arg,
-                    ValueError: null,
-                    resolvedArg.PreparedValue,
-                    resolvedArg.Source,
-                    resolvedArg.Callable);
-                // Binding already knows this emitted slot's role. Demand a VALUE here,
-                // before later slots' eager effects, through the same once-only helper
-                // used below. A callback slot still carries the unexecuted algorithm.
-                if (valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count))
+                var role = metadata.SlotRole(items.Count);
+                if (role == SequenceBuiltinSlotRole.Callback)
                 {
-                    item = DemandSequenceBuiltinCallItemValue(item, ctx, valEnv);
-                    // A resource limit the demand reached ends the call here, before any
-                    // later slot is evaluated (IsDeferrableEvaluationFailure, Q-02).
-                    if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
-                        return demandFailure;
+                    items.Add(UnevaluatedCallItem(resolvedArg));
+                    continue;
                 }
 
-                items.Add(item);
-                continue;
+                if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
+                {
+                    var item = UnevaluatedCallItem(resolvedArg);
+                    if (role == SequenceBuiltinSlotRole.Value)
+                    {
+                        item = DemandSequenceBuiltinCallItemValue(item, ctx, valEnv);
+                        // A resource limit the demand reached ends the call here, before any
+                        // later slot is evaluated (IsDeferrableEvaluationFailure, Q-02).
+                        if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
+                            return demandFailure;
+                    }
+
+                    items.Add(item);
+                    continue;
+                }
             }
 
             // A prepared argument (a dotted receiver or builtin callback value) already
@@ -756,17 +787,18 @@ public static partial class Evaluator
                 continue;
             }
 
-            // RESOURCE LIMITS ARE TERMINAL (IsDeferrableEvaluationFailure, Q-02): a limit the
-            // eager attempt actually reached ends the call here, before any later argument is
-            // evaluated, and no arity verdict, earlier retained failure, or callback
-            // fall-through can replace or absorb it.
-            if (!IsDeferrableEvaluationFailure(outputR.Error))
+            // A failed SPREAD supplies nothing: its failure is the call's failure, whatever
+            // its kind, before the arity check and before any later slot. RESOURCE LIMITS ARE
+            // TERMINAL (IsDeferrableEvaluationFailure, Q-02): a limit the eager attempt
+            // actually reached ends the call here too, and no arity verdict or earlier
+            // retained failure can replace or absorb it.
+            if (resolvedArg.SpreadsSequence || !IsDeferrableEvaluationFailure(outputR.Error))
                 return outputR.Error;
 
-            // An ORDINARY failure is retained on the item. A value-shaped NAMED argument with
-            // no output is that property's failure when a value position later demands it
-            // (BlameDemandedArgumentForMissingOutput), never the callee's; callback positions
-            // ignore the value error as before.
+            // An ORDINARY failure of a value or surplus slot is retained on the item as that
+            // slot's final outcome. A value-shaped NAMED argument with no output is that
+            // property's failure when binding demands the slot
+            // (BlameDemandedArgumentForMissingOutput), never the callee's.
             items.Add(new VariadicCallItem(
                 Value: null,
                 arg,
@@ -789,14 +821,34 @@ public static partial class Evaluator
     /// (RESOURCE LIMITS ARE TERMINAL — assembly already returns a limit its eager attempt
     /// reaches, so here it can only come from this value position's own demand). A
     /// parameter's established failure takes precedence over classification of its
-    /// independent callable channel.
-    /// Lean: <c>sequenceBuiltinValueDemandError?</c>.
+    /// independent callable channel. With <paramref name="reduceInitial"/> the item is
+    /// <c>reduce</c>'s <c>initial</c> — an ordinary VALUE slot, demanded once like every
+    /// other — whose zero-argument REJECTION alone is reported with reduce's dedicated hint
+    /// (<see cref="ReduceInitialRejection"/>).
+    /// Lean: <c>sequenceBuiltinValueDemandErrorWith?</c>.
     /// </summary>
-    private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item)
+    private static EvalError? SequenceBuiltinValueDemandError(VariadicCallItem item, bool reduceInitial = false)
         => (item.Source is Expr.Param ? item.ValueError : null)
             ?? (item.ValueError is { } failure && !IsDeferrableEvaluationFailure(failure) ? failure : null)
-            ?? (item.NamedAlgorithm is { } algorithm ? ZeroArgumentValueDemandError(item.Source, algorithm) : null)
+            ?? (item.NamedAlgorithm is { } algorithm
+                ? reduceInitial
+                    ? ReduceInitialRejection(algorithm, ZeroArgumentValueDemandError(item.Source, algorithm))
+                    : ZeroArgumentValueDemandError(item.Source, algorithm)
+                : null)
             ?? item.ValueError;
+
+    /// <summary>
+    /// <c>reduce</c>'s <c>initial</c> is an ordinary VALUE slot (HO-04); only the REPORT of a
+    /// zero-argument demand rejection is reduce's own. A rejected callable that declares
+    /// parameters is the reducer written where the initial accumulator belongs
+    /// (<c>reduce(xs, Add, Inc)</c>), so it gets reduce's dedicated accumulator hint; any
+    /// other rejection (a clause family's <c>NoMatchingBranch</c>) keeps the law's report.
+    /// Lean: <c>reduceInitialRejection</c>.
+    /// </summary>
+    private static EvalError? ReduceInitialRejection(Algorithm named, EvalError? rejection)
+        => rejection is not null && named.ParameterCount != 0
+            ? ReduceInitialAccumulatorRequiresValueError(named)
+            : rejection;
 
     /// <summary>
     /// Demand ONE collection-builtin call item that binding has placed in a VALUE
@@ -853,21 +905,11 @@ public static partial class Evaluator
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
                 {
-                    // A resource-limit failure of the slot's eager value evaluation never
-                    // reaches this fall-through: the limit is a property of the run, so
-                    // call-item assembly returns it the moment the attempt reaches it
-                    // (BuildCallableCallItems, IsDeferrableEvaluationFailure — RESOURCE
-                    // LIMITS ARE TERMINAL), and the fused filter-count pipeline applies the
-                    // same attempt through PrepareFilterPredicateArgument. This check is the
-                    // backstop that keeps any other producer from routing a limit into the
-                    // algorithm channel, where it would re-run the same body — each active
-                    // level retrying once turns a failing self-referential argument
-                    // (`A = xs.reduce(F, A)`) into work exponential in the depth limit.
-                    // ORDINARY value errors keep the legacy fall-through, which is what lets
-                    // a genuine callback reference reach the algorithm channel.
-                    if (item.ValueError is { } failure && !IsDeferrableEvaluationFailure(failure))
-                        return failure;
-
+                    // A CALLBACK slot: call-item assembly never value-evaluated the item
+                    // (CALL-03 — supplying a callback evaluates nothing), so it carries its
+                    // algorithm channel only, and the builtin invokes it later. An item that
+                    // has no algorithm channel (already-prepared callback data) reaches the
+                    // slot as its counted value's algorithm.
                     var algorithm = item.Algorithm
                         ?? (item.PreparedValue is { } prepared
                             ? CountedArgAlgorithm(prepared, ctx)
@@ -877,8 +919,6 @@ public static partial class Evaluator
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
                             new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(algorithm)
                             {
-                                PreparedValue = item.PreparedValue,
-                                Source = item.Source,
                                 Callable = item.Callable,
                             });
                     }
@@ -895,9 +935,10 @@ public static partial class Evaluator
                         new PreparedSequenceBuiltinSuffixArg.ValueArg(item.Value));
                 }
 
-                return SequenceBuiltinValueDemandError(item) ?? new EvalError.WithContext(
-                    SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                    new EvalError.BadArity());
+                return SequenceBuiltinValueDemandError(item, reduceInitial: builtin == BuiltinId.@reduce)
+                    ?? new EvalError.WithContext(
+                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
+                        new EvalError.BadArity());
 
             case SequenceBuiltinSuffixArgKind.WholeNumber:
                 {
@@ -969,48 +1010,27 @@ public static partial class Evaluator
     /// accumulator as ONE value — two ordinary callback arguments (THE CALLBACK
     /// LAW); nested sequence values stay intact, and only the reducer's own
     /// explicit pattern opens a structured element or accumulator.
+    /// The initial accumulator is an ordinary VALUE slot (HO-04): binding already
+    /// demanded it ONCE — a failure there is the call's failure and is never retried —
+    /// so this function receives its <paramref name="initial"/> value, never an
+    /// algorithm to evaluate again. A callable that cannot supply a zero-argument value
+    /// was rejected at binding, with reduce's dedicated hint when it declares parameters
+    /// (<see cref="SequenceBuiltinValueDemandError"/>).
     /// Lean: <c>evalReduceCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
         IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
-        Algorithm initialAlg,
-        Algorithm initialNamed,
-        CountedResult? preparedInitial,
-        Expr? initialSource,
+        Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (preparedInitial is null && ParameterValueFailure(initialSource, ctx, valEnv) is { } slotFailure)
-            return slotFailure;
-
-        // The initial accumulator is a written VALUE slot: when call-item assembly
-        // already evaluated it (a value-shaped argument), that result IS the slot's
-        // value — evaluating the algorithm channel again would run the body twice.
-        // A parameterized algorithm there is rejected from its signature at this
-        // boundary — never by entering its body and reinterpreting the failure —
-        // with reduce's dedicated hint, the same rejection the dotted
-        // `Values.reduce(Add)` form reports for a visibly parameterized reducer.
-        // The law and the hint judge the callable the argument NAMES
-        // (<paramref name="initialNamed"/>); the accepted demand reads the VALUE side
-        // (<paramref name="initialAlg"/>), so a named property initial is its ordinary
-        // cached property read.
-        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialNamed) is { } rejection)
-            return initialNamed.ParameterCount != 0
-                ? ReduceInitialAccumulatorRequiresValueError(initialNamed)
-                : rejection;
-
-        var initialR = preparedInitial is { } preparedValue
-            ? EvalResult<CountedResult>.Ok(preparedValue)
-            : BlameDemandedArgumentForMissingOutput(initialSource, EvalArgumentAlgOutputCounted(initialAlg, ctx, valEnv));
-        if (initialR.IsError) return initialR.Error;
-
-        // The initial accumulator expression occupies ONE written accumulator
-        // slot: its result is reified as one persistent value at the ordinary
-        // value boundary (ReCountValueBoundary) BEFORE reduction begins, so an
-        // initial expression that emitted multiple items cannot leak that
-        // supply through the empty-collection return.
-        var accumulator = ReCountValueBoundary(initialR.Value);
+        // The initial accumulator occupies ONE written accumulator slot: its value is
+        // reified as one persistent value at the ordinary value boundary (the count
+        // ReCountValueBoundary computes) BEFORE reduction begins, so an initial
+        // expression that emitted multiple items cannot leak that supply through the
+        // empty-collection return.
+        var accumulator = new CountedResult(initial, initial.ValueCount());
         foreach (var item in items)
         {
             var stepR = WithCtx(
@@ -1338,23 +1358,9 @@ public static partial class Evaluator
     /// The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
     /// <c>filter</c> predicate, the <c>map</c> mapper, the <c>reduce</c> reducer): the
     /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>).
-    /// <c>reduce</c>'s <c>initial</c> shares the algorithm metadata kind but is a VALUE slot,
-    /// so it reads the full argument (<see cref="ExpectPreparedAlgorithmSuffixArgFull"/>)
-    /// and demands its value side. Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
+    /// Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
     /// </summary>
     private static EvalResult<Algorithm> ExpectPreparedAlgorithmSuffixArg(
-        BuiltinId builtin,
-        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
-        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
-        int index)
-    {
-        var argR = ExpectPreparedAlgorithmSuffixArgFull(builtin, descriptors, args, index);
-        return argR.IsError
-            ? argR.Error
-            : EvalResult<Algorithm>.Ok(argR.Value.InvokedAlgorithm);
-    }
-
-    private static EvalResult<PreparedSequenceBuiltinSuffixArg.AlgorithmArg> ExpectPreparedAlgorithmSuffixArgFull(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
@@ -1366,8 +1372,8 @@ public static partial class Evaluator
             index,
             SequenceBuiltinSuffixArgKind.Algorithm,
             (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg algorithmArg
-                ? EvalResult<PreparedSequenceBuiltinSuffixArg.AlgorithmArg>.Ok(algorithmArg)
-                : InternalSequenceBuiltinSuffixArgMetadataError<PreparedSequenceBuiltinSuffixArg.AlgorithmArg>(
+                ? EvalResult<Algorithm>.Ok(algorithmArg.InvokedAlgorithm)
+                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm>(
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
 
@@ -1941,7 +1947,7 @@ public static partial class Evaluator
                             0);
                         if (stepR.IsError) return stepR.Error;
 
-                        var initialR = ExpectPreparedAlgorithmSuffixArgFull(
+                        var initialR = ExpectPreparedValueSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
                             preparedSuffixArgs,
@@ -1951,10 +1957,7 @@ public static partial class Evaluator
                         return EvalReduceCounted(
                             bound.IterationItems,
                             stepR.Value,
-                            initialR.Value.AlgorithmValue,
-                            initialR.Value.InvokedAlgorithm,
-                            initialR.Value.PreparedValue,
-                            initialR.Value.Source,
+                            initialR.Value,
                             ctx,
                             valEnv);
                     }),

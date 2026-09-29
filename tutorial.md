@@ -917,6 +917,17 @@ Distance(P*, Q*)
 
 A spread opens exactly one level: `((1, 2), 3)*` supplies the two items `(1, 2)` and `3`, and the inner sequence stays whole.
 
+The spread value is computed before the call counts its arguments, so if computing it fails, the call — your own algorithm or a built-in one — fails with that same error:
+
+```
+Add(x, y) = x + y
+Bad = 1 / 0
+
+Add(Bad*)
+```
+
+**Result:** error — division by zero, while computing `Bad*` for the call.
+
 When another item follows a spread, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`: a star followed by an operand always multiplies, even when the operand is on the next line.
 
 ### Unpacking an Argument
@@ -1323,6 +1334,16 @@ A brace callback's parameters are its undefined names, so choose names that are 
 
 Conversely, a name that appears only inside the braces is a parameter of the callback, not of the algorithm around it: in `Scale = values.map{n * factor}`, the callback has the parameters `n` and `factor`, `Scale` has only `values`, and calling the callback with one element fails. To make `factor` an input of `Scale`, declare it — `Scale(values, factor) = values.map{n * factor}` — and the `factor` in the braces is then the parameter of `Scale`.
 
+A callback runs only when it is called. Passing it evaluates nothing, so a callback that is never called — here because the collection is empty — has no effect and cannot fail:
+
+```
+Broken = 1 / 0
+
+map([], Broken)
+```
+
+**Result:** `[]`
+
 ### Folding with `reduce`
 
 `reduce(collection, reducer, initial)` combines the elements into one value. It starts with `initial` and calls `reducer(element, accumulator)` for each element in turn, and each result becomes the next accumulator:
@@ -1341,6 +1362,14 @@ range(1, 5).reduce({x * product}, 1)
 ```
 
 The parameters of a brace reducer follow first appearance, so write the element's name first and the accumulator's name second.
+
+`initial` is an ordinary value: `reduce` evaluates it once, before the first element. If that evaluation fails, `reduce` fails with the same error, even for an empty collection:
+
+```
+[].reduce({x + total}, 1 / 0)
+```
+
+**Result:** error — division by zero, in the initial accumulator.
 
 ### Flattening with `atoms`
 

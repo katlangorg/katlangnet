@@ -493,12 +493,18 @@ public class DotCallValueBoundaryTests
         }
     }
 
+    /// <summary>
+    /// The source's effect happens exactly once and the first error is identical on every
+    /// strategy and spelling; the zero-parameter predicate is a CALLBACK and is never
+    /// evaluated for its value (formerly its eager value attempt ran <c>Probe(2)</c> on every
+    /// strategy, PV-19), so a valid source reaches the ordinary callback arity error.
+    /// </summary>
     [Theory]
     [InlineData("Probe(1)", "Probe(2)", false)]
     [InlineData("(Probe(1) / 0)", "Probe(2)", true)]
     [InlineData("range(Probe(1) / 0, 4)", "Probe(2)", true)]
     [InlineData("range(Probe(1), 4)", "(Probe(2) / 0)", false)]
-    public async Task FusedPreparation_PreservesEffectsAndFirstError(string receiver, string predicate, bool sourceDivisionError)
+    public async Task FusedPreparation_PreservesEffectsAndFirstError_WithoutEvaluatingThePredicate(string receiver, string predicate, bool sourceDivisionError)
     {
         string? baseline = null;
         foreach (var dotted in new[] { false, true })
@@ -524,10 +530,10 @@ public class DotCallValueBoundaryTests
             var outcome = AsyncEvaluationHarness.NeutralOf(result);
             baseline ??= outcome;
             Assert.Equal(baseline, outcome);
-            Assert.Equal(new[] { 1, 2 }, trace);
+            Assert.Equal(new[] { 1 }, trace);
             Assert.True(result.IsError);
-            // With a valid source, the zero-parameter predicate fails callback arity;
-            // its eager value-attempt error does not replace its algorithm identity.
+            // With a valid source, the zero-parameter predicate fails callback arity when it is
+            // invoked with the first element, before its body could run.
             Assert.Equal(sourceDivisionError ? KatLangErrorCode.DivisionByZero : KatLangErrorCode.ArityMismatch, result.Error.Code);
         }
     }

@@ -12,14 +12,15 @@ namespace KatLang.Tests;
 /// <para>A resource-limit failure is a property of the run, not a latent argument value.
 /// Once any evaluation that actually occurs reaches a resource limit, the run terminates
 /// with that failure: an unused parameter, a retained algorithm channel, deferred value
-/// demand, call forwarding, a builtin's arity verdict or callback fall-through, or a
-/// consumer's choice cannot absorb it, and nothing evaluates after it — no later argument,
-/// callee body, random draw, or host operation. A resource limit may stop a run; it never
-/// redefines the value of a run that succeeds. Laziness is untouched: an argument the
-/// language does not evaluate (an unselected <c>if</c> branch, an invoking callback slot)
-/// reaches no limit. The decision is <c>Evaluator.IsDeferrableEvaluationFailure</c>,
-/// consulted by user-call argument assembly, the builtin argument adapter, and the fused
-/// filter-count pipeline, in the synchronous evaluator and its async twin alike.</para>
+/// demand, call forwarding, a builtin's arity verdict, or a consumer's choice cannot absorb
+/// it, and nothing evaluates after it — no later argument, callee body, random draw, or
+/// host operation. A resource limit may stop a run; it never redefines the value of a run
+/// that succeeds. Laziness is untouched: an argument the language does not evaluate (an
+/// unselected <c>if</c> branch, a builtin callback slot that is never invoked) reaches no
+/// limit. The decision is <c>Evaluator.IsDeferrableEvaluationFailure</c>, consulted by
+/// user-call argument assembly and the builtin argument adapter (which the fused
+/// filter-count pipeline shares), in the synchronous evaluator and its async twin
+/// alike.</para>
 ///
 /// <para>Before the rule, an algorithm-channel argument slot whose evaluation reached a
 /// limit RETAINED the failure beside its algorithm binding and surfaced it only on demand,
@@ -520,9 +521,10 @@ public class ResourceLimitTerminalityTests
     [InlineData("Ignore(v) = 7\nIgnore({DeepP}.string)")]
     [InlineData("x, y = DeepP, 1\nIgnore(v) = 7\nIgnore(x)")]
     [InlineData("MyFilter(xs, p) = []\nMyFilter([], {DeepP})")]
-    [InlineData("filter([], {DeepP})")]
-    [InlineData("map([], {DeepP})")]
     [InlineData("reduce([], {x + y}, {DeepP})")]
+    [InlineData("reduce([], {x + y}, DeepP)")]
+    [InlineData("filter([], {x > 0}, {DeepP})")]
+    [InlineData("map([], DeepP*)")]
     [InlineData("count([DeepP])")]
     [InlineData("count({DeepP}, 2)")]
     [InlineData("take([1, 2], {DeepP})")]
@@ -536,14 +538,15 @@ public class ResourceLimitTerminalityTests
             "trace(1)");
 
     /// <summary>
-    /// A builtin consumer and its user-defined equivalent agree: before the rule the builtin
-    /// adapter already treated the limit as the call's verdict (surfacing it only after later
-    /// slots had run), while the user-defined twin let the run succeed.
+    /// A builtin consumer and its user-defined equivalent agree wherever both evaluate the
+    /// argument — a builtin VALUE slot and a user argument slot alike: before the rule the
+    /// builtin adapter already treated the limit as the call's verdict (surfacing it only
+    /// after later slots had run), while the user-defined twin let the run succeed.
     /// </summary>
     [Theory]
-    [InlineData("filter([], {DeepP})", "MyFilter(xs, p) = []\nMyFilter([], {DeepP})")]
-    [InlineData("map([], {DeepP})", "MyMap(xs, f) = []\nMyMap([], {DeepP})")]
     [InlineData("take([1], {DeepP})", "MyTake(xs, n) = xs\nMyTake([1], {DeepP})")]
+    [InlineData("reduce([], {x + y}, {DeepP})", "MyReduce(xs, f, i) = xs\nMyReduce([], {x + y}, {DeepP})")]
+    [InlineData("count({DeepP})", "MyCount(xs) = 0\nMyCount({DeepP})")]
     public async Task BuiltinAndUserDefinedConsumers_Agree(string builtin, string userDefined)
     {
         var viaBuiltin = await OnEveryRouteAsync(WithDeepPrelude(builtin) + ", trace(2)", limits: Shallow);
@@ -551,6 +554,27 @@ public class ResourceLimitTerminalityTests
         AssertTerminal(viaBuiltin, KatLangErrorCode.EvaluationDepthExceeded, "trace(1)");
         AssertTerminal(viaUser, KatLangErrorCode.EvaluationDepthExceeded, "trace(1)");
         Assert.Equal(viaBuiltin.ToString(), viaUser.ToString());
+    }
+
+    /// <summary>
+    /// A builtin CALLBACK slot is not an argument slot of a user call: the builtin adapter never
+    /// evaluates a supplied callback for its value (CALL-03 — it is invoked per element, and an
+    /// empty collection invokes it never), so a deep callback reaches no limit, while a
+    /// user-defined consumer evaluates every written argument at assembly (CALL-02) and the
+    /// same argument's limit is terminal there. Before the PV-19 repair the builtin's eager
+    /// attempt reached the limit too, which made the two look alike.
+    /// </summary>
+    [Theory]
+    [InlineData("filter([], {DeepP})", "MyFilter(xs, p) = []\nMyFilter([], {DeepP})", "L[]")]
+    [InlineData("map([], {DeepP})", "MyMap(xs, f) = []\nMyMap([], {DeepP})", "L[]")]
+    [InlineData("reduce([], DeepP, 7)", "MyReduce(xs, f, i) = i\nMyReduce([], DeepP, 7)", "7")]
+    public async Task BuiltinCallbackSlot_IsNeverEvaluated_WhileAUserArgumentIs(string builtin, string userDefined, string value)
+    {
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude(builtin), limits: Shallow), value);
+        AssertTerminal(
+            await OnEveryRouteAsync(WithDeepPrelude(userDefined) + ", trace(2)", limits: Shallow),
+            KatLangErrorCode.EvaluationDepthExceeded,
+            "trace(1)");
     }
 
     /// <summary>
@@ -588,9 +612,9 @@ public class ResourceLimitTerminalityTests
     /// <summary>
     /// The fused filter-count pipeline keeps exact parity with the generic adapter it
     /// replaces (the Optimized route fuses; the others do not): a source that reaches a limit
-    /// ends the call before the predicate is attempted, and a predicate attempt that reaches
-    /// a limit beats the source's deferred ordinary failure — in the direct-range and the
-    /// dotted-receiver forms alike.
+    /// ends the call, and the predicate — a CALLBACK slot — is never evaluated for its value,
+    /// so it can neither run first nor replace the source's failure — in the direct-range and
+    /// the dotted-receiver forms alike.
     /// </summary>
     [Theory]
     [InlineData("count(filter(range(1, DeepP), (trace(5))))", "count(filter(range(1, 3), (trace(5))))")]
@@ -605,18 +629,23 @@ public class ResourceLimitTerminalityTests
             "trace(1)");
     }
 
+    /// <summary>
+    /// A source's deferred ORDINARY failure is the pipeline's verdict: the deep predicate is a
+    /// CALLBACK slot, never evaluated merely because it was supplied, so it reaches no limit and
+    /// cannot replace the source's failure (before the PV-19 repair its eager value attempt ran
+    /// after the failed source and its limit won).
+    /// </summary>
     [Theory]
     [InlineData("count(filter(range(1, trace(2) / 0), (DeepP)))", "count(filter(range(1, 3), (1)))")]
     [InlineData("range(1, trace(2) / 0).filter((DeepP)).count", "range(1, 3).filter((1)).count")]
     [InlineData("range(1, trace(2) / 0).filter({DeepP}).count", "range(1, 3).filter({1}).count")]
-    public async Task FusedPipeline_PredicateLimitBeatsTheDeferredSourceFailure(string pipeline, string fusableTwin)
+    public async Task FusedPipeline_SourceFailureIsTheVerdict_ThePredicateIsNeverEvaluated(string pipeline, string fusableTwin)
     {
         AssertCommitsToFusion(pipeline, fusableTwin);
-        AssertTerminal(
+        AssertFails(
             await OnEveryRouteAsync(WithDeepPrelude(pipeline), limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(2)",
-            "trace(1)");
+            KatLangErrorCode.DivisionByZero,
+            "trace(2)");
     }
 
     /// <summary>
@@ -787,6 +816,12 @@ public class ResourceLimitTerminalityTests
     {
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("if(true, 7, DeepP)"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("map([], {x + DeepP})"), limits: Shallow), "L[]");
+        // A supplied callback that is never invoked is never evaluated, even when it declares
+        // no parameters (CALL-03; formerly an eager value attempt reached the limit, PV-19).
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("map([], DeepP)"), limits: Shallow), "L[]");
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("filter([], {DeepP})"), limits: Shallow), "L[]");
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("reduce([], DeepP, 7)"), limits: Shallow), "7");
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("[].filter(DeepP).count"), limits: Shallow), "0");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Step(s) = DeepP + s\nIgnore(f) = 7\nIgnore(Step)"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Step(s) = DeepP + s\nrepeat(Step, 0, 7)"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("x, y = DeepP, 1\n7"), limits: Shallow), "7");

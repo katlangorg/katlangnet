@@ -32,6 +32,32 @@ internal enum SequenceBuiltinItemShapeConstraint
     SingleNumeric,
 }
 
+/// <summary>
+/// What one supplied item position of a collection builtin IS to the builtin's argument
+/// adapter, decided by the metadata alone (<see cref="SequenceBuiltinMetadata.SlotRole"/>,
+/// CALL-03). A spread slot is not a position: it is supply assembly, and each of its items
+/// takes the role of the position it lands on. Lean: <c>SequenceBuiltinSlotRole</c>.
+/// </summary>
+internal enum SequenceBuiltinSlotRole
+{
+    /// <summary>
+    /// The <c>collection</c> (position 0) or a <see cref="SequenceBuiltinSuffixArgKind.Value"/> /
+    /// <see cref="SequenceBuiltinSuffixArgKind.WholeNumber"/> control: demanded ONCE for its
+    /// value, and that outcome — one value or one failure — is final for the call.
+    /// </summary>
+    Value,
+
+    /// <summary>
+    /// An <see cref="SequenceBuiltinSuffixArgKind.Algorithm"/> control (the <c>filter</c>
+    /// predicate, the <c>map</c> mapper, the <c>reduce</c> reducer): it carries its algorithm
+    /// and the builtin INVOKES it per element; supplying it evaluates nothing.
+    /// </summary>
+    Callback,
+
+    /// <summary>A position beyond the fixed signature: supplying it makes the call an arity error.</summary>
+    Surplus,
+}
+
 internal readonly record struct SequenceBuiltinMetadata(
     IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> SuffixArgs,
     SequenceBuiltinEmptyPolicy EmptyPolicy,
@@ -43,6 +69,20 @@ internal readonly record struct SequenceBuiltinMetadata(
     // value is interpreted through the one-level builtin collection view only
     // AFTER binding; argument boundaries are never altered before binding.
     public IReadOnlyList<CallableParameter> Parameters { get; } = CreateParameters(SuffixArgs);
+
+    /// <summary>
+    /// The role of supplied item position <paramref name="slot"/>: the collection and every
+    /// value control are VALUE positions, an algorithm control is a CALLBACK, and a position
+    /// beyond the signature is SURPLUS. Lean: <c>SequenceBuiltinMetadata.slotRole</c>.
+    /// </summary>
+    public SequenceBuiltinSlotRole SlotRole(int slot)
+        => slot == 0
+            ? SequenceBuiltinSlotRole.Value
+            : slot <= SuffixArgs.Count
+                ? SuffixArgs[slot - 1].Kind == SequenceBuiltinSuffixArgKind.Algorithm
+                    ? SequenceBuiltinSlotRole.Callback
+                    : SequenceBuiltinSlotRole.Value
+                : SequenceBuiltinSlotRole.Surplus;
 
     private static IReadOnlyList<CallableParameter> CreateParameters(
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> suffixArgs)
@@ -308,8 +348,10 @@ internal static class BuiltinRegistry
     private static readonly SequenceBuiltinMetadata AvgSequenceMetadata =
         new([], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
+    // The reducer is a callback the builtin INVOKES; the initial accumulator is an
+    // ordinary VALUE, demanded once (HO-04).
     private static readonly SequenceBuiltinMetadata ReduceSequenceMetadata =
-        new([new("reducer"), new("initial")], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new([new("reducer"), new("initial", SequenceBuiltinSuffixArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly BuiltinDescriptor[] Builtins =
     [

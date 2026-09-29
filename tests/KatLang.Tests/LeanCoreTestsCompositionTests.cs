@@ -36,6 +36,7 @@ public class LeanCoreTestsCompositionTests
         "ArgumentValueOutcome",
         "ForwardingBindings",
         "RepeatedNameConstraints",
+        "BuiltinArgumentRoles",
     ];
 
     [Fact]

@@ -1819,10 +1819,10 @@ public static partial class Evaluator
     /// encountered instead of raising it. Such a site may defer an ORDINARY failure under
     /// its own rule: user-call argument assembly records it beside the slot's algorithm
     /// channel as the parameter's value outcome (<see cref="BuildCallArgumentInputs"/>,
-    /// <see cref="SlotAlgorithmBinding"/>), the builtin argument adapter keeps an eager
-    /// item's failure behind the arity verdict and the callback fall-through
-    /// (<see cref="BuildCallableCallItems"/>), and the fused filter-count pipeline mirrors
-    /// that adapter. A resource-limit failure (<see cref="EvalError.IsResourceLimit"/>) is
+    /// <see cref="SlotAlgorithmBinding"/>), and the builtin argument adapter retains a value
+    /// or surplus item's failure behind the arity verdict until binding demands the slot
+    /// (<see cref="BuildCallableCallItems"/>; the fused filter-count pipeline shares that
+    /// adapter). A resource-limit failure (<see cref="EvalError.IsResourceLimit"/>) is
     /// never deferrable: the limit is a property of the RUN, not a latent value of one slot,
     /// so the site returns it at once and nothing after it runs — no later argument, callee
     /// body, consumer, random draw, or host operation. An unused parameter, a retained

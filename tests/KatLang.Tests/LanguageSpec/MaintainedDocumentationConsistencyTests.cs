@@ -90,6 +90,12 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bcannot\s+be\s+forwarded\s+implicitly\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
         { @"\bno\s+implicit\s+forwarding\s+into\s+a\s+repeated-name\s+callee\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
         { @"\bnever\s+(?:takes?|participates?)\s+(?:part\s+)?in\s+implicit\s+(?:parameter\s+)?(?:forwarding|lifting)\b", "a callee excluded from implicit forwarding (Q-72, reversed)" },
+        // PV-05 / PV-19 / PV-20: builtin call assembly respects argument roles. A callback slot is
+        // never value-evaluated merely because it was supplied, so no value outcome can fall
+        // through to it; `reduce`'s `initial` is an ordinary value control.
+        { @"\bcallback\s+fall-?through\b", "a builtin callback slot's value fall-through (before PV-19)" },
+        { @"\bcallback\s+slot'?s\s+eager\b", "an eager value attempt in a builtin callback slot (before PV-19)" },
+        { @"`?initial`?\s+shares\s+the\s+algorithm\s+metadata\s+kind", "reduce's initial as an algorithm-kind slot (before PV-05)" },
     };
 
     [Theory]

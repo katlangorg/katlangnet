@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 310
+- specification surface cases: 311
 - excluded parse-level cases (Lean has no surface parser): 39
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 253
-- probe observations (C#-only by design): 927
+- Lean-guarded cases: 254
+- probe observations (C#-only by design): 938
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -810,6 +810,11 @@ def case_forwarded_callable_keeps_its_algorithm_channel : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "SumWhile" (algWithParameters [{ name := "s", kind := .collecting }] [] [] [(.binary .add (.dotCall (.param "s") "sum" none) (.num 1)), (.comparison (.binary .add (.dotCall (.param "s") "sum" none) (.num 1)) [{ op := .lt, operand := (.num 3) }])]), privateProp "Apply" (alg ["f", "xs"] [] [] [(.dotCall (.param "xs") "map" (some [.param "f"]))]), privateProp "Loop" (alg ["g"] [] [] [(.call (.resolve "while") [.param "g", .num 0])]), privateProp "Outer" (alg ["xs"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["xs"]) (alg ["g"] [] [] [(.dotCall (.param "xs") "map" (some [.param "g"]))])) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Inner") [.resolve "Cnt"])])] [(.call (.resolve "Apply") [.resolve "Cnt", (.listLiteral [.num 1, .num 2])]), (.call (.resolve "Loop") [.resolve "SumWhile"]), (.call (.resolve "Outer") [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_forwarded_callable_keeps_its_algorithm_channel == "ok raw=S[L[1, 1], 2, L[1, 1]] n=3"
 
+-- builtin-call-assembly-respects-argument-roles [collection-builtins]: L = L + 1 \n Add(a, b) = a + b \n  \n map([], L) \n filter([], L) \n reduce([], L, 7) \n reduce([1, 2], Add, 10)
+def case_builtin_call_assembly_respects_argument_roles : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.binary .add (.resolve "L") (.num 1))]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "map") [(.listLiteral []), .resolve "L"]), (.call (.resolve "filter") [(.listLiteral []), .resolve "L"]), (.call (.resolve "reduce") [(.listLiteral []), .resolve "L", .num 7]), (.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .num 10])])
+#guard obs case_builtin_call_assembly_respects_argument_roles == "ok raw=S[L[], L[], 7, 13] n=4"
+
 -- distinct-preserves-first [collection-builtins]: distinct((3, 1, 3, 2, 1, 2))
 def case_distinct_preserves_first : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "distinct") [(.capture [.num 3, .num 1, .num 3, .num 2, .num 1, .num 2])])])
@@ -1365,7 +1370,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 253 canonical Lean-guarded specification cases.
+-- 254 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1515,6 +1520,7 @@ def specCaseIds : List String := [
   "callback-mixed-variadic-rows",
   "callback-nested-pattern-binds-like-call",
   "forwarded-callable-keeps-its-algorithm-channel",
+  "builtin-call-assembly-respects-argument-roles",
   "distinct-preserves-first",
   "distinct-structural-pairs",
   "take-family-tutorial",
@@ -1627,6 +1633,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 253
+#guard specCaseIds.length == 254
 
 end LanguageSpecCases

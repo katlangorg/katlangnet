@@ -636,38 +636,15 @@ internal static class SequencePipelineOptimizer
     }
 
     /// <summary>
-    /// The verdict of a committed fused pipeline whose SOURCE slot failed — the mirror of
-    /// the generic call-item assembly of <c>filter(R, P)</c> in BOTH spellings (a dot
-    /// receiver is the ordinary first argument; dot-call passes a value). Assembly
-    /// evaluates the slots left to right and DEFERS the collection slot's ordinary failure
-    /// until binding, so the predicate's one eager attempt still runs and the source error
-    /// wins — unless that attempt reaches a resource limit. A resource limit is never
-    /// deferred (RESOURCE LIMITS ARE TERMINAL, <see cref="Evaluator.IsDeferrableEvaluationFailure"/>):
-    /// when the SOURCE reached one, the call ends at once and the predicate is never
-    /// attempted; when the ATTEMPT reaches one, it ends the call in place of the deferred
-    /// source error, attributed exactly as a predicate failure after a successful source.
-    /// </summary>
-    private static EvalError SourceFailureVerdict(
-        EvalError sourceError,
-        FilterCountPipelinePreparation preparation,
-        Evaluator.EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        if (!Evaluator.IsDeferrableEvaluationFailure(sourceError))
-            return sourceError;
-
-        var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
-        return predicateR.IsError && !Evaluator.IsDeferrableEvaluationFailure(predicateR.Error)
-            ? WithContext(preparation.Syntax, ctx, EvalResult<Evaluator.CountedResult>.Err(predicateR.Error)).Error
-            : sourceError;
-    }
-
-    /// <summary>
     /// The committed fused region. The caller holds the outer collection-argument
-    /// depth level across source evaluation, the predicate's eager value attempt, and
-    /// the later callbacks. No fallback is possible from here: source failures and a
-    /// predicate attempt's resource limit (terminal, <see cref="SourceFailureVerdict"/>)
-    /// are returned as optimized-path errors.
+    /// depth level across source evaluation and the later callbacks. No fallback is
+    /// possible from here: a failed SOURCE is the pipeline's verdict, exactly as the
+    /// generic call-item assembly of <c>filter(R, P)</c> reports it in BOTH spellings (a
+    /// dot receiver is the ordinary first argument; dot-call passes a value) — assembly
+    /// never value-evaluates the predicate, a CALLBACK slot (CALL-03), so no predicate
+    /// outcome can precede, follow, or replace the source failure, whether it is ordinary
+    /// (deferred to binding by the generic path, where it is the first failure raised) or
+    /// a resource limit (terminal at once, <see cref="Evaluator.IsDeferrableEvaluationFailure"/>).
     /// </summary>
     private static FilterCountRecognitionStatus TryCreateFilterCountPlan(
         FilterCountPipelinePreparation preparation,
@@ -693,7 +670,7 @@ internal static class SequencePipelineOptimizer
                     directRangeSource.Span));
             if (rangeR.IsError)
             {
-                result = SourceFailureVerdict(rangeR.Error, preparation, ctx, valEnv);
+                result = rangeR.Error;
                 return FilterCountRecognitionStatus.Error;
             }
 
@@ -712,7 +689,7 @@ internal static class SequencePipelineOptimizer
             if (sourceItemsR.IsError)
             {
                 // Same slot-assembly parity as the direct-range branch.
-                result = SourceFailureVerdict(sourceItemsR.Error, preparation, ctx, valEnv);
+                result = sourceItemsR.Error;
                 return FilterCountRecognitionStatus.Error;
             }
 
@@ -721,9 +698,10 @@ internal static class SequencePipelineOptimizer
                 preparation.DirectRangeFallbackReason);
         }
 
-        // Use the actual generic preparation: it owns eager evaluation, terminal
-        // resource limits and callable identity. A failure after commitment is terminal;
-        // falling back here would evaluate the source and predicate a second time.
+        // Use the actual generic callback-slot preparation: it owns callable identity and
+        // evaluates nothing (a callback slot is never value-evaluated merely because it was
+        // supplied). A failure after commitment is terminal; falling back here would
+        // evaluate the source a second time.
         var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
         if (predicateR.IsError)
         {

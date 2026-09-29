@@ -1207,16 +1207,15 @@ public class BudgetCrossTalkMatrixTests
     /// <summary>
     /// The same invariant swept across the fusion-eligible spellings and source shapes,
     /// including the ones only reachable when the pipeline's depth lives in its range
-    /// BOUNDS rather than its predicate, and the ones where it lives in the PREDICATE
-    /// ARGUMENT's eager value attempt (K3-02 of the fused-pipeline review): the generic
-    /// binding materializes a VALUE-SHAPED predicate — a capture <c>(D)</c>, a bare
-    /// zero-parameter property <c>D</c>, a zero-declaration brace <c>{D}</c> — at the
-    /// filter call boundary before any item is visited, so a deep <c>D</c> charges its
-    /// depth even over the EMPTY source <c>E</c>, where no predicate call ever happens.
-    /// (Over a non-empty source such a predicate is an arity error on both strategies;
-    /// see <see cref="ValueShapedDeepPredicate_StickyLimitIsTheFusedPipelinesTerminalVerdict"/>.)
-    /// The fused pipeline used to resolve the predicate on the algorithm channel only and
-    /// skip the attempt entirely: peak depth 3 fused against 10 generic.
+    /// BOUNDS rather than its predicate. The VALUE-SHAPED predicate rows — a capture
+    /// <c>(D)</c>, a bare zero-parameter property <c>D</c>, a zero-declaration brace
+    /// <c>{D}</c> over the EMPTY source <c>E</c> — pin that neither strategy charges
+    /// anything for a callback that is never invoked: a CALLBACK slot is never evaluated
+    /// merely because it was supplied (CALL-03). (Before the PV-19 repair the generic binding
+    /// evaluated such a predicate eagerly at the filter call boundary, so a deep <c>D</c>
+    /// charged its depth even here, and K3-02 had made the fused pipeline mirror that
+    /// attempt. Over a non-empty source such a predicate is an arity error on both
+    /// strategies; see <see cref="ValueShapedDeepPredicate_IsNeverEvaluated_SoOnlyThePipelineDepthCounts"/>.)
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter(P).count", 1)]
@@ -1444,11 +1443,10 @@ public class BudgetCrossTalkMatrixTests
     /// configuring it selected the generic sequence strategy, which consumed one more
     /// level of dynamic depth than the fused strategy, and the program's <c>MaxDepth</c>
     /// verdict flipped from success to <see cref="EvalError.EvaluationDepthExceeded"/>.
-    /// The value-shaped predicate rows (K3-02 of the fused-pipeline review) are the same
-    /// flip one layer in: the generic binding's eager value attempt on the deep predicate
-    /// <c>(D)</c> / <c>D</c> is where the program's depth lives, and the fused pipeline
-    /// used to skip that attempt — so the unrelated string limit decided whether
-    /// <c>MaxDepth = 3</c> or <c>MaxDepth = 10</c> was the boundary.
+    /// The value-shaped predicate rows (K3-02 of the fused-pipeline review) pin the same
+    /// verdict for a deep predicate <c>(D)</c> / <c>D</c> that is never invoked: since the
+    /// PV-19 repair neither strategy evaluates it (a CALLBACK slot is never demanded), so its
+    /// depth is never part of the boundary on either strategy.
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter(P).count")]
@@ -1500,20 +1498,17 @@ public class BudgetCrossTalkMatrixTests
     }
 
     /// <summary>
-    /// The value-shaped predicate defect over a NON-EMPTY source (K3-02 of the
-    /// fused-pipeline review). The generic binding evaluates a value-shaped predicate —
-    /// <c>(D)</c>, bare <c>D</c>, <c>{D}</c> — eagerly at the filter call boundary and
-    /// treats a resource-limit failure of that attempt as the call's verdict (the
-    /// terminal rule — once the sticky rule of <c>PrepareSequenceBuiltinSuffixArg</c>, now
-    /// applied at the attempt itself, RESOURCE LIMITS ARE TERMINAL); a success or a non-limit failure
-    /// proceeds to the algorithm channel, where applying a zero-parameter algorithm to
-    /// an item is an arity error. The fused pipeline resolved the predicate on the
-    /// algorithm channel only, so below the attempt's depth it reported the ARITY error
-    /// where the generic strategy reported the DEPTH limit, and its accounting never
-    /// included the attempt. Both strategies must agree on the complete structured error
-    /// (kind, payload, context chain and spans) and on the operational counters at EVERY
-    /// depth limit up to and past the attempt's need, and the fused path must reach that
-    /// agreement itself — a limit is its terminal verdict, never a fallback.
+    /// A VALUE-SHAPED predicate over a NON-EMPTY source — <c>(D)</c>, bare <c>D</c>,
+    /// <c>{D}</c> — is a CALLBACK: neither strategy evaluates it for its value (CALL-03), so
+    /// its deep body charges nothing, and the first item's application rejects the
+    /// zero-parameter value with the ordinary arity error before the body could run. (Before
+    /// the PV-19 repair the generic binding evaluated it eagerly at the filter call boundary,
+    /// so the deep body dominated the depth profile and a depth limit below its need was the
+    /// verdict; K3-02 had made the fused pipeline mirror that attempt instead of reporting the
+    /// arity error.) Both strategies must agree on the complete structured error (kind,
+    /// payload, context chain and spans) and on the operational counters at EVERY depth limit
+    /// up to and past the pipeline's own need, and the fused path must reach that agreement
+    /// itself — never through a fallback.
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter((D)).count")]
@@ -1523,13 +1518,15 @@ public class BudgetCrossTalkMatrixTests
     [InlineData("count(A.filter((D)))")]
     [InlineData("range(1, 3).filter(D).count")]
     [InlineData("range(1, 3).filter({D}).count")]
-    public void ValueShapedDeepPredicate_StickyLimitIsTheFusedPipelinesTerminalVerdict(string pipeline)
+    public void ValueShapedDeepPredicate_IsNeverEvaluated_SoOnlyThePipelineDepthCounts(string pipeline)
     {
         var ast = FromSource($"{CountDown}D = f(6) + 1\nA = (1, 2, 3)\n{pipeline}");
+        var (_, deepBudget) = Evaluator.RunCountedObserved(
+            FromSource($"{CountDown}D = f(6) + 1\nD"),
+            enableOptimizations: false);
 
-        // Unlimited: the eager attempt succeeds, the predicate reaches the algorithm
-        // channel, and the first item's application fails identically on both strategies
-        // — with the attempt's depth and steps charged on both.
+        // Unlimited: the predicate reaches the algorithm channel unevaluated, and the first
+        // item's application fails identically on both strategies.
         var diagnostics = new SequencePipelineDiagnostics();
         var (optimized, optimizedBudget) = Evaluator.RunCountedObserved(
             ast,
@@ -1542,12 +1539,12 @@ public class BudgetCrossTalkMatrixTests
         AssertIdenticalFailure(generic, genericBudget, optimized, optimizedBudget);
         Assert.Equal(1, diagnostics.GetSnapshot().FilterCountFusionHits);
 
-        // The attempt is the program's deepest point, so every limit below its need is a
-        // verdict on the attempt itself: the sticky depth limit, reported by BOTH
-        // strategies, never the per-item arity error the fused path used to report.
-        var attemptDepth = genericBudget.PeakDepth;
-        Assert.True(attemptDepth > 3, $"expected the deep predicate to dominate the depth profile, observed {attemptDepth}");
-        for (var maxDepth = 1; maxDepth <= attemptDepth + 1; maxDepth++)
+        // The deep body is never entered, so the pipeline needs less depth than D alone.
+        var pipelineDepth = genericBudget.PeakDepth;
+        Assert.True(
+            pipelineDepth < deepBudget.PeakDepth,
+            $"expected the never-evaluated predicate to charge nothing: pipeline {pipelineDepth}, D alone {deepBudget.PeakDepth}");
+        for (var maxDepth = 1; maxDepth <= pipelineDepth + 1; maxDepth++)
         {
             var limits = new EvaluationLimits { MaxDepth = maxDepth };
             var limitedDiagnostics = new SequencePipelineDiagnostics();
@@ -1563,7 +1560,7 @@ public class BudgetCrossTalkMatrixTests
 
             Assert.True(genericAtLimit.IsError);
             Assert.IsType(
-                maxDepth < attemptDepth
+                maxDepth < pipelineDepth
                     ? typeof(EvalError.EvaluationDepthExceeded)
                     : typeof(EvalError.ArityMismatch),
                 Innermost(genericAtLimit.Error));

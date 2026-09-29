@@ -50,9 +50,17 @@ public class TutorialResultSweepTests
                     "**Result:** error — `Pair` is one argument, but `Add` needs two.",
                     KatLangErrorCode.ArityMismatch),
                 new(
+                    "Add(x, y) = x + y\nBad = 1 / 0\n\nAdd(Bad*)",
+                    "**Result:** error — division by zero, while computing `Bad*` for the call.",
+                    KatLangErrorCode.DivisionByZero),
+                new(
                     "sum(1, 2, 3)",
                     "**Result:** error — `sum` takes one collection, but three separate numbers were passed.",
                     KatLangErrorCode.ArityMismatch),
+                new(
+                    "[].reduce({x + total}, 1 / 0)",
+                    "**Result:** error — division by zero, in the initial accumulator.",
+                    KatLangErrorCode.DivisionByZero),
                 new(
                     "Inc(y) = y + 1\nSame(x, x) = true\nSame(x, y) = false\n\nSame(Inc, 1)",
                     "**Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.",

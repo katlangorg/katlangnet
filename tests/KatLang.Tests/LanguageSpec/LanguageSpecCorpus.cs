@@ -2717,6 +2717,37 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "builtin-call-assembly-respects-argument-roles",
+            Category = "collection-builtins",
+            Source = "L = L + 1\nAdd(a, b) = a + b\n\nmap([], L)\nfilter([], L)\nreduce([], L, 7)\nreduce([1, 2], Add, 10)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]\n[]\n7\n13",
+            ExpectedRaw = "S[L[], L[], 7, 13]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // A CALLBACK slot is never evaluated merely because it was supplied: an unused
+                // callback cannot fail and cannot recurse, exactly like an unused loop step.
+                new SpecProbe("E = ()\nD = E.filter(D)\nD.count", "ok raw=0 n=1"),
+                new SpecProbe("A = 1 / 0\nmap([], A), repeat(A, 0, 5)", "ok raw=S[L[], 5] n=2"),
+                new SpecProbe("A = 5\nmap([1], A)", "err arity"),
+                // reduce's initial is a VALUE slot, demanded once: its failure is the call's
+                // failure, and a callable it cannot read keeps reduce's own report.
+                new SpecProbe("Add(a, b) = a + b\nreduce([], Add, 1 / 0)", "err div0"),
+                new SpecProbe("Add(a, b) = a + b\nreduce([1, 2], Add, 1 / 0)", "err div0"),
+                new SpecProbe("Inc(x) = x + 1\nAdd(a, b) = a + b\nreduce([1, 2], Add, Inc)", "err arity"),
+                // A SPREAD either supplies exactly its items or its failure is the call's
+                // failure, before the arity check — never one phantom argument.
+                new SpecProbe("Bad = 1 / 0\ntake(Bad*)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nmap([], Bad*)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nreduce([], Bad*, 0)", "err div0"),
+                new SpecProbe("count(1, {}*)", "err spreadMissingOutput"),
+                new SpecProbe("P = [1, 2, 3], 2\ntake(P*)", "ok raw=L[1, 2] n=1"),
+            ],
+            Explanation = "A collection builtin handles each argument by the role its position has. A callback — the map mapper, the filter predicate, the reduce reducer — is invoked once per element and is never evaluated merely because it was passed, so an unused callback has no effect, cannot fail, and cannot recurse (`map([], L)` is `[]` although reading `L` would never end). A value — the collection, a count, reduce's initial accumulator — is evaluated once; if that fails, the failure is the call's failure and is never retried. A spread `X*` supplies exactly its items, and if evaluating `X` fails, that failure is the call's failure before the arguments are counted.",
+        },
+        new()
+        {
             Id = "distinct-preserves-first",
             Category = "collection-builtins",
             Source = "distinct((3, 1, 3, 2, 1, 2))",

@@ -949,6 +949,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 
 - Use it when the task needs a custom accumulator shape or custom folding logic
 - `reduce` takes exactly three arguments — the initial accumulator is required, so `reduce((1, 2, 3), Add)` is a two-argument arity error, and inline items such as `reduce(2, 3, 4, Append, 1)` are a five-argument arity error (group the collection: `reduce((2, 3, 4), Append, 1)`). The dotted `collection.reduce(Add)` form recognizes a visibly parameterized reducer and adds a targeted missing-initial hint; the plain form remains an ordinary arity error.
+- Builtin arguments follow their role: the initial accumulator (like the collection, a `take` count or a `contains` item) is an ordinary value evaluated once — if it fails, `reduce` fails with that error, even over an empty collection — while the reducer, mapper, and predicate are callbacks that run only when called (an empty collection never evaluates them). A spread argument whose value fails makes the whole call fail with that error before its arguments are counted.
 - `reducer(element, accumulator)` receives the current item as one selected value — exactly what `S:i` returns
 - The reducer must emit exactly one next accumulator value: a sequence-value result such as `(a, b)` is one accumulator value, but a bare multi-output result such as `a, b` is invalid as a reducer result
 - The accumulator is ONE ordinary argument, bound by the reducer's parameter pattern: a normal parameter receives the accumulator value whole, a structural pattern such as `(total, itemCount)` or `(*history)` opens it, and a top-level collecting accumulator parameter collects it as one item (`[accumulator]`)
@@ -1553,7 +1554,7 @@ Repeated parameter names use one order-independent compatibility rule over indep
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (108 of the 310-case canonical language specification,
+Verified reference examples (108 of the 311-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

@@ -547,12 +547,39 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
       itemShapeConstraint := .singleNumeric
     }
   | .reduceBuiltin => some {
+      -- The reducer is a callback the builtin INVOKES; the initial accumulator is
+      -- an ordinary VALUE, demanded once (HO-04).
       suffixArgs := [
         { name := "reducer" },
-        { name := "initial" }
+        { name := "initial", kind := .value }
       ]
     }
   | _ => none
+
+/-- What one supplied item position of a collection builtin IS to the builtin's
+    argument adapter, decided by the metadata alone (CALL-03):
+    - `value`: the `collection` (position 0) or a `.value` / `.wholeNumber`
+      control. Demanded ONCE for its value; that outcome — one value or one
+      failure — is final for the call.
+    - `callback`: an `.algorithm` control (the `filter` predicate, the `map`
+      mapper, the `reduce` reducer). It carries its algorithm, and the builtin
+      INVOKES it per element; supplying it evaluates nothing.
+    - `surplus`: a position beyond the fixed signature. Supplying it makes the
+      call an arity error.
+    A spread slot is not a position: it is supply assembly, and each of its items
+    takes the role of the position it lands on. -/
+inductive SequenceBuiltinSlotRole where
+  | value
+  | callback
+  | surplus
+  deriving Repr, BEq, DecidableEq
+
+def SequenceBuiltinMetadata.slotRole (metadata : SequenceBuiltinMetadata) (slot : Nat)
+    : SequenceBuiltinSlotRole :=
+  if slot == 0 then .value
+  else match metadata.suffixArgs[slot - 1]? with
+    | some descriptor => if descriptor.kind == .algorithm then .callback else .value
+    | none => .surplus
 
 private def sequenceBuiltinTotalArgCountDesc
     (signature : CallableSignature) : String :=
@@ -3171,9 +3198,13 @@ structure PreparedSequenceBuiltinInput where
   numericItems? : Option (List Int) := none
   deriving Repr
 
+/-- One bound control argument of a collection builtin. A CALLBACK control
+    (`.algorithm`) carries the algorithm channel and the named callable it
+    invokes (`callable?`, read through `ResolvedArgumentAlgorithm.invoked`) and
+    no value: it was never value-evaluated. A VALUE control carries the value
+    its one demand established. -/
 inductive PreparedSequenceBuiltinSuffixArg where
-  | algorithm (value : Algorithm) (source? : Option Expr := none)
-      (callable? : Option Algorithm := none)
+  | algorithm (value : Algorithm) (callable? : Option Algorithm := none)
   | value (value : Result)
   | wholeNumber (value : Int)
   deriving Repr
@@ -4107,21 +4138,42 @@ def internalSequenceBuiltinSuffixArgMetadataError
     an unevaluated callable using its written source — judging the callable the
     item NAMES (`CallableCallItem.named?`), never its value wrapper. Preserve a
     valid value's body error; callback positions never consult this helper. A
-    parameter's established failure precedes callable classification. -/
-def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
+    parameter's established failure precedes callable classification. `refine`
+    rewrites only the zero-argument law's REJECTION of the named callable (every
+    value slot keeps it unchanged except `reduce`'s `initial`,
+    `reduceInitialRejection`). -/
+def sequenceBuiltinValueDemandErrorWith? (refine : Algorithm -> Error -> Error)
+    (item : CallableCallItem) : Option Error :=
   match item.source?, item.error? with
   | some (.param _), some err => some err
   | _, _ => match item.named? with
-    | some alg => (zeroArgumentDemandError? item.source? alg).or item.error?
+    | some alg => ((zeroArgumentDemandError? item.source? alg).map (refine alg)).or item.error?
     | none => item.error?
+
+def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
+  sequenceBuiltinValueDemandErrorWith? (fun _ err => err) item
+
+def reduceInitialAccumulatorRequiresValueError : Error :=
+  Error.withContext "while preparing reduce initial accumulator" Error.badArity
+
+/-- `reduce`'s `initial` is an ordinary VALUE slot (HO-04), demanded once like
+    every other value slot; only the REPORT of a zero-argument demand rejection is
+    reduce's own. A rejected callable that declares parameters is the reducer
+    written where the initial accumulator belongs (`reduce(xs, Add, Inc)`), so it
+    gets reduce's dedicated accumulator report; any other rejection (a clause
+    family's `noMatchingBranch`) keeps the law's report. -/
+def reduceInitialRejection (alg : Algorithm) (err : Error) : Error :=
+  if (Algorithm.params alg).isEmpty then err else reduceInitialAccumulatorRequiresValueError
 
 def prepareSequenceBuiltinSuffixArgItem
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor)
     (item : CallableCallItem) : EvalM PreparedSequenceBuiltinSuffixArg := do
   match descriptor.kind with
   | .algorithm =>
+    -- A CALLBACK slot: call-item assembly never evaluated the item (CALL-03), so
+    -- it carries its algorithm channel only; the builtin invokes it later.
     match item.algorithm? with
-    | some alg => pure (.algorithm alg item.source? item.callable?)
+    | some alg => pure (.algorithm alg item.callable?)
     | none =>
         match item.error? with
         | some err => .error err
@@ -4133,7 +4185,10 @@ def prepareSequenceBuiltinSuffixArgItem
     match item.value? with
     | some value => pure (.value value)
     | none =>
-        match sequenceBuiltinValueDemandError? item with
+        let refine : Algorithm -> Error -> Error := match b with
+          | .reduceBuiltin => reduceInitialRejection
+          | _ => fun _ err => err
+        match sequenceBuiltinValueDemandErrorWith? refine item with
         | some err => .error err
         | none =>
         .error (Error.withContext
@@ -4176,27 +4231,19 @@ def expectPreparedSequenceBuiltinSuffixArgAt
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"expected suffix argument {index + 1} to have metadata kind {sequenceBuiltinSuffixArgKindDesc expectedKind}"
 
-def expectPreparedSequenceBuiltinAlgorithmSuffixArgFull
+/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
+    `filter` predicate, the `map` mapper, the `reduce` reducer): the argument's
+    algorithm-channel identity (`ResolvedArgumentAlgorithm.invoked`). -/
+def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
-    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM ResolvedArgumentAlgorithm :=
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
   expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
     match arg with
-    | .algorithm algorithm source? callable? =>
-        pure { algorithm := algorithm, source? := source?, callable? := callable? }
+    | .algorithm algorithm callable? =>
+        pure ({ algorithm := algorithm, callable? := callable? } : ResolvedArgumentAlgorithm).invoked
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
-
-/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
-    `filter` predicate, the `map` mapper, the `reduce` reducer): the argument's
-    algorithm-channel identity (`ResolvedArgumentAlgorithm.invoked`). `reduce`'s
-    `initial` shares the algorithm metadata kind but is a VALUE slot, so it
-    reads the full argument (`...Full`) and demands its value side. -/
-def expectPreparedSequenceBuiltinAlgorithmSuffixArg
-    (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
-    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm := do
-  let arg <- expectPreparedSequenceBuiltinAlgorithmSuffixArgFull b descriptors args index
-  pure arg.invoked
 
 def expectPreparedSequenceBuiltinWholeNumberSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
@@ -4226,9 +4273,6 @@ def expectPreparedNumericItems (b : Builtin)
       .error (Error.withContext
         s!"internal sequence metadata for {builtinDisplayName b} did not produce numeric items"
         Error.badArity)
-
-def reduceInitialAccumulatorRequiresValueError : Error :=
-  Error.withContext "while preparing reduce initial accumulator" Error.badArity
 
 /-- Evaluate `order(collection)`.
     `order` eagerly evaluates the full top-level collection, sorts its numeric
@@ -5629,52 +5673,68 @@ mutual
       ]
       ctx env calleeName
 
+  /-- Collection-builtin argument assembly: the written slots, left to right, each
+      handled by its ROLE (`SequenceBuiltinMetadata.slotRole`), before the arity
+      check and before binding (CALL-03).
+      - A SPREAD slot is supply assembly: its operand is demanded NOW and supplies
+        exactly its spread items, which take the roles of the positions they land
+        on. Its failure — of any kind — is the CALL's failure, raised here, before
+        any later slot and before the arity check; it is never one phantom supplied
+        item (SUP-01, SUP-02, CALL-04). So `take(Bad*)` is `Bad`'s failure, not an
+        arity error, and `map([], Bad*)` fails although `map` would never invoke a
+        callback: the spread law of every call.
+      - A CALLBACK slot carries its algorithm and is never value-evaluated here:
+        the builtin INVOKES it per element (CALL-03, HO-04). An unused callback runs
+        no body, so it has no effect, cannot fail and cannot recurse
+        (`map([], A)` never reads `A`, exactly as `repeat(A, 0, 5)` never runs `A`).
+      - A VALUE slot is demanded ONCE, here, in written order; an ordinary failure
+        is retained on the item as that slot's final outcome — reported when
+        binding reads the slot, after the arity check, and never evaluated again —
+        so no later read retries it (`reduce`'s `initial` included, HO-04).
+      - A SURPLUS slot (beyond the signature) is prepared like a value slot's eager
+        attempt but never demanded through the zero-argument law; the call reports
+        its arity error after every written item was prepared.
+      A callable-shaped argument (one that declares parameters, or a clause
+      family) is never evaluated standalone: its parameters are unbound at this
+      collection point, so evaluating its body would resolve those parameter
+      names against the surrounding scope (when a sibling argument shares a
+      parameter name and was deferred as a self-referential thunk, that stray
+      lookup re-enters the same builtin call and never settles). In a VALUE
+      position it is demanded through the ONE zero-argument law
+      (`demandSequenceBuiltinCallItemValue`). The shape is the NAMED callable's
+      (`invoked`), never its value wrapper's; a named zero-parameter property is
+      read through its value side — the ordinary property read, served from the
+      run cache. C#: `BuildCallableCallItems`. -/
     partial def collectSequenceCallableCallItems
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-      (valueSlots : SequenceBuiltinMetadata)
+      (metadata : SequenceBuiltinMetadata)
       : EvalM (List CallableCallItem) := do
-    let isValueSlot (slot : Nat) : Bool :=
-      slot == 0 || match valueSlots.suffixArgs[slot - 1]? with
-        | some descriptor => descriptor.kind != .algorithm
-        | none => false
     let rec loop : List ResolvedArgumentAlgorithm -> Nat -> EvalM (List CallableCallItem)
       | [], _ => pure []
       | arg :: rest, slot => do
           let alg := arg.algorithm
-          -- A callback argument (a callable that declares parameters) is applied
-          -- per element by the consuming sequence builtin, never used as a value here.
-          -- Its parameters are unbound at this collection point, so evaluating its body
-          -- standalone would resolve those parameter names against the surrounding scope;
-          -- when a sibling argument shares a parameter name and was deferred as a
-          -- self-referential thunk, that stray lookup re-enters the same builtin call and
-          -- never settles. Keep the algorithm unevaluated so it is applied with bound
-          -- parameters later; only value-shaped arguments are materialized eagerly.
-          -- The shape is the NAMED callable's (`invoked`), never its value wrapper's:
-          -- a named collecting-only callback (`map(xs, Only)`) stays unevaluated,
-          -- while a named zero-parameter property is read through its value side —
-          -- the ordinary property read, served from the run cache.
-          let callableShaped := match arg.invoked with
-            | .conditional _ _ _ _ => true
-            | named => !(Algorithm.parameterPatterns named).isEmpty
           let head <-
-            if callableShaped then do
+            if arg.spreadsSequence then do
+              let counted <- evalZeroArgumentDemandOutputCounted alg ctx env
+              pure ((countedTopLevelValues counted).map (fun value =>
+                { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false }))
+            else do
               let item : CallableCallItem :=
                 { value? := none, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source?,
                   callable? := arg.callable? }
-              -- The descriptor binds this slot's role before later argument effects.
-              -- Only VALUE positions demand newly eligible callables; callbacks do not.
-              let item <- if isValueSlot slot then demandSequenceBuiltinCallItemValue item ctx env else pure item
-              pure [item]
-            else do
-              match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
-              | .ok counted =>
-                  if arg.spreadsSequence then
-                    pure ((countedTopLevelValues counted).map (fun value =>
-                      { value? := some value, algorithm? := some alg, error? := none, skipMissingValue := false }))
-                  else
-                    pure [{ value? := some counted.fst, algorithm? := some alg, error? := none, skipMissingValue := false, source? := arg.source?, callable? := arg.callable? }]
-              | .error err =>
-                  pure [{ value? := none, algorithm? := some alg, error? := some err, skipMissingValue := false, source? := arg.source?, callable? := arg.callable? }]
+              match metadata.slotRole slot with
+              | .callback => pure [item]
+              | role =>
+                  let callableShaped := match arg.invoked with
+                    | .conditional _ _ _ _ => true
+                    | named => !(Algorithm.parameterPatterns named).isEmpty
+                  if callableShaped then do
+                    let item <- if role == .value then demandSequenceBuiltinCallItemValue item ctx env else pure item
+                    pure [item]
+                  else do
+                    match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
+                    | .ok counted => pure [{ item with value? := some counted.fst }]
+                    | .error err => pure [{ item with error? := some err }]
           let tail <- loop rest (slot + head.length)
           pure (head ++ tail)
     loop args 0
@@ -5780,27 +5840,17 @@ mutual
       value, or one exact list value is valid (the empty list `[]` counts as
       one value), while empty-sequence and multi-output results are rejected.
 
-      The initial accumulator expression occupies one written accumulator
-      slot (reified via `reCountValueBoundary` before reduction), so empty
-      collections return the initial accumulator as ONE value. -/
+      The initial accumulator is an ordinary VALUE slot (HO-04): binding has
+      already demanded it ONCE — a failure there is the call's failure and is
+      never retried — so this function receives its value, never an algorithm
+      to evaluate again. A callable that cannot supply a zero-argument value was
+      rejected at binding (`reduceInitialRejection`). The value occupies one
+      written accumulator slot, reified at the ordinary value boundary before
+      reduction, so empty collections return the initial accumulator as ONE
+      value. -/
   partial def evalReduceCounted (collection : List CountedResult)
-      (stepAlg : Algorithm) (initial : ResolvedArgumentAlgorithm)
+      (stepAlg : Algorithm) (initial : Result)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    if let some err <- argumentParameterValueFailure? initial.source? ctx env then
-      throw err
-    -- The initial accumulator is a VALUE slot: a parameterized algorithm there is
-    -- rejected from its signature at this boundary — never by entering its body
-    -- and reinterpreting the failure — with reduce's dedicated hint, the same
-    -- rejection the dotted `Values.reduce(Add)` form reports for a visibly
-    -- parameterized reducer. The law and the hint judge the callable the
-    -- argument NAMES (`invoked`); the accepted demand reads the VALUE side, so a
-    -- named property initial is its ordinary cached property read.
-    let initOut <-
-      match zeroArgumentDemandError? initial.source? initial.invoked with
-      | some err =>
-          if (Algorithm.params initial.invoked).isEmpty then .error err
-          else .error reduceInitialAccumulatorRequiresValueError
-      | none => evalZeroArgumentDemandOutputCounted initial.algorithm ctx env
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
@@ -5809,12 +5859,12 @@ mutual
             evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
-    -- The initial accumulator expression occupies ONE written accumulator
-    -- slot: its result is reified as one persistent value at the ordinary
-    -- value boundary (`reCountValueBoundary`) BEFORE reduction begins, so an
-    -- initial expression that emitted multiple items cannot leak that supply
-    -- through the empty-collection return.
-    reduceLoop collection (reCountValueBoundary initOut)
+    -- The initial accumulator occupies ONE written accumulator slot: its value
+    -- is reified as one persistent value at the ordinary value boundary
+    -- (`Result.valueCount`, what `reCountValueBoundary` computes) BEFORE
+    -- reduction begins, so an initial expression that emitted multiple items
+    -- cannot leak that supply through the empty-collection return.
+    reduceLoop collection (initial, Result.valueCount initial)
 
     /-- Evaluate `filter(collection, predicate)`.
       The fixed `collection` argument supplies the items through the
@@ -5954,9 +6004,9 @@ mutual
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               let stepAlg <-
                 expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              let initialAlg <-
-                expectPreparedSequenceBuiltinAlgorithmSuffixArgFull b metadata.suffixArgs preparedSuffixArgs 1
-              evalReduceCounted bound.iterationItems stepAlg initialAlg ctx env
+              let initial <-
+                expectPreparedSequenceBuiltinValueSuffixArg b metadata.suffixArgs preparedSuffixArgs 1
+              evalReduceCounted bound.iterationItems stepAlg initial ctx env
         | _ =>
             .error (builtinArityError b args.length)
 

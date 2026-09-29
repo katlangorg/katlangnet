@@ -64,11 +64,16 @@ public class SequencePreparationParityTests
         }
     }
 
+    /// <summary>
+    /// A failed source is the verdict on both strategies, at every depth: the deep predicate
+    /// <c>(D)</c> is a CALLBACK that neither strategy evaluates for its value, so it can add no
+    /// work before or after the source's failure.
+    /// </summary>
     [Theory]
     [InlineData("count(filter(range(1 / 0, 3), (D)))")]
     [InlineData("count(filter(range(1, 5), (D)))")]
     [InlineData("range(1 / 0, 3).filter((D)).count")]
-    public void FailedSource_PreservesPredicatePreparationWork(string pipeline)
+    public void FailedSource_KeepsStrategyParity_WithoutEvaluatingThePredicate(string pipeline)
     {
         var ast = Program($"f(0) = 0\nf(n) = f(n - 1)\nD = f(6) + 1\n{pipeline}");
         foreach (var depth in new[] { 1, 2, 3, 8, 9, 10, 11, 32 })
@@ -80,13 +85,23 @@ public class SequencePreparationParityTests
         }
     }
 
+    /// <summary>
+    /// A captured value in the predicate slot is a CALLBACK, never evaluated for its value
+    /// (CALL-03): neither strategy materializes the string it would build, so no string limit
+    /// is ever reached (before the PV-19 repair both strategies ran an eager value attempt that
+    /// materialized it, and a limit of 3 was their terminal verdict). An empty source never
+    /// invokes the predicate; a non-empty one invokes the zero-parameter value with one
+    /// element — the ordinary arity error, identical on both strategies. The fused plan is
+    /// prepared and executed in every case (no fallback, one hit): preparation evaluates
+    /// nothing that could fail, so the arity error arises while the plan runs.
+    /// </summary>
     [Theory]
-    [InlineData("E.filter((D)).count")]
-    [InlineData("A.filter(((D, ()))).count")]
-    [InlineData("range(1, 3).filter({D}).count")]
-    [InlineData("count(range(1, 3).filter((D)))")]
-    [InlineData("count(filter(range(1, 3), (D)))")]
-    public void CapturedStringPredicate_ExactLimitsAreTerminalWithoutFallback(string pipeline)
+    [InlineData("E.filter((D)).count", true)]
+    [InlineData("A.filter(((D, ()))).count", false)]
+    [InlineData("range(1, 3).filter({D}).count", false)]
+    [InlineData("count(range(1, 3).filter((D)))", false)]
+    [InlineData("count(filter(range(1, 3), (D)))", false)]
+    public void CapturedStringPredicate_IsNeverEvaluated_SoNoStringLimitIsReached(string pipeline, bool emptySource)
     {
         var ast = Program($"f(0) = 'abcd'\nf(n) = f(n - 1)\nD = f(6)\nE = ()\nA = (1, 2, 3)\n{pipeline}");
         foreach (var cumulative in new[] { false, true })
@@ -97,54 +112,84 @@ public class SequencePreparationParityTests
                 : new EvaluationLimits { MaxStringLength = limit };
             var diagnostics = new SequencePipelineDiagnostics();
             // Public runs deliberately disable fusion for configured string limits.
-            // Force ONLY that strategy flag here to test the fused implementation's
-            // sticky-limit handling, using the real evaluator and preparation helpers.
+            // Force ONLY that strategy flag here to exercise the fused implementation
+            // under string limits, using the real evaluator and preparation helpers.
             var optimized = RunStrategy(ast, limits, true, diagnostics);
             var generic = RunStrategy(ast, limits, false, new SequencePipelineDiagnostics());
             AssertParity(generic, optimized);
             Assert.Equal(0, diagnostics.GetSnapshot().FilterCountFusionFallbacks);
-            if (limit == 3)
+            Assert.Equal(1, diagnostics.GetSnapshot().FilterCountFusionHits);
+            Assert.Equal(0, optimized.Budget.MaterializedStringChars);
+            if (emptySource)
             {
-                Assert.True(optimized.Result.IsError);
-                Assert.IsType(cumulative ? typeof(EvalError.StringMaterializationLimitExceeded) : typeof(EvalError.StringSizeLimitExceeded), optimized.Result.Error);
-                Assert.Equal(0, diagnostics.GetSnapshot().FilterCountFusionHits);
-                Assert.Equal(0, optimized.Budget.MaterializedStringChars);
+                Assert.True(optimized.Result.IsOk, optimized.Result.IsError ? optimized.Result.Error.ToString() : "");
             }
             else
             {
-                Assert.Equal(1, diagnostics.GetSnapshot().FilterCountFusionHits);
-                Assert.Equal(4, optimized.Budget.MaterializedStringChars);
+                var error = optimized.Result.Error;
+                while (error is EvalError.WithContext context) error = context.Inner;
+                var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+                Assert.Equal(0, arity.Expected);
+                Assert.Equal(1, arity.Actual);
             }
         }
     }
 
+    /// <summary>
+    /// The fused predicate preparation evaluates nothing, in the caller's environment or any
+    /// other: a captured predicate that would build <c>range(1, v)</c> from the enclosing
+    /// activation's <c>v</c> never builds it, so the collection-size limit that value would
+    /// break is never reached (before the PV-19 repair both strategies' eager value attempt
+    /// built it in the caller's value environment and failed the limit). Both strategies agree:
+    /// the empty source gives 0, a non-empty one the callback's ordinary arity error.
+    /// </summary>
     [Theory]
-    [InlineData("E.filter((D)).count")]
-    [InlineData("count(filter(range(1, 3), ((D, ()))))")]
-    public void CapturedPredicate_UsesTheCallersValueEnvironment(string pipeline)
+    [InlineData("E.filter((D)).count", true)]
+    [InlineData("count(filter(range(1, 3), ((D, ()))))", false)]
+    public void CapturedPredicate_IsNeverEvaluated_SoItsValueIsNeverBuilt(string pipeline, bool emptySource)
     {
         var ast = Program($"Run(v) = {{ D = range(1, v)\nE = ()\n{pipeline} }}\nRun(7)");
         var limits = new EvaluationLimits { MaxCollectionItems = 6 };
         var diagnostics = new SequencePipelineDiagnostics();
         var generic = Evaluator.RunCountedObserved(ast, limits, enableOptimizations: false);
         var optimized = Evaluator.RunCountedObserved(ast, limits, sequenceDiagnostics: diagnostics);
-        var failure = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(generic.Result.Error);
-        Assert.Equal(6, failure.Limit);
-        Assert.Equal(7, failure.Requested);
+        if (emptySource)
+        {
+            Assert.True(generic.Result.IsOk, generic.Result.IsError ? generic.Result.Error.ToString() : "");
+            Assert.Equal(new Result.Atom(0), generic.Result.Value.Value);
+        }
+        else
+        {
+            var error = generic.Result.Error;
+            while (error is EvalError.WithContext context) error = context.Inner;
+            Assert.IsType<EvalError.ArityMismatch>(error);
+        }
+
         AssertParity(generic, optimized);
         Assert.Equal(0, diagnostics.GetSnapshot().FilterCountFusionFallbacks);
     }
 
+    /// <summary>
+    /// The predicate is a CALLBACK slot: neither strategy evaluates it for its value, so its host
+    /// effect never runs (before the PV-19 repair both strategies ran it once in an eager value
+    /// attempt), and when it is invoked with an element the zero-parameter value is rejected
+    /// by the binder before its body runs. A host effect in the SOURCE runs exactly once on both
+    /// strategies — including when plain recognition falls back for a non-range source, which it
+    /// does before evaluating anything.
+    /// </summary>
     [Theory]
-    [InlineData("E.filter((D)).count", "Mark()", 1)]
-    [InlineData("range(1, 3).filter((D)).count", "Mark()", 1)]
-    [InlineData("count(filter(range(1, 3), (D)))", "Mark()", 1)]
-    [InlineData("count(filter(range(1 / 0, 3), (D)))", "Mark()", 1)]
-    [InlineData("range(1 / 0, 3).filter((D)).count", "Mark()", 1)]
-    [InlineData("E.filter((D)).count", "Mark() / 0", 1)]
-    [InlineData("E.filter((D)).count", "{Mark(), range(1, 5)}", 1)]
-    [InlineData("count(filter(E, (D)))", "Mark()", 1)]
-    public void EagerAttemptAndNonRangeFallback_DoNotReplayHostEffects(string pipeline, string body, int expectedCalls)
+    [InlineData("E.filter((D)).count", "Mark()", 0, 0)]
+    [InlineData("range(1, 3).filter((D)).count", "Mark()", 0, 0)]
+    [InlineData("count(filter(range(1, 3), (D)))", "Mark()", 0, 0)]
+    [InlineData("count(filter(range(1 / 0, 3), (D)))", "Mark()", 0, 0)]
+    [InlineData("range(1 / 0, 3).filter((D)).count", "Mark()", 0, 0)]
+    [InlineData("E.filter((D)).count", "Mark() / 0", 0, 0)]
+    [InlineData("E.filter((D)).count", "{Mark(), range(1, 5)}", 0, 0)]
+    [InlineData("count(filter(E, (D)))", "Mark()", 0, 1)]
+    [InlineData("range(Mark(), 3).filter((D)).count", "1", 1, 0)]
+    [InlineData("count(filter(range(Mark(), 3), (D)))", "1", 1, 0)]
+    [InlineData("count(filter([Mark(), 2], (D)))", "1", 1, 1)]
+    public void PredicateIsNeverEvaluated_AndSourceEffectsAreNeverReplayed(string pipeline, string body, int expectedCalls, int expectedFallbacks)
     {
         var calls = 0;
         var operations = HostOperations.Create(HostOperation.Create("Mark", (_, _) =>
@@ -163,7 +208,7 @@ public class SequencePreparationParityTests
         var optimized = Evaluator.RunCountedObserved(ast, limits, sequenceDiagnostics: diagnostics, hostOperations: operations);
         Assert.Equal(expectedCalls, calls);
         AssertParity(generic, optimized);
-        Assert.Equal(pipeline == "count(filter(E, (D)))" ? 1 : 0, diagnostics.GetSnapshot().FilterCountFusionFallbacks);
+        Assert.Equal(expectedFallbacks, diagnostics.GetSnapshot().FilterCountFusionFallbacks);
     }
 
     private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) RunStrategy(

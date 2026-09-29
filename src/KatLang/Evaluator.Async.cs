@@ -2504,34 +2504,40 @@ public static partial class Evaluator
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
         EvalCtx ctx,
         ValEnv valEnv,
-        SequenceBuiltinMetadata? valueSlots = null)
+        SequenceBuiltinMetadata metadata)
     {
         var items = new List<VariadicCallItem>();
         foreach (var resolvedArg in args)
         {
             var arg = resolvedArg.Algorithm;
 
-            // Callable callback arguments stay unevaluated — see the synchronous twin
-            // (the shared IsValueShapedArgument classification of the NAMED callable).
-            if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
+            // Each non-spread slot is handled by its ROLE — see the synchronous twin: a
+            // CALLBACK slot is never value-evaluated, and a callable-shaped VALUE item is
+            // demanded through the ONE law (the shared IsValueShapedArgument classification
+            // of the NAMED callable).
+            if (!resolvedArg.SpreadsSequence)
             {
-                var item = new VariadicCallItem(
-                    Value: null,
-                    arg,
-                    ValueError: null,
-                    resolvedArg.PreparedValue,
-                    resolvedArg.Source,
-                    resolvedArg.Callable);
-                if (valueSlots is { } metadata && IsSequenceBuiltinValueSlot(metadata, items.Count))
+                var role = metadata.SlotRole(items.Count);
+                if (role == SequenceBuiltinSlotRole.Callback)
                 {
-                    item = await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false);
-                    // A resource limit the demand reached ends the call — see the synchronous twin.
-                    if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
-                        return demandFailure;
+                    items.Add(UnevaluatedCallItem(resolvedArg));
+                    continue;
                 }
 
-                items.Add(item);
-                continue;
+                if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
+                {
+                    var item = UnevaluatedCallItem(resolvedArg);
+                    if (role == SequenceBuiltinSlotRole.Value)
+                    {
+                        item = await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false);
+                        // A resource limit the demand reached ends the call — see the synchronous twin.
+                        if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
+                            return demandFailure;
+                    }
+
+                    items.Add(item);
+                    continue;
+                }
             }
 
             var outputR = resolvedArg.PreparedValue is { } prepared
@@ -2566,11 +2572,12 @@ public static partial class Evaluator
                 continue;
             }
 
-            // MIRROR OF BuildCallableCallItems: a resource limit the eager attempt reached
-            // ends the call here (RESOURCE LIMITS ARE TERMINAL); an ordinary failure is
-            // retained, and a named value-shaped argument's missing output is blamed on the
-            // property, never on the callee.
-            if (!IsDeferrableEvaluationFailure(outputR.Error))
+            // MIRROR OF BuildCallableCallItems: a failed SPREAD is the call's failure, and a
+            // resource limit the eager attempt reached ends the call here (RESOURCE LIMITS
+            // ARE TERMINAL); an ordinary value- or surplus-slot failure is retained, and a
+            // named value-shaped argument's missing output is blamed on the property, never
+            // on the callee.
+            if (resolvedArg.SpreadsSequence || !IsDeferrableEvaluationFailure(outputR.Error))
                 return outputR.Error;
 
             items.Add(new VariadicCallItem(
@@ -2795,7 +2802,7 @@ public static partial class Evaluator
                         0);
                     if (stepR.IsError) return stepR.Error;
 
-                    var initialR = ExpectPreparedAlgorithmSuffixArgFull(
+                    var initialR = ExpectPreparedValueSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
                         bound.SuffixArgs,
@@ -2805,10 +2812,7 @@ public static partial class Evaluator
                     return await EvalReduceCountedAsync(
                         bound.IterationItems,
                         stepR.Value,
-                        initialR.Value.AlgorithmValue,
-                        initialR.Value.InvokedAlgorithm,
-                        initialR.Value.PreparedValue,
-                        initialR.Value.Source,
+                        initialR.Value,
                         ctx,
                         valEnv).ConfigureAwait(false);
                 }
@@ -2951,32 +2955,13 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalReduceCountedAsync(
         IReadOnlyList<CountedResult> items,
         Algorithm stepAlg,
-        Algorithm initialAlg,
-        Algorithm initialNamed,
-        CountedResult? preparedInitial,
-        Expr? initialSource,
+        Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (preparedInitial is null && ParameterValueFailure(initialSource, ctx, valEnv) is { } slotFailure)
-            return slotFailure;
-
-        // A parameterized initial accumulator is rejected from its signature at this
-        // boundary, never by entering its body; the law judges the NAMED callable and
-        // the demand reads the value side — see the synchronous twin.
-        if (preparedInitial is null && ZeroArgumentValueDemandError(initialSource, initialNamed) is { } rejection)
-            return initialNamed.ParameterCount != 0
-                ? ReduceInitialAccumulatorRequiresValueError(initialNamed)
-                : rejection;
-
-        var initialR = preparedInitial is { } preparedValue
-            ? EvalResult<CountedResult>.Ok(preparedValue)
-            : BlameDemandedArgumentForMissingOutput(initialSource, await EvalArgumentAlgOutputCountedAsync(initialAlg, ctx, valEnv).ConfigureAwait(false));
-        if (initialR.IsError) return initialR.Error;
-
-        // The initial accumulator expression occupies ONE written accumulator slot —
-        // see the synchronous twin.
-        var accumulator = ReCountValueBoundary(initialR.Value);
+        // The initial accumulator is an ordinary VALUE slot that binding already demanded
+        // once; it occupies ONE written accumulator slot — see the synchronous twin.
+        var accumulator = new CountedResult(initial, initial.ValueCount());
         foreach (var item in items)
         {
             var stepR = WithCtx(
