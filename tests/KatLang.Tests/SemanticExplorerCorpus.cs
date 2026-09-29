@@ -715,6 +715,21 @@ public static class SemanticExplorerCorpus
         Special("dotStringNavigatedParameterizedMemberIsArity", "Lib = { Sub(x) = x }\nLib.Sub.string"),
         Special("reduceParameterIgnoringInitialStillRejected", "K(x) = 5\nAdd(e, a) = e + a\nreduce([1, 2], Add, K)"),
         Special("repeatParameterizedStepIsCallback", "Inc(x) = x + 1\nrepeat(Inc, 2, 0)"),
+        // Q-05 (September 29 2026): REPEATED NAMES ARE CONSTRAINTS, NOT MERGES. Every occurrence
+        // of a repeated parameter name supplies its own value, so a callable-only or failed
+        // argument is its own failure in either position — never a binding that pairs one
+        // argument's value with another's callable — while a callable still accompanies an
+        // equal value its own argument supplied. Pinned against Lean on the parsed trees.
+        Special("repeatedNameCallableThenValue", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nP(Inc, 1)"),
+        Special("repeatedNameValueThenCallable", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nP(1, Inc)"),
+        Special("repeatedNameFailedThenValue", "Bad = 1 / 0\nQ(x, x) = x\nQ(Bad, 7)"),
+        Special("repeatedNameValueThenFailed", "Bad = 1 / 0\nQ(x, x) = x\nQ(7, Bad)"),
+        Special("repeatedNameAcrossCollectorCallable", "Inc(y) = y + 1\nC(x, *r, x) = x\nC(Inc, 9, 1)"),
+        Special("repeatedNameAcrossNestedGroupFailed", "Bad = 1 / 0\nN(x, (x, y)) = y\nN(Bad, (7, 8))"),
+        Special("repeatedNameForwardedCallable", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nFwd(a, b) = P(a, b)\nFwd(1, Inc)"),
+        Special("repeatedNameDotReceiverFailed", "Bad = 1 / 0\nQ(x, x) = x\nBad.Q(7)"),
+        Special("repeatedNameValuelessBeforeVerdict", "Bad = 1 / 0\nQ2(x, x, y, y) = 0\nQ2(Bad, 7, 1, 2)"),
+        Special("repeatedNameAccompanyingChannel", "A = 5\nP(f, f) = f, f()\nP(5, A)"),
     ];
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------

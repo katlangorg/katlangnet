@@ -773,11 +773,12 @@ and lone-collecting shapes and empty/singleton/multiple middles are all instance
 
 The environment is stated structurally (an association list assembled
 positionally), so no name-uniqueness premise is needed: duplicate names in
-this abstract binder simply contribute multiple entries, and surface KatLang
-separately rejects duplicate parameter names before this model is reached.
-(The full model's binder additionally MERGES duplicate bindings with an
-equality check — `repeatedNameValueConflict` — which the extraction deliberately
-omits; the bridge theorems in `KatLangArityLaws.lean` use distinct names.)
+this abstract binder simply contribute multiple entries. (Surface KatLang does
+NOT reject duplicate parameter names: the full model's binder treats a repeated
+name as an equality CONSTRAINT over independently supplied values — every
+occurrence supplies its own value, and `repeatedNameFailure` only restricts
+(Q-05) — which the extraction deliberately omits; the bridge theorems in
+`KatLangArityLaws.lean` use distinct names.)
 -/
 
 private theorem filter_isCollecting_eq_nil : ∀ {ps : List Pat},

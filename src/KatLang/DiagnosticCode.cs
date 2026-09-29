@@ -351,4 +351,21 @@ public enum DiagnosticCode
     /// truncated — never a fact about any one place in the source.
     /// </summary>
     DiagnosticCountExceeded = 46,
+
+    /// <summary>
+    /// A bare reference in a lifting position names a callable whose parameter patterns
+    /// REPEAT a binding name (<c>P(x, x)</c>, <c>P((x, a), x)</c>), so its arguments cannot
+    /// be forwarded implicitly (Q-72, decided September 29 2026). Each occurrence of a
+    /// repeated name is an independently supplied argument whose compatibility the binder
+    /// checks at call time (Q-05); implicit forwarding supplies arguments BY NAME and would
+    /// feed every occurrence from ONE binding, erasing that constraint. The front end refuses
+    /// the forwarding instead of choosing a multiplicity: the reference is left unlifted,
+    /// the enclosing algorithm gains no parameter from it, and this error is reported at the
+    /// reference, in open and closed (explicit-list or branch-pattern) bodies alike. The
+    /// program writes the call — <c>Alias(a, b) = P(a, b)</c>, or <c>Same(x) = P(x, x)</c>
+    /// to pass one value to both. A bare ROOT output row is not a lifting position (it stays
+    /// the callable's own zero-argument demand), and a reference in a neutral position
+    /// (a call argument such as <c>Apply(P)</c>, a callee) passes the callable itself.
+    /// </summary>
+    RepeatedParameterNotForwardable = 47,
 }

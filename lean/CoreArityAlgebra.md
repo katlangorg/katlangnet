@@ -347,10 +347,12 @@ single movable collecting binding collects exactly the middle supply, for empty,
 and multiple middles and for leading/middle/trailing positions
 (`bindPats_leading_collecting`, `bindPats_middle_collecting`, `bindPats_trailing_collecting`,
 `bindPats_lone_collecting` are the shape instances). The environment is stated
-structurally, so no name-uniqueness premise is needed; surface KatLang
-rejects duplicate parameter names before this binder model is reached, and
-the full model's binder additionally merges duplicate bindings with an
-equality check that the extraction omits.
+structurally, so no name-uniqueness premise is needed. Surface KatLang does
+not reject duplicate parameter names: the full model's binder treats a
+repeated name as an equality constraint over independently supplied values —
+every occurrence supplies its own value, and the check only restricts a
+binding, never merges contributions into one (Q-05) — which the extraction
+omits.
 
 The Lean algebra permits a lone collecting binding:
 `bindArgs [Pat.collecting "x"] xs` is the single collecting parameter

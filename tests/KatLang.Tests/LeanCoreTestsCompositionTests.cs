@@ -35,6 +35,7 @@ public class LeanCoreTestsCompositionTests
         "PropertyCacheConsumers",
         "ArgumentValueOutcome",
         "ForwardingBindings",
+        "RepeatedNameConstraints",
     ];
 
     [Fact]

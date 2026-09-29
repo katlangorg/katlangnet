@@ -239,6 +239,8 @@ public sealed class CliApplicationTests
     // other parser diagnostic.
     [InlineData("1 2", "[1:3] Unexpected item after a closed expression on the same line. Add ',' to separate slots, add an operator to continue the expression, or start a declaration on a new line.")]
     [InlineData("F(a, b) = a + b\r\nF(1 2)", "[2:5] Unexpected item after a closed expression on the same line.")]
+    [InlineData("P(x, x) = x\nAlias = P\n0", "[2:9] 'P' is used here without arguments, but its arguments cannot be forwarded implicitly: its parameter list repeats 'x'.")]
+    [InlineData("P((x, a), x) = a\nQ(y) = P\n0", "[2:8] 'P' is used here without arguments, but its arguments cannot be forwarded implicitly: its parameter list repeats 'x'.")]
     [InlineData("x = 3 y = 4", "[1:7] Unexpected item after a closed expression on the same line.")]
     public async Task Eval_ReportsUserFacingParserWordingAndLocations(string source, string expected)
     {

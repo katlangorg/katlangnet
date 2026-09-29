@@ -666,20 +666,23 @@ public class ArgumentValueOutcomeTests
     }
 
     /// <summary>
-    /// A repeated name keeps the value another contribution supplies (the repeated-name
-    /// verdict is its own rule), and the failed contribution is never evaluated again — by
-    /// a value read or by the <c>.string</c> receiver, which must agree with the value read.
+    /// A repeated name never keeps a value another contribution supplies in place of a failed
+    /// one (REPEATED NAMES ARE CONSTRAINTS, NOT MERGES, Q-05): every occurrence needs its own
+    /// value, so the failed slot's recorded failure propagates — after exactly one evaluation,
+    /// never a second one to re-check it — in either argument order. (Before Q-05 the other
+    /// occurrence's value stood in: <c>Q(Bad, 7)</c> was <c>7</c>.) The full matrix is
+    /// <see cref="RepeatedNameConstraintTests"/>.
     /// </summary>
     [Fact]
-    public async Task RepeatedNameBesideAFailedSlot_NeverReevaluatesIt_EveryReadAgrees()
+    public async Task RepeatedNameBesideAFailedSlot_PropagatesItsFailure_EvaluatedOnce()
     {
-        AssertOk(
-            await OnEveryRouteAsync("Bad = trace(1) / 0\nQ(x, x) = x\nQ(Bad, 7), Q(7, Bad)"),
-            "S[7, 7]",
-            "trace(1)", "trace(1)");
-        AssertOk(
-            await OnEveryRouteAsync("Bad = trace(1) / 0\nQ(x, x) = x, x.string\nQ(Bad, 7)"),
-            "S[7, '7']",
+        AssertFails(
+            await OnEveryRouteAsync("Bad = trace(1) / 0\nQ(x, x) = x\nQ(Bad, 7)"),
+            KatLangErrorCode.DivisionByZero,
+            "trace(1)");
+        AssertFails(
+            await OnEveryRouteAsync("Bad = trace(1) / 0\nQ(x, x) = x, x.string\nQ(7, Bad)"),
+            KatLangErrorCode.DivisionByZero,
             "trace(1)");
     }
 

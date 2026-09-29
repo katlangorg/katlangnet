@@ -75,6 +75,19 @@ public class MaintainedDocumentationConsistencyTests
         // forwarded parameter belongs to the call interface only; it never joins the parameters
         // a written name can denote, so "completed" signatures no longer re-own written names.
         { @"\bcomplet(?:e|ed)\s+(?:owner\s+)?(?:signatures?|parameters?)\s+include\s+(?:later\s+)?(?:implicit\s+)?forwarding\s+captures\b", "forwarded parameters owning written names (ownership completion before Q-04)" },
+        // Q-05: a repeated name is a compatibility constraint over independently supplied
+        // arguments. Every occurrence supplies its own value, so no verdict ever sees a
+        // valueless contribution, and no binding pairs one argument's value with another's
+        // callable.
+        { @"\btwo\s+algorithm-channel\s+bindings\s+only\s+when\s+(?:each|both)\s+carr(?:y|ies)\s+a\s+value\b", "valueless repeated contributions accepted beside values (before Q-05)" },
+        { @"\balgorithm-only\s+repeat(?:s|ed\s+names?)?\b", "an algorithm-only repeated-name verdict (before Q-05)" },
+        { @"P\(5,\s*Inc\)`?\s+binds\b", "a value spliced with another argument's callable (before Q-05)" },
+        // Q-72: a callable whose parameter patterns repeat a name never takes part in implicit
+        // forwarding. Forwarding by name would feed every occurrence from one binding, so a bare
+        // alias is refused and an existing same-named binding never feeds the occurrences.
+        { @"`Alias\s*=\s*P`[^.]*\belaborates\s+to\s+`Alias\(x\)\s*=\s*P\(x,\s*x\)", "a repeated-name callee's alias lifted to one forwarded parameter (before Q-72)" },
+        { @"`Q\(x\)\s*=\s*P`\s+is\s+`Q\(x\)\s*=\s*P\(x,\s*x\)", "an existing binding fed to every repeated occurrence (before Q-72)" },
+        { @"\bQ-72\b[^.\n]*\b(?:undecided|pending)\b", "Q-72 described as undecided" },
     };
 
     [Theory]

@@ -363,6 +363,38 @@ public class TutorialSemanticContractTests
         Assert.Contains("'Speed'", renamed.Message);
     }
 
+    // ── "Formulas That Use Formulas": a formula that repeats a parameter name is never handed inputs (Q-72) ──
+
+    private const string RepeatedNameFormula = "Common(x, x) = x\n";
+
+    [Fact]
+    public void RepeatedNameFormula_IsNeverHandedInputs_AndItsWrittenCallsKeepTheConstraint()
+    {
+        // The alias is refused at `Common` — a front-end rule, so nothing runs — and the error names
+        // the repeated parameter (formerly `Alias(x) = Common(x, x)`: one input fed to both slots).
+        var refusal = FrontEndRejection(
+            RepeatedNameFormula + "Alias = Common\n\nAlias(7, 7)",
+            DiagnosticCode.RepeatedParameterNotForwardable, KatLangErrorCode.RepeatedParameterNotForwardable);
+        Assert.Equal(new SourceSpan(2, 9, 2, 15), refusal.Span);
+        Assert.Contains("repeats 'x'", refusal.Message);
+
+        // "`Both(7, 8)` is an error, exactly like `Common(7, 8)`": the wrapper's two parameters are
+        // two independently supplied arguments, so Common still checks them.
+        const string both = RepeatedNameFormula + "Both(a, b) = Common(a, b)\n\n";
+        var wrapped = RunFailure(both + "Both(7, 8)", KatLangErrorCode.ArityMismatch);
+        var direct = RunFailure(RepeatedNameFormula + "\nCommon(7, 8)", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("while evaluating call to Both: " + direct.Message, wrapped.Message);
+        Assert.Equal(["a", "b"], PropertyOf(SourceProvenance.ParseValid(both + "Both(7, 7)").Root, "Both").Value.Params);
+
+        // "`Twice(v) = Common(v, v)` passes one input to both": the source writes it.
+        Assert.Equal("8", Display(RepeatedNameFormula + "Twice(v) = Common(v, v)\n\nTwice(8)"));
+
+        // "calling `Common` with its arguments, or passing `Common` itself to another function,
+        // works as usual".
+        Assert.Equal("7", Display(RepeatedNameFormula + "\nCommon(7, 7)"));
+        Assert.Equal("5", Display(RepeatedNameFormula + "Apply(f) = f(5, 5)\n\nApply(Common)"));
+    }
+
     // ── "Members Come First", "Callbacks Receive One Element": which names an inferred signature takes ──
 
     [Fact]

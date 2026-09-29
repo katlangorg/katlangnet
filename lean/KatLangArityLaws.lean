@@ -959,6 +959,89 @@ theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
   exact hc
 
 /-
+## No implicit forwarding into a repeated-name callee (Q-72, decided 2026-09-29)
+
+The surface pass's decision for a bare value-position reference has THREE outcomes
+(`bareValueReferenceTreatment`): a callable that accepts zero supplied arguments is
+READ (Q-03, above); one that requires arguments is LIFTED into the implicit
+forwarding call — unless its own parameter patterns repeat a binding name, when the
+reference is REFUSED with a front-end error. These are laws of the C# front-end
+rule's specification, not of the evaluator: Lean models no signature construction,
+and a refused reference never reaches evaluation. They pin that the refusal takes
+nothing from Q-03 (a value read stays exactly the cacheable demand), that no lifted
+callee repeats a name (so forwarding BY NAME is forwarding by capture occurrence),
+and that a refused reference was never a legitimate value read either. The
+evaluator law the refusal protects is Q-05's (`repeated_capture_*` below): repeated
+occurrences are independently supplied inputs whose compatibility is checked at
+binding time.
+-/
+
+/-- A callee that repeats a parameter name is never lifted, whatever else holds. -/
+theorem repeated_name_callee_is_never_lifted (ps : List ParameterPattern)
+    (h : refusesImplicitForwarding ps = true) :
+    bareValueReferenceTreatment ps ≠ .lift := by
+  unfold bareValueReferenceTreatment
+  rw [h]
+  split <;> simp
+
+/-- THE Q-72 LAW. A lifted callee binds each capture name exactly once, so the
+by-name argument list forwarding builds (one argument per distinct name) and the
+callee's by-occurrence capture list coincide: no lifted call can feed two
+independently supplied occurrences from one binding. -/
+theorem lifted_callee_binds_each_capture_name_once (ps : List ParameterPattern)
+    (h : bareValueReferenceTreatment ps = .lift) :
+    ((ps.flatMap ParameterPattern.captures).map (fun parameter => parameter.name)).eraseDups.length
+      = ((ps.flatMap ParameterPattern.captures).map (fun parameter => parameter.name)).length := by
+  unfold bareValueReferenceTreatment at h
+  split at h
+  · cases hr : refusesImplicitForwarding ps with
+    | true => rw [hr] at h; simp at h
+    | false =>
+      unfold refusesImplicitForwarding ParameterPattern.hasRepeatedCaptureNames at hr
+      exact (bne_eq_false_iff_eq.mp hr).symm
+  · simp at h
+
+/-- The refusal takes nothing from Q-03: for a user algorithm, a reference is READ
+exactly when the property cache serves it as a zero-argument demand. -/
+theorem bare_reference_is_read_iff_cacheable
+    (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
+    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
+    (bareValueReferenceTreatment ps = .read)
+      ↔ isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = true := by
+  have hl := bare_reference_lifts_iff_not_cacheable p ps op pr out id
+  unfold bareValueReferenceTreatment
+  cases hc : isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) with
+  | true =>
+    rw [hc] at hl
+    simp [hl]
+  | false =>
+    rw [hc] at hl
+    simp [hl]
+    split <;> simp
+
+/-- A refused reference was never a legitimate value read: as a zero-argument demand
+the evaluator would REJECT it, so the refusal removes only the implicit call, which is
+exactly the transformation that would have collapsed the repeated occurrences. -/
+theorem refused_bare_reference_was_never_a_value_read
+    (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
+    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity)
+    (h : bareValueReferenceTreatment ps = .refuse) :
+    acceptsZeroArgumentValueDemand (Algorithm.mk p ps op pr out id) = false := by
+  have hl := bare_reference_lifts_iff_not_cacheable p ps op pr out id
+  rw [zero_argument_value_demand_accepts_exactly_zero_supply_callables _
+    (fun b hb => by cases hb)]
+  unfold bareValueReferenceTreatment at h
+  split at h
+  · rename_i hlift
+    rw [hlift] at hl
+    have : isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = false := by
+      cases hc : isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) with
+      | true => rw [hc] at hl; simp at hl
+      | false => rfl
+    exact this
+  · simp at h
+
+/-
 ## Automatic parameter forwarding preserves existing bindings (Q-04, decided 2026-09-28)
 
 THE LAW: automatic parameter forwarding must not change what an existing name refers
@@ -1413,8 +1496,9 @@ theorem nested_pattern_scalar_is_one_item_supply (n : Int) :
 
 A repeated name is decided ONCE per pattern level, when its last contribution joins, by
 `repeatedNameFailure`: every PAIR of its contributions must be compatible (equal values;
-equal counted values; two algorithm-channel bindings only when each carries a value
-and both have the same callable identity).
+equal counted values; the same callable identity for two algorithm-channel bindings).
+Every contribution carries its own value — the binder fails a valueless one first
+(Q-05, see "Repeated names are constraints, not merges" below).
 The verdict is a function of the MULTISET of contributions, so no permutation of the
 arguments and no grouping of the merges can change it.
 -/
@@ -1444,15 +1528,11 @@ theorem repeated_name_failure_is_permutation_invariant (names : List Ident)
       = repeatedNameCountedConflict name permuted := fun name => by
     simp only [repeatedNameCountedConflict]
     exact pairwise_any_perm (h.filterMap _) _
-  have hAlgorithm : ∀ name, repeatedNameAlgorithmConflict name contributions
-      = repeatedNameAlgorithmConflict name permuted := fun name => by
-    simp only [repeatedNameAlgorithmConflict]
-    rw [(h.filter _).length_eq, perm_any_eq (h.filter _)]
   have hIdentity : ∀ name, repeatedNameCallableIdentityConflict name contributions
       = repeatedNameCallableIdentityConflict name permuted := fun name => by
     simp only [repeatedNameCallableIdentityConflict]
     exact pairwise_any_perm (h.filterMap _) _
-  simp only [repeatedNameFailure, hValue, hCounted, hAlgorithm, hIdentity]
+  simp only [repeatedNameFailure, hValue, hCounted, hIdentity]
 
 /-- A successful repeated-name verdict also excludes different callable identities.
     The permutation theorem alone did not constrain the callable kept by the merge. -/
@@ -1461,7 +1541,6 @@ theorem repeated_name_success_has_no_callable_identity_conflict (names : List Id
     (success : repeatedNameFailure names contributions = none) :
     names.any (fun name => repeatedNameCallableIdentityConflict name contributions) = false := by
   unfold repeatedNameFailure at success
-  split at success <;> try contradiction
   split at success <;> try contradiction
   split at success <;> try contradiction
   split at success <;> simp_all
@@ -1592,7 +1671,6 @@ theorem repeated_name_complete_binding_is_permutation_invariant
     unfold repeatedNameFailure at success
     split at success <;> try contradiction
     split at success <;> try contradiction
-    split at success <;> try contradiction
     split at success <;> simp_all
   refine ⟨?_, ?_, ?_⟩
   · rw [repeated_merged_lookup name ParameterPatternBindings.argEnv (by intros; rfl) rfl contributions,
@@ -1606,9 +1684,10 @@ theorem repeated_name_complete_binding_is_permutation_invariant
     have h := (List.any_eq_false.mp compatible.2.1) name member
     simpa [repeatedNameCountedConflict] using h
   · -- The algorithm channel is compared by the callable it binds (`AlgEnv.lookup`, the
-    -- projection an invocation reads). A slot's recorded value failure is observable
-    -- only when no contribution binds a value, and then at most one contribution binds
-    -- the algorithm channel at all (two or more must each carry a value).
+    -- projection an invocation reads). No recorded value failure survives a repeated
+    -- name: every contribution of one carries its own value (Q-05, the binder half is
+    -- `repeated_capture_success_requires_every_value`), so each algorithm binding it
+    -- keeps records none.
     simp only [AlgEnv.lookup]
     rw [repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl contributions,
         repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl permuted,
@@ -2429,23 +2508,105 @@ reports `AlgBinding.valueFailure?` and never evaluates the algorithm — lives i
 the partial evaluator and is pinned by `CoreTests/ArgumentValueOutcome.lean`. -/
 
 /-- A written slot whose one value evaluation FAILED binds its algorithm channel
-together with that failure, and binds no value. -/
+together with that failure, and binds no value — for a capture whose name does not
+repeat at its level (a repeated name needs the slot's OWN value, Q-05:
+`repeated_capture_valueless_first_fails_with_its_own_outcome`). -/
 theorem failed_slot_binds_its_failure_beside_the_algorithm_channel
     (name : Ident) (a : Algorithm) (err : Error) :
-    runEvalM (bindParameterPattern (.capture { name := name })
+    runEvalM (bindParameterPattern [.capture { name := name }] (.capture { name := name })
       { algorithm? := some a, error? := some err } true)
       = .ok { argEnv := [], countedParamEnv := [],
               algEnv := [(name, { algorithm := a, valueFailure? := some err })] } := by
-  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM]
+  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM, ParameterPattern.repeatsAtLevel,
+    ParameterPattern.bindsName]
   rfl
 
 /-- A written slot whose one value evaluation SUCCEEDED binds that value and an
-algorithm channel that records no failure: the value tier holds the outcome. -/
+algorithm channel that records no failure: the value tier holds the outcome. The
+pattern level is irrelevant to a slot that has a value. -/
 theorem valued_slot_binds_its_value_and_no_failure
-    (name : Ident) (a : Algorithm) (v : Result) :
-    runEvalM (bindParameterPattern (.capture { name := name })
+    (level : List ParameterPattern) (name : Ident) (a : Algorithm) (v : Result) :
+    runEvalM (bindParameterPattern level (.capture { name := name })
       { value? := some v, algorithm? := some a } true)
       = .ok { argEnv := [(name, v)], countedParamEnv := [],
               algEnv := [(name, { algorithm := a, valueFailure? := none })] } := by
   simp [bindParameterPattern, slotAlgorithmBinding, runEvalM]
   rfl
+
+/-! ## Repeated names are constraints, not merges (Q-05, September 2026)
+
+A repeated parameter name is an equality constraint over INDEPENDENTLY supplied
+arguments. Every occurrence must supply its OWN value; the values must be equal;
+a failed required value propagates; a callable-only argument cannot satisfy the
+constraint; several callable channels must share one identity; and channels from
+different occurrences are never spliced together to make up for a missing or
+failed value. Repeated-name matching may RESTRICT a binding — it never
+manufactures one that no individual argument supplied.
+
+Before Q-05, `repeatedNameAlgorithmConflict` rejected only TWO valueless
+contributions: one beside a value was merged into a binding whose value came from
+one argument and whose algorithm came from the other (`P(x, x) = x, x(5)` with
+`P(Inc, 1)` gave `(1, 6)`), and a failed argument was repaired by the other's value
+(`Q(Bad, 7)` gave `7`). The laws below pin the binder half over the real
+`bindParameterPatternList`: a valueless occurrence (a callable-only argument, whose
+value demand is its own arity rejection, or an argument whose value evaluation
+failed) fails the binding with ITS OWN recorded outcome in either argument order,
+before any verdict; the first such occurrence wins; and a successful binding of a
+repeated capture requires every occurrence to have supplied a value, so its algorithm
+channel never records a failure. The executable half — surface programs, collectors,
+nested groups, clause families, forwarding — is `CoreTests/RepeatedNameConstraints.lean`. -/
+
+/-- The two-occurrence level `P(x, x)`. -/
+def repeatedCapturePair : List ParameterPattern :=
+  [.capture { name := "x" }, .capture { name := "x" }]
+
+/-- `P(x, x)`: a valueless FIRST argument — a callable-only one (`Inc`, whose value
+demand failed with its own arity rejection) or a failed one — fails with its own
+recorded outcome, whatever the second argument supplies: the second is never bound,
+so its value cannot stand in, and when BOTH failed the FIRST failure is the one
+reported (arguments were evaluated left to right, and binding follows that order). -/
+theorem repeated_capture_valueless_first_fails_with_its_own_outcome
+    (a? : Option Algorithm) (e? : Option Error) (other : ParameterPatternInput) :
+    runEvalM (bindParameterPatternList repeatedCapturePair
+      [{ algorithm? := a?, error? := e? }, other] true) = .error (e?.getD Error.badArity) := by
+  cases a? <;>
+    simp [repeatedCapturePair, bindParameterPatternList, bindParameterPatternList.findCollecting,
+      bindParameterPatternList.bindPairs, bindParameterPattern, ParameterPattern.minimumSuppliedSlots,
+      ParameterPattern.hasCollectingCaptureAtCurrentLevel, ParameterPattern.repeatsAtLevel,
+      ParameterPattern.bindsName, runEvalM] <;> rfl
+
+/-- `P(x, x)`: a valueless SECOND argument beside a value fails with its own recorded
+outcome — the first argument's value never stands in for it, and its algorithm is
+never paired with that value (`P(7, Bad)` is `Bad`'s failure, `P(1, Inc)` `Inc`'s). -/
+theorem repeated_capture_valueless_second_fails_with_its_own_outcome
+    (v : Result) (a₁? a₂? : Option Algorithm) (e₁? e? : Option Error) :
+    runEvalM (bindParameterPatternList repeatedCapturePair
+      [{ value? := some v, algorithm? := a₁?, error? := e₁? }, { algorithm? := a₂?, error? := e? }] true)
+      = .error (e?.getD Error.badArity) := by
+  cases a₁? <;> cases a₂? <;>
+    simp [repeatedCapturePair, bindParameterPatternList, bindParameterPatternList.findCollecting,
+      bindParameterPatternList.bindPairs, bindParameterPattern, ParameterPattern.minimumSuppliedSlots,
+      ParameterPattern.hasCollectingCaptureAtCurrentLevel, ParameterPattern.repeatsAtLevel,
+      ParameterPattern.bindsName, slotAlgorithmBinding, runEvalM] <;> rfl
+
+/-- `P(x, x)` binds only when BOTH arguments supplied their OWN value: no binding of a
+repeated capture is ever made from a contribution that had none — neither a
+callable-only argument nor a failed one — so no other occurrence's value is ever
+paired with its algorithm (and, by `valued_slot_binds_its_value_and_no_failure`,
+every algorithm channel the binding keeps records no failure). -/
+theorem repeated_capture_success_requires_every_value
+    (i₁ i₂ : ParameterPatternInput) (b : ParameterPatternBindings)
+    (success : runEvalM (bindParameterPatternList repeatedCapturePair [i₁, i₂] true) = .ok b) :
+    i₁.value?.isSome ∧ i₂.value?.isSome := by
+  rcases i₁ with ⟨v₁?, a₁?, e₁?⟩
+  rcases i₂ with ⟨v₂?, a₂?, e₂?⟩
+  cases v₁? with
+  | none =>
+      rw [repeated_capture_valueless_first_fails_with_its_own_outcome a₁? e₁? ⟨v₂?, a₂?, e₂?⟩] at success
+      cases success
+  | some v₁ =>
+      cases v₂? with
+      | none =>
+          rw [repeated_capture_valueless_second_fails_with_its_own_outcome v₁ a₁? a₂? e₁? e₂?] at success
+          cases success
+      | some v₂ => exact ⟨rfl, rfl⟩

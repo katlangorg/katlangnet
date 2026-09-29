@@ -117,8 +117,11 @@ public class EvaluatorConditionalTests
     }
 
     [Fact]
-    public void Eval_RepeatedBinder_AlgorithmOnlyArgumentsReportUnsupportedEquality()
+    public void Eval_RepeatedBinder_CallableOnlyArgumentsReportTheirOwnValueDemand()
     {
+        // A repeated name compares VALUES (Q-05): each occurrence must supply its own, and a
+        // callable-only argument has none — its value demand is its own arity rejection, the
+        // failure reported here (formerly an "algorithm-only arguments" type mismatch).
         var error = GetEvalError(
             """
             Inc(x) = x + 1
@@ -126,8 +129,8 @@ public class EvaluatorConditionalTests
             ApplySame(Inc, Inc)
             """);
 
-        var typeMismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error!));
-        Assert.Contains("algorithm-only arguments", typeMismatch.Message);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error!));
+        Assert.Equal((1, 0), (arity.Expected, arity.Actual));
     }
 
     [Fact]

@@ -54,6 +54,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — `sum` takes one collection, but three separate numbers were passed.",
                     KatLangErrorCode.ArityMismatch),
                 new(
+                    "Inc(y) = y + 1\nSame(x, x) = true\nSame(x, y) = false\n\nSame(Inc, 1)",
+                    "**Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.",
+                    KatLangErrorCode.ArityMismatch),
+                new(
                     "Grade(1) = 'excellent'\nGrade(2) = 'good'\n\nGrade(3)",
                     "**Result:** error — no clause of `Grade` matches the argument `3`.",
                     KatLangErrorCode.NoMatchingBranch),

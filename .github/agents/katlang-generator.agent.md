@@ -297,6 +297,7 @@ Before emitting code, verify silently:
 - Any explicit parameters or same-name clause branches appear on enclosing algorithm definitions.
 - Any algorithm that declares explicit parameters also defines output.
 - No implicit parameter, branch binder, or helper placeholder shadows a builtin/prelude algorithm name.
+- A callable whose parameter list repeats a name is called with written arguments wherever its value is needed — never used bare in a formula, an alias, or under a written parameter list (passing it as a callback is fine).
 - Parentheses and braces are used correctly.
 - Parenthesized sub-expressions in call arguments parse correctly (no double-paren trap).
 - Nested property bodies use `{ ... }`; `( ... )` cannot contain declarations; simple property bodies are not wrapped.
@@ -741,6 +742,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
 - For implicit-parameter algorithms, parameters are handed on transitively through referenced properties (automatic parameter forwarding). Only a referenced callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears (an operand, a list element, a Math argument, an alias), so hand arguments on to it with an explicit call (`Count(items*)`).
 - Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
+- Never rely on automatic parameter forwarding into a callable whose parameter list repeats a name (`Common(x, x)`, `P((x, a), x)`): each occurrence is its own argument that must equal the others, so a bare `Common` in a formula, an alias (`Alias = Common`), or a written parameter list (`Q(x) = Common`) is rejected before anything runs. Write the call: `Both(a, b) = Common(a, b)` keeps the arguments independent, and `Twice(v) = Common(v, v)` passes one value to both on purpose.
 
 Teaching contrast:
 
@@ -1084,7 +1086,7 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
 
 ### Supported pattern forms
 
-- Repeated binder names impose structural equality constraints: in `Equal(x, x)` or `SamePair((x, x))`, the first occurrence binds and later occurrences compare without overwriting it. Do not repeat a name when any occurrence is a collecting binding.
+- Repeated binder names impose structural equality constraints: in `Equal(x, x)` or `SamePair((x, x))`, the first occurrence binds and later occurrences compare without overwriting it. Every occurrence must supply its own value (a bare callable such as `Inc` passed to `Equal(Inc, 1)` is an error, not a match). Do not repeat a name when any occurrence is a collecting binding.
 - Binder / variable pattern: `a` — matches any value at that position and binds it for that branch body. A binder may be unused in the body; this is the preferred way to intentionally ignore parameters.
 - Integer literal pattern: `0`, `1`, `-1` — matches only that exact integer at that position.
 - String literal pattern: `'apples'`, `'LV'` — matches only that exact string (case-sensitive) at that position.
@@ -1548,11 +1550,11 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
     Abs = if(x >= 0, x, -x)
     Abs(-5)
 
-Repeated parameter names use one order-independent compatibility rule: all supplied values must agree, and multiple callable contributions must carry values and identify the same callable (including captured activations). Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Bind every pattern of a range before checking repeats; around a collector, bind and check the prefix, then the suffix, then gather the middle, then compare names shared across the collector. Direct and forwarded invoking slots select the same callable. Forwarding retains ordinary eager parameter-binding effects; selecting the callable adds no value demand. Value slots, including reduce.initial, read the bound value.
+Repeated parameter names use one order-independent compatibility rule over independently supplied arguments: every occurrence must supply its own value, all values must agree, and multiple callable contributions must identify the same callable (including captured activations). A bare callable that needs arguments, or an argument whose evaluation fails, supplies no value: the call reports that argument's own error, and another occurrence never stands in for it or pairs its value with that callable. Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Bind every pattern of a range before checking repeats; around a collector, bind and check the prefix, then the suffix, then gather the middle, then compare names shared across the collector. Direct and forwarded invoking slots select the same callable. Forwarding retains ordinary eager parameter-binding effects; selecting the callable adds no value demand. Value slots, including reduce.initial, read the bound value.
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (105 of the 307-case canonical language specification,
+Verified reference examples (108 of the 310-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1955,6 +1957,15 @@ Regenerate this block from the repo root with:
   Displays:
     15
 
+[repeated-name-is-a-constraint-not-a-merge] A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.
+
+    Inc(y) = y + 1
+    P(x, x) = x, x(5)
+
+    P(Inc, 1)
+
+  Fails with an evaluation error (arity).
+
 [repeated-equal-values-require-one-callable-identity] Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.
 
     A(*xs) = 5
@@ -1963,6 +1974,28 @@ Regenerate this block from the repo root with:
     P(A, B)
 
   Fails with an evaluation error (type).
+
+[repeated-name-callee-is-never-forwarded-implicitly] Automatic parameter forwarding supplies arguments by name, so for a callable whose parameter list repeats a name it would feed every occurrence from ONE binding: `Alias = Common` would take one argument and pass it to both of Common's slots, and Common's equality check would hold by construction. A bare reference to such a callable is therefore rejected wherever its arguments would be forwarded implicitly: an alias row, an operand, a list element, a Math argument, a block row, and inside a written parameter list (`Q(x) = Common`) alike. Write the call instead: `Both(a, b) = Common(a, b)` keeps two independently supplied arguments, and `Twice(v) = Common(v, v)` supplies one value to both on purpose. Passing Common itself (`Apply(Common)`) and calling it (`Common(7, 7)`) are unaffected.
+
+    Common(x, x) = x
+    Alias = Common
+
+    Alias(7, 7)
+
+  Rejected by the parser: "its arguments cannot be forwarded implicitly: its parameter list repeats 'x' ..."
+
+[repeated-name-callee-is-called-explicitly] The written forms of a repeated-name callable are ordinary calls. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one value into both occurrences, so `Twice(8)` is 8. An alias of a wrapper whose own parameter names are distinct lifts like any alias.
+
+    Common(x, x) = x
+    Both(a, b) = Common(a, b)
+    Twice(v) = Common(v, v)
+
+    Both(7, 7)
+    Twice(8)
+
+  Displays:
+    7
+    8
 
 [repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.
 

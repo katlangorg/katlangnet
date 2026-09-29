@@ -798,11 +798,18 @@ public static partial class Evaluator
                 group.Items.Any(static item => item is CaptureParameterPattern { Kind: ParameterKind.Collecting })),
             new EvalError.ArityMismatch(required, actual));
 
+    /// <summary>
+    /// Binds ONE pattern of the pattern <paramref name="level"/> (the complete list of
+    /// patterns at this level, the pattern itself included) against its supplied input.
+    /// Lean: <c>bindParameterPattern</c>.
+    /// </summary>
     private static EvalResult<UserCallBindings> BindParameterPattern(
+        IReadOnlyList<ParameterPattern> level,
         ParameterPattern pattern,
         ParameterPatternInput input,
         EvalCtx ctx,
-        bool allowAlgorithmBindings)
+        bool allowAlgorithmBindings,
+        ref HashSet<string>? repeatedNames)
     {
         switch (pattern)
         {
@@ -820,7 +827,18 @@ public static partial class Evaluator
                     if (allowAlgorithmBindings && input.Algorithm is not null)
                         algorithmBindings.Add(SlotAlgorithmBinding(capture.Name, input.Algorithm, input.Value, input.ValueError));
 
-                    if (input.Value is null && (!allowAlgorithmBindings || input.Algorithm is null))
+                    // A valueless slot binds a capture only through its algorithm channel, and
+                    // only where the capture does not need a value. REPEATED NAMES ARE
+                    // CONSTRAINTS, NOT MERGES (Q-05): a capture whose name the level repeats is
+                    // an equality constraint over independently supplied arguments, so it needs
+                    // its slot's OWN value, exactly as a sequence-value pattern needs the value
+                    // it opens. A callable-only argument (`Inc` passed bare) or a failed one
+                    // (`Bad = 1 / 0`) fails here with the slot's own recorded outcome; another
+                    // occurrence's value never stands in for it, and no binding pairs one
+                    // argument's value with another's algorithm. The level is consulted only
+                    // for a valueless slot, so the ordinary path never pays for it.
+                    if (input.Value is null
+                        && (!allowAlgorithmBindings || input.Algorithm is null || RepeatsAtLevel(capture.Name, level, ref repeatedNames)))
                         return SurfacedSlotValueError(input);
 
                     return EvalResult<UserCallBindings>.Ok(new UserCallBindings(valueBindings, [], algorithmBindings));
@@ -863,8 +881,9 @@ public static partial class Evaluator
     /// <item>the arity check against the ONE minimum-supply rule;</item>
     /// <item>every pattern of a range binds, left to right, BEFORE any repeated name is
     /// decided (Lean <c>bindPairs</c>), so a later pattern's binding failure — its nested arity
-    /// mismatch, or its argument's retained value error — outranks the range's repeated-name
-    /// conflicts (<see cref="BindParameterPatternRange"/>);</item>
+    /// mismatch, its argument's retained value error, or a repeated name's valueless
+    /// contribution (Q-05) — outranks the range's repeated-name conflicts
+    /// (<see cref="BindParameterPatternRange"/>);</item>
     /// <item>with a collecting capture, the prefix binds and settles, then the suffix, then the
     /// collector's values are collected and materialized, and the names shared across the
     /// collector are decided last (<see cref="FindCrossRepeatedNameFailure"/>).</item>
@@ -873,7 +892,12 @@ public static partial class Evaluator
     /// ONCE per level, when its last contribution joins, by requiring every PAIR of its
     /// contributions to be compatible (<see cref="RepeatedNameAggregate"/>), so no permutation
     /// of the arguments changes its effective binding. Multiple callable contributions must
-    /// also share one declaration and captured activation identity, including two occurrences. The first collecting capture is
+    /// also share one declaration and captured activation identity, including two occurrences.
+    /// REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): every contribution
+    /// of a repeated name carries its OWN value — a valueless one has already failed its own
+    /// binding with its slot's recorded outcome (<see cref="BindParameterPattern"/>) — so the
+    /// verdict only restricts, and the kept binding never pairs one argument's value with
+    /// another argument's algorithm. The first collecting capture is
     /// the list's collector (Lean <c>findCollecting</c>); a second one — a host-built shape the
     /// parser never produces — is an ordinary suffix pattern that
     /// <see cref="BindParameterPattern"/> rejects. A successful binding keeps each name's first
@@ -887,6 +911,8 @@ public static partial class Evaluator
         Func<int, int, EvalError> arityMismatch)
     {
         var collectingIndex = FirstCollectingCaptureIndex(patterns);
+        // Shared by the prefix and suffix; populated only when a valueless capture needs it.
+        HashSet<string>? repeatedNames = null;
 
         // The accepted supply is the ONE minimum-supply rule
         // (ParameterPattern.MinimumSuppliedSlots): without a collecting capture every
@@ -900,7 +926,7 @@ public static partial class Evaluator
                 return arityMismatch(requiredCount, inputs.Count);
 
             var rangeR = BindParameterPatternRange(
-                patterns, inputs, 0, 0, patterns.Count, ctx, allowAlgorithmBindings, outside: null);
+                patterns, inputs, 0, 0, patterns.Count, ctx, allowAlgorithmBindings, outside: null, ref repeatedNames);
             if (rangeR.IsError) return rangeR.Error;
             return EvalResult<UserCallBindings>.Ok(rangeR.Value.Merged);
         }
@@ -917,12 +943,12 @@ public static partial class Evaluator
         // the other side of the collector, or as the collector.
         var prefixR = BindParameterPatternRange(
             patterns, inputs, 0, 0, collectingIndex, ctx, allowAlgorithmBindings,
-            new LevelNames(patterns, suffixStart, suffixCount, collectingCapture.Name));
+            new LevelNames(patterns, suffixStart, suffixCount, collectingCapture.Name), ref repeatedNames);
         if (prefixR.IsError) return prefixR.Error;
 
         var suffixR = BindParameterPatternRange(
             patterns, inputs, suffixStart, suffixInputStart, suffixCount, ctx, allowAlgorithmBindings,
-            new LevelNames(patterns, 0, collectingIndex, collectingCapture.Name));
+            new LevelNames(patterns, 0, collectingIndex, collectingCapture.Name), ref repeatedNames);
         if (suffixR.IsError) return suffixR.Error;
 
         var capturedValues = new List<Result>(suffixInputStart - collectingIndex);
@@ -1036,14 +1062,17 @@ public static partial class Evaluator
         int count,
         EvalCtx ctx,
         bool allowAlgorithmBindings,
-        LevelNames? outside)
+        LevelNames? outside,
+        ref HashSet<string>? repeatedNames)
     {
         if (count == 0)
             return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(new UserCallBindings([], [], []), null));
 
+        // Every pattern binds against the WHOLE level, which says whether its name repeats
+        // (Q-05) — also for a one-pattern range, whose name may repeat across the collector.
         if (count == 1)
         {
-            var singleR = BindParameterPattern(patterns[patternStart], inputs[inputStart], ctx, allowAlgorithmBindings);
+            var singleR = BindParameterPattern(patterns, patterns[patternStart], inputs[inputStart], ctx, allowAlgorithmBindings, ref repeatedNames);
             if (singleR.IsError) return singleR.Error;
             return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(singleR.Value, null));
         }
@@ -1052,7 +1081,7 @@ public static partial class Evaluator
         for (var offset = 0; offset < count; offset++)
         {
             var boundR = BindParameterPattern(
-                patterns[patternStart + offset], inputs[inputStart + offset], ctx, allowAlgorithmBindings);
+                patterns, patterns[patternStart + offset], inputs[inputStart + offset], ctx, allowAlgorithmBindings, ref repeatedNames);
             if (boundR.IsError) return boundR.Error;
             bound[offset] = boundR.Value;
         }
@@ -1075,7 +1104,7 @@ public static partial class Evaluator
     /// first, and a repeated name is decided at the ONE merge where its last contribution
     /// joins — the step of its FIRST occurrence — so the failing name whose first occurrence is
     /// rightmost is reported; within one step an unequal value (<see cref="EvalError.BadArity"/>)
-    /// outranks an algorithm-channel conflict (<see cref="EvalError.TypeMismatch"/>). A name
+    /// outranks a callable-identity conflict (<see cref="EvalError.TypeMismatch"/>). A name
     /// <paramref name="outside"/> also binds is not complete here. <c>null</c> when every
     /// complete repeated name binds.
     /// </summary>
@@ -1155,18 +1184,21 @@ public static partial class Evaluator
             RepeatedNameFailureKind.Value => new EvalError.BadArity(),
             RepeatedNameFailureKind.CallableIdentity => new EvalError.TypeMismatch(
                 "Repeated bind equality requires the same callable identity"),
-            _ => new EvalError.TypeMismatch("Repeated bind equality is not supported for algorithm-only arguments"),
+            _ => throw new InvalidOperationException($"No repeated-name failure of kind {kind}."),
         };
 
+    /// <summary>
+    /// The verdict kinds, in precedence order (a later member outranks an earlier one within
+    /// one merge). There is no "algorithm-only" kind (Q-05): every contribution of a repeated
+    /// name carries its own value, because <see cref="BindParameterPattern"/> fails a valueless
+    /// one with its slot's own outcome before any verdict runs.
+    /// </summary>
     private enum RepeatedNameFailureKind
     {
         None,
 
         /// <summary>Equal values cannot make different callables interchangeable.</summary>
         CallableIdentity,
-
-        /// <summary>Two or more contributions bind the name on the algorithm channel and one of them carries no value.</summary>
-        Algorithm,
 
         /// <summary>Two contributions carry unequal values or unequal counted values.</summary>
         Value,
@@ -1176,10 +1208,12 @@ public static partial class Evaluator
     /// REPEATED-NAME VERDICT (September 2026): every contribution of one name at one pattern
     /// level, summarized so the verdict is a function of the MULTISET of contributions
     /// (Lean <c>repeatedNameFailure</c>): the name binds iff every PAIR of its contributions is
-    /// compatible — equal values, equal counted values, and two algorithm-channel bindings only
-    /// when each carries a value and all share the same callable identity.
-    /// <see cref="Result.ValueComparer"/> is an equivalence, so "some pair differs" is "some
-    /// value differs from the first".
+    /// compatible — equal values, equal counted values, and the same callable identity for
+    /// every algorithm-channel binding. REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (Q-05): the
+    /// verdict only restricts; it never sees a valueless contribution (the binder has already
+    /// failed one with its own outcome), so a kept algorithm channel always accompanies a value
+    /// its own argument supplied. <see cref="Result.ValueComparer"/> is an equivalence, so
+    /// "some pair differs" is "some value differs from the first".
     /// </summary>
     private sealed class RepeatedNameAggregate(string name)
     {
@@ -1194,19 +1228,15 @@ public static partial class Evaluator
         private bool _valueConflict;
         private CountedResult? _firstCounted;
         private bool _countedConflict;
-        private int _algorithmCount;
-        private bool _algorithmWithoutValue;
         private Algorithm? _firstAlgorithm;
         private bool _callableIdentityConflict;
 
         public RepeatedNameFailureKind Failure
             => _valueConflict || _countedConflict
                 ? RepeatedNameFailureKind.Value
-                : _algorithmCount >= 2 && _algorithmWithoutValue
-                    ? RepeatedNameFailureKind.Algorithm
-                    : _callableIdentityConflict
-                        ? RepeatedNameFailureKind.CallableIdentity
-                        : RepeatedNameFailureKind.None;
+                : _callableIdentityConflict
+                    ? RepeatedNameFailureKind.CallableIdentity
+                    : RepeatedNameFailureKind.None;
 
         /// <summary>Aggregates every name of the given contributions, in order.</summary>
         public static Dictionary<string, RepeatedNameAggregate> Collect(IReadOnlyList<UserCallBindings> contributions)
@@ -1227,13 +1257,8 @@ public static partial class Evaluator
                     For(valueName, index).AddValue(value);
                 foreach (var (countedName, counted) in contribution.CountedBindings)
                     For(countedName, index).AddCounted(counted);
-
-                HashSet<string>? valueNames = null;
                 foreach (var binding in contribution.AlgorithmBindings)
-                {
-                    valueNames ??= contribution.ValueBindings.Select(static value => value.Name).ToHashSet(StringComparer.Ordinal);
-                    For(binding.Name, index).AddAlgorithm(binding.Value, hasValue: valueNames.Contains(binding.Name));
-                }
+                    For(binding.Name, index).AddAlgorithm(binding.Value);
             }
 
             return aggregates;
@@ -1269,11 +1294,8 @@ public static partial class Evaluator
                 _countedConflict = true;
         }
 
-        private void AddAlgorithm(Algorithm algorithm, bool hasValue)
+        private void AddAlgorithm(Algorithm algorithm)
         {
-            _algorithmCount++;
-            if (!hasValue)
-                _algorithmWithoutValue = true;
             if (_firstAlgorithm is null)
                 _firstAlgorithm = algorithm;
             else if (!SameRepeatedCallableIdentity(_firstAlgorithm, algorithm))
@@ -1298,6 +1320,38 @@ public static partial class Evaluator
             && IsSameDeclaringScope(left.Parent, right.Parent)
             && CompatibleActivations(left.Parent, right.Parent)
             && CompatibleActivations(right.Parent, left.Parent);
+    }
+
+    /// <summary>
+    /// REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): whether TWO OR MORE
+    /// patterns of one pattern <paramref name="level"/> bind <paramref name="name"/> (at any
+    /// depth inside each) — a REPEATED name of that level, whose every occurrence is an
+    /// independent contribution to an equality constraint, so a top-level capture of it must
+    /// supply its OWN value (<see cref="BindParameterPattern"/>). Read only for a slot that has
+    /// no value. The index is built once per level and shared across both sides of a collector:
+    /// unrelated valueless captures must not each scan the whole signature. Lean:
+    /// <c>ParameterPattern.repeatsAtLevel</c> (the same predicate, evaluated directly).
+    /// </summary>
+    private static bool RepeatsAtLevel(
+        string name,
+        IReadOnlyList<ParameterPattern> level,
+        ref HashSet<string>? repeatedNames)
+    {
+        if (repeatedNames is null)
+        {
+            repeatedNames = new(StringComparer.Ordinal);
+            var firstPattern = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var index = 0; index < level.Count; index++)
+            {
+                foreach (var capture in ParameterPattern.EnumerateCaptures([level[index]]))
+                {
+                    if (!firstPattern.TryAdd(capture.Name, index) && firstPattern[capture.Name] != index)
+                        repeatedNames.Add(capture.Name);
+                }
+            }
+        }
+
+        return repeatedNames.Contains(name);
     }
 
     /// <summary>

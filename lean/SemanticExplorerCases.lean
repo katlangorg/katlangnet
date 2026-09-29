@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2299
+- surface corpus cases: 2309
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2257
+- Lean-representable surface cases: 2267
 - internal-node cases: 14
-- total generated guards: 2271 case guards + 2 count guards
+- total generated guards: 2281 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -11379,7 +11379,57 @@ def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
--- 2257 differential cases.
+-- special__repeatedNameCallableThenValue: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n P(Inc, 1)
+def case_special__repeatedNameCallableThenValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "P") [.resolve "Inc", .num 1])])
+#guard obs case_special__repeatedNameCallableThenValue == "err arity"
+
+-- special__repeatedNameValueThenCallable: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n P(1, Inc)
+def case_special__repeatedNameValueThenCallable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "P") [.num 1, .resolve "Inc"])])
+#guard obs case_special__repeatedNameValueThenCallable == "err arity"
+
+-- special__repeatedNameFailedThenValue: Bad = 1 / 0 \n Q(x, x) = x \n Q(Bad, 7)
+def case_special__repeatedNameFailedThenValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Q") [.resolve "Bad", .num 7])])
+#guard obs case_special__repeatedNameFailedThenValue == "err div0"
+
+-- special__repeatedNameValueThenFailed: Bad = 1 / 0 \n Q(x, x) = x \n Q(7, Bad)
+def case_special__repeatedNameValueThenFailed : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Q") [.num 7, .resolve "Bad"])])
+#guard obs case_special__repeatedNameValueThenFailed == "err div0"
+
+-- special__repeatedNameAcrossCollectorCallable: Inc(y) = y + 1 \n C(x, *r, x) = x \n C(Inc, 9, 1)
+def case_special__repeatedNameAcrossCollectorCallable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "C" (algWithParameters [{ name := "x" }, { name := "r", kind := .collecting }, { name := "x" }] [] [] [.param "x"])] [(.call (.resolve "C") [.resolve "Inc", .num 9, .num 1])])
+#guard obs case_special__repeatedNameAcrossCollectorCallable == "err arity"
+
+-- special__repeatedNameAcrossNestedGroupFailed: Bad = 1 / 0 \n N(x, (x, y)) = y \n N(Bad, (7, 8))
+def case_special__repeatedNameAcrossNestedGroupFailed : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "N" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])] [(.call (.resolve "N") [.resolve "Bad", (.capture [.num 7, .num 8])])])
+#guard obs case_special__repeatedNameAcrossNestedGroupFailed == "err div0"
+
+-- special__repeatedNameForwardedCallable: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Fwd(a, b) = P(a, b) \n Fwd(1, Inc)
+def case_special__repeatedNameForwardedCallable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])]), privateProp "Fwd" (alg ["a", "b"] [] [] [(.call (.resolve "P") [.param "a", .param "b"])])] [(.call (.resolve "Fwd") [.num 1, .resolve "Inc"])])
+#guard obs case_special__repeatedNameForwardedCallable == "err arity"
+
+-- special__repeatedNameDotReceiverFailed: Bad = 1 / 0 \n Q(x, x) = x \n Bad.Q(7)
+def case_special__repeatedNameDotReceiverFailed : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.dotCall (.resolve "Bad") "Q" (some [.num 7]))])
+#guard obs case_special__repeatedNameDotReceiverFailed == "err div0"
+
+-- special__repeatedNameValuelessBeforeVerdict: Bad = 1 / 0 \n Q2(x, x, y, y) = 0 \n Q2(Bad, 7, 1, 2)
+def case_special__repeatedNameValuelessBeforeVerdict : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q2" (alg ["x", "x", "y", "y"] [] [] [.num 0])] [(.call (.resolve "Q2") [.resolve "Bad", .num 7, .num 1, .num 2])])
+#guard obs case_special__repeatedNameValuelessBeforeVerdict == "err div0"
+
+-- special__repeatedNameAccompanyingChannel: A = 5 \n P(f, f) = f, f() \n P(5, A)
+def case_special__repeatedNameAccompanyingChannel : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "P" (alg ["f", "f"] [] [] [.param "f", (.call (.param "f") [])])] [(.call (.resolve "P") [.num 5, .resolve "A"])])
+#guard obs case_special__repeatedNameAccompanyingChannel == "ok raw=S[5, 5] n=1"
+
+-- 2267 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -13643,9 +13693,19 @@ def surfaceCaseIds : List String := [
   "special__dotStringParameterizedReceiverIsArity",
   "special__dotStringNavigatedParameterizedMemberIsArity",
   "special__reduceParameterIgnoringInitialStillRejected",
-  "special__repeatParameterizedStepIsCallback"
+  "special__repeatParameterizedStepIsCallback",
+  "special__repeatedNameCallableThenValue",
+  "special__repeatedNameValueThenCallable",
+  "special__repeatedNameFailedThenValue",
+  "special__repeatedNameValueThenFailed",
+  "special__repeatedNameAcrossCollectorCallable",
+  "special__repeatedNameAcrossNestedGroupFailed",
+  "special__repeatedNameForwardedCallable",
+  "special__repeatedNameDotReceiverFailed",
+  "special__repeatedNameValuelessBeforeVerdict",
+  "special__repeatedNameAccompanyingChannel"
 ]
-#guard surfaceCaseIds.length == 2257
+#guard surfaceCaseIds.length == 2267
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -13747,5 +13807,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2271 case guards (2257 surface + 14 internal-node).
+-- Total: 2281 case guards (2267 surface + 14 internal-node).
 end SemanticExplorerCases

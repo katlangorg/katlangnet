@@ -1192,21 +1192,25 @@ def repeatedAcrossNestedClauseMatchesOnlyEqualItems : Bool :=
 -- PATTERN-LIST BINDING ERROR PRECEDENCE (September 2026, D1; the C# binders were aligned
 -- to this model — C# PatternBindingErrorPrecedenceTests). `bindPairs` binds EVERY pattern
 -- of a list before it merges repeated names, and it merges right to left (the innermost
--- merge first; within one merge an unequal value, `badArity`, before an algorithm-only
--- repeat, `typeMismatch`). With a collecting capture the prefix binds and merges, then the
+-- merge first; within one merge an unequal value, `badArity`, before a callable-identity
+-- conflict, `typeMismatch`). With a collecting capture the prefix binds and merges, then the
 -- suffix binds and merges, then the collector's values are collected, and the
 -- prefix/collector/suffix merges come last. So a later binding failure — a nested arity
--- mismatch, an argument's retained value error — outranks an earlier repeated-name conflict,
--- in ordinary calls and callbacks alike.
+-- mismatch, an argument's retained value error, a repeated name's valueless contribution
+-- (Q-05) — outranks an earlier repeated-name conflict, in ordinary calls and callbacks alike.
 def precedenceCap (name : String) : KatLang.ParameterPattern := .capture { name := name }
 
 def precedenceColl (name : String) : KatLang.ParameterPattern := .capture { name := name, kind := .collecting }
 
+-- `A = 5` and `B = 5 + 0`: equal values from two distinct callables (a callable-identity
+-- conflict, never a value conflict).
 def precedenceRun (patterns : List KatLang.ParameterPattern) (output call : KatLang.Expr) : Except Error Result :=
   runResult (.algorithmExpr (algPrivate [] [] [
     ("P", algWithParameterPatterns patterns [] [] [output]),
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
-    ("Inc", alg ["y"] [] [] [.binary .add (.param "y") (.num 1)])
+    ("Inc", alg ["y"] [] [] [.binary .add (.param "y") (.num 1)]),
+    ("A", alg [] [] [] [.num 5]),
+    ("B", alg [] [] [] [.binary .add (.num 5) (.num 0)])
   ] [call]))
 
 def patternBindingFailureOutranksRepeatedNameConflict : Bool :=
@@ -1261,27 +1265,36 @@ def collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging : Bool :=
 
 def repeatedNameMergesRunRightToLeft : Bool :=
   let callP (args : List KatLang.Expr) : KatLang.Expr := .call (resolve "P") args
-  -- P(x, x, f, f) with P(1, 2, Inc, Inc): the (f, f) merge runs first — an algorithm-only
-  -- repeated name is a type mismatch...
-  (match precedenceRun [precedenceCap "x", precedenceCap "x", precedenceCap "f", precedenceCap "f"] (.num 0)
-      (callP [.num 1, .num 2, .resolve "Inc", .resolve "Inc"]) with
-   | .error err => innermostIsTypeMismatch "Repeated bind equality is not supported for algorithm-only arguments" err
+  let xxff := [precedenceCap "x", precedenceCap "x", precedenceCap "f", precedenceCap "f"]
+  let ffxx := [precedenceCap "f", precedenceCap "f", precedenceCap "x", precedenceCap "x"]
+  -- P(x, x, f, f) with P(1, 2, A, B): the (f, f) merge runs first — two distinct
+  -- callables with equal values are the callable-identity type mismatch...
+  (match precedenceRun xxff (.num 0) (callP [.num 1, .num 2, .resolve "A", .resolve "B"]) with
+   | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err
    | _ => false) &&
-  -- ...and P(f, f, x, x) with P(Inc, Inc, 1, 2) reports the unequal x first.
-  (match precedenceRun [precedenceCap "f", precedenceCap "f", precedenceCap "x", precedenceCap "x"] (.num 0)
-      (callP [.resolve "Inc", .resolve "Inc", .num 1, .num 2]) with
-   | .error err => innermostIsBadArity err | _ => false)
+  -- ...and P(f, f, x, x) with P(A, B, 1, 2) reports the unequal x first.
+  (match precedenceRun ffxx (.num 0) (callP [.resolve "A", .resolve "B", .num 1, .num 2]) with
+   | .error err => innermostIsBadArity err | _ => false) &&
+  -- A repeated name's VALUELESS contribution is not a verdict but a binding failure
+  -- (Q-05): `Inc` passed bare fails with its own arity rejection when its pattern binds,
+  -- before any merge, wherever the unequal x stands.
+  (match precedenceRun xxff (.num 0) (callP [.num 1, .num 2, .resolve "Inc", .resolve "Inc"]) with
+   | .error err => innermostIsArityMismatch 1 0 err | _ => false) &&
+  (match precedenceRun ffxx (.num 0) (callP [.resolve "Inc", .resolve "Inc", .num 1, .num 2]) with
+   | .error err => innermostIsArityMismatch 1 0 err | _ => false)
 
 #guard repeatedNameMergesRunRightToLeft
 
 -- REPEATED-NAME BINDING IS ORDER-INDEPENDENT (September 2026). A repeated name is
 -- decided ONCE, when its last contribution at the level joins, by requiring every PAIR
--- of its contributions to be compatible (equal values; two algorithm-channel bindings
--- only when both carry a value). So for P(f, f, f) = f the triple (Inc, 5, A) — Inc an
--- algorithm only, 5 a value only, A = 5 both — fails in EVERY permutation (Inc and A are
--- two algorithm bindings and Inc has no value), (A, A, 5) binds in every permutation,
--- and a value conflict outranks an algorithm conflict whatever the order. One- and
--- two-occurrence controls below remain valid; distinct callable identities now reject.
+-- of its contributions to be compatible (equal values; one callable identity). And
+-- REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (Q-05): every contribution must supply its
+-- OWN value, so for P(f, f, f) = f the triple (Inc, 5, A) — Inc a callable only, 5 a
+-- value only, A = 5 both — fails in EVERY permutation with Inc's own arity rejection
+-- (formerly the "algorithm-only" type mismatch), (A, A, 5) binds in every permutation,
+-- (A, B, 5) is the unequal-value `badArity` in every permutation, and Inc beside unequal
+-- values is still Inc's own failure: a valueless contribution is a binding failure, never
+-- a verdict. Distinct callable identities reject.
 def repeatedRun (patterns : List KatLang.ParameterPattern) (output : KatLang.Expr) (args : List KatLang.Expr)
     : Except Error Result :=
   runResult (.algorithmExpr (algPrivate [] [] [
@@ -1297,31 +1310,36 @@ def repeatedPermutations (a b c : KatLang.Expr) : List (List KatLang.Expr) :=
 def repeatedThreeCaptures : List KatLang.ParameterPattern :=
   [precedenceCap "f", precedenceCap "f", precedenceCap "f"]
 
-def isAlgorithmOnlyRepeat (result : Except Error Result) : Bool :=
+/-- A repeated name's callable-only contribution `Inc` (Q-05): its own value demand, the
+    arity rejection of `Inc(y)` called with nothing — never an "algorithm-only" verdict. -/
+def isCallableOnlyContribution (result : Except Error Result) : Bool :=
   match result with
-  | .error err => innermostIsTypeMismatch "Repeated bind equality is not supported for algorithm-only arguments" err
+  | .error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
 def repeatedNameVerdictIsOrderIndependent : Bool :=
   let three (args : List KatLang.Expr) := repeatedRun repeatedThreeCaptures (.param "f") args
-  -- (Inc, 5, A): the Inc/A pair is incompatible in every permutation.
-  (repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args => isAlgorithmOnlyRepeat (three args)) &&
+  -- (Inc, 5, A): Inc supplies no value, in every permutation.
+  (repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args => isCallableOnlyContribution (three args)) &&
   -- (A, A, 5): every pair is compatible in every permutation.
   (repeatedPermutations (.resolve "A") (.resolve "A") (.num 5)).all (fun args =>
     match three args with | .ok (.atom 5) => true | _ => false) &&
-  -- (A, B, Inc): unequal values AND an algorithm-only repeat — the value conflict wins in
-  -- every permutation.
-  (repeatedPermutations (.resolve "A") (.resolve "B") (.resolve "Inc")).all (fun args =>
+  -- (A, B, 5): unequal values in every permutation.
+  (repeatedPermutations (.resolve "A") (.resolve "B") (.num 5)).all (fun args =>
     match three args with | .error err => innermostIsBadArity err | _ => false) &&
+  -- (A, B, Inc): unequal values AND a valueless Inc — Inc's binding failure precedes the
+  -- verdict in every permutation.
+  (repeatedPermutations (.resolve "A") (.resolve "B") (.resolve "Inc")).all (fun args =>
+    isCallableOnlyContribution (three args)) &&
   -- Four occurrences: (A, 5, 5, Inc) fails wherever Inc stands.
   ([[.resolve "Inc", .resolve "A", .num 5, .num 5], [.resolve "A", .num 5, .num 5, .resolve "Inc"],
     [.num 5, .resolve "Inc", .num 5, .resolve "A"], [.resolve "A", .resolve "Inc", .num 5, .num 5]].all (fun args =>
-      isAlgorithmOnlyRepeat (repeatedRun [precedenceCap "f", precedenceCap "f", precedenceCap "f", precedenceCap "f"]
+      isCallableOnlyContribution (repeatedRun [precedenceCap "f", precedenceCap "f", precedenceCap "f", precedenceCap "f"]
         (.param "f") args))) &&
   -- Across a collector: P(f, *r, f, f) with (Inc, 5, A) around the collected 9.
   ((repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args =>
     match args with
-    | [a, b, c] => isAlgorithmOnlyRepeat (repeatedRun
+    | [a, b, c] => isCallableOnlyContribution (repeatedRun
         [precedenceCap "f", precedenceColl "r", precedenceCap "f", precedenceCap "f"] (.param "f") [a, .num 9, b, c])
     | _ => false))
 
@@ -1346,16 +1364,18 @@ def repeatedNameIsDecidedWhenComplete : Bool :=
 
 #guard repeatedNameIsDecidedWhenComplete
 
--- The retained two-occurrence cases: (Inc, A) is the algorithm-only
--- repeat, (A, A) and (A, 5) bind, and (5, Inc) binds the value 5 with Inc's algorithm.
+-- The two-occurrence cases: (A, A) and (A, 5) bind; Inc beside A or beside a plain value
+-- is Inc's own failure in both orders — (5, Inc) formerly bound the value 5 with Inc's
+-- algorithm, a binding neither argument supplied (Q-05).
 def twoOccurrenceRepeatsKeepThePairwiseRule : Bool :=
   let two (args : List KatLang.Expr) := repeatedRun [precedenceCap "f", precedenceCap "f"] (.param "f") args
-  isAlgorithmOnlyRepeat (two [.resolve "Inc", .resolve "A"]) &&
-  isAlgorithmOnlyRepeat (two [.resolve "A", .resolve "Inc"]) &&
+  isCallableOnlyContribution (two [.resolve "Inc", .resolve "A"]) &&
+  isCallableOnlyContribution (two [.resolve "A", .resolve "Inc"]) &&
   (match two [.resolve "A", .resolve "A"] with | .ok (.atom 5) => true | _ => false) &&
   (match two [.resolve "A", .num 5] with | .ok (.atom 5) => true | _ => false) &&
-  (match two [.num 5, .resolve "Inc"] with | .ok (.atom 5) => true | _ => false) &&
-  (match two [.resolve "Inc", .num 5] with | .ok (.atom 5) => true | _ => false)
+  (match two [.num 5, .resolve "A"] with | .ok (.atom 5) => true | _ => false) &&
+  isCallableOnlyContribution (two [.num 5, .resolve "Inc"]) &&
+  isCallableOnlyContribution (two [.resolve "Inc", .num 5])
 
 #guard twoOccurrenceRepeatsKeepThePairwiseRule
 
@@ -1465,7 +1485,11 @@ def repeatedPatternProducesOneBinding : Bool :=
 
 #guard repeatedPatternProducesOneBinding
 
-def repeatedAlgorithmOnlyArgumentsAreUnsupported : Bool :=
+-- A repeated name compares VALUES (Q-05): two callable-only arguments supply none, so the
+-- first one's own value demand — `Inc`'s arity rejection — fails the binding (formerly the
+-- "algorithm-only arguments" type mismatch, which reported a pattern error instead of the
+-- argument's own failure).
+def repeatedCallableOnlyArgumentsFailWithTheirOwnDemand : Bool :=
   let applySame := Algorithm.elaborateClauseGroup [{
     pattern := KatLang.Pattern.sequenceValue [
       KatLang.Pattern.bind "f",
@@ -1481,13 +1505,10 @@ def repeatedAlgorithmOnlyArgumentsAreUnsupported : Bool :=
   ] [
     .call (resolve "ApplySame") [resolve "Inc", resolve "Inc"]
   ])) with
-  | Except.error err =>
-      innermostIsTypeMismatch
-        "Repeated bind equality is not supported for algorithm-only arguments"
-        err
+  | Except.error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
-#guard repeatedAlgorithmOnlyArgumentsAreUnsupported
+#guard repeatedCallableOnlyArgumentsFailWithTheirOwnDemand
 
 def repeatedConditionalFallbackAlg : Algorithm :=
   Algorithm.elaborateClauseGroup [

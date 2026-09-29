@@ -442,6 +442,36 @@ Report(3, 4)
 
 `Doubled` uses `Area`, which needs `width` and `height`. `Doubled` is written inside `Report`, whose parameters have those names, so `Area` receives Report's `width` and `height`, and `Doubled` needs no inputs of its own: it is an ordinary property of `Report`. A new parameter is added only when no parameter of the needed name is available, and never to an algorithm with an explicit parameter list. Properties, opened names, and builtins are not handed on as parameters, even when their names match: with `v = 99` and `Need(v) = v`, the formula `Outer = Need + 1` still takes its own `v`, so `Outer(7)` is `8`.
 
+A formula whose parameter list repeats a name is never handed inputs this way. The two `x` of `Common(x, x) = x` are two separate arguments that must be equal (see [Equal Arguments](#equal-arguments)); handing inputs on by name would feed both from one input, so the check could never fail. Using such a formula without arguments where its inputs would be handed on is therefore an error, reported at its name:
+
+<!-- spec:repeated-name-callee-is-never-forwarded-implicitly -->
+```
+Common(x, x) = x
+Alias = Common
+
+Alias(7, 7)
+```
+
+Write the call instead. A wrapper with parameters of its own keeps the two arguments separate, and a wrapper that passes one input to both does so visibly:
+
+<!-- spec:repeated-name-callee-is-called-explicitly -->
+```
+Common(x, x) = x
+Both(a, b) = Common(a, b)
+Twice(v) = Common(v, v)
+
+Both(7, 7)
+Twice(8)
+```
+
+**Results:**
+```
+7
+8
+```
+
+`Both(7, 8)` is an error, exactly like `Common(7, 8)`. The rule is about handing inputs on automatically only: calling `Common` with its arguments, or passing `Common` itself to another function, works as usual.
+
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
 
@@ -1764,6 +1794,22 @@ Same(3, 4)
 true
 false
 ```
+
+Each argument must bring its own value to compare. A function that requires arguments cannot supply a value just by being named, and an argument whose calculation fails reports its own error — the other argument never stands in for it:
+
+```
+Inc(y) = y + 1
+Same(x, x) = true
+Same(x, y) = false
+
+Same(Inc, 1)
+```
+
+**Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.
+
+A callable that accepts zero arguments can supply its value through the ordinary cached read.
+
+Because each occurrence is an argument of its own, a function that repeats a parameter name never has its inputs handed on automatically; write the call (see [Formulas That Use Formulas](#formulas-that-use-formulas)).
 
 ### Rules for Clauses
 

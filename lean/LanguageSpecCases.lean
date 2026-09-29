@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 307
-- excluded parse-level cases (Lean has no surface parser): 39
+- specification surface cases: 310
+- excluded parse-level cases (Lean has no surface parser): 40
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 250
-- probe observations (C#-only by design): 904
+- Lean-guarded cases: 252
+- probe observations (C#-only by design): 919
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -470,15 +470,25 @@ def case_binding_failure_outranks_repeated_name_conflict : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.call (.resolve "P") [.num 1, .num 2, .resolve "Bad"])])
 #guard obs case_binding_failure_outranks_repeated_name_conflict == "err div0"
 
--- repeated-name-binding-is-order-independent [variadic-calls]: A = 5 \n Inc(y) = y + 1 \n P(f, f, f) = f \n  \n P(A, 5, Inc)
+-- repeated-name-binding-is-order-independent [variadic-calls]: A = 5 \n B = 2 + 3 \n P(f, f, f) = f \n  \n P(A, 5, B)
 def case_repeated_name_binding_is_order_independent : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["f", "f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [.resolve "A", .num 5, .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "B" (alg [] [] [] [(.binary .add (.num 2) (.num 3))]), privateProp "P" (alg ["f", "f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [.resolve "A", .num 5, .resolve "B"])])
 #guard obs case_repeated_name_binding_is_order_independent == "err type"
+
+-- repeated-name-is-a-constraint-not-a-merge [variadic-calls]: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n  \n P(Inc, 1)
+def case_repeated_name_is_a_constraint_not_a_merge : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "P") [.resolve "Inc", .num 1])])
+#guard obs case_repeated_name_is_a_constraint_not_a_merge == "err arity"
 
 -- repeated-equal-values-require-one-callable-identity [variadic-calls]: A(*xs) = 5 \n B(*xs) = 5 + xs.count \n P(f, f) = f(1) \n P(A, B)
 def case_repeated_equal_values_require_one_callable_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 5]), privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "P") [.resolve "A", .resolve "B"])])
 #guard obs case_repeated_equal_values_require_one_callable_identity == "err type"
+
+-- repeated-name-callee-is-called-explicitly [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n  \n Both(7, 7) \n Twice(8)
+def case_repeated_name_callee_is_called_explicitly : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8])])
+#guard obs case_repeated_name_callee_is_called_explicitly == "ok raw=S[7, 8] n=2"
 
 -- repeated-callable-success-preserves-both-channels [variadic-calls]: B(*xs) = 5 + xs.count \n P(f, f, f, f, f) = [f, f(1), map([7], f)] \n P(B, 5, B, 5, 5) \n P(5, B, 5, 5, B)
 def case_repeated_callable_success_preserves_both_channels : Expr :=
@@ -1350,7 +1360,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 250 canonical Lean-guarded specification cases.
+-- 252 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1433,7 +1443,9 @@ def specCaseIds : List String := [
   "ordinary-sequence-pattern-opens-sequence-or-list",
   "binding-failure-outranks-repeated-name-conflict",
   "repeated-name-binding-is-order-independent",
+  "repeated-name-is-a-constraint-not-a-merge",
   "repeated-equal-values-require-one-callable-identity",
+  "repeated-name-callee-is-called-explicitly",
   "repeated-callable-success-preserves-both-channels",
   "repeated-genuine-aliases-preserve-complete-binding",
   "repeated-callable-identity-includes-captured-activation",
@@ -1609,6 +1621,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 250
+#guard specCaseIds.length == 252
 
 end LanguageSpecCases

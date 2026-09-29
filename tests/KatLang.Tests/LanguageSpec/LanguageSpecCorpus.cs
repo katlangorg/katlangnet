@@ -1490,37 +1490,68 @@ public static class LanguageSpecCorpus
             [
                 // Every pattern binds first; the unequal x is only a merge failure.
                 new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err arity"),
-                // Between different names the innermost merge decides: the (f, f) merge runs first.
-                new SpecProbe("Inc(y) = y + 1\nP(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", "err type"),
-                new SpecProbe("Inc(y) = y + 1\nP(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", "err arity"),
+                // Between different names the innermost merge decides: the (f, f) merge runs first
+                // (A and B are two callables with the equal value 5).
+                new SpecProbe("A = 5\nB = 2 + 3\nP(x, x, f, f) = 0\nP(1, 2, A, B)", "err type"),
+                new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, x, x) = 0\nP(A, B, 1, 2)", "err arity"),
+                // A repeated name's argument without a value fails its own binding first.
+                new SpecProbe("Bad = 1 / 0\nP(x, x, y, y) = 0\nP(Bad, 7, 1, 2)", "err div0"),
                 // A conflict inside a nested group is part of binding that group.
                 new SpecProbe("Bad = 1 / 0\nP((x, x), (a, b)) = a\nP((1, 2), Bad)", "err arity"),
                 // Equal repeated values still bind.
                 new SpecProbe("P(x, x, (a, b)) = b\nP(1, 1, (2, 3))", "ok raw=3 n=1"),
             ],
-            Explanation = "A parameter-pattern list binds EVERY pattern before it checks its repeated names, so a later pattern's failure — here the argument `Bad`, whose value the `(a, b)` pattern must open — is reported instead of the unequal `x`. Between different repeated names, the merge that runs first — the innermost, whose name completes furthest right — decides, and within one merge an unequal value (an arity error) is found before a callable-only repeat (a type error). A conflict inside a nested group belongs to binding that group, and equal repeated values still bind. Callbacks and loop state bind in the same order.",
+            Explanation = "A parameter-pattern list binds EVERY pattern before it checks its repeated names, so a later pattern's failure — here the argument `Bad`, whose value the `(a, b)` pattern must open — is reported instead of the unequal `x`. An argument that must supply a value for a repeated name but has none fails its own binding the same way. Between different repeated names, the merge that runs first — the innermost, whose name completes furthest right — decides, and within one merge an unequal value (an arity error) is found before two different callables (a type error). A conflict inside a nested group belongs to binding that group, and equal repeated values still bind. Callbacks and loop state bind in the same order.",
         },
         new()
         {
             Id = "repeated-name-binding-is-order-independent",
             Category = "variadic-calls",
-            Source = "A = 5\nInc(y) = y + 1\nP(f, f, f) = f\n\nP(A, 5, Inc)",
+            Source = "A = 5\nB = 2 + 3\nP(f, f, f) = f\n\nP(A, 5, B)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "type",
             Probes =
             [
                 // Every permutation of the same arguments gives the same verdict.
-                new SpecProbe("A = 5\nInc(y) = y + 1\nP(f, f, f) = f\nP(Inc, 5, A)", "err type"),
-                new SpecProbe("A = 5\nInc(y) = y + 1\nP(f, f, f) = f\nP(5, A, Inc)", "err type"),
+                new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(B, 5, A)", "err type"),
+                new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(5, A, B)", "err type"),
                 // Every pair compatible: binds in every order.
                 new SpecProbe("A = 5\nP(f, f, f) = f\nP(A, A, 5)", "ok raw=5 n=1"),
                 new SpecProbe("A = 5\nP(f, f, f) = f\nP(5, A, A)", "ok raw=5 n=1"),
-                // Unequal values outrank a callable-only repeat, in every order.
-                new SpecProbe("A = 5\nB = 6\nInc(y) = y + 1\nP(f, f, f) = f\nP(Inc, B, A)", "err arity"),
-                // Two occurrences keep the pairwise rule: a plain value beside a callable binds.
-                new SpecProbe("Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)", "ok raw=5 n=1"),
+                // Unequal values, in every order.
+                new SpecProbe("A = 5\nB = 6\nP(f, f, f) = f\nP(B, 5, A)", "err arity"),
+                // An argument without a value is its own failure wherever it stands (formerly the
+                // two-occurrence rule bound `P(5, Inc)` to the value 5 with Inc's algorithm).
+                new SpecProbe("Bad = 1 / 0\nP(f, f, f) = f\nP(5, Bad, 5)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nP(f, f, f) = f\nP(5, 5, Bad)", "err div0"),
+                new SpecProbe("Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)", "err arity"),
             ],
-            Explanation = "A repeated parameter name is checked once, after all of its occurrences have bound, by comparing every occurrence with every other: values must be equal, and when two or more arguments reach the name as callables, each of them must also carry a value to compare. `Inc` passed bare has no value, and `A = 5` is also usable as a callable, so `(A, 5, Inc)` fails in every order, while `(A, A, 5)` binds in every order. Argument order never changes whether the call binds.",
+            Explanation = "A repeated parameter name is checked once, after all of its occurrences have bound, by comparing every occurrence with every other: values must be equal, and when arguments also reach the name as callables, they must all be the same callable. `A` and `B` both have the value 5 but are different callables, so `(A, 5, B)` fails in every order, while `(A, A, 5)` binds in every order. Every occurrence must also supply its own value, so an argument without one — a failing one, or a bare callable — is its own error wherever it stands. Argument order never changes whether the call binds.",
+        },
+        new()
+        {
+            Id = "repeated-name-is-a-constraint-not-a-merge",
+            Category = "variadic-calls",
+            Source = "Inc(y) = y + 1\nP(x, x) = x, x(5)\n\nP(Inc, 1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // Both orders: the value 1 never borrows Inc's algorithm (formerly `(1, 6)`).
+                new SpecProbe("Inc(y) = y + 1\nP(x, x) = x, x(5)\nP(1, Inc)", "err arity"),
+                // A failing argument's own error propagates; the other value never stands in
+                // (formerly `7`), and two failures report the first (formerly a type error).
+                new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(Bad, 7)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(7, Bad)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nMissing = [1]:5\nQ(x, x) = x\nQ(Missing, Bad)", "err index"),
+                // Values that each arrive on their own bind; a callable accompanies its own value.
+                new SpecProbe("P(x, x) = x\nP(7, 7)", "ok raw=7 n=1"),
+                new SpecProbe("A = 5\nP(f, f) = f, f()\nP(5, A)", "ok raw=S[5, 5] n=1"),
+                // Clause families already required every argument's value before matching.
+                new SpecProbe("Bad = 1 / 0\nE(x, x) = true\nE(x, y) = false\nE(Bad, 7)", "err div0"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.",
         },
         new()
         {
@@ -1537,6 +1568,42 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
+        },
+        new()
+        {
+            Id = "repeated-name-callee-is-never-forwarded-implicitly",
+            Category = "variadic-calls",
+            Source = "Common(x, x) = x\nAlias = Common\n\nAlias(7, 7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "its arguments cannot be forwarded implicitly: its parameter list repeats 'x'",
+            ExpectedDiagnosticCode = DiagnosticCode.RepeatedParameterNotForwardable,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-72 (decided 2026-09-29): a front-end refusal, parse-level by construction. Lean specifies the decision (`bareValueReferenceTreatment`, `refusesImplicitForwarding`) but models no signature construction, and a rejected parse has no elaborated Lean program; the written forms are the Lean-derived case `repeated-name-callee-is-called-explicitly`. Formerly `Alias = Common` elaborated to `Alias(x) = Common(x, x)`, so `Alias(7, 7)` was an arity error and `Alias(7)` was 7.",
+            Explanation = "Automatic parameter forwarding supplies arguments by name, so for a callable whose parameter list repeats a name it would feed every occurrence from ONE binding: `Alias = Common` would take one argument and pass it to both of Common's slots, and Common's equality check would hold by construction. A bare reference to such a callable is therefore rejected wherever its arguments would be forwarded implicitly: an alias row, an operand, a list element, a Math argument, a block row, and inside a written parameter list (`Q(x) = Common`) alike. Write the call instead: `Both(a, b) = Common(a, b)` keeps two independently supplied arguments, and `Twice(v) = Common(v, v)` supplies one value to both on purpose. Passing Common itself (`Apply(Common)`) and calling it (`Common(7, 7)`) are unaffected.",
+        },
+        new()
+        {
+            Id = "repeated-name-callee-is-called-explicitly",
+            Category = "variadic-calls",
+            Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\n\nBoth(7, 7)\nTwice(8)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n8",
+            ExpectedRaw = "S[7, 8]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // The wrapper keeps P's two independently supplied arguments: unequal values
+                // are P's own failure, and a failed argument is its own error.
+                new SpecProbe("P(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(7, 8)", "err arity"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(Bad, 7)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSame(x) = P(x, x)\nSame(Bad)", "err div0"),
+                // A nested repetition, and an alias of the written wrapper (whose names are
+                // distinct), lift and call as ordinary callables do.
+                new SpecProbe("P((x, a), x) = a\nW(p, q) = P(p, q)\nW((7, 8), 7)", "ok raw=8 n=1"),
+                new SpecProbe("P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)", "ok raw=5 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The written forms of a repeated-name callable are ordinary calls. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one value into both occurrences, so `Twice(8)` is 8. An alias of a wrapper whose own parameter names are distinct lifts like any alias.",
         },
         new()
         {

@@ -205,6 +205,15 @@ namespace ParameterPattern
       | pattern :: rest => bindsName name pattern || anyBindsName name rest
   end
 
+  /-- REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): whether
+      TWO OR MORE patterns of one pattern level bind `name` (at any depth inside
+      each) — a REPEATED name of that level. Every occurrence of such a name is an
+      independent contribution to an equality constraint, so a top-level capture of
+      it must supply its OWN value (`bindParameterPattern`); another occurrence can
+      never stand in for a value it lacks. C#: `Evaluator.RepeatsAtLevel`. -/
+  def repeatsAtLevel (name : Ident) (level : List ParameterPattern) : Bool :=
+    2 ≤ (level.filter (bindsName name)).length
+
   def topLevelCaptureKind? (name : Ident) : List ParameterPattern -> Option ParameterKind
     | [] => none
     | .capture parameter :: rest =>
@@ -2615,7 +2624,11 @@ def appendFirstOccurrences {A} (acc incoming : Assoc Ident A) : Assoc Ident A :=
     on each channel. Every repeated name has passed `repeatedNameFailure`
     before this runs, so discarded entries agree on the complete value/counted
     channels and callable identity. This storage choice gives no callable
-    positional precedence (`repeated_name_complete_binding_is_permutation_invariant`). -/
+    positional precedence (`repeated_name_complete_binding_is_permutation_invariant`).
+    Every contribution of a repeated name carries its OWN value (Q-05,
+    `bindParameterPattern`), so the kept algorithm channel accompanies a value its
+    own argument supplied — equal to the kept value — never a value some other
+    argument supplied in place of a missing or failed one. -/
 def mergeFirstOccurrences (contributions : List ParameterPatternBindings) : ParameterPatternBindings :=
   contributions.foldl (fun merged contribution => {
     argEnv := appendFirstOccurrences merged.argEnv contribution.argEnv,
@@ -2623,9 +2636,10 @@ def mergeFirstOccurrences (contributions : List ParameterPatternBindings) : Para
     algEnv := appendFirstOccurrences merged.algEnv contribution.algEnv }) {}
 
 /-- REPEATED-NAME VERDICT, value channel: some PAIR of the values carried by
-    `name`'s contributions differs (every contribution that carries a value must
-    carry an equal one). Stated over all pairs, so it depends only on the
-    multiset of contributions (`repeated_name_failure_is_permutation_invariant`). -/
+    `name`'s contributions differs. Every contribution carries a value — the binder
+    admits no valueless contribution of a repeated name (Q-05) — so every value must
+    be equal. Stated over all pairs, so it depends only on the multiset of
+    contributions (`repeated_name_failure_is_permutation_invariant`). -/
 def repeatedNameValueConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
   let values := contributions.filterMap (fun contribution => lookupAssoc name contribution.argEnv)
   values.any (fun first => values.any (fun second => !(first == second)))
@@ -2636,14 +2650,6 @@ def repeatedNameValueConflict (name : Ident) (contributions : List ParameterPatt
 def repeatedNameCountedConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
   let values := contributions.filterMap (fun contribution => lookupAssoc name contribution.countedParamEnv)
   values.any (fun first => values.any (fun second => !(first == second)))
-
-/-- REPEATED-NAME VERDICT, algorithm channel: when two or more contributions
-    bind `name` on the algorithm channel, EACH of them must also carry a value,
-    because repeated-bind equality compares values and an algorithm-only
-    argument has none. -/
-def repeatedNameAlgorithmConflict (name : Ident) (contributions : List ParameterPatternBindings) : Bool :=
-  let carriers := contributions.filter (fun contribution => (contribution.algEnv.lookup name).isSome)
-  2 ≤ carriers.length && carriers.any (fun contribution => (lookupAssoc name contribution.argEnv).isNone)
 
 /-- Callable identity includes its declaration and the captured lexical activation chain.
     Comparing identities does not evaluate either algorithm or consult its value cache. -/
@@ -2669,19 +2675,26 @@ def repeatedNameCallableIdentityConflict (name : Ident) (contributions : List Pa
 /-- REPEATED-NAME BINDING IS ORDER-INDEPENDENT (September 2026). The failure,
     if any, of the names that become COMPLETE at one merge — every one of their
     contributions at this pattern level is in `contributions`. A repeated name
-    binds iff every PAIR of its contributions is compatible under the
-    two-binding rule (equal values; equal complete counted pairs; two algorithm-channel
-    bindings only when both carry a value and have the same callable identity), so the verdict depends on the
-    multiset of contributions and never on their order or on how the merges are
-    grouped: `P(f, f, f)` rejects `(Inc, 5, A)` in every permutation. Two distinct
-    callable identities now reject even if their values agree. Within one merge
-    an unequal value or counted value (`badArity`) is reported before an
-    algorithm-channel conflict (`typeMismatch`). C#: `RepeatedNameAggregate`. -/
+    binds iff every PAIR of its contributions is compatible (equal values; equal
+    complete counted pairs; the same callable identity for two algorithm-channel
+    bindings), so the verdict depends on the multiset of contributions and never on
+    their order or on how the merges are grouped. Two distinct callable identities
+    reject even if their values agree. Within one merge an unequal value or counted
+    value (`badArity`) is reported before a callable-identity conflict
+    (`typeMismatch`).
+
+    REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): the verdict
+    only RESTRICTS. It sees no valueless contribution — the binder has already
+    failed any repeated capture whose slot has no value, with that slot's own
+    outcome (`bindParameterPattern`) — so there is no "algorithm-only" verdict, and
+    the merged binding never combines one argument's value with another argument's
+    algorithm. (The former `repeatedNameAlgorithmConflict` type mismatch rejected
+    only TWO algorithm-only contributions; one beside a value was spliced into a
+    binding no argument supplied, and a failed contribution was replaced by the
+    other's value.) C#: `RepeatedNameAggregate`. -/
 def repeatedNameFailure (names : List Ident) (contributions : List ParameterPatternBindings) : Option Error :=
   if names.any (fun name => repeatedNameValueConflict name contributions) then some Error.badArity
   else if names.any (fun name => repeatedNameCountedConflict name contributions) then some Error.badArity
-  else if names.any (fun name => repeatedNameAlgorithmConflict name contributions) then
-    some (Error.typeMismatch "Repeated bind equality is not supported for algorithm-only arguments")
   else if names.any (fun name => repeatedNameCallableIdentityConflict name contributions) then
     some (Error.typeMismatch "Repeated bind equality requires the same callable identity")
   else none
@@ -4955,8 +4968,11 @@ private theorem list_drop_sizeOf_le [SizeOf α] (n : Nat) (xs : List α) :
           omega
 
 mutual
-  def bindParameterPattern (pattern : ParameterPattern) (input : ParameterPatternInput)
-      (allowAlgorithmBindings : Bool) : EvalM ParameterPatternBindings := do
+  /-- Bind ONE pattern of the pattern `level` (the complete list of patterns at this
+      level, the pattern itself included) against its supplied input. -/
+  def bindParameterPattern (level : List ParameterPattern) (pattern : ParameterPattern)
+      (input : ParameterPatternInput) (allowAlgorithmBindings : Bool)
+      : EvalM ParameterPatternBindings := do
     match pattern with
     | .capture parameter =>
         match parameter.kind with
@@ -4973,7 +4989,17 @@ mutual
                 | some algorithm => [(parameter.name, slotAlgorithmBinding input.value? input.error? algorithm)]
                 | none => []
               else []
-            if input.value?.isNone && (input.algorithm?.isNone || !allowAlgorithmBindings) then
+            -- A valueless slot binds a capture only through its algorithm channel, and
+            -- only where the capture does not need a value. REPEATED NAMES ARE
+            -- CONSTRAINTS, NOT MERGES (Q-05): a capture whose name the level repeats is
+            -- an equality constraint over independently supplied arguments, so it needs
+            -- its slot's OWN value, exactly as a sequence-value pattern needs the value
+            -- it opens. A callable-only argument (`Inc` passed bare) or a failed one
+            -- (`Bad = 1 / 0`) fails here with the slot's own recorded outcome; another
+            -- occurrence's value never stands in for it, and no binding pairs one
+            -- argument's value with another's algorithm.
+            if input.value?.isNone && (input.algorithm?.isNone || !allowAlgorithmBindings
+                || ParameterPattern.repeatsAtLevel parameter.name level) then
               .error (input.error?.getD Error.badArity)
             else
               pure { argEnv := argEnv, countedParamEnv := [], algEnv := algEnv }
@@ -5023,12 +5049,15 @@ mutual
     -- `bindPairs` binds EVERY pattern of a range, left to right, before
     -- anything merges: the first binding failure wins over any repeated-name
     -- conflict of the range (September 2026). `settle` then decides the
-    -- range's repeated names in the merge order (`settlePatternRange`).
+    -- range's repeated names in the merge order (`settlePatternRange`). A
+    -- repeated name's valueless contribution is such a binding failure (Q-05):
+    -- each pattern binds against the WHOLE level, which says whether its name
+    -- repeats.
     let rec bindPairs : List ParameterPattern -> List ParameterPatternInput
         -> EvalM (List ParameterPatternBindings)
       | [], [] => pure []
       | pattern :: patterns', input :: inputs' => do
-          let current <- bindParameterPattern pattern input allowAlgorithmBindings
+          let current <- bindParameterPattern patterns pattern input allowAlgorithmBindings
           let rest <- bindPairs patterns' inputs'
           pure (current :: rest)
       | _, _ => .error (Error.arityMismatch patterns.length inputs.length)
@@ -7301,6 +7330,18 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    (`KatLangArityLaws.lean`) states that an unlifted reference is always a
    cacheable demand.
 
+   A reference to a sibling whose parameter patterns REPEAT a binding name
+   (`P(x, x)`, `P((x, a), x)`) is not rewritten either, and it is not a value
+   read: the surface pass REFUSES it with a front-end error (Q-72, decided
+   2026-09-29; `refusesImplicitForwarding` and `bareValueReferenceTreatment`
+   below). Forwarding supplies arguments BY NAME, so it would feed every
+   occurrence of the repeated name from one binding — `Alias = P` became
+   `Alias(x) = P(x, x)` — and repeated occurrences are independently supplied
+   inputs whose compatibility the binder checks (Q-05). The program writes the
+   call (`Alias(a, b) = P(a, b)`, or `Same(x) = P(x, x)` to supply one value to
+   both); the evaluator never sees a refused reference, because a front-end
+   error blocks evaluation.
+
    Example:
      Surface:   `{ A = x + 1  B = A * 2 }`
      After detection: A.params = [x], B.params = []
@@ -7369,9 +7410,74 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
     lifted — an open question of its own (PV-14 / Q-13), unchanged by this
     rule. C#: `ImplicitArgumentResolver.RequiresSuppliedArguments` over
     `CallableSignature.AcceptsZeroSuppliedArguments` /
-    `ParameterPattern.AcceptsZeroSuppliedSlots`. -/
+    `ParameterPattern.AcceptsZeroSuppliedSlots`.
+
+    Since Q-72 (2026-09-29) this is the ARITY half of the decision: a reference
+    it accepts is a CALL demand rather than a value read, and that call demand
+    is lifted unless the callee repeats a parameter name, which the surface pass
+    refuses instead (`bareValueReferenceTreatment`). The value-read half — and
+    with it `bare_reference_lifts_iff_not_cacheable` — is unchanged. -/
 def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
   ParameterPattern.minimumSuppliedSlots signature != 0
+
+/-- **Repeated-name forwarding refusal** (Q-72, decided 2026-09-29; surface
+    syntax support — the specification of a C# front-end rule, which Lean states
+    but does not execute: Lean models no signature construction). A callee whose
+    parameter patterns REPEAT a binding name — two captures of the flattened
+    signature share a name, at any nesting depth, a collecting capture included
+    (`P(x, x)`, `P((x, a), x)`, `P((x, y), (z, x))`, `P((x, *rest), x)`) — never
+    takes part in implicit parameter forwarding.
+
+    Each occurrence of a repeated name is an INDEPENDENTLY supplied argument
+    whose compatibility the binder checks at call time (Q-05:
+    `bindParameterPattern` reads `ParameterPattern.repeatsAtLevel`), while
+    forwarding supplies arguments BY NAME (`forwardingSource` decides per name):
+    it would feed every occurrence from ONE binding, so `P(x, x) = x` /
+    `Alias = P` became `Alias(x) = P(x, x)` — an alias of a different arity whose
+    equality constraint held by construction. THE INVARIANT: repeated occurrences
+    represent independently supplied inputs whose compatibility is checked at
+    binding time; no implicit transformation may collapse those occurrences into
+    one input unless the source explicitly supplies that same input to each
+    occurrence.
+
+    The surface pass therefore leaves such a reference unlifted and reports it
+    (C# `DiagnosticCode.RepeatedParameterNotForwardable`) in open and closed
+    bodies alike — an existing same-named binding never feeds the occurrences
+    either (`Q(x) = P` is refused, never `Q(x) = P(x, x)`) — and the program
+    writes the call: `Alias(a, b) = P(a, b)`, or `Same(x) = P(x, x)` to supply one
+    value to both. The rule reads only the callee's OWN signature, so by-name
+    sharing ACROSS callees is untouched (`H = F + G` with `F(x)` and `G(x)` still
+    infers `H(x)`). The evaluator is unaffected: it evaluates whichever tree the
+    surface pass produces, and a refused reference never reaches it. C#:
+    `ImplicitArgumentResolver.RefusesImplicitForwarding` over
+    `CallableSignature.RepeatedParameterName`. -/
+def refusesImplicitForwarding (signature : List ParameterPattern) : Bool :=
+  ParameterPattern.hasRepeatedCaptureNames signature
+
+/-- What the surface pass does with a bare value-position reference to a callee
+    of the given LIFTING signature (Q-03 with Q-72). -/
+inductive BareValueReferenceTreatment where
+  /-- The callee accepts zero supplied arguments: the reference stays `.resolve`,
+      the cached zero-argument value demand (Q-03). -/
+  | read
+  /-- The callee requires supplied arguments and binds every capture name once:
+      the reference becomes the implicit forwarding call (`forwardingSource`). -/
+  | lift
+  /-- The callee requires supplied arguments and repeats a capture name: the
+      reference is left unlifted and reported as a front-end error (Q-72). -/
+  | refuse
+  deriving Repr, DecidableEq
+
+/-- The surface pass's ONE decision for a bare value-position reference: read,
+    lift, or refuse (see `liftsBareValueReference` and `refusesImplicitForwarding`;
+    the arity half decides first, so a callable that accepts zero supplied
+    arguments is read whatever its names). C#: the arms of
+    `ImplicitArgumentResolver.CollectImplicitDepsCore` and `RewriteBareReference`,
+    in that order. -/
+def bareValueReferenceTreatment (signature : List ParameterPattern) : BareValueReferenceTreatment :=
+  if liftsBareValueReference signature then
+    if refusesImplicitForwarding signature then .refuse else .lift
+  else .read
 
 /-- Where AUTOMATIC PARAMETER FORWARDING takes the argument for one callee parameter
     (Q-04, decided 2026-09-28): see `forwardingSource`. -/
@@ -7412,7 +7518,12 @@ inductive ForwardingSource where
     it). C#: `ImplicitArgumentResolver.ForwardableParameters` (the enclosing parameter
     bindings), `LiftSignature`, `MissingClosedListForwardingNames`,
     `BuildImplicitCallArguments`; laws in `KatLangArityLaws.lean`, guards in
-    `CoreTests/ForwardingBindings.lean`. -/
+    `CoreTests/ForwardingBindings.lean`.
+
+    Deciding per NAME is deciding per capture occurrence only because a lifted
+    callee binds each name once: a callee that repeats a parameter name is never
+    lifted (`bareValueReferenceTreatment`, Q-72), so this decision is never asked
+    to feed several independently supplied occurrences from one binding. -/
 def forwardingSource (chain : List OwnerLevel) (inferring : Bool) (name : Ident) : ForwardingSource :=
   match selectOwnedDeclaration chain name with
   | .parameter 0 => .ownParameter

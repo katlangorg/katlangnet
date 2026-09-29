@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 ///
 /// <para>Lean's <c>bindPairs</c> binds EVERY pattern of a range before it merges repeated names,
 /// and it merges right to left — the innermost merge first; within one merge an unequal value
-/// (<see cref="EvalError.BadArity"/>) before an algorithm-only repeated name
+/// (<see cref="EvalError.BadArity"/>) before a callable-identity conflict
 /// (<see cref="EvalError.TypeMismatch"/>). With a collecting capture the prefix binds and
 /// merges, then the suffix binds and merges, then the collector's values are collected and
 /// materialized, and the prefix/collector/suffix merges come last. The C# binders used to
@@ -28,6 +28,16 @@ namespace KatLang.Tests;
 /// more occurrences that mix algorithm-only, value-only, and dual-channel arguments changed
 /// outcome (Lean's former right fold accepted <c>P(A, 5, Inc)</c> but rejected
 /// <c>P(Inc, 5, A)</c>; C#'s former left fold the mirror image).</para>
+///
+/// <para>REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): every occurrence
+/// must supply its OWN value, so a valueless contribution — a callable-only argument
+/// (<c>Inc</c>, whose value demand is its own arity rejection) or a failed one (<c>Bad</c>) —
+/// is a BINDING failure of its own pattern, reported with the slot's own outcome before any
+/// verdict of that range. The former "algorithm-only arguments" verdict is gone: it rejected
+/// only two valueless contributions, while one beside a value was spliced into a binding no
+/// argument supplied (<c>P(5, Inc)</c> bound the value 5 with Inc's algorithm) and a failed
+/// one was repaired by the other's value. The full Q-05 matrix is
+/// <see cref="RepeatedNameConstraintTests"/>.</para>
 ///
 /// <para>The nested-group wording (<see cref="SequenceValueParameterBindingContext"/>) and every
 /// outer call/callback frame are untouched. Lean: the precedence guards in
@@ -63,20 +73,40 @@ public class PatternBindingErrorPrecedenceTests
         // ...and the collector's values are collected before it.
         { "P(x, *r, x) = x\nP(1, Bad, 2)", "DivByZero in []" },
         { "P(x, *r, x) = x\nP(1, Inc, 2)", "TypeMismatch(Collecting parameter `*r` collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected.) in []" },
-        // Merges run right to left: the rightmost failing merge decides the kind.
-        { "P(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
-        { "P(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", "BadArity in []" },
-        { "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), Inc, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
+        // Merges run right to left: the rightmost failing merge decides the kind (A and B
+        // are two callables with the equal value 5).
+        { Distinct + "P(x, x, f, f) = 0\nP(1, 2, A, B)", Identity },
+        { Distinct + "P(f, f, x, x) = 0\nP(A, B, 1, 2)", "BadArity in []" },
+        { Distinct + "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), A, B)", Identity },
         // A lone conflict is still the ordinary BadArity.
         { "P(x, x) = x\nP(1, 2)", "BadArity in []" },
         { "P(x, *r, x) = x\nP(1, 9, 2)", "BadArity in []" },
         // The prefix/collector/suffix merge: within ONE merge an unequal value is found before
-        // an algorithm-only repeat (both x and f repeat across the collector)...
-        { "P(x, f, *r, f, x) = 0\nP(1, Inc, Inc, 2)", "BadArity in []" },
-        // ...and an algorithm-only repeat across the collector is the type mismatch.
-        { "P(f, *r, f) = 0\nP(Inc, 9, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
-        { "P(*r, f, f) = 0\nP(Bad, Inc, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
+        // a callable-identity conflict (both x and f repeat across the collector)...
+        { Distinct + "P(x, f, *r, f, x) = 0\nP(1, A, B, 2)", "BadArity in []" },
+        // ...and a callable-identity conflict across the collector is the type mismatch.
+        { Distinct + "P(f, *r, f) = 0\nP(A, 9, B)", Identity },
+        // A repeated name's VALUELESS contribution is a binding failure of its own pattern
+        // (Q-05): the slot's own outcome, before any verdict of that range, wherever the
+        // unequal name stands, and before a later pattern binds.
+        { "P(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", IncValueDemand },
+        { "P(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", IncValueDemand },
+        { "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), Inc, Inc)", IncValueDemand },
+        { "P(x, x, f, f) = 0\nP(1, 2, Bad, 7)", "DivByZero in []" },
+        { "P(f, f, (a, b)) = a\nP(7, Bad, 5)", "DivByZero in []" },
+        { "P(x, f, *r, f, x) = 0\nP(1, Inc, Inc, 2)", IncValueDemand },
+        { "P(f, *r, f) = 0\nP(Inc, 9, Inc)", IncValueDemand },
+        { "P(f, *r, f) = 0\nP(7, 9, Bad)", "DivByZero in []" },
+        { "P(*r, f, f) = 0\nP(Bad, Inc, Inc)", IncValueDemand },
     };
+
+    /// <summary>Two callables with the equal zero-argument value 5.</summary>
+    private const string Distinct = "A = 5\nB = 5 + 0\n";
+
+    private const string Identity = "TypeMismatch(Repeated bind equality requires the same callable identity) in []";
+
+    /// <summary><c>Inc</c> passed bare: its own value demand, the arity rejection of <c>Inc(y)</c>.</summary>
+    private const string IncValueDemand = "ArityMismatch(1, 0) in []";
 
     [Theory]
     [MemberData(nameof(OrdinaryCalls))]
@@ -192,6 +222,8 @@ public class PatternBindingErrorPrecedenceTests
     [InlineData("P(x, x, (a, b)) = a\nP(1, 2, Bad)")]
     [InlineData("P(x, *r, x) = x\nP(1, Bad, 2)")]
     [InlineData("P(x, x, f, f) = 0\nP(1, 2, Inc, Inc)")]
+    [InlineData("P(x, x) = x\nP(7, Bad)")]
+    [InlineData("P(x, x) = x, x(5)\nP(1, Inc)")]
     [InlineData("K((x, x, (a, b))) = true\n[(1, 2, 7), (1, 1, (2, 3))].filter(K).count")]
     [InlineData("R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))")]
     [InlineData("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, 7)")]
@@ -214,42 +246,51 @@ public class PatternBindingErrorPrecedenceTests
     // ── Repeated-name binding is order-independent ──────────────────────────
 
     /// <summary>
-    /// Argument multisets for one repeated name, with the verdict every permutation must give
-    /// (Lean <c>repeatedNameFailure</c>: every PAIR of contributions compatible). <c>Inc</c> is
-    /// an algorithm only, <c>5</c>/<c>6</c> are values only, <c>A = 5</c>/<c>B = 6</c> carry
-    /// both.
+    /// Argument multisets for one repeated name, with the outcome every permutation must give
+    /// (Lean <c>repeatedNameFailure</c>: every PAIR of contributions compatible; and Q-05: every
+    /// contribution supplies its own value). <c>Inc</c> is a callable only, <c>Bad</c> a failed
+    /// argument, <c>5</c>/<c>6</c> are values only, <c>A = 5</c>/<c>B = 6</c> carry both.
     /// </summary>
     public static TheoryData<string[], string> RepeatedNameMultisets => new()
     {
-        // Inc and A are two algorithm bindings and Inc has no value: fails in every order.
-        { ["Inc", "5", "A"], "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
-        { ["Inc", "A", "A"], "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
-        { ["Inc", "5", "5", "A"], "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []" },
-        // Unequal values outrank an algorithm-only repeat, in every order.
-        { ["A", "B", "Inc"], "BadArity in []" },
-        { ["5", "6", "Inc"], "BadArity in []" },
+        // Inc supplies no value: its own value demand fails, in every order.
+        { ["Inc", "5", "A"], IncValueDemand },
+        { ["Inc", "A", "A"], IncValueDemand },
+        { ["Inc", "5", "5", "A"], IncValueDemand },
+        // A valueless contribution is a binding failure: it precedes the unequal-value verdict,
+        // in every order.
+        { ["A", "B", "Inc"], IncValueDemand },
+        { ["5", "6", "Inc"], IncValueDemand },
+        { ["5", "6", "Bad"], "DivByZero in []" },
+        // Formerly `ok 5`: the value 5 was paired with Inc's algorithm, and Bad's failure was
+        // repaired by the other occurrences' value.
+        { ["5", "Inc", "5"], IncValueDemand },
+        { ["5", "Bad", "5"], "DivByZero in []" },
+        { ["A", "Bad", "A"], "DivByZero in []" },
+        // Unequal values, in every order.
+        { ["A", "B", "5"], "BadArity in []" },
         // Every pair compatible: binds, in every order (the value is 5 whichever occurrence
         // supplies it).
         { ["A", "A", "5"], "ok 5" },
         { ["5", "5", "A"], "ok 5" },
-        { ["5", "Inc", "5"], "ok 5" },
     };
 
     [Theory]
     [MemberData(nameof(RepeatedNameMultisets))]
     public void RepeatedNameVerdict_IsTheSameForEveryPermutation(string[] arguments, string expected)
     {
+        const string definitions = "A = 5\nB = 6\nBad = 1 / 0\nInc(y) = y + 1\n";
         var captures = string.Join(", ", Enumerable.Repeat("f", arguments.Length));
         foreach (var permutation in Permutations(arguments))
         {
             var call = $"P({string.Join(", ", permutation)})";
-            Assert.Equal(expected, Outcome(Run($"A = 5\nB = 6\nInc(y) = y + 1\nP({captures}) = f\n{call}")));
+            Assert.Equal(expected, Outcome(Run($"{definitions}P({captures}) = f\n{call}")));
 
             // The same multiset around a collecting parameter: the name spans the prefix and
             // the suffix, and is decided once at the cross merge with all of it in hand.
             var spread = $"P({permutation[0]}, 9, {string.Join(", ", permutation.Skip(1))})";
             var collecting = $"f, *r, {string.Join(", ", Enumerable.Repeat("f", arguments.Length - 1))}";
-            Assert.Equal(expected, Outcome(Run($"A = 5\nB = 6\nInc(y) = y + 1\nP({collecting}) = f\n{spread}")));
+            Assert.Equal(expected, Outcome(Run($"{definitions}P({collecting}) = f\n{spread}")));
         }
     }
 
@@ -269,19 +310,25 @@ public class PatternBindingErrorPrecedenceTests
     }
 
     [Theory]
-    [InlineData("P(f, f) = f\nP(Inc, A)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []")]
-    [InlineData("P(f, f) = f\nP(A, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []")]
-    [InlineData("P(f, f) = f\nP(Inc, Inc)", "TypeMismatch(Repeated bind equality is not supported for algorithm-only arguments) in []")]
+    [InlineData("P(f, f) = f\nP(Inc, A)", IncValueDemand)]
+    [InlineData("P(f, f) = f\nP(A, Inc)", IncValueDemand)]
+    [InlineData("P(f, f) = f\nP(Inc, Inc)", IncValueDemand)]
     [InlineData("P(f, f) = f\nP(A, A)", "ok 5")]
     [InlineData("P(f, f) = f\nP(A, 5)", "ok 5")]
-    [InlineData("P(f, f) = f\nP(5, Inc)", "ok 5")]
-    [InlineData("P(f, f) = f\nP(Inc, 5)", "ok 5")]
-    // (Inc, 5) combine: f's value is 5 and its algorithm is Inc, so f() calls Inc with no argument.
-    [InlineData("P(f, f) = f()\nP(Inc, 5)", "ArityMismatch(1, 0) in []")]
-    public void TwoOccurrenceNames_KeepThePairwiseRule(string program, string expected)
+    [InlineData("P(f, f) = f\nP(5, A)", "ok 5")]
+    [InlineData("P(f, f) = f\nP(5, Inc)", IncValueDemand)]
+    [InlineData("P(f, f) = f\nP(Inc, 5)", IncValueDemand)]
+    // The binding itself fails, before the body runs: formerly (Inc, 5) was combined into
+    // the value 5 with Inc's algorithm, so a body ignoring f gave 0 and `f(1)` invoked Inc.
+    [InlineData("P(f, f) = 0\nP(Inc, 5)", IncValueDemand)]
+    [InlineData("P(f, f) = f(1)\nP(5, Inc)", IncValueDemand)]
+    [InlineData("P(f, f) = f()\nP(Inc, 5)", IncValueDemand)]
+    public void TwoOccurrenceNames_RequireEachArgumentsOwnValue(string program, string expected)
     {
-        // These earlier one/two-occurrence controls stay valid. Distinct callable identities
-        // are the deliberate two-occurrence compatibility change tested below.
+        // One algorithm channel may ACCOMPANY an equal value its own argument supplied
+        // (`P(A, 5)`, `P(5, A)`), but a callable-only argument supplies no value, and the other
+        // occurrence's value never completes it (Q-05). Distinct callable identities are the
+        // deliberate two-occurrence compatibility rule tested below.
         Assert.Equal(expected, Outcome(Run("A = 5\nInc(y) = y + 1\n" + program)));
     }
 
