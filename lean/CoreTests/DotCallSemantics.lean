@@ -818,9 +818,12 @@ def explicitCallSiteSequenceValueCountSequenceValue2Alg : Algorithm :=
     .dotCall (.param "values") "count" none
   ]
 
+-- `CountSequenceValue3([(*values)]) = values.count`: a one-element LIST whose element
+-- is a SEQUENCE. (The former `((*values))` is a one-item sequence pattern, invalid
+-- since structural patterns became kind-specific: no one-item sequence exists.)
 def explicitCallSiteSequenceValueCountSequenceValue3Alg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]
+    .listValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]
   ] [] [] [
     .dotCall (.param "values") "count" none
   ]
@@ -856,12 +859,11 @@ def sequenceValueCollectingParameterIgnoresRedundantCallSiteGrouping : Bool :=
 
 #guard sequenceValueCollectingParameterIgnoresRedundantCallSiteGrouping
 
--- A nested pattern `((*values))` opens two REAL boundaries: the argument must
--- open to exactly one item that itself opens. A sequence value never can
--- (unary sequence structure does not survive normalization), so `(1, 2, 3)`
--- opens to three items against the one nested pattern at every host-built
--- capture depth (`arityMismatch 1 3`), while a one-element list supplies the
--- outer level.
+-- A nested pattern `[(*values)]` opens two REAL boundaries of two kinds: the
+-- argument must be a one-element LIST whose element is a SEQUENCE. A sequence
+-- argument is never a list, so `(1, 2, 3)` is the outer list pattern's kind
+-- mismatch at every host-built capture depth, while the one-element list
+-- `[(1, 2, 3)]` supplies the outer level and its sequence element the inner one.
 def nestedSequenceValueCollectingParameterOpensOneRealBoundaryPerLevel : Bool :=
   let root (argument : KatLang.Expr) : Algorithm :=
     algPrivate [] [] [
@@ -869,7 +871,7 @@ def nestedSequenceValueCollectingParameterOpensOneRealBoundaryPerLevel : Bool :=
     ] [.call (.resolve "CountSequenceValue3") [argument]]
   let rejects (depth : Nat) : Bool :=
     match runResult (.algorithmExpr (root (explicitCallSiteSequenceValue123 depth))) with
-    | Except.error err => innermostIsArityMismatch 1 3 err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   let listOpens : Bool :=
     match runFlat (.algorithmExpr (root (.listLiteral [explicitCallSiteSequenceValue123 0]))) with

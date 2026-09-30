@@ -161,8 +161,8 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         public bool HasEmptyGroup { get; }
 
         private static bool ContainsEmptyGroup(ParameterPattern pattern)
-            => pattern is SequenceValueParameterPattern group
-                && (group.Items.Count == 0 || group.Items.Any(ContainsEmptyGroup));
+            => ParameterPattern.StructuralItems(pattern) is { } items
+                && (items.Count == 0 || items.Any(ContainsEmptyGroup));
 
         /// <summary>Whether a capture is a parser recovery placeholder (editor metadata displays it as <c>?</c>).</summary>
         public bool HasRecoveryPlaceholder { get; }
@@ -334,18 +334,19 @@ internal sealed class ImplicitSignatureTemplateInterner(FrontEndTraversalObserva
 {
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate> _flat = new();
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate?> _liftedTails = new();
-    private readonly Dictionary<SequenceValueParameterPattern, SequenceValueParameterPattern> _groups = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ParameterPattern, ParameterPattern> _groups = new(ReferenceEqualityComparer.Instance);
 
     // Public host patterns retain caller-owned lists. Freeze nested membership once per
-    // resolution before a shared template can cache facts about it; preserve record metadata.
+    // resolution before a shared template can cache facts about it; the structural kind is
+    // preserved (a list group stays a list group).
     internal ParameterPattern Freeze(ParameterPattern pattern)
     {
-        if (pattern is not SequenceValueParameterPattern group)
+        if (ParameterPattern.StructuralItems(pattern) is not { } items)
             return pattern;
-        if (!_groups.TryGetValue(group, out var frozen))
+        if (!_groups.TryGetValue(pattern, out var frozen))
         {
-            frozen = group with { Items = Array.AsReadOnly(group.Items.Select(Freeze).ToArray()) };
-            _groups.Add(group, frozen);
+            frozen = ParameterPattern.WithStructuralItems(pattern, Array.AsReadOnly(items.Select(Freeze).ToArray()));
+            _groups.Add(pattern, frozen);
             _groups.Add(frozen, frozen);
         }
         return frozen;

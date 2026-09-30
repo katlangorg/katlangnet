@@ -222,55 +222,80 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_VariadicImplicitCall_NameMismatchForwardsCallerStreamAsSpreadWithoutLiftingCalleeName()
+    public void Resolve_VariadicImplicitCall_NameMismatch_OnlyAFormulaForwardsTheStreamByShape()
     {
-        // The callee's one parameter is a group holding a collector: it REQUIRES its one
-        // supplied slot, so the bare reference is a forwarding call (a lone top-level
-        // collector `CountItems(*items)` accepts zero supplied arguments and is read as a
-        // value instead — Q-03, see Resolve_ZeroArgumentVariadicHelper_IsNeverLifted).
+        // A LONE row is bare forwarding BY NAME (FWD-02): `Use(*values) = CountItems` declares no
+        // parameter `(*items)`, so it is rejected — the caller's stream is never renamed into the
+        // callee's name nor reshaped into its group — and the callee's binder is never lifted.
         var source = """
             CountItems((*items)) = items.count
             Use(*values) = CountItems
             """;
-        var root = Resolve(source);
-
-        var use = root.Properties.Single(p => p.Name == "Use").Value;
-        Assert.Equal(["values"], use.Params);
+        var rejection = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        Assert.Equal(DiagnosticCode.UnforwardableParameter, rejection.Code);
+        Assert.Contains("'(*items)'", rejection.Message, StringComparison.Ordinal);
+        var use = SourceProvenance.ParseAllowingDiagnostics(source).Root.Properties.Single(p => p.Name == "Use").Value;
         Assert.Equal(["*values"], use.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
-        Assert.DoesNotContain("items", use.Params);
+        Assert.Equal("CountItems", Assert.IsType<Expr.Resolve>(Assert.Single(use.Output)).Name);
 
-        var call = Assert.IsType<Expr.Call>(Assert.Single(use.Output));
-        var function = Assert.IsType<Expr.Resolve>(call.Function);
-        Assert.Equal("CountItems", function.Name);
-
-        // Variadic forwarding BY SHAPE synthesizes the callee's group around a SPREAD argument
-        // (`CountItems((values*))`): the caller's collecting parameter holds one exact list, and
-        // the spread re-supplies its collected items so the group's collecting parameter
-        // re-collects exactly them.
-        var capture = Assert.IsType<Expr.Capture>(Assert.Single(call.Args));
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
-        var param = Assert.IsType<Expr.Param>(spread.Operand);
-        Assert.Equal("values", param.Name);
+        // In a FORMULA the callee's one grouped stream is still forwarded BY SHAPE: the callee's
+        // SEQUENCE group is rebuilt, as a sequence, from a SPREAD argument
+        // (`CountItems((values*)) + 0`), so the group's collecting parameter re-collects exactly
+        // the caller's items.
+        var formula = Resolve(source.Replace("= CountItems", "= CountItems + 0", StringComparison.Ordinal))
+            .Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["values"], formula.Params);
+        var lifted = Assert.IsType<Expr.Call>(Assert.IsType<Expr.Binary>(Assert.Single(formula.Output)).Left);
+        var group = Assert.IsType<Expr.Capture>(Assert.Single(lifted.Args));
+        var grouped = Assert.IsType<Expr.SequenceSpread>(Assert.Single(group.Body));
+        Assert.Equal("values", Assert.IsType<Expr.Param>(grouped.Operand).Name);
     }
 
     [Theory]
-    [InlineData("Use(*values) = CountItems")]
-    [InlineData("Use(*items) = CountItems")]
-    [InlineData("Use(items) = CountItems")]
-    [InlineData("Use = CountItems")]
     [InlineData("Use = CountItems + 1")]
     [InlineData("Use(*values) = Math.Abs(CountItems)")]
+    [InlineData("Use(*values) = [CountItems]:0")]
     public void Resolve_ZeroArgumentVariadicHelper_IsNeverLifted(string use)
     {
-        // Q-03: `CountItems(*items)` accepts zero supplied arguments, so its bare name is a
-        // property-style value demand wherever it stands and whatever the caller binds — by name
-        // or by shape. Nothing is lifted into `Use` and no call is synthesized.
+        // Q-03: `CountItems(*items)` accepts zero supplied arguments, so its bare name in a
+        // FORMULA is a property-style value demand whatever the caller binds — by name or by
+        // shape. Nothing is lifted into `Use` and no call is synthesized.
         var source = "CountItems(*items) = items.count\n" + use;
         var written = SourceProvenance.ParseSyntaxValidRoot(source).Properties.Single(p => p.Name == "Use").Value;
         var resolved = Resolve(source).Properties.Single(p => p.Name == "Use").Value;
 
         Assert.Equal(written.Params, resolved.Params);
         Assert.Empty(CallsTo(resolved, "CountItems"));
+    }
+
+    [Theory]
+    [InlineData("Use(*values) = CountItems", "*values", null)]
+    [InlineData("Use(*items) = CountItems", "*items", "items*")]
+    [InlineData("Use(items) = CountItems", "items", "items")]
+    [InlineData("Use = CountItems", "*items", "items*")]
+    public void Resolve_ZeroArgumentVariadicHelper_AsALoneRow_IsAliasedForwardedOrRead(string use, string signature, string? arguments)
+    {
+        // A lone row reads the callee's DECLARED signature (FWD-02, superseding Q-03's alias
+        // clause): an open body inherits `(*items)`; a written list forwards BY NAME — the
+        // same-named collector re-spread, a same-named fixed parameter as one argument — and when
+        // no binding has the collector's name nothing is forwarded, so the row is the callee's bare
+        // name, its cached zero-argument value (Q-03).
+        var resolved = Resolve("CountItems(*items) = items.count\n" + use).Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(signature, string.Join(", ", resolved.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+        if (arguments is null)
+        {
+            Assert.Empty(CallsTo(resolved, "CountItems"));
+            Assert.Equal("CountItems", Assert.IsType<Expr.Resolve>(Assert.Single(resolved.Output)).Name);
+            return;
+        }
+
+        var call = Assert.Single(CallsTo(resolved, "CountItems"));
+        Assert.Equal(arguments, string.Join(", ", call.Args.Select(static argument => argument switch
+        {
+            Expr.SequenceSpread { Operand: Expr.Param spread } => spread.Name + "*",
+            Expr.Param param => param.Name,
+            _ => argument.GetType().Name,
+        })));
     }
 
     private static List<Expr.Call> CallsTo(Algorithm algorithm, string callee)
@@ -295,11 +320,11 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper()
     {
-        // The helper REQUIRES its `first` argument, so it is a forwarding candidate that the
-        // closed list must refuse (a zero-argument helper is never a candidate at all, Q-03).
+        // The helper REQUIRES its `first` argument. In a FORMULA the closed list must refuse to
+        // forward the names it does not declare, so the reference stays bare.
         var source = """
             CountItems(first, *items) = items.count
-            Use(value) = CountItems
+            Use(value) = CountItems + 0
             """;
         var root = Resolve(source);
 
@@ -307,9 +332,19 @@ public class ImplicitArgumentResolverTests
         Assert.Equal(["value"], use.Params);
         Assert.Equal(["value"], use.ParameterPatterns.Select(parameter => parameter.DisplayName).ToList());
         Assert.DoesNotContain("items", use.Params);
-
-        var resolve = Assert.IsType<Expr.Resolve>(Assert.Single(use.Output));
+        var resolve = Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.Binary>(Assert.Single(use.Output)).Left);
         Assert.Equal("CountItems", resolve.Name);
+
+        // A LONE row is bare forwarding BY NAME: the list declares no `first`, so the row is
+        // rejected at the front end — never renamed from `value`, never added to the closed list
+        // (FWD-02) — and stays as written.
+        var lone = source.Replace(" + 0", "", StringComparison.Ordinal);
+        var rejection = Assert.Single(SourceProvenance.ExpectFrontEndError(lone));
+        Assert.Equal(DiagnosticCode.UnforwardableParameter, rejection.Code);
+        Assert.Contains("'first'", rejection.Message, StringComparison.Ordinal);
+        var rejected = SourceProvenance.ParseAllowingDiagnostics(lone).Root.Properties.Single(p => p.Name == "Use").Value;
+        Assert.Equal(["value"], rejected.Params);
+        Assert.Equal("CountItems", Assert.IsType<Expr.Resolve>(Assert.Single(rejected.Output)).Name);
     }
 
     [Fact]
@@ -537,11 +572,15 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Eval_ZeroArgumentVariadicCallee_IsReadNotForwarded()
     {
-        // Q-03: a callee whose only parameter is a top-level collector works with no
-        // arguments, so the bare name is ITS zero-argument value (0) — never a forwarding
-        // call — whether the caller's collector has the same name or another one. The
-        // forwarding is written explicitly, and then it is the ordinary call.
-        AssertEval("CountValues(*values) = values.count\nUse(*values) = CountValues\nUse((1, 2, 3)*)", 0);
+        // Q-03: a callee whose only parameter is a top-level collector works with no arguments,
+        // so its bare name in a FORMULA is ITS zero-argument value (0) — never a forwarding call —
+        // whether the caller's collector has the same name or another one. A LONE row is bare
+        // forwarding BY NAME (FWD-02): the same-named collector is re-spread (3), while a caller
+        // stream of another name is never renamed into the callee's, so nothing is forwarded and
+        // the row is the callee's zero-argument value again (0); the written call forwards (3).
+        AssertEval("CountValues(*values) = values.count\nUse(*values) = CountValues + 0\nUse((1, 2, 3)*)", 0);
+        AssertEval("CountItems(*items) = items.count\nUse(*values) = CountItems + 0\nUse((1, 2, 3)*)", 0);
+        AssertEval("CountValues(*values) = values.count\nUse(*values) = CountValues\nUse((1, 2, 3)*)", 3);
         AssertEval("CountItems(*items) = items.count\nUse(*values) = CountItems\nUse((1, 2, 3)*)", 0);
         AssertEval("CountItems(*items) = items.count\nUse(*values) = CountItems(values*)\nUse((1, 2, 3)*)", 3);
     }
@@ -551,7 +590,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             CountSequenceValue((*values)) = values.count
-            Use(*values) = CountSequenceValue
+            Use(*values) = [CountSequenceValue]:0
             Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
@@ -562,10 +601,21 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             CountSequenceValue((*items)) = items.count
-            Use(*values) = CountSequenceValue
+            Use(*values) = [CountSequenceValue]:0
             Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
+
+        // A LONE row is bare forwarding by name: `Use(*values)` declares no `(*items)`, so it is
+        // rejected at the front end — the caller's stream is neither renamed nor reshaped — while
+        // the written `CountSequenceValue(values*)` passes three arguments the callee's one sequence
+        // parameter rejects at run time.
+        var rejection = Assert.Single(SourceProvenance.ExpectFrontEndError(
+            "CountSequenceValue((*items)) = items.count\nUse(*values) = CountSequenceValue\nUse((1, 2, 3)*)"));
+        Assert.Equal(DiagnosticCode.UnforwardableParameter, rejection.Code);
+        var written = Eval("CountSequenceValue((*items)) = items.count\nUse(*values) = CountSequenceValue(values*)\nUse((1, 2, 3)*)");
+        Assert.True(written.IsError);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(written.Error));
     }
 
     [Fact]
@@ -576,8 +626,8 @@ public class ImplicitArgumentResolverTests
         // is `Target(tag, items)` — ONE argument, collected as one item whatever its
         // value (the destination being collecting must not open it): a list, a
         // sequence, and a scalar alike — exactly as for the explicitly written
-        // `Target(tag, items)`. (`Target` requires its `tag`, so it is forwarded to at all:
-        // a callee that works with no arguments is read as a value instead, Q-03.)
+        // `Target(tag, items)`. (The lone row under a written list is bare forwarding: Use's
+        // same-named bindings supply Target's parameters, FWD-02.)
         var source = """
             Target(tag, *items) = items
             Use(tag, items) = Target
@@ -651,24 +701,18 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Eval_SequenceValueOrdinaryCaller_NameMismatchStaysUnresolved()
     {
-        // The callee's parameter name does not match any caller parameter, so the
-        // reference is NOT rewritten and never silently spreads the caller's ordinary
-        // sequence-value parameter. Since September 2026 a collecting parameter requires
-        // no supplied argument, so the unrewritten reference is an ordinary zero-argument
-        // value demand that collects NOTHING: the result is 0. Had the resolver rewritten
-        // `CountValues` into `CountValues(sequenceValue)` it would be 3 — that difference
-        // is what this case pins. (Since Q-03 a callee that works with no arguments is never
-        // a forwarding candidate at all, so the reference stays this value read even when a
-        // caller parameter matches its name.)
-        var result = Eval(
-            """
-            CountValues(*values) = values.count
-            Use(sequenceValue) = CountValues
-            Use((1, 2, 3))
-            """);
-
-        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
-        Assert.Equal([(Decimal128)0], result.Value);
+        // Nothing ever silently spreads — or renames — the caller's ordinary sequence-value
+        // parameter. In a FORMULA the callee works with no arguments, so its bare name is its
+        // zero-argument value demand (Q-03), which collects NOTHING: 0. As a LONE row, bare
+        // forwarding is BY NAME (FWD-02) and no binding is named `values`, so nothing is forwarded
+        // and the row is the same zero-argument value: 0. Silently spreading `sequenceValue`
+        // would give 3, forwarding it under another name 1 — that difference is what this pins.
+        foreach (var (body, expected) in new[] { ("CountValues + 0", 0m), ("CountValues", 0m) })
+        {
+            var result = Eval($"CountValues(*values) = values.count\nUse(sequenceValue) = {body}\nUse((1, 2, 3))");
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            Assert.Equal([(Decimal128)expected], result.Value);
+        }
     }
 
     // â”€â”€ Transitive ordering: zero-param intermediaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -829,6 +873,13 @@ public class ImplicitArgumentResolverTests
                 for (var i = 0; i < capture.Body.Count; i++)
                     AssertSameLiftingShape(capture.Body[i], actualCapture.Body[i]);
                 break;
+            case Expr.ListLiteral list:
+                // A forwarded LIST group is rebuilt as a list literal of its items.
+                var actualList = Assert.IsType<Expr.ListLiteral>(actual);
+                Assert.Equal(list.Items.Count, actualList.Items.Count);
+                for (var i = 0; i < list.Items.Count; i++)
+                    AssertSameLiftingShape(list.Items[i], actualList.Items[i]);
+                break;
             case Expr.Call call:
                 var actualCall = Assert.IsType<Expr.Call>(actual);
                 AssertSameLiftingShape(call.Function, actualCall.Function);
@@ -953,6 +1004,10 @@ public class ImplicitArgumentResolverTests
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
     }
 
+    /// <summary>The one element of a list-element formula row <c>[e]:0</c>: an ordinary value position.</summary>
+    private static Expr ListElement(Expr row)
+        => Assert.Single(Assert.IsType<Expr.ListLiteral>(Assert.IsType<Expr.Index>(row).Target).Items);
+
     [Fact]
     public void Resolve_MathArgument_CollectingSourceNameMismatch_MatchesUnwrappedValuePosition()
     {
@@ -962,12 +1017,12 @@ public class ImplicitArgumentResolverTests
             """);
         var unwrapped = Resolve("""
             Target((*xs)) = xs.count
-            Use(*items) = Target
+            Use(*items) = [Target]:0
             """);
 
-        Assert.IsType<Expr.Call>(PropertyOutputRow(unwrapped, "Use"));
+        Assert.IsType<Expr.Call>(ListElement(PropertyOutputRow(unwrapped, "Use")));
         AssertSameLiftingShape(
-            PropertyOutputRow(unwrapped, "Use"),
+            ListElement(PropertyOutputRow(unwrapped, "Use")),
             MathArgument(PropertyOutputRow(wrapped, "Use")));
     }
 
@@ -984,7 +1039,7 @@ public class ImplicitArgumentResolverTests
         AssertEval(
             """
             Target((*xs)) = xs.count
-            Use(*items) = Target
+            Use(*items) = [Target]:0
             Use(1, 2, 3)
             """,
             3);
@@ -1152,7 +1207,7 @@ public class ImplicitArgumentResolverTests
         var unwrapped = Resolve("""
             A = y + 1
             G = {
-              F(x) = A
+              F(x) = [A]:0
               F(1) + y
             }
             """);
@@ -1161,7 +1216,7 @@ public class ImplicitArgumentResolverTests
             => root.Properties.Single(p => p.Name == "G").Value.Properties.Single(p => p.Name == "F");
 
         AssertSameLiftingShape(
-            Assert.Single(NestedF(unwrapped).Value.Output),
+            ListElement(Assert.Single(NestedF(unwrapped).Value.Output)),
             MathArgument(Assert.Single(NestedF(wrapped).Value.Output)));
         Assert.Equal(NestedF(unwrapped).Exposure, NestedF(wrapped).Exposure);
         Assert.Equal(NestedF(unwrapped).Value.Params, NestedF(wrapped).Value.Params);
@@ -1169,7 +1224,7 @@ public class ImplicitArgumentResolverTests
 
     [Theory]
     [InlineData("F(x) = Math.Abs(A)")]
-    [InlineData("F(x) = A")]
+    [InlineData("F(x) = [A]:0")]
     public void Eval_ClosedExplicitParameterList_ReadsTheCapturedAncestorParameter(string f)
     {
         // Q-04: `A`'s `y` is G's `y` (10) — the binding a `y` written in F denotes — so F(1) is
@@ -1178,6 +1233,17 @@ public class ImplicitArgumentResolverTests
         // a parameter F did not write.
         var source = $"A = y + 1\nG = {{\n  {f}\n  F(1) + y\n}}\nG(10)";
         var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
+        Assert.Equal<Decimal128>([21], result.Value);
+    }
+
+    [Fact]
+    public void Eval_ClosedExplicitParameterList_LoneRow_ForwardsByName()
+    {
+        // FWD-02 bare forwarding: the lone row `F(x) = A` hands A the EXISTING binding of A's own
+        // parameter name `y` — the one a `y` written in F denotes, G's inferred `y` (Q-04) — and
+        // never renames F's `x` to it: F(1) is 11 and G(10) is 21, exactly the formula's answer.
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve("A = y + 1\nG = {\n  F(x) = A\n  F(1) + y\n}\nG(10)")));
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
         Assert.Equal<Decimal128>([21], result.Value);
     }
@@ -1655,14 +1721,13 @@ public class ImplicitArgumentResolverTests
     [Fact]
     public void Resolve_ConditionalBranch_DoesNotLiftBareParameterizedHelper()
     {
-        // Mirror of Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper: `A`
-        // needs `x`, which the pattern `0` does not bind, so the reference stays bare and the
+        // Mirror of Resolve_ExplicitParameterList_DoesNotLiftBareParameterizedHelper: in a FORMULA
+        // `A` needs `x`, which the pattern `0` does not bind, so the reference stays bare and the
         // body invents no parameter. Evaluation then reports the ordinary arity error of the
-        // zero-argument value demand — the same outcome as `F(k) = A` — never `Unknown name`
-        // for a parameter nobody binds.
+        // zero-argument value demand — never `Unknown name` for a parameter nobody binds.
         var source = """
             A = x + 1
-            F(0) = A
+            F(0) = A + 0
             F(n) = n
             """;
         var root = Resolve(source);
@@ -1670,7 +1735,7 @@ public class ImplicitArgumentResolverTests
         var f = Assert.IsType<Algorithm.Conditional>(root.Properties.Single(p => p.Name == "F").Value);
         var body = f.Branches[0].Body;
         Assert.Empty(body.Params);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.Binary>(Assert.Single(body.Output)).Left).Name);
 
         var result = Eval(source + "\nF(0)");
         Assert.True(result.IsError);
@@ -1678,5 +1743,17 @@ public class ImplicitArgumentResolverTests
         while (error is EvalError.WithContext withContext)
             error = withContext.Inner;
         Assert.IsType<EvalError.ArityMismatch>(error);
+
+        // A LONE row is bare forwarding BY NAME (FWD-02): the head `0` binds no `x` and a literal is
+        // never forwarded, so `F(0) = A` is rejected at the front end, naming `x`; the row stays
+        // as written and the branch invents no parameter.
+        var lone = source.Replace(" + 0", "", StringComparison.Ordinal);
+        var rejection = Assert.Single(SourceProvenance.ExpectFrontEndError(lone));
+        Assert.Equal(DiagnosticCode.UnforwardableParameter, rejection.Code);
+        Assert.Contains("'x'", rejection.Message, StringComparison.Ordinal);
+        var rejected = SourceProvenance.ParseAllowingDiagnostics(lone).Root;
+        var rejectedBody = Assert.IsType<Algorithm.Conditional>(rejected.Properties.Single(p => p.Name == "F").Value).Branches[0].Body;
+        Assert.Empty(rejectedBody.Params);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(rejectedBody.Output)).Name);
     }
 }

@@ -636,11 +636,27 @@ def sequenceValuePatternEmptySequenceSiblingItemIsPreserved : Bool :=
 
 #guard sequenceValuePatternEmptySequenceSiblingItemIsPreserved
 
-/-- Regression: only an explicit spread contributes zero items. `F((E*, 6))`
-    with `E = ()` spreads away the empty value, so the pattern sees the single
-    item `6`. -/
+/-- Regression: only an explicit spread contributes zero items. `F((E*, 6, 7))`
+    with `E = ()` spreads away the empty value, so the pattern sees the two items
+    `6, 7`; and `F((E*, 6))` builds the ONE item `6` — no one-item sequence
+    exists — which the sequence pattern rejects as a scalar (September 2026:
+    no scalar is a one-item structure). -/
 def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  (match runFlat (.algorithmExpr (algPrivate [] [] [
+    ("E", alg [] [] [] [.emptySequence 0]),
+    ("F", sequenceValueCollectingCountAlg)
+  ] [
+    .call (resolve "F") [
+      .capture [
+        .sequenceSpread (.resolve "E"),
+        .num 6,
+        .num 7
+      ]
+    ]
+  ])) with
+  | Except.ok [2] => true
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [
     ("E", alg [] [] [] [.emptySequence 0]),
     ("F", sequenceValueCollectingCountAlg)
   ] [
@@ -651,8 +667,8 @@ def sequenceValuePatternSpreadOfEmptyStillContributesNoItems : Bool :=
       ]
     ]
   ])) with
-  | Except.ok [1] => true
-  | _ => false
+  | Except.error err => innermostIsAnyTypeMismatch err
+  | _ => false)
 
 #guard sequenceValuePatternSpreadOfEmptyStillContributesNoItems
 
@@ -739,42 +755,73 @@ def preparedAlgorithmOutputSpreadOfSelectionSuppliesItems : Bool :=
 
 #guard preparedAlgorithmOutputSpreadOfSelectionSuppliesItems
 
-def sequenceValueSingletonFirstAlg : Algorithm :=
+/-- The one-element structural pattern is the LIST pattern `F([x]) = x`: a
+    one-item SEQUENCE pattern `(x)` is invalid (no one-item sequence value exists;
+    `singletonSequencePatternIsRejectedBeforeEvaluation` below). -/
+def oneElementListFirstAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "x" }]
+    .listValue [.capture { name := "x" }]
   ] [] [] [.param "x"]
 
-/-- End-to-end (PARENTHESES GROUP SYNTAX, September 2026): a sequence-value
-    pattern opens the argument's VALUE, never a written slot. The selected pair is
-    ONE value (selection is a value boundary) that opens to two items, so the
-    singleton pattern `F((x)) = x` rejects `F(S:0)` with `arityMismatch 1 2` — and
-    a host-built single capture around the selection (`capture [S:0]`, the shape
-    the C# parser no longer writes because `(S:0)` IS `S:0`) is the very same
-    rejection: no capture depth restores a written slot for the pattern to bind.
-    Mirrors `PatternedCallSingleEvaluationTests`. -/
-def sequenceValueSingletonPatternOpensTheSelectedValue : Bool :=
+/-- End-to-end (PARENTHESES GROUP SYNTAX, September 2026): a structural pattern
+    reads the argument's VALUE, never a written slot. The selected pair is ONE
+    sequence value (selection is a value boundary), so the list pattern
+    `F([x]) = x` rejects `F(S:0)` as its kind mismatch — and a host-built single
+    capture around the selection (`capture [S:0]`, the shape the C# parser never
+    writes because `(S:0)` IS `S:0`) is the very same rejection: no capture depth
+    restores a written slot for the pattern to bind. Mirrors
+    `PatternedCallSingleEvaluationTests`. -/
+def oneElementListPatternRejectsTheSelectedSequence : Bool :=
   let s : Algorithm := alg [] [] [] [
     .capture [.num 1, .num 2],
     .capture [.num 3, .num 4]
   ]
   let direct := runResult (.algorithmExpr (algPrivate [] [] [
-    ("S", s), ("F", sequenceValueSingletonFirstAlg)
+    ("S", s), ("F", oneElementListFirstAlg)
   ] [
     .call (resolve "F") [.index (resolve "S") (.num 0)]
   ]))
   let grouped := runResult (.algorithmExpr (algPrivate [] [] [
-    ("S", s), ("F", sequenceValueSingletonFirstAlg)
+    ("S", s), ("F", oneElementListFirstAlg)
   ] [
     .call (resolve "F") [.capture [.index (resolve "S") (.num 0)]]
   ]))
   (match direct with
-   | Except.error err => innermostIsArityMismatch 1 2 err
+   | Except.error err => innermostIsAnyTypeMismatch err
    | _ => false) &&
   (match grouped with
-   | Except.error err => innermostIsArityMismatch 1 2 err
+   | Except.error err => innermostIsAnyTypeMismatch err
    | _ => false)
 
-#guard sequenceValueSingletonPatternOpensTheSelectedValue
+#guard oneElementListPatternRejectsTheSelectedSequence
+
+/-- THE SINGLETON RULE: a program holding a one-item sequence pattern `F((x))` is
+    rejected before anything is evaluated (`illegalInEval`), while the
+    collector-only `F((*xs))` and the one-element list pattern `F([x])` are
+    valid. The C# parser reports `SingletonSequencePattern` for the written form. -/
+def singletonSequencePatternIsRejectedBeforeEvaluation : Bool :=
+  let singleton := algWithParameterPatterns [.sequenceValue [.capture { name := "x" }]] [] [] [.param "x"]
+  let nested := algWithParameterPatterns
+    [.sequenceValue [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]] [] [] [.param "x"]
+  let listInside := algWithParameterPatterns
+    [.sequenceValue [.listValue [.capture { name := "x" }]]] [] [] [.param "x"]
+  let collector := algWithParameterPatterns
+    [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [.param "xs"]
+  let rejected (f : Algorithm) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] [] [("F", f)] [.num 0])) with
+    | Except.error err => innermostIsIllegalInEval KatLang.singletonSequencePatternMessage err
+    | _ => false
+  rejected singleton && rejected nested && rejected listInside &&
+  (match runResult (.algorithmExpr (algPrivate [] [] [("F", collector)]
+      [.call (resolve "F") [.capture [.num 1, .num 2]]])) with
+   | Except.ok (.listValue [.atom 1, .atom 2]) => true
+   | _ => false) &&
+  (match runResult (.algorithmExpr (algPrivate [] [] [("F", oneElementListFirstAlg)]
+      [.call (resolve "F") [.listLiteral [.num 7]]])) with
+   | Except.ok (.atom 7) => true
+   | _ => false)
+
+#guard singletonSequencePatternIsRejectedBeforeEvaluation
 
 /-- The one-element LIST is what opens to exactly one item: `F([S:0])` binds the
     whole selected pair. -/
@@ -784,7 +831,7 @@ def sequenceValueSingletonPatternBindsTheOneListElement : Bool :=
       .capture [.num 1, .num 2],
       .capture [.num 3, .num 4]
     ]),
-    ("F", sequenceValueSingletonFirstAlg)
+    ("F", oneElementListFirstAlg)
   ] [
     .call (resolve "F") [.listLiteral [.index (resolve "S") (.num 0)]]
   ])) with
@@ -868,32 +915,34 @@ def sequenceValuePatternWrappedPairWithFixedSuffixOpensLikeThePair : Bool :=
 
 #guard sequenceValuePatternWrappedPairWithFixedSuffixOpensLikeThePair
 
-def sequenceValueSingleCaptureAlg : Algorithm :=
+/-- The one-element structural pattern `IdList([x]) = x` (the one-item SEQUENCE
+    pattern `(x)` is invalid: no one-item sequence value exists). -/
+def oneElementListIdAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "x" }]
+    .listValue [.capture { name := "x" }]
   ] [] [] [.param "x"]
 
-/-- `IdSeq(((1, 2)))` with `IdSeq((x)) = x` IS `IdSeq((1, 2))`: the singleton
-    sequence-value pattern opens the pair's value to TWO items and rejects it
-    (`arityMismatch 1 2`) — in the source shape and in the host-built
-    single-capture shape alike, because binding never sees written slots. -/
+/-- `IdList(((1, 2)))` with `IdList([x]) = x` IS `IdList((1, 2))`: the list
+    pattern never opens the SEQUENCE pair and rejects it as its kind mismatch — in
+    the source shape and in the host-built single-capture shape alike, because
+    binding never sees written slots. -/
 def sequenceValuePatternSingleCaptureRejectsThePair : Bool :=
-  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+  let source := runResult (.algorithmExpr (algPrivate [] [] [("F", oneElementListIdAlg)] [
     .call (resolve "F") [.capture [.num 1, .num 2]]
   ]))
-  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+  let hostGrouped := runResult (.algorithmExpr (algPrivate [] [] [("F", oneElementListIdAlg)] [
     .call (resolve "F") [.capture [.capture [.num 1, .num 2]]]
   ]))
-  (match source with | Except.error err => innermostIsArityMismatch 1 2 err | _ => false) &&
-  (match hostGrouped with | Except.error err => innermostIsArityMismatch 1 2 err | _ => false)
+  (match source with | Except.error err => innermostIsAnyTypeMismatch err | _ => false) &&
+  (match hostGrouped with | Except.error err => innermostIsAnyTypeMismatch err | _ => false)
 
 #guard sequenceValuePatternSingleCaptureRejectsThePair
 
-/-- `IdSeq([(1, 2)])`: a one-element list opens to exactly one item, and that item
+/-- `IdList([(1, 2)])`: a one-element list opens to exactly one item, and that item
     is the CANONICAL pair `(1, 2)` — never a literal-unwritable orphan `((1, 2))`.
     The structural match pins the exact shape. -/
 def sequenceValuePatternSingleCaptureBindsTheListElementAsCanonicalItem : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureAlg)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("F", oneElementListIdAlg)] [
     .call (resolve "F") [.listLiteral [.capture [.num 1, .num 2]]]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
@@ -903,11 +952,11 @@ def sequenceValuePatternSingleCaptureBindsTheListElementAsCanonicalItem : Bool :
 
 def sequenceValueSingleCaptureCountAlg : Algorithm :=
   algWithParameterPatterns [
-    .sequenceValue [.capture { name := "x" }]
+    .listValue [.capture { name := "x" }]
   ] [] [] [.dotCall (.param "x") "count" none]
 
 /-- The canonically bound item observes consistently -- `x.count` for the
-    `IdSeq([(1, 2)])` binding is 2, matching the structural shape `(1, 2)` (an
+    `IdList([(1, 2)])` binding is 2, matching the structural shape `(1, 2)` (an
     orphan `((1, 2))` would count 1). -/
 def sequenceValuePatternSingleCaptureListElementCountsItems : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("F", sequenceValueSingleCaptureCountAlg)] [
@@ -918,18 +967,29 @@ def sequenceValuePatternSingleCaptureListElementCountsItems : Bool :=
 
 #guard sequenceValuePatternSingleCaptureListElementCountsItems
 
-/-- PARENTHESES GROUP SYNTAX (September 2026): a sequence-value pattern opens the
+/-- PARENTHESES GROUP SYNTAX (September 2026): a structural pattern opens the
     argument's VALUE — the two argument shapes whose former written-slot view
     differed from the value view now bind by the value alone.
-    `P((A*))` with `A = [[1, 2]]` and `P((*xs)) = xs`: the capture of the lone
-    spread item is the list `[1, 2]` (one item normalizes to itself), which the
-    pattern opens — `xs = [1, 2]`, exactly as `P([1, 2])` and `P(A*)`.
-    `F({S})` with `S = 1, 2` and `F((a, b)) = a + b`: the single-row block's value
-    is the pair, which the pattern opens — `3`, exactly as `F(S)` and `F((S))`. -/
+    `P((A*))` with `A = [[1, 2]]` and the LIST collector `P([*xs]) = xs`: the
+    capture of the lone spread item is the list `[1, 2]` (one item normalizes to
+    itself), which the list pattern opens — `xs = [1, 2]`, exactly as `P([1, 2])`
+    and `P(A*)`; the SEQUENCE collector `Q((*xs))` rejects all three, a list
+    never being a sequence. `F({S})` with `S = 1, 2` and `F((a, b)) = a + b`: the
+    single-row block's value is the pair, which the sequence pattern opens — `3`,
+    exactly as `F(S)` and `F((S))`. -/
 def sequenceValuePatternOpensTheValueOfSpreadCapturesAndBlocks : Bool :=
   let collector := algWithParameterPatterns [
+    .listValue [.capture { name := "xs", kind := .collecting }]
+  ] [] [] [.param "xs"]
+  let sequenceCollector := algWithParameterPatterns [
     .sequenceValue [.capture { name := "xs", kind := .collecting }]
   ] [] [] [.param "xs"]
+  let rejectedAsSequence (argument : KatLang.Expr) : Bool :=
+    match runResult (.algorithmExpr (algPrivate [] []
+        [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2]]]), ("Q", sequenceCollector)]
+        [.call (resolve "Q") [argument]])) with
+    | Except.error err => innermostIsAnyTypeMismatch err
+    | _ => false
   let pairSum := algWithParameterPatterns [
     .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]
   ] [] [] [.binary .add (.param "a") (.param "b")]
@@ -948,6 +1008,9 @@ def sequenceValuePatternOpensTheValueOfSpreadCapturesAndBlocks : Bool :=
   collected (.capture [.sequenceSpread (.resolve "A")]) &&
   collected (.sequenceSpread (.resolve "A")) &&
   collected (.listLiteral [.num 1, .num 2]) &&
+  rejectedAsSequence (.capture [.sequenceSpread (.resolve "A")]) &&
+  rejectedAsSequence (.sequenceSpread (.resolve "A")) &&
+  rejectedAsSequence (.listLiteral [.num 1, .num 2]) &&
   summed (.algorithmExpr (alg [] [] [] [.resolve "S"])) &&
   summed (.resolve "S") &&
   summed (.capture [.num 1, .num 2])
@@ -968,30 +1031,38 @@ def sequenceValuePatternTwoEmptySiblingItemsBindPositionally : Bool :=
 
 #guard sequenceValuePatternTwoEmptySiblingItemsBindPositionally
 
-/-- Ordinary nested parameter patterns retain scalar one-item fallback. Only a
-    list retains a unary structural boundary; scalars need no such boundary.
-    This is user-call binding; callback binding shares the same opening rule
-    (`Result.sequenceValuePatternItems`, pinned for callbacks by the S3 guards
-    in `CoreTests/SequenceCallbackBuiltins.lean`). -/
-def nestedParameterPatternKeepsScalarFallback : Bool :=
+/-- Nested structural patterns have NO scalar one-item fallback (September
+    2026): a scalar is never a structure, at any level and for any group size,
+    and each level opens only its own kind. `P([(*xs)])` — a one-element LIST
+    whose element is a SEQUENCE — collects a sequence element's items, rejects a
+    scalar, a list or a sequence at the outer level, and rejects a scalar or a
+    list element at the inner level. This is user-call binding; callback binding
+    shares the same opening rule (`Result.sequencePatternItems?` /
+    `Result.listPatternItems?`, pinned for callbacks by the guards in
+    `CoreTests/SequenceCallbackBuiltins.lean`). -/
+def nestedParameterPatternHasNoScalarFallback : Bool :=
   let collector := algWithParameterPatterns [
-    .sequenceValue [.sequenceValue [.capture { name := "xs", kind := .collecting }]]
+    .listValue [.sequenceValue [.capture { name := "xs", kind := .collecting }]]
   ] [] [] [.param "xs"]
   let call (argument : KatLang.Expr) :=
     runResult (.algorithmExpr (algPrivate [] [] [("P", collector)]
       [.call (resolve "P") [argument]]))
-  (match call (.num 7) with
-   | .ok (.listValue [.atom 7]) => true | _ => false) &&
-  (match call (.boolLiteral true) with
-   | .ok (.listValue [.bool true]) => true | _ => false) &&
-  (match call (.stringLiteral "s") with
-   | .ok (.listValue [.str "s"]) => true | _ => false) &&
+  let wrongKind (argument : KatLang.Expr) : Bool :=
+    match call argument with
+    | .error error => innermostIsAnyTypeMismatch error
+    | _ => false
+  (match call (.listLiteral [.capture [.num 1, .num 2]]) with
+   | .ok (.listValue [.atom 1, .atom 2]) => true | _ => false) &&
   (match call (.listLiteral [.emptySequence 0]) with
    | .ok (.listValue []) => true | _ => false) &&
-  (match call (.capture [.num 1, .num 2]) with
+  wrongKind (.num 7) && wrongKind (.boolLiteral true) && wrongKind (.stringLiteral "s") &&
+  wrongKind (.capture [.num 1, .num 2]) &&
+  wrongKind (.listLiteral [.num 7]) &&
+  wrongKind (.listLiteral [.listLiteral [.num 1, .num 2]]) &&
+  (match call (.listLiteral [.capture [.num 1, .num 2], .num 3]) with
    | .error error => innermostIsArityMismatch 1 2 error | _ => false)
 
-#guard nestedParameterPatternKeepsScalarFallback
+#guard nestedParameterPatternHasNoScalarFallback
 
 def sequenceValueCollectingIsNotTopLevelVariadic : Bool :=
   let sequenceValueCall :=
@@ -1615,8 +1686,9 @@ def deconstructionScalarArgument : Bool :=
 
 #guard deconstructionScalarArgument
 
--- A sequence-value parameter pattern also normalizes a scalar to a one-item
--- supply: F((first, *tail)) with the scalar 1 binds first = 1, tail = [].
+-- A sequence parameter pattern NEVER treats a scalar as a one-item supply
+-- (September 2026): F((first, *tail)) with the scalar 1 is the pattern's kind
+-- mismatch, while the flat F(first, *tail) above binds the scalar whole.
 def deconstructSequenceValueFirstTailAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .collecting }]
@@ -1625,23 +1697,27 @@ def deconstructSequenceValueFirstTailAlg : Algorithm :=
   ]
 
 def sequenceValuePatternScalarArgument : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
     .call (resolve "F") [.num 1]
   ])) with
-  | Except.ok [1, 0] => true
-  | _ => false
+  | Except.error err => innermostIsAnyTypeMismatch err
+  | _ => false) &&
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("F", deconstructSequenceValueFirstTailAlg)] [
+    .call (resolve "F") [.capture [.num 1, .num 2, .num 3]]
+  ])) with
+  | Except.ok [1, 2] => true
+  | _ => false)
 
 #guard sequenceValuePatternScalarArgument
 
 -- Callback binding of a scalar element follows the ordinary call (S3, September
 -- 2026; mirrors C# DeconstructionBindingTests
 -- .CallbackSequenceValueDeconstruction_OnScalarElement_BindsLikeTheOrdinaryCall):
--- both binders open a nested pattern's value through the ONE rule
--- `Result.sequenceValuePatternItems`, so each scalar map element is the ordinary
--- one-item supply for `(first, *tail)` exactly as in `F(1)` above. The body is one
--- list value so map's single-value contract cannot mask the binding. (The counted
--- callback binder formerly fell back only for one-item groups, and this guard
--- pinned the resulting badArity.)
+-- both binders open a nested pattern's value through the ONE kind-specific rule
+-- (`Result.sequencePatternItems?`), so a scalar map element is the sequence
+-- pattern `(first, *tail)`'s kind mismatch exactly as in `F(1)` above, while a
+-- sequence element binds. The body is one list value so map's single-value
+-- contract cannot mask the binding.
 def deconstructSequenceValueFirstTailListAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .collecting }]
@@ -1656,13 +1732,18 @@ def sequenceValueDeconstructionCallbackOnScalarBindsLikeCall : Bool :=
       sequenceItems [.num 1, .num 2, .num 3],
       .resolve "F"
     ])) with
-   | Except.ok (.listValue [
-       .listValue [.atom 1, .atom 0],
-       .listValue [.atom 2, .atom 0],
-       .listValue [.atom 3, .atom 0]]) => true
+   | Except.error err => innermostIsAnyTypeMismatch err
    | _ => false) &&
   (match runResult (program (.call (resolve "F") [.num 1])) with
-   | Except.ok (.listValue [.atom 1, .atom 0]) => true
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false) &&
+  (match runResult (program (.call (resolve "map") [
+      .listLiteral [.capture [.num 1, .num 2], .capture [.num 3, .num 4, .num 5]],
+      .resolve "F"
+    ])) with
+   | Except.ok (.listValue [
+       .listValue [.atom 1, .atom 1],
+       .listValue [.atom 3, .atom 2]]) => true
    | _ => false)
 
 #guard sequenceValueDeconstructionCallbackOnScalarBindsLikeCall

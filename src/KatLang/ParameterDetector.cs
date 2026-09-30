@@ -122,7 +122,7 @@ internal static class ParameterDetector
                 conditional, "<anonymous>", parentScope, capturedParameters, diagnostics, observations, run),
 
             // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is already a
-            // fully-formed elaboration leaf: an explicit N-capture sequence-value pattern, no
+            // fully-formed elaboration leaf: one unpacking receiver over the N targets, no
             // opens, no properties, and an output that is exactly the single bound target name.
             // Its only required elaboration is rewriting that bound Resolve to a Param. Running
             // it through the general path builds an O(N) param-name set, param-order list,

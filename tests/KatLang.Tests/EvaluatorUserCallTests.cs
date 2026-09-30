@@ -637,13 +637,26 @@ public class EvaluatorUserCallTests
     [Fact]
     public void Eval_NonVariadicSequenceValuePattern_DoesNotSpreadArbitraryGroup()
     {
-        var result = EvalFull(
+        // A fixed-size structural pattern never spreads a longer value across itself: a
+        // three-element sequence is the two-element pattern's arity mismatch, and a
+        // one-element list pattern rejects the sequence as its kind mismatch.
+        var pair = EvalFull(
             """
-            F((x)) = x
+            F((x, y)) = x
             F((1, 2, 3))
             """);
 
-        Assert.True(result.IsError);
+        Assert.True(pair.IsError);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(pair.Error));
+
+        var single = EvalFull(
+            """
+            F([x]) = x
+            F((1, 2, 3))
+            """);
+
+        Assert.True(single.IsError);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(single.Error));
     }
 
     [Fact]

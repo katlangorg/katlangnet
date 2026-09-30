@@ -65,12 +65,9 @@ public class MaintainedDocumentationConsistencyTests
         // Indexing is zero-based (source line/column coordinates are 1-based, a different thing).
         { @"\b(?:one|1)-based\s+(?:index|indexing|selection)\b", "one-based indexing" },
         // Q-03: implicit lifting follows zero-argument acceptance. A callable that works with no
-        // arguments is read by its bare name — an alias of it is a value read, never a
-        // manufactured collecting callable, and lifting never treats its collector like a
+        // arguments is read by its bare name, and lifting never treats its collector like a
         // required parameter.
-        { @"\baliases?\s+of\s+(?:a\s+)?collecting\s+callables?\s+(?:are|is)\s+(?:itself\s+)?collecting\b", "aliases of collecting callables are collecting (lifting before Q-03)" },
         { @"\bunchanged\s+for\s+collecting\s+and\s+fixed\s+parameters\s+alike\b", "lifting unchanged for collecting parameters (before Q-03)" },
-        { @"`Alias = Cnt`[^.]*\belaborates\s+to\s+`Alias\(\*xs\)", "a bare alias elaborating to a forwarding callable (before Q-03)" },
         // Q-04: automatic parameter forwarding must not change what an existing name refers to. A
         // forwarded parameter belongs to the call interface only; it never joins the parameters
         // a written name can denote, so "completed" signatures no longer re-own written names.
@@ -82,10 +79,11 @@ public class MaintainedDocumentationConsistencyTests
         { @"\btwo\s+algorithm-channel\s+bindings\s+only\s+when\s+(?:each|both)\s+carr(?:y|ies)\s+a\s+value\b", "valueless repeated contributions accepted beside values (before Q-05)" },
         { @"\balgorithm-only\s+repeat(?:s|ed\s+names?)?\b", "an algorithm-only repeated-name verdict (before Q-05)" },
         { @"P\(5,\s*Inc\)`?\s+binds\b", "a value spliced with another argument's callable (before Q-05)" },
-        // Implicit forwarding is by binding name, regardless of how many times that name occurs in
-        // a callee's parameter patterns (September 29 2026, reversing the Q-72 refusal of the same
-        // day): a callee that repeats a name lifts like any callee — one caller binding per name,
-        // supplied to every occurrence — and no front-end diagnostic refuses it.
+        // Formula lifting is by binding name, regardless of how many times that name occurs in a
+        // callee's parameter patterns (September 29 2026, reversing the Q-72 refusal of the same
+        // day; narrowed to formulas by the alias and bare-forwarding rules): a callee that
+        // repeats a name lifts like any callee — one caller binding per name, supplied to every
+        // occurrence — and no front-end diagnostic refuses it.
         { @"\bRepeatedParameterNotForwardable\b", "the removed repeated-name forwarding refusal diagnostic (Q-72, reversed)" },
         { @"\bcannot\s+be\s+forwarded\s+implicitly\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
         { @"\bno\s+implicit\s+forwarding\s+into\s+a\s+repeated-name\s+callee\b", "the repeated-name forwarding refusal (Q-72, reversed)" },
@@ -101,6 +99,22 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bpass(?:es|ing)\s+(?:that|the)\s+(?:parser|outer(?:[- ]dot)?[- ]form)\s+check\b", "an open target validated by its outer node only (before PV-11)" },
         // PV-24: clause-family opens are branch-owned; a family owns no opens of its own.
         { @"\bopens\s+list\s+is\s+taken\s+from\s+the\s+first\s+branch", "a clause family owning its first branch's opens (before PV-24)" },
+        // Structural patterns select the value kind they destructure (September 29 2026): a
+        // sequence pattern opens sequence values only, a list pattern list values only, a scalar
+        // is never a one-item structure, and a one-item sequence pattern is invalid source.
+        { @"(?<!\bno\s{1,3})\bscalar\s+one-item\s+fallback\b", "a structural pattern's scalar one-item fallback (before the structural kind law)" },
+        { @"\bsequenceValuePatternItems\b", "the kind-blind structural pattern opener (before the structural kind law)" },
+        { @"\bpatternSequenceValueMembers\b", "the family matcher's scalar arm (before the structural kind law)" },
+        { @"\bsingleton\s+sequence-value\s+(?:fallback|normalization)\b", "a singleton sequence pattern binding a whole value (before the singleton rule)" },
+        { @"\blist\s+patterns\s+are\s+deferred\b", "clause families without list patterns (before the structural kind law)" },
+        { @"\bsequence(?:-value)?\s+patterns?\s+(?:also\s+)?opens?\s+(?:a\s+|the\s+)?(?:list|sequence\s+or\s+(?:a\s+)?list)\b", "a sequence pattern opening a list (before the structural kind law)" },
+        // The alias and bare-forwarding rules (FWD-02, September 29–30 2026): a lone bare row is an
+        // EXACT ALIAS of the callable it names or BARE FORWARDING — each parameter supplied by name
+        // from an existing compatible binding, never completed by the callee's binder names into a
+        // new signature. Formula lifting keeps forwarding by binding name.
+        { @"`?\b(?:Some|Alias|A)\s*=\s*P`?\s+(?:is|elaborates\s+to|becomes)\s+`?(?:Some|Alias|A)\(x\)\s*=\s*P\(x,\s*x\)", "an alias of a repeated-name callee deduplicated by binding name (before the alias rule)" },
+        { @"`?\bG\(x\)\s*=\s*Single`?\s+(?:is|elaborates\s+to|becomes)\s+`?G\(x\)\s*=\s*Single\(\[x\]\)", "a lone row completed by the callee's binder name (before the alias and bare-forwarding rules)" },
+        { @"\bAlias\s*=\s*Cnt`?\s+(?:is|elaborates\s+to|becomes)\s+a\s+zero-parameter\s+property", "a zero-parameter alias of a collecting-only callable (Q-03's alias clause, before the alias rule)" },
     };
 
     [Theory]

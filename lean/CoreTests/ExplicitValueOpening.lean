@@ -46,11 +46,14 @@ def collMiddleAlg : Algorithm :=
     [{ name := "x" }, { name := "middle", kind := .collecting }, { name := "z" }] [] []
     [.param "x", .param "middle", .param "z"]
 
--- Id(x) = x ; Add(x, y) = x + y ; AddPair((x, y)) = x + y
+-- Id(x) = x ; Add(x, y) = x + y ; AddPair((x, y)) = x + y ; AddPairL([x, y]) = x + y
 def collIdAlg : Algorithm := alg ["x"] [] [] [.param "x"]
 def collAddAlg : Algorithm := alg ["x", "y"] [] [] [.binary .add (.param "x") (.param "y")]
 def collAddPairAlg : Algorithm :=
   algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] []
+    [.binary .add (.param "x") (.param "y")]
+def collAddPairListAlg : Algorithm :=
+  algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] []
     [.binary .add (.param "x") (.param "y")]
 
 -- Cnt(*xs) = xs.count ; CntValue(x) = x.count
@@ -71,6 +74,7 @@ def collForwardAlg : Algorithm :=
 def collProps : List (Prod String Algorithm) :=
   [ ("Coll", collAlg), ("F", collSuffixAlg), ("G", collPrefixAlg), ("H", collMiddleAlg),
     ("Id", collIdAlg), ("Add", collAddAlg), ("AddPair", collAddPairAlg),
+    ("AddPairL", collAddPairListAlg),
     ("Cnt", collCntAlg), ("CntValue", collCntValueAlg), ("Forward", collForwardAlg),
     ("A", alg [] [] [] [.num 1, .num 2]),                       -- A = 1, 2
     ("Make", alg [] [] [] [.capture [.num 1, .num 2]]),         -- Make = (1, 2)
@@ -334,28 +338,44 @@ def collectorsCountArgumentsAndFixedParametersReadContents : Bool :=
 
 #guard collectorsCountArgumentsAndFixedParametersReadContents
 
--- Nested sequence-value parameter patterns are the explicit structural
--- openers: they open exactly one level of a sequence or a list, and a nested
--- collector collects the opened items exactly: Pat((x, *y)) on `(1, (2, 3))`
--- binds `y = [(2, 3)]`.
+-- Nested structural parameter patterns are the explicit structural openers,
+-- and the delimiter selects the kind: a sequence pattern opens exactly one level
+-- of a SEQUENCE, a list pattern one level of a LIST, and a nested collector
+-- collects the opened items exactly: Pat((x, *y)) on `(1, (2, 3))` binds
+-- `y = [(2, 3)]`, PatL([x, *y]) on `[1, 2, 3]` binds `y = [2, 3]`, and
+-- neither opens the other kind.
 def nestedPatternsOpenExplicitly : Bool :=
   let patAlg := algWithParameterPatterns [
     .sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }]
+  ] [] [] [.listLiteral [.param "x"], .param "y"]
+  let patListAlg := algWithParameterPatterns [
+    .listValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }]
   ] [] [] [.listLiteral [.param "x"], .param "y"]
   let pat2Alg := algWithParameterPatterns [
     .sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }],
     .capture { name := "z" }
   ] [] [] [.listLiteral [.param "x"], .param "y", .listLiteral [.param "z"]]
   let run (out : KatLang.Expr) : Except Error Result :=
-    runResult (.algorithmExpr (algPrivate [] [] [("Pat", patAlg), ("Pat2", pat2Alg)] [out]))
+    runResult (.algorithmExpr (algPrivate [] []
+      [("Pat", patAlg), ("PatL", patListAlg), ("Pat2", pat2Alg)] [out]))
   let is (expected : Result) (out : KatLang.Expr) : Bool :=
     match run out with
     | Except.ok value => value == expected
     | _ => false
+  let failsWithKind (out : KatLang.Expr) : Bool :=
+    match run out with
+    | Except.error err => innermostIsAnyTypeMismatch err
+    | _ => false
   is (.sequenceValue [.listValue [.atom 1], .listValue [.atom 2, .atom 3]])
     (.call (resolve "Pat") [.capture [.num 1, .num 2, .num 3]]) &&
+  failsWithKind (.call (resolve "Pat") [.listLiteral [.num 1, .num 2, .num 3]]) &&
+  failsWithKind (.call (resolve "Pat") [.num 7]) &&
   is (.sequenceValue [.listValue [.atom 1], .listValue [.atom 2, .atom 3]])
-    (.call (resolve "Pat") [.listLiteral [.num 1, .num 2, .num 3]]) &&
+    (.call (resolve "PatL") [.listLiteral [.num 1, .num 2, .num 3]]) &&
+  is (.sequenceValue [.listValue [.atom 7], .listValue []])
+    (.call (resolve "PatL") [.listLiteral [.num 7]]) &&
+  failsWithKind (.call (resolve "PatL") [.capture [.num 1, .num 2, .num 3]]) &&
+  failsWithKind (.call (resolve "PatL") [.num 7]) &&
   is (.sequenceValue [.listValue [.atom 1], .listValue [.sequenceValue [.atom 2, .atom 3]]])
     (.call (resolve "Pat") [.capture [.num 1, .capture [.num 2, .num 3]]]) &&
   is (.sequenceValue [.listValue [.atom 1], .listValue [.listValue [.atom 2, .atom 3]]])
@@ -370,7 +390,8 @@ def nestedPatternsOpenExplicitly : Bool :=
 -- THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly
 -- as the direct call with that element: a single collector collects it as one
 -- item, a two-parameter flat callee rejects it with the ordinary arity error,
--- and only an explicit pattern opens it — a sequence and a list alike.
+-- and only an explicit pattern of the element's own kind opens it (a sequence
+-- pattern a sequence element, a list pattern a list element).
 def callbacksPassEachElementAsOneArgument : Bool :=
   let restAlg := algWithParameters [{ name := "a" }, { name := "rest", kind := .collecting }] [] []
     [.param "rest"]
@@ -402,7 +423,13 @@ def callbacksPassEachElementAsOneArgument : Bool :=
   fails (.call (resolve "map") [.listLiteral [pair12], resolve "Add"]) &&
   fails (.call (resolve "map") [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "Add"]) &&
   is (.listValue [.atom 3]) (.call (resolve "map") [.listLiteral [pair12], resolve "AddPair"]) &&
-  is (.listValue [.atom 3]) (.call (resolve "map") [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "AddPair"]) &&
+  is (.listValue [.atom 3]) (.call (resolve "map") [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "AddPairL"]) &&
+  (match run (.call (resolve "map") [.listLiteral [.listLiteral [.num 1, .num 2]], resolve "AddPair"]) with
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false) &&
+  (match run (.call (resolve "map") [.listLiteral [pair12], resolve "AddPairL"]) with
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false) &&
   -- The dotted spelling of the higher-order call is the same call.
   is (.listValue [.listValue [seq12], .listValue [.sequenceValue [.atom 3, .atom 4]]])
     (.dotCall (.capture [pair12, .capture [.num 3, .num 4]]) "map" (some [resolve "Coll"]))
@@ -487,8 +514,9 @@ def reducerAccumulatorIsOneArgument : Bool :=
   (match run "PairAcc" (.listLiteral [.num 10, .num 20]) (.capture [.num 1, .num 2]) with
    | Except.ok value => value == .sequenceValue [.atom 11, .atom 22]
    | _ => false) &&
+  -- The sequence pattern never opens a LIST accumulator: that is its kind mismatch.
   (match run "PairAcc" (.listLiteral [.num 10]) (.listLiteral [.num 1, .num 2]) with
-   | Except.ok value => value == .sequenceValue [.atom 2, .atom 11]
+   | Except.error err => innermostIsAnyTypeMismatch err
    | _ => false)
 
 #guard reducerAccumulatorIsOneArgument
@@ -519,17 +547,23 @@ def loopStateSlotsAreEstablishedItems : Bool :=
 
 #guard loopStateSlotsAreEstablishedItems
 
--- Assignment deconstruction is explicit structural syntax: it opens one lone
--- sequence or list boundary of its shared right-hand side, and its collecting
--- target collects the matched (pattern-opened) items exactly.
+-- Assignment deconstruction is explicit unpacking syntax: it opens one lone
+-- sequence or list boundary of its shared right-hand side (the helper's one
+-- `.unpacking targets` parameter opens the demanded value), and its collecting
+-- target collects the matched (opened) items exactly. It is not a structural
+-- pattern, so it opens both kinds alike.
 def deconstructionOpensExplicitly : Bool :=
   let decon (targets : List KatLang.ParameterPattern) (observed : String) (rhs : List KatLang.Expr)
       : Except Error Result :=
     runResult (.algorithmExpr (algPrivate [] [] [("sharedRhs", alg [] [] [] rhs)]
-      [.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue targets] [] [] [.param observed]))
+      [.call (.algorithmExpr (algWithParameterPatterns [.unpacking targets] [] [] [.param observed]))
         [resolve "sharedRhs"]]))
   let fix (name : String) : KatLang.ParameterPattern := .capture { name := name }
   let coll (name : String) : KatLang.ParameterPattern := .capture { name := name, kind := .collecting }
+  -- The actual receiver must demand the absent value, not report a spread failure.
+  (match decon [fix "x", fix "y"] "x" [] with
+   | Except.error err => innermostIsMissingOutput err
+   | _ => false) &&
   (match decon [fix "x", coll "y", fix "z"] "y" [.num 1, .num 2, .num 3, .num 4] with
    | Except.ok value => value == .listValue [.atom 2, .atom 3]
    | _ => false) &&
@@ -658,19 +692,33 @@ def evoSameOutcome (expected actual : Except Error Result) : Bool :=
   | .error e, .error a => reprStr (evoInnermostError e) == reprStr (evoInnermostError a)
   | _, _ => false
 
--- Explicit structural parameter patterns remain the openers, for a sequence
--- and a list alike: `Pair((x, y)) = [x, y]`, `Parts((*xs)) = xs`,
--- `HeadTail((x, *xs)) = [x, xs]`. A non-structured argument is the ordinary
--- one-item fallback of a nested pattern, and `()` / `[]` open to zero items.
--- The callback spelling `map([V], P)` binds exactly as the direct call `P(V)`.
-def structuralPatternsOpenSequencesAndListsAlike : Bool :=
+-- Explicit structural parameter patterns remain the openers, and the delimiter
+-- selects the value kind (September 2026): the SEQUENCE patterns
+-- `Pair((x, y)) = [x, y]`, `Parts((*xs)) = xs`, `HeadTail((x, *xs)) = [x, xs]`
+-- open sequence values only, and the LIST patterns `PairL([x, y])`,
+-- `PartsL([*xs])`, `HeadTailL([x, *xs])` open list values only. A value of the
+-- other kind or a scalar is the pattern's kind mismatch (`typeMismatch`), a
+-- right-kind value of the wrong length the group's ordinary arity mismatch,
+-- `()` opens only to a sequence pattern and `[]` only to a list pattern, and
+-- a list pattern keeps every cardinality (`PartsL([7])` is `[7]`). The callback
+-- spelling `map([V], P)` binds exactly as the direct call `P(V)`.
+def structuralPatternsOpenOnlyTheirOwnKind : Bool :=
   let pairAlg := algWithParameterPatterns
     [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] []
     [.listLiteral [.param "x", .param "y"]]
   let headTailAlg := algWithParameterPatterns
     [.sequenceValue [.capture { name := "x" }, .capture { name := "xs", kind := .collecting }]] [] []
     [.listLiteral [.param "x", .param "xs"]]
-  let props := [("Pair", pairAlg), ("Parts", collPartsAlg), ("HeadTail", headTailAlg)]
+  let pairListAlg := algWithParameterPatterns
+    [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] []
+    [.listLiteral [.param "x", .param "y"]]
+  let partsListAlg := algWithParameterPatterns
+    [.listValue [.capture { name := "xs", kind := .collecting }]] [] [] [.param "xs"]
+  let headTailListAlg := algWithParameterPatterns
+    [.listValue [.capture { name := "x" }, .capture { name := "xs", kind := .collecting }]] [] []
+    [.listLiteral [.param "x", .param "xs"]]
+  let props := [("Pair", pairAlg), ("Parts", collPartsAlg), ("HeadTail", headTailAlg),
+    ("PairL", pairListAlg), ("PartsL", partsListAlg), ("HeadTailL", headTailListAlg)]
   let run (out : KatLang.Expr) : Except Error Result :=
     runResult (.algorithmExpr (algPrivate [] [] props [out]))
   let is (expected : Result) (out : KatLang.Expr) : Bool :=
@@ -681,31 +729,53 @@ def structuralPatternsOpenSequencesAndListsAlike : Bool :=
     match run out with
     | Except.error err => innermostIsArityMismatch expected actual err
     | _ => false
+  let wrongKind (out : KatLang.Expr) : Bool :=
+    match run out with
+    | Except.error err => innermostIsAnyTypeMismatch err
+    | _ => false
   let nestedSeq : KatLang.Expr := .capture [pair12, .num 3]
   let nestedList : KatLang.Expr := .listLiteral [.listLiteral [.num 1, .num 2], .num 3]
   let list12Expr : KatLang.Expr := .listLiteral [.num 1, .num 2]
+  -- Sequence patterns: sequences only.
   is (.listValue [.atom 1, .atom 2]) (.call (resolve "Pair") [pair12]) &&
-  is (.listValue [.atom 1, .atom 2]) (.call (resolve "Pair") [list12Expr]) &&
+  wrongKind (.call (resolve "Pair") [list12Expr]) &&
   is (.listValue [seq12, .atom 3]) (.call (resolve "Pair") [nestedSeq]) &&
-  is (.listValue [list12, .atom 3]) (.call (resolve "Pair") [nestedList]) &&
+  wrongKind (.call (resolve "Pair") [nestedList]) &&
   fails 2 0 (.call (resolve "Pair") [.emptySequence 0]) &&
-  fails 2 0 (.call (resolve "Pair") [.listLiteral []]) &&
-  fails 2 1 (.call (resolve "Pair") [.num 7]) &&
+  wrongKind (.call (resolve "Pair") [.listLiteral []]) &&
+  wrongKind (.call (resolve "Pair") [.num 7]) &&
   is list12 (.call (resolve "Parts") [pair12]) &&
-  is list12 (.call (resolve "Parts") [list12Expr]) &&
+  wrongKind (.call (resolve "Parts") [list12Expr]) &&
   is (.listValue []) (.call (resolve "Parts") [.emptySequence 0]) &&
-  is (.listValue []) (.call (resolve "Parts") [.listLiteral []]) &&
+  wrongKind (.call (resolve "Parts") [.listLiteral []]) &&
   is (.listValue [seq12, .atom 3]) (.call (resolve "Parts") [nestedSeq]) &&
-  is (.listValue [list12, .atom 3]) (.call (resolve "Parts") [nestedList]) &&
-  is (.listValue [.atom 7]) (.call (resolve "Parts") [.num 7]) &&
+  wrongKind (.call (resolve "Parts") [.num 7]) &&
   is (.listValue [.atom 1, .listValue [.atom 2]]) (.call (resolve "HeadTail") [pair12]) &&
-  is (.listValue [.atom 1, .listValue [.atom 2]]) (.call (resolve "HeadTail") [list12Expr]) &&
+  wrongKind (.call (resolve "HeadTail") [list12Expr]) &&
   is (.listValue [seq12, .listValue [.atom 3]]) (.call (resolve "HeadTail") [nestedSeq]) &&
-  is (.listValue [.atom 7, .listValue []]) (.call (resolve "HeadTail") [.num 7]) &&
+  wrongKind (.call (resolve "HeadTail") [.num 7]) &&
   fails 1 0 (.call (resolve "HeadTail") [.emptySequence 0]) &&
+  -- List patterns: lists only, every cardinality.
+  is (.listValue [.atom 1, .atom 2]) (.call (resolve "PairL") [list12Expr]) &&
+  wrongKind (.call (resolve "PairL") [pair12]) &&
+  is (.listValue [list12, .atom 3]) (.call (resolve "PairL") [nestedList]) &&
+  fails 2 0 (.call (resolve "PairL") [.listLiteral []]) &&
+  fails 2 1 (.call (resolve "PairL") [.listLiteral [.num 7]]) &&
+  wrongKind (.call (resolve "PairL") [.emptySequence 0]) &&
+  wrongKind (.call (resolve "PairL") [.num 7]) &&
+  is list12 (.call (resolve "PartsL") [list12Expr]) &&
+  is (.listValue [.atom 7]) (.call (resolve "PartsL") [.listLiteral [.num 7]]) &&
+  is (.listValue []) (.call (resolve "PartsL") [.listLiteral []]) &&
+  wrongKind (.call (resolve "PartsL") [.emptySequence 0]) &&
+  wrongKind (.call (resolve "PartsL") [pair12]) &&
+  is (.listValue [list12, .atom 3]) (.call (resolve "PartsL") [nestedList]) &&
+  is (.listValue [.atom 7, .listValue []]) (.call (resolve "HeadTailL") [.listLiteral [.num 7]]) &&
+  is (.listValue [list12, .listValue [.atom 3]]) (.call (resolve "HeadTailL") [nestedList]) &&
+  fails 1 0 (.call (resolve "HeadTailL") [.listLiteral []]) &&
+  wrongKind (.call (resolve "HeadTailL") [.num 7]) &&
   -- The callback spelling binds exactly like the direct call.
-  ([pair12, list12Expr, .emptySequence 0, .listLiteral [], nestedSeq, nestedList, .num 7]).all fun value =>
-    ["Pair", "Parts", "HeadTail"].all fun callee =>
+  ([pair12, list12Expr, .emptySequence 0, .listLiteral [], .listLiteral [.num 7], nestedSeq, nestedList, .num 7]).all fun value =>
+    ["Pair", "Parts", "HeadTail", "PairL", "PartsL", "HeadTailL"].all fun callee =>
       match run (.call (resolve callee) [value]),
             run (.call (resolve "map") [.listLiteral [value], resolve callee]) with
       | Except.ok direct, Except.ok (.listValue [mapped]) => direct == mapped
@@ -713,7 +783,7 @@ def structuralPatternsOpenSequencesAndListsAlike : Bool :=
           reprStr (evoInnermostError direct) == reprStr (evoInnermostError mapped)
       | _, _ => false
 
-#guard structuralPatternsOpenSequencesAndListsAlike
+#guard structuralPatternsOpenOnlyTheirOwnKind
 
 -- ALIASES AND FORWARDING change neither the callable nor the supply: with
 -- `Cnt(*xs) = xs.count`, `Alias(*xs) = Cnt(xs*)`, `Apply(f, xs) = map(xs, f)`,
@@ -726,10 +796,9 @@ def structuralPatternsOpenSequencesAndListsAlike : Bool :=
 def aliasesAndForwardingKeepTheCallbackLaw : Bool :=
   -- The forwarding alias is WRITTEN, `Alias(*xs) = Cnt(xs*)` (the collecting
   -- capture forwarded into the collecting callee through the explicit spread),
-  -- so the forwarding law is part of the path. Since Q-03 a bare `Alias = Cnt`
-  -- is not this callable: `Cnt` works with no arguments, so the surface pass
-  -- leaves the reference unlifted and `Alias` is a zero-parameter property
-  -- holding Cnt's cached value (`liftsBareValueReference`).
+  -- so the forwarding law is part of the path. The bare exact alias `Alias = Cnt`
+  -- elaborates to this same tree (FWD-02: it inherits Cnt's collecting signature,
+  -- `sourceCall`).
   let aliasAlg : Algorithm := algWithParameters [{ name := "xs", kind := .collecting }] [] []
     [.call (resolve "Cnt") [sequenceSpread (.param "xs")]]
   let applyAlg : Algorithm := alg ["f", "xs"] [] [] [.call (resolve "map") [.param "xs", .param "f"]]
@@ -806,7 +875,8 @@ def reduceStepIsTheOrdinaryTwoArgumentCall : Bool :=
 -- Loop state slots are the loop's ESTABLISHED supply and are never reopened or
 -- collapsed: one scalar, sequence, or list state is one slot for a fixed step
 -- (`repeat(Id, 1, S)` returns `S` unchanged); an explicit structural step
--- pattern opens a sequence and a list state alike (`Swap((a, b)) = (b, a)`);
+-- pattern opens a state of its OWN kind (`Swap((a, b)) = (b, a)` a sequence
+-- state, never a list state);
 -- several written state arguments are several slots; and a collecting `while`
 -- step collects its state slots exactly — `W(n, *xs) = n + 1, xs.count, n < 1`
 -- started from `0, (1, 2)` sees `xs = [(1, 2)]` (count 1), so it stops at the
@@ -830,8 +900,9 @@ def loopStateMatrix : Bool :=
   is list12 (.call (resolve "repeat") [resolve "Id", .num 1, .listLiteral [.num 1, .num 2]]) &&
   is (.sequenceValue []) (.call (resolve "repeat") [resolve "Id", .num 1, .emptySequence 0]) &&
   is (.sequenceValue [.atom 2, .atom 1]) (.call (resolve "repeat") [resolve "Swap", .num 1, pair12]) &&
-  is (.sequenceValue [.atom 2, .atom 1])
-    (.call (resolve "repeat") [resolve "Swap", .num 1, .listLiteral [.num 1, .num 2]]) &&
+  (match run (.call (resolve "repeat") [resolve "Swap", .num 1, .listLiteral [.num 1, .num 2]]) with
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false) &&
   is seq12 (.call (resolve "repeat") [resolve "Swap", .num 2, pair12]) &&
   is (.atom 1) (.call (resolve "repeat") [resolve "Cnt", .num 1, pair12]) &&
   is (.atom 1) (.call (resolve "repeat") [resolve "Cnt", .num 1, .listLiteral [.num 1, .num 2]]) &&
@@ -848,8 +919,9 @@ def loopStateMatrix : Bool :=
 -- Selection feeds every later consumer as ONE value: with `B = ((1, 2), 3)`
 -- and `LL = [[1, 2], 3]`, `B:0`, `first(B)`, `LL:0`, and `first(LL)` bind a fixed
 -- parameter unchanged, are rejected by a two-parameter callee (one argument),
--- are opened by an explicit structural pattern (`AddPair`) and by the
--- explicit spread (`Add(sel*)`), and are ONE collected item.
+-- are opened by an explicit structural pattern of their own kind (`AddPair`
+-- for a selected sequence, `AddPairL` for a selected list) and by the explicit
+-- spread (`Add(sel*)`), and are ONE collected item.
 def selectionFeedsEveryConsumerAsOneValue : Bool :=
   let props := collProps ++ [("LL", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]
   let run (out : KatLang.Expr) : Except Error Result :=
@@ -858,23 +930,23 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
     match run out with
     | Except.ok value => value == expected
     | _ => false
-  let selections : List (KatLang.Expr × Result) :=
-    [ (.index (resolve "B") (.num 0), seq12),
-      (.call (resolve "first") [resolve "B"], seq12),
-      (.index (resolve "LL") (.num 0), list12),
-      (.call (resolve "first") [resolve "LL"], list12) ]
-  selections.all fun (selection, value) =>
+  let selections : List (KatLang.Expr × Result × String) :=
+    [ (.index (resolve "B") (.num 0), seq12, "AddPair"),
+      (.call (resolve "first") [resolve "B"], seq12, "AddPair"),
+      (.index (resolve "LL") (.num 0), list12, "AddPairL"),
+      (.call (resolve "first") [resolve "LL"], list12, "AddPairL") ]
+  selections.all fun (selection, value, addPair) =>
     is value (.call (resolve "Id") [selection]) &&
     (match run (.call (resolve "Add") [selection]) with
      | Except.error err => innermostIsArityMismatch 2 1 err
      | _ => false) &&
-    is (.atom 3) (.call (resolve "AddPair") [selection]) &&
+    is (.atom 3) (.call (resolve addPair) [selection]) &&
     is (.atom 3) (.call (resolve "Add") [sequenceSpread selection]) &&
     is (.listValue [value]) (.call (resolve "Coll") [selection]) &&
     is (.listValue [value]) (.dotCall selection "Coll" none) &&
     is list12 (.call (resolve "Coll") [sequenceSpread selection]) &&
     is list12 (.dotCall (sequenceSpread selection) "Coll" none) &&
-    is (.listValue [.atom 3]) (.call (resolve "map") [.listLiteral [selection], resolve "AddPair"])
+    is (.listValue [.atom 3]) (.call (resolve "map") [.listLiteral [selection], resolve addPair])
 
 #guard selectionFeedsEveryConsumerAsOneValue
 
@@ -893,9 +965,15 @@ def realCallbackBinderMatchesOrdinaryValueSupply : Bool := Id.run do
   let y : KatLang.ParameterPattern := .capture { name := "y" }
   let rest : KatLang.ParameterPattern := .capture { name := "rest", kind := .collecting }
   let pair : KatLang.ParameterPattern := .sequenceValue [x, y]
+  let listPair : KatLang.ParameterPattern := .listValue [x, y]
   let patterns := [[], [x], [x, y], [rest], [x, rest], [rest, y], [x, rest, y],
     [pair], [pair, y], [x, pair], [.sequenceValue [rest]],
-    [.sequenceValue [x, rest]], [.sequenceValue [x, x]], [x, rest, x]]
+    [.sequenceValue [x, rest]], [.sequenceValue [x, x]], [x, rest, x],
+    -- The kind-specific structural patterns (September 2026): list patterns of
+    -- every cardinality, the empty sequence pattern, and mixed nesting.
+    [listPair], [listPair, y], [.listValue [x]], [.listValue [rest]],
+    [.listValue [x, rest]], [.listValue []], [.sequenceValue []],
+    [.sequenceValue [listPair, y]], [.listValue [pair, y]]]
   let values : List Result := [.atom 1, .sequenceValue [], .listValue [], seq12, list12,
     .sequenceValue [seq12, .atom 3], .listValue [list12, .atom 3],
     .listValue [seq12], .listValue [.sequenceValue []]]

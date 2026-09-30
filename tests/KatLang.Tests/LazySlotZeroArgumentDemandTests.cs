@@ -414,8 +414,8 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void NestedPattern_ConsumesOneSuppliedSlot_EvenWhenItContainsACollector()
     {
-        // A nested pattern's scalar one-item fallback binds ONE supplied value; it never
-        // means the callable accepts zero. The reported minimum is the SLOT count (1),
+        // A nested pattern binds ONE supplied value of its own kind; it never means the
+        // callable accepts zero. The reported minimum is the SLOT count (1),
         // not the flattened captures.
         AssertPropertyZeroArgumentDemand("P((x, y)) = x\nif(true, P, 0)", "P", expectedParameters: 1, line: 2, column: 10);
         AssertPropertyZeroArgumentDemand("P((x, *rest)) = x\nif(true, P, 0)", "P", expectedParameters: 1, line: 2, column: 10);

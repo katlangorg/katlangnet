@@ -673,18 +673,39 @@ def collectingParameterForwardingSequenceValueUseAlg : Algorithm :=
     .call (resolve "CountSequenceValue") [.param "values"]
   ]
 
--- A deconstruction-shaped callee (`CountSequenceValue((*values))`) opens a
--- bare-forwarded collected LIST through its lone-structure rule, so the unspread
--- forward still reaches the items.
+-- A bare-forwarded collected LIST is one list value: the LIST pattern callee
+-- `CountList([*values])` opens it and reaches the items, while the SEQUENCE
+-- pattern callee `CountSequenceValue((*values))` rejects it as its kind mismatch —
+-- a structural pattern opens only its own kind (September 2026; formerly the
+-- sequence pattern opened lists too). Re-spreading into a sequence,
+-- `CountSequenceValue((values*))`, reaches the items through the sequence pattern.
 def collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  let countList := algWithParameterPatterns [
+    .listValue [.capture { name := "values", kind := .collecting }]
+  ] [] [] [.dotCall (.param "values") "count" none]
+  let useList := algWithParameters [{ name := "values", kind := .collecting }] [] [] [
+    .call (resolve "CountList") [.param "values"]
+  ]
+  let useSpread := algWithParameters [{ name := "values", kind := .collecting }] [] [] [
+    .call (resolve "CountSequenceValue") [.capture [sequenceSpread (.param "values")]]
+  ]
+  let props := [
     ("CountSequenceValue", collectingParameterForwardingCountSequenceValueAlg),
-    ("Use", collectingParameterForwardingSequenceValueUseAlg)
-  ] [
-    .call (resolve "Use") [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])]
-  ])) with
-  | Except.ok [3] => true
-  | _ => false
+    ("Use", collectingParameterForwardingSequenceValueUseAlg),
+    ("CountList", countList), ("UseList", useList), ("UseSpread", useSpread) ]
+  let run (callee : String) :=
+    runFlat (.algorithmExpr (algPrivate [] [] props [
+      .call (resolve callee) [sequenceSpread (sequenceItems [.num 10, .num 20, .num 30])]
+    ]))
+  (match run "UseList" with
+   | Except.ok [3] => true
+   | _ => false) &&
+  (match run "UseSpread" with
+   | Except.ok [3] => true
+   | _ => false) &&
+  (match run "Use" with
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false)
 
 #guard collectingParameterForwardingSequenceValueVariadicPatternPreservesBehavior
 
@@ -1159,11 +1180,13 @@ def repeatedSequenceValueClauseMatchesOnlyEqualItems : Bool :=
 
 #guard repeatedSequenceValueClauseMatchesOnlyEqualItems
 
+-- `F(x, [x]) = x`: the name repeats across a nested ONE-ELEMENT LIST pattern (the
+-- one-element structural pattern; a one-item sequence pattern `(x)` is invalid).
 def repeatedAcrossNestedClauseAlg : Algorithm :=
   Algorithm.elaborateClauseGroup [{
     pattern := KatLang.Pattern.sequenceValue [
       KatLang.Pattern.bind "x",
-      KatLang.Pattern.sequenceValue [KatLang.Pattern.bind "x"]
+      KatLang.Pattern.listValue [KatLang.Pattern.bind "x"]
     ]
     body := alg [] [] [] [.param "x"]
   }]
@@ -1173,14 +1196,14 @@ def repeatedAcrossNestedClauseMatchesOnlyEqualItems : Bool :=
     runFlat (.algorithmExpr (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
       .call (resolve "F") [
         .num 1,
-        .capture [.num 1]
+        .listLiteral [.num 1]
       ]
     ]))
   let unequalCall :=
     runResult (.algorithmExpr (algPrivate [] [] [("F", repeatedAcrossNestedClauseAlg)] [
       .call (resolve "F") [
         .num 1,
-        .capture [.num 2]
+        .listLiteral [.num 2]
       ]
     ]))
   match equalCall, unequalCall with
@@ -1216,10 +1239,14 @@ def precedenceRun (patterns : List KatLang.ParameterPattern) (output call : KatL
 def patternBindingFailureOutranksRepeatedNameConflict : Bool :=
   let pair := KatLang.ParameterPattern.sequenceValue [precedenceCap "a", precedenceCap "b"]
   let callP (args : List KatLang.Expr) : KatLang.Expr := .call (resolve "P") args
-  -- P((x, x, (a, b))) with P((1, 2, 7)): the nested (a, b) failure, not the unequal x.
+  -- P((x, x, (a, b))) with P((1, 2, (7, 8, 9))): the nested (a, b) failure, not the
+  -- unequal x; and a scalar there is (a, b)'s kind mismatch, which outranks it too.
+  (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x", pair]] (.param "a")
+      (callP [.capture [.num 1, .num 2, .capture [.num 7, .num 8, .num 9]]]) with
+   | .error err => innermostIsArityMismatch 2 3 err | _ => false) &&
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x", pair]] (.param "a")
       (callP [.capture [.num 1, .num 2, .num 7]]) with
-   | .error err => innermostIsArityMismatch 2 1 err | _ => false) &&
+   | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
   -- P(x, x, (a, b)) with P(1, 2, Bad): the argument's retained division by zero.
   (match precedenceRun [precedenceCap "x", precedenceCap "x", pair] (.param "a")
       (callP [.num 1, .num 2, .resolve "Bad"]) with
@@ -1247,19 +1274,20 @@ def collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging : Bool :=
   (match precedenceRun [precedenceCap "x", precedenceCap "x", precedenceColl "r", pair] (.param "a")
       (callP [.num 1, .num 2, .num 7]) with
    | .error err => innermostIsBadArity err | _ => false) &&
-  -- P(x, *r, x, (a, b)) with P(1, 2, 7): the suffix binds before the prefix/suffix merge.
+  -- P(x, *r, x, (a, b)) with P(1, 2, 7): the suffix binds before the prefix/suffix merge
+  -- (the scalar 7 is (a, b)'s kind mismatch).
   (match precedenceRun [precedenceCap "x", precedenceColl "r", precedenceCap "x", pair] (.param "a")
       (callP [.num 1, .num 2, .num 7]) with
-   | .error err => innermostIsArityMismatch 2 1 err | _ => false) &&
+   | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
   -- P(x, *r, x) with P(1, Bad, 2): the collector's values are collected before that merge.
   (match precedenceRun [precedenceCap "x", precedenceColl "r", precedenceCap "x"] (.param "x")
       (callP [.num 1, .resolve "Bad", .num 2]) with
    | .error err => innermostIsDivByZero err | _ => false) &&
-  -- The counted callback binder: map([(1, 9, 2, 7)], P) with P((x, *m, x, (a, b))).
+  -- The counted callback binder: map([(1, 9, 2, (7, 8, 9))], P) with P((x, *m, x, (a, b))).
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceColl "m", precedenceCap "x", pair]]
       (.listLiteral [.param "a"])
-      (.call (resolve "map") [.listLiteral [.capture [.num 1, .num 9, .num 2, .num 7]], .resolve "P"]) with
-   | .error err => innermostIsArityMismatch 2 1 err | _ => false)
+      (.call (resolve "map") [.listLiteral [.capture [.num 1, .num 9, .num 2, .capture [.num 7, .num 8, .num 9]]], .resolve "P"]) with
+   | .error err => innermostIsArityMismatch 2 3 err | _ => false)
 
 #guard collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging
 
@@ -1359,8 +1387,8 @@ def repeatedNameIsDecidedWhenComplete : Bool :=
       ("P", algWithParameterPatterns [.sequenceValue fixed] [] [] [.listLiteral [.param "a"]])
     ] [.call (resolve "map") [.listLiteral [.capture xs], .resolve "P"]]))
   [[.num 1, .num 2, .num 9, .num 1, .num 7], [.num 1, .num 1, .num 9, .num 2, .num 7]].all (fun xs =>
-    (match direct xs with | .error err => innermostIsArityMismatch 2 1 err | _ => false) &&
-    (match viaMap xs with | .error err => innermostIsArityMismatch 2 1 err | _ => false))
+    (match direct xs with | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
+    (match viaMap xs with | .error err => innermostIsAnyTypeMismatch err | _ => false))
 
 #guard repeatedNameIsDecidedWhenComplete
 
@@ -1452,7 +1480,7 @@ def secondCollectingCaptureIsASuffixPattern : Bool :=
     precedenceRun twoCollectors (.listLiteral [.param "a"]) (.call (resolve "map") [.listLiteral [item], .resolve "P"])
   (match viaMap (.emptySequence 0) with
    | .error err => innermostIsArityMismatch 1 0 err | _ => false) &&
-  (match viaMap (.num 7) with
+  (match viaMap (.capture [.num 7, .num 8]) with
    | .error err => innermostIsBadArity err | _ => false)
 
 #guard secondCollectingCaptureIsASuffixPattern

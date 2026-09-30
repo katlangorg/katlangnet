@@ -430,8 +430,9 @@ def dotCallParityChooseAlg : Algorithm := .conditional none [] [
   ⟨ .sequenceValue [.litInt 0, .bind "y"], alg [] [] [] [.param "y"] ⟩,
   ⟨ .sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")] ⟩ ]
 
--- G((0)) = 100; G((x)) = x
-def dotCallParitySingletonSequenceValueAlg : Algorithm := .conditional none [] [
+-- G(0) = 100; G(x) = x — a branch's top-level pattern is its head's argument
+-- list (`matchCallPattern`), never a nested group.
+def dotCallParityOneSlotHeadAlg : Algorithm := .conditional none [] [
   ⟨ .sequenceValue [.litInt 0], alg [] [] [] [.num 100] ⟩,
   ⟨ .sequenceValue [.bind "x"], alg [] [] [] [.param "x"] ⟩ ]
 
@@ -453,7 +454,7 @@ def dotCallParityProg : Algorithm :=
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
     ("Holder", alg [] [] [publicProp "Inner" (alg [] [] [] [.num 42])] [.num 1]),
     ("Choose", dotCallParityChooseAlg),
-    ("G", dotCallParitySingletonSequenceValueAlg)
+    ("G", dotCallParityOneSlotHeadAlg)
   ] [.num 0]
 
 -- Inline `(…)` receivers are one sequence value each; the collection
@@ -602,9 +603,9 @@ def dotCallParityCases : List DotCallParityCase :=
     -- patterns: noMatchingBranch "Choose" on both paths.
     { label := "L/conditional-receiver-underbinds", target := .num 1, name := "Choose",
       expected := .failedOtherwise },
-    -- M: `1.G` SUCCEEDS: singleton sequence-value clause patterns match a non-sequence-value
-    -- argument (`patternSequenceValueMembers?` adaptation), so G((x)) binds x = 1.
-    { label := "M/singleton-sequence-value-conditional-matches", target := .num 1, name := "G",
+    -- M: `1.G` SUCCEEDS: the one-slot head `G(x)` binds the injected receiver
+    -- whole (a head is matched against the argument list), so x = 1.
+    { label := "M/one-slot-head-conditional-matches", target := .num 1, name := "G",
       expectedAtoms := some [1] },
     -- N: unknown member: unknownName "DoesNotExist" on both paths.
     { label := "N/unknown-name", target := .num 1, name := "DoesNotExist",

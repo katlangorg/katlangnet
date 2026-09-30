@@ -51,7 +51,8 @@ theorem listItems?_list (xs : Supply) : listItems? (Val.list xs) = some xs := rf
 `structureItems?` unifies the openable halves of `sequenceItems?` and
 `listItems?`: both collection kinds project to their immediate items, and an
 atom is not an openable structure. It matches the full model's
-`Result.structureItems?`, the deconstruction receiver's structure view.
+`Result.structureItems?`, whose total extension `Result.spreadItems` is the
+deconstruction receiver's opening.
 -/
 
 theorem structureItems?_seq (xs : Supply) :
@@ -260,8 +261,9 @@ theorem capture_atom_empty_list_spread (n : Int) :
     _ = Val.atom n := capture_singleton_atom n
 
 /-- `openLoneStructure` on a single-value supply is definitionally the shared
-structural projection with a one-item fallback — the exact shape of the full
-model's deconstruction binder (`(Result.structureItems? value).getD [value]`). -/
+structural projection with a one-item fallback — the full model's deconstruction
+receiver opens through `Result.spreadItems value`, which is
+`(Result.structureItems? value).getD [value]` (`spreadItems_extends_structureItems`). -/
 theorem openLoneStructure_single_eq_structureItems?_getD (v : Val) :
     openLoneStructure [v] = (structureItems? v).getD [v] := rfl
 

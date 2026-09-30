@@ -56,6 +56,8 @@ public class CallableArityFactsPerLevelTests
             {
                 if (node is SequenceValueBindingNode group)
                     Walk(group.Children, $"{path} > ({string.Join(", ", group.Children.Captures.Select(static capture => capture.DisplayName))})");
+                else if (node is ListValueBindingNode list)
+                    Walk(list.Children, $"{path} > [{string.Join(", ", list.Children.Captures.Select(static capture => capture.DisplayName))}]");
             }
         }
     }
@@ -89,7 +91,7 @@ public class CallableArityFactsPerLevelTests
         var signature = SignatureFor("G((a, b), *rest) = a", "G");
 
         Assert.Equal("G((a, b), *rest)", signature.DisplayText);
-        Assert.True(signature.HasSequenceValueParameterPattern);
+        Assert.True(signature.HasStructuralParameterPattern);
         // The grouped pattern consumes one supplied slot; the collector consumes none.
         AssertTopLevelFacts(signature, min: 1, max: null, collectingCount: 1);
         Assert.False(signature.AcceptsItemCount(0));
@@ -172,31 +174,34 @@ public class CallableArityFactsPerLevelTests
         Assert.Equal(1, structured.Expected);
         Assert.Equal(0, structured.Actual);
         Assert.Equal(
-            "Sequence-value parameter pattern `(x, *r)` expects at least 1 value, but received 0 values.",
+            "Sequence pattern `(x, *r)` expects at least 1 element, but received 0 elements.",
             RenderEvaluationError(nestedFailure));
 
-        // ...and one or more nested items bind.
+        // ...a sequence of two or more elements binds (there is no one-element sequence)...
         AssertCallSucceeds("P((x, *r)) = x\nP((7, 8, 9))", 7);
-        AssertCallSucceeds("P((x, *r)) = x\nP(5)", 5);
+        AssertCallSucceeds("P((x, *r)) = x\nP((5, 6))", 5);
+        // ...and a scalar is the sequence pattern's kind mismatch, never a one-item supply.
+        SourceProvenance.ParseValid("P((x, *r)) = x\nP(5)").ExpectEvaluationError<EvalError.TypeMismatch>();
     }
 
     [Fact]
     public void NestedPlan_DoublyNestedGroup_DecidesEachLevelSeparately()
     {
-        // `((x, *r))` is a group holding a group: the middle level has no collector
-        // (exactly one pattern), the innermost one does.
-        var plan = PlanFor("F(((x, *r))) = x", "F");
+        // `[(x, *r)]` is a one-element LIST pattern holding a SEQUENCE pattern: the middle
+        // level has no collector (exactly one pattern), the innermost one does. (A one-item
+        // SEQUENCE pattern around the group would be invalid: there is no one-item sequence.)
+        var plan = PlanFor("F([(x, *r)]) = x", "F");
 
-        Assert.Equal("F(((x, *r)))", plan.DisplayText);
+        Assert.Equal("F([(x, *r)])", plan.DisplayText);
         Assert.Equal(
             [
-                ("F(((x, *r)))", 1, (int?)1),
-                ("F(((x, *r))) > (x, *r)", 1, 1),
-                ("F(((x, *r))) > (x, *r) > (x, *r)", 1, null),
+                ("F([(x, *r)])", 1, (int?)1),
+                ("F([(x, *r)]) > [x, *r]", 1, 1),
+                ("F([(x, *r)]) > [x, *r] > (x, *r)", 1, null),
             ],
             LevelArities(plan));
 
-        var middle = NestedLevel(plan, 0);
+        var middle = Assert.IsType<ListValueBindingNode>(plan.TopLevelPatternList.Nodes[0]).Children;
         Assert.Equal(1, middle.MinSlotCount);
         Assert.Equal(1, middle.MaxSlotCount);
         Assert.False(middle.HasCollectingAtThisLevel);
@@ -207,16 +212,16 @@ public class CallableArityFactsPerLevelTests
         Assert.True(innermost.HasCollectingAtThisLevel);
 
         // The middle level's exact-one expectation is what the binder enforces.
-        var middleFailure = SourceProvenance.ParseValid("F(((x, *r))) = x\nF((1, 2, 3))");
+        var middleFailure = SourceProvenance.ParseValid("F([(x, *r)]) = x\nF([(1, 2), (3, 4)])");
         var structured = middleFailure.ExpectEvaluationError<EvalError.ArityMismatch>();
         Assert.Equal(1, structured.Expected);
-        Assert.Equal(3, structured.Actual);
+        Assert.Equal(2, structured.Actual);
         Assert.Equal(
-            "Sequence-value parameter pattern `((x, *r))` expects 1 value, but received 3 values.",
+            "List pattern `[(x, *r)]` expects 1 element, but received 2 elements.",
             RenderEvaluationError(middleFailure));
 
-        // One outer item that itself opens reaches the innermost collecting level.
-        AssertCallSucceeds("F(((x, *r))) = x\nF([(1, 2, 3)])", 1);
+        // One list element that is itself a sequence reaches the innermost collecting level.
+        AssertCallSucceeds("F([(x, *r)]) = x\nF([(1, 2, 3)])", 1);
     }
 
     [Fact]
@@ -271,7 +276,7 @@ public class CallableArityFactsPerLevelTests
             { "F", "F((x, y), *r) = x", 1, null },
             { "F", "F(*r, (x, y)) = x", 1, null },
             { "F", "F((x, *r)) = x", 1, 1 },
-            { "F", "F(((x, *r))) = x", 1, 1 },
+            { "F", "F([(x, *r)]) = x", 1, 1 },
             { "F", "F((*inner), *outer) = outer", 1, null },
             { "F", "F((a, b), (c, d)) = a", 2, 2 },
             { "F", "F((a, b), *r, (c, d)) = a", 2, null },

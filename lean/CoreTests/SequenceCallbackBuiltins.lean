@@ -950,10 +950,11 @@ def filterZeroParameterWrapperRetainsArity : Bool :=
 
 --------------------------------------------------------------------------------
 -- S3 (September 2026): callback binding of ONE supplied value uses the
--- ordinary call's nested-pattern rules. Both binders open a sequence-value
--- pattern's value through the ONE rule `Result.sequenceValuePatternItems`
--- (sequence/list opens one level; any other value is a one-item supply at
--- every group size), so for every pattern `P` and value `V`, `map([V], P)`
+-- ordinary call's nested-pattern rules. Both binders open a structural
+-- pattern's value through the ONE kind-specific rule
+-- (`Result.sequencePatternItems?` for `(…)`, `Result.listPatternItems?` for
+-- `[…]`; any other value is the pattern's kind mismatch), so for every
+-- pattern `P` and value `V`, `map([V], P)`
 -- binds `V` exactly as `P(V)` does: same success, same bound values, and the
 -- same innermost binding error. The callback operation still decides how many
 -- values it supplies (map/filter one element, reduce element + accumulator).
@@ -965,24 +966,31 @@ def innermostError : Error -> Error
   | error => error
 
 /-- Pattern lists (with the names their one-value list body reports) covering
-    every nested-group shape the one-item fallback distinguishes: one item,
-    head plus collector, collector only, fixed pair, collector plus suffix,
-    head/collector/suffix, a doubly nested collector, a nested group inside a
-    group, and a repeated binder. -/
+    every nested structural shape of both kinds (September 2026: the delimiter
+    selects the kind, and no scalar is a one-item structure): the one-element
+    list pattern, head plus collector, collector only, fixed pair, collector plus
+    suffix, head/collector/suffix, a sequence inside a one-element list, a nested
+    group inside a group, a repeated binder, and the list twins of the head,
+    collector and pair shapes plus a list inside a sequence. -/
 def s3CallbackPatterns : List (List KatLang.ParameterPattern × List String) := [
-  ([.sequenceValue [.capture { name := "x" }]], ["x"]),
+  ([.listValue [.capture { name := "x" }]], ["x"]),
   ([.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]], ["x", "rest"]),
   ([.sequenceValue [.capture { name := "xs", kind := .collecting }]], ["xs"]),
   ([.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]], ["x", "y"]),
   ([.sequenceValue [.capture { name := "init", kind := .collecting }, .capture { name := "z" }]], ["init", "z"]),
   ([.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }, .capture { name := "z" }]],
     ["x", "r", "z"]),
-  ([.sequenceValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]],
+  ([.listValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]],
     ["x", "r"]),
   ([.sequenceValue [.capture { name := "a" },
       .sequenceValue [.capture { name := "b" }, .capture { name := "r", kind := .collecting }]]],
     ["a", "b", "r"]),
-  ([.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]], ["x"])
+  ([.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]], ["x"]),
+  ([.listValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]], ["x", "rest"]),
+  ([.listValue [.capture { name := "xs", kind := .collecting }]], ["xs"]),
+  ([.listValue [.capture { name := "x" }, .capture { name := "y" }]], ["x", "y"]),
+  ([.sequenceValue [.listValue [.capture { name := "x" }, .capture { name := "y" }], .capture { name := "z" }]],
+    ["x", "y", "z"])
 ]
 
 /-- Supplied values: scalars of every kind, the empty sequence value, sequence
@@ -1001,7 +1009,9 @@ def s3CallbackValues : List KatLang.Expr := [
   .listLiteral [],
   .listLiteral [.num 5],
   .listLiteral [.num 1, .num 2],
-  .listLiteral [.capture [.num 1, .num 2]]
+  .listLiteral [.capture [.num 1, .num 2]],
+  .listLiteral [.capture [.num 1, .num 2], .num 3],
+  .capture [.listLiteral [.num 1, .num 2], .num 3]
 ]
 
 def s3PatternAlg (patterns : List KatLang.ParameterPattern) (names : List String) : Algorithm :=
@@ -1072,46 +1082,61 @@ def s3DirectAndReduceBindAlike (patterns : List KatLang.ParameterPattern) (names
   s3CallbackValues.all fun value => s3DirectAndReduceBindAlike patterns names value
 
 -- The agreement matrix alone would also pass if BOTH paths regressed the same
--- way, so the characteristic cells are pinned as well: a scalar is ONE item
--- for `(x, *rest)` (binds, rest empty), for `(*init, z)`, and inside a nested
--- group; it is one item too few for `(x, y)` — the nested group's ordinary
--- `arityMismatch 2 1`, never a bare `badArity` — in the direct call and the
--- callback alike.
+-- way, so the characteristic cells are pinned as well (September 2026: a scalar
+-- is never a one-item structure): a scalar is the kind mismatch of `(x, *rest)`,
+-- `(*init, z)` and `(x, y)` alike; a list is the kind mismatch of a sequence
+-- pattern and a sequence that of a list pattern; the right kind binds through
+-- nested groups of either kind; and a right-kind value of the wrong length is
+-- the nested group's ordinary `arityMismatch`, never a bare `badArity` — in the
+-- direct call and the callback alike.
 def s3CallbackScalarCells : Bool :=
   let headRest : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
   let pair : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]
   let initLast : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "init", kind := .collecting }, .capture { name := "z" }]]
-  let nestedHead : List KatLang.ParameterPattern := [.sequenceValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]]
+  let listOfHead : List KatLang.ParameterPattern := [.listValue [.sequenceValue [.capture { name := "x" }, .capture { name := "r", kind := .collecting }]]]
   let groupInGroup : List KatLang.ParameterPattern := [.sequenceValue [.capture { name := "a" },
       .sequenceValue [.capture { name := "b" }, .capture { name := "r", kind := .collecting }]]]
+  let listHead : List KatLang.ParameterPattern := [.listValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
   let viaMap (patterns : List KatLang.ParameterPattern) (names : List String) (value : KatLang.Expr) :=
     runResult (s3Program patterns names (.call (resolve "map") [.listLiteral [value], .resolve "P"]))
   let direct (patterns : List KatLang.ParameterPattern) (names : List String) (value : KatLang.Expr) :=
     runResult (s3Program patterns names (.call (resolve "P") [value]))
-  (match viaMap headRest ["x", "rest"] (.num 7) with
+  let wrongKind (result : Except Error Result) : Bool :=
+    match result with
+    | .error err => innermostIsAnyTypeMismatch err
+    | _ => false
+  wrongKind (viaMap headRest ["x", "rest"] (.num 7)) &&
+  wrongKind (viaMap headRest ["x", "rest"] (.stringLiteral "s")) &&
+  wrongKind (viaMap initLast ["init", "z"] (.boolLiteral true)) &&
+  wrongKind (viaMap pair ["x", "y"] (.num 7)) &&
+  wrongKind (direct pair ["x", "y"] (.num 7)) &&
+  wrongKind (viaMap headRest ["x", "rest"] (.listLiteral [.num 1, .num 2])) &&
+  wrongKind (viaMap listHead ["x", "rest"] (.capture [.num 1, .num 2])) &&
+  wrongKind (viaMap listHead ["x", "rest"] (.num 7)) &&
+  (match viaMap headRest ["x", "rest"] (.capture [.num 7, .num 8]) with
+   | .ok (.listValue [.listValue [.atom 7, .listValue [.atom 8]]]) => true | _ => false) &&
+  (match viaMap listHead ["x", "rest"] (.listLiteral [.num 7]) with
    | .ok (.listValue [.listValue [.atom 7, .listValue []]]) => true | _ => false) &&
-  (match viaMap headRest ["x", "rest"] (.stringLiteral "s") with
-   | .ok (.listValue [.listValue [.str "s", .listValue []]]) => true | _ => false) &&
-  (match viaMap initLast ["init", "z"] (.boolLiteral true) with
-   | .ok (.listValue [.listValue [.listValue [], .bool true]]) => true | _ => false) &&
-  (match viaMap nestedHead ["x", "r"] (.num 7) with
-   | .ok (.listValue [.listValue [.atom 7, .listValue []]]) => true | _ => false) &&
-  (match viaMap groupInGroup ["a", "b", "r"] (.capture [.num 1, .num 2]) with
-   | .ok (.listValue [.listValue [.atom 1, .atom 2, .listValue []]]) => true | _ => false) &&
-  (match viaMap pair ["x", "y"] (.num 7) with
-   | .error err => innermostIsArityMismatch 2 1 err | _ => false) &&
-  (match direct pair ["x", "y"] (.num 7) with
-   | .error err => innermostIsArityMismatch 2 1 err | _ => false)
+  (match viaMap listOfHead ["x", "r"] (.listLiteral [.capture [.num 7, .num 8]]) with
+   | .ok (.listValue [.listValue [.atom 7, .listValue [.atom 8]]]) => true | _ => false) &&
+  (match viaMap groupInGroup ["a", "b", "r"] (.capture [.num 1, .capture [.num 2, .num 3]]) with
+   | .ok (.listValue [.listValue [.atom 1, .atom 2, .listValue [.atom 3]]]) => true | _ => false) &&
+  wrongKind (viaMap groupInGroup ["a", "b", "r"] (.capture [.num 1, .num 2])) &&
+  (match viaMap pair ["x", "y"] (.capture [.num 1, .num 2, .num 3]) with
+   | .error err => innermostIsArityMismatch 2 3 err | _ => false) &&
+  (match direct pair ["x", "y"] (.capture [.num 1, .num 2, .num 3]) with
+   | .error err => innermostIsArityMismatch 2 3 err | _ => false)
 
 #guard s3CallbackScalarCells
 
 -- filter and reduce deliver their values through the same counted binder:
--- `filter([7, 1], P)` keeps 7 with `P((x, *rest)) = x > 1`; reduce binds the
--- scalar element (`R((x, *rest), acc)`) and the scalar accumulator
--- (`R(e, (a, *r))`) exactly as the two-argument ordinary call `R(7, 0)` does,
+-- `filter([(7, 1), (1, 2)], P)` keeps `(7, 1)` with `P((x, *rest)) = x > 1`;
+-- reduce binds the sequence element (`R((x, *rest), acc)`) and the sequence
+-- accumulator (`R(e, (a, *r))`) exactly as the two-argument ordinary call does,
 -- and the element beside a top-level collecting accumulator (`R((a, *r), *acc)`)
 -- exactly as the ordinary call with the same supply — the accumulator is ONE
--- ordinary argument, so that call is again `R(7, 0)`.
+-- ordinary argument. A SCALAR element or accumulator is the sequence pattern's
+-- kind mismatch in both (September 2026: no scalar is a one-item structure).
 def s3FilterAndReduceBindLikeCalls : Bool :=
   let headRest : List KatLang.ParameterPattern :=
     [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
@@ -1128,20 +1153,35 @@ def s3FilterAndReduceBindLikeCalls : Bool :=
     [.listLiteral [.param "a", .param "r", .param "acc"]]
   let run (name : String) (callee : Algorithm) (output : KatLang.Expr) :=
     runResult (.algorithmExpr (algPrivate [] [] [(name, callee)] [output]))
-  (match run "P" keepAboveOne (.call (resolve "filter") [.listLiteral [.num 7, .num 1], .resolve "P"]) with
-   | .ok (.listValue [.atom 7]) => true | _ => false) &&
-  (match run "R" elementReducer (.call (resolve "reduce") [.listLiteral [.num 7, .num 8], .resolve "R", .num 0]) with
+  let wrongKind (result : Except Error Result) : Bool :=
+    match result with
+    | .error err => innermostIsAnyTypeMismatch err
+    | _ => false
+  (match run "P" keepAboveOne (.call (resolve "filter")
+      [.listLiteral [.capture [.num 7, .num 1], .capture [.num 1, .num 2]], .resolve "P"]) with
+   | .ok (.listValue [.sequenceValue [.atom 7, .atom 1]]) => true | _ => false) &&
+  wrongKind (run "P" keepAboveOne (.call (resolve "filter") [.listLiteral [.num 7, .num 1], .resolve "P"])) &&
+  (match run "R" elementReducer (.call (resolve "reduce")
+      [.listLiteral [.capture [.num 7, .num 1], .capture [.num 8, .num 2]], .resolve "R", .num 0]) with
    | .ok (.atom 15) => true | _ => false) &&
-  (match run "R" elementReducer (.call (resolve "R") [.num 7, .num 0]) with
+  (match run "R" elementReducer (.call (resolve "R") [.capture [.num 7, .num 1], .num 0]) with
    | .ok (.atom 7) => true | _ => false) &&
-  (match run "R" accumulatorReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0]) with
+  wrongKind (run "R" elementReducer (.call (resolve "reduce") [.listLiteral [.num 7, .num 8], .resolve "R", .num 0])) &&
+  wrongKind (run "R" elementReducer (.call (resolve "R") [.num 7, .num 0])) &&
+  (match run "R" accumulatorReducer (.call (resolve "reduce")
+      [.listLiteral [.num 7], .resolve "R", .capture [.num 0, .num 5]]) with
    | .ok (.atom 7) => true | _ => false) &&
-  (match run "R" accumulatorReducer (.call (resolve "R") [.num 7, .num 0]) with
+  (match run "R" accumulatorReducer (.call (resolve "R") [.num 7, .capture [.num 0, .num 5]]) with
    | .ok (.atom 7) => true | _ => false) &&
-  (match run "R" collectingReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0]) with
-   | .ok (.listValue [.atom 7, .listValue [], .listValue [.atom 0]]) => true | _ => false) &&
-  (match run "R" collectingReducer (.call (resolve "R") [.num 7, .num 0]) with
-   | .ok (.listValue [.atom 7, .listValue [], .listValue [.atom 0]]) => true | _ => false)
+  wrongKind (run "R" accumulatorReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0])) &&
+  wrongKind (run "R" accumulatorReducer (.call (resolve "R") [.num 7, .num 0])) &&
+  (match run "R" collectingReducer (.call (resolve "reduce")
+      [.listLiteral [.capture [.num 7, .num 1]], .resolve "R", .num 0]) with
+   | .ok (.listValue [.atom 7, .listValue [.atom 1], .listValue [.atom 0]]) => true | _ => false) &&
+  (match run "R" collectingReducer (.call (resolve "R") [.capture [.num 7, .num 1], .num 0]) with
+   | .ok (.listValue [.atom 7, .listValue [.atom 1], .listValue [.atom 0]]) => true | _ => false) &&
+  wrongKind (run "R" collectingReducer (.call (resolve "reduce") [.listLiteral [.num 7], .resolve "R", .num 0])) &&
+  wrongKind (run "R" collectingReducer (.call (resolve "R") [.num 7, .num 0]))
 
 #guard s3FilterAndReduceBindLikeCalls
 

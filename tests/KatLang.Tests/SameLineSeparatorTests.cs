@@ -488,7 +488,8 @@ public class SameLineSeparatorTests
     [InlineData("F(a, *b c) = a\nF(1, 2, 3)", "1:9")]
     [InlineData("F(a *b) = a\nF(1, 2)", "1:5")]
     [InlineData("F(a (b, c)) = a\nF(1, (2, 3))", "1:5")]
-    [InlineData("F((a) b) = a\nF((1), 2)", "1:7")]
+    [InlineData("F([a] b) = a\nF([1], 2)", "1:7")]
+    [InlineData("F(a [b]) = a\nF(1, [2])", "1:5")]
     [InlineData("F(1 -2) = 3\nF(1, -2)", "1:5")]
     [InlineData("F(a 'x') = a\nF(1, 'x')", "1:5")]
     [InlineData("F(a b c) = a\nF(1, 2, 3)", "1:5;1:7")]
@@ -735,7 +736,7 @@ public class SameLineSeparatorTests
             [TokenKind.Identifier] = ("y", true),
             [TokenKind.Minus] = ("-2", true),
             [TokenKind.Tilde] = ("~y", true),
-            [TokenKind.LParen] = ("(y)", true),
+            [TokenKind.LParen] = ("(y, z)", true),
             [TokenKind.Star] = ("*y", true),
             [TokenKind.Plus] = ("+", false),
             [TokenKind.Slash] = ("/", false),
@@ -759,7 +760,7 @@ public class SameLineSeparatorTests
             [TokenKind.RParen] = (")", false),
             [TokenKind.LBrace] = ("{", false),
             [TokenKind.RBrace] = ("}", false),
-            [TokenKind.LBracket] = ("[", false),
+            [TokenKind.LBracket] = ("[y]", true),
             [TokenKind.RBracket] = ("]", false),
             [TokenKind.Comma] = (",", false),
             [TokenKind.Semicolon] = (";", false),

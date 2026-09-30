@@ -158,14 +158,20 @@ ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" "=" OutputBundle ;
                         KatLang supports recursive parameter patterns in ordinary
                         algorithm definitions and conditional branch heads. A
                         same-name group with exactly one clause whose head consists
-                        only of captures and structural sequence-value patterns elaborates as an
-                        ordinary explicit parameter list, e.g. PairSum((x, y)) or
-                        CountSequenceValue((*values)). A sequence-value parameter pattern
-                        consumes one parent-level argument slot, so F((head,
-                        *tail), suffix) takes one sequence-value first argument and
-                        binds its immediate contents. Collecting bindings consume
-                        sibling values at their own pattern-list level and collect
-                        the assigned slots as one list.
+                        only of captures and structural (sequence or list) patterns
+                        elaborates as an ordinary explicit parameter list, e.g.
+                        PairSum((x, y)), Only([x]), or CountSequenceValue((*values)).
+                        A structural pattern consumes one parent-level argument
+                        slot, so F((head, *tail), suffix) takes one sequence first
+                        argument and binds its immediate elements. STRUCTURAL
+                        PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE:
+                        a SequencePattern matches sequence values only and a
+                        ListPattern list values only; neither opens the other kind
+                        or treats a scalar as a one-item structure (a plain binder
+                        takes a value whole). Collecting bindings consume sibling
+                        values at their own pattern-list level and collect the
+                        assigned slots as one list. The head's own parentheses are
+                        the call's argument list, never a SequencePattern.
                         Multi-clause families and literal/mixed heads elaborate as
                         conditional algorithms. *)
 
@@ -181,7 +187,18 @@ PatternAtom        = BindingIdentifier             (* fixed bind *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
                    | StringLiteral                 (* litString *)
                    | BooleanLiteral                (* litBool: matches only the Boolean value *)
-                   | "(" Pattern ")" ;             (* sequence-value pattern; always structural, even for singletons *)
+                   | SequencePattern
+                   | ListPattern ;
+SequencePattern    = "(" [ Pattern ] ")" ;          (* matches SEQUENCE values only, of exactly its
+                                                      length (a collector: at least its fixed items);
+                                                      "()" is the empty sequence. Exactly ONE
+                                                      non-collecting item is the front-end error
+                                                      SingletonSequencePattern: there is no one-item
+                                                      sequence value. "(*xs)" is valid. *)
+ListPattern        = "[" [ Pattern ] "]" ;          (* matches LIST values only, at every cardinality:
+                                                      "[]" the empty list, "[x]" a one-element list,
+                                                      "[x, *rest]" at least one element. In a pattern
+                                                      "[" never begins a list expression. *)
 
 OutputLine      = OutputBundle ;
 OutputBundle    = ExpressionList ;
@@ -685,8 +702,9 @@ ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                      into one value). Pattern parentheses (ClauseDefinition,
                      Pattern) describe the call SHAPE a branch or parameter
                      list requires; they never create a runtime value
-                     boundary, and a sequence-value pattern opens its
-                     argument's VALUE, never the group it was written with.
+                     boundary, and a structural pattern opens its argument's
+                     VALUE (a SequencePattern a sequence value, a ListPattern
+                     a list value), never the group it was written with.
                      By contrast "{}" is an empty no-output body
                      (BraceAlgorithmExpr), not a value. *)
 BraceAlgorithmExpr = "{" Algorithm "}" ;

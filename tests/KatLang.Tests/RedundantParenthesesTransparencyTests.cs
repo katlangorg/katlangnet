@@ -42,7 +42,7 @@ public class RedundantParenthesesTransparencyTests
         "Two(x, y) = [x, y]\n" +
         "Coll(*xs) = xs\n" +
         "Pat((x, *y)) = ([x], y)\n" +
-        "Sing((x)) = x\n" +
+        "Sing([x]) = x\n" +
         "Fam((a, b)) = a + b\n" +
         "Fam(x) = 0\n" +
         "Keep(x) = true\n" +
@@ -367,22 +367,25 @@ public class RedundantParenthesesTransparencyTests
     }
 
     [Theory]
-    [InlineData("7", "L[7]")]
-    [InlineData("true", "L[true]")]
-    [InlineData("'s'", "L['s']")]
-    [InlineData("[7]", "L[7]")]
-    [InlineData("[()]", "L[]")]
-    [InlineData("[(1, 2)]", "L[1, 2]")]
-    [InlineData("[[1, 2]]", "L[1, 2]")]
-    public void NestedOrdinaryPattern_KeepsScalarFallbackAndRealListBoundaries(string argument, string expected)
+    [InlineData("7", "err type")]
+    [InlineData("true", "err type")]
+    [InlineData("'s'", "err type")]
+    [InlineData("(1, 2)", "err type")]
+    [InlineData("[7]", "err type")]
+    [InlineData("[[1, 2]]", "err type")]
+    [InlineData("[()]", "ok raw=L[] n=1")]
+    [InlineData("[(1, 2)]", "ok raw=L[1, 2] n=1")]
+    [InlineData("[(1, 2, 3)]", "ok raw=L[1, 2, 3] n=1")]
+    public void NestedStructuralPatterns_MatchOnlyTheirOwnKind_AtEveryGroupingDepth(string argument, string expected)
     {
-        // Only a list can retain a unary STRUCTURE. Scalars need no wrapper:
-        // each ordinary sequence-value pattern treats a scalar as one item.
-        const string declaration = "P(((*xs))) = xs\n";
+        // A one-element LIST whose element is a SEQUENCE: each structural pattern opens only
+        // its own kind, and nothing treats a scalar (or the other kind) as a one-item
+        // structure. Grouping the argument changes nothing.
+        const string declaration = "P([(*xs)]) = xs\n";
         for (var depth = 0; depth <= 3; depth++)
         {
             var source = declaration + "P(" + Grouped(argument, depth) + ")";
-            Assert.Equal($"ok raw={expected} n=1", Neutral(source));
+            Assert.Equal(expected, Neutral(source));
             AssertStrategiesAgree(source, declaration + "P(" + argument + ")");
         }
     }

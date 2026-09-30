@@ -33,6 +33,11 @@ public class OwnershipConformanceTests
         ["collecting-parameter"] = new("v = 99\nOuter(*v) = { Inner = v\nInner }\nOuter(7, 20)", "Outer/Inner", "[7, 20]"),
         ["grouped-branch-binder"] = new("v = 99\nF((0, v)) = { v = 5\nInner = v\nInner }\nF((0, 7))", "F/@0/Inner", "7"),
         ["ancestor-property"] = new("v = 99\nOuter(q) = { Inner = v\nInner }\nOuter(7)", "Outer/Inner", "99"),
+        // FWD-02: Outer is an exact alias of F (its one row is the bare `F`), so it inherits F's
+        // `v` — the callee's private binder name, which owns no written name and collides with no
+        // property: Outer's property `v` is legal and Inner reads it.
+        ["alias-inherited-no-collision"] = new("F(v) = v + 1\nOuter = { v = 5\nInner = v\nF }\nOuter(7)", "Outer/Inner", "8"),
+        ["alias-inherited-owns-no-name"] = new("v = 99\nF(v) = v + 1\nOuter = { Inner = v\nF }\nOuter(7)", "Outer/Inner", "8"),
     };
 
     public static TheoryData<string, string, string, int, bool> Inputs()
@@ -168,8 +173,14 @@ public class OwnershipConformanceTests
                 ? ParameterPattern.FlattenCaptures(user.NameResolutionParameterPatterns).Select(static p => p.Name)
                 : Algorithm.Params);
 
-        /// <summary>The names AUTOMATIC FORWARDING added to this level (Q-04): they own no written name.</summary>
-        public IEnumerable<string> ForwardedNames => Binder is null && Algorithm is Algorithm.User { ForwardingParameterStart: { } start } user
+        /// <summary>
+        /// The names AUTOMATIC FORWARDING added to this level (Q-04): they own no written name. An
+        /// exact alias's inherited signature (FWD-02) is not among them — its names are the callee's
+        /// private binder names, which own no written name AND collide with nothing, so the Lean
+        /// level models them in neither list.
+        /// </summary>
+        public IEnumerable<string> ForwardedNames => Binder is null
+            && Algorithm is Algorithm.User { ForwardingParameterStart: { } start, InheritsCalleeSignature: false } user
             ? ParameterPattern.FlattenCaptures(user.ParameterPatterns.Skip(start)).Select(static p => p.Name)
             : [];
     }
@@ -210,6 +221,7 @@ public class OwnershipConformanceTests
     {
         Pattern.Bind bind => bind.Name == name ? bind.NameSpan : null,
         Pattern.SequenceValue group => group.Items.Select(child => BinderSpan(child, name)).FirstOrDefault(span => span is not null),
+        Pattern.ListValue list => list.Items.Select(child => BinderSpan(child, name)).FirstOrDefault(span => span is not null),
         Pattern.LitInt or Pattern.LitString or Pattern.LitBool => null,
     };
 }

@@ -29,3 +29,5 @@ import CoreTests.ArgumentValueOutcome
 import CoreTests.ForwardingBindings
 import CoreTests.RepeatedNameConstraints
 import CoreTests.BuiltinArgumentRoles
+import CoreTests.StructuralPatterns
+import CoreTests.AliasForwarding

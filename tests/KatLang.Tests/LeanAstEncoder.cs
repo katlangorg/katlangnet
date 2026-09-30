@@ -274,8 +274,8 @@ internal sealed class LeanAstEncoding
     /// constructor, mirroring how the corpora spell the three shapes:
     /// <c>alg [names]</c> for all-normal flat captures,
     /// <c>algWithParameters [{ name, kind }]</c> once a collecting capture
-    /// appears, and <c>algWithParameterPatterns [...]</c> once any
-    /// sequence-value pattern appears. The Lean helpers derive the flattened
+    /// appears, and <c>algWithParameterPatterns [...]</c> once any structural
+    /// (sequence or list) pattern appears. The Lean helpers derive the flattened
     /// parameter list from the patterns exactly as the C# tree does: a user
     /// algorithm stores ONE channel (<see cref="Algorithm.User.ParameterPatterns"/>)
     /// and <see cref="Algorithm.User.Parameters"/> is its projection, so the two
@@ -307,19 +307,22 @@ internal sealed class LeanAstEncoding
     };
 
     /// <summary>
-    /// Lean <c>ParameterPattern</c> constructor spelling. Pattern SHAPE is
-    /// load-bearing: <c>F((x))</c> is a singleton sequence-value pattern, a
-    /// different program from the flat <c>F(x)</c>, and the flattened
-    /// <see cref="Algorithm.User.Parameters"/> list cannot distinguish them — the
-    /// original Track 9 failure mode. Encoding the pattern tree keeps the
-    /// distinction. Compiler-exhaustive over the closed ParameterPattern hierarchy:
-    /// a new variant fails this build until the encoder covers it.
+    /// Lean <c>ParameterPattern</c> constructor spelling. Pattern SHAPE and KIND are
+    /// load-bearing: <c>F((x, y))</c>, <c>F([x, y])</c> and the flat <c>F(x, y)</c> are
+    /// three different programs, and the flattened <see cref="Algorithm.User.Parameters"/>
+    /// list cannot distinguish them — the original Track 9 failure mode. Encoding the
+    /// pattern tree keeps the distinction. Compiler-exhaustive over the closed
+    /// ParameterPattern hierarchy: a new variant fails this build until the encoder covers it.
     /// </summary>
     private static string EncodeParameterPattern(ParameterPattern pattern) => pattern switch
     {
         CaptureParameterPattern capture => $".capture {EncodeCallableParameter(capture)}",
         SequenceValueParameterPattern(var items) =>
             $".sequenceValue [{EncodeList(items, EncodeParameterPattern)}]",
+        ListValueParameterPattern(var items) =>
+            $".listValue [{EncodeList(items, EncodeParameterPattern)}]",
+        UnpackingParameterPattern(var items) =>
+            $".unpacking [{EncodeList(items, EncodeParameterPattern)}]",
     };
 
     /// <summary>
@@ -350,12 +353,11 @@ internal sealed class LeanAstEncoding
     }
 
     /// <summary>
-    /// Conditional clause head. Pattern SHAPE is load-bearing: a singleton
-    /// <c>sequenceValue [bind]</c> head (written <c>F((x))</c>) is a different
-    /// clause from a bare <c>bind</c> head (written <c>F(x)</c>), and only the
-    /// former exercises the documented whole-argument singleton rule.
-    /// Compiler-exhaustive over the closed Pattern hierarchy: a new variant fails
-    /// this build until the encoder covers it.
+    /// Conditional clause head. Pattern SHAPE and KIND are load-bearing: a nested
+    /// <c>sequenceValue</c> (written <c>F((x, y))</c>) matches sequences only, a
+    /// <c>listValue</c> (written <c>F([x, y])</c>) lists only, and a bare <c>bind</c>
+    /// head (written <c>F(x)</c>) any value. Compiler-exhaustive over the closed
+    /// Pattern hierarchy: a new variant fails this build until the encoder covers it.
     /// </summary>
     public static string EncodePattern(Pattern pattern) => pattern switch
     {
@@ -364,6 +366,7 @@ internal sealed class LeanAstEncoding
         Pattern.LitString(var value) => $".litString {Quote(value)}",
         Pattern.LitBool(var value) => $".litBool {EncodeBool(value)}",
         Pattern.SequenceValue(var items) => $".sequenceValue [{EncodeList(items, EncodePattern)}]",
+        Pattern.ListValue(var items) => $".listValue [{EncodeList(items, EncodePattern)}]",
     };
 
     /// <summary>Lean's `Bool` literals are spelled exactly like KatLang's.</summary>

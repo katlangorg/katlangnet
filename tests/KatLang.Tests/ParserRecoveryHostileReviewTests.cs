@@ -261,7 +261,7 @@ public class ParserRecoveryHostileReviewTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var options = new RunOptions { EvaluationCancellationToken = cancellation.Token, RandomSeed = 123 };
-        string[] sources = ["F([a]) = random\nF(1)", "random +\nGood=41", "[random)",
+        string[] sources = ["F((a)) = random\nF(1)","random +\nGood=41", "[random)",
             "F(*a,*b)=random\nF(1)", "random @", "F(x @ y)=random\nF(a)=a"];
         foreach (var source in sources)
         {

@@ -408,6 +408,9 @@ public class KatLangErrorCodeTests
             ["IllegalInOpen"] = 44,
             ["UnresolvedOpenTarget"] = 45,
             ["DiagnosticCountExceeded"] = 46,
+            // 47 is permanently retired (the withdrawn Q-72 repeated-name refusal), never reused.
+            ["SingletonSequencePattern"] = 48,
+            ["UnforwardableParameter"] = 49,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -488,6 +491,9 @@ public class KatLangErrorCodeTests
             ["InvalidNumberLiteral"] = 66,
             ["UnresolvedOpenTarget"] = 67,
             ["DiagnosticCountExceeded"] = 68,
+            // 69 is permanently retired (the withdrawn Q-72 repeated-name refusal), never reused.
+            ["SingletonSequencePattern"] = 70,
+            ["UnforwardableParameter"] = 71,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

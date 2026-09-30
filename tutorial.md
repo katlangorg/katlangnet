@@ -451,19 +451,92 @@ G(x) = x * 2
 H = F + G
 
 Common(x, x) = x
-Some = Common
+Twice = Common * 2
 
 H(3)
-Some(7)
+Twice(7)
 ```
 
 **Results:**
 ```
 10
+14
+```
+
+`H = F + G` means `H(x) = F(x) + G(x)`, and in the same way `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2`: `Twice` takes one input and hands it to both places where `Common` names `x`, so `Twice` is called with one argument. Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error.
+
+All of this is about formulas that *use* another formula inside an expression. A definition whose whole body is just the name of a formula is different, as the next section shows.
+
+### Aliases, Forwarding, and Explicit Calls
+
+There are four ways to define a formula through another one, and they are four different things:
+
+<!-- spec:alias-forwarding-and-explicit-call -->
+```
+Double(x) = x * 2
+Other(y) = y * 2
+
+Alias = Double
+Forward(x) = Double
+Explicit(x) = Other(x)
+Formula = Double + 1
+
+Alias(5)
+Forward(5)
+Explicit(5)
+Formula(5)
+```
+
+**Results:**
+```
+10
+10
+10
+11
+```
+
+- `Alias = Double` is an **alias**: its whole body is the name of a formula, and it has no parameter list of its own, so it is `Double` under another name, with Double's parameters. It takes exactly the arguments `Double` takes.
+- `Forward(x) = Double` is **forwarding by name**: `Forward` has its own parameter list, and `Double` receives the parameter of the same name — `Double` needs an `x`, and `Forward` has one. Nothing is added to the list, and nothing is renamed: `Bad(x) = Other` is an error, because `Other` needs a `y` and `Bad` has none — KatLang does not rename `x` to `y`. Parameters are matched by name, never by position, and a parameter the called formula does not need simply stays unused (with `Ten = 10`, `Always(p) = Ten` is `10` whatever it is given).
+- `Explicit(x) = Other(x)` is an **explicit call**: the arguments are passed exactly as written, so the names do not have to match.
+- `Formula = Double + 1` *uses* `Double` in an expression, so Double's input becomes an input of `Formula` (see [Formulas That Use Formulas](#formulas-that-use-formulas)): it means `Formula(x) = Double(x) + 1`.
+
+So `Forward(x) = Double` is not the same as `Forward(x) = Double(x)` — the two only agree when the names do. With `Sub(y, x) = y - x`, the definition `G(x, y) = Sub` hands G's `y` to Sub's `y` and G's `x` to Sub's `x`, so `G(10, 3)` is `3 - 10`, which is `-7`, while `G(x, y) = Sub(x, y)` passes the arguments in the written order and gives `7`.
+
+The same four forms work with structural parameters:
+
+<!-- spec:alias-structural-forwarding-and-written-call -->
+```
+Single([x]) = x
+
+Alias = Single
+SameShape([x]) = Single
+Explicit(x) = Single(x)
+Construct = Single([x])
+
+Alias([7])
+SameShape([7])
+Explicit([7])
+Construct(7)
+```
+
+**Results:**
+```
+7
+7
+7
 7
 ```
 
-`H = F + G` means `H(x) = F(x) + G(x)`, and in the same way `Some = Common` means `Some(x) = Common(x, x)`: `Some` takes one input and hands it to both places where `Common` names `x`, so `Some` is called with one argument. Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error.
+- `Alias = Single` has Single's parameter `[x]`, so it takes exactly the arguments `Single` takes: `Alias(7)` is an error, just like `Single(7)`.
+- `SameShape([x]) = Single` forwards by name: its own parameter is the same pattern `[x]`, so `Single` receives it as the list it matched.
+- `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`.
+- `Construct = Single([x])` is an ordinary formula: its parameter `x` comes from the `[x]` written in it, and it builds the list before calling `Single`, so it takes the element itself.
+
+`Bad(x) = Single` is an error: Single's parameter is the pattern `[x]`, a one-element list, while `Bad`'s parameter is a whole value that happens to be called `x`. Forwarding by name matches whole parameters, never a name inside a pattern, and it never reshapes an argument — write `Bad(x) = Single(x)` to pass `x` whole, or declare the same pattern, `Bad([x]) = Single`. In the same way, with `Add((a, b)) = a + b`, `Pair(a, b) = Add` is an error, because `Add` takes one pair; `Pair((a, b)) = Add` forwards the pair, and `Pair(a, b) = Add((a, b))` builds it.
+
+An alias keeps everything about the formula it names — its structural parameters, collecting parameters, and repeated names: with `Common(x, x) = x`, `Same = Common` takes two arguments that must be equal, just like `Common`. Forwarding by name keeps the kind of each parameter: a collecting parameter hands on everything it collected to a collecting parameter of the same name (`Many(*vs) = Coll` with `Coll(*vs) = vs` means `Coll(vs*)`), and a structural parameter is rebuilt as its own list or sequence.
+
+Because of this, renaming a formula's parameters affects each form differently. An alias takes the new names with it, and a formula that uses it takes them as its inputs. Forwarding by name must be updated to match, or it becomes an error. An explicit call is unaffected, because its arguments are written out: in `G = Add((x, y))` the parameters of `G` are `x` and `y`, the names written there, and renaming `Add`'s parameters to `left` and `right` changes nothing about `G`.
 
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
@@ -948,7 +1021,19 @@ Length((6, 8))
 10
 ```
 
-`Length` has one parameter, the pattern `(x, y)`, so it takes one argument — a pair — and names the pair's two items.
+`Length` has one parameter, the pattern `(x, y)`, so it takes one argument — a pair — and names the pair's two items. A parenthesized pattern unpacks only a **sequence** of exactly its length:
+
+```
+FirstPair((x, y)) = x
+
+FirstPair((10, 20))
+```
+
+**Result:** `10`
+
+`FirstPair(10)` and `FirstPair((1, 2, 3))` are errors: a number is not a sequence, and a three-item sequence is not a pair.
+
+There is no pattern `(x)`: a sequence never has exactly one item — `(7)` is just `7` — so a definition such as `F((x)) = x` is rejected. Write `F(x)` to take one whole value. ([Lists](#lists) have a pattern for exactly one element, `[x]`.)
 
 ### The Empty Sequence
 
@@ -1065,7 +1150,61 @@ Grid:1:0
 3
 ```
 
-A list, too, is one value in a call: `Add([10, 20])` passes one argument, and `Add([10, 20]*)` passes two. A single definition with a pattern parameter, such as `Length((x, y))`, unpacks a list as well as a sequence; the clauses of [Pattern Matching](#matching-structure) are stricter.
+A list, too, is one value in a call: `Add([10, 20])` passes one argument, and `Add([10, 20]*)` passes two. A bracketed pattern unpacks a list the way a parenthesized pattern unpacks a sequence (see [Unpacking an Argument](#unpacking-an-argument)), and since a list keeps even one element, `[x]` is a pattern too:
+
+```
+Only([x]) = x
+PairSum([x, y]) = x + y
+
+Only([10])
+PairSum([10, 20])
+```
+
+**Results:**
+```
+10
+30
+```
+
+Each pattern unpacks only its own kind: `Only(10)` and `PairSum((10, 20))` are errors, because a number is not a list and neither is a sequence. Patterns nest, and every level keeps its kind — here a sequence whose first item is a list:
+
+```
+F(([x, y], z)) = x + y + z
+
+F(([10, 20], 30))
+```
+
+**Result:** `60`
+
+| Pattern | Matches |
+|---|---|
+| `x` | any one value, whole |
+| `()` | the empty sequence |
+| `(x, y)` | a sequence of exactly two items |
+| `(x, *rest)` | a sequence of at least one item; `rest` is the list of the others |
+| `(*xs)` | any sequence; `xs` is the list of its items |
+| `[]` | the empty list |
+| `[x]` | a list of exactly one element |
+| `[x, y]` | a list of exactly two elements |
+| `[*xs]` | any list; `xs` is the list of its elements |
+
+An alias of such a definition takes exactly the same arguments (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)), so the pattern unpacks exactly the same items either way:
+
+```
+Only([x]) = x
+First = Only
+
+Only([[7]])
+First([[7]])
+```
+
+**Results:**
+```
+[7]
+[7]
+```
+
+The pattern `[x]` unpacks the one element of `[[7]]`, which is `[7]`, and `First` does exactly the same: an alias never changes the structure of an argument, and never unpacks a value a second time.
 
 ### Lists or Sequences?
 
@@ -1328,7 +1467,7 @@ map(((1, 2), (3, 4)), Swap)
 
 **Result:** `[(2, 1), (4, 3)]`
 
-A `map` or `filter` callback with two ordinary parameters, such as `Add(a, b) = a + b`, does not accept a pair element, just as `Add((1, 2))` is an error.
+A `map` or `filter` callback with two ordinary parameters, such as `Add(a, b) = a + b`, does not accept a pair element, just as `Add((1, 2))` is an error. A list element is unpacked by a list pattern instead: `[[1, 2], [3, 4]].map(LSwap)` with `LSwap([a, b]) = [b, a]`.
 
 A brace callback's parameters are its undefined names, so choose names that are not already defined around it. If the program defines a property `x`, then `{x * 2}` uses that `x`, and no parameter is left to receive the element.
 
@@ -1464,14 +1603,14 @@ Roll == Roll
 | `Roll()` | A fresh evaluation |
 | `Roll(2)` | A fresh evaluation with the argument `2` |
 
-The name alone means the value wherever it appears — in a formula, in a list, or as another name — so it never receives the arguments of the formula that uses it:
+The name alone means the value wherever it appears in a formula or a list, so it never receives the arguments of the formula that uses it:
 
 ```
 Count(*items) = items.count
 Size = Count
 Twice = Count + Count
 
-Size, Twice, Count(7, 8, 9)
+Size, Twice, Count(7, 8, 9), Size(7, 8)
 ```
 
 **Results:**
@@ -1479,9 +1618,10 @@ Size, Twice, Count(7, 8, 9)
 0
 0
 3
+2
 ```
 
-`Size` is another name for the value `0`, and `Twice` adds that value to itself. To hand arguments on, call the algorithm explicitly (see [Forwarding Collected Arguments](#forwarding-collected-arguments)).
+`Twice` adds the value `0` to itself. `Size` is different: its whole body is the name `Count`, so it is an alias of `Count` (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)). Used alone it is its value, `0`, and called with arguments it counts them. To hand arguments on inside a formula, call the algorithm explicitly (see [Forwarding Collected Arguments](#forwarding-collected-arguments)).
 
 ### Passing Items with `*`
 
@@ -1547,7 +1687,7 @@ Forward([1, 2])
 [[1, 2]]
 ```
 
-`Forward` hands on exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list. The call must be written out: `Forward(*items) = Target` would read `Target`'s own value, `[]`, whatever `Forward` received (see [Using the Name Alone](#using-the-name-alone)).
+`Forward` hands on exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list. `Forward(*items) = Target` means the same here: Forward's collecting parameter `items` is handed on by name to Target's collecting parameter `items`, re-spread (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)). Inside a larger formula the call must be written out: in `Forward(*items) = [Target, 0]`, the name `Target` alone would be `Target`'s own value, `[]`, whatever `Forward` received (see [Using the Name Alone](#using-the-name-alone)).
 
 ### Values and Items at a Glance
 
@@ -1562,7 +1702,8 @@ The last chapters rest on one idea: a value stays one value until you open it ex
 | `A:0` | One item of `A`, selected as a value: `1` |
 | `(A*, B*)`, `[A*, B*]` | One sequence, or one list, of the items `1, 2, 3, 4` |
 | `F(*xs) = ...` | `F` collects its arguments into the list `xs` |
-| `F((x, y)) = ...` | `F` takes one argument and unpacks its two items |
+| `F((x, y)) = ...` | `F` takes one sequence argument and unpacks its two items |
+| `F([x, y]) = ...` | `F` takes one list argument and unpacks its two elements |
 | `A.count`, `A.sum` | A collection operation receives the whole list `A` |
 
 ---
@@ -1797,7 +1938,24 @@ Area(('circle', 1)).round(4)
 3.1416
 ```
 
-When a parenthesized pattern of several items chooses between clauses or contains a literal, it matches sequences, not lists: `['rect', 3, 4]` matches no clause of `Area`, so `Area(['rect', 3, 4])` is an error.
+A parenthesized pattern matches sequences only, and a bracketed pattern lists only, in clauses exactly as in single definitions: `['rect', 3, 4]` matches no clause of `Area`, so `Area(['rect', 3, 4])` is an error. Bracketed patterns tell lists apart by their length:
+
+```
+Kind([]) = 0
+Kind([x]) = 1
+Kind(xs) = 2
+
+Kind([])
+Kind([5])
+Kind([5, 6])
+```
+
+**Results:**
+```
+0
+1
+2
+```
 
 ### Equal Arguments
 
@@ -1831,7 +1989,7 @@ Same(Inc, 1)
 
 A callable that accepts zero arguments can supply its value through the ordinary cached read.
 
-The check is about arguments that are supplied separately. When one input is handed on to both places, as `Some = Common` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own.
+The check is about arguments that are supplied separately. When one input is handed on to both places, as `Twice = Common * 2` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own. An alias is different: `Same = Common` takes two separate arguments, exactly like `Common`.
 
 ### Rules for Clauses
 
@@ -2105,6 +2263,7 @@ A* B
 - **A misspelled member falls back to a call.** `Math` has no member `Ceiling`, so `Math.Ceiling(2.1)` means `Ceiling(Math, 2.1)`; as nothing named `Ceiling` is defined, the name becomes a parameter, and the error message suggests `Math.Ceil`.
 - **Parameters follow first appearance.** `Ratio = b / a` takes `b` first; use an explicit parameter list or Grace to change the order.
 - **Values are not unpacked automatically.** A sequence or list is one argument. Open it with `*`, select its items with `:`, or unpack it with a pattern parameter.
+- **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
@@ -2152,7 +2311,8 @@ A* B
 | `{ ... }` | An algorithm: a brace algorithm, or a body with local definitions |
 | `value*` | Spread: supply the items of a value |
 | `*name` | Collecting parameter or collecting deconstruction target |
-| `(x, y)` in a parameter list | Pattern parameter: unpack one argument |
+| `(x, y)` in a parameter list | Sequence pattern: unpack one sequence argument |
+| `[x, y]` in a parameter list | List pattern: unpack one list argument |
 | `~x`, `x~` | Grace: move an inferred parameter one position earlier or later |
 | `load('url')` | Load an algorithm from a URL; a special form, not a keyword |
 | `'text'` | String |

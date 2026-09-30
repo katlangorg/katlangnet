@@ -3798,14 +3798,13 @@ public class ParserTests
             global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(canonical.Root, []),
             global::KatLang.ParserFuzz.FrontEndFingerprint.ComputeParseResult(result.Root, []));
 
-        // `y` still binds through the shared sequence-value pattern as a
-        // COLLECTING binding. The target property's body applies an inline
-        // pattern helper to the shared RHS property; the pattern lives on
-        // that helper.
+        // `y` still binds through the shared unpacking receiver as a COLLECTING
+        // binding. The target property's body applies an inline helper to the
+        // shared RHS property; the receiver lives on that helper.
         var yBody = Assert.IsType<Algorithm.User>(result.Root.Properties[2].Value);
         var helperCall = Assert.IsType<Expr.Call>(Assert.Single(yBody.Output));
         var yHelper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
-        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(yHelper.ParameterPatterns));
+        var pattern = Assert.IsType<UnpackingParameterPattern>(Assert.Single(yHelper.ParameterPatterns));
         Assert.Collection(
             pattern.Items,
             item => Assert.Equal(ParameterKind.Normal, Assert.IsType<CaptureParameterPattern>(item).Kind),
@@ -3829,7 +3828,7 @@ public class ParserTests
         var itemsBody = Assert.IsType<Algorithm.User>(result.Root.Properties[1].Value);
         var helperCall = Assert.IsType<Expr.Call>(Assert.Single(itemsBody.Output));
         var helper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
-        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
+        var pattern = Assert.IsType<UnpackingParameterPattern>(Assert.Single(helper.ParameterPatterns));
         var item = Assert.IsType<CaptureParameterPattern>(Assert.Single(pattern.Items));
         Assert.Equal(ParameterKind.Collecting, item.Kind);
         Assert.NotNull(item.CollectMarkerSpan);
@@ -3852,7 +3851,7 @@ public class ParserTests
         var yBody = Assert.IsType<Algorithm.User>(result.Root.Properties[2].Value);
         var helperCall = Assert.IsType<Expr.Call>(Assert.Single(yBody.Output));
         var helper = Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm;
-        var pattern = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
+        var pattern = Assert.IsType<UnpackingParameterPattern>(Assert.Single(helper.ParameterPatterns));
         Assert.Equal(
             ParameterKind.Normal,
             Assert.IsType<CaptureParameterPattern>(pattern.Items[1]).Kind);
@@ -4779,9 +4778,10 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(middle.Value);
         var call = Assert.IsType<Expr.Call>(Assert.Single(body.Output));
         var helperBlock = Assert.IsType<Expr.AlgorithmExpr>(call.Function);
-        var sequence = Assert.IsType<SequenceValueParameterPattern>(
+        // The helper binds through the unpacking receiver (never a written structural pattern).
+        var receiver = Assert.IsType<UnpackingParameterPattern>(
             Assert.Single(helperBlock.Algorithm.ParameterPatterns));
-        var capture = Assert.IsType<CaptureParameterPattern>(sequence.Items[1]);
+        var capture = Assert.IsType<CaptureParameterPattern>(receiver.Items[1]);
         Assert.Equal("middle", capture.Name);
         Assert.Null(capture.Span); // the helper is synthetic; the property declaration owns the name span
         Assert.Equal(new SourceSpan(1, 8, 1, 9), capture.CollectMarkerSpan);
@@ -5422,7 +5422,7 @@ public class ParserTests
     {
         var source = """
             F(1) = 100
-            F((x)) = 0
+            F(x) = 0
             """;
         var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);
@@ -5445,7 +5445,7 @@ public class ParserTests
     {
         var source = """
             F = 1
-            F((x)) = x
+            F([x]) = x
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -5621,7 +5621,7 @@ public class ParserTests
     public void Parse_Conditional_SingleBranch_AlwaysValid()
     {
         // Single branch: no arity conflict possible
-        var result = Parser.ParseSyntax("K((x)) = x");
+        var result = Parser.ParseSyntax("K([x]) = x");
         Assert.False(result.HasErrors);
     }
 
@@ -5645,10 +5645,10 @@ public class ParserTests
     [Fact]
     public void Parse_Conditional_Arity1vs2_ReportsError()
     {
-        // First branch arity 1 (sequence-value singleton), second branch arity 2 (sequence value)
+        // First branch arity 1 (a one-element list pattern), second branch arity 2
         var source = """
-            F((x)) = 1
-            F(a, (b)) = a
+            F([x]) = 1
+            F(a, [b]) = a
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -5721,7 +5721,7 @@ public class ParserTests
     public void Parse_Conditional_SingleBranch_OutputArity_AlwaysValid()
     {
         // Single branch: no output arity conflict possible
-        var result = Parser.ParseSyntax("F((x)) = x, x + 1");
+        var result = Parser.ParseSyntax("F([x]) = x, x + 1");
         Assert.False(result.HasErrors);
     }
 
@@ -5806,7 +5806,7 @@ public class ParserTests
         // the same line), never a `when`-syntax error.
         var source = """
             F when (1) = 100
-            F when ((x)) = 0
+            F when ([x]) = 0
             """;
         var result = Parser.ParseSyntax(source);
         // F is output, when(1)=100 and when(x)=0 are branches of conditional "when"
@@ -5837,7 +5837,7 @@ public class ParserTests
         // First two lines are definitions (followed by =), last line is a call (no =)
         var source = """
             F(1) = 100
-            F((x)) = 0
+            F(x) = 0
             F(1)
             """;
         var result = Parser.ParseSyntax(source);
@@ -5854,7 +5854,7 @@ public class ParserTests
         // F(x) in the body of G is a call, not a branch definition
         var source = """
             F(1) = 100
-            F((x)) = 0
+            F(x) = 0
             G = F(1)
             """;
         var result = Parser.ParseSyntax(source);
@@ -6005,8 +6005,8 @@ public class ParserTests
     public void Parse_DuplicateConditionalBranchPattern_Bind_ReportsError()
     {
         var source = """
-            F((x)) = x + 1
-            F((x)) = x + 2
+            F(x) = x + 1
+            F(x) = x + 2
             """;
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
@@ -6078,7 +6078,7 @@ public class ParserTests
     {
         var source = """
             F(1) = 100
-            F((x)) = 0
+            F(x) = 0
             """;
         var result = Parser.ParseSyntax(source);
         Assert.False(result.HasErrors);

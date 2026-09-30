@@ -1996,6 +1996,14 @@ public sealed class Parser
     private const string CollectMarkerMissingNameDiagnostic =
         "The collect marker `*` must be followed by a binding name, as in `*items`.";
 
+    /// <summary>
+    /// <see cref="DiagnosticCode.SingletonSequencePattern"/>: a structural pattern restriction,
+    /// never a statement about expression grouping. Shares its wording with the Lean model's
+    /// <c>singletonSequencePatternMessage</c> and the pre-evaluation violation.
+    /// </summary>
+    internal const string SingletonSequencePatternDiagnostic =
+        "A sequence pattern with exactly one non-collecting item is invalid: KatLang has no one-item sequence value. Bind the whole value with a plain name, or use the list pattern `[x]` for a one-element list.";
+
     private static string SpreadMarkerInBindingPatternDiagnostic(string name) =>
         $"Postfix `*` is the spread marker and is not valid in a binding pattern. Write `*{name}` to declare a collecting binding.";
 
@@ -2296,14 +2304,20 @@ public sealed class Parser
     /// <summary>
     /// Elaborates a deconstruction pattern into properties. The right-hand side is
     /// hoisted into one synthetic shared property (evaluated once), and each target
-    /// becomes a property whose body applies an inline sequence-value-pattern
-    /// helper to that shared source, returning its own bound name. The helper reuses
-    /// the ordinary patterned-binding path: assignment deconstruction is an
-    /// unpacking receiver, so a single sequence-valued right-hand side is opened and
-    /// matched element-by-element (Python-style: <c>x, y, z = A</c> splits a stored
-    /// sequence value <c>A</c>). Explicit <c>x, y, z = A*</c> supplies the same
-    /// items. This unpacking is deconstruction-specific and does not change ordinary
-    /// calls, which still pass <c>A</c> as one argument unless <c>A*</c> is written.
+    /// becomes a property whose body applies an inline helper to that shared source,
+    /// returning its own bound name. Assignment deconstruction is the UNPACKING
+    /// RECEIVER, not a written structural pattern: every helper's single parameter
+    /// pattern is ONE shared <see cref="UnpackingParameterPattern"/> over the written
+    /// targets, which demands the right-hand side as an ordinary VALUE (so a right-hand
+    /// side without output is that missing output) and binds the targets as one flat
+    /// pattern list (fixed prefix and suffix, at most one collector) against its
+    /// ONE-LEVEL items: a lone sequence or list value is opened one level and any other
+    /// value is one item (Python-style: <c>x, y, z = A</c> splits a stored sequence or
+    /// list <c>A</c>, and <c>x, *rest = 1</c> binds <c>rest = []</c>). It has no delimiter
+    /// that could select a value kind, so it opens both kinds alike; the kind-specific
+    /// structural patterns never do. Explicit <c>x, y, z = A*</c> supplies the same items.
+    /// This unpacking is deconstruction-specific and does not change ordinary calls,
+    /// which still pass <c>A</c> as one argument unless <c>A*</c> is written.
     /// Synthetic constructs carry no source spans; only the target property names are
     /// source-backed declarations. The collect-marker metadata is the one additional
     /// source-backed syntax span retained on the synthetic binding pattern.
@@ -2333,11 +2347,11 @@ public sealed class Parser
                     CollectMarkerSpan = target.CollectMarkerSpan,
                 }))
             .ToList();
-        var seqPattern = new SequenceValueParameterPattern(captures);
-        // Every target helper shares ONE explicit pattern list: the N-capture sequence-value
-        // pattern the written targets form. Parameters/Params derive from it on demand, so
-        // constructing a helper is O(1) in the capture count.
-        IReadOnlyList<ParameterPattern> helperPatterns = [seqPattern];
+        // Every target helper shares ONE explicit pattern list holding ONE unpacking receiver
+        // over the N written targets. Parameters/Params derive from it on demand, so
+        // constructing a helper is O(1) in the capture count, and every walker meets the one
+        // shared receiver node once.
+        IReadOnlyList<ParameterPattern> helperPatterns = [new UnpackingParameterPattern(captures)];
 
         // One identity token shared by every target helper of this deconstruction. The evaluator
         // keys its run-scoped shared-bind cache on it so the N helpers bind the shared N-capture
@@ -2966,6 +2980,7 @@ public sealed class Parser
         {
             Pattern.Bind { ParameterKind: ParameterKind.Collecting } => true,
             Pattern.SequenceValue(var items) => items.Any(PatternContainsCollectingParameter),
+            Pattern.ListValue(var items) => items.Any(PatternContainsCollectingParameter),
             _ => false,
         };
 
@@ -3033,13 +3048,19 @@ public sealed class Parser
 
     /// <summary>
     /// The recovery shape of a pattern with several collecting bindings at one level:
-    /// the first collecting binding of every sequence-value level is kept, every later
-    /// one becomes an ordinary fixed binding (its collect marker dropped). Recursion
-    /// depth is the pattern's nesting, which the parser's recursion budget bounds.
+    /// the first collecting binding of every structural level (sequence or list) is kept,
+    /// every later one becomes an ordinary fixed binding (its collect marker dropped).
+    /// Recursion depth is the pattern's nesting, which the parser's recursion budget bounds.
     /// </summary>
     private static Pattern KeepFirstCollectingBindingPerLevel(Pattern pattern)
     {
-        if (pattern is not Pattern.SequenceValue(var items))
+        var items = pattern switch
+        {
+            Pattern.SequenceValue(var sequenceItems) => sequenceItems,
+            Pattern.ListValue(var listItems) => listItems,
+            _ => null,
+        };
+        if (items is null)
             return pattern;
 
         var kept = new List<Pattern>(items.Count);
@@ -3065,17 +3086,22 @@ public sealed class Parser
             }
         }
 
-        return changed ? new Pattern.SequenceValue(kept) : pattern;
+        if (!changed)
+            return pattern;
+        return pattern is Pattern.ListValue ? new Pattern.ListValue(kept) : new Pattern.SequenceValue(kept);
     }
 
     /// <summary>
     /// Parses a clause-head pattern for ordinary recursive parameter patterns
-    /// or conditional algorithm branches.
-    /// Patterns are comma-separated at the top level (creating a sequence-value pattern
-    /// when more than one element), with support for:
-    /// - integer literals (including negative)
-    /// - identifier binders
-    /// - nested parenthesized sequence-value patterns
+    /// or conditional algorithm branches. The head's items are comma-separated; the
+    /// head's own argument list is a top-level <see cref="Pattern.SequenceValue"/> when it
+    /// has more than one item or its lone item is a structural pattern (so <c>F((x, y))</c>
+    /// is <c>SequenceValue[SequenceValue[x, y]]</c> and <c>F([x])</c> is
+    /// <c>SequenceValue[ListValue[x]]</c>), and the lone item itself otherwise. Items are:
+    /// - number literals (including negative), string and Boolean literals
+    /// - identifier binders (fixed or collecting)
+    /// - nested SEQUENCE patterns <c>(p1, …, pn)</c> and LIST patterns <c>[p1, …, pn]</c>,
+    ///   including the empty <c>()</c> and <c>[]</c>
     /// </summary>
     private Pattern ParsePattern()
     {
@@ -3083,7 +3109,7 @@ public sealed class Parser
         if (items.Count != 1)
             return new Pattern.SequenceValue(items);
 
-        return items[0] is Pattern.SequenceValue ? new Pattern.SequenceValue(items) : items[0];
+        return items[0] is Pattern.SequenceValue or Pattern.ListValue ? new Pattern.SequenceValue(items) : items[0];
     }
 
     private List<Pattern> ParsePatternItems()
@@ -3121,8 +3147,9 @@ public sealed class Parser
     /// expression-list rule. A token on a later line is never admitted here:
     /// parameter lists have no newline separator, so it reaches the ordinary
     /// closing-delimiter check unchanged. What can begin a pattern item is
-    /// the atom grammar's own starter set (<see cref="CanStartPatternAtom"/>),
-    /// with one refinement for the star: a star that no operand can follow is
+    /// the atom grammar's own starter set (<see cref="CanStartPatternAtom"/>,
+    /// a nested sequence or list pattern included), with one refinement for the
+    /// star: a star that no operand can follow is
     /// a (misplaced) spread marker on the pattern before it, never the collect
     /// marker of a next binding — the same classifier the atom grammar and the
     /// expression-level star decision use — so it is left to the closing
@@ -3152,7 +3179,8 @@ public sealed class Parser
     /// and <c>SameLineSeparatorTests</c> pins the classification of every
     /// <see cref="TokenKind"/>, so the predicate and the grammar cannot drift
     /// apart. Deliberately narrower than <see cref="CanStartExpression"/>: a
-    /// pattern has no <c>not</c>, block, or list form.
+    /// pattern has no <c>not</c> or block form (its <c>[</c> begins a LIST pattern, never
+    /// a list expression).
     /// </summary>
     private static bool CanStartPatternAtom(TokenKind kind) => kind switch
     {
@@ -3164,7 +3192,8 @@ public sealed class Parser
         or TokenKind.KeywordTrue   // Boolean literal pattern
         or TokenKind.KeywordFalse
         or TokenKind.Identifier
-        or TokenKind.LParen => true, // nested sequence-value pattern
+        or TokenKind.LParen      // nested sequence pattern
+        or TokenKind.LBracket => true, // nested list pattern
         _ => false,
     };
 
@@ -3173,7 +3202,9 @@ public sealed class Parser
     /// - number literal → Pattern.LitInt
     /// - negative number → Pattern.LitInt with negated value
     /// - identifier → Pattern.Bind
-    /// - ( pattern ) -> nested sequence-value pattern
+    /// - ( pattern ) -> nested SEQUENCE pattern (<c>()</c> is the empty sequence pattern;
+    ///   one non-collecting item is the invalid singleton, <see cref="DiagnosticCode.SingletonSequencePattern"/>)
+    /// - [ pattern ] -> nested LIST pattern (<c>[]</c> is the empty list pattern)
     /// Grace `~` is rejected in clause-head patterns.
     /// </summary>
     private Pattern ParsePatternAtom()
@@ -3410,13 +3441,42 @@ public sealed class Parser
 
             case TokenKind.LParen:
                 {
-                    Advance(); // consume '('
-                    var items = ParsePatternItems();
+                    var open = Advance(); // consume '('
+                    var itemsDiagnosticsStart = _diagnostics.ReportedCount;
+                    // `()` is the empty SEQUENCE pattern: it matches only the empty sequence.
+                    var items = Current.Kind == TokenKind.RParen ? [] : ParsePatternItems();
+                    var close = Current;
                     Expect(TokenKind.RParen);
-                    // Parentheses in patterns are structural at every nesting level:
-                    // (a, b) -> SequenceValue([a, b]); (x) -> SequenceValue([x]);
-                    // ((a, b)) -> SequenceValue([SequenceValue([a, b])]).
+                    // Parentheses in patterns are structural at every nesting level and select
+                    // the SEQUENCE kind: (a, b) -> SequenceValue([a, b]);
+                    // ((a, b)) -> SequenceValue([SequenceValue([a, b])]). THE SINGLETON RULE: a
+                    // sequence pattern of exactly one non-collecting item describes a one-item
+                    // sequence, which no value is — `(x)`, `((a, b))`, `([x])` are rejected (a
+                    // cleanly parsed group only, so a malformed item never cascades), while the
+                    // collector-only `(*xs)` is valid. The recovered tree keeps the group as
+                    // written (the program is never evaluated).
+                    if (Pattern.IsSingletonSequenceItems(items)
+                        && _diagnostics.ReportedCount == itemsDiagnosticsStart
+                        && close.Kind == TokenKind.RParen)
+                    {
+                        ReportErrorAcross(
+                            DiagnosticCode.SingletonSequencePattern,
+                            SingletonSequencePatternDiagnostic,
+                            open,
+                            close);
+                    }
+
                     return new Pattern.SequenceValue(items);
+                }
+
+            case TokenKind.LBracket:
+                {
+                    Advance(); // consume '['
+                    // Brackets in patterns select the LIST kind: [x] -> ListValue([x]) matches a
+                    // one-element list; `[]` is the empty list pattern.
+                    var items = Current.Kind == TokenKind.RBracket ? [] : ParsePatternItems();
+                    Expect(TokenKind.RBracket);
+                    return new Pattern.ListValue(items);
                 }
 
             default:
@@ -3435,9 +3495,9 @@ public sealed class Parser
     /// atom becomes a unique spanless recovery binder, which declares no source name,
     /// and recovery never leaves the head: a closing delimiter is reported and left in
     /// place — the head's own <c>)</c> or a nested pattern group's closes its construct
-    /// (<c>F() = 1</c> reports once instead of consuming the head's <c>)</c>); an opening <c>[</c> or
+    /// (<c>F() = 1</c> reports once instead of consuming the head's <c>)</c>); an opening
     /// <c>{</c> is reported and skipped together with the rest of its group, which the
-    /// head encloses (<c>F([a, b]) = …</c> keeps its <c>)</c>, its <c>=</c>, and its body);
+    /// head encloses (<c>F({a, b}) = …</c> keeps its <c>)</c>, its <c>=</c>, and its body);
     /// any other token is reported and skipped alone. A missing item a reported character
     /// stands in (<c>F(x, @) = x</c>: only a closer, a comma, or the end of input follows
     /// it) is that character: the lexer already reported it, so the binder is filled
@@ -3457,7 +3517,7 @@ public sealed class Parser
         if (IsClosingDelimiter(token.Kind) || token.Kind == TokenKind.EndOfFile)
             return RecoveryBinder();
 
-        if (token.Kind is TokenKind.LBracket or TokenKind.LBrace)
+        if (token.Kind is TokenKind.LBrace)
         {
             var depth = 0;
             do

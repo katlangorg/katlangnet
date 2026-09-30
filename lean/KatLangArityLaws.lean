@@ -108,9 +108,9 @@ fixed-arity callables (`count(collection)`, `take(collection, count)`), so an
 unspread sequence or list is one argument like at every other call boundary.
 Call parameter binding never uses this view. Assignment
 deconstruction opens its single right-hand side value through a different
-mechanism: the sequence-value parameter pattern (`.sequenceValue`), not the
-builtin collection view (see the deconstruction bridge laws at the end of
-this file).
+mechanism: its unpacking receiver (`.unpacking`, which opens with the
+equivalent one-level view `Result.spreadItems`), not the builtin collection
+view (see the deconstruction bridge laws later in this file).
 -/
 theorem builtinCollectionItems_sequence (xs : List Result) :
     builtinCollectionItems (Result.sequenceValue xs) = xs := rfl
@@ -580,7 +580,7 @@ binder allocated to it (after fixed prefix/suffix allocation) as ONE exact list
 (`collectSegment`) and never inspects or opens an item: every non-spread
 written argument is ONE item whatever its value, so a lone sequence, list,
 `()`, or `[]` is collected as that one value. Only an explicit spread (the
-caller's `v*`) or an explicit sequence-value pattern (the callee's `((*xs))`)
+caller's `v*`) or an explicit structural pattern (the callee's `((*xs))` or `([*xs])`)
 turns one value into several items. The laws below are stated over the real
 binder `bindParameterPatternList`, so they pin the rule at the layer that owns
 it — collector binding, never dot-call, selection, or grouping.
@@ -778,8 +778,8 @@ theorem minimum_supplied_slots_required_suffix (r z : Ident) :
 
 /-- A nested pattern consumes ONE supplied slot whatever it contains, so a
 collector INSIDE a group never lowers the outer minimum: `P((*xs))` still needs
-one supplied value, and its scalar one-item fallback binds that value rather
-than standing for none. -/
+one supplied value — a sequence, which the group opens — rather than standing
+for none. -/
 theorem minimum_supplied_slots_group_is_one_slot (items : List ParameterPattern) :
     ParameterPattern.minimumSuppliedSlots [.sequenceValue items] = 1 := rfl
 
@@ -1046,6 +1046,246 @@ theorem forwarded_parameter_still_conflicts_with_a_same_named_property (name : I
     conflictingOwnedNames { parameters := [], properties := [name], forwarded := [name] } = [name] := by
   simp [conflictingOwnedNames, OwnerLevel.signature]
 
+/-
+## The alias and bare-forwarding rules (FWD-02, decided 2026-09-29–30)
+
+A body whose ONE written row is a bare reference to a callable that declares
+parameters (`aliasesLoneBareReference`) is not a formula. An OPEN body is an exact
+alias: `A = F` inherits `F`'s signature and calls `F` with it rebuilt
+(`ParameterPattern.sourceArguments`, `sourceCall`, KatLang.lean). A CLOSED body — a
+written parameter list or a clause branch — is bare forwarding: each of `F`'s
+parameters is supplied from an EXISTING compatible binding of the same name
+(`bareForwardingArgument`, `bareForwardingRow`). The laws below pin the
+reconstruction (one argument per top-level pattern, each capture as its own binding,
+a collector re-spread, each structural pattern as its own kind), the bare-forwarding
+decision (by name, never renamed, never positional, never added to a closed list,
+never reshaped from same-named leaves), its distinction from formula lifting, and the
+eligibility's relation to Q-03's lifting rule. `CoreTests/AliasForwarding.lean`
+evaluates the elaborated trees.
+-/
+
+/-- A fixed capture forwards its binding as ONE argument, `x`. -/
+theorem source_argument_fixed_capture_is_its_binding (x : Ident) :
+    ParameterPattern.sourceArgument (.capture { name := x }) = .param x := rfl
+
+/-- A collecting capture forwards the items it collected, `xs*`: the source's supplied
+range reaches the callee as that many arguments. -/
+theorem source_argument_collector_is_respread (xs : Ident) :
+    ParameterPattern.sourceArgument (.capture { name := xs, kind := .collecting })
+      = .sequenceSpread (.param xs) := rfl
+
+/-- A list pattern rebuilds a LIST of its items' arguments, at every cardinality. -/
+theorem source_argument_list_pattern_rebuilds_a_list (items : List ParameterPattern) :
+    ParameterPattern.sourceArgument (.listValue items)
+      = .listLiteral (ParameterPattern.sourceArguments items) := rfl
+
+/-- The rebuilt call has the source signature's arity: one argument per top-level pattern. -/
+theorem source_arguments_length (patterns : List ParameterPattern) :
+    (ParameterPattern.sourceArguments patterns).length = patterns.length := by
+  induction patterns with
+  | nil => rfl
+  | cons pattern rest ih => simp [ParameterPattern.sourceArguments, ih]
+
+/-- A VALID sequence pattern (no singleton, PAT-06) rebuilds a SEQUENCE — the empty
+sequence or a capture — never a list and never a bare item: reconstruction keeps the
+structural kind. -/
+theorem source_argument_sequence_pattern_rebuilds_a_sequence (items : List ParameterPattern)
+    (valid : ParameterPattern.isSingletonSequenceItems items = false) :
+    ParameterPattern.sourceArgument (.sequenceValue items) = .emptySequence 0
+      ∨ ∃ exprs, ParameterPattern.sourceArgument (.sequenceValue items) = .capture exprs := by
+  match items, valid with
+  | [], _ => exact Or.inl rfl
+  | [.capture parameter], valid =>
+    cases h : parameter.kind with
+    | normal => simp [ParameterPattern.isSingletonSequenceItems, h] at valid
+    | collecting =>
+      exact Or.inr ⟨[.sequenceSpread (.param parameter.name)], by
+        simp [ParameterPattern.sourceArgument, ParameterPattern.sourceArguments, sequenceArgument, h]⟩
+  | [.sequenceValue _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
+  | [.listValue _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
+  | [.unpacking _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
+  | first :: second :: rest, _ =>
+    exact Or.inr ⟨ParameterPattern.sourceArgument first :: ParameterPattern.sourceArgument second
+        :: ParameterPattern.sourceArguments rest,
+      by simp [ParameterPattern.sourceArgument, ParameterPattern.sourceArguments, sequenceArgument]⟩
+
+/-- The alias's call is its inherited signature rebuilt: `A = F` calls `F` with exactly
+the patterns it took from `F`. -/
+theorem source_call_rebuilds_the_inherited_signature (callee : Ident) (source : List ParameterPattern) :
+    sourceCall callee source = .call (.resolve callee) (ParameterPattern.sourceArguments source) := rfl
+
+/-! ### Bare forwarding (FWD-02, decided 2026-09-30) -/
+
+@[simp] private theorem parameter_kind_normal_beq_normal :
+    (ParameterKind.normal == ParameterKind.normal) = true := by decide
+@[simp] private theorem parameter_kind_normal_beq_collecting :
+    (ParameterKind.normal == ParameterKind.collecting) = false := by decide
+@[simp] private theorem parameter_kind_collecting_beq_normal :
+    (ParameterKind.collecting == ParameterKind.normal) = false := by decide
+@[simp] private theorem parameter_kind_collecting_beq_collecting :
+    (ParameterKind.collecting == ParameterKind.collecting) = true := by decide
+
+/-- Same-name forwarding: `F(p) = p * 2` / `A(p) = F` forwards A's `p` to F's `p`. -/
+theorem bare_forwarding_same_name_is_supplied (p : Ident) :
+    bareForwardingArgument [.capture { name := p }] [p] [] (.capture { name := p })
+      = .supplied (.param p) := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
+
+/-- NO RENAMING: `F(q) = q * 2` / `A(p) = F` is rejected — A's `p` never becomes F's `q`,
+whatever the arity. -/
+theorem bare_forwarding_never_renames (p q : Ident) (distinct : p ≠ q) :
+    bareForwardingArgument [.capture { name := p }] [p] [] (.capture { name := q }) = .unforwardable := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, distinct, Ne.symm distinct]
+
+/-- A CLOSED LIST NEVER GAINS A PARAMETER: `F(p, q) = p + q` / `A(p) = F` is rejected,
+never an inferred `q`. -/
+theorem bare_forwarding_never_adds_a_parameter (p q : Ident) (distinct : p ≠ q) :
+    bareForwardingArguments [.capture { name := p }] [p] []
+      [.capture { name := p }, .capture { name := q }] = none := by
+  simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
+    bareForwardedBinding, distinct, Ne.symm distinct]
+
+/-- An UNUSED parameter stays unused: `F(p)` / `A(p, unused) = F` forwards `p` alone. -/
+theorem bare_forwarding_ignores_an_unused_parameter (p unused : Ident) :
+    bareForwardingArguments [.capture { name := p }, .capture { name := unused }] [p, unused] []
+      [.capture { name := p }] = some [.param p] := by
+  simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
+    bareForwardedBinding]
+
+/-- NOT POSITIONAL: `F(y, x) = y - x` / `G(x, y) = F` supplies F's `y` from G's `y` and F's
+`x` from G's `x` — `F(y, x)`, never G's order. -/
+theorem bare_forwarding_is_not_positional (x y : Ident) (distinct : x ≠ y) :
+    bareForwardingArguments [.capture { name := x }, .capture { name := y }] [x, y] []
+      [.capture { name := y }, .capture { name := x }] = some [.param y, .param x] := by
+  simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
+    bareForwardedBinding, distinct]
+
+/-- STRUCTURAL COMPATIBILITY IS WHOLE-PATTERN: `Single([x])` / `G(x) = Single` is rejected —
+G's whole `x` never builds Single's `[x]` because the leaf names coincide. -/
+theorem bare_forwarding_never_reshapes_a_leaf (x : Ident) :
+    bareForwardingArgument [.capture { name := x }] [x] [] (.listValue [.capture { name := x }])
+      = .unforwardable := by
+  simp [bareForwardingArgument, ParameterPattern.sameContract]
+
+/-- ... and the same pattern forwards: `G([x]) = Single` is `Single([x])`. -/
+theorem bare_forwarding_same_pattern_is_supplied (x : Ident) :
+    bareForwardingArgument [.listValue [.capture { name := x }]] [x] []
+      (.listValue [.capture { name := x }])
+      = .supplied (.listLiteral [.param x]) := by
+  simp [bareForwardingArgument, ParameterPattern.sameContract, ParameterPattern.sameContracts,
+    ParameterPattern.sourceArgument, ParameterPattern.sourceArguments]
+
+/-- The same leaf names in another shape are another contract: `F((x, y))` / `G(x, y) = F`
+never manufactures the pair. -/
+theorem bare_forwarding_never_manufactures_a_sequence (x y : Ident) :
+    bareForwardingArgument [.capture { name := x }, .capture { name := y }] [x, y] []
+      (.sequenceValue [.capture { name := x }, .capture { name := y }]) = .unforwardable := by
+  simp [bareForwardingArgument, ParameterPattern.sameContract]
+
+/-- A WHOLE VALUE NEEDS A TOP-LEVEL BINDING: `F(x)` / `G([x]) = F` is rejected — the `x`
+inside G's list pattern is an element, not G's parameter. -/
+theorem bare_forwarding_whole_value_needs_a_top_level_binding (x : Ident) :
+    bareForwardingArgument [.listValue [.capture { name := x }]] [x] [] (.capture { name := x })
+      = .unforwardable := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?]
+
+/-- Positions inside a structural pattern are never renamed either: `F([a, b])` /
+`A([x, y]) = F` is rejected. -/
+theorem bare_forwarding_never_renames_inside_a_pattern (a b x y : Ident) (distinct : a ≠ x) :
+    bareForwardingArgument [.listValue [.capture { name := x }, .capture { name := y }]] [x, y] []
+      (.listValue [.capture { name := a }, .capture { name := b }]) = .unforwardable := by
+  simp [bareForwardingArgument, ParameterPattern.sameContract, ParameterPattern.sameContracts, distinct]
+
+/-- A collecting source re-spreads into a collecting destination of the same name
+(`spread (collect S) = S`, FWD-01). -/
+theorem bare_forwarding_collector_respreads (xs : Ident) :
+    bareForwardingArgument [.capture { name := xs, kind := .collecting }] [xs] []
+      (.capture { name := xs, kind := .collecting }) = .supplied (.sequenceSpread (.param xs)) := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
+
+/-- Only the SOURCE binding's kind decides a spread: a fixed binding reaches a collector as
+one item, and a collected list reaches a fixed parameter whole. -/
+theorem bare_forwarding_source_kind_decides_the_spread (xs : Ident) :
+    bareForwardingArgument [.capture { name := xs }] [xs] []
+        (.capture { name := xs, kind := .collecting }) = .supplied (.param xs)
+      ∧ bareForwardingArgument [.capture { name := xs, kind := .collecting }] [xs] []
+        (.capture { name := xs }) = .supplied (.param xs) := by
+  constructor <;> simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
+
+/-- A collector nothing of its name supplies receives no argument, and a callee that then
+receives nothing is its bare name — Q-03's cached value read, never an invented call. -/
+theorem bare_forwarding_unsupplied_collector_is_read (callee p xs : Ident) (distinct : p ≠ xs) :
+    bareForwardingRow callee [.capture { name := p }] [p] []
+      [.capture { name := xs, kind := .collecting }] = some (.resolve callee) := by
+  simp [bareForwardingRow, bareForwardingArguments, bareForwardingArgument,
+    ParameterPattern.topLevelCaptureKind?, distinct, Ne.symm distinct]
+
+/-- Q-04: a name the closed body does not bind is the ENCLOSING parameter binding a written
+name would denote there, reused as it is (`Outer(x) = { Local(y) = F … }` forwards Outer's
+`x`) ... -/
+theorem bare_forwarding_reuses_an_enclosing_binding (x y : Ident) (distinct : y ≠ x) :
+    bareForwardingArgument [.capture { name := y }] [y] [{ name := x }] (.capture { name := x })
+      = .supplied (.param x) := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding,
+    distinct, Ne.symm distinct]
+
+/-- ... but the body's OWN binding is nearer: an own fixed `x` beats an enclosing
+collecting `x`, so nothing is re-spread. -/
+theorem bare_forwarding_own_binding_beats_an_enclosing_one (x : Ident) :
+    bareForwardingArgument [.capture { name := x }] [x] [{ name := x, kind := .collecting }]
+      (.capture { name := x, kind := .collecting }) = .supplied (.param x) := by
+  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
+
+/-- An enclosing binding is a plain named value: it never supplies a structural parameter. -/
+theorem bare_forwarding_enclosing_binding_supplies_no_pattern (x : Ident) :
+    bareForwardingArgument [] [] [{ name := x }] (.listValue [.capture { name := x }]) = .unforwardable := by
+  simp [bareForwardingArgument]
+
+/-- REPEATED NAMES follow the by-name rule: `P(x, x) = x` / `Q(x) = P` hands Q's ONE binding
+`x` to both occurrences, `P(x, x)` — the two slots are then ordinary independent arguments
+that happen to read one binding (Q-05 compares them, merges nothing). -/
+theorem bare_forwarding_repeated_name_reuses_one_binding (x : Ident) :
+    bareForwardingArguments [.capture { name := x }] [x] []
+      [.capture { name := x }, .capture { name := x }] = some [.param x, .param x] := by
+  simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
+    bareForwardedBinding]
+
+/-- FORMULA LIFTING IS A DIFFERENT MECHANISM: the name bare forwarding refuses to add to a
+closed list (`bare_forwarding_never_renames`) is exactly the one a formula in an OPEN body
+lifts — `F(q)` / `A = F + 1` gives `A(q)` — while a closed formula `A(p) = F + 1` adds
+nothing either (§57: the reference stays F's zero-argument demand). -/
+theorem formula_lifting_infers_what_bare_forwarding_rejects (p q : Ident) (distinct : p ≠ q) :
+    forwardingSource [{ parameters := [], properties := [] }] true q = .forwardedParameter
+      ∧ forwardingSource [{ parameters := [p], properties := [] }] false q = .unavailable
+      ∧ bareForwardingArgument [.capture { name := p }] [p] [] (.capture { name := q })
+        = .unforwardable := by
+  refine ⟨?_, ?_, bare_forwarding_never_renames p q distinct⟩
+  · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom]
+  · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom, Ne.symm distinct]
+
+/-- The alias and bare-forwarding rules read the DECLARED signature: a callee with no
+parameter pattern is read (its bare name is its value), every other callee is aliased or
+forwarded by name. -/
+theorem aliases_iff_declares_parameters (signature : List ParameterPattern) :
+    aliasesLoneBareReference signature = true ↔ signature ≠ [] := by
+  cases signature <;> simp [aliasesLoneBareReference]
+
+/-- `Only(*xs)` works with no arguments, so a bare reference to it is never LIFTED
+(Q-03) — but as a lone row it IS aliased: the alias rule reads the declared signature. -/
+theorem collecting_only_callee_is_aliased_not_lifted (xs : Ident) :
+    aliasesLoneBareReference [.capture { name := xs, kind := .collecting }] = true
+      ∧ liftsBareValueReference [.capture { name := xs, kind := .collecting }] = false :=
+  ⟨rfl, rfl⟩
+
+/-- Every signature that lifts is one that aliases: requiring a supplied argument means
+declaring a parameter. -/
+theorem lifting_signature_is_an_alias_signature (signature : List ParameterPattern)
+    (lifts : liftsBareValueReference signature = true) :
+    aliasesLoneBareReference signature = true := by
+  cases signature with
+  | nil => exact absurd lifts (by decide)
+  | cons pattern rest => rfl
+
 /-- A FIXED parameter binds its one argument unchanged: `Id((1, 2))` binds
 the sequence whole. -/
 theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :
@@ -1064,16 +1304,18 @@ theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :
 ## Deconstruction bridge laws (unpacking receiver)
 
 Assignment deconstruction (`x, *y, z = RHS`) is parser-elaborated into a helper
-whose single parameter is a sequence-value pattern (`.sequenceValue [captures]`)
-applied to the right-hand side value as one argument. Binding through the real
-`bindParameterPatternList`, that pattern OPENS its single received value into items
-and matches them element-by-element — so `x, y, z = A` unpacks a stored sequence
-value `A`. This opening is deconstruction-specific.
+whose single parameter is the UNPACKING RECEIVER (`.unpacking [captures]`) applied
+to the right-hand side value as one argument. Binding through the real
+`bindParameterPatternList`, that pattern OPENS its single received value one level
+(`Result.spreadItems`: a sequence or a list opens, any other value is one item)
+and matches the items element-by-element — so `x, y, z = A` unpacks a stored
+sequence or list value `A`. This opening is deconstruction-specific: the written
+structural patterns open only their own kind.
 
 Call parameter binding, by contrast, is a flat capture list
 (`[.capture x, .capture y]`) bound over the SUPPLIED argument supply, which does NOT
 open a single sequence argument. The two groups of laws below pin that contrast over
-the real binder: deconstruction (the `.sequenceValue` pattern) opens, while a call
+the real binder: deconstruction (the `.unpacking` receiver) opens, while a call
 (the flat capture list) preserves the single argument.
 
 The single supplied item is the value `A` (a stored sequence value).
@@ -1111,31 +1353,34 @@ theorem call_variadic_single_sequence_preserved :
     collectSegment]
   rfl
 
--- Assignment deconstruction: the `.sequenceValue` pattern OPENS its single value.
+-- Assignment deconstruction binds through its UNPACKING RECEIVER: the elaborated
+-- helper's single parameter pattern `.unpacking [targets]`, applied to the one
+-- shared right-hand-side value, binds the targets against that value's ONE-LEVEL
+-- items (`Result.spreadItems`): a lone sequence or list opens one level and any
+-- other value is one item. It is not a written structural pattern — it has no
+-- delimiter to select a kind — so it opens both kinds alike.
 
-/-- `x, y = A`: the deconstruction sequence-value pattern opens the single
-right-hand-side value, binding `x = 1`, `y = 2`. -/
+/-- `x, y = A`: the unpacking receiver opens the single right-hand-side value,
+binding `x = 1`, `y = 2`. -/
 theorem deconstruct_fixed_single_sequence_opens :
     runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "x", kind := .normal },
-                         .capture { name := "y", kind := .normal }]]
+        [.unpacking [.capture { name := "x", kind := .normal },
+                     .capture { name := "y", kind := .normal }]]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
               countedParamEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequenceValuePatternItems, Result.structureItems?,
-    ]
+    Result.spreadItems, Result.toItems]
   rfl
 
-/-- `first, *rest = A`: the deconstruction sequence-value pattern opens `A`, so
-`first = 1` and `rest` COLLECTS the matched items as one exact immutable
-list `[2, 3]`. -/
+/-- `first, *rest = A`: the unpacking receiver opens `A`, so `first = 1` and
+`rest` COLLECTS the matched items as one exact immutable list `[2, 3]`. -/
 theorem deconstruct_collecting_single_sequence_opens :
     runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "first", kind := .normal },
-                         .capture { name := "rest", kind := .collecting }]]
+        [.unpacking [.capture { name := "first", kind := .normal },
+                     .capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
         true)
       = .ok { argEnv := [("first", Result.atom 1),
@@ -1144,8 +1389,41 @@ theorem deconstruct_collecting_single_sequence_opens :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+    bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
     collectSegment]
+  rfl
+
+/-- `x, *rest = 1`: a scalar right-hand side is ONE item for the unpacking
+receiver (never a structure it opens): `x = 1` and `rest` collects the empty
+list. -/
+theorem deconstruct_scalar_is_one_item :
+    runEvalM (bindParameterPatternList
+        [.unpacking [.capture { name := "x", kind := .normal },
+                     .capture { name := "rest", kind := .collecting }]]
+        [{ value? := some (Result.atom 1) }]
+        true)
+      = .ok { argEnv := [("x", Result.atom 1), ("rest", Result.listValue [])],
+              countedParamEnv := [("rest", (Result.listValue [], 1))],
+              algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+    bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
+    collectSegment]
+  rfl
+
+/-- The unpacking receiver DEMANDS its one right-hand-side value like any
+pattern that opens a value: a slot with no value fails with its OWN recorded
+outcome — a right-hand side without output is that `missingOutput`, never a
+spread failure (no spread is involved). -/
+theorem deconstruct_valueless_right_hand_side_is_its_own_failure :
+    runEvalM (bindParameterPatternList
+        [.unpacking [.capture { name := "x", kind := .normal },
+                     .capture { name := "y", kind := .normal }]]
+        [{ value? := none, error? := some Error.missingOutput }]
+        true)
+      = .error Error.missingOutput := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM]
   rfl
 
 /-
@@ -1153,11 +1431,12 @@ theorem deconstruct_collecting_single_sequence_opens :
 
 Exact list values (`Result.listValue`) join the deconstruction opening rule but
 remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
-list as one item, while the spread marker (`Result.spreadItems`), the
-deconstruction pattern (`Result.structureItems?`), the indexing `:` TARGET
-position view (`Result.projectionItems` — the selected element itself is never
-opened), and the post-binding builtin collection view open one list boundary
-in their documented contexts. The laws below pin
+list as one item, while the spread marker (`Result.spreadItems`, which
+assignment deconstruction opens its right-hand side with), the LIST pattern
+(`Result.listPatternItems?` — never the sequence pattern), the indexing `:`
+TARGET position view (`Result.projectionItems` — the selected element itself is
+never opened), and the post-binding builtin collection view open one list
+boundary in their documented contexts. The laws below pin
 each decision over the real model, mirroring the sequence laws above.
 -/
 
@@ -1355,58 +1634,175 @@ theorem spread_of_selected_list_opens_one_boundary (xs ys : List Result) :
       = some xs := by
   simp [Result.select?, Result.projectionItems, Result.toItems, Result.spreadItems]
 
-/-- The deconstruction structure view opens a received list to its items. -/
+/-- The openable-structure view opens a received list to its items. -/
 theorem structureItems_listValue (xs : List Result) :
     Result.structureItems? (Result.listValue xs) = some xs := rfl
 
-/-- The deconstruction structure view opens a received sequence value. -/
+/-- The openable-structure view opens a received sequence value. -/
 theorem structureItems_sequenceValue (xs : List Result) :
     Result.structureItems? (Result.sequenceValue xs) = some xs := rfl
 
-/-- Atoms are not openable structures for deconstruction. -/
+/-- Atoms are not openable structures. -/
 theorem structureItems_atom (n : Int) :
     Result.structureItems? (Result.atom n) = none := rfl
 
-/-
-## Nested-pattern opening (S3, September 2026)
+/-- The spread view is the openable-structure view's total extension: it opens
+a lone sequence or list and supplies any other value as itself. This is the
+opening assignment deconstruction applies to its one right-hand-side value. -/
+theorem spreadItems_extends_structureItems (v : Result) :
+    (Result.structureItems? v).getD [v] = Result.spreadItems v := by
+  cases v <;> rfl
 
-`Result.sequenceValuePatternItems` is the ONE rule by which a sequence-value
-parameter pattern opens the value its slot supplies, shared by the ordinary
-binder (`bindParameterPattern`) and the counted callback binder
-(`bindCountedParameterPattern`, a `partial def`, pinned by the S3 guards in
-`CoreTests/SequenceCallbackBuiltins.lean`). A sequence or list opens one
-level; every other value is ONE item — never zero, never opened further.
+/-
+## Structural patterns select the value kind they destructure (September 2026)
+
+`Result.sequencePatternItems?` and `Result.listPatternItems?` are the ONE rules
+by which a structural pattern opens the value its slot supplies, shared by the
+ordinary binder (`bindParameterPattern`), the counted callback binder
+(`bindCountedParameterPattern`, a `partial def`, pinned by the guards in
+`CoreTests/StructuralPatterns.lean`) and the family matchers. A sequence
+pattern `(…)` opens a SEQUENCE value only and a list pattern `[…]` a LIST value
+only; neither opens the other kind, and no scalar is a one-item structure — the
+only pattern that takes a value whole is a bare binder.
 -/
 
-theorem sequence_value_pattern_items_sequence (xs : List Result) :
-    Result.sequenceValuePatternItems (Result.sequenceValue xs) = xs := rfl
+theorem sequence_pattern_items_sequence (xs : List Result) :
+    Result.sequencePatternItems? (Result.sequenceValue xs) = some xs := rfl
 
-theorem sequence_value_pattern_items_list (xs : List Result) :
-    Result.sequenceValuePatternItems (Result.listValue xs) = xs := rfl
+theorem sequence_pattern_items_never_open_a_list (xs : List Result) :
+    Result.sequencePatternItems? (Result.listValue xs) = none := rfl
 
-theorem sequence_value_pattern_items_scalar_is_one_item (n : Int) (s : String) (b : Bool) :
-    Result.sequenceValuePatternItems (Result.atom n) = [Result.atom n]
-    ∧ Result.sequenceValuePatternItems (Result.str s) = [Result.str s]
-    ∧ Result.sequenceValuePatternItems (Result.bool b) = [Result.bool b] :=
+theorem sequence_pattern_items_never_open_a_scalar (n : Int) (s : String) (b : Bool) :
+    Result.sequencePatternItems? (Result.atom n) = none
+    ∧ Result.sequencePatternItems? (Result.str s) = none
+    ∧ Result.sequencePatternItems? (Result.bool b) = none :=
   ⟨rfl, rfl, rfl⟩
 
-/-- The scalar one-item fallback reaches a multi-item group through the binder
-itself: `P((x, *rest))` with the scalar `n` binds `x = n` and collects the empty
-`rest = []` — one supplied value, so the collector gets none. -/
-theorem nested_pattern_scalar_is_one_item_supply (n : Int) :
+theorem list_pattern_items_list (xs : List Result) :
+    Result.listPatternItems? (Result.listValue xs) = some xs := rfl
+
+theorem list_pattern_items_never_open_a_sequence (xs : List Result) :
+    Result.listPatternItems? (Result.sequenceValue xs) = none := rfl
+
+theorem list_pattern_items_never_open_a_scalar (n : Int) (s : String) (b : Bool) :
+    Result.listPatternItems? (Result.atom n) = none
+    ∧ Result.listPatternItems? (Result.str s) = none
+    ∧ Result.listPatternItems? (Result.bool b) = none :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- No value is opened by BOTH structural patterns: the two kinds are disjoint,
+so a sequence pattern and a list pattern never destructure the same value. -/
+theorem structural_pattern_kinds_are_disjoint (v : Result) :
+    Result.sequencePatternItems? v = none ∨ Result.listPatternItems? v = none := by
+  cases v <;> simp [Result.sequencePatternItems?, Result.listPatternItems?]
+
+/-- A scalar is never a one-item structure: `P((x, *rest))` rejects the scalar `n`
+with the pattern's kind mismatch through the binder itself (formerly the scalar
+one-item fallback bound `x = n`, `rest = []`). -/
+theorem nested_sequence_pattern_rejects_scalar (n : Int) :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "x", kind := .normal },
                          .capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.atom n) }]
         false)
-      = .ok { argEnv := [("x", Result.atom n), ("rest", Result.listValue [])],
-              countedParamEnv := [("rest", (Result.listValue [], 1))],
-              algEnv := [] } := by
+      = .error (structuralPatternKindMismatch
+          (.sequenceValue [.capture { name := "x", kind := .normal },
+                           .capture { name := "rest", kind := .collecting }])
+          (Result.atom n)) := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
-    collectSegment]
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
   rfl
+
+/-- A sequence pattern never opens a list: `P((x, y))` rejects `[a, b]` with its
+kind mismatch (formerly it opened the list). -/
+theorem nested_sequence_pattern_rejects_list (a b : Result) :
+    runEvalM (bindParameterPatternList
+        [.sequenceValue [.capture { name := "x", kind := .normal },
+                         .capture { name := "y", kind := .normal }]]
+        [{ value? := some (Result.listValue [a, b]) }]
+        false)
+      = .error (structuralPatternKindMismatch
+          (.sequenceValue [.capture { name := "x", kind := .normal },
+                           .capture { name := "y", kind := .normal }])
+          (Result.listValue [a, b])) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
+  rfl
+
+/-- The list pattern `[x]` binds the one element of a one-element list — the
+one-element structural pattern (`Only([x])` on `[[7]]` binds `x = [7]`). -/
+theorem nested_list_pattern_binds_one_element (v : Result) :
+    runEvalM (bindParameterPatternList
+        [.listValue [.capture { name := "x", kind := .normal }]]
+        [{ value? := some (Result.listValue [v]) }]
+        false)
+      = .ok { argEnv := [("x", v)], countedParamEnv := [], algEnv := [] } := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.listPatternItems?, ParameterPattern.minimumSuppliedSlots]
+  rfl
+
+/-- A list pattern never opens a sequence: `P([x, y])` rejects `(a, b)` with its
+kind mismatch. -/
+theorem nested_list_pattern_rejects_sequence (a b : Result) :
+    runEvalM (bindParameterPatternList
+        [.listValue [.capture { name := "x", kind := .normal },
+                     .capture { name := "y", kind := .normal }]]
+        [{ value? := some (Result.sequenceValue [a, b]) }]
+        false)
+      = .error (structuralPatternKindMismatch
+          (.listValue [.capture { name := "x", kind := .normal },
+                       .capture { name := "y", kind := .normal }])
+          (Result.sequenceValue [a, b])) := by
+  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
+    Result.listPatternItems?, ParameterPattern.minimumSuppliedSlots]
+  rfl
+
+/-- A list collector `[*xs]` collects every list cardinality exactly: `[]`,
+`[v]` and `[v, w]` bind `xs = []`, `[v]`, `[v, w]`. -/
+theorem nested_list_collector_collects_every_cardinality (v w : Result) :
+    runEvalM (bindParameterPatternList
+        [.listValue [.capture { name := "xs", kind := .collecting }]]
+        [{ value? := some (Result.listValue []) }] false)
+      = .ok { argEnv := [("xs", Result.listValue [])],
+              countedParamEnv := [("xs", (Result.listValue [], 1))], algEnv := [] }
+    ∧ runEvalM (bindParameterPatternList
+        [.listValue [.capture { name := "xs", kind := .collecting }]]
+        [{ value? := some (Result.listValue [v]) }] false)
+      = .ok { argEnv := [("xs", Result.listValue [v])],
+              countedParamEnv := [("xs", (Result.listValue [v], 1))], algEnv := [] }
+    ∧ runEvalM (bindParameterPatternList
+        [.listValue [.capture { name := "xs", kind := .collecting }]]
+        [{ value? := some (Result.listValue [v, w]) }] false)
+      = .ok { argEnv := [("xs", Result.listValue [v, w])],
+              countedParamEnv := [("xs", (Result.listValue [v, w], 1))], algEnv := [] } := by
+  refine ⟨?_, ?_, ?_⟩ <;>
+  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
+      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
+      bindParameterPattern, runEvalM, Result.listPatternItems?, collectSegment]
+    rfl
+
+/-- The singleton rule (`ParameterPattern.isSingletonSequenceItems`): a sequence
+pattern of one non-collecting item is invalid, the collector-only `(*xs)` and
+every list pattern are valid. -/
+theorem singleton_sequence_pattern_is_invalid (x : Ident) (inner : List ParameterPattern) :
+    ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.capture { name := x }]) = true
+    ∧ ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.sequenceValue inner]) = true
+    ∧ ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.listValue inner]) = true := by
+  simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems]
+
+theorem collector_only_sequence_pattern_is_valid (xs : Ident) :
+    ParameterPattern.hasSingletonSequenceGroup
+      (.sequenceValue [.capture { name := xs, kind := .collecting }]) = false := by
+  simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems,
+    ParameterPattern.anyHasSingletonSequenceGroup]
+
+theorem one_element_list_pattern_is_valid (x : Ident) :
+    ParameterPattern.hasSingletonSequenceGroup (.listValue [.capture { name := x }]) = false := by
+  simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.anyHasSingletonSequenceGroup]
 
 /-
 ## Repeated-name binding is order-independent (September 2026)
@@ -1620,19 +2016,19 @@ theorem repeated_name_complete_binding_is_permutation_invariant
 -- no lawful lemmas to close a value comparison by proof.
 
 
-/-- ... and it is ONE item, not two: a fixed pair group rejects a scalar with the
-nested group's ordinary arity mismatch (2 required, 1 supplied). -/
-theorem nested_pair_pattern_rejects_scalar_as_one_item (n : Int) :
+/-- A right-kind value with the wrong number of elements is the group's ordinary
+arity mismatch, never a kind mismatch: the pair pattern `(x, y)` given the
+three-element sequence `(a, b, c)` reports 2 required, 3 supplied. -/
+theorem nested_pair_pattern_rejects_three_element_sequence (a b c : Result) :
     runEvalM (bindParameterPatternList
         [.sequenceValue [.capture { name := "x", kind := .normal },
                          .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.atom n) }]
+        [{ value? := some (Result.sequenceValue [a, b, c]) }]
         false)
-      = .error (Error.arityMismatch 2 1) := by
+      = .error (Error.arityMismatch 2 3) := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequenceValuePatternItems, Result.structureItems?,
-    ParameterPattern.minimumSuppliedSlots]
+    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
   rfl
 
 /-- The post-binding builtin collection view opens a bound list exactly like a
@@ -1713,32 +2109,31 @@ theorem call_variadic_single_list_preserved :
     collectSegment]
   rfl
 
--- Assignment deconstruction: the pattern opens a lone LIST exactly like a
--- lone sequence value.
+-- Assignment deconstruction: the unpacking receiver opens a lone LIST exactly
+-- like a lone sequence value (it is not a written structural pattern; it has no
+-- delimiter to select a kind).
 
-/-- `x, y = [1, 2]`: the deconstruction pattern opens the lone list, binding
+/-- `x, y = [1, 2]`: the unpacking receiver opens the lone list, binding
 `x = 1`, `y = 2` — identical bindings to `x, y = [1, 2]*`. -/
 theorem deconstruct_fixed_single_list_opens :
     runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "x", kind := .normal },
-                         .capture { name := "y", kind := .normal }]]
+        [.unpacking [.capture { name := "x", kind := .normal },
+                     .capture { name := "y", kind := .normal }]]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
               countedParamEnv := [], algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequenceValuePatternItems, Result.structureItems?,
-    ]
+    Result.spreadItems]
   rfl
 
-/-- `first, *rest = [1, 2, 3]`: the deconstruction pattern opens the lone
-list; `first = 1` and `rest` COLLECTS the matched items as the exact list
-`[2, 3]`. -/
+/-- `first, *rest = [1, 2, 3]`: the unpacking receiver opens the lone list;
+`first = 1` and `rest` COLLECTS the matched items as the exact list `[2, 3]`. -/
 theorem deconstruct_collecting_single_list_opens :
     runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "first", kind := .normal },
-                         .capture { name := "rest", kind := .collecting }]]
+        [.unpacking [.capture { name := "first", kind := .normal },
+                     .capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
         true)
       = .ok { argEnv := [("first", Result.atom 1),
@@ -1747,7 +2142,7 @@ theorem deconstruct_collecting_single_list_opens :
               algEnv := [] } := by
   simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
     bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+    bindParameterPattern, runEvalM, Result.spreadItems,
     collectSegment]
   rfl
 
@@ -1765,7 +2160,7 @@ theorem lone_collecting_list_call_and_deconstruct_differ :
               countedParamEnv := [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
               algEnv := [] }
     ∧ runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "rest", kind := .collecting }]]
+        [.unpacking [.capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
@@ -1779,14 +2174,14 @@ theorem lone_collecting_list_call_and_deconstruct_differ :
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+      bindParameterPattern, runEvalM, Result.spreadItems,
       collectSegment]
     rfl
 
 /-- Lone-SEQUENCE receiver disagreement, lone-collecting shape — the same as
 for a list: call binding collects the one supplied argument (`rest = [(1, 2)]`)
-while the explicit deconstruction pattern opens it (`rest = [1, 2]`). Only the
-structural syntax opens; the call boundary preserves the value. -/
+while the deconstruction unpacking receiver opens it (`rest = [1, 2]`). Only an
+opening receiver opens; the call boundary preserves the value. -/
 theorem lone_collecting_seq_call_and_deconstruct_differ :
     runEvalM (bindParameterPatternList
         [.capture { name := "rest", kind := .collecting }]
@@ -1797,7 +2192,7 @@ theorem lone_collecting_seq_call_and_deconstruct_differ :
                 [("rest", (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]], 1))],
               algEnv := [] }
     ∧ runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "rest", kind := .collecting }]]
+        [.unpacking [.capture { name := "rest", kind := .collecting }]]
         [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
         true)
       = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
@@ -1811,7 +2206,7 @@ theorem lone_collecting_seq_call_and_deconstruct_differ :
     rfl
   · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
       bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      bindParameterPattern, runEvalM, Result.sequenceValuePatternItems, Result.structureItems?,
+      bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
       collectSegment]
     rfl
 

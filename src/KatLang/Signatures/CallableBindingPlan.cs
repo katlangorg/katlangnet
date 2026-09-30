@@ -143,8 +143,16 @@ internal sealed record PatternListBindingPlan
         MaxSlotCount = maxSlotCount;
         CollectingCountAtThisLevel = collectingCountAtThisLevel;
         Captures = Nodes.SelectMany(static node => node.Captures).ToArray();
-        HasCollectingInDescendants = Nodes.OfType<SequenceValueBindingNode>()
-            .Any(static group => group.Children.HasCollectingAtThisLevel || group.Children.HasCollectingInDescendants);
+        HasCollectingInDescendants = Nodes
+            .Select(static node => node switch
+            {
+                SequenceValueBindingNode group => group.Children,
+                ListValueBindingNode list => list.Children,
+                UnpackingBindingNode unpacking => unpacking.Children,
+                CaptureBindingNode or CollectingCaptureBindingNode => null,
+            })
+            .Any(static children => children is not null
+                && (children.HasCollectingAtThisLevel || children.HasCollectingInDescendants));
     }
 
     public IReadOnlyList<CallableBindingNode> Nodes { get; }
@@ -224,7 +232,7 @@ internal sealed record PatternListBindingPlan
         // The ONE per-level arity rule, the same one the binder applies at this level
         // (ParameterPattern.MinimumSuppliedSlots, read by BindParameterPatternList itself):
         // every pattern here consumes ONE supplied slot whatever it contains — a
-        // sequence-value group is one slot the binder opens afterwards — and a COLLECTING
+        // structural group (sequence or list) is one slot the binder opens afterwards — and a COLLECTING
         // capture here consumes NONE and lifts the upper bound. The decision is LEVEL-LOCAL:
         // `isTopLevel` classifies the collecting NODE, never the arity, nested captures are
         // never flattened into this level's counts, and a grouped pattern beside a collector
@@ -265,6 +273,8 @@ internal sealed record PatternListBindingPlan
         {
             CaptureParameterPattern capture => CreateCaptureNode(capture, parameters, isTopLevel),
             SequenceValueParameterPattern group => new SequenceValueBindingNode(FromParameterPatterns(group.Items, parameters, isTopLevel: false)),
+            ListValueParameterPattern list => new ListValueBindingNode(FromParameterPatterns(list.Items, parameters, isTopLevel: false)),
+            UnpackingParameterPattern unpacking => new UnpackingBindingNode(FromParameterPatterns(unpacking.Items, parameters, isTopLevel: false)),
         };
 
     private static CallableBindingNode CreateCaptureNode(
@@ -299,10 +309,11 @@ internal sealed record CallableBindingCapture(
 
 /// <summary>
 /// One node of a callable's binding plan. A C# <c>closed</c> hierarchy:
-/// <see cref="CaptureBindingNode"/>, <see cref="CollectingCaptureBindingNode"/>, and
-/// <see cref="SequenceValueBindingNode"/> (top-level records of this assembly) are its
-/// only variants, no other assembly can derive from it, and a switch EXPRESSION naming
-/// all three is compiler-exhaustive with no catch-all arm.
+/// <see cref="CaptureBindingNode"/>, <see cref="CollectingCaptureBindingNode"/>,
+/// <see cref="SequenceValueBindingNode"/>, <see cref="ListValueBindingNode"/> and
+/// <see cref="UnpackingBindingNode"/> (top-level records of this assembly) are its only
+/// variants, no other assembly can derive from it, and a switch EXPRESSION naming all five is
+/// compiler-exhaustive with no catch-all arm.
 /// </summary>
 internal closed record CallableBindingNode
 {
@@ -333,7 +344,24 @@ internal sealed record CollectingCaptureBindingNode(CallableBindingCapture Captu
     public override IReadOnlyList<CallableBindingCapture> Captures { get; } = [Capture];
 }
 
+/// <summary>A sequence pattern <c>(…)</c>: one slot whose SEQUENCE value binds <see cref="Children"/>.</summary>
 internal sealed record SequenceValueBindingNode(PatternListBindingPlan Children) : CallableBindingNode
+{
+    public override IReadOnlyList<CallableBindingCapture> Captures => Children.Captures;
+}
+
+/// <summary>A list pattern <c>[…]</c>: one slot whose LIST value binds <see cref="Children"/>.</summary>
+internal sealed record ListValueBindingNode(PatternListBindingPlan Children) : CallableBindingNode
+{
+    public override IReadOnlyList<CallableBindingCapture> Captures => Children.Captures;
+}
+
+/// <summary>
+/// The deconstruction unpacking receiver (<see cref="UnpackingParameterPattern"/>): one slot whose
+/// value's ONE-LEVEL items (a sequence or a list opened, any other value one item) bind
+/// <see cref="Children"/>.
+/// </summary>
+internal sealed record UnpackingBindingNode(PatternListBindingPlan Children) : CallableBindingNode
 {
     public override IReadOnlyList<CallableBindingCapture> Captures => Children.Captures;
 }

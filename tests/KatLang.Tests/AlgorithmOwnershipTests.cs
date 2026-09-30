@@ -66,15 +66,17 @@ public class AlgorithmOwnershipTests
         var root = SourceProvenance.ParseValid("x, *rest = (1, 2, 3)\nPairSum((p, q)) = p + q\nx + PairSum((1, 2))").Root;
 
         // The target helper of an assignment deconstruction carries the written N-capture
-        // sequence-value pattern as its explicit list; the hoisted source does not.
+        // UNPACKING RECEIVER as its explicit list — ONE node shared by every target helper
+        // (assignment deconstruction is never a written structural pattern); the hoisted
+        // source does not.
         var x = UserProperty(root, "x");
         var helperCall = Assert.IsType<Expr.Call>(Assert.Single(x.Output));
         var helper = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(helperCall.Function).Algorithm);
         Assert.True(helper.HasExplicitParameterList);
-        var group = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
+        var receiver = Assert.IsType<UnpackingParameterPattern>(Assert.Single(helper.ParameterPatterns));
         Assert.Equal(["x", "rest"], helper.Params);
         Assert.Equal(ParameterKind.Collecting, helper.Parameters[1].Kind);
-        Assert.Same(group, Assert.Single(Assert.IsType<Algorithm.User>(
+        Assert.Same(receiver, Assert.Single(Assert.IsType<Algorithm.User>(
             Assert.IsType<Expr.AlgorithmExpr>(Assert.IsType<Expr.Call>(Assert.Single(UserProperty(root, "rest").Output)).Function).Algorithm).ParameterPatterns));
         var source = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, p => p.Name.StartsWith("$deconstruct$", StringComparison.Ordinal)).Value);
         Assert.False(source.HasExplicitParameterList);

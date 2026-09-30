@@ -688,12 +688,18 @@ internal static class AstStructuralPreflight
 
             case Pattern.SequenceValue sequenceValue:
                 return PickFromList(index, sequenceValue.Items, out child);
+            case Pattern.ListValue listValue:
+                return PickFromList(index, listValue.Items, out child);
             case Pattern.Bind or Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                 child = null!;
                 return false;
 
             case SequenceValueParameterPattern sequencePattern:
                 return PickFromList(index, sequencePattern.Items, out child);
+            case ListValueParameterPattern listPattern:
+                return PickFromList(index, listPattern.Items, out child);
+            case UnpackingParameterPattern unpackingPattern:
+                return PickFromList(index, unpackingPattern.Items, out child);
             case CaptureParameterPattern:
                 child = null!;
                 return false;

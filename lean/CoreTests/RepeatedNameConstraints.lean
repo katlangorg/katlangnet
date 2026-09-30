@@ -91,34 +91,55 @@ def rnFwdAlg : Algorithm := alg ["a", "b"] [] [] [.call (resolve "P") [param "a"
 /-- `Same(x) = P(x, x)`: the WRITTEN form that supplies one value to both occurrences. -/
 def rnSameAlg : Algorithm := alg ["x"] [] [] [.call (resolve "P") [param "x", param "x"]]
 
-/-- `NW(p, q) = N(p, q)`: an explicit wrapper of the nested repetition. -/
+/-- `NW(p, q) = N(p, q)`: an explicit call of the nested repetition. -/
 def rnNWAlg : Algorithm := alg ["p", "q"] [] [] [.call (resolve "N") [param "p", param "q"]]
 
-/-- `Some = P`, as the front end elaborates it: forwarding is by binding name, so the ONE
-    caller binding `x` is supplied to both occurrences, `Some(x) = P(x, x)` — the very tree of
-    the written `Same`. -/
-def rnSomeAlg : Algorithm := alg ["x"] [] [] [.call (resolve "P") [param "x", param "x"]]
+/-- The EXACT ALIAS of a callee, as the front end elaborates `Alias = Callee` (FWD-02): the
+    callee's parameter patterns inherited VERBATIM, and the call rebuilt from them
+    (`KatLang.sourceCall`). Nothing is deduplicated: `Some = P` is `Some(x, x) = P(x, x)`. -/
+def rnAlias (callee : String) (signature : List ParameterPattern) : Algorithm :=
+  algWithParameterPatterns signature [] [] [KatLang.sourceCall callee signature]
 
-/-- `SomeN = N`, elaborated: `SomeN(x, (y)) = N(x, (x, y))` — one binding per name, the group
-    keeping its shape for the name that is new there. -/
-def rnSomeNAlg : Algorithm :=
-  algWithParameterPatterns [rnCap "x", .sequenceValue [rnCap "y"]] [] []
-    [.call (resolve "N") [param "x", .capture [param "x", param "y"]]]
+/-- `Some = P`, `SomeN = N`, `SomeC = C`: exact aliases of the repeated-name callees. -/
+def rnSomeAlg : Algorithm := rnAlias "P" [rnCap "x", rnCap "x"]
 
-/-- `SomeC = C`, elaborated: `SomeC(x, *r) = C(x, r*, x)` — the repeated `x` supplied from one
-    binding, the collector re-spread because its SOURCE binding collects (FWD-02). -/
-def rnSomeCAlg : Algorithm :=
+def rnSomeNAlg : Algorithm := rnAlias "N" [rnCap "x", .sequenceValue [rnCap "x", rnCap "y"]]
+
+def rnSomeCAlg : Algorithm := rnAlias "C" [rnCap "x", rnColl "r", rnCap "x"]
+
+/-- `Lifted = [P]:0`, as the front end elaborates it: a FORMULA forwards by binding name, so
+    the ONE caller binding `x` is supplied to both occurrences, `Lifted(x) = [P(x, x)]:0` —
+    the call of the written `Same`. -/
+def rnLifted (call : KatLang.Expr) : List KatLang.Expr := [.index (.listLiteral [call]) (num 0)]
+
+def rnLiftedAlg : Algorithm := alg ["x"] [] [] (rnLifted (.call (resolve "P") [param "x", param "x"]))
+
+/-- `LiftedN = [N]:0`, elaborated: `LiftedN(x, y) = [N(x, (x, y))]:0` — one binding per name;
+    the group keeps its kind for the names that are new there, and a SEQUENCE group left with
+    one non-collecting item is that item (there is no one-item sequence), so `y` is a plain
+    parameter. The callee's sequence group is rebuilt as a sequence (FWD-02). -/
+def rnLiftedNAlg : Algorithm :=
+  algWithParameterPatterns [rnCap "x", rnCap "y"] [] []
+    (rnLifted (.call (resolve "N") [param "x", .capture [param "x", param "y"]]))
+
+/-- `LiftedC = [C]:0`, elaborated: `LiftedC(x, *r) = [C(x, r*, x)]:0` — the repeated `x`
+    supplied from one binding, the collector re-spread because its SOURCE binding collects. -/
+def rnLiftedCAlg : Algorithm :=
   algWithParameterPatterns [rnCap "x", rnColl "r"] [] []
-    [.call (resolve "C") [param "x", .sequenceSpread (param "r"), param "x"]]
+    (rnLifted (.call (resolve "C") [param "x", .sequenceSpread (param "r"), param "x"]))
 
-/-- `G((x, x)) = x` and the elaborated `SomeG((x)) = G((x, x))`. Deduplicating
-    names preserves the caller's sequence-value pattern, including its value opening. -/
+/-- `G((x, x)) = x`, its exact alias `SomeG = G` (which keeps the one sequence parameter
+    `(x, x)`), and the formula `LiftedG = [G]:0`, elaborated `LiftedG(x) = [G((x, x))]:0`:
+    deduplicating names leaves the caller's sequence group ONE non-collecting item, and a
+    one-item sequence group does not exist (the singleton rule), so the lifted parameter is the
+    name itself and the callee's group is rebuilt as the sequence `(x, x)` from the one binding. -/
 def rnGAlg : Algorithm :=
   algWithParameterPatterns [.sequenceValue [rnCap "x", rnCap "x"]] [] [] [param "x"]
 
-def rnSomeGAlg : Algorithm :=
-  algWithParameterPatterns [.sequenceValue [rnCap "x"]] [] []
-    [.call (resolve "G") [.capture [param "x", param "x"]]]
+def rnSomeGAlg : Algorithm := rnAlias "G" [.sequenceValue [rnCap "x", rnCap "x"]]
+
+def rnLiftedGAlg : Algorithm :=
+  alg ["x"] [] [] (rnLifted (.call (resolve "G") [.capture [param "x", param "x"]]))
 
 /-- `E(x, x) = true` / `E(x, y) = false`: a clause family. -/
 def rnEAlg : Algorithm :=
@@ -135,7 +156,8 @@ def rnRoot (out : List KatLang.Expr) : KatLang.Expr :=
     , ("N", rnNAlg), ("C", rnCAlg), ("Q2", rnQ2Alg), ("Fwd", rnFwdAlg), ("E", rnEAlg)
     , ("Same", rnSameAlg), ("NW", rnNWAlg), ("Suffix", rnSuffixAlg), ("Prefix", rnPrefixAlg)
     , ("Some", rnSomeAlg), ("SomeN", rnSomeNAlg), ("SomeC", rnSomeCAlg)
-    , ("G", rnGAlg), ("SomeG", rnSomeGAlg) ]
+    , ("Lifted", rnLiftedAlg), ("LiftedN", rnLiftedNAlg), ("LiftedC", rnLiftedCAlg)
+    , ("G", rnGAlg), ("SomeG", rnSomeGAlg), ("LiftedG", rnLiftedGAlg) ]
     out)
 
 /-- The outcome of a run AND the binding contexts it opened, kept for a FAILED run too. -/
@@ -299,48 +321,69 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
   | _ => false
 
 --------------------------------------------------------------------------------
--- Implicit forwarding is by binding name (decided 2026-09-29; reverses Q-72)
+-- Formula lifting is by binding name; an alias keeps the callee's contract
+-- (decided 2026-09-29; the by-name rule reverses Q-72, the alias rule is FWD-02)
 --------------------------------------------------------------------------------
--- Implicit forwarding supplies the caller's ONE binding of a name to EVERY
--- occurrence of that name in the callee's parameter patterns, exactly as it
--- shares one binding across callees (`H = F + G` is `H(x) = F(x) + G(x)`). Lean
--- models no signature construction; it evaluates the ELABORATED forwarding trees
--- (`rnSomeAlg`, `rnSomeNAlg`, `rnSomeCAlg`), and the Lean programs of the
--- `implicit-forwarding-is-by-binding-name` spec cases are derived from the C#
--- elaboration. Each occurrence is an ordinary argument slot reading the one
+-- A FORMULA that uses a callee supplies the caller's ONE binding of a name to
+-- EVERY occurrence of that name in the callee's parameter patterns, exactly as
+-- it shares one binding across callees (`H = F + G` is `H(x) = F(x) + G(x)`).
+-- A body whose ONE row is the bare callee is not a formula: it is an EXACT ALIAS
+-- (`Some = P` inherits `P(x, x)` verbatim and keeps its two independent
+-- arguments) — the earlier alias-signature deduplication (`Some(x) = P(x, x)`)
+-- is superseded. Lean models no signature construction; it evaluates the
+-- ELABORATED trees (the aliases built with `KatLang.sourceCall`, the formulas
+-- `rnLiftedAlg`, `rnLiftedNAlg`, `rnLiftedCAlg`, `rnLiftedGAlg`), and the Lean
+-- programs of the corresponding spec cases are derived from the C# elaboration.
+-- Each forwarded occurrence is an ordinary argument slot reading the one
 -- binding, so the occurrences agree by construction on a value, and a
--- callable-only or failed argument is its own failure: nothing is merged. (The
--- Q-72 decision had refused such references with a front-end error; that
--- refusal is removed.)
+-- callable-only or failed argument is its own failure: nothing is merged.
 
--- 15. The forwarded alias is the written same-binding call, observation for
---     observation: the value, the failures, and the binding contexts (Some binds —
---     one context — then P binds — one more; a failed argument never lets P bind).
-#guard rnSucceedsWith [rnCall "Some" [num 7]] (.atom 7)
-#guard rnContexts [rnCall "Some" [num 7]] == 2
-#guard rnContexts [rnCall "Some" [num 7]] == rnContexts [rnCall "Same" [num 7]]
-#guard rnFailsWith innermostIsDivByZero [rnCall "Some" [resolve "Bad"]]
-#guard rnContexts [rnCall "Some" [resolve "Bad"]] == rnContexts [rnCall "Same" [resolve "Bad"]]
-#guard rnFailsWith rnIncFailure [rnCall "Some" [resolve "Inc"]]
-#guard rnSucceedsWith [rnCall "Some" [.listLiteral [num 1]]] (.listValue [.atom 1])
--- One binding name is one caller parameter: two arguments are an arity error ...
-#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "Some" [num 7, num 7]]
+-- 15. The exact alias IS its callee: it takes P's two independent arguments, with
+--     P's constraint and P's failures, and adds exactly one binding context — its
+--     own — re-evaluating nothing.
+#guard rnSucceedsWith [rnCall "Some" [num 7, num 7]] (.atom 7)
+#guard rnFailsWith innermostIsBadArity [rnCall "Some" [num 7, num 8]]
+#guard rnFailsWith (innermostIsArityMismatch 2 1) [rnCall "Some" [num 7]]
+#guard rnFailsWith innermostIsDivByZero [rnCall "Some" [resolve "Bad", num 7]]
+#guard rnFailsWith rnIncFailure [rnCall "Some" [resolve "Inc", num 1]]
+#guard rnContexts [rnCall "Some" [num 7, num 7]] == rnContexts [rnCall "P" [num 7, num 7]] + 1
+-- A failed argument lets neither the alias nor P bind: no context beyond Bad's own.
+#guard rnContexts [rnCall "Some" [resolve "Bad", num 7]] == rnContexts [rnCall "P" [resolve "Bad", num 7]]
+-- The formula is the written same-binding call, observation for observation: the
+-- value, the failures, and the binding contexts (Lifted binds — one context — then P
+-- binds — one more; a failed argument never lets P bind).
+#guard rnSucceedsWith [rnCall "Lifted" [num 7]] (.atom 7)
+#guard rnContexts [rnCall "Lifted" [num 7]] == 2
+#guard rnContexts [rnCall "Lifted" [num 7]] == rnContexts [rnCall "Same" [num 7]]
+#guard rnFailsWith innermostIsDivByZero [rnCall "Lifted" [resolve "Bad"]]
+#guard rnContexts [rnCall "Lifted" [resolve "Bad"]] == rnContexts [rnCall "Same" [resolve "Bad"]]
+#guard rnFailsWith rnIncFailure [rnCall "Lifted" [resolve "Inc"]]
+#guard rnSucceedsWith [rnCall "Lifted" [.listLiteral [num 1]]] (.listValue [.atom 1])
+-- One binding name is one formula parameter: two arguments are an arity error ...
+#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "Lifted" [num 7, num 7]]
 -- ... while the direct call still supplies independent arguments (Q-05).
 #guard rnFailsWith innermostIsBadArity [rnCall "P" [num 7, num 8]]
 
--- 16. A nested repetition and a collector forward by name too: one binding for `x`,
---     the group keeping its shape for `y`, the collector re-spread by its kind.
-#guard rnSucceedsWith [rnCall "SomeN" [num 7, num 8]] (.atom 8)
-#guard rnFailsWith innermostIsDivByZero [rnCall "SomeN" [resolve "Bad", num 8]]
-#guard rnFailsWith rnIncFailure [rnCall "SomeN" [resolve "Inc", num 8]]
-#guard rnSucceedsWith [rnCall "SomeC" [num 7, num 9]] (.atom 7)
-#guard rnFailsWith innermostIsDivByZero [rnCall "SomeC" [resolve "Bad", num 9]]
+-- 16. A nested repetition and a collector: the aliases keep the callees' own shapes
+--     and constraints; the formulas forward by name — one binding for `x`, the group
+--     keeping its shape for `y`, the collector re-spread by its kind.
+#guard rnSucceedsWith [rnCall "SomeN" [num 7, .capture [num 7, num 8]]] (.atom 8)
+#guard rnFailsWith innermostIsBadArity [rnCall "SomeN" [num 6, .capture [num 7, num 8]]]
+#guard rnSucceedsWith [rnCall "SomeC" [num 7, num 9, num 7]] (.atom 7)
+#guard rnFailsWith innermostIsBadArity [rnCall "SomeC" [num 7, num 9, num 8]]
+#guard rnSucceedsWith [rnCall "LiftedN" [num 7, num 8]] (.atom 8)
+#guard rnFailsWith innermostIsDivByZero [rnCall "LiftedN" [resolve "Bad", num 8]]
+#guard rnFailsWith rnIncFailure [rnCall "LiftedN" [resolve "Inc", num 8]]
+#guard rnSucceedsWith [rnCall "LiftedC" [num 7, num 9]] (.atom 7)
+#guard rnFailsWith innermostIsDivByZero [rnCall "LiftedC" [resolve "Bad", num 9]]
 
--- 17. Who supplies the occurrences decides what is checked. A wrapper with its OWN
---     two parameters keeps P's arguments independent (`Fwd(a, b) = P(a, b)`, section
+-- 17. Who supplies the occurrences decides what is checked. An explicit call with its
+--     OWN two parameters keeps P's arguments independent (`Fwd(a, b) = P(a, b)`, section
 --     10): equal values match, unequal values are P's own `badArity`. Writing one
---     binding into both occurrences (`Same(x) = P(x, x)`) is what forwarding does. A
---     nested repetition's wrapper (`NW(p, q) = N(p, q)`) keeps N's constraint.
+--     binding into both occurrences (`Same(x) = P(x, x)`) is what a formula does — and
+--     what bare forwarding `Q(x) = P` does, since it reuses Q's one binding `x` by name
+--     (`bareForwardingArguments`, `CoreTests/AliasForwarding.lean`). A nested repetition's
+--     explicit call (`NW(p, q) = N(p, q)`) keeps N's constraint.
 #guard rnSucceedsWith [rnCall "Fwd" [num 7, num 7]] (.atom 7)
 #guard rnFailsWith innermostIsBadArity [rnCall "Fwd" [num 7, num 8]]
 #guard rnSucceedsWith [rnCall "Same" [num 7]] (.atom 7)
@@ -349,13 +392,23 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
 #guard rnSucceedsWith [rnCall "NW" [num 7, .capture [num 7, num 8]]] (.atom 8)
 #guard rnFailsWith innermostIsBadArity [rnCall "NW" [num 6, .capture [num 7, num 8]]]
 
--- 18. The surviving one-name group is a real pattern boundary. These guards
---     evaluate the tree; C# tests separately pin that inference produces it.
-#guard rnSucceedsWith [rnCall "SomeG" [num 7]] (.atom 7)
-#guard rnSucceedsWith [rnCall "SomeG" [.listLiteral [num 7]]] (.atom 7)
-#guard rnSucceedsWith [rnCall "SomeG" [.listLiteral [.capture [num 7, num 8]]]]
-  (.sequenceValue [.atom 7, .atom 8])
-#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "SomeG" [.capture [num 7, num 8]]]
-#guard rnFailsWith (innermostIsArityMismatch 1 0) [rnCall "SomeG" [.listLiteral []]]
+-- 18. The one-name group lifts as its one name in a FORMULA (September 2026,
+--     structural patterns): `LiftedG(x) = [G((x, x))]:0` binds its argument WHOLE,
+--     whatever its kind, exactly like the written `Same`-style explicit call, and G's
+--     pattern then checks the two occurrences it was given. (The former lifted `(x)`
+--     opened lists and took scalars; a one-item sequence pattern no longer exists.)
+--     The exact alias `SomeG = G` keeps G's one SEQUENCE parameter instead. These
+--     guards evaluate the trees; C# tests separately pin that elaboration produces them.
+#guard rnSucceedsWith [rnCall "LiftedG" [num 7]] (.atom 7)
+#guard rnSucceedsWith [rnCall "LiftedG" [.listLiteral [num 7]]] (.listValue [.atom 7])
+#guard rnSucceedsWith [rnCall "LiftedG" [.listLiteral [.capture [num 7, num 8]]]]
+  (.listValue [.sequenceValue [.atom 7, .atom 8]])
+#guard rnSucceedsWith [rnCall "LiftedG" [.capture [num 7, num 8]]] (.sequenceValue [.atom 7, .atom 8])
+#guard rnSucceedsWith [rnCall "LiftedG" [.listLiteral []]] (.listValue [])
+#guard rnFailsWith innermostIsDivByZero [rnCall "LiftedG" [resolve "Bad"]]
+#guard rnFailsWith (innermostIsArityMismatch 1 2) [rnCall "LiftedG" [num 7, num 7]]
+#guard rnSucceedsWith [rnCall "SomeG" [.capture [num 7, num 7]]] (.atom 7)
+#guard rnFailsWith innermostIsBadArity [rnCall "SomeG" [.capture [num 7, num 8]]]
+#guard rnFailsWith innermostIsAnyTypeMismatch [rnCall "SomeG" [num 7]]
 
 end KatLangTests

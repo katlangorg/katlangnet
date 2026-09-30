@@ -151,10 +151,23 @@ public static class AlgebraOracle
     public static OracleVal Collect(IReadOnlyList<OracleVal> supply) => OracleVal.List(supply);
 
     /// <summary>
+    /// The SEQUENCE pattern opener: a sequence value projects to its items, while a list
+    /// or an atom is the pattern's kind mismatch (null). Structural pattern delimiters
+    /// select the value kind they destructure, so a sequence pattern never opens a list
+    /// and never treats an atom as a one-item structure. Full model:
+    /// <c>KatLang.lean Result.sequencePatternItems?</c> (the algebra models flat parameter
+    /// lists only; this is the test-side model of one nested sequence pattern).
+    /// </summary>
+    public static IReadOnlyList<OracleVal>? SequencePatternItems(OracleVal value)
+        => value is OracleVal.SeqVal seq ? seq.Items : null;
+
+    /// <summary>
     /// Lean: <c>CoreArityAlgebra.structureItems?</c> (full model:
     /// <c>Result.structureItems?</c>). The deconstruction-openable structure
     /// view: a sequence or list value projects to its items; an atom is not an
-    /// openable structure.
+    /// openable structure. Assignment deconstruction is the unpacking receiver and
+    /// opens both kinds; structural PATTERNS use their own kind's opener instead
+    /// (<see cref="SequencePatternItems"/>).
     /// </summary>
     public static IReadOnlyList<OracleVal>? StructureItems(OracleVal value) => value switch
     {

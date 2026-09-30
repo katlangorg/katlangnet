@@ -147,10 +147,18 @@ public abstract class AstWalker
                 foreach (var item in group.Items)
                     VisitPattern(item);
                 break;
+            case Pattern.ListValue list:
+                foreach (var item in list.Items)
+                    VisitPattern(item);
+                break;
             case Pattern.LitInt:
             case Pattern.LitString:
             case Pattern.LitBool:
                 break;
+            default:
+                // Closed hierarchies do not make switch statements exhaustive: fail loudly
+                // when a pattern variant is added instead of silently skipping its binders.
+                throw new InvalidOperationException($"Unhandled pattern: {pattern.GetType().Name}");
         }
     }
 
@@ -289,7 +297,7 @@ public abstract class AstWalker
     }
 
     // The declarations of one explicit parameter pattern, in written order: a capture leaf is
-    // one declaration; a sequence-value pattern nests. Recursive like the rest of this walker
+    // one declaration; a structural pattern nests. Recursive like the rest of this walker
     // (see the recursion contract above); the library's own entry points preflight the depth.
     private void VisitExplicitParameterPattern(Algorithm.User algorithm, ParameterPattern pattern)
     {
@@ -303,6 +311,14 @@ public abstract class AstWalker
                 break;
             case SequenceValueParameterPattern group:
                 foreach (var item in group.Items)
+                    VisitExplicitParameterPattern(algorithm, item);
+                break;
+            case ListValueParameterPattern list:
+                foreach (var item in list.Items)
+                    VisitExplicitParameterPattern(algorithm, item);
+                break;
+            case UnpackingParameterPattern unpacking:
+                foreach (var item in unpacking.Items)
                     VisitExplicitParameterPattern(algorithm, item);
                 break;
             default:

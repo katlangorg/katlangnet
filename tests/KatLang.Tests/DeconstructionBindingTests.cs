@@ -806,21 +806,21 @@ public class DeconstructionBindingTests
     }
 
     [Fact]
-    public void CallbackSequenceValueDeconstruction_OnScalarElement_BindsLikeTheOrdinaryCall()
+    public void CallbackStructuralPattern_OnScalarElement_FailsLikeTheOrdinaryCall()
     {
         // A callback binds each element exactly as the ordinary call `F(element)` binds
-        // that one value (September 2026, S3): a scalar is the ordinary one-item supply for
-        // the nested pattern, so `first` is the scalar and `tail` the empty list — in the
-        // direct call and in every callback alike. The counted callback path used to fall
-        // back only for one-item groups and rejected this shape with BadArity. The body
+        // that one value (September 2026, S3). A structural pattern opens only a value of its
+        // OWN kind, so a scalar element is the sequence pattern's kind mismatch in the direct
+        // call and in every callback alike — never a one-item supply — while a sequence
+        // element binds and a one-element LIST pattern takes a one-element list. The body
         // returns ONE value so map's single-value contract is not what is being tested.
         const string define = "F((first, *tail)) = [first, tail.count]\n";
-        AssertDisplay(define + "F(1)", "[1, 0]");
-        AssertDisplay(define + "map((1, 2, 3), F)", "[[1, 0], [2, 0], [3, 0]]");
-        AssertDisplay(define + "(1, 2, 3).map(F)", "[[1, 0], [2, 0], [3, 0]]");
-        AssertDisplay(define + "map([7, (8, 9)], F)", "[[7, 0], [8, 1]]");
-        AssertBool("F((first, *tail)) = first > 1\nfilter((1, 2, 3), F) == [2, 3]", true);
-        AssertAtoms("F((first, *tail), acc) = acc + first + tail.count\nreduce((1, 2, 3), F, 0)", 6);
+        foreach (var call in new[] { "F(1)", "map((1, 2, 3), F)", "(1, 2, 3).map(F)", "map([7, (8, 9)], F)" })
+            Assert.Equal(KatLangErrorCode.TypeMismatch, Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(define + call)).Errors[0].Code);
+        AssertDisplay(define + "map([(7, 1), (8, 9, 2)], F)", "[[7, 1], [8, 2]]");
+        AssertDisplay("L([first, *tail]) = [first, tail.count]\nmap([[7], [8, 9]], L)", "[[7, 0], [8, 1]]");
+        AssertBool("F((first, *tail)) = first > 1\nfilter([(1, 0), (2, 0), (3, 0)], F) == [(2, 0), (3, 0)]", true);
+        AssertAtoms("F((first, *tail), acc) = acc + first + tail.count\nreduce([(1, 0), (2, 0), (3, 0)], F, 0)", 9);
     }
 
     private static void AssertDisplay(string source, string expected)

@@ -41,8 +41,9 @@ sequenceItems? / listItems?     artifact-local structural projections (the
                                 full model pattern-matches the payloads
                                 directly)
 structureItems?                 Result.structureItems? (the shared
-                                deconstruction-openable structure view: a
-                                sequence or list value opens to its items)
+                                openable-structure view: a sequence or list
+                                value opens to its items; its total extension
+                                is Result.spreadItems)
 items                           Result.spreadItems (the spread-marker view,
                                 which opens one sequence OR list boundary —
                                 the only way a call turns one value into
@@ -55,9 +56,11 @@ canonicalSupply                 invariant of observable supplies (the full
 collect                         collectSegment (exact list collection)
 openLoneStructure               deconstruction receiver opening of a lone
                                 sequence or lone list
-                                ((Result.structureItems? value).getD [value]
-                                inside the sequence-value parameter pattern
-                                binder); the collection builtins'
+                                (the unpacking receiver
+                                ParameterPattern.unpacking, which opens through
+                                Result.spreadItems =
+                                (Result.structureItems? value).getD [value]);
+                                the collection builtins'
                                 POST-BINDING view builtinCollectionItems
                                 applies the same one-boundary opening to the
                                 bound `collection` argument
@@ -118,9 +121,10 @@ The shared openable-structure projection: the stored items of either
 collection kind. A sequence value or an exact list value projects to its
 immediate items; an atom is not an openable structure.
 
-This is the deconstruction receiver's structure view (the full model's
-`Result.structureItems?`): `openLoneStructure` opens a single received value
-through it, with a one-item fallback for non-structures. It is partial where
+It mirrors the full model's `Result.structureItems?`, whose total extension
+`Result.spreadItems` is the deconstruction receiver's opening:
+`openLoneStructure` opens a single received value through it, with a one-item
+fallback for non-structures. It is partial where
 `items` (surface spread) is total — spread supplies an atom as itself, while
 deconstruction distinguishes "openable structure" from "scalar". The
 kind-specific projections `sequenceItems?` / `listItems?` remain for

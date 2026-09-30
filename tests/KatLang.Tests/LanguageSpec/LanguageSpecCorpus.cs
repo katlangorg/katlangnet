@@ -1186,15 +1186,22 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(tag, *items) = items\nUseVariadic(tag, *items) = Target\nUseVariadic(0, [1, 2])", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("Target(tag, *items) = items\nUseVariadic(tag, *items) = Target\nUseVariadic(0, (1, 2))", "ok raw=L[S[1, 2]] n=1"),
                 new SpecProbe("Target(first, *middle, last) = middle\nUse(first, *middle, last) = Target\nUse(1, 2, 3, 4)", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("Target(b, *a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
-                // A callee that works with NO arguments is never forwarded to (Q-03): its name
-                // alone reads its own zero-argument value, whatever the caller binds.
-                new SpecProbe("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", "ok raw=L[] n=1"),
-                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic(1, 2)", "ok raw=L[] n=1"),
+                // A formula forwards by binding NAME: Use's nested fixed `a` reaches Target's `*a`
+                // as one value.
+                new SpecProbe("Target(b, *a) = a\nUse((a, b)) = [Target]:0\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
+                // Bare forwarding is by name too, never by position: Use's `a` reaches Target's `*a`
+                // and Use's `b` Target's `b`, whatever order Use declares them in.
+                new SpecProbe("Target(b, *a) = a\nUse(a, b) = Target\nUse([1, 2], 5)", "ok raw=L[L[1, 2]] n=1"),
+                // Bare forwarding reads the callee's DECLARED signature, so a callee that works with
+                // no arguments is forwarded like any other — exactly the written forwarding.
+                new SpecProbe("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic(1, 2)", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target(items*)\nUseVariadic(1, 2)", "ok raw=L[1, 2] n=1"),
+                // In a FORMULA such a callee is read as a value by its bare name (Q-03).
+                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = [Target]:0\nUseVariadic(1, 2)", "ok raw=L[] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(tag, items) = Target` elaborates to `Target(tag, items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter legitimately forwards as spread (`UseVariadic(tag, *items) = Target` elaborates to `Target(tag, items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply). Forwarding happens only into a callee that REQUIRES supplied arguments: a callee that works with no arguments, such as `Target(*items)` alone, is read as a value by its bare name (`[]` here), so forwarding to it is written explicitly (`Target(items*)`).",
+            Explanation = "Forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(tag, items) = Target` forwards Use's `tag` and `items` by name, `Target(tag, items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter forwards as spread (`UseVariadic(tag, *items) = Target` is `Target(tag, items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply). Bare forwarding reads the callee's declared signature and supplies each parameter from the caller's binding of the SAME NAME, never by position, so even `Target(*items)` alone is forwarded; a formula that USES the callee forwards by binding name as well, and there a callee that works with no arguments is read as a value (`[]`).",
         },
         new()
         {
@@ -1297,7 +1304,7 @@ public static class LanguageSpecCorpus
         {
             Id = "callback-element-is-one-argument",
             Category = "collection-builtins",
-            Source = "AddPair((x, y)) = x + y\n\nmap([(1, 2)], AddPair)\nmap([[1, 2]], AddPair)",
+            Source = "AddPair((x, y)) = x + y\nLAddPair([x, y]) = x + y\n\nmap([(1, 2)], AddPair)\nmap([[1, 2]], LAddPair)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[3]\n[3]",
             ExpectedRaw = "S[L[3], L[3]]",
@@ -1312,7 +1319,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Acc(x, *acc) = acc\nreduce([9], Acc, (1, 2)), reduce([9], Acc, [1, 2])", "ok raw=S[L[S[1, 2]], L[L[1, 2]]] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern opens the element explicitly (`AddPair((x, y))`). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through a written forwarding alias and forwarding parameters too (`Alias(*xs) = Cnt(xs*)`, `Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).",
+            Explanation = "THE CALLBACK LAW: a callback element is ONE ordinary argument, bound exactly as the direct call `F(element)` — `map`, `filter`, and `reduce` add no implicit opening. A two-parameter flat callee therefore rejects a pair element with the ordinary arity error (`map([(1, 2)], Add)` like `Add((1, 2))`), a sequence and a list alike, while a structural pattern of the element's kind opens it explicitly (`AddPair((x, y))` a sequence element, `LAddPair([x, y])` a list element). A collecting callback counts one argument per element (`map([(1, 2)], Cnt)` is `[1]`), through a written forwarding alias and forwarding parameters too (`Alias(*xs) = Cnt(xs*)`, `Apply(Alias, [(10, 7), 20])` is `[1, 1]`), and a reducer receives its accumulator as one argument (`Acc(x, *acc)` collects `[(1, 2)]`).",
         },
         new()
         {
@@ -1451,33 +1458,110 @@ public static class LanguageSpecCorpus
                 new SpecProbe("CountValues(*values) = values.count\nCountValues((1, 2, 3), 4)", "ok raw=2 n=1"),
                 new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue((1, 2, 3), 4)", "err arity"),
                 new SpecProbe("CountValues(*values) = values.count\nCountValues([1, 2, 3])", "ok raw=1 n=1"),
-                new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue([1, 2, 3])", "ok raw=3 n=1"),
+                new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue([1, 2, 3])", "err type"),
+                new SpecProbe("CountListValue([*values]) = values.count\nCountListValue([1, 2, 3])", "ok raw=3 n=1"),
             ],
-            Explanation = "Top-level `*values` collects the call's ARGUMENTS: a grouped `(1, 2, 3)` is ONE argument (count 1), two arguments stay two (`CountValues((1, 2, 3), 4)` counts 2), and a list is one argument too. The sequence-value pattern `(*values)` is the explicit structural opener instead: it consumes exactly one structured argument — a sequence value or a list — and opens it during binding (`CountSequenceValue((1, 2, 3))` and `CountSequenceValue([1, 2, 3])` count 3), so a second argument is an arity error.",
+            Explanation = "Top-level `*values` collects the call's ARGUMENTS: a grouped `(1, 2, 3)` is ONE argument (count 1), two arguments stay two (`CountValues((1, 2, 3), 4)` counts 2), and a list is one argument too. The sequence pattern `(*values)` is the explicit structural opener instead: it consumes exactly one argument, which must be a SEQUENCE value, and opens it during binding (`CountSequenceValue((1, 2, 3))` counts 3), so a second argument is an arity error and a list is its kind mismatch; the list pattern `[*values]` opens a list the same way.",
         },
         new()
         {
-            Id = "ordinary-sequence-pattern-opens-sequence-or-list",
+            Id = "singleton-sequence-pattern-is-invalid",
+            Category = "empty-and-singleton",
+            Source = "F((x)) = x\nF(7)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "no one-item sequence value",
+            ExpectedDiagnosticCode = DiagnosticCode.SingletonSequencePattern,
+            Probes =
+            [
+                // The collector-only sequence pattern, the one-element LIST pattern, and a plain
+                // binder are the valid spellings; expression grouping is unaffected. (Every
+                // nesting level and clause families follow the rejection too — `F(((x)))`,
+                // `F(([x]))`, `F(((x, y)))`, `F(0) = 0` / `F((x)) = x`: SingletonSequencePatternTests.)
+                new SpecProbe("F((*xs)) = xs\nF((1, 2))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("F([x]) = x\nF([7])", "ok raw=7 n=1"),
+                new SpecProbe("F(x) = (x)\nF((7))", "ok raw=7 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Source-level pattern diagnostic; no elaborated Lean program exists for a rejected parse. Lean enforces the same rule on hand-built trees: validateExplicitParamOutputInvariant rejects a singleton sequence pattern before evaluation (CoreTests singletonSequencePatternIsRejectedBeforeEvaluation).",
+            Explanation = "KatLang has no one-item sequence value — `(7)` IS `7` — so a sequence pattern with exactly ONE non-collecting item describes a boundary no value has. The front end rejects it at every nesting level, in ordinary definitions and clause families alike, instead of silently reading `F((x))` as `F(x)`: bind the whole value with a plain name `x`, or use the list pattern `[x]` for a one-element list. The collector-only `(*xs)` stays valid — a collector stands for a sequence's elements, not for a sequence of one — and grouping in expressions is unaffected (`(x)` there IS `x`).",
+        },
+        new()
+        {
+            Id = "list-patterns-cover-every-cardinality",
+            Category = "lists",
+            Source = "L([*xs]) = xs\nOnly([x]) = x\nPair([x, y]) = x + y\nEnds([first, *middle, last]) = first, middle, last\n\nL([]), L([1]), L([1, 2])\nOnly([10])\nPair([10, 20])\nEnds([1, 2, 3, 4])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]\n[1]\n[1, 2]\n10\n30\n(1, [2, 3], 4)",
+            ExpectedRaw = "S[L[], L[1], L[1, 2], 10, 30, S[1, L[2, 3], 4]]",
+            ExpectedEmittedCount = 6,
+            Probes =
+            [
+                // A list pattern opens LIST values only, of its own length.
+                new SpecProbe("Only([x]) = x\nOnly(7)", "err type"),
+                new SpecProbe("Only([x]) = x\nOnly((7, 8))", "err type"),
+                new SpecProbe("Only([x]) = x\nOnly([7, 8])", "err arity"),
+                new SpecProbe("Only([x]) = x\nOnly([[7]])", "ok raw=L[7] n=1"),
+                // The empty sequence and the empty list are different values and patterns.
+                new SpecProbe("E([]) = 0\nE([])", "ok raw=0 n=1"),
+                new SpecProbe("E([]) = 0\nE(())", "err type"),
+                new SpecProbe("E(()) = 0\nE([])", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Lists keep every cardinality, so list patterns do too: `[]` matches the empty list, `[x]` exactly a one-element list (the one-element structural pattern), `[x, y]` a two-element list, and a collector — `[*xs]`, `[first, *rest]`, `[first, *middle, last]` — collects the remaining elements of a list of any length as an exact list. A list pattern opens LIST values only: a scalar or a sequence is its kind mismatch. The empty sequence `()` and the empty list `[]` are different values, and `()` and `[]` are different patterns.",
+        },
+        new()
+        {
+            Id = "nested-structural-patterns-keep-their-kind",
             Category = "variadic-calls",
-            Source = "PairSum((x, y)) = x + y\nPairSum((2, 3))\nPairSum([2, 3])",
+            Source = "F(([x, y], z)) = x + y + z\nG([(x, y), z]) = x + y + z\n\nF(([10, 20], 30))\nG([(1, 2), 3])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "60\n6",
+            ExpectedRaw = "S[60, 6]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Each level checks its own kind.
+                new SpecProbe("F(([x, y], z)) = x + y + z\nF(((10, 20), 30))", "err type"),
+                new SpecProbe("F(([x, y], z)) = x + y + z\nF([[10, 20], 30])", "err type"),
+                new SpecProbe("G([(x, y), z]) = x + y + z\nG([[1, 2], 3])", "err type"),
+                // Outer call arity is not structural shape.
+                new SpecProbe("F(x, y) = x + y\nF(1, 2)", "ok raw=3 n=1"),
+                new SpecProbe("F((x, y)) = x + y\nF(1, 2)", "err arity"),
+                new SpecProbe("F([x, y]) = x + y\nF((1, 2))", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Structural patterns compose, keeping their kind at every level: `F(([x, y], z))` takes ONE argument that must be a two-element sequence whose first element is a two-element list, and `G([(x, y), z])` is the mirror image. Outer call arity is separate from structural shape: `F(x, y)` has two parameters, `F((x, y))` one parameter whose value must be a two-element sequence, and `F([x, y])` one parameter whose value must be a two-element list.",
+        },
+        new()
+        {
+            Id = "structural-patterns-open-only-their-own-kind",
+            Category = "variadic-calls",
+            Source = "PairSum((x, y)) = x + y\nListSum([x, y]) = x + y\n\nPairSum((2, 3))\nListSum([2, 3])",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "5\n5",
             ExpectedRaw = "S[5, 5]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                // The pattern opens ONE lone structure of either kind and binds its immediate items; a
-                // wrong item count or a non-structure argument is an arity error against the pattern.
-                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([1, 2, 3])", "err arity"),
-                new SpecProbe("PairSum((x, y)) = x + y\nPairSum(7)", "err arity"),
-                // A collecting sequence-value pattern collects a lone list's items the same way.
-                new SpecProbe("Count((*v)) = v.count\nCount([1, 2, 3])", "ok raw=3 n=1"),
-                // Callback position uses the same binder, so a nested pattern opens list AND sequence rows.
-                new SpecProbe("PairSum((x, y)) = x + y\n[[1, 2], (3, 4)].map(PairSum)", "ok raw=L[3, 7] n=1"),
-                // Contrast: in a multi-clause family the same written pattern matches sequence values only.
+                // The other kind, or a scalar, is the pattern's KIND mismatch; the right kind with
+                // the wrong number of elements is its arity mismatch.
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([2, 3])", "err type"),
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum(7)", "err type"),
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum((1, 2, 3))", "err arity"),
+                new SpecProbe("ListSum([x, y]) = x + y\nListSum((2, 3))", "err type"),
+                // Collectors keep the kind: a sequence collector opens sequences only, a list
+                // collector lists of every cardinality, one element included.
+                new SpecProbe("Count((*v)) = v.count\nCount((1, 2, 3))", "ok raw=3 n=1"),
+                new SpecProbe("Count((*v)) = v.count\nCount([1, 2, 3])", "err type"),
+                new SpecProbe("LCount([*v]) = v.count\nLCount([7])", "ok raw=1 n=1"),
+                // Callback position uses the same binder and the same law.
+                new SpecProbe("PairSum((x, y)) = x + y\n[(1, 2), (3, 4)].map(PairSum)", "ok raw=L[3, 7] n=1"),
+                new SpecProbe("PairSum((x, y)) = x + y\n[[1, 2], (3, 4)].map(PairSum)", "err type"),
+                // A clause family follows the same law; there a mismatch only rejects the clause.
                 new SpecProbe("F((x, y)) = x + y\nF(z) = 0\nF([2, 3])", "ok raw=0 n=1"),
             ],
-            Explanation = "An ordinary (single-clause) sequence-value parameter pattern consumes exactly one argument slot and opens that slot's value — a lone sequence value or a lone exact list, the same two kinds assignment deconstruction opens — binding only its immediate items. Any other value, or the wrong number of items, is an arity error against the pattern. A multi-clause family is narrower: there the same pattern matches sequence values only.",
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Structural pattern delimiters select the value kind they destructure. A parenthesized sequence pattern consumes one argument slot and opens a SEQUENCE value only; a bracketed list pattern opens a LIST value only. A value of the other kind — or a scalar, which is never a one-item structure — is the pattern's kind mismatch, a type error in an ordinary definition; the right kind with the wrong number of elements is an arity error. Clause families follow the same law, where a mismatch only rejects that clause.",
         },
         new()
         {
@@ -1488,8 +1572,11 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "div0",
             Probes =
             [
-                // Every pattern binds first; the unequal x is only a merge failure.
-                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err arity"),
+                // Every pattern binds first; the unequal x is only a merge failure (here the
+                // scalar 7 is the pair pattern's kind mismatch, and a three-element sequence its
+                // arity mismatch).
+                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err type"),
+                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "err arity"),
                 // Between different names the innermost merge decides: the (f, f) merge runs first
                 // (A and B are two callables with the equal value 5).
                 new SpecProbe("A = 5\nB = 2 + 3\nP(x, x, f, f) = 0\nP(1, 2, A, B)", "err type"),
@@ -1573,34 +1660,40 @@ public static class LanguageSpecCorpus
         {
             Id = "implicit-forwarding-is-by-binding-name",
             Category = "variadic-calls",
-            Source = "F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nCommon(x, x) = x\nSome = Common\n\nH(3)\nSome(7)",
+            Source = "F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nCommon(x, x) = x\nTwice = Common * 2\n\nH(3)\nTwice(7)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "10\n7",
-            ExpectedRaw = "S[10, 7]",
+            ExpectedDisplay = "10\n14",
+            ExpectedRaw = "S[10, 14]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                // One binding name is one caller parameter: Some takes one argument.
-                new SpecProbe("Common(x, x) = x\nSome = Common\nSome(7, 7)", "err arity"),
+                // One binding name is one caller parameter: Twice takes one argument.
+                new SpecProbe("Common(x, x) = x\nTwice = Common * 2\nTwice(7, 7)", "err arity"),
                 // The direct call supplies two independent arguments, which must be equal (Q-05).
                 new SpecProbe("Common(x, x) = x\nCommon(7, 8)", "err arity"),
                 // Three occurrences, a nested group, and a written parameter list that binds the name.
-                new SpecProbe("P(x, x, x) = x\nSome = P\nSome(7)", "ok raw=7 n=1"),
-                new SpecProbe("P((x, a), x) = a\nSome = P\nSome((7, 8))", "ok raw=8 n=1"),
-                new SpecProbe("P(x, x) = x\nQ(x) = P\nQ(7)", "ok raw=7 n=1"),
+                new SpecProbe("P(x, x, x) = x\nSome = P + 0\nSome(7)", "ok raw=7 n=1"),
+                new SpecProbe("P((x, a), x) = a\nSome = [P]:0\nSome((7, 8))", "ok raw=8 n=1"),
+                new SpecProbe("P(x, x) = x\nQ(x) = P + 0\nQ(7)", "ok raw=7 n=1"),
                 // The one binding is the caller's argument, whatever it is: a failing or
                 // callable-only argument is still its own error (Q-05), never repaired or spliced.
-                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)", "err div0"),
-                new SpecProbe("Inc(y) = y + 1\nP(x, x) = x\nSome = P\nSome(Inc)", "err arity"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P + 0\nSome(Bad)", "err div0"),
+                new SpecProbe("Inc(y) = y + 1\nP(x, x) = x\nSome = P + 0\nSome(Inc)", "err arity"),
+                // A body that is ONLY the callee is not a formula: an exact alias keeps Common's two
+                // arguments and their constraint, and bare forwarding reuses the caller's one
+                // binding named x for both occurrences, P(x, x).
+                new SpecProbe("Common(x, x) = x\nSame = Common\nSame(7, 7)", "ok raw=7 n=1"),
+                new SpecProbe("Common(x, x) = x\nSame = Common\nSame(7)", "err arity"),
+                new SpecProbe("P(x, x) = x\nQ(x) = P\nQ(7)", "ok raw=7 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Implicit forwarding is by binding name, regardless of how many times that name occurs in a callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Some = Common` is `Some(x) = Common(x, x)`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Some(7)` is 7, and Some takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error.",
+            Explanation = "A formula that USES another formula hands its inputs on by binding name, regardless of how many times that name occurs in the callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Twice = Common * 2` is `Twice(x) = Common(x, x) * 2`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Twice(7)` is 14, and Twice takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error. A definition whose whole body is the callee is not a formula: `Same = Common` is an exact alias that keeps Common's two independent arguments, and bare forwarding `Q(x) = P` reuses Q's one binding named x by name, `P(x, x)`.",
         },
         new()
         {
             Id = "repeated-name-wrapper-keeps-independent-arguments",
             Category = "variadic-calls",
-            Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\nSome = Common\n\nBoth(7, 7)\nTwice(8)\nSome(9)",
+            Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\nSome = Common\n\nBoth(7, 7)\nTwice(8)\nSome(9, 9)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "7\n8\n9",
             ExpectedRaw = "S[7, 8, 9]",
@@ -1611,15 +1704,232 @@ public static class LanguageSpecCorpus
                 // failure, and a failed argument is its own error.
                 new SpecProbe("P(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(7, 8)", "err arity"),
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(Bad, 7)", "err div0"),
-                // One binding supplied to both occurrences, written or forwarded implicitly.
+                // The exact alias keeps the two independent arguments too.
+                new SpecProbe("P(x, x) = x\nSome = P\nSome(7, 8)", "err arity"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad, 7)", "err div0"),
+                // One binding supplied to both occurrences, written or forwarded by a formula.
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSame(x) = P(x, x)\nSame(Bad)", "err div0"),
-                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = [P]:0\nSome(Bad)", "err div0"),
                 // A nested repetition, and an alias of a wrapper whose own names are distinct.
                 new SpecProbe("P((x, a), x) = a\nW(p, q) = P(p, q)\nW((7, 8), 7)", "ok raw=8 n=1"),
                 new SpecProbe("P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)", "ok raw=5 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and `Some = Common` forwards one binding by name in exactly the same way, so `Twice(8)` is 8 and `Some(9)` is 9. An alias of a wrapper whose own parameter names are distinct lifts both of its parameters.",
+            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is an exact alias with Common's own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common]:0` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
+        },
+        new()
+        {
+            Id = "implicit-forwarding-preserves-structural-kind",
+            Category = "variadic-calls",
+            Source = "Single([x]) = x\nA = Single\nAdd((x, y)) = x + y\nB = Add\nC((*xs)) = xs.count\nCount = C\nG([x]) = Single\n\nA([7])\nA([[7]])\nB((10, 20))\nCount((1, 2, 3))\nG([7])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n[7]\n30\n3\n7",
+            ExpectedRaw = "S[7, L[7], 30, 3, 7]",
+            ExpectedEmittedCount = 5,
+            Probes =
+            [
+                // An alias means its callee, for every argument and every structural kind.
+                new SpecProbe("Single([x]) = x\nA = Single\nA([[7]]) == Single([[7]])", "ok raw=true n=1"),
+                new SpecProbe("Single([x]) = x\nA = Single\nA(7)", "err type"),
+                new SpecProbe("Add((x, y)) = x + y\nB = Add\nB([10, 20])", "err type"),
+                new SpecProbe("C((*xs)) = xs.count\nCount = C\nCount(())", "ok raw=0 n=1"),
+                // Nested groups keep their kind at every level.
+                new SpecProbe("F(([x, y], z)) = x + y + z\nA = F\nA(([10, 20], 30))", "ok raw=60 n=1"),
+                new SpecProbe("F([(x, y), z]) = x + y + z\nA = F\nA([(1, 2), 3])", "ok raw=6 n=1"),
+                // Alias chains keep the structure too, repeated names included.
+                new SpecProbe("P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8), (7, 8)])", "ok raw=S[7, 8] n=1"),
+                new SpecProbe("P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8)])", "err arity"),
+                // A local alias keeps Single's list pattern, and its owner forwards its own
+                // same-pattern [x] to it by name.
+                new SpecProbe("Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}\nF([[7]])", "ok raw=L[7] n=1"),
+                // Bare forwarding rebuilds the same-named, same-pattern parameter as its own kind.
+                new SpecProbe("M([first, *middle, last]) = [first, middle, last]\nW([first, *middle, last]) = M\nW([1, 2, 3])", "ok raw=L[1, L[2], 3] n=1"),
+                new SpecProbe("F(([x, y], z)) = x + y + z\nW(([x, y], z)) = F\nW(([1, 2], 3))", "ok raw=6 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Forwarding hands every existing binding on unchanged and rebuilds every structural pattern it reconstructs as the SAME kind that pattern matches. An exact alias inherits its callee's patterns and rebuilds them from its own bindings: `A = Single` accepts exactly the one-element lists Single accepts, `B = Add` exactly the pairs (so, like `Add`, it rejects a list), a sequence collector re-spreads its items into a sequence, and nested groups keep their kind at every level. Bare forwarding supplies a structural parameter only from a binding with the same name AND the same pattern, rebuilt as that kind: `G([x]) = Single` is `G([x]) = Single([x])`, so `G([7])` is 7 (while `G(x) = Single` is rejected, because G's whole `x` is not Single's `[x]`). Nothing converts between sequences and lists.",
+        },
+        new()
+        {
+            Id = "alias-forwarding-and-explicit-call",
+            Category = "name-resolution",
+            Source = "Double(x) = x * 2\nOther(y) = y * 2\n\nAlias = Double\nForward(x) = Double\nExplicit(x) = Other(x)\nFormula = Double + 1\n\nAlias(5)\nForward(5)\nExplicit(5)\nFormula(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n10\n10\n11",
+            ExpectedRaw = "S[10, 10, 10, 11]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // Bare forwarding keeps the explicit list closed: Forward still takes one argument.
+                new SpecProbe("Double(x) = x * 2\nForward(x) = Double\nForward(5, 6)", "err arity"),
+                // A parameter the callee does not need stays unused, and a callee that needs nothing
+                // is simply read.
+                new SpecProbe("Double(x) = x * 2\nForward(x, unused) = Double\nForward(5, 999)", "ok raw=10 n=1"),
+                new SpecProbe("Ten = 10\nAlways(p) = Ten\nAlways(999)", "ok raw=10 n=1"),
+                // By name, never by position: G's y reaches Sub's y and G's x reaches Sub's x ...
+                new SpecProbe("Sub(y, x) = y - x\nG(x, y) = Sub\nG(10, 3)", "ok raw=-7 n=1"),
+                // ... while the written call passes its arguments in the written order.
+                new SpecProbe("Sub(y, x) = y - x\nG(x, y) = Sub(x, y)\nG(10, 3)", "ok raw=7 n=1"),
+                // Formula lifting shares one binding per name across callees.
+                new SpecProbe("F(x) = x * 2\nG(x) = x + 10\nA = F + G\nA(5)", "ok raw=25 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Four ways to define a formula through another one are four different mechanisms. `Alias = Double` is an EXACT ALIAS: it takes Double's complete signature and calls Double with it. `Forward(x) = Double` is BARE FORWARDING: Forward's explicit parameter list is closed, and Double's parameter `x` is supplied from Forward's existing binding of the SAME NAME — never by position, never renamed, never added (a parameter Double does not need simply stays unused). `Explicit(x) = Other(x)` is an EXPLICIT CALL: the written arguments are passed as written, so the names need not match. `Formula = Double + 1` USES Double inside an expression, so Double's parameter is lifted into Formula by name: `Formula(x) = Double(x) + 1`. So `Forward(x) = Double` is not the same thing as `Forward(x) = Double(x)`: with `Sub(y, x) = y - x`, `G(x, y) = Sub` hands G's `y` to Sub's `y` and gives -7 for `G(10, 3)`, while `G(x, y) = Sub(x, y)` gives 7.",
+        },
+        new()
+        {
+            Id = "bare-forwarding-never-renames-a-parameter",
+            Category = "name-resolution",
+            Source = "Other(y) = y * 2\nBad(x) = Other\n\nBad(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is forwarded by name here, but its parameter 'y'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnforwardableParameter,
+            IncludeInGeneratorPrompt = true,
+            Notes = "FWD-02 bare forwarding (decided September 30 2026): a front-end rejection, so no elaborated Lean program exists; Lean pins the same verdict with `bareForwardingRow` in CoreTests/AliasForwarding.lean.",
+            Explanation = "Bare forwarding reuses an existing parameter only under its own name. `Other` needs `y`, and `Bad`'s explicit parameter list declares only `x`, so the definition is rejected: KatLang never renames `x` to `y` and never matches parameters by position. Write the call to pass `x` anyway (`Bad(x) = Other(x)`), or name the parameter `y`.",
+        },
+        new()
+        {
+            Id = "bare-forwarding-never-adds-a-parameter",
+            Category = "name-resolution",
+            Source = "F(p, q) = p + q\nA(p) = F\n\nA(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is forwarded by name here, but its parameter 'q'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnforwardableParameter,
+            IncludeInGeneratorPrompt = true,
+            Notes = "FWD-02 bare forwarding with a closed explicit list (PAR-04): a front-end rejection, so no elaborated Lean program exists.",
+            Explanation = "An explicit parameter list is closed: bare forwarding may reuse its parameters by name, but never adds one. `F` still needs `q`, which `A(p)` does not declare, so the definition is rejected instead of inferring `q`. Declare it (`A(p, q) = F`) or supply it explicitly (`A(p) = F(p, 10)`).",
+        },
+        new()
+        {
+            Id = "alias-structural-forwarding-and-written-call",
+            Category = "name-resolution",
+            Source = "Single([x]) = x\n\nAlias = Single\nSameShape([x]) = Single\nExplicit(x) = Single(x)\nConstruct = Single([x])\n\nAlias([7])\nSameShape([7])\nExplicit([7])\nConstruct(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n7\n7\n7",
+            ExpectedRaw = "S[7, 7, 7, 7]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // The alias and the same-pattern forwarding take Single's one-element list; the explicit
+                // call takes one whole value and passes it as Single's list argument.
+                new SpecProbe("Single([x]) = x\nAlias = Single\nAlias(7)", "err type"),
+                new SpecProbe("Single([x]) = x\nSameShape([x]) = Single\nSameShape(7)", "err type"),
+                new SpecProbe("Single([x]) = x\nExplicit(x) = Single(x)\nExplicit(7)", "err type"),
+                new SpecProbe("Single([x]) = x\nAlias = Single\nSameShape([x]) = Single\nAlias([[7]]), SameShape([[7]])", "ok raw=S[L[7], L[7]] n=2"),
+                // Construct builds the list itself, so it takes the element.
+                new SpecProbe("Single([x]) = x\nConstruct = Single([x])\nConstruct([7])", "ok raw=L[7] n=1"),
+                // An explicit call builds a sequence where a callee needs one.
+                new SpecProbe("Add((a, b)) = a + b\nPair(a, b) = Add((a, b))\nPair(2, 3)", "ok raw=5 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The same four forms apply to structural parameters. `Alias = Single` inherits Single's `[x]` signature: it takes exactly the arguments Single takes. `SameShape([x]) = Single` is bare forwarding: its own parameter is the same pattern `[x]` under the same name, so Single receives it rebuilt as the list it matched. `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`. `Construct = Single([x])` infers `x` from the written `[x]` and builds the list before calling Single, so it takes the element itself. A bare `Bad(x) = Single` is rejected, because a same-named leaf inside a pattern is not the same parameter.",
+        },
+        new()
+        {
+            Id = "bare-forwarding-never-reshapes-a-structural-parameter",
+            Category = "name-resolution",
+            Source = "Single([x]) = x\nBad(x) = Single\n\nBad([7])",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "does not declare its parameter '[x]' in that form",
+            ExpectedDiagnosticCode = DiagnosticCode.UnforwardableParameter,
+            IncludeInGeneratorPrompt = true,
+            Notes = "FWD-02 structural compatibility is decided at the top-level parameter pattern: a front-end rejection, so no elaborated Lean program exists.",
+            Explanation = "Bare forwarding matches whole parameters, not leaf names. Single's parameter is the one-element list pattern `[x]`, while `Bad`'s is a whole value that happens to be called `x`, so the definition is rejected rather than silently building `Single([x])` from it. Write `Bad(x) = Single(x)` to pass `x` whole (then `Bad([7])` is 7), or declare the same pattern: `Bad([x]) = Single`.",
+        },
+        new()
+        {
+            Id = "bare-forwarding-never-manufactures-a-sequence",
+            Category = "name-resolution",
+            Source = "Add((x, y)) = x + y\nG(x, y) = Add\n\nG(2, 3)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "does not declare its parameter '(x, y)' in that form",
+            ExpectedDiagnosticCode = DiagnosticCode.UnforwardableParameter,
+            Notes = "FWD-02 structural compatibility: a front-end rejection, so no elaborated Lean program exists.",
+            Explanation = "Add takes ONE parameter, the pair pattern `(x, y)`. `G(x, y)` declares two whole values with the same names, which is a different signature, so bare forwarding is rejected instead of manufacturing the pair. `G((x, y)) = Add` forwards the same pattern, and `G(x, y) = Add((x, y))` builds the pair explicitly.",
+        },
+        new()
+        {
+            Id = "alias-preserves-the-callee-signature",
+            Category = "name-resolution",
+            Source = "Single([x]) = x\nP(x, x) = x\nE((), []) = 1\nA = Single\nB = A\nC = B\nAP = P\nAE = E\n\nC([7])\nC([[7]])\nAP(5, 5)\nAE((), [])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n[7]\n5\n1",
+            ExpectedRaw = "S[7, L[7], 5, 1]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // The alias rejects exactly what the callee rejects, at every level of a chain.
+                new SpecProbe("Single([x]) = x\nA = Single\nB = A\nB(7)", "err type"),
+                new SpecProbe("Single([x]) = x\nA = Single\nA((1, 2))", "err type"),
+                new SpecProbe("Single([x]) = x\nA = Single\nA([])", "err arity"),
+                new SpecProbe("Add((x, y)) = x + y\nA = Add\nA([2, 3])", "err type"),
+                // Repeated names keep their two independent arguments and their constraint.
+                new SpecProbe("P(x, x) = x\nA = P\nA(5, 6)", "err arity"),
+                new SpecProbe("P(x, x) = x\nA = P\nA(5)", "err arity"),
+                // Binderless structural parameters keep their arity and kinds.
+                new SpecProbe("E((), []) = 1\nA = E\nA()", "err arity"),
+                new SpecProbe("E((), []) = 1\nA = E\nA([], ())", "err type"),
+                // The three collector shapes stay distinct.
+                new SpecProbe("C(*xs) = xs\nA = C\nA(1, 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("C([*xs]) = xs\nA = C\nA([1, 2])", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("C((*xs)) = xs\nA = C\nA((1, 2))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("C([*xs]) = xs\nA = C\nA((1, 2))", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A definition whose whole body is a bare callable that declares parameters is an EXACT ALIAS: `A = Single` takes Single's parameter patterns verbatim and calls Single with them rebuilt, so `A(S)` behaves as `Single(S)` for every argument supply — the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` keeps `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` keeps `E((), [])`'s two structural parameters), collectors and structural kinds all survive, through every level of a chain (`C = B`, `B = A`).",
+        },
+        new()
+        {
+            Id = "bare-forwarding-keeps-each-parameter-kind",
+            Category = "name-resolution",
+            Source = "Add((a, b)) = a + b\nColl(*vs) = vs\nMid([first, *middle, last]) = [first, middle, last]\nPair((a, b)) = Add\nMany(*vs) = Coll\nSame([first, *middle, last]) = Mid\n\nPair((2, 3))\nMany(1, 2)\nSame([1, 2, 3, 4])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n[1, 2]\n[1, [2, 3], 4]",
+            ExpectedRaw = "S[5, L[1, 2], L[1, L[2, 3], 4]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A collecting parameter forwards what it collected, 0, 1 or N arguments.
+                new SpecProbe("Coll(*vs) = vs\nMany(*vs) = Coll\nMany()", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*vs) = vs\nMany(*vs) = Coll\nMany(7)", "ok raw=L[7] n=1"),
+                // The SOURCE binding's kind decides the spread: a fixed binding is one collected
+                // item, and a collected list reaches a fixed parameter whole.
+                new SpecProbe("Coll(*vs) = vs\nOne(vs) = Coll\nOne((1, 2))", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("One(vs) = vs\nMany(*vs) = One\nMany(1, 2)", "ok raw=L[1, 2] n=1"),
+                // A binding the local list does not declare is the enclosing one a written name
+                // would denote (Q-04); the local y stays unused.
+                new SpecProbe("F(x) = x\nOuter(x) = {\n  Local(y) = F\n  Local(5)\n}\nOuter(100)", "ok raw=100 n=1"),
+                // A local parameter of the same name is the nearer binding.
+                new SpecProbe("F(x) = x\nOuter(x) = {\n  Local(x) = F\n  Local(5)\n}\nOuter(100)", "ok raw=5 n=1"),
+                // A clause branch forwards the binders of its own pattern.
+                new SpecProbe("F(n) = n * 10\nG(0) = 0\nG(n) = F\nG(0), G(3)", "ok raw=S[0, 30] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Bare forwarding supplies each parameter of the callee from the binding of the same name, keeping the binding as it is: a structural parameter declared with the same pattern is rebuilt as its own list or sequence (`Pair((a, b)) = Add` is `Add((a, b))`, `Same([first, *middle, last]) = Mid` is `Mid([first, middle*, last])`), and a collecting parameter re-spreads what it collected into a collecting parameter of the same name (`Many(*vs) = Coll` is `Coll(vs*)`). Only the source binding's kind decides a spread, so a fixed binding reaches a collector as one item and a collected list reaches a fixed parameter whole. A name the explicit list does not declare may still be an enclosing parameter binding — the one a written name would denote there — and is reused as it is; nothing is ever added to the list or renamed.",
+        },
+        new()
+        {
+            Id = "written-call-infers-its-written-names",
+            Category = "name-resolution",
+            Source = "Add((a, b)) = a + b\nSingle([a]) = a\nG = Add((x, y))\nConstruct = Single([x])\n\nG(2, 3)\nConstruct(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n7",
+            ExpectedRaw = "S[5, 7]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Renaming the callee's binders changes nothing for the caller.
+                new SpecProbe("Add((left, right)) = left + right\nG = Add((x, y))\nG(2, 3)", "ok raw=5 n=1"),
+                // G takes the two names it writes, in first-appearance order.
+                new SpecProbe("Add((a, b)) = a + b\nG = Add((x, y))\nG(2)", "err arity"),
+                new SpecProbe("Sub((a, b)) = a - b\nG = Sub((y, x))\nG(2, 3)", "ok raw=-1 n=1"),
+                new SpecProbe("Add((a, b)) = a + b\nG(x, y) = Add((x, y))\nG(2, 3)", "ok raw=5 n=1"),
+                // A name written twice is one input.
+                new SpecProbe("Two(a, b) = [a, b]\nG = Two(x, x)\nG(7)", "ok raw=L[7, 7] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A written call is authoritative: `G = Add((x, y))` takes its parameters from the free names WRITTEN in its arguments, `x` then `y`, so it is exactly `G(x, y) = Add((x, y))` — and the sequence `(x, y)` stays one argument to Add. Add's own binder names never reach G: renaming them to `left` and `right` changes nothing. `Construct = Single([x])` likewise takes one parameter `x` and builds the one-element list itself.",
         },
         new()
         {
@@ -1694,22 +2004,22 @@ public static class LanguageSpecCorpus
         {
             Id = "redundant-call-parens-canonical",
             Category = "variadic-calls",
-            Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount(((*values))) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount([(1, 2, 3)])\nNestedCount(([[1, 2, 3]]))",
+            Source = "Inner = (1, 2, 3)\nCountSequenceValue((*values)) = values.count\nNestedCount([(*values)]) = values.count\n\nCountSequenceValue(Inner)\nCountSequenceValue((Inner))\nCountSequenceValue(((1, 2, 3)))\nNestedCount([(1, 2, 3)])\nNestedCount(([(1, 2, 3)]))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3\n3\n3\n3\n3",
             ExpectedRaw = "S[3, 3, 3, 3, 3]",
             ExpectedEmittedCount = 5,
             Probes =
             [
-                new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount((1, 2, 3))", "err arity"),
-                new SpecProbe("NestedCount(((*values))) = values.count\nNestedCount(((1, 2, 3)))", "err arity"),
-                new SpecProbe("NestedCount(((*values))) = values\nNestedCount(7), NestedCount(((7))), NestedCount(true), NestedCount('s')", "ok raw=S[L[7], L[7], L[true], L['s']] n=4"),
-                new SpecProbe("NestedCount(((*values))) = values\nNestedCount([()]), NestedCount(([(1, 2)]))", "ok raw=S[L[], L[1, 2]] n=2"),
+                new SpecProbe("NestedCount([(*values)]) = values.count\nNestedCount((1, 2, 3))", "err type"),
+                new SpecProbe("NestedCount([(*values)]) = values.count\nNestedCount(([[1, 2, 3]]))", "err type"),
+                new SpecProbe("NestedCount([(*values)]) = values\nNestedCount(7)", "err type"),
+                new SpecProbe("NestedCount([(*values)]) = values\nNestedCount([()]), NestedCount(([(1, 2)]))", "ok raw=S[L[], L[1, 2]] n=2"),
                 new SpecProbe("CountSequenceValue((*values)) = values.count\nCountSequenceValue(((1, 2), 3))", "ok raw=2 n=1"),
                 new SpecProbe("S = 1, 2\nF((a, b)) = a + b\nF({S})", "ok raw=3 n=1"),
-                new SpecProbe("A = [[1, 2]]\nP((*xs)) = xs\nP((A*))", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("A = [[1, 2], [3]]\nP((*xs)) = xs\nP((A*))", "ok raw=L[L[1, 2], L[3]] n=1"),
             ],
-            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A pattern-shaped callee opens the argument's VALUE: `Inner`, `(Inner)`, and `((1, 2, 3))` are all the sequence value `(1, 2, 3)`, so the collecting parameter collects its three items in every spelling — a redundant group is never a written level for the pattern to consume, and a single-row block `{S}` or a captured spread `(A*)` is likewise just its value. A nested pattern `((*values))` opens two real boundaries, and unary sequence structure never survives normalization, so a one-element list (`[(1, 2, 3)]`, `[[1, 2, 3]]`) supplies the outer structural level. Scalars also bind through the ordinary one-item fallback at each level, without creating a unary sequence; `(1, 2, 3)` and `((1, 2, 3))` open to three items against the one nested pattern and are the same arity error. Non-unary structure is preserved: `((1, 2), 3)` counts 2.",
+            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A pattern-shaped callee opens the argument's VALUE: `Inner`, `(Inner)`, and `((1, 2, 3))` are all the sequence value `(1, 2, 3)`, so the collecting parameter collects its three items in every spelling — a redundant group is never a written level for the pattern to consume, and a single-row block `{S}` or a captured spread `(A*)` is likewise just its value. A nested pattern `[(*values)]` opens two real boundaries, each of its own kind: a one-element LIST whose element is a SEQUENCE (unary sequence structure never survives normalization, so a one-element outer level is always a list). A sequence, a list element, or a scalar where the other kind is required is the pattern's kind mismatch. Non-unary structure is preserved: `((1, 2), 3)` counts 2.",
         },
         new()
         {
@@ -1731,14 +2041,14 @@ public static class LanguageSpecCorpus
         {
             Id = "patterned-user-call-is-one-value-boundary",
             Category = "item-supply-vs-value",
-            Source = "F((x)) = 1, 2\nF((7))",
+            Source = "F([x]) = 1, 2\nF([7])",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(1, 2)",
             ExpectedRaw = "S[1, 2]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("F((x)) = x, x\nF((7))", "ok raw=S[7, 7] n=1"),
+                new SpecProbe("F([x]) = x, x\nF([7])", "ok raw=S[7, 7] n=1"),
                 new SpecProbe("F((x, y)) = x, y\nF((1, 2))", "ok raw=S[1, 2] n=1"),
                 // The flat-parameter spelling must reach the same boundary.
                 new SpecProbe("F(x) = 1, 2\nF(7)", "ok raw=S[1, 2] n=1"),
@@ -1747,23 +2057,24 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "conditional-singleton-head-binds-its-argument-whole",
+            Id = "conditional-one-element-list-pattern",
             Category = "conditionals",
-            Source = "F((x)) = x\nF(n) = 0\nF([1, 2])",
+            Source = "F([x]) = x\nF(n) = 0\n\nF([7])\nF([1, 2])",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[1, 2]",
-            ExpectedRaw = "L[1, 2]",
-            ExpectedEmittedCount = 1,
+            ExpectedDisplay = "7\n0",
+            ExpectedRaw = "S[7, 0]",
+            ExpectedEmittedCount = 2,
             Probes =
             [
-                // A SINGLETON list is not opened either: `x` binds `[7]`, not 7.
-                new SpecProbe("F((x)) = x\nF(n) = 0\nF([7])", "ok raw=L[7] n=1"),
-                // Control: a two-item SEQUENCE value has arity 2 against a
-                // one-element pattern, so it falls through to the next clause.
-                new SpecProbe("F((x)) = x\nF(n) = 0\nF((1, 2))", "ok raw=0 n=1"),
-                new SpecProbe("F((x)) = x\nF(n) = 0\nF(7)", "ok raw=7 n=1"),
+                // A scalar and a sequence are no lists: they fall through to the next clause.
+                new SpecProbe("F([x]) = x\nF(n) = 0\nF(7)", "ok raw=0 n=1"),
+                new SpecProbe("F([x]) = x\nF(n) = 0\nF((1, 2))", "ok raw=0 n=1"),
+                // The element is bound whole, whatever it is.
+                new SpecProbe("F([x]) = x\nF(n) = 0\nF([[1, 2]])", "ok raw=L[1, 2] n=1"),
+                // List patterns tell every list cardinality apart.
+                new SpecProbe("Kind([]) = 0\nKind([x]) = 1\nKind([x, y]) = 2\nKind(v) = 9\nKind([]), Kind([5]), Kind([5, 6]), Kind([5, 6, 7]), Kind(()), Kind(5)", "ok raw=S[0, 1, 2, 9, 9, 9] n=6"),
             ],
-            Explanation = "A singleton sequence-value clause head `(x)` matches ANY one argument whole via the scalar one-item rule: singleton sequence structure normalizes away during construction, so the pattern must also accept a non-sequence result as if it were a one-element sequence. It never opens the argument — an exact list binds entire, including a singleton list. Only a sequence value of a different arity fails the head.",
+            Explanation = "In a clause family the one-element list pattern `[x]` matches exactly a one-element list and binds its element whole; a longer list, a sequence, or a scalar does not match that clause and falls through. List patterns distinguish every list cardinality — `[]`, `[x]`, `[x, y]`. There is no one-item sequence pattern: `(x)` is rejected by the front end, and a plain binder `F(x)` is how a clause takes any one argument whole.",
         },
         new()
         {
@@ -1778,12 +2089,12 @@ public static class LanguageSpecCorpus
             [
                 // With no clause that accepts a list, the list argument matches nothing.
                 new SpecProbe("F((x, y)) = x + y\nF((x, y, z)) = 0\n\nF([2, 3])", "err branch"),
-                // The singleton pattern is the one exception: it matches any single argument whole.
-                new SpecProbe("F((x)) = x\nF(z) = 0\n\nF([2, 3])", "ok raw=L[2, 3] n=1"),
-                // Contrast: the ordinary single-clause definition opens the same list.
-                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([2, 3])", "ok raw=5 n=1"),
+                // The list pattern is the list twin.
+                new SpecProbe("F([x, y]) = x + y\nF(z) = 0\n\nF([2, 3])", "ok raw=5 n=1"),
+                // An ordinary single-clause definition follows the same kind law.
+                new SpecProbe("PairSum((x, y)) = x + y\nPairSum([2, 3])", "err type"),
             ],
-            Explanation = "In a clause family a sequence-value pattern matches sequence values only: an exact list argument does not match `(x, y)` even when its element count fits, so it falls through to a later clause, or fails with no matching branch when none accepts it. A singleton pattern `(x)` is the one exception and matches any single argument whole. An ordinary single-clause definition is wider and also opens a lone list.",
+            Explanation = "In a clause family a sequence pattern matches sequence values only: an exact list argument does not match `(x, y)` even when its element count fits, so it falls through to a later clause, or fails with no matching branch when none accepts it. The list pattern `[x, y]` is the list twin. An ordinary single-clause definition follows the same kind law, where a wrong-kind value is the pattern's type error instead of a fall-through.",
         },
         new()
         {
@@ -2670,9 +2981,10 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("Swap(a, b) = (b, a)\nmap(((1, 2), (3, 4)), Swap)", "err arity"),
-                new SpecProbe("Swap((a, b)) = (b, a)\nmap([[1, 2]], Swap)", "ok raw=L[S[2, 1]] n=1"),
+                new SpecProbe("Swap((a, b)) = (b, a)\nmap([[1, 2]], Swap)", "err type"),
+                new SpecProbe("LSwap([a, b]) = [b, a]\nmap([[1, 2]], LSwap)", "ok raw=L[L[2, 1]] n=1"),
             ],
-            Explanation = "Each callback item is one selected value, passed to the callback as ONE ordinary argument — exactly as the direct call `Swap(item)`. A pair-shaped callback therefore opens the row with an explicit structural pattern `Swap((a, b))`, a sequence and a list row alike; the flat two-parameter `Swap(a, b)` is the ordinary arity error for a one-argument call. Each callback must return exactly one value, preserved as one exact list element.",
+            Explanation = "Each callback item is one selected value, passed to the callback as ONE ordinary argument — exactly as the direct call `Swap(item)`. A pair-shaped callback therefore opens the row with an explicit structural pattern of the row's kind — `Swap((a, b))` for a sequence row, `LSwap([a, b])` for a list row; the flat two-parameter `Swap(a, b)` is the ordinary arity error for a one-argument call. Each callback must return exactly one value, preserved as one exact list element.",
         },
         new()
         {
@@ -2715,41 +3027,44 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("F(first, *middle, last) = middle\nRows = [(1, 2, 3, 4)]\nRows.map(F)", "err arity"),
-                new SpecProbe("F((first, *middle, last)) = middle\nRows = [[1, 2, 3, 4]]\nRows.map(F)", "ok raw=L[L[2, 3]] n=1"),
+                new SpecProbe("F((first, *middle, last)) = middle\nRows = [[1, 2, 3, 4]]\nRows.map(F)", "err type"),
+                new SpecProbe("F([first, *middle, last]) = middle\nRows = [[1, 2, 3, 4]]\nRows.map(F)", "ok raw=L[L[2, 3]] n=1"),
                 new SpecProbe("F(first, *rest) = rest\n[(1, 2, 3)].map(F)", "ok raw=L[L[]] n=1"),
                 new SpecProbe("F((first, *rest)) = rest\n[(1, 2, 3)].map(F)", "ok raw=L[L[2, 3]] n=1"),
                 new SpecProbe("F(first, *rest) = rest\n[7].map(F)", "ok raw=L[L[]] n=1"),
                 new SpecProbe("F(*init, last) = init\n[(1, 2, 3)].map(F)", "ok raw=L[L[]] n=1"),
             ],
-            Explanation = "A callback element is ONE ordinary argument (there is no callback row convention), so a row is opened by the callee's explicit structural pattern: `F((first, *middle, last))` opens each row — a sequence and a list alike — and COLLECTS the middle as an exact list. The flat `F(first, *middle, last)` receives one argument against two fixed positions and is the ordinary arity error, exactly like `F((1, 2, 3, 4))`; a flat prefix or suffix binds the whole element and leaves the collector empty.",
+            Explanation = "A callback element is ONE ordinary argument (there is no callback row convention), so a row is opened by the callee's explicit structural pattern of the row's kind: `F((first, *middle, last))` opens each sequence row (and `F([first, *middle, last])` each list row) and COLLECTS the middle as an exact list. The flat `F(first, *middle, last)` receives one argument against two fixed positions and is the ordinary arity error, exactly like `F((1, 2, 3, 4))`; a flat prefix or suffix binds the whole element and leaves the collector empty.",
         },
         new()
         {
             Id = "callback-nested-pattern-binds-like-call",
             Category = "collection-builtins",
-            Source = "Head((x, *rest)) = [x, rest]\n\nHead(7)\n[7].map(Head)\nmap((7, (8, 9)), Head)",
+            Source = "Head((x, *rest)) = [x, rest]\n\nHead((7, 8))\n[(7, 8)].map(Head)\nmap([(7, 8), (9, 10, 11)], Head)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[7, []]\n[[7, []]]\n[[7, []], [8, [9]]]",
-            ExpectedRaw = "S[L[7, L[]], L[L[7, L[]]], L[L[7, L[]], L[8, L[9]]]]",
+            ExpectedDisplay = "[7, [8]]\n[[7, [8]]]\n[[7, [8]], [9, [10, 11]]]",
+            ExpectedRaw = "S[L[7, L[8]], L[L[7, L[8]]], L[L[7, L[8]], L[9, L[10, 11]]]]",
             ExpectedEmittedCount = 3,
             Probes =
             [
-                // A scalar is ONE item for the nested pattern — too few for a fixed pair, in the
-                // direct call and the callback alike.
-                new SpecProbe("Pair((x, y)) = [x, y]\nPair(7)", "err arity"),
-                new SpecProbe("Pair((x, y)) = [x, y]\n[7].map(Pair)", "err arity"),
-                // A sequence or list element opens one level, exactly as in the direct call.
-                new SpecProbe("Head((x, *rest)) = [x, rest]\n[[7, 8]].map(Head)", "ok raw=L[L[7, L[8]]] n=1"),
-                new SpecProbe("Last((*init, z)) = z\n[true, (1, 2)].map(Last)", "ok raw=L[true, 2] n=1"),
+                // A scalar is no one-item structure: it is the pattern's kind mismatch, in the
+                // direct call and the callback alike; the right kind of the wrong length is the
+                // pattern's arity mismatch.
+                new SpecProbe("Head((x, *rest)) = [x, rest]\nHead(7)", "err type"),
+                new SpecProbe("Head((x, *rest)) = [x, rest]\n[7].map(Head)", "err type"),
+                new SpecProbe("Pair((x, y)) = [x, y]\n[(1, 2, 3)].map(Pair)", "err arity"),
+                // Each pattern opens its own kind one level, exactly as in the direct call.
+                new SpecProbe("LHead([x, *rest]) = [x, rest]\n[[7], [8, 9]].map(LHead)", "ok raw=L[L[7, L[]], L[8, L[9]]] n=1"),
+                new SpecProbe("Last((*init, z)) = z\n[(true, 1), (1, 2)].map(Last)", "ok raw=L[1, 2] n=1"),
                 // filter and reduce bind their values through the same rules.
-                new SpecProbe("Big((x, *rest)) = x > 1\n[7, 1].filter(Big)", "ok raw=L[7] n=1"),
-                new SpecProbe("R((x, *rest), acc) = acc + x\nreduce([7, 8], R, 0)", "ok raw=15 n=1"),
+                new SpecProbe("Big((x, *rest)) = x > 1\n[(7, 0), (1, 0)].filter(Big)", "ok raw=L[S[7, 0]] n=1"),
+                new SpecProbe("R((x, *rest), acc) = acc + x\nreduce([(7, 0), (8, 0)], R, 0)", "ok raw=15 n=1"),
                 // The operation decides the invocations: an empty collection runs nothing, while
                 // an empty element is one invocation with the value `()`.
                 new SpecProbe("Head((x, *rest)) = [x, rest]\n[].map(Head)", "ok raw=L[] n=1"),
                 new SpecProbe("Head((x, *rest)) = [x, rest]\n[()].map(Head)", "err arity"),
             ],
-            Explanation = "A callback binds each value it supplies exactly as the ordinary call supplying that one value does: a nested sequence-value pattern opens a sequence or list value one level, and any other value (a number, string, or Boolean) is the ordinary one-item supply at every pattern level — so a scalar element binds `(x, *rest)` with an empty `rest` and is one item too few for `(x, y)`, just like `Head(7)` and `Pair(7)`. The callback operation still decides how many values it supplies (one element for map and filter, element and accumulator for reduce) and how often it invokes the callback (never for an empty collection).",
+            Explanation = "A callback binds each value it supplies exactly as the ordinary call supplying that one value does: a nested sequence pattern opens a sequence element one level and a list pattern a list element, while any other value — a scalar, or the other kind — is the pattern's kind mismatch in the direct call and the callback alike (`Head(7)` and `[7].map(Head)`). The callback operation still decides how many values it supplies (one element for map and filter, element and accumulator for reduce) and how often it invokes the callback (never for an empty collection; once for the empty element `()`, which is too short for `(x, *rest)`).",
         },
         new()
         {
@@ -2763,15 +3078,15 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // Every invoking slot takes the callable: the plain map, filter (also fused
-                // with count), reduce, and repeat, and a written forwarding alias of the
-                // callable (a bare `G = Only` is a value read, so it is no callable, Q-03).
+                // with count), reduce, and repeat, and a written forwarding alias or a bare
+                // exact alias of the callable (`G = Only` keeps Only's signature, FWD-02).
                 new SpecProbe("Cnt(*xs) = xs.count\nApply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])", "ok raw=L[1, 1] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])", "ok raw=2 n=1"),
                 new SpecProbe("SumAll(*xs) = xs.sum\nFold(f, xs) = xs.reduce(f, 0)\nFold(SumAll, [1, 2, 3])", "ok raw=6 n=1"),
                 new SpecProbe("CountStep(*s) = s.count + 1\nRun(g) = repeat(g, 3, 9)\nRun(CountStep)", "ok raw=2 n=1"),
                 new SpecProbe("Only(*xs) = xs\nG(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
-                new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "err arity"),
+                new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
                 // VALUE slots read the bound value: the collection and reduce's initial
                 // accumulator see the callable's zero-argument value.
                 new SpecProbe("Only(*xs) = xs\nSize(xs) = count(xs)\nSize(Only)", "ok raw=0 n=1"),
@@ -3182,19 +3497,21 @@ public static class LanguageSpecCorpus
         {
             Id = "reduce-accumulates-value",
             Category = "collection-builtins",
-            Source = "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
+            Source = "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, (0, 1))",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, 2, 3, 4)",
-            ExpectedRaw = "S[1, 2, 3, 4]",
+            ExpectedDisplay = "(0, 1, 2, 3, 4)",
+            ExpectedRaw = "S[0, 1, 2, 3, 4]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Append(item, (*history)) = (history*, item)\nreduce(2, 3, 4, Append, 1)", "err arity"),
+                new SpecProbe("Append(item, (*history)) = (history*, item)\nreduce(2, 3, 4, Append, (0, 1))", "err arity"),
                 new SpecProbe("Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)", "ok raw=S[S[S[1, 2], 3], 4] n=1"),
+                new SpecProbe("Append(item, [*history]) = [history*, item]\nreduce((2, 3, 4), Append, [1])", "ok raw=L[1, 2, 3, 4] n=1"),
+                new SpecProbe("Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)", "err type"),
                 new SpecProbe("Add(a, b) = a + b\nreduce((1, 2, 3, 4), Add, 0)", "ok raw=10 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`reduce(collection, reducer, initial)` takes exactly three arguments and threads ONE accumulator value: the reducer is called as `Append(item, accumulator)`, two ordinary arguments. The explicit pattern `(*history)` opens the accumulator (a scalar is a one-item supply), so the result displays as ONE sequence value `(1, 2, 3, 4)` — not as separate rows — while an unopened collecting parameter `*history` collects the one accumulator value whole, nesting each step. Supplying the items inline (`reduce(2, 3, 4, Append, 1)`) is an ordinary five-argument arity error.",
+            Explanation = "`reduce(collection, reducer, initial)` takes exactly three arguments and threads ONE accumulator value: the reducer is called as `Append(item, accumulator)`, two ordinary arguments. The explicit sequence pattern `(*history)` opens a SEQUENCE accumulator — a scalar is its kind mismatch, so the accumulator starts as the pair `(0, 1)` — and the result displays as ONE sequence value `(0, 1, 2, 3, 4)`, not as separate rows; the list pattern `[*history]` opens a list accumulator of any length, one element included. An unopened collecting parameter `*history` collects the one accumulator value whole, nesting each step. Supplying the items inline (`reduce(2, 3, 4, Append, (0, 1))`) is an ordinary five-argument arity error.",
         },
         new()
         {
@@ -4613,7 +4930,10 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Area = width * height\nReport(width, height) = {\n    Doubled = Area * 2\n    if(width > 1, Doubled, 0)\n}\nReport(3, 4)", "ok raw=24 n=1"),
                 // A clause-branch binder is reused like any parameter.
                 new SpecProbe("A = n * 10\nF(0) = 0\nF(n) = {\n    G = n * 100 + A\n    H(n) = G\n    H(9)\n}\nF(2)", "ok raw=220 n=1"),
-                // A closed parameter list forwards the captured ancestor parameter too.
+                // A formula under a closed parameter list forwards the captured ancestor parameter too.
+                new SpecProbe("A = y + 1\nG = {\n  F(x) = A + 0\n  F(1) + y\n}\nG(10)", "ok raw=21 n=1"),
+                // Bare forwarding reuses the same binding by name: F(x) = A supplies A's y from G's y,
+                // and F's own x stays unused (it is never renamed to y).
                 new SpecProbe("A = y + 1\nG = {\n  F(x) = A\n  F(1) + y\n}\nG(10)", "ok raw=21 n=1"),
                 // Explicit shadowing stays intentional.
                 new SpecProbe("A = y + 1\nOuter(y) = {\n    Inner(y) = A * 2\n    Inner(10) + y\n}\nOuter(3)", "ok raw=25 n=1"),
@@ -4650,16 +4970,16 @@ public static class LanguageSpecCorpus
             Source = """
                 Target(tag, *items) = items
                 Collected(tag, *items) = {
-                    G(q) = Target
+                    G(q) = [Target]:0
                     G(99)
                 }
                 Fixed(tag, items) = {
-                    G(q) = Target
+                    G(q) = [Target]:0
                     G(99)
                 }
                 Head(x, *rest) = x + rest.count
                 Partial(x) = {
-                    H = Head
+                    H = [Head]:0
                     [H, H(10, 20)]
                 }
                 [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
@@ -4668,7 +4988,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[[(1, 2), [3], ()], [[(1, 2), [3], ()]], [4, 6]]",
             ExpectedRaw = "L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]]",
             ExpectedEmittedCount = 1,
-            Explanation = "Automatic parameter forwarding reuses the enclosing binding's kind. Both closed G(q) bodies reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items.",
+            Explanation = "Automatic parameter forwarding in a formula reuses the enclosing binding's kind. Both closed G(q) formulas reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items. (A lone row `G(q) = Target` forwards by name the same way — it reuses tag and items and never renames q — while a bare `H = Head` is an exact alias of Head — FWD-02.)",
         },
         new()
         {
@@ -4928,18 +5248,21 @@ public static class LanguageSpecCorpus
         {
             Id = "conditional-branch-pattern-is-a-closed-input-specification",
             Category = "conditionals",
-            Source = "A = x + 1\nF(0) = A\nF(n) = n\n\nF(0)",
+            Source = "A = x + 1\nF(0) = A + 0\nF(n) = n\n\nF(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
                 // A binder the pattern DOES bind supplies the referenced callable's implicit
-                // parameter, without the body acquiring a parameter of its own.
+                // parameter in a formula, without the body acquiring a parameter of its own.
+                new SpecProbe("A = n + 1\nF(0) = 0\nF(n) = A + 0\nF(4)", "ok raw=5 n=1"),
+                // The same formula behind a closed explicit list fails the same way.
+                new SpecProbe("A = x + 1\nF(k) = A + 0\nF(0)", "err arity"),
+                // A LONE row is bare forwarding by name from the branch pattern or the list.
                 new SpecProbe("A = n + 1\nF(0) = 0\nF(n) = A\nF(4)", "ok raw=5 n=1"),
-                // The same reference behind a closed explicit list fails the same way.
-                new SpecProbe("A = x + 1\nF(k) = A\nF(0)", "err arity"),
+                new SpecProbe("A = k + 1\nF(k) = A\nF(0)", "ok raw=1 n=1"),
             ],
-            Explanation = "A conditional branch pattern is a closed input specification, like a written explicit parameter list: the branch body's only inputs are its pattern binders, and the front end never invents a body parameter to feed a referenced callable. `F(0) = A` therefore keeps `A` as a bare reference whose zero-argument value demand fails with the ordinary arity error, exactly as `F(k) = A` does — never with an `Unknown name` for a parameter nothing binds.",
+            Explanation = "A conditional branch pattern is a closed input specification, like a written explicit parameter list: the branch body's only inputs are its pattern binders, and the front end never invents a body parameter to feed a referenced callable. In a formula `F(0) = A + 0` therefore keeps `A` as a bare reference whose zero-argument value demand fails with the ordinary arity error, exactly as `F(k) = A + 0` does — never with an `Unknown name` for a parameter nothing binds. A body that is ONLY the callee is bare forwarding (FWD-02): it reuses a binder of the branch's own pattern by name (`F(n) = A` with `A = n + 1` is `F(n) = A(n)`), and a pattern that binds no such name — `F(0) = A` with `A = x + 1` — is rejected at the front end instead of renaming anything.",
         },
         new()
         {
@@ -5307,12 +5630,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Head(x, *rest) = x\nHead()", "err arity"),
                 new SpecProbe("Tail(*rest, z) = z\nTail", "err arity"),
                 new SpecProbe("Tail(*rest, z) = z\nTail()", "err arity"),
-                // A nested pattern consumes its one supplied slot: its scalar one-item
-                // fallback binds a value, it does not accept none.
+                // A nested pattern consumes its one supplied slot: even a collector-only
+                // pattern, which accepts zero ELEMENTS, requires the one supplied value.
                 new SpecProbe("P((x, *rest)) = x\nP", "err arity"),
                 new SpecProbe("P((x, *rest)) = x\nP()", "err arity"),
                 new SpecProbe("P((*xs)) = xs\nP", "err arity"),
-                new SpecProbe("P((*xs)) = xs\nP(7)", "ok raw=L[7] n=1"),
+                new SpecProbe("P((*xs)) = xs\nP(())", "ok raw=L[] n=1"),
+                new SpecProbe("P([*xs]) = xs\nP", "err arity"),
                 // The ALGORITHM channel is untouched: a callback still receives the
                 // callable, so each element is collected.
                 new SpecProbe("Only(*xs) = xs\nmap((1, 2), Only)", "ok raw=L[L[1], L[2]] n=1"),
@@ -5335,8 +5659,8 @@ public static class LanguageSpecCorpus
                 // a documented unmodeled gap in the Lean core, so the Lean-compared program
                 // above uses operator, comparison, list, and index positions).
                 new SpecProbe("Cnt(*xs) = xs.count\nabs(Cnt), Cnt.abs", "ok raw=S[0, 0] n=2"),
-                // The alias is a zero-parameter property holding Cnt's value: it takes no arguments.
-                new SpecProbe("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)", "err arity"),
+                // The alias keeps Cnt's collecting signature (FWD-02): it takes arguments like Cnt.
+                new SpecProbe("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)", "ok raw=2 n=1"),
                 // Forwarding to a callable that works with no arguments is written explicitly.
                 new SpecProbe("Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nAlias(1, 2)", "ok raw=2 n=1"),
                 new SpecProbe("Cnt(*xs) = xs.count\nTwice(*items) = Cnt(items*) + Cnt(items*)\nTwice(1, 2, 3)", "ok raw=6 n=1"),
@@ -5349,7 +5673,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair:0, last(Pair) == Pair:1", "ok raw=S[true, true] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name — as an operand or comparison operand, a list element, a Math argument, an index target, an alias, or inside a formula — is never rewritten into a forwarding call: `Alias = Cnt` is a zero-parameter property holding `0`, and `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. Forwarding to such a callable is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
+            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is an exact alias instead (FWD-02): `Alias = Cnt` keeps Cnt's collecting signature, so `Alias` alone is its value `0` and `Alias(1, 2)` is 2. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
         },
         new()
         {

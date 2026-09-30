@@ -1188,9 +1188,9 @@ public static partial class Evaluator
     ///   <see cref="ParameterPattern.MinimumSuppliedSlots"/> is zero — so
     ///   <c>Only(*xs)</c> accepts (<c>Only()</c> binds <c>xs = []</c>) while
     ///   <c>Head(x, *rest)</c>, <c>Tail(*rest, z)</c>, <c>P((x, *rest))</c>,
-    ///   <c>P((x))</c> and <c>Pair(x, y)</c> do not. A COLLECTING parameter contributes
-    ///   ZERO required slots; a nested pattern still consumes one, and its scalar
-    ///   one-item fallback binds ONE supplied value, never none;</item>
+    ///   <c>P([x])</c> and <c>Pair(x, y)</c> do not. A COLLECTING parameter contributes
+    ///   ZERO required slots; a nested pattern still consumes one, and binds ONE
+    ///   supplied value of its own kind, never none;</item>
     ///   <item>a clause family accepts iff some branch's top-level pattern has arity
     ///   zero — exactly the branch <see cref="MatchCallBranches"/> selects for an empty
     ///   argument list. A flat multi-binder core equivalent always has at least two
@@ -2691,6 +2691,8 @@ public static partial class Evaluator
                 new EvalError.ExplicitParametersRequireOutput() { Span = v.Span },
             PreEvaluationAstViolation.ConditionalBranchArityMismatch v =>
                 new EvalError.BranchArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
+            PreEvaluationAstViolation.SingletonSequencePattern =>
+                new EvalError.IllegalInEval(Parser.SingletonSequencePatternDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
         };

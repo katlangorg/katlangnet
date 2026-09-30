@@ -9,7 +9,9 @@ namespace KatLang.Tests;
 /// Regression coverage for wide assignment-deconstruction scalability. A comma binding pattern
 /// <c>x0, ..., x{N-1} = RHS</c> elaborates to one shared <c>$deconstruct$N</c> source property
 /// plus one target property per name, each binding through a synthetic inline helper that carries
-/// the full N-capture sequence-value pattern. These tests pin the observable semantics (property
+/// the full N-capture unpacking receiver (<see cref="UnpackingParameterPattern"/>: assignment
+/// deconstruction is never a kind-specific structural pattern). These tests pin the observable
+/// semantics (property
 /// order, per-position values, collision/duplicate/recovery diagnostics, deferred arity errors, and
 /// the retained helper pattern) AND the linear growth of the parse + front-end work in the number
 /// of targets. That work was previously O(N^2): each of the N helpers carried the full N-capture
@@ -78,6 +80,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
     {
         const int n = 60;
         var root = (Algorithm.User)SourceProvenance.ParseValid(WideSource(n, $"range(1, {n})") + "\nx0").Root;
+        UnpackingParameterPattern? firstReceiver = null;
 
         foreach (var i in new[] { 0, 23, n - 1 })
         {
@@ -86,19 +89,21 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
             var helper = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(call.Function).Algorithm);
 
             // The helper is the synthetic assignment-deconstruction leaf and STILL carries the full
-            // N-capture sequence-value pattern — the frontend leaf guards must preserve it, because
-            // the evaluator needs it for arity binding and written-pattern error phrasing.
+            // N-capture unpacking receiver — ONE node shared by every target helper — which the
+            // frontend leaf guards must preserve, because the evaluator needs it for arity binding
+            // and written-pattern error phrasing.
             var target = Assert.IsType<AssignmentDeconstructionTarget>(helper.AssignmentDeconstructionTarget);
             Assert.Equal(i, target.Index);
-            var sequence = Assert.IsType<SequenceValueParameterPattern>(Assert.Single(helper.ParameterPatterns));
-            Assert.Equal(n, sequence.Items.Count);
+            var receiver = Assert.IsType<UnpackingParameterPattern>(Assert.Single(helper.ParameterPatterns));
+            Assert.Equal(n, receiver.Items.Count);
+            Assert.Same(firstReceiver ??= receiver, receiver);
             Assert.Equal(n, helper.Params.Count);
 
             // Its output is the single bound target, rewritten to a Param by ParameterDetector.
             var selected = Assert.IsType<Expr.Param>(Assert.Single(helper.Output));
             Assert.Equal($"x{i}", selected.Name);
 
-            // Its argument resolves the one shared source.
+            // Its argument resolves the one shared source, demanded as an ordinary value.
             var argument = Assert.IsType<Expr.Resolve>(Assert.Single(call.Args));
             Assert.Equal("$deconstruct$0", argument.Name);
         }

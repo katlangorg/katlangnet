@@ -988,6 +988,11 @@ public static class SemanticModelBuilder
                         foreach (var item in group.Items)
                             Visit(item);
                         break;
+
+                    case Pattern.ListValue list:
+                        foreach (var item in list.Items)
+                            Visit(item);
+                        break;
                 }
             }
 
@@ -1672,6 +1677,10 @@ public static class SemanticModelBuilder
                 CaptureParameterPattern => pattern,
                 SequenceValueParameterPattern group => new SequenceValueParameterPattern(
                     group.Items.Select(RecoveryDisplayParameter).ToArray()),
+                ListValueParameterPattern list => new ListValueParameterPattern(
+                    list.Items.Select(RecoveryDisplayParameter).ToArray()),
+                UnpackingParameterPattern unpacking => new UnpackingParameterPattern(
+                    unpacking.Items.Select(RecoveryDisplayParameter).ToArray()),
             };
 
         private static IReadOnlyList<PropertyParameterInfo> CreateOrdinaryParameters(
@@ -2099,6 +2108,8 @@ public static class SemanticModelBuilder
                             return binder;
                         case Pattern.SequenceValue group:
                             return new Pattern.SequenceValue(group.Items.Select(DescribeBinders).ToArray());
+                        case Pattern.ListValue list:
+                            return new Pattern.ListValue(list.Items.Select(DescribeBinders).ToArray());
                         case Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                             return pattern;
                         default:

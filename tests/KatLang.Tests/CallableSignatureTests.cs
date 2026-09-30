@@ -188,7 +188,7 @@ public class CallableSignatureTests
         var facts = signature.ArityFacts;
 
         Assert.Equal("CountValues(*values)", signature.DisplayText);
-        Assert.False(signature.HasSequenceValueParameterPattern);
+        Assert.False(signature.HasStructuralParameterPattern);
         Assert.Equal(1, signature.TopLevelParameterCount);
         Assert.Equal(1, signature.CollectingParameterCount);
         // A lone collecting parameter is the degenerate item-supply case: min 0, unbounded max.
@@ -255,7 +255,7 @@ public class CallableSignatureTests
         // the binder that accepts `G((1, 2))` and rejects `G()` with minimum 1.
         var groupThenCollector = SignatureFor("G((a, b), *rest) = a", "G");
         Assert.Equal("G((a, b), *rest)", groupThenCollector.DisplayText);
-        Assert.True(groupThenCollector.HasSequenceValueParameterPattern);
+        Assert.True(groupThenCollector.HasStructuralParameterPattern);
         Assert.Equal(1, groupThenCollector.ArityFacts.MinTopLevelArgumentCount);
         Assert.Null(groupThenCollector.ArityFacts.MaxTopLevelArgumentCount);
         Assert.True(groupThenCollector.ArityFacts.HasTopLevelCollecting);
@@ -331,7 +331,7 @@ public class CallableSignatureTests
 
         Assert.Equal("CountSequenceValue((*values))", signature.DisplayText);
         Assert.NotEqual("CountSequenceValue(*values)", signature.DisplayText);
-        Assert.True(signature.HasSequenceValueParameterPattern);
+        Assert.True(signature.HasStructuralParameterPattern);
         Assert.Equal(1, facts.MinTopLevelArgumentCount);
         Assert.Equal(1, facts.MaxTopLevelArgumentCount);
         Assert.False(facts.HasTopLevelCollecting);
@@ -347,7 +347,7 @@ public class CallableSignatureTests
         var facts = signature.ArityFacts;
 
         Assert.Equal("G(((*history), previous))", signature.DisplayText);
-        Assert.True(signature.HasSequenceValueParameterPattern);
+        Assert.True(signature.HasStructuralParameterPattern);
         Assert.Equal(1, facts.MinTopLevelArgumentCount);
         Assert.Equal(1, facts.MaxTopLevelArgumentCount);
         Assert.False(facts.HasTopLevelCollecting);
@@ -405,10 +405,10 @@ public class CallableSignatureTests
     public void ImplicitResolver_VariadicForwarding_StillForwardsTheStream()
     {
         // The implicit forwarding synthesizes spread arguments, so a stream
-        // supplied at the root (spread call) round-trips through the lifted
-        // callee — for a variadic callee with a required parameter and the pattern
-        // callee alike. (A callee whose ONLY parameter is a top-level collector works
-        // with no arguments, so its bare name is its value, never forwarded: Q-03.)
+        // supplied at the root (spread call) round-trips through bare forwarding or the
+        // lifted formula — for a variadic callee with a required parameter, a
+        // collector-only callee (forwarded by name: the lone row reads its declared
+        // signature, FWD-02) and a grouped-collector callee in a formula alike.
         AssertEval(
             """
             CountItems(tag, *items) = items.count
@@ -423,6 +423,17 @@ public class CallableSignatureTests
             Use(0, (1, 2, 3)*)
             """,
             3);
+        // A lone row is bare forwarding BY NAME (FWD-02) — the callee's declared signature
+        // decides, so a collector-only callee is forwarded too: a same-named collector re-spreads
+        // the caller's stream, while a differently named one forwards nothing, and the row then
+        // reads the callee's cached zero-argument value.
+        AssertEval(
+            """
+            CountItems(*items) = items.count
+            Use(*items) = CountItems
+            Use((1, 2, 3)*)
+            """,
+            3);
         AssertEval(
             """
             CountItems(*items) = items.count
@@ -431,10 +442,11 @@ public class CallableSignatureTests
             """,
             0);
 
+        // In a formula the one grouped stream is forwarded by shape into the callee's group.
         AssertEval(
             """
             CountSequenceValue((*items)) = items.count
-            Use(*values) = CountSequenceValue
+            Use(*values) = [CountSequenceValue]:0
             Use((1, 2, 3)*)
             """,
             3);

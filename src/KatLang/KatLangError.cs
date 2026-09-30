@@ -166,6 +166,8 @@ public sealed class KatLangError
             DiagnosticCode.IllegalInOpen => KatLangErrorCode.IllegalInOpen,
             DiagnosticCode.UnresolvedOpenTarget => KatLangErrorCode.UnresolvedOpenTarget,
             DiagnosticCode.DiagnosticCountExceeded => KatLangErrorCode.DiagnosticCountExceeded,
+            DiagnosticCode.SingletonSequencePattern => KatLangErrorCode.SingletonSequencePattern,
+            DiagnosticCode.UnforwardableParameter => KatLangErrorCode.UnforwardableParameter,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "
@@ -267,8 +269,8 @@ public sealed class KatLangError
             return formattedLoopStateArityMismatch;
         if (TryFormatDeconstructionBindingMismatch(error, out var formattedDeconstructionMismatch))
             return formattedDeconstructionMismatch;
-        if (TryFormatSequenceValuePatternBindingMismatch(error, out var formattedSequenceValuePatternMismatch))
-            return formattedSequenceValuePatternMismatch;
+        if (TryFormatStructuralPatternBindingMismatch(error, out var formattedStructuralPatternMismatch))
+            return formattedStructuralPatternMismatch;
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
             return formattedArityMismatch;
         if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
@@ -610,23 +612,28 @@ public sealed class KatLangError
     }
 
     /// <summary>
-    /// Phrase a nested sequence-value parameter pattern's arity failure against
-    /// the WRITTEN pattern (<c>F((b, c))</c> receiving three values) instead of
-    /// the enclosing call's argument count. The context may be nested under
+    /// Phrase a nested structural pattern's arity failure against the WRITTEN pattern
+    /// (<c>F((b, c))</c> receiving a three-element sequence, <c>F([b, c])</c> a three-element
+    /// list) instead of the enclosing call's argument count. The context may be nested under
     /// ordinary call/dot-call/property contexts, so the chain is searched.
     /// </summary>
-    private static bool TryFormatSequenceValuePatternBindingMismatch(EvalError error, out string message)
+    private static bool TryFormatStructuralPatternBindingMismatch(EvalError error, out string message)
     {
         var current = error;
         while (current is EvalError.WithContext context)
         {
-            if (context.ErrorContext is SequenceValueParameterBindingContext pattern
-                && context.Inner is EvalError.ArityMismatch mismatch)
+            var (kind, display, hasCollecting) = context.ErrorContext switch
             {
-                var expectation = pattern.HasCollectingItem
-                    ? $"at least {FormatCount(mismatch.Expected, "value")}"
-                    : FormatCount(mismatch.Expected, "value");
-                message = $"Sequence-value parameter pattern `{pattern.PatternDisplayName}` expects {expectation}, but received {FormatCount(mismatch.Actual, "value")}.";
+                SequenceValueParameterBindingContext sequence => ("Sequence", sequence.PatternDisplayName, sequence.HasCollectingItem),
+                ListValueParameterBindingContext list => ("List", list.PatternDisplayName, list.HasCollectingItem),
+                _ => ((string?)null, "", false),
+            };
+            if (kind is not null && context.Inner is EvalError.ArityMismatch mismatch)
+            {
+                var expectation = hasCollecting
+                    ? $"at least {FormatCount(mismatch.Expected, "element")}"
+                    : FormatCount(mismatch.Expected, "element");
+                message = $"{kind} pattern `{display}` expects {expectation}, but received {FormatCount(mismatch.Actual, "element")}.";
                 return true;
             }
 

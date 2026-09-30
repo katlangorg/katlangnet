@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 317
-- excluded parse-level cases (Lean has no surface parser): 43
+- specification surface cases: 330
+- excluded parse-level cases (Lean has no surface parser): 48
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 256
-- probe observations (C#-only by design): 953
+- Lean-guarded cases: 264
+- probe observations (C#-only by design): 1040
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -317,67 +317,67 @@ def case_empty_visible_at_root : Expr :=
 
 -- decon-pair [deconstruction]: x, y = 1, 2 \n x \n y
 def case_decon_pair : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y"])
 #guard obs case_decon_pair == "ok raw=S[1, 2] n=2"
 
 -- decon-rhs-implicit-parameter [deconstruction]: F = { \n     a, b = x, 10 \n     a + b \n } \n F(1)
 def case_decon_rhs_implicit_parameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x", .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x", .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1])])
 #guard obs case_decon_rhs_implicit_parameter == "ok raw=11 n=1"
 
 -- decon-rhs-brace-scope [deconstruction]: F = { \n     Q = 100 \n     a, b = { Q = 7 \n         Q, 10 } \n     a + b \n } \n F
 def case_decon_rhs_brace_scope : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 100]), privateProp "$deconstruct$0" (alg [] [] [] [(.algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [.resolve "Q", .num 10]))]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.resolve "a") (.resolve "b"))])] [.resolve "F"])
+  .algorithmExpr (alg [] [] [privateProp "F" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 100]), privateProp "$deconstruct$0" (alg [] [] [] [(.algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [.resolve "Q", .num 10]))]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.binary .add (.resolve "a") (.resolve "b"))])] [.resolve "F"])
 #guard obs case_decon_rhs_brace_scope == "ok raw=17 n=1"
 
 -- decon-rhs-lifted-parameter-order [deconstruction]: P = x * 2 \n R = y * 3 \n F = { \n     a, b = P, 10 \n     R + a + b \n } \n F(1, 2)
 def case_decon_rhs_lifted_parameter_order : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "R" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 3))]), privateProp "F" (alg ["x", "y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.resolve "P") [.param "x"]), .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.binary .add (.call (.resolve "R") [.param "y"]) (.resolve "a")) (.resolve "b"))])] [(.call (.resolve "F") [.num 1, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "R" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 3))]), privateProp "F" (alg ["x", "y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.resolve "P") [.param "x"]), .num 10])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.binary .add (.call (.resolve "R") [.param "y"]) (.resolve "a")) (.resolve "b"))])] [(.call (.resolve "F") [.num 1, .num 2])])
 #guard obs case_decon_rhs_lifted_parameter_order == "ok raw=18 n=1"
 
 -- decon-collecting-tail [deconstruction]: x, *rest = 1, 2, 3 \n rest
 def case_decon_collecting_tail : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "rest"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "rest"])
 #guard obs case_decon_collecting_tail == "ok raw=L[2, 3] n=1"
 
 -- decon-collecting-head [deconstruction]: *head, last = 1, 2, 3 \n head \n last
 def case_decon_collecting_head : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "head" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "head"])) [.resolve "$deconstruct$0"])]), privateProp "last" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "last"])) [.resolve "$deconstruct$0"])])] [.resolve "head", .resolve "last"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "head" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "head"])) [.resolve "$deconstruct$0"])]), privateProp "last" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "head", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "last"])) [.resolve "$deconstruct$0"])])] [.resolve "head", .resolve "last"])
 #guard obs case_decon_collecting_head == "ok raw=S[L[1, 2], 3] n=2"
 
 -- decon-collecting-middle [deconstruction]: x, *middle, z = 1, 2, 3, 4 \n middle
 def case_decon_collecting_middle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "middle" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "middle"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "middle"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "middle" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "middle"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "middle", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "middle"])
 #guard obs case_decon_collecting_middle == "ok raw=L[2, 3] n=1"
 
 -- decon-empty-collecting [deconstruction]: x, *rest = 1 \n rest \n x
 def case_decon_empty_collecting : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "rest", .resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "rest", .resolve "x"])
 #guard obs case_decon_empty_collecting == "ok raw=S[L[], 1] n=2"
 
 -- decon-arity-under [deconstruction]: x, y = 1 \n x
 def case_decon_arity_under : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_decon_arity_under == "err arity"
 
 -- decon-arity-over [deconstruction]: x, y = 1, 2, 3 \n x
 def case_decon_arity_over : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_decon_arity_over == "err arity"
 
 -- decon-unpacks-stored-value [deconstruction]: A = 1, 2, 3 \n x, y, z = A \n y
 def case_decon_unpacks_stored_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "$deconstruct$0" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "$deconstruct$0" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_decon_unpacks_stored_value == "ok raw=2 n=1"
 
 -- decon-tutorial-full [deconstruction]: A = 1, 2, 3, 4, 5 \n  \n x, *y, z = A \n x \n y \n z
 def case_decon_tutorial_full : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "$deconstruct$0" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y", .resolve "z"])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4, .num 5]), privateProp "$deconstruct$0" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y", .resolve "z"])
 #guard obs case_decon_tutorial_full == "ok raw=S[1, L[2, 3, 4], 5] n=3"
 
 -- decon-lone-collecting [deconstruction]: *all = 1, 2, 3 \n all
 def case_decon_lone_collecting : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "all" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "all", kind := .collecting }]] [] [] [.param "all"])) [.resolve "$deconstruct$0"])])] [.resolve "all"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "all" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "all", kind := .collecting }]] [] [] [.param "all"])) [.resolve "$deconstruct$0"])])] [.resolve "all"])
 #guard obs case_decon_lone_collecting == "ok raw=L[1, 2, 3] n=1"
 
 -- variadic-grouped-and-spread [variadic-calls]: A = 1, 2, 3, 4, 5 \n  \n G(*x) = x.sum \n  \n G(A*) \n G(1, 2, 3, 4, 5)
@@ -420,9 +420,9 @@ def case_values_stay_values : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "CntValue" (alg ["x"] [] [] [(.dotCall (.param "x") "count" none)])] [(.call (.resolve "Coll") [(.capture [.num 1, .num 2])]), (.call (.resolve "Coll") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Coll") [(.sequenceSpread (.capture [.num 1, .num 2]))]), (.call (.resolve "Cnt") [(.capture [.num 10, .num 7])]), (.call (.resolve "CntValue") [(.capture [.num 10, .num 7])])])
 #guard obs case_values_stay_values == "ok raw=S[L[S[1, 2]], L[L[1, 2]], L[1, 2], 1, 2] n=5"
 
--- callback-element-is-one-argument [collection-builtins]: AddPair((x, y)) = x + y \n  \n map([(1, 2)], AddPair) \n map([[1, 2]], AddPair)
+-- callback-element-is-one-argument [collection-builtins]: AddPair((x, y)) = x + y \n LAddPair([x, y]) = x + y \n  \n map([(1, 2)], AddPair) \n map([[1, 2]], LAddPair)
 def case_callback_element_is_one_argument : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "AddPair" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "AddPair"]), (.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "AddPair"])])
+  .algorithmExpr (alg [] [] [privateProp "AddPair" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "LAddPair" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2])]), .resolve "AddPair"]), (.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "LAddPair"])])
 #guard obs case_callback_element_is_one_argument == "ok raw=S[L[3], L[3]] n=2"
 
 -- parentheses-group-syntax [item-supply-vs-value]: Collect(*items) = items \n S = 1, 2 \n L = [1, 2] \n E = () \n  \n Collect(S), Collect((S)), Collect(((S))) \n Collect(L), Collect((L)) \n Collect(E), Collect((E)) \n S.Collect, (S).Collect, ((S)).Collect \n E*.Collect, (E)*.Collect
@@ -460,10 +460,20 @@ def case_supply_vs_value_patterns : Expr :=
   .algorithmExpr (alg [] [] [privateProp "CountValues" (algWithParameters [{ name := "values", kind := .collecting }] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountValues") []), (.call (.resolve "CountValues") [.num 1, .num 2, .num 3]), (.call (.resolve "CountValues") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obs case_supply_vs_value_patterns == "ok raw=S[0, 3, 1, 3] n=4"
 
--- ordinary-sequence-pattern-opens-sequence-or-list [variadic-calls]: PairSum((x, y)) = x + y \n PairSum((2, 3)) \n PairSum([2, 3])
-def case_ordinary_sequence_pattern_opens_sequence_or_list : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "PairSum" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "PairSum") [(.capture [.num 2, .num 3])]), (.call (.resolve "PairSum") [(.listLiteral [.num 2, .num 3])])])
-#guard obs case_ordinary_sequence_pattern_opens_sequence_or_list == "ok raw=S[5, 5] n=2"
+-- list-patterns-cover-every-cardinality [lists]: L([*xs]) = xs \n Only([x]) = x \n Pair([x, y]) = x + y \n Ends([first, *middle, last]) = first, middle, last \n  \n L([]), L([1]), L([1, 2]) \n Only([10]) \n Pair([10, 20]) \n Ends([1, 2, 3, 4])
+def case_list_patterns_cover_every_cardinality : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (algWithParameterPatterns [.listValue [.capture { name := "xs", kind := .collecting }]] [] [] [.param "xs"]), privateProp "Only" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "Pair" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "Ends" (algWithParameterPatterns [.listValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "first", .param "middle", .param "last"])] [(.call (.resolve "L") [(.listLiteral [])]), (.call (.resolve "L") [(.listLiteral [.num 1])]), (.call (.resolve "L") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Only") [(.listLiteral [.num 10])]), (.call (.resolve "Pair") [(.listLiteral [.num 10, .num 20])]), (.call (.resolve "Ends") [(.listLiteral [.num 1, .num 2, .num 3, .num 4])])])
+#guard obs case_list_patterns_cover_every_cardinality == "ok raw=S[L[], L[1], L[1, 2], 10, 30, S[1, L[2, 3], 4]] n=6"
+
+-- nested-structural-patterns-keep-their-kind [variadic-calls]: F(([x, y], z)) = x + y + z \n G([(x, y), z]) = x + y + z \n  \n F(([10, 20], 30)) \n G([(1, 2), 3])
+def case_nested_structural_patterns_keep_their_kind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameterPatterns [.sequenceValue [.listValue [.capture { name := "x" }, .capture { name := "y" }], .capture { name := "z" }]] [] [] [(.binary .add (.binary .add (.param "x") (.param "y")) (.param "z"))]), privateProp "G" (algWithParameterPatterns [.listValue [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }], .capture { name := "z" }]] [] [] [(.binary .add (.binary .add (.param "x") (.param "y")) (.param "z"))])] [(.call (.resolve "F") [(.capture [(.listLiteral [.num 10, .num 20]), .num 30])]), (.call (.resolve "G") [(.listLiteral [(.capture [.num 1, .num 2]), .num 3])])])
+#guard obs case_nested_structural_patterns_keep_their_kind == "ok raw=S[60, 6] n=2"
+
+-- structural-patterns-open-only-their-own-kind [variadic-calls]: PairSum((x, y)) = x + y \n ListSum([x, y]) = x + y \n  \n PairSum((2, 3)) \n ListSum([2, 3])
+def case_structural_patterns_open_only_their_own_kind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "PairSum" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "ListSum" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "PairSum") [(.capture [.num 2, .num 3])]), (.call (.resolve "ListSum") [(.listLiteral [.num 2, .num 3])])])
+#guard obs case_structural_patterns_open_only_their_own_kind == "ok raw=S[5, 5] n=2"
 
 -- binding-failure-outranks-repeated-name-conflict [variadic-calls]: Bad = 1 / 0 \n P(x, x, (a, b)) = a \n  \n P(1, 2, Bad)
 def case_binding_failure_outranks_repeated_name_conflict : Expr :=
@@ -485,15 +495,45 @@ def case_repeated_equal_values_require_one_callable_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 5]), privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "P") [.resolve "A", .resolve "B"])])
 #guard obs case_repeated_equal_values_require_one_callable_identity == "err type"
 
--- implicit-forwarding-is-by-binding-name [variadic-calls]: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n Common(x, x) = x \n Some = Common \n  \n H(3) \n Some(7)
+-- implicit-forwarding-is-by-binding-name [variadic-calls]: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n Common(x, x) = x \n Twice = Common * 2 \n  \n H(3) \n Twice(7)
 def case_implicit_forwarding_is_by_binding_name : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "F") [.param "x"]) (.call (.resolve "G") [.param "x"]))]), privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "H") [.num 3]), (.call (.resolve "Some") [.num 7])])
-#guard obs case_implicit_forwarding_is_by_binding_name == "ok raw=S[10, 7] n=2"
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "F") [.param "x"]) (.call (.resolve "G") [.param "x"]))]), privateProp "Twice" (alg ["x"] [] [] [(.binary .mul (.call (.resolve "Common") [.param "x", .param "x"]) (.num 2))]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "H") [.num 3]), (.call (.resolve "Twice") [.num 7])])
+#guard obs case_implicit_forwarding_is_by_binding_name == "ok raw=S[10, 14] n=2"
 
--- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9)
+-- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9, 9)
 def case_repeated_name_wrapper_keeps_independent_arguments : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x", "x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9, .num 9])])
 #guard obs case_repeated_name_wrapper_keeps_independent_arguments == "ok raw=S[7, 8, 9] n=3"
+
+-- implicit-forwarding-preserves-structural-kind [variadic-calls]: Single([x]) = x \n A = Single \n Add((x, y)) = x + y \n B = Add \n C((*xs)) = xs.count \n Count = C \n G([x]) = Single \n  \n A([7]) \n A([[7]]) \n B((10, 20)) \n Count((1, 2, 3)) \n G([7])
+def case_implicit_forwarding_preserves_structural_kind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "B" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Count" (algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.call (.resolve "C") [(.capture [(.sequenceSpread (.param "xs"))])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "C" (algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "G" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "B") [(.capture [.num 10, .num 20])]), (.call (.resolve "Count") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "G") [(.listLiteral [.num 7])])])
+#guard obs case_implicit_forwarding_preserves_structural_kind == "ok raw=S[7, L[7], 30, 3, 7] n=5"
+
+-- alias-forwarding-and-explicit-call [name-resolution]: Double(x) = x * 2 \n Other(y) = y * 2 \n  \n Alias = Double \n Forward(x) = Double \n Explicit(x) = Other(x) \n Formula = Double + 1 \n  \n Alias(5) \n Forward(5) \n Explicit(5) \n Formula(5)
+def case_alias_forwarding_and_explicit_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Alias" (alg ["x"] [] [] [(.call (.resolve "Double") [.param "x"])]), privateProp "Formula" (alg ["x"] [] [] [(.binary .add (.call (.resolve "Double") [.param "x"]) (.num 1))]), privateProp "Double" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Other" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 2))]), privateProp "Forward" (alg ["x"] [] [] [(.call (.resolve "Double") [.param "x"])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Other") [.param "x"])])] [(.call (.resolve "Alias") [.num 5]), (.call (.resolve "Forward") [.num 5]), (.call (.resolve "Explicit") [.num 5]), (.call (.resolve "Formula") [.num 5])])
+#guard obs case_alias_forwarding_and_explicit_call == "ok raw=S[10, 10, 10, 11] n=4"
+
+-- alias-structural-forwarding-and-written-call [name-resolution]: Single([x]) = x \n  \n Alias = Single \n SameShape([x]) = Single \n Explicit(x) = Single(x) \n Construct = Single([x]) \n  \n Alias([7]) \n SameShape([7]) \n Explicit([7]) \n Construct(7)
+def case_alias_structural_forwarding_and_written_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Alias" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Construct" (alg ["x"] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "SameShape" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Single") [.param "x"])])] [(.call (.resolve "Alias") [(.listLiteral [.num 7])]), (.call (.resolve "SameShape") [(.listLiteral [.num 7])]), (.call (.resolve "Explicit") [(.listLiteral [.num 7])]), (.call (.resolve "Construct") [.num 7])])
+#guard obs case_alias_structural_forwarding_and_written_call == "ok raw=S[7, 7, 7, 7] n=4"
+
+-- alias-preserves-the-callee-signature [name-resolution]: Single([x]) = x \n P(x, x) = x \n E((), []) = 1 \n A = Single \n B = A \n C = B \n AP = P \n AE = E \n  \n C([7]) \n C([[7]]) \n AP(5, 5) \n AE((), [])
+def case_alias_preserves_the_callee_signature : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "B" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "A") [(.listLiteral [.param "x"])])]), privateProp "C" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "B") [(.listLiteral [.param "x"])])]), privateProp "AP" (alg ["x", "x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "AE" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [(.call (.resolve "E") [(.emptySequence 0), (.listLiteral [])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "C") [(.listLiteral [.num 7])]), (.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "AP") [.num 5, .num 5]), (.call (.resolve "AE") [(.emptySequence 0), (.listLiteral [])])])
+#guard obs case_alias_preserves_the_callee_signature == "ok raw=S[7, L[7], 5, 1] n=4"
+
+-- bare-forwarding-keeps-each-parameter-kind [name-resolution]: Add((a, b)) = a + b \n Coll(*vs) = vs \n Mid([first, *middle, last]) = [first, middle, last] \n Pair((a, b)) = Add \n Many(*vs) = Coll \n Same([first, *middle, last]) = Mid \n  \n Pair((2, 3)) \n Many(1, 2) \n Same([1, 2, 3, 4])
+def case_bare_forwarding_keeps_each_parameter_kind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Coll" (algWithParameters [{ name := "vs", kind := .collecting }] [] [] [.param "vs"]), privateProp "Mid" (algWithParameterPatterns [.listValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [(.listLiteral [.param "first", .param "middle", .param "last"])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.call (.resolve "Add") [(.capture [.param "a", .param "b"])])]), privateProp "Many" (algWithParameters [{ name := "vs", kind := .collecting }] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "vs"))])]), privateProp "Same" (algWithParameterPatterns [.listValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [(.call (.resolve "Mid") [(.listLiteral [.param "first", (.sequenceSpread (.param "middle")), .param "last"])])])] [(.call (.resolve "Pair") [(.capture [.num 2, .num 3])]), (.call (.resolve "Many") [.num 1, .num 2]), (.call (.resolve "Same") [(.listLiteral [.num 1, .num 2, .num 3, .num 4])])])
+#guard obs case_bare_forwarding_keeps_each_parameter_kind == "ok raw=S[5, L[1, 2], L[1, L[2, 3], 4]] n=3"
+
+-- written-call-infers-its-written-names [name-resolution]: Add((a, b)) = a + b \n Single([a]) = a \n G = Add((x, y)) \n Construct = Single([x]) \n  \n G(2, 3) \n Construct(7)
+def case_written_call_infers_its_written_names : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Construct" (alg ["x"] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "a" }]] [] [] [.param "a"])] [(.call (.resolve "G") [.num 2, .num 3]), (.call (.resolve "Construct") [.num 7])])
+#guard obs case_written_call_infers_its_written_names == "ok raw=S[5, 7] n=2"
 
 -- repeated-callable-success-preserves-both-channels [variadic-calls]: B(*xs) = 5 + xs.count \n P(f, f, f, f, f) = [f, f(1), map([7], f)] \n P(B, 5, B, 5, 5) \n P(5, B, 5, 5, B)
 def case_repeated_callable_success_preserves_both_channels : Expr :=
@@ -525,9 +565,9 @@ def case_collecting_pattern_list_merges_after_the_collector : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "x"])] [(.call (.resolve "P") [.num 1, .resolve "Bad", .num 2])])
 #guard obs case_collecting_pattern_list_merges_after_the_collector == "err div0"
 
--- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount(((*values))) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount([(1, 2, 3)]) \n NestedCount(([[1, 2, 3]]))
+-- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount([(*values)]) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount([(1, 2, 3)]) \n NestedCount(([(1, 2, 3)]))
 def case_redundant_call_parens_canonical : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.sequenceValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "NestedCount") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.listLiteral [(.listLiteral [.num 1, .num 2, .num 3])])])])
+  .algorithmExpr (alg [] [] [privateProp "Inner" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "CountSequenceValue" (algWithParameterPatterns [.sequenceValue [.capture { name := "values", kind := .collecting }]] [] [] [(.dotCall (.param "values") "count" none)]), privateProp "NestedCount" (algWithParameterPatterns [.listValue [.sequenceValue [.capture { name := "values", kind := .collecting }]]] [] [] [(.dotCall (.param "values") "count" none)])] [(.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [.resolve "Inner"]), (.call (.resolve "CountSequenceValue") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "NestedCount") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])])]), (.call (.resolve "NestedCount") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])])])])
 #guard obs case_redundant_call_parens_canonical == "ok raw=S[3, 3, 3, 3, 3] n=5"
 
 -- call-spread-into-conditional-clauses [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (1, 2) \n F(A*)
@@ -535,15 +575,15 @@ def case_call_spread_into_conditional_clauses : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .litInt 0], (alg [] [] [] [.num 100])⟩, ⟨.sequenceValue [.bind "x", .bind "y"], (alg [] [] [] [(.binary .add (.param "x") (.param "y"))])⟩])] [(.call (.resolve "F") [(.sequenceSpread (.resolve "A"))])])
 #guard obs case_call_spread_into_conditional_clauses == "ok raw=3 n=1"
 
--- patterned-user-call-is-one-value-boundary [item-supply-vs-value]: F((x)) = 1, 2 \n F((7))
+-- patterned-user-call-is-one-value-boundary [item-supply-vs-value]: F([x]) = 1, 2 \n F([7])
 def case_patterned_user_call_is_one_value_boundary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }]] [] [] [.num 1, .num 2])] [(.call (.resolve "F") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.num 1, .num 2])] [(.call (.resolve "F") [(.listLiteral [.num 7])])])
 #guard obs case_patterned_user_call_is_one_value_boundary == "ok raw=S[1, 2] n=1"
 
--- conditional-singleton-head-binds-its-argument-whole [conditionals]: F((x)) = x \n F(n) = 0 \n F([1, 2])
-def case_conditional_singleton_head_binds_its_argument_whole : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "x"]], (alg [] [] [] [.param "x"])⟩, ⟨.bind "n", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.listLiteral [.num 1, .num 2])])])
-#guard obs case_conditional_singleton_head_binds_its_argument_whole == "ok raw=L[1, 2] n=1"
+-- conditional-one-element-list-pattern [conditionals]: F([x]) = x \n F(n) = 0 \n  \n F([7]) \n F([1, 2])
+def case_conditional_one_element_list_pattern : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.listValue [.bind "x"]], (alg [] [] [] [.param "x"])⟩, ⟨.bind "n", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.listLiteral [.num 7])]), (.call (.resolve "F") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_conditional_one_element_list_pattern == "ok raw=S[7, 0] n=2"
 
 -- conditional-sequence-pattern-matches-sequence-values-only [conditionals]: F((x, y)) = x + y \n F(z) = 0 \n  \n F((2, 3)) \n F([2, 3])
 def case_conditional_sequence_pattern_matches_sequence_values_only : Expr :=
@@ -805,10 +845,10 @@ def case_callback_mixed_variadic_rows : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])])]), privateProp "F" (algWithParameterPatterns [.sequenceValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "middle"])] [(.dotCall (.resolve "Rows") "map" (some [.resolve "F"]))])
 #guard obs case_callback_mixed_variadic_rows == "ok raw=L[L[2, 3]] n=1"
 
--- callback-nested-pattern-binds-like-call [collection-builtins]: Head((x, *rest)) = [x, rest] \n  \n Head(7) \n [7].map(Head) \n map((7, (8, 9)), Head)
+-- callback-nested-pattern-binds-like-call [collection-builtins]: Head((x, *rest)) = [x, rest] \n  \n Head((7, 8)) \n [(7, 8)].map(Head) \n map([(7, 8), (9, 10, 11)], Head)
 def case_callback_nested_pattern_binds_like_call : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [(.listLiteral [.param "x", .param "rest"])])] [(.call (.resolve "Head") [.num 7]), (.dotCall (.listLiteral [.num 7]) "map" (some [.resolve "Head"])), (.call (.resolve "map") [(.capture [.num 7, (.capture [.num 8, .num 9])]), .resolve "Head"])])
-#guard obs case_callback_nested_pattern_binds_like_call == "ok raw=S[L[7, L[]], L[L[7, L[]]], L[L[7, L[]], L[8, L[9]]]] n=3"
+  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [(.listLiteral [.param "x", .param "rest"])])] [(.call (.resolve "Head") [(.capture [.num 7, .num 8])]), (.dotCall (.listLiteral [(.capture [.num 7, .num 8])]) "map" (some [.resolve "Head"])), (.call (.resolve "map") [(.listLiteral [(.capture [.num 7, .num 8]), (.capture [.num 9, .num 10, .num 11])]), .resolve "Head"])])
+#guard obs case_callback_nested_pattern_binds_like_call == "ok raw=S[L[7, L[8]], L[L[7, L[8]]], L[L[7, L[8]], L[9, L[10, 11]]]] n=3"
 
 -- forwarded-callable-keeps-its-algorithm-channel [collection-builtins]: Cnt(*xs) = xs.count \n SumWhile(*s) = s.sum + 1, s.sum + 1 < 3 \n Apply(f, xs) = xs.map(f) \n Loop(g) = while(g, 0) \n Outer(xs) = { \n   Inner(g) = xs.map(g) \n   Inner(Cnt) \n } \n  \n Apply(Cnt, [1, 2]) \n Loop(SumWhile) \n Outer([1, 2])
 def case_forwarded_callable_keeps_its_algorithm_channel : Expr :=
@@ -930,10 +970,10 @@ def case_builtin_fixed_collection_arity : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obs case_builtin_fixed_collection_arity == "ok raw=3 n=1"
 
--- reduce-accumulates-value [collection-builtins]: Append(item, (*history)) = (history*, item) \n reduce((2, 3, 4), Append, 1)
+-- reduce-accumulates-value [collection-builtins]: Append(item, (*history)) = (history*, item) \n reduce((2, 3, 4), Append, (0, 1))
 def case_reduce_accumulates_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Append" (algWithParameterPatterns [.capture { name := "item" }, .sequenceValue [.capture { name := "history", kind := .collecting }]] [] [] [(.capture [(.sequenceSpread (.param "history")), .param "item"])])] [(.call (.resolve "reduce") [(.capture [.num 2, .num 3, .num 4]), .resolve "Append", .num 1])])
-#guard obs case_reduce_accumulates_value == "ok raw=S[1, 2, 3, 4] n=1"
+  .algorithmExpr (alg [] [] [privateProp "Append" (algWithParameterPatterns [.capture { name := "item" }, .sequenceValue [.capture { name := "history", kind := .collecting }]] [] [] [(.capture [(.sequenceSpread (.param "history")), .param "item"])])] [(.call (.resolve "reduce") [(.capture [.num 2, .num 3, .num 4]), .resolve "Append", (.capture [.num 0, .num 1])])])
+#guard obs case_reduce_accumulates_value == "ok raw=S[0, 1, 2, 3, 4] n=1"
 
 -- reduce-empty-initial-is-one-value [collection-builtins]: R(x, acc) = acc + x \n Init = 1, 2 \n reduce((), R, Init)
 def case_reduce_empty_initial_is_one_value : Expr :=
@@ -1182,22 +1222,22 @@ def case_list_call_boundary : Expr :=
 
 -- list-lone-deconstruction [lists]: x, y, z = [1, 2, 3] \n  \n x \n y \n z
 def case_list_lone_deconstruction : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y", .resolve "z"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y", .resolve "z"])
 #guard obs case_list_lone_deconstruction == "ok raw=S[1, 2, 3] n=3"
 
 -- list-deconstruction-not-recursive [lists]: x, y = [[1, 2], 3] \n  \n x \n y
 def case_list_deconstruction_not_recursive : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "y"])
 #guard obs case_list_deconstruction_not_recursive == "ok raw=S[L[1, 2], 3] n=2"
 
 -- collecting-binding-exact-list [lists]: x, *rest = [1, 2, 3] \n  \n x \n rest
 def case_collecting_binding_exact_list : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "rest"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "rest" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "rest"])) [.resolve "$deconstruct$0"])])] [.resolve "x", .resolve "rest"])
 #guard obs case_collecting_binding_exact_list == "ok raw=S[1, L[2, 3]] n=2"
 
 -- list-lone-collecting-assignment [lists]: *items = [1, 2, 3] \n items
 def case_list_lone_collecting_assignment : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.sequenceValue [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) [.resolve "$deconstruct$0"])])] [.resolve "items"])
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) [.resolve "$deconstruct$0"])])] [.resolve "items"])
 #guard obs case_list_lone_collecting_assignment == "ok raw=L[1, 2, 3] n=1"
 
 -- list-builtin-collection [lists]: count([1, 2, 3])
@@ -1245,9 +1285,9 @@ def case_forwarding_never_supplies_a_property_an_open_or_a_builtin : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [] [(.binary .add (.call (.resolve "Need") [.param "v"]) (.num 1))]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_forwarding_never_supplies_a_property_an_open_or_a_builtin == "ok raw=8 n=1"
 
--- forwarding-reused-binding-kind-preserves-values [name-resolution]: Target(tag, *items) = items \n Collected(tag, *items) = { \n     G(q) = Target \n     G(99) \n } \n Fixed(tag, items) = { \n     G(q) = Target \n     G(99) \n } \n Head(x, *rest) = x + rest.count \n Partial(x) = { \n     H = Head \n     [H, H(10, 20)] \n } \n [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
+-- forwarding-reused-binding-kind-preserves-values [name-resolution]: Target(tag, *items) = items \n Collected(tag, *items) = { \n     G(q) = [Target]:0 \n     G(99) \n } \n Fixed(tag, items) = { \n     G(q) = [Target]:0 \n     G(99) \n } \n Head(x, *rest) = x + rest.count \n Partial(x) = { \n     H = [Head]:0 \n     [H, H(10, 20)] \n } \n [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
 def case_forwarding_reused_binding_kind_preserves_values : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Collected" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Fixed" (alg ["tag", "items"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.call (.resolve "Target") [.param "tag", .param "items"])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.binary .add (.param "x") (.dotCall (.param "rest") "count" none))]), privateProp "Partial" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (algWithParameters [{ name := "rest", kind := .collecting }] [] [] [(.call (.resolve "Head") [.param "x", (.sequenceSpread (.param "rest"))])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.listLiteral [.resolve "H", (.call (.resolve "H") [.num 10, .num 20])])])] [(.listLiteral [(.call (.resolve "Collected") [.num 0, (.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)]), (.call (.resolve "Fixed") [.num 0, (.listLiteral [(.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)])]), (.call (.resolve "Partial") [.num 4])])])
+  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Collected" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])]) (.num 0))])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Fixed" (alg ["tag", "items"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", .param "items"])]) (.num 0))])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.binary .add (.param "x") (.dotCall (.param "rest") "count" none))]), privateProp "Partial" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (algWithParameters [{ name := "rest", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "Head") [.param "x", (.sequenceSpread (.param "rest"))])]) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.listLiteral [.resolve "H", (.call (.resolve "H") [.num 10, .num 20])])])] [(.listLiteral [(.call (.resolve "Collected") [.num 0, (.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)]), (.call (.resolve "Fixed") [.num 0, (.listLiteral [(.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)])]), (.call (.resolve "Partial") [.num 4])])])
 #guard obs case_forwarding_reused_binding_kind_preserves_values == "ok raw=L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]] n=1"
 
 -- ownership-captured-parameter-beats-outer-property [name-resolution]: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
@@ -1275,9 +1315,9 @@ def case_clause_family_nested_in_branch_body_binds_its_own_binders : Expr :=
   .algorithmExpr (alg [] [] [privateProp "n" (alg [] [] [] [.num 99]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "G" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.stringLiteral "zero"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 5])])⟩, ⟨.bind "k", (alg [] [] [] [.param "k"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_clause_family_nested_in_branch_body_binds_its_own_binders == "ok raw=5 n=1"
 
--- conditional-branch-pattern-is-a-closed-input-specification [conditionals]: A = x + 1 \n F(0) = A \n F(n) = n \n  \n F(0)
+-- conditional-branch-pattern-is-a-closed-input-specification [conditionals]: A = x + 1 \n F(0) = A + 0 \n F(n) = n \n  \n F(0)
 def case_conditional_branch_pattern_is_a_closed_input_specification : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.resolve "A"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .add (.resolve "A") (.num 0))])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_pattern_is_a_closed_input_specification == "err arity"
 
 -- conditional-branch-inline-open-exposes-members-to-the-branch [conditionals]: F(0) = { \n   open { \n     public Helper = 5 \n   } \n   Helper \n } \n F(n) = n \n  \n F(0)
@@ -1342,7 +1382,7 @@ def case_zero_argument_demand_follows_actual_call_arity : Expr :=
 
 -- zero-argument-callable-name-is-read-not-lifted [variadic-calls]: Cnt(*xs) = xs.count \n Pair(*xs) = 10, 20 \n Alias = Cnt \n Twice(*items) = Cnt + Cnt \n  \n Cnt + 1, [Cnt], Cnt == Cnt, Pair:1 \n Alias, Alias() \n Twice(1, 2, 3)
 def case_zero_argument_callable_name_is_read_not_lifted : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Alias" (alg [] [] [] [.resolve "Cnt"]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "Alias" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "Cnt") [(.sequenceSpread (.param "xs"))])]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
 #guard obs case_zero_argument_callable_name_is_read_not_lifted == "ok raw=S[1, L[0], true, 20, 0, 0, 0] n=7"
 
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
@@ -1380,7 +1420,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 256 canonical Lean-guarded specification cases.
+-- 264 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1460,13 +1500,21 @@ def specCaseIds : List String := [
   "variadic-grouped-vs-spread",
   "variadic-nested-not-flattened",
   "supply-vs-value-patterns",
-  "ordinary-sequence-pattern-opens-sequence-or-list",
+  "list-patterns-cover-every-cardinality",
+  "nested-structural-patterns-keep-their-kind",
+  "structural-patterns-open-only-their-own-kind",
   "binding-failure-outranks-repeated-name-conflict",
   "repeated-name-binding-is-order-independent",
   "repeated-name-is-a-constraint-not-a-merge",
   "repeated-equal-values-require-one-callable-identity",
   "implicit-forwarding-is-by-binding-name",
   "repeated-name-wrapper-keeps-independent-arguments",
+  "implicit-forwarding-preserves-structural-kind",
+  "alias-forwarding-and-explicit-call",
+  "alias-structural-forwarding-and-written-call",
+  "alias-preserves-the-callee-signature",
+  "bare-forwarding-keeps-each-parameter-kind",
+  "written-call-infers-its-written-names",
   "repeated-callable-success-preserves-both-channels",
   "repeated-genuine-aliases-preserve-complete-binding",
   "repeated-callable-identity-includes-captured-activation",
@@ -1476,7 +1524,7 @@ def specCaseIds : List String := [
   "redundant-call-parens-canonical",
   "call-spread-into-conditional-clauses",
   "patterned-user-call-is-one-value-boundary",
-  "conditional-singleton-head-binds-its-argument-whole",
+  "conditional-one-element-list-pattern",
   "conditional-sequence-pattern-matches-sequence-values-only",
   "conditional-clause-head-rejects-extra-arguments",
   "call-spread-dispatches-before-clause-selection",
@@ -1645,6 +1693,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 256
+#guard specCaseIds.length == 264
 
 end LanguageSpecCases

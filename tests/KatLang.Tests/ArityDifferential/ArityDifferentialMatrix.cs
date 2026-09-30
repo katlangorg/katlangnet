@@ -142,6 +142,7 @@ public static class ArityDifferentialMatrix
     private static ExpectedObservation Ok(OracleVal value, int emitted) => new() { Neutral = OkNeutral(value, emitted) };
     private static ExpectedObservation Err(string category) => new() { Neutral = ErrNeutral(category) };
     private const string Arity = "arity";
+    private const string Type = "type";
 
     // ----- Matrix generation ----------------------------------------------------
 
@@ -709,18 +710,25 @@ public static class ArityDifferentialMatrix
                     : throw new InvalidOperationException("One callback argument can never satisfy two fixed parameters."),
                 baseTrace.Append("the element is ONE ordinary argument vs 2 fixed parameters -> arity mismatch (only an explicit pattern opens it)"));
 
-            // T18: nested sequence-value pattern — opens ONE boundary of either
-            // kind, and binds the callback element exactly as the ordinary call
-            // `NestedCb(element)` would (S3, September 2026): a non-structure
-            // (scalar) element is the ordinary one-item supply for the nested
-            // pattern at every group size, so `(x, *y)` binds x = element, y = [].
-            var patternSupply = StructureItems(shape.Value) ?? [shape.Value];
-            var patternEnv = BindPats([OraclePat.Fixed("x"), OraclePat.Collect("y")], patternSupply);
-            if (patternEnv is null)
+            // T18: nested SEQUENCE pattern — opens ONE boundary of a sequence
+            // element only, and binds the callback element exactly as the ordinary
+            // call `NestedCb(element)` would (S3 under the structural-pattern kind
+            // law, September 2026): a list or scalar element is the pattern's kind
+            // mismatch, never a one-item supply.
+            const string nestedSource = "NestedCb((x, *y)) = [x, y]\n[{0}].map(NestedCb)";
+            if (SequencePatternItems(shape.Value) is not { } patternSupply)
             {
                 b.Add("cb-map-nested-pattern", ReceiverKind.Callback, BindingForm.Capture, shape, m,
-                    $"NestedCb((x, *y)) = [x, y]\n[{shape.Literal}].map(NestedCb)",
-                    ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
+                    string.Format(System.Globalization.CultureInfo.InvariantCulture, nestedSource, shape.Literal),
+                    ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE,
+                    Err(Type),
+                    baseTrace.Append($"sequence pattern (x, *y) over the non-sequence element {shape.Value.Neutral} -> kind mismatch"));
+            }
+            else if (BindPats([OraclePat.Fixed("x"), OraclePat.Collect("y")], patternSupply) is not { } patternEnv)
+            {
+                b.Add("cb-map-nested-pattern", ReceiverKind.Callback, BindingForm.Capture, shape, m,
+                    string.Format(System.Globalization.CultureInfo.InvariantCulture, nestedSource, shape.Literal),
+                    ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE,
                     Err(Arity),
                     baseTrace.Append($"pattern (x, *y) over opened supply {SupplyNeutral(patternSupply)} -> arity mismatch (x needs one item)"));
             }
@@ -728,10 +736,10 @@ public static class ArityDifferentialMatrix
             {
                 var mappedPattern = OracleVal.List(OracleVal.List(patternEnv[0].Value, patternEnv[1].Value));
                 b.Add("cb-map-nested-pattern", ReceiverKind.Callback, BindingForm.Capture, shape, m,
-                    $"NestedCb((x, *y)) = [x, y]\n[{shape.Literal}].map(NestedCb)",
-                    ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
+                    string.Format(System.Globalization.CultureInfo.InvariantCulture, nestedSource, shape.Literal),
+                    ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE,
                     Ok(mappedPattern, 1),
-                    baseTrace.Append($"pattern opens ONE boundary (a scalar is a one-item supply): {SupplyNeutral(patternSupply)} -> x = {patternEnv[0].Value.Neutral}, y = {patternEnv[1].Value.Neutral}"));
+                    baseTrace.Append($"sequence pattern opens ONE sequence boundary: {SupplyNeutral(patternSupply)} -> x = {patternEnv[0].Value.Neutral}, y = {patternEnv[1].Value.Neutral}"));
             }
 
             return;
@@ -841,17 +849,25 @@ public static class ArityDifferentialMatrix
             else
             {
                 var state = initSupply;
-                var failed = false;
-                for (var iteration = 1; iteration <= 2 && !failed; iteration++)
+                string? failedCategory = null;
+                for (var iteration = 1; iteration <= 2 && failedCategory is null; iteration++)
                 {
                     if (state.Length != 2)
                     {
-                        failed = true;
+                        failedCategory = Arity;
                         trace.Add($"iteration {iteration}: {state.Length} state slot(s) vs 2 parameters -> loop arity mismatch");
                         break;
                     }
 
-                    var openedHistory = StructureItems(state[0]) ?? [state[0]];
+                    // `(*h)` is a SEQUENCE pattern: it opens a sequence state slot only; a
+                    // list or scalar slot is its kind mismatch (never a one-item supply).
+                    if (SequencePatternItems(state[0]) is not { } openedHistory)
+                    {
+                        failedCategory = Type;
+                        trace.Add($"iteration {iteration}: sequence pattern (*h) over the non-sequence state slot {state[0].Neutral} -> kind mismatch");
+                        break;
+                    }
+
                     var counter = ((OracleVal.AtomVal)state[1]).Value;
                     var nextSlots = new List<OracleVal>();
                     if (openedHistory.Count > 0)
@@ -863,9 +879,9 @@ public static class ArityDifferentialMatrix
                     state = nextSlots.ToArray();
                 }
 
-                if (failed)
+                if (failedCategory is not null)
                 {
-                    expected = Err(Arity);
+                    expected = Err(failedCategory);
                 }
                 else
                 {

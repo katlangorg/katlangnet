@@ -553,16 +553,29 @@ public class SequenceSpreadTests
             3m);
 
     [Fact]
-    public void CollectingParameterForwarding_SequenceValueVariadicPatternOpensForwardedList()
-        // The pattern callee wants ONE grouped value, so the collected list is
-        // passed bare and the sequence-value pattern opens its one boundary.
-        => AssertEval(
+    public void CollectingParameterForwarding_ListPatternOpensTheForwardedList_SequencePatternNeedsASequence()
+    {
+        // The collected parameter is ONE exact list. A LIST pattern callee opens it bare; a
+        // SEQUENCE pattern callee opens only a sequence, so the list must be re-spread into
+        // one (`(values*)`) — passed bare it is the sequence pattern's kind mismatch.
+        AssertEval(
             """
-            CountSequenceValue((*values)) = values.count
-            Use(*values) = CountSequenceValue(values)
+            CountList([*values]) = values.count
+            Use(*values) = CountList(values)
             Use((10, 20, 30)*)
             """,
             3m);
+        AssertEval(
+            """
+            CountSequenceValue((*values)) = values.count
+            Use(*values) = CountSequenceValue((values*))
+            Use((10, 20, 30)*)
+            """,
+            3m);
+        var bare = SourceProvenance.ParseValid(
+            "CountSequenceValue((*values)) = values.count\nUse(*values) = CountSequenceValue(values)\nUse((10, 20, 30)*)");
+        bare.ExpectEvaluationError<EvalError.TypeMismatch>();
+    }
 
     [Fact]
     public void CollectingParameterForwarding_SequenceValueCollectingCaptureForwardsStreamWithExplicitSpread()

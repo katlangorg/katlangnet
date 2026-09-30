@@ -74,15 +74,15 @@ public class EvaluatorConditionalTests
     {
         AssertEval(
             """
-            F(x, (x)) = x
-            F(1, (1))
+            F(x, [x]) = x
+            F(1, [1])
             """,
             1);
 
         var error = GetEvalError(
             """
-            F(x, (x)) = x
-            F(1, (2))
+            F(x, [x]) = x
+            F(1, [2])
             """);
         Assert.IsType<EvalError.BadArity>(Innermost(error!));
     }
@@ -173,22 +173,26 @@ public class EvaluatorConditionalTests
     }
 
     [Fact]
-    public void Eval_OrdinarySingletonGroupParameter_RejectsMultiItemGroup()
+    public void Eval_OrdinaryOneElementListParameter_RejectsALongerListAndASequence()
     {
-        // K(a, (b)) = a  ⟹  K(1, (2, 3)) should fail
-        // because (b) is a 1-element sequence-value pattern that does not match (2, 3).
+        // K(a, [b]) = a  ⟹  K(1, [2, 3]) should fail
+        // because [b] is a one-element list pattern that does not match [2, 3].
         var source = """
-            K(a, (b)) = a
-            K(1, (2, 3))
+            K(a, [b]) = a
+            K(1, [2, 3])
             """;
         var error = GetEvalError(source);
         Assert.NotNull(error);
         Assert.IsType<EvalError.WithContext>(error);
-        // The mismatch is attributed to the nested pattern `(b)` (a
-        // SequenceValueParameterBindingContext layer may sit between the call
+        // The mismatch is attributed to the nested pattern `[b]` (a
+        // ListValueParameterBindingContext layer may sit between the call
         // context and the innermost arity error).
         var inner = Innermost(error!);
         Assert.True(inner is EvalError.ArityMismatch or EvalError.BadArity);
+
+        // A sequence value is not a list: the list pattern's kind mismatch.
+        var sequence = GetEvalError("K(a, [b]) = a\nK(1, (2, 3))");
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(sequence!));
     }
 
     [Fact]
@@ -204,14 +208,14 @@ public class EvaluatorConditionalTests
     }
 
     [Fact]
-    public void Eval_OrdinarySingletonGroupParameter_MatchesNormalizedSingleton()
+    public void Eval_OrdinaryOneElementListParameter_MatchesAOneElementList()
     {
-        // K(a, (b)) = a  ⟹  K(1, (2)) => 1
-        // (2) normalizes to Atom(2); (b) is a 1-element sequence-value pattern
-        // that matches the normalized singleton.
+        // K(a, [b]) = a  ⟹  K(1, [2]) => 1
+        // [b] is the one-element structural pattern (a one-item SEQUENCE pattern `(b)` is
+        // invalid: `(2)` normalizes to the scalar 2), and it matches the one-element list.
         var source = """
-            K(a, (b)) = a
-            K(1, (2))
+            K(a, [b]) = a
+            K(1, [2])
             """;
         AssertEval(source, 1);
     }

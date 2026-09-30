@@ -44,7 +44,7 @@ public class ZeroArgumentDemandArityTests
         { "Tail(*rest, z) = z", "Tail", false, 1 },
         { "Mid(x, *rest, z) = x", "Mid", false, 2 },
         { "Pair(x, y) = x + y", "Pair", false, 2 },
-        { "One((x)) = x", "One", false, 1 },
+        { "One([x]) = x", "One", false, 1 },
         { "GroupedCollecting((x, *rest)) = x", "GroupedCollecting", false, 1 },
         { "GroupedOnly((*xs)) = xs", "GroupedOnly", false, 1 },
         { "GroupThenCollecting((a, b), *rest) = a", "GroupThenCollecting", false, 1 },
@@ -387,8 +387,10 @@ public class ZeroArgumentDemandArityTests
     [Theory]
     [InlineData("F(x, *rest) = x", "7", "7")]
     [InlineData("F(*rest, x) = x", "7", "7")]
-    [InlineData("F((*xs)) = xs", "[7]", "[7]")]
-    [InlineData("F((x, y), *rest) = x", "[7, 8]", "7")]
+    [InlineData("F((*xs)) = xs", "(7, 8)", "[7, 8]")]
+    [InlineData("F([*xs]) = xs", "[7]", "[7]")]
+    [InlineData("F((x, y), *rest) = x", "(7, 8)", "7")]
+    [InlineData("F([x, y], *rest) = x", "[7, 8]", "7")]
     public void PlainAndCountedCallbackBinders_KeepTheSameTopLevelMinimum(string declaration, string argument, string expected)
     {
         string Display(string row) => Assert.IsType<RunResult.Success>(KatLangEngine.Run(declaration + "\n" + row)).ToDisplayString();
@@ -471,21 +473,29 @@ public class ZeroArgumentDemandArityTests
     }
 
     /// <summary>
-    /// A nested pattern's scalar one-item fallback accepts ONE supplied value; it never
-    /// means the callable accepts none. <c>P(7)</c> binds, <c>P()</c> and bare <c>P</c>
-    /// both reject.
+    /// A structural pattern consumes ONE supplied value whose elements it opens; it never
+    /// means the callable accepts none, whatever the pattern's own element minimum —
+    /// <c>(*xs)</c> and <c>[*xs]</c> accept zero ELEMENTS but still require the one supplied
+    /// value. A value of the other kind or a scalar is the pattern's kind mismatch.
     /// </summary>
     [Fact]
-    public void NestedPatternScalarFallback_DoesNotImplyZeroSupplyAcceptance()
+    public void NestedPatternElementMinimum_DoesNotImplyZeroSupplyAcceptance()
     {
         const string decl = "P((*xs)) = xs\n";
-        Assert.Equal(new Result.ListValue([new Result.Atom(7)]), Eval(decl + "P(7)").Value, Result.ValueComparer);
-        Assert.Equal(new Result.ListValue([new Result.Atom(7)]), Eval(decl + "P([7])").Value, Result.ValueComparer);
+        Assert.Equal(new Result.ListValue([new Result.Atom(7), new Result.Atom(8)]), Eval(decl + "P((7, 8))").Value, Result.ValueComparer);
+        Assert.Equal(new Result.ListValue([]), Eval(decl + "P(())").Value, Result.ValueComparer);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(Eval(decl + "P(7)").Error));
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(Eval(decl + "P([7])").Error));
         Assert.True(Eval(decl + "P()").IsError);
         Assert.True(Eval(decl + "P").IsError);
 
+        const string list = "L([*xs]) = xs\n";
+        Assert.Equal(new Result.ListValue([new Result.Atom(7)]), Eval(list + "L([7])").Value, Result.ValueComparer);
+        Assert.True(Eval(list + "L()").IsError);
+        Assert.True(Eval(list + "L").IsError);
+
         const string pair = "Q((x, *rest)) = x, rest.count\n";
-        Assert.Equal([7m, 0m], Atoms(Eval(pair + "Q(7)")));
+        Assert.Equal([7m, 1m], Atoms(Eval(pair + "Q((7, 8))")));
         Assert.True(Eval(pair + "Q()").IsError);
         Assert.True(Eval(pair + "Q").IsError);
     }

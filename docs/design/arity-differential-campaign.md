@@ -179,6 +179,13 @@ of the plain algebra:
    matrix row `cb-map-nested-pattern` binds a scalar element through the
    ordinary one-item fallback (`[[7, []]]`) exactly as the direct call does.
 
+   **Superseded by the September 2026 structural-pattern decision:** the
+   ordinary/callback equivalence remains, but sequence patterns now open
+   sequences only and list patterns open lists only. Scalar fallback and
+   cross-kind opening are removed. The matrix uses a matching sequence
+   element for the positive `cb-map-nested-pattern` case; the kind-mismatch
+   cases reject scalars and the opposite structural kind in both binders.
+
 ## Relationship to the other corpora
 
 - The **semantic explorer** (`SemanticExplorerCorpus`) is the Lean/C#

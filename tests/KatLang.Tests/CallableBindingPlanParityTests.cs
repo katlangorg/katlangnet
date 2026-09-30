@@ -160,6 +160,8 @@ public class CallableBindingPlanParityTests
             CaptureBindingNode capture => $"Capture({capture.Name}:{capture.Source})",
             CollectingCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
             SequenceValueBindingNode group => $"SequenceValue({DescribePatternList(group.Children)})",
+            ListValueBindingNode list => $"ListValue({DescribePatternList(list.Children)})",
+            UnpackingBindingNode unpacking => $"Unpacking({DescribePatternList(unpacking.Children)})",
         };
 
     private static string DescribePatternList(PatternListBindingPlan plan)
@@ -375,7 +377,7 @@ public class CallableBindingPlanParityTests
             """,
             expected: 1,
             actual: 0,
-            "Sequence-value parameter pattern `(x, *r)` expects at least 1 value, but received 0 values.");
+            "Sequence pattern `(x, *r)` expects at least 1 element, but received 0 elements.");
 
         // ...and the TOP level's exact maximum, which the nested collector never lifted.
         AssertArityFailure(

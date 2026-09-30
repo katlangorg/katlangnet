@@ -667,12 +667,24 @@ public class EvaluatorSequenceCallbackTests
                 new Result.SequenceValue([ResultFromAtoms(1, 2), new Result.Atom(3)]),
                 new Result.Atom(4)]));
 
+        // A SEQUENCE pattern opens a sequence accumulator (never a scalar: there is no
+        // one-item sequence, so the accumulator starts as a pair)...
         var opened = """
             Append(item, (*history)) = (history*, item)
-            reduce((2, 3, 4), Append, 1)
+            reduce((2, 3, 4), Append, (0, 1))
             """;
 
-        AssertEvalResultSequenceModes(opened, ResultFromAtoms(1, 2, 3, 4));
+        AssertEvalResultSequenceModes(opened, ResultFromAtoms(0, 1, 2, 3, 4));
+
+        // ...and a LIST pattern opens a list accumulator at every cardinality, one included.
+        var openedList = """
+            Append(item, [*history]) = [history*, item]
+            reduce((2, 3, 4), Append, [1])
+            """;
+
+        AssertEvalResultSequenceModes(
+            openedList,
+            new Result.ListValue([new Result.Atom(1), new Result.Atom(2), new Result.Atom(3), new Result.Atom(4)]));
     }
 
     [Fact]
@@ -954,18 +966,16 @@ public class EvaluatorSequenceCallbackTests
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
-        // A scalar item is the ordinary one-item supply for `(x, y)` — exactly what the
-        // direct call `PairSum(1)` supplies — so the rejection is the nested group's own
-        // arity mismatch, never a flattened or reinterpreted item (S3). It is raised inside
-        // the map transform frame and renders the same pattern message as the direct call.
+        // A scalar item is the sequence pattern's KIND mismatch — exactly what the direct
+        // call `PairSum(1)` reports — never a flattened, reinterpreted, or one-item supply
+        // (S3). It is raised inside the map transform frame and names the same pattern and
+        // value as the direct call.
         var direct = EvalFull("PairSum((x, y)) = x + y\nPairSum(1)");
-        AssertNestedGroupArityMismatch(result.Error, "(x, y)", expected: 2, actual: 1);
-        AssertNestedGroupArityMismatch(direct.Error, "(x, y)", expected: 2, actual: 1);
+        var mapped = Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
+        var called = Assert.IsType<EvalError.TypeMismatch>(Innermost(direct.Error));
+        Assert.Equal(called.Message, mapped.Message);
+        Assert.Equal("sequence pattern `(x, y)` expects a sequence value, but received numeric value 1", mapped.Message);
         AssertHasContext(result.Error, "while evaluating map transform");
-        Assert.Equal(
-            "Sequence-value parameter pattern `(x, y)` expects 2 values, but received 1 value.",
-            KatLangError.FromEvalError(result.Error).Message);
-        Assert.Equal(KatLangError.FromEvalError(direct.Error).Message, KatLangError.FromEvalError(result.Error).Message);
     }
 
     /// <summary>
@@ -1016,15 +1026,24 @@ public class EvaluatorSequenceCallbackTests
             """,
             1, 2);
 
-        // A scalar item supplies ONE value to the two-item group — the ordinary call's
-        // nested arity rejection, not an equality failure (S3).
+        // A scalar item is the sequence pattern's KIND mismatch — exactly the ordinary
+        // call's rejection, never a one-item supply and never an equality failure (S3).
         var result = EvalFull(
             """
             Same((x, x)) = x
             map((1, 2), Same)
             """);
         Assert.True(result.IsError);
-        AssertNestedGroupArityMismatch(result.Error, "(x, x)", expected: 2, actual: 1);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
+
+        // A three-element sequence item is the group's own arity rejection.
+        var triple = EvalFull(
+            """
+            Same((x, x)) = x
+            map([(1, 1, 1)], Same)
+            """);
+        Assert.True(triple.IsError);
+        AssertNestedGroupArityMismatch(triple.Error, "(x, x)", expected: 2, actual: 3);
 
         // An unequal pair item is still the repeated-binder equality failure.
         var unequalPair = EvalFull(
@@ -1081,9 +1100,10 @@ public class EvaluatorSequenceCallbackTests
 
         AssertHasContext(result.Error, "while evaluating map transform");
 
-        // `((1, 2, 3))` IS `(1, 2, 3)`, so the first item is the scalar 1: the group's own
-        // ArityMismatch(2, 1), as for `PairSum(1)`. A three-item row item reports (2, 3).
-        AssertNestedGroupArityMismatch(result.Error, "(x, y)", expected: 2, actual: 1);
+        // `((1, 2, 3))` IS `(1, 2, 3)`, so the first item is the scalar 1: the sequence
+        // pattern's KIND mismatch, as for `PairSum(1)` — never a one-item supply. A
+        // three-element sequence item is the group's own ArityMismatch(2, 3).
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
         AssertNestedGroupArityMismatch(
             EvalFull("PairSum((x, y)) = x + y\nmap([(1, 2, 3)], PairSum)").Error, "(x, y)", expected: 2, actual: 3);
     }

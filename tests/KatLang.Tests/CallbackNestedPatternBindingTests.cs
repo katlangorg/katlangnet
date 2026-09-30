@@ -6,40 +6,43 @@ using KatLang.Tests.AsyncEvaluation;
 namespace KatLang.Tests;
 
 /// <summary>
-/// S3 — CALLBACK BINDING USES THE ORDINARY CALL'S NESTED-PATTERN RULES (September 2026).
+/// S3 — CALLBACK BINDING USES THE ORDINARY CALL'S STRUCTURAL-PATTERN RULES (September 2026).
 ///
 /// <para>When a callback operation supplies ONE value <c>V</c> to a callable whose parameter
-/// is a nested sequence-value pattern <c>P</c>, binding <c>V</c> follows exactly the rules of
-/// the ordinary call <c>P(V)</c>: the same success or failure, the same bound values, and the
-/// same binding reason on failure (the innermost error and the nested group it is attributed
-/// to — only the outer call/map/filter/reduce frames differ). Both binders open a pattern's
-/// value through the ONE rule <c>SequenceValuePatternItems</c> (Lean
-/// <c>Result.sequenceValuePatternItems</c>): a sequence or list opens one level, and any other
-/// value — a number, a string, a Boolean — is a ONE-item supply at every group size. The
-/// counted callback binder used to fall back only for one-item groups, so
-/// <c>map([7], P)</c> with <c>P((x, *rest))</c> failed with a bare BadArity while
-/// <c>P(7)</c> bound <c>x = 7, rest = []</c>.</para>
+/// is a structural pattern <c>P</c>, binding <c>V</c> follows exactly the rules of the ordinary
+/// call <c>P(V)</c>: the same success or failure, the same bound values, and the same binding
+/// reason on failure (the innermost error and the nested group it is attributed to — only the
+/// outer call/map/filter/reduce frames differ). Both binders open a pattern's value through
+/// the ONE kind-specific rule (<c>Result.SequencePatternItems</c> /
+/// <c>Result.ListPatternItems</c>; Lean <c>Result.sequencePatternItems?</c> /
+/// <c>listPatternItems?</c>): a sequence pattern opens a SEQUENCE value only and a list pattern
+/// a LIST value only, while any other value — a number, a string, a Boolean, the other kind —
+/// is the pattern's kind mismatch in both binders. No value is ever a one-item structure.</para>
 ///
 /// <para>The qualifications stay: the callback OPERATION decides how many values it supplies
-/// (map and filter one element, reduce element plus accumulator, flat callees the row
-/// convention), selection passes a value, spread opens a value, and an empty collection
-/// invokes nothing. Lean: the S3 guards in <c>CoreTests/SequenceCallbackBuiltins.lean</c>.</para>
+/// (map and filter one element, reduce element plus accumulator), selection passes a value,
+/// spread opens a value, and an empty collection invokes nothing. Lean: the S3 guards in
+/// <c>CoreTests/SequenceCallbackBuiltins.lean</c>.</para>
 /// </summary>
 public class CallbackNestedPatternBindingTests
 {
-    /// <summary>Nested-pattern shapes, each with the names its one-value list body reports.</summary>
+    /// <summary>Structural-pattern shapes, each with the names its one-value list body reports.</summary>
     public static TheoryData<string, string> Patterns => new()
     {
-        { "(x)", "x" },
+        { "[x]", "x" },
         { "(x, *rest)", "x, rest" },
         { "(*xs)", "xs" },
         { "(x, y)", "x, y" },
         { "(*init, z)", "init, z" },
         { "(x, *r, z)", "x, r, z" },
-        { "((x, *r))", "x, r" },
+        { "[(x, *r)]", "x, r" },
         { "(a, (b, *r))", "a, b, r" },
         { "(x, x)", "x" },
-        { "(((x)))", "x" },
+        { "[[x]]", "x" },
+        { "[x, *rest]", "x, rest" },
+        { "[*xs]", "xs" },
+        { "([x], y)", "x, y" },
+        { "[(x, y), z]", "x, y, z" },
     };
 
     /// <summary>
@@ -102,36 +105,57 @@ public class CallbackNestedPatternBindingTests
     }
 
     [Fact]
-    public void ScalarOneItemFallback_IsOneItem_NeverZero_NeverMore()
+    public void StructuralPatterns_OpenOnlyTheirOwnKind_InBothBinders()
     {
         // The characteristic cells, pinned directly so a regression shared by BOTH paths
-        // cannot pass the agreement matrix: a scalar is ONE item for a head plus collector,
-        // a collector plus suffix, and a nested group, and one item too few for a pair.
-        AssertDisplay("P((x, *rest)) = [x, rest]\nP(7)\nmap([7], P)\n[7].map(P)", "[7, []]\n[[7, []]]\n[[7, []]]");
-        AssertDisplay("P((x, *rest)) = [x, rest]\nmap(('s', true), P)", "[[s, []], [true, []]]");
-        AssertDisplay("P((*init, z)) = [init, z]\nmap([7], P)", "[[[], 7]]");
-        AssertDisplay("P(((x, *r))) = [x, r]\nmap([7], P)", "[[7, []]]");
-        AssertDisplay("P((a, (b, *r))) = [a, b, r]\nmap([(1, 2)], P)", "[[1, 2, []]]");
-        AssertDisplay("P((x, *rest)) = [x, rest]\nmap((7, (8, 9), [10]), P)", "[[7, []], [8, [9]], [10, []]]");
+        // cannot pass the agreement matrix: each pattern opens its own kind, one level.
+        AssertDisplay("P((x, *rest)) = [x, rest]\nP((7, 8))\nmap([(7, 8)], P)\n[(7, 8)].map(P)", "[7, [8]]\n[[7, [8]]]\n[[7, [8]]]");
+        AssertDisplay("P([x, *rest]) = [x, rest]\nmap([[7], [8, 9]], P)", "[[7, []], [8, [9]]]");
+        AssertDisplay("P((*init, z)) = [init, z]\nmap([(1, 7)], P)", "[[[1], 7]]");
+        AssertDisplay("P([(x, *r)]) = [x, r]\nmap([[(7, 8)]], P)", "[[7, [8]]]");
+        AssertDisplay("P((a, (b, *r))) = [a, b, r]\nmap([(1, (2, 3))], P)", "[[1, 2, [3]]]");
+        AssertDisplay("P([x]) = x\nmap([[7], [(8, 9)], [[]]], P)", "[7, (8, 9), []]");
 
+        // A scalar, or the other kind, is the pattern's KIND mismatch — never a one-item
+        // structure — with the same reason in the direct call and every callback operation.
+        foreach (var (pattern, value) in new[] { ("(x, *rest)", "7"), ("(x, *rest)", "[7, 8]"), ("[x, *rest]", "7"), ("[x, *rest]", "(7, 8)") })
+        {
+            var direct = Run($"P({pattern}) = [x, rest]\nP({value})");
+            Assert.True(direct.IsError, $"P({value}) against {pattern}");
+            var reason = BindingReason(direct.Error);
+            Assert.StartsWith("TypeMismatch(", reason, StringComparison.Ordinal);
+            foreach (var source in new[]
+            {
+                $"P({pattern}) = [x, rest]\nmap([{value}], P)",
+                $"P({pattern}) = [x, rest]\n[{value}].map(P)",
+                $"P({pattern}) = x > 0\nfilter([{value}], P)",
+                $"P({pattern}, acc) = acc\nreduce([{value}], P, 0)",
+            })
+            {
+                var result = Run(source);
+                Assert.True(result.IsError, source);
+                Assert.Equal(reason, BindingReason(result.Error));
+            }
+        }
+
+        // Of the right kind but the wrong length: the pattern's own arity mismatch.
         foreach (var source in new[]
         {
-            "P((x, y)) = [x, y]\nP(7)",
-            "P((x, y)) = [x, y]\nmap([7], P)",
-            "P((x, y)) = [x, y]\n[7].map(P)",
-            "P((x, y)) = x > 0\nfilter([7], P)",
-            "P((x, y), acc) = acc\nreduce([7], P, 0)",
+            "P((x, y)) = [x, y]\nP((1, 2, 3))",
+            "P((x, y)) = [x, y]\nmap([(1, 2, 3)], P)",
+            "P((x, y)) = [x, y]\n[(1, 2, 3)].map(P)",
+            "P((x, y)) = x > 0\nfilter([(1, 2, 3)], P)",
+            "P((x, y), acc) = acc\nreduce([(1, 2, 3)], P, 0)",
         })
         {
             var result = Run(source);
             Assert.True(result.IsError, source);
-            Assert.Equal("ArityMismatch(2, 1) in [(x, y)]", BindingReason(result.Error));
+            Assert.Equal("ArityMismatch(2, 3) in [(x, y)]", BindingReason(result.Error));
         }
 
-        // `(x, *r, z)` needs two items: a scalar supplies one (at least 2, received 1).
         Assert.Equal(
-            BindingReason(Run("P((x, *r, z)) = x\nP(7)").Error),
-            BindingReason(Run("P((x, *r, z)) = x\nmap([7], P)").Error));
+            BindingReason(Run("P([x, *r, z]) = x\nP([7])").Error),
+            BindingReason(Run("P([x, *r, z]) = x\nmap([[7]], P)").Error));
     }
 
     [Fact]
@@ -140,8 +164,8 @@ public class CallbackNestedPatternBindingTests
         // Only the OUTER frame differs from the direct call: the callback failure carries the
         // map transform frame structurally, renders the same pattern message the direct call
         // renders, and stays located (a present span on the map row, never a fabricated one).
-        var result = Run("P((x, y)) = [x, y]\n\nmap([7], P)");
-        var direct = Run("P((x, y)) = [x, y]\n\nP(7)");
+        var result = Run("P((x, y)) = [x, y]\n\nmap([(1, 2, 3)], P)");
+        var direct = Run("P((x, y)) = [x, y]\n\nP((1, 2, 3))");
         Assert.True(result.IsError);
         Assert.True(direct.IsError);
 
@@ -151,7 +175,7 @@ public class CallbackNestedPatternBindingTests
         Assert.Contains(frames, frame => frame.Contains("while evaluating map transform", StringComparison.Ordinal));
 
         var error = KatLangError.FromEvalError(result.Error);
-        Assert.Equal("Sequence-value parameter pattern `(x, y)` expects 2 values, but received 1 value.", error.Message);
+        Assert.Equal("Sequence pattern `(x, y)` expects 2 elements, but received 3 elements.", error.Message);
         Assert.Equal(KatLangError.FromEvalError(direct.Error).Message, error.Message);
         Assert.Equal(KatLangError.FromEvalError(direct.Error).Code, error.Code);
         var span = Assert.IsType<SourceSpan>(error.Span);
@@ -167,16 +191,17 @@ public class CallbackNestedPatternBindingTests
         // callee receives them whole, and only the pattern (as in the direct call) or an
         // explicit spread opens them.
         AssertDisplay("Wrap(x) = [x]\nmap([(1, 2), [3, 4], ()], Wrap)", "[[(1, 2)], [[3, 4]], [()]]");
-        AssertDisplay("P((*xs)) = xs\nmap([(1, 2), [3, 4], ()], P)", "[[1, 2], [3, 4], []]");
-        AssertDisplay("P((*xs)) = xs\n[P((1, 2)), P([3, 4]), P(())]", "[[1, 2], [3, 4], []]");
+        AssertDisplay("P((*xs)) = xs\nmap([(1, 2), (3, 4, 5), ()], P)", "[[1, 2], [3, 4, 5], []]");
+        AssertDisplay("P((*xs)) = xs\n[P((1, 2)), P((3, 4, 5)), P(())]", "[[1, 2], [3, 4, 5], []]");
+        AssertDisplay("P([*xs]) = xs\nmap([[1, 2], [3], []], P)", "[[1, 2], [3], []]");
         AssertDisplay("Coll(*xs) = xs\nmap([[1, 2]], Coll)", "[[[1, 2]]]");
         AssertDisplay("Coll(*xs) = xs\nColl([1, 2]*)", "[1, 2]");
 
         // A singleton list's element is the callback item, with its own identity: the pair
-        // inside `[(1, 2)]` reaches `(x)` as ONE pair value it cannot bind to one item.
+        // inside `[(1, 2)]` reaches `[x]` as ONE pair value, which is not a list.
         Assert.Equal(
-            BindingReason(Run("P((x)) = x\nP((1, 2))").Error),
-            BindingReason(Run("P((x)) = x\nmap([(1, 2)], P)").Error));
+            BindingReason(Run("P([x]) = x\nP((1, 2))").Error),
+            BindingReason(Run("P([x]) = x\nmap([(1, 2)], P)").Error));
     }
 
     [Fact]
@@ -211,7 +236,7 @@ public class CallbackNestedPatternBindingTests
         Assert.Equal([(Decimal128)1], ticks);
 
         ticks.Clear();
-        Assert.Equal("[[1, 7, []]]", DisplayWith("P((x, *rest)) = [Tick(1), x, rest]\nmap([7], P)", operations));
+        Assert.Equal("[[1, 7, [8]]]", DisplayWith("P((x, *rest)) = [Tick(1), x, rest]\nmap([(7, 8)], P)", operations));
         Assert.Equal([(Decimal128)1], ticks);
     }
 
@@ -222,8 +247,8 @@ public class CallbackNestedPatternBindingTests
         var operations = TickOperations(ticks);
 
         Assert.Equal(
-            "[[7, []], [8, [9]], [10, []]]",
-            DisplayWith("P((x, *rest)) = [Tick(x), rest]\nmap((7, (8, 9), [10]), P)", operations));
+            "[[7, [1]], [8, [9, 2]], [10, [3]]]",
+            DisplayWith("P((x, *rest)) = [Tick(x), rest]\nmap([(7, 1), (8, 9, 2), (10, 3)], P)", operations));
         Assert.Equal([(Decimal128)7, 8, 10], ticks);
 
         // A binding failure stops the traversal at the failing element: nothing after it runs.
@@ -243,10 +268,11 @@ public class CallbackNestedPatternBindingTests
     [InlineData("(1, 2)")]
     [InlineData("(1, 2, 3)")]
     [InlineData("[1, 2]")]
+    [InlineData("[5]")]
     [InlineData("()")]
     public void ClauseFamilyCallbacks_SelectTheBranchTheOrdinaryCallSelects(string value)
     {
-        const string family = "F(0) = [100]\nF((a, b)) = [a + b]\nF((x)) = [x]\n";
+        const string family = "F(0) = [100]\nF((a, b)) = [a + b]\nF([x]) = [x]\n";
         var direct = Run(family + $"F({value})");
         var mapped = Run(family + $"map([{value}], F)");
         if (direct.IsOk)
@@ -319,8 +345,8 @@ public class CallbackNestedPatternBindingTests
         // The documented example, pinned by value: the accumulator (1, 2) is one
         // collected item, and only the spread call supplies its two items.
         AssertDisplay(
-            "R((a, *r), *acc) = [a, r, acc]\nreduce([7], R, (1, 2))\nR(7, (1, 2))\nR(7, (1, 2)*)",
-            "[7, [], [(1, 2)]]\n[7, [], [(1, 2)]]\n[7, [], [1, 2]]");
+            "R((a, *r), *acc) = [a, r, acc]\nreduce([(7, 8)], R, (1, 2))\nR((7, 8), (1, 2))\nR((7, 8), (1, 2)*)",
+            "[7, [8], [(1, 2)]]\n[7, [8], [(1, 2)]]\n[7, [8], [1, 2]]");
     }
 
     // ── The explorer's direct/callback template pairs are related, value by value ──
@@ -328,6 +354,8 @@ public class CallbackNestedPatternBindingTests
     [Theory]
     [InlineData("patternHead", "patternHeadMap")]
     [InlineData("patternPair", "patternPairMap")]
+    [InlineData("listPatternHead", "listPatternHeadMap")]
+    [InlineData("listPatternPair", "listPatternPairMap")]
     public void ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall(string directTemplate, string callbackTemplate)
     {
         // Each template is pinned against Lean on its own (SemanticExplorerCases.lean); this
@@ -353,10 +381,16 @@ public class CallbackNestedPatternBindingTests
     }
 
     [Theory]
-    [InlineData("K((x, *rest)) = x > 1\n[7, 1, 3].filter(K).count", "ok raw=2 n=1")]
-    [InlineData("K((x, *rest)) = x > 1\n(7, (1, 5), [3], 1).filter(K).count", "ok raw=2 n=1")]
-    [InlineData("K((x, *rest)) = x > 2\ncount(filter(range(1, 5), K))", "ok raw=3 n=1")]
-    [InlineData("K((x, y)) = x > 1\n[7, 1].filter(K).count", "err arity")]
+    [InlineData("K((x, *rest)) = x > 1\n[(7, 0), (1, 0), (3, 0)].filter(K).count", "ok raw=2 n=1")]
+    [InlineData("K((x, *rest)) = x > 1\n((7, 0), (1, 5), (3, 2, 1)).filter(K).count", "ok raw=2 n=1")]
+    [InlineData("K([x, *rest]) = x > 1\n[[7], [1, 5], [3, 2]].filter(K).count", "ok raw=2 n=1")]
+    // The plain `count(filter(...))` form fuses only over a direct `range` source, whose
+    // elements are numbers: a sequence pattern rejects the first one as the other kind,
+    // exactly as the generic path does.
+    [InlineData("K((x, *rest)) = x > 2\ncount(filter(range(1, 5), K))", "err type")]
+    [InlineData("K((x, y)) = x > 1\n[(7, 1, 2)].filter(K).count", "err arity")]
+    [InlineData("K((x, y)) = x > 1\n[7, 1].filter(K).count", "err type")]
+    [InlineData("K([x, y]) = x > 1\n[(7, 1)].filter(K).count", "err type")]
     public void FilterCountFusion_BindsNestedPatternPredicatesLikeTheGenericPath(string source, string expected)
     {
         var sequence = new SequencePipelineDiagnostics();
@@ -374,10 +408,10 @@ public class CallbackNestedPatternBindingTests
         // The async twin calls the same binder; the host operation in the callback body
         // genuinely suspends on the first element, and resumption neither re-binds nor
         // re-invokes anything.
-        const string source = "P((x, *rest)) = [Tick(x), rest]\nmap((7, (8, 9), [10]), P)";
+        const string source = "P((x, *rest)) = [Tick(x), rest]\nmap([(7, 1), (8, 9), (10, 2)], P)";
         var syncTicks = new List<Decimal128>();
         var expected = NeutralWith(source, TickOperations(syncTicks));
-        Assert.Equal("ok raw=L[L[7, L[]], L[8, L[9]], L[10, L[]]] n=1", expected);
+        Assert.Equal("ok raw=L[L[7, L[1]], L[8, L[9]], L[10, L[2]]] n=1", expected);
 
         var ticks = new List<Decimal128>();
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -412,14 +446,14 @@ public class CallbackNestedPatternBindingTests
     [Fact]
     public async Task SuspendedCallback_BindingFailureAfterResumption_MatchesTheSynchronousFailure()
     {
-        const string source = "P((x, y)) = [Tick(x), y]\nmap([(1, 2), 7], P)";
+        const string source = "P((x, y)) = [Tick(x), y]\nmap([(1, 2), (7, 8, 9)], P)";
         var syncTicks = new List<Decimal128>();
         var expected = Evaluator.RunCounted(
             new Expr.AlgorithmExpr(Parse(source, TickOperations(syncTicks))),
             new RunScopedZeroArgPropertyResultCache(),
             hostOperations: TickOperations(syncTicks));
         Assert.True(expected.IsError);
-        Assert.Equal("ArityMismatch(2, 1) in [(x, y)]", BindingReason(expected.Error));
+        Assert.Equal("ArityMismatch(2, 3) in [(x, y)]", BindingReason(expected.Error));
 
         var ticks = new List<Decimal128>();
         var operations = HostOperations.Create(HostOperation.CreateAsync("Tick", async (args, _) =>
@@ -457,7 +491,7 @@ public class CallbackNestedPatternBindingTests
             }, "value")),
         };
 
-        var pending = KatLangEngine.RunAsync("P((x, *rest)) = [Tick(x), rest]\nmap((7, 8), P)", options);
+        var pending = KatLangEngine.RunAsync("P((x, *rest)) = [Tick(x), rest]\nmap([(7, 1), (8, 2)], P)", options);
         await reached.Task.WaitAsync(TimeSpan.FromSeconds(45));
         cancellation.Cancel();
         release.SetResult();
@@ -475,6 +509,8 @@ public class CallbackNestedPatternBindingTests
         "empty group then collector",
         "deeply nested collector",
         "collector between two nested groups",
+        "empty list",
+        "list collector",
     };
 
     [Theory]
@@ -512,16 +548,20 @@ public class CallbackNestedPatternBindingTests
                 [new SequenceValueParameterPattern([]), new CaptureParameterPattern("r", Kind: ParameterKind.Collecting)],
                 ["r"]),
             "deeply nested collector" => (
-                [new SequenceValueParameterPattern([
-                    new SequenceValueParameterPattern([
+                [new ListValueParameterPattern([
+                    new ListValueParameterPattern([
                         new SequenceValueParameterPattern([new CaptureParameterPattern("r", Kind: ParameterKind.Collecting)])])])],
                 ["r"]),
             "collector between two nested groups" => (
                 [new SequenceValueParameterPattern([
-                    new SequenceValueParameterPattern([new CaptureParameterPattern("x")]),
+                    new ListValueParameterPattern([new CaptureParameterPattern("x")]),
                     new CaptureParameterPattern("m", Kind: ParameterKind.Collecting),
-                    new SequenceValueParameterPattern([new CaptureParameterPattern("z")])])],
+                    new ListValueParameterPattern([new CaptureParameterPattern("z")])])],
                 ["x", "m", "z"]),
+            "empty list" => ([new ListValueParameterPattern([])], []),
+            "list collector" => (
+                [new ListValueParameterPattern([new CaptureParameterPattern("r", Kind: ParameterKind.Collecting)])],
+                ["r"]),
             _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
         };
 
@@ -605,9 +645,9 @@ public class CallbackNestedPatternBindingTests
 
     /// <summary>
     /// The pattern-binding reason of a failure: the innermost error with its payload and the
-    /// nested sequence-value groups it is attributed to — everything except the outer
-    /// call/map/filter/reduce frames, which legitimately differ between the direct call and a
-    /// callback invocation.
+    /// nested structural (sequence or list) groups it is attributed to — everything except the
+    /// outer call/map/filter/reduce frames, which legitimately differ between the direct call
+    /// and a callback invocation.
     /// </summary>
     private static string BindingReason(EvalError error)
     {
@@ -616,6 +656,8 @@ public class CallbackNestedPatternBindingTests
         {
             if (context.ErrorContext is SequenceValueParameterBindingContext group)
                 groups.Add(group.PatternDisplayName);
+            else if (context.ErrorContext is ListValueParameterBindingContext listGroup)
+                groups.Add(listGroup.PatternDisplayName);
             error = context.Inner;
         }
 

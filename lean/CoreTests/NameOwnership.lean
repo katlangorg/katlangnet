@@ -121,6 +121,9 @@ def chainBranchBinder : List OwnerLevel :=
 -- The three `forwarded-*` rows were the `lifted-*` rows before the Q-04 decision:
 -- the lifted parameter then owned the reference (masks [0, 1, 0], [0, 3, 0] and
 -- [0, 2, 1, 0]; the first selected `.parameter 1` where it now selects nothing).
+-- The two `alias-*` rows (FWD-02, 2026-09-29): an exact alias's inherited signature is
+-- in NEITHER list of its level (see `OwnerLevel`), so the alias's own property of that
+-- name is valid and a written `v` keeps its ordinary owner.
 def ownershipConformanceInputs : List (String × List Nat × OwnedDeclaration × Bool) := [
   ("captured", [0, 1, 2], .parameter 1, true),
   ("same-owner-nested", [0, 3, 0], .parameter 1, false),
@@ -138,7 +141,9 @@ def ownershipConformanceInputs : List (String × List Nat × OwnedDeclaration ×
   ("grouped-parameter", [0, 1, 2], .parameter 1, true),
   ("collecting-parameter", [0, 1, 2], .parameter 1, true),
   ("grouped-branch-binder", [0, 3, 2], .parameter 1, false),
-  ("ancestor-property", [0, 0, 2], .property 2, true)
+  ("ancestor-property", [0, 0, 2], .property 2, true),
+  ("alias-inherited-no-collision", [0, 2, 0], .property 1, true),
+  ("alias-inherited-owns-no-name", [0, 0, 2], .property 2, true)
 ]
 
 def ownershipMaskLevel (mask : Nat) : OwnerLevel :=
@@ -146,7 +151,7 @@ def ownershipMaskLevel (mask : Nat) : OwnerLevel :=
     properties := if (mask / 2) % 2 == 1 then ["v"] else []
     forwarded := if mask / 4 == 1 then ["v"] else [] }
 
-#guard ownershipConformanceInputs.length == 17
+#guard ownershipConformanceInputs.length == 19
 #guard ownershipConformanceInputs.all fun (_, masks, expected, valid) =>
   validOwnedDeclarations (masks.map ownershipMaskLevel) == valid &&
   masks.all (· < 8) &&

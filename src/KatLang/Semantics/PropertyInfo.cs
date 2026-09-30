@@ -389,6 +389,9 @@ internal static class ConditionalBranchHeadFormatter
             Pattern.LitString litString => $"'{litString.Value}'",
             Pattern.LitBool litBool => Rendering.ValueTextRenderer.FormatBool(litBool.Value),
             Pattern.SequenceValue sequenceValue => FormatSequenceValue(sequenceValue, nested),
+            // A list pattern keeps its brackets at every level (the head's own argument list is
+            // always a SequenceValue, never a list).
+            Pattern.ListValue listValue => $"[{string.Join(", ", listValue.Items.Select(item => FormatPattern(item, nested: true)))}]",
         };
 
     private static string FormatSequenceValue(Pattern.SequenceValue sequenceValue, bool nested)

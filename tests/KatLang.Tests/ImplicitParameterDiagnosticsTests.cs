@@ -552,7 +552,9 @@ public class ImplicitParameterDiagnosticsTests
         // `Value` is bound by an enclosing scope, and the owner walk reaches that
         // binding before any open is consulted — so the corrected spelling really
         // does resolve, to the parameter, and suggesting it is right. (The two
-        // ambiguous providers would decide the name only if nothing owned it.)
+        // ambiguous providers would decide the name only if nothing owned it.) `Use` is
+        // read in a FORMULA: a lone row `Use` would be bare forwarding (FWD-02), which no
+        // binding named `Valeu` can supply — a front-end rejection, not this diagnostic.
         var (message, error) = FailWithParity(
             """
             A = { public Value = 1 }
@@ -562,7 +564,7 @@ public class ImplicitParameterDiagnosticsTests
                 open A, B
                 Valeu
               }
-              Use
+              Use + 0
             }
             Outer(9)
             """);
@@ -604,7 +606,7 @@ public class ImplicitParameterDiagnosticsTests
                 open A, B
                 Valeu + seed
               }
-              Use
+              Use + 0
             }
             Outer(9)
             """);
@@ -635,7 +637,7 @@ public class ImplicitParameterDiagnosticsTests
                 open Lib
                 Valeu
               }
-              Use
+              Use + 0
             }
             Outer(1)
             """);

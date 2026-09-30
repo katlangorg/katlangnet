@@ -193,10 +193,10 @@ public class PatternedCallSingleEvaluationTests
             "A = (1, 2)\nF((x, y, z)) = (x, y, z)\nF((A*, 3))",
             Seq(Atom(1), Atom(2), Atom(3))
         },
-        { "F((x)) = x\nF((7))", Atom(7) },
+        { "F([x]) = x\nF([(7)])", Atom(7) },
         { "A = ()\nF((*items)) = items\nF((A))", List() },
         { "A = ()\nF((*items)) = items.count\nF((A*))", Atom(0) },
-        { "A = [[1, 2]]\nF((*items)) = items\nF((A*))", List(Atom(1), Atom(2)) },
+        { "A = [[1, 2], [3]]\nF((*items)) = items\nF((A*))", List(List(Atom(1), Atom(2)), List(Atom(3))) },
         { "S = 1, 2\nF((a, b)) = a + b\nF({S})", Atom(3) },
         {
             "S = ((1, 2), (3, 4))\nF((x, y)) = (x, y)\nF((S:0, 5))",
@@ -245,7 +245,7 @@ public class PatternedCallSingleEvaluationTests
     [Fact]
     public void EmptyOutputBlock_StillFailsOnceWithMissingOutput()
     {
-        var parsed = Parser.Parse("F((x)) = x\nF((7))");
+        var parsed = Parser.Parse("F([x]) = x\nF([7])");
         Assert.False(parsed.HasErrors);
         var emptyBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
@@ -300,12 +300,12 @@ public class PatternedCallSingleEvaluationTests
         // The argument is ONE value however it was produced — a selected pair
         // (selection is a value boundary) or a loop result emitting two values — and a
         // zero-parameter block around it is one written slot whose value the
-        // sequence-value pattern opens (parentheses group syntax; a block or group
-        // never carries a second, written-slot view of its rows). The pair opens to
-        // two items, so the singleton pattern `(x)` is the arity error 1 vs 2 in every
-        // spelling: the host-built block argument, the direct expression, and the
-        // grouped expression alike.
-        var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\n" + expression);
+        // sequence pattern opens (parentheses group syntax; a block or group never
+        // carries a second, written-slot view of its rows). The pair opens to two
+        // elements, so the pair pattern `(x, y)` binds x = 1, y = 2 in every spelling:
+        // the host-built block argument, the direct expression, and the grouped
+        // expression alike.
+        var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\n" + expression);
         var selectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             ParameterPatterns: [],
@@ -317,8 +317,8 @@ public class PatternedCallSingleEvaluationTests
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), callArgs)],
         };
-        var direct = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF(" + expression + ")").Root;
-        var grouped = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF((" + expression + "))").Root;
+        var direct = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\nF(" + expression + ")").Root;
+        var grouped = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\nF((" + expression + "))").Root;
 
         foreach (var program in new[] { root, direct, grouped })
         foreach (var optimize in new[] { false, true })
@@ -327,15 +327,14 @@ public class PatternedCallSingleEvaluationTests
                 new Expr.AlgorithmExpr(program),
                 enableOptimizations: optimize);
 
-            Assert.True(result.IsError, $"expected the singleton pattern to reject the pair (optimize: {optimize})");
-            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-            Assert.Equal(1, arity.Expected);
-            Assert.Equal(2, arity.Actual);
+            Assert.True(result.IsOk, Failure($"pair pattern (optimize: {optimize})", result));
+            AssertSemanticallyEqual(List(Atom(1), Atom(2)), result.Value.Value);
         }
 
-        // A one-element list opens to exactly one item, which the singleton pattern binds.
+        // A one-element list opens to exactly one element, which the one-element list
+        // pattern binds whole: the pair itself.
         var (bound, _) = Evaluator.RunCountedObserved(
-            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x)) = x\nF([" + expression + "])").Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF([x]) = x\nF([" + expression + "])").Root),
             enableOptimizations: false);
         Assert.True(bound.IsOk, Failure("one-element list", bound));
         AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), bound.Value.Value);

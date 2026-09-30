@@ -297,6 +297,8 @@ public enum KatLang.DiagnosticCode : int
   IllegalInOpen = 44
   UnresolvedOpenTarget = 45
   DiagnosticCountExceeded = 46
+  SingletonSequencePattern = 48
+  UnforwardableParameter = 49
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1405,6 +1407,8 @@ public enum KatLang.KatLangErrorCode : int
   InvalidNumberLiteral = 66
   UnresolvedOpenTarget = 67
   DiagnosticCountExceeded = 68
+  SingletonSequencePattern = 70
+  UnforwardableParameter = 71
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -1414,6 +1418,38 @@ public static class KatLang.Lexer
   property public static System.Collections.Generic.IReadOnlyList<string> KeywordNames { get; }
   method   public static bool IsValidIdentifier(string text)
   method   public static (System.Collections.Generic.IReadOnlyList<KatLang.Token> Tokens, System.Collections.Generic.IReadOnlyList<KatLang.Diagnostic> Diagnostics) Tokenize(string source)
+
+public sealed record KatLang.ListValueParameterBindingContext : KatLang.ErrorContext, System.IEquatable<KatLang.ListValueParameterBindingContext>
+  ctor     public ListValueParameterBindingContext(string PatternDisplayName, bool HasCollectingItem)
+  property protected override System.Type EqualityContract { get; }
+  property public bool HasCollectingItem { get; init; }
+  property public string PatternDisplayName { get; init; }
+  method   public virtual KatLang.ListValueParameterBindingContext <Clone>$()
+  method   public void Deconstruct(out string PatternDisplayName, out bool HasCollectingItem)
+  method   public bool Equals(KatLang.ListValueParameterBindingContext? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.ErrorContext? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  operator public static bool op_Equality(KatLang.ListValueParameterBindingContext? left, KatLang.ListValueParameterBindingContext? right)
+  operator public static bool op_Inequality(KatLang.ListValueParameterBindingContext? left, KatLang.ListValueParameterBindingContext? right)
+
+public sealed record KatLang.ListValueParameterPattern : KatLang.ParameterPattern, System.IEquatable<KatLang.ListValueParameterPattern>
+  ctor     public ListValueParameterPattern(System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items)
+  property public override System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Captures { get; }
+  property public override string DisplayName { get; }
+  property protected override System.Type EqualityContract { get; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items { get; init; }
+  method   public virtual KatLang.ListValueParameterPattern <Clone>$()
+  method   public void Deconstruct(out System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items)
+  method   public bool Equals(KatLang.ListValueParameterPattern? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.ParameterPattern? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.ListValueParameterPattern? left, KatLang.ListValueParameterPattern? right)
+  operator public static bool op_Inequality(KatLang.ListValueParameterPattern? left, KatLang.ListValueParameterPattern? right)
 
 public sealed record KatLang.LoopStateBindingContext : KatLang.ErrorContext, System.IEquatable<KatLang.LoopStateBindingContext>
   ctor     public LoopStateBindingContext(string LoopName, System.Collections.Generic.IReadOnlyList<string> StepParameterNames, int ActualStateValueCount)
@@ -1563,6 +1599,21 @@ public sealed record KatLang.Pattern.Bind : KatLang.Pattern, System.IEquatable<K
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.Pattern.Bind? left, KatLang.Pattern.Bind? right)
   operator public static bool op_Inequality(KatLang.Pattern.Bind? left, KatLang.Pattern.Bind? right)
+
+public sealed record KatLang.Pattern.ListValue : KatLang.Pattern, System.IEquatable<KatLang.Pattern.ListValue>
+  ctor     public ListValue(System.Collections.Generic.IReadOnlyList<KatLang.Pattern> Items)
+  property protected override System.Type EqualityContract { get; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Pattern> Items { get; init; }
+  method   public virtual KatLang.Pattern.ListValue <Clone>$()
+  method   public void Deconstruct(out System.Collections.Generic.IReadOnlyList<KatLang.Pattern> Items)
+  method   public bool Equals(KatLang.Pattern.ListValue? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Pattern? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Pattern.ListValue? left, KatLang.Pattern.ListValue? right)
+  operator public static bool op_Inequality(KatLang.Pattern.ListValue? left, KatLang.Pattern.ListValue? right)
 
 public sealed record KatLang.Pattern.LitBool : KatLang.Pattern, System.IEquatable<KatLang.Pattern.LitBool>
   ctor     public LitBool(bool Value)
@@ -2266,6 +2317,23 @@ public enum KatLang.TokenKind : int
 public enum KatLang.UnaryOp : int
   Minus = 0
   Not = 1
+
+public sealed record KatLang.UnpackingParameterPattern : KatLang.ParameterPattern, System.IEquatable<KatLang.UnpackingParameterPattern>
+  ctor     public UnpackingParameterPattern(System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items)
+  property public override System.Collections.Generic.IReadOnlyList<KatLang.ParameterDeclaration> Captures { get; }
+  property public override string DisplayName { get; }
+  property protected override System.Type EqualityContract { get; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items { get; init; }
+  method   public virtual KatLang.UnpackingParameterPattern <Clone>$()
+  method   public void Deconstruct(out System.Collections.Generic.IReadOnlyList<KatLang.ParameterPattern> Items)
+  method   public bool Equals(KatLang.UnpackingParameterPattern? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.ParameterPattern? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.UnpackingParameterPattern? left, KatLang.UnpackingParameterPattern? right)
+  operator public static bool op_Inequality(KatLang.UnpackingParameterPattern? left, KatLang.UnpackingParameterPattern? right)
 
 public sealed record KatLang.VariadicLoopStateBindingContext : KatLang.ErrorContext, System.IEquatable<KatLang.VariadicLoopStateBindingContext>
   ctor     public VariadicLoopStateBindingContext(string LoopName, System.Collections.Generic.IReadOnlyList<string> StepParameterNames, int ExpectedMinimumStateValueCount, int ActualStateValueCount)

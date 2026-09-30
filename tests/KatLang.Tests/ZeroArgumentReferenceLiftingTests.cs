@@ -302,7 +302,7 @@ public class ZeroArgumentReferenceLiftingTests
         { "", "if(Only == 1, Only, 0)" },
         { "", "(Only, Only)" },
         { "", "{ Only + Only }" },
-        { "Alias = Only", "Alias + Alias" },
+        { "Formula = Only + 0", "Formula + Formula" },
         { "Nested = { Inner = Only * 2 \n Inner + Only }", "Nested" },
         { "Twice(v) = v + v", "Twice(Only)" },
         { "Twice(v) = v + v", "Only.Twice" },
@@ -356,19 +356,23 @@ public class ZeroArgumentReferenceLiftingTests
     }
 
     /// <summary>
-    /// An alias row is a zero-parameter property whose body is the bare reference: nothing is
-    /// lifted into it, and the root that reads it gains nothing either.
+    /// An alias row is not a value position (FWD-02, superseding Q-03's alias clause): the lone
+    /// bare row names the callable itself, so the alias inherits Only's collecting signature and
+    /// calls Only with it re-spread. The root that reads the alias BARE gains nothing: the alias
+    /// accepts zero arguments too, so its name there is its own cached zero-argument value.
     /// </summary>
     [Fact]
-    public void TheFrontEnd_KeepsAnAliasOfAZeroArgumentCallableAZeroParameterProperty()
+    public void TheFrontEnd_MakesAnAliasOfAZeroArgumentCallableAnExactAlias()
     {
         var root = SourceProvenance.ParseValid("Only(*xs) = xs.count\nAlias = Only\nAlias + 1").Root;
         var alias = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, static p => p.Name == "Alias").Value);
 
-        Assert.Empty(alias.Parameters);
-        Assert.Equal("Only", Assert.IsType<Expr.Resolve>(Assert.Single(alias.Output)).Name);
+        Assert.True(alias.InheritsCalleeSignature);
+        Assert.Equal(["*xs"], alias.ParameterPatterns.Select(static pattern => pattern.DisplayName));
+        var call = Assert.Single(CallsOf("Only", alias));
+        Assert.Equal("xs", Assert.IsType<Expr.Param>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args)).Operand).Name);
         Assert.Empty(root.Parameters);
-        Assert.Empty(CallsOf("Only", root));
+        Assert.Empty(CallsOf("Alias", root));
     }
 
     // ── 3. Selection and formula chains ──────────────────────────────────────────────
@@ -423,8 +427,8 @@ public class ZeroArgumentReferenceLiftingTests
 
     /// <summary>
     /// A callable that requires a supplied argument still lifts and forwards: its parameters join
-    /// the referencing formula's signature, and each lifted reference is a CALL — fresh, like
-    /// every call. The rule never disables lifting; it only stops treating "declares a parameter"
+    /// the referencing formula's signature (a lone row is an exact alias, which inherits them), and
+    /// each lifted reference is a CALL — fresh, like every call. The rule never disables lifting; it only stops treating "declares a parameter"
     /// as "requires an argument".
     /// </summary>
     [Fact]
@@ -483,31 +487,41 @@ public class ZeroArgumentReferenceLiftingTests
     // ── 6. Aliases ───────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// An alias of a callable that accepts zero supplied arguments is a VALUE DEMAND, never a
-    /// manufactured forwarding callable (this supersedes the former "aliases of collecting
-    /// callables are collecting" rule): <c>Alias</c> is a zero-parameter property holding
-    /// <c>Cnt</c>'s cached value, so passing it arguments — directly or as a callback — is an
-    /// arity error. Forwarding is written explicitly, and the explicit forwarding alias keeps the
-    /// callback law.
+    /// An alias of a callable that accepts zero supplied arguments is an EXACT ALIAS (FWD-02,
+    /// decided September 29 2026, superseding Q-03's "an alias is a value demand" clause, which in
+    /// turn had superseded "aliases of collecting callables are collecting"): it keeps
+    /// <c>Cnt</c>'s collecting signature, so it takes arguments directly and as a callback exactly
+    /// like <c>Cnt</c> and like the written forwarding alias. Read BARE it is still a cached
+    /// zero-argument value (Q-03 applies to the alias as to any callable that works with no
+    /// arguments) — of its OWN binding: cache identity follows binding identity, so the alias is
+    /// evaluated once for its entry (its body is the explicit call <c>Only()</c>) and the callee's
+    /// bare reads keep theirs.
     /// </summary>
     [Fact]
-    public async Task AliasOfAZeroArgumentCallable_IsAValueDemand()
+    public async Task AliasOfAZeroArgumentCallable_KeepsItsSignature_AndIsReadWhenBare()
     {
         AssertOk(await OnEveryRouteAsync("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias, Alias(), Alias + 1"), "S[0, 0, 1]");
-        AssertFails(await OnEveryRouteAsync("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)"), KatLangErrorCode.ArityMismatch);
-        AssertFails(
-            await OnEveryRouteAsync("Cnt(*xs) = xs.count\nAlias = Cnt\nmap([1, 2], Alias)"),
-            KatLangErrorCode.ArityMismatch);
+        AssertOk(await OnEveryRouteAsync("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)"), "2");
+        AssertOk(await OnEveryRouteAsync("Cnt(*xs) = xs.count\nAlias = Cnt\nmap([1, 2], Alias)"), "L[1, 1]");
 
-        AssertOk(
-            await OnEveryRouteAsync(
-                "Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nApply(f, xs) = map(xs, f)\n"
-                + "Alias(1, 2, 3), map([1, 2], Alias), Apply(Alias, [(10, 7), 20])"),
-            "S[3, L[1, 1], L[1, 1]]");
+        foreach (var alias in new[] { "Alias = Cnt", "Alias(*xs) = Cnt(xs*)" })
+        {
+            AssertOk(
+                await OnEveryRouteAsync(
+                    $"Cnt(*xs) = xs.count\n{alias}\nApply(f, xs) = map(xs, f)\n"
+                    + "Alias(1, 2, 3), map([1, 2], Alias), Apply(Alias, [(10, 7), 20])"),
+                "S[3, L[1, 1], L[1, 1]]");
+        }
 
-        // The alias shares the callee's ONE evaluation instead of re-running it.
+        // One evaluation per BINDING: the alias's entry, then Only's own entry.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nAlias = Only\nAlias, Alias + Alias, Only"),
+            "S[1, 2, 2]",
+            "tick#1",
+            "tick#2");
+        // A FORMULA over Only is a value read of Only's entry: one evaluation in all.
+        AssertOk(
+            await OnEveryRouteAsync($"{Only}\nFormula = Only + 0\nFormula, Formula + Formula, Only"),
             "S[1, 2, 1]",
             "tick#1");
     }

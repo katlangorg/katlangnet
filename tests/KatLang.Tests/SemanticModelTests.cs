@@ -1659,6 +1659,74 @@ public class SemanticModelTests
         Assert.NotEqual(["x", "y"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
     }
 
+    // STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE (September 2026): a
+    // list pattern is editor-visible syntax like a sequence pattern — its binders are
+    // source-backed parameter declarations, references resolve to them, and every surface
+    // keeps the written kind of every level.
+
+    [Fact]
+    public void Build_ListPatternBinders_AreExplicitParameterDeclarationsWithResolvedReferences()
+    {
+        var model = BuildModel(
+            """
+            F([a, b]) = a + b
+            F([1, 2])
+            """);
+
+        var aDeclaration = Assert.Single(model.FindDeclarations("a"));
+        Assert.Equal(OccurrenceKind.ExplicitParameterDefinition, aDeclaration.Kind);
+        AssertSpan(aDeclaration.Span, 1, 4, 1, 5);
+        var bDeclaration = Assert.Single(model.FindDeclarations("b"));
+        AssertSpan(bDeclaration.Span, 1, 7, 1, 8);
+
+        var aReference = ResolutionAt(model, 1, 13);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, aReference.Classification);
+        Assert.Equal(aDeclaration, aReference.ResolvedDeclaration);
+        var bReference = ResolutionAt(model, 1, 17);
+        Assert.Equal(bDeclaration, bReference.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_ListPatternInAFamily_DeclaresConditionalBindersPerBranch()
+    {
+        var model = BuildModel(
+            """
+            Kind([]) = 0
+            Kind([x]) = x
+            Kind(xs) = 2
+            Kind([5])
+            """);
+
+        var xDeclaration = Assert.Single(model.FindDeclarations("x"));
+        Assert.Equal(OccurrenceKind.ConditionalBinderDefinition, xDeclaration.Kind);
+        AssertSpan(xDeclaration.Span, 2, 7, 2, 8);
+        var xReference = ResolutionAt(model, 2, 13);
+        Assert.Equal(IdentifierClassification.ConditionalBinderReference, xReference.Classification);
+        Assert.Equal(xDeclaration, xReference.ResolvedDeclaration);
+
+        var property = SingleProperty(model, "Kind");
+        Assert.Equal(PropertyShape.Conditional, property.Shape);
+        Assert.Equal(
+            ["Kind([])", "Kind([x])", "Kind(xs)"],
+            property.ConditionalBranches.Select(branch => branch.HeadText).ToList());
+        Assert.Equal(["x"], property.ConditionalBranches[1].BinderNames.ToList());
+        Assert.Empty(property.ConditionalBranches[0].BinderNames);
+    }
+
+    [Theory]
+    [InlineData("F([x, y]) = x + y", "F", "F([x, y])", "[x, y]")]
+    [InlineData("F([*xs]) = xs", "F", "F([*xs])", "[*xs]")]
+    [InlineData("F([]) = 0", "F", "F([])", "[]")]
+    [InlineData("F(([x, y], z)) = x + y + z", "F", "F(([x, y], z))", "([x, y], z)")]
+    [InlineData("G([(x, y), z]) = x + y + z", "G", "G([(x, y), z])", "[(x, y), z]")]
+    public void Build_OrdinaryPropertyInfo_DisplaysListPatternSignaturesInTheirWrittenKind(
+        string source, string name, string signature, string parameterDisplay)
+    {
+        var property = SingleProperty(BuildModel(source), name);
+        Assert.Equal(signature, property.DisplaySignature);
+        Assert.Equal([parameterDisplay], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+    }
+
     [Fact]
     public void Build_OrdinaryPropertyInfo_DisplaysSequenceValueCollectingExplicitParameterPatternSignature()
     {

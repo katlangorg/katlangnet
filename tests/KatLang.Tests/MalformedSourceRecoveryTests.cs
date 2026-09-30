@@ -193,7 +193,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     // ── Clause heads confine their recovery ─────────────────────────────────
 
     [Theory]
-    [InlineData("F([a, b]) = a + b\nNext = 1\nNext", "[UnexpectedToken] 1:3-1:4 Unexpected '[' in a pattern.")]
+    [InlineData("F((a)) = a\nNext = 1\nNext", "[SingletonSequencePattern] 1:3-1:6 " + Parser.SingletonSequencePatternDiagnostic)]
     [InlineData("F({a}) = a\nNext = 1\nNext", "[UnexpectedToken] 1:3-1:4 Unexpected '{' in a pattern.")]
     [InlineData("F() = 1\nNext = 1\nNext", "[UnexpectedToken] 1:3-1:4 Unexpected ')' in a pattern.")]
     [InlineData("F(x +) = x\nNext = 1\nNext", "[UnexpectedToken] 1:5-1:6 Expected ')' but found '+'.")]
@@ -753,7 +753,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
         "(Probe(), 2]\nX = Probe()\nX",
         "X = F((Probe(), 2], 3)\nF(a, b) = a\nX",
         "X = Probe() +\nGood = Probe()\nGood",
-        "F([a]) = Probe()\nF(1)",
+        "F((a)) = Probe()\nF(1)",
         "F(x +) = Probe()\nF(y) = y\nF(1)",
         "F(*a, *b) = Probe()\nF(1)",
         "X = !Probe()\nX",

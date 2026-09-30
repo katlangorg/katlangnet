@@ -40,7 +40,11 @@ public static partial class Evaluator
             // A Boolean literal pattern matches only a Boolean value (never the number
             // it would once have encoded).
             Pattern.LitBool(var b) => result is Result.Bool(var bv) && bv == b,
-            Pattern.SequenceValue(var items) => MatchSequenceValuePattern(items, result, bindings),
+            // STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE: a sequence
+            // pattern matches only a sequence value, a list pattern only a list value, each
+            // of exactly its length (Lean: `patternStructureMembers?`).
+            Pattern.SequenceValue(var items) => MatchStructurePattern(items, result.SequencePatternItems(), bindings),
+            Pattern.ListValue(var items) => MatchStructurePattern(items, result.ListPatternItems(), bindings),
         };
 
     private static bool MatchBindPattern(string name, Result result, List<(string Name, Result Value)> bindings)
@@ -53,31 +57,24 @@ public static partial class Evaluator
         return true;
     }
 
-    private static bool MatchSequenceValuePattern(
+    /// <summary>
+    /// Matches a structural pattern's items against the elements its value supplied
+    /// (<paramref name="members"/> is <c>null</c> when the value is not of the pattern's kind).
+    /// The lengths must be equal: there is no singleton adaptation — a one-item sequence
+    /// pattern is invalid, and no value is a one-item structure of another kind.
+    /// Lean: <c>matchStructureInto</c> over <c>patternStructureMembers?</c>.
+    /// </summary>
+    private static bool MatchStructurePattern(
         IReadOnlyList<Pattern> items,
-        Result result,
+        IReadOnlyList<Result>? members,
         List<(string Name, Result Value)> bindings)
     {
-        // Result.normalize collapses sequenceValue [x] -> x, so a
-        // singleton sequence-value pattern (e.g. "(b)") must also
-        // match a non-sequence-value result by treating it as if it
-        // were sequenceValue [result].
-        if (result is Result.SequenceValue(var rs))
-        {
-            if (rs.Count != items.Count) return false;
-        }
-        else if (items.Count == 1)
-        {
-            rs = [result];
-        }
-        else
-        {
+        if (members is null || members.Count != items.Count)
             return false;
-        }
 
         for (var i = 0; i < items.Count; i++)
         {
-            if (!MatchPattern(items[i], rs[i], bindings))
+            if (!MatchPattern(items[i], members[i], bindings))
                 return false;
         }
         return true;
@@ -150,7 +147,8 @@ public static partial class Evaluator
             Pattern.LitString(var s) => result.Value is Result.Str(var sv)
                 && string.Equals(sv, s, StringComparison.Ordinal),
             Pattern.LitBool(var b) => result.Value is Result.Bool(var bv) && bv == b,
-            Pattern.SequenceValue(var items) => MatchCountedSequenceValuePattern(items, result, bindings),
+            Pattern.SequenceValue(var items) => MatchCountedStructurePattern(items, result.Value.SequencePatternItems(), bindings),
+            Pattern.ListValue(var items) => MatchCountedStructurePattern(items, result.Value.ListPatternItems(), bindings),
         };
 
     private static bool MatchCountedBindPattern(
@@ -166,27 +164,14 @@ public static partial class Evaluator
         return true;
     }
 
-    private static bool MatchCountedSequenceValuePattern(
+    /// <summary>Counted twin of <see cref="MatchStructurePattern"/> (Lean: <c>matchCountedStructureInto</c>).</summary>
+    private static bool MatchCountedStructurePattern(
         IReadOnlyList<Pattern> items,
-        CountedResult result,
+        IReadOnlyList<Result>? members,
         List<(string Name, CountedResult Value)> bindings)
     {
-        IReadOnlyList<Result> members;
-        if (result.Value is Result.SequenceValue(var groupedMembers))
-        {
-            if (groupedMembers.Count != items.Count)
-                return false;
-
-            members = groupedMembers;
-        }
-        else if (items.Count == 1)
-        {
-            members = [result.Value];
-        }
-        else
-        {
+        if (members is null || members.Count != items.Count)
             return false;
-        }
 
         for (var i = 0; i < items.Count; i++)
         {
@@ -334,29 +319,45 @@ public static partial class Evaluator
             case CaptureParameterPattern { Kind: ParameterKind.Collecting }:
                 return new EvalError.BadArity();
 
-            case SequenceValueParameterPattern group:
+            case SequenceValueParameterPattern or ListValueParameterPattern:
                 {
-                    // The callback value opens through the SAME nested-pattern rule
-                    // as the ordinary binder (SequenceValuePatternItems): a sequence
-                    // or list value opens one level, and any other value is a
-                    // one-item supply at every level and for every group size, so
-                    // `map([7], P)` with `P((x, *rest))` binds `x = 7, rest = []`
-                    // exactly like `P(7)`, and `P((x, y))` rejects a scalar with the
-                    // nested group's ordinary ArityMismatch(2, 1) in both
-                    // (September 2026, S3; the callback path formerly fell back only
-                    // for one-item groups). Lean: bindCountedParameterPattern.
+                    // The callback value opens through the SAME kind-specific rule as the
+                    // ordinary binder (StructuralPatternItems): a sequence pattern opens a
+                    // SEQUENCE value only and a list pattern a LIST value only; the other
+                    // kind or a scalar is the pattern's kind mismatch in both, so
+                    // `map([7], P)` with `P((x, *rest))` fails exactly like `P(7)`
+                    // (September 2026; S3 made the two binders one rule).
+                    // Lean: bindCountedParameterPattern.
                     //
                     // The pattern's explicit structure opens exactly this one
                     // boundary; a nested collecting binding collects the opened
                     // items exactly.
-                    var nestedInputs = SequenceValuePatternItems(input.Value)
+                    if (StructuralPatternItems(pattern, input.Value) is not { } elements)
+                        return StructuralPatternKindMismatch(pattern, input.Value);
+
+                    var nestedInputs = elements
                         .Select(static item => new CountedResult(item, item.ValueCount()))
                         .ToList();
                     return BindCountedParameterPatternList(
-                        group.Items,
+                        ParameterPattern.StructuralItems(pattern)!,
                         nestedInputs,
                         ctx,
-                        (required, actual) => SequenceValuePatternArityMismatch(group, required, actual));
+                        (required, actual) => StructuralPatternArityMismatch(pattern, required, actual));
+                }
+
+            case UnpackingParameterPattern unpacking:
+                {
+                    // The deconstruction unpacking receiver opens ONE level of either kind
+                    // and treats any other value as one item, exactly as the ordinary binder
+                    // does. Lean: the `.unpacking` arm of bindCountedParameterPattern.
+                    var nestedInputs = input.Value.SpreadItems()
+                        .Select(static item => new CountedResult(item, item.ValueCount()))
+                        .ToList();
+                    return BindCountedParameterPatternList(
+                        unpacking.Items,
+                        nestedInputs,
+                        ctx,
+                        static (required, actual) => new EvalError.ArityMismatch(required, actual));
                 }
 
             default:

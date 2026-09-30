@@ -178,7 +178,8 @@ counterexample in the extraction, while `CoreTests.lean` and
 `openLoneStructure` models a common one-boundary transformation applied after
 a receiver has selected one structured value: in the full model it appears as
 the deconstruction receiver's opening (`(Result.structureItems? value).getD
-[value]` inside the sequence-value parameter pattern binder) and, with the
+[value]`, which is `Result.spreadItems`, inside the unpacking receiver
+`ParameterPattern.unpacking`) and, with the
 same one-boundary behaviour, as the collection builtins' POST-BINDING view of
 the bound `collection` argument (`builtinCollectionItems`). The extraction
 unifies the two as one operation; that does **not** mean assignment
@@ -461,9 +462,10 @@ in `KatLang.lean`, including the subtle points:
   its supply as it is.
 * `structureItems?` mirrors the authoritative `Result.structureItems?`, and
   `openLoneStructure [v]` is definitionally
-  `(structureItems? v).getD [v]` — the exact shape of the full model's
-  deconstruction binder
-  (`openLoneStructure_single_eq_structureItems?_getD`).
+  `(structureItems? v).getD [v]`
+  (`openLoneStructure_single_eq_structureItems?_getD`) — which the full model
+  proves equal to `Result.spreadItems v` (`spreadItems_extends_structureItems`),
+  the view its deconstruction receiver opens with.
 * Repeated spread is capture-mediated: the authoritative evaluator applies
   each extra written star by re-capturing the previous star's supply
   (`Result.normalize ∘ Result.sequenceValue`) and re-spreading

@@ -1164,7 +1164,10 @@ public class AstStructuralDepthTests
             [nameof(OutputBundle)] = ["Item"],
             ["Call"] = ["Function", "Args"],
             ["SequenceValue"] = ["Items"],
+            ["ListValue"] = ["Items"],
             ["SequenceValueParameterPattern"] = ["Items"],
+            ["ListValueParameterPattern"] = ["Items"],
+            ["UnpackingParameterPattern"] = ["Items"],
             [nameof(Property)] = ["Value"],
             [nameof(CondBranch)] = ["Pattern", "Body"],
             [nameof(ScopeCtx)] = ["Parent", "Opens", "Properties"],
@@ -1421,8 +1424,8 @@ public class AstStructuralDepthTests
         // turns "a new variant was added" into a failing test here, so their child
         // enumeration cannot silently fall behind.
         string[] knownAlgorithm = ["User", "Builtin", "Conditional"];
-        string[] knownPattern = ["Bind", "LitBool", "LitInt", "LitString", "SequenceValue"];
-        string[] knownParameterPattern = ["CaptureParameterPattern", "SequenceValueParameterPattern"];
+        string[] knownPattern = ["Bind", "ListValue", "LitBool", "LitInt", "LitString", "SequenceValue"];
+        string[] knownParameterPattern = ["CaptureParameterPattern", "ListValueParameterPattern", "SequenceValueParameterPattern", "UnpackingParameterPattern"];
 
         AssertVariants(typeof(Algorithm), knownAlgorithm);
         AssertVariants(typeof(Pattern), knownPattern);
@@ -1448,7 +1451,7 @@ public class AstStructuralDepthTests
     public void Preflight_TraversesEveryExprVariantTree()
     {
         // One tree containing every Expr variant, every Algorithm variant, every
-        // Pattern variant, and both ParameterPattern variants; the preflight must
+        // Pattern variant, and every ParameterPattern variant; the preflight must
         // accept it (proving each switch arm enumerates real children) and reject it
         // under a tiny limit (proving each variant's children are actually followed).
         var conditional = new Algorithm.Conditional(
@@ -1457,11 +1460,20 @@ public class AstStructuralDepthTests
             Branches:
             [
                 new CondBranch(
-                    new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.LitString("s"), new Pattern.Bind("x")]),
+                    new Pattern.SequenceValue([
+                        new Pattern.LitInt(1),
+                        new Pattern.LitString("s"),
+                        new Pattern.Bind("x"),
+                        new Pattern.ListValue([new Pattern.LitBool(true)]),
+                    ]),
                     new Algorithm.User(null, [], [], [], [new Expr.Param("x")])),
             ]);
         var parameterized = new Algorithm.User(null, [], [], [], [new Expr.Num(1)])
-            .WithParameterPatterns([new SequenceValueParameterPattern([new CaptureParameterPattern("q")])]);
+            .WithParameterPatterns([
+                new SequenceValueParameterPattern([new CaptureParameterPattern("q"), new CaptureParameterPattern("r")]),
+                new ListValueParameterPattern([new CaptureParameterPattern("s")]),
+                new UnpackingParameterPattern([new CaptureParameterPattern("t"), new CaptureParameterPattern("u")]),
+            ]);
         var everything = new Expr.AlgorithmExpr(new Algorithm.User(
             new ScopeCtx(null, [], []),
             [],
@@ -2429,8 +2441,10 @@ public class AstStructuralDepthProcessTests
             AssertNestingRejected(Rep("-1 ^ ", 192) + "1");
             AssertNestingRejected(Rep("-1 ^ ", 5_000) + "1");
 
-            // Clause-head patterns: 1 unit/level.
-            AssertBoundary(n => "F" + Rep("(", n) + "x" + Rep(")", n) + " = x\nF(1)", 384);
+            // Clause-head patterns: 1 unit/level, for nested sequence patterns (each a pair:
+            // a one-item sequence pattern is invalid) and nested list patterns alike.
+            AssertBoundary(n => "F(" + Rep("(", n - 1) + "x" + Rep(", y)", n - 1) + ") = x\nF(1)", 384);
+            AssertBoundary(n => "F(" + Rep("[", n - 1) + "x" + Rep("]", n - 1) + ") = x\nF(1)", 384);
 
             // Mixed alternating containers: 11 units per ([{ cycle — the composed
             // shape a per-mechanism budget would wrongly admit.

@@ -58,9 +58,10 @@ public class PatternBindingErrorPrecedenceTests
     public static TheoryData<string, string> OrdinaryCalls => new()
     {
         // A later nested failure outranks an earlier unequal repeated value.
-        { "P((x, x, (a, b))) = a\nP((1, 2, 7))", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "P((x, x, (a, b))) = a\nP((1, 2, 7))", PairKindMismatch },
         { "P((x, x, (a, b))) = a\nP((1, 2, (7, 8, 9)))", "ArityMismatch(2, 3) in [(a, b)]" },
-        { "P(x, x, (a, b)) = a\nP(1, 2, 7)", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "P(x, x, (a, b)) = a\nP(1, 2, 7)", PairKindMismatch },
+        { "P(x, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "ArityMismatch(2, 3) in [(a, b)]" },
         // ...and so does an argument's retained value error (div0, not arity).
         { "P(x, x, (a, b)) = a\nP(1, 2, Bad)", "DivByZero in []" },
         // A conflict INSIDE a nested group is part of binding that group.
@@ -69,7 +70,8 @@ public class PatternBindingErrorPrecedenceTests
         { "P(x, x, *r, (a, b)) = a\nP(1, 2, 7)", "BadArity in []" },
         { "P(x, x, *r, (a, b)) = a\nP(1, 2, Bad)", "BadArity in []" },
         // ...the suffix binds before the prefix/suffix merge...
-        { "P(x, *r, x, (a, b)) = a\nP(1, 2, 7)", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "P(x, *r, x, (a, b)) = a\nP(1, 2, 7)", PairKindMismatch },
+        { "P(x, *r, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "ArityMismatch(2, 3) in [(a, b)]" },
         // ...and the collector's values are collected before it.
         { "P(x, *r, x) = x\nP(1, Bad, 2)", "DivByZero in []" },
         { "P(x, *r, x) = x\nP(1, Inc, 2)", "TypeMismatch(Collecting parameter `*r` collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected.) in []" },
@@ -103,6 +105,13 @@ public class PatternBindingErrorPrecedenceTests
     /// <summary>Two callables with the equal zero-argument value 5.</summary>
     private const string Distinct = "A = 5\nB = 5 + 0\n";
 
+    /// <summary>
+    /// The scalar 7 given to the sequence pattern <c>(a, b)</c>: the pattern's KIND mismatch
+    /// (structural patterns open only their own kind; a scalar is never a one-item supply).
+    /// </summary>
+    private const string PairKindMismatch =
+        "TypeMismatch(sequence pattern `(a, b)` expects a sequence value, but received numeric value 7) in []";
+
     private const string Identity = "TypeMismatch(Repeated bind equality requires the same callable identity) in []";
 
     /// <summary><c>Inc</c> passed bare: its own value demand, the arity rejection of <c>Inc(y)</c>.</summary>
@@ -121,12 +130,13 @@ public class PatternBindingErrorPrecedenceTests
     public static TheoryData<string, string> Callbacks => new()
     {
         { "P((x, x, (a, b))) = [a]\nmap([(1, 2, (7, 8, 9))], P)", "ArityMismatch(2, 3) in [(a, b)]" },
-        { "P((x, x, (a, b))) = [a]\n[(1, 2, 7)].map(P)", "ArityMismatch(2, 1) in [(a, b)]" },
-        { "P((x, x, (a, b))) = true\nfilter([(1, 2, 7)], P)", "ArityMismatch(2, 1) in [(a, b)]" },
-        { "R((x, x, (a, b)), acc) = acc\nreduce([(1, 2, 7)], R, 0)", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "P((x, x, (a, b))) = [a]\n[(1, 2, 7)].map(P)", PairKindMismatch },
+        { "P((x, x, (a, b))) = true\nfilter([(1, 2, 7)], P)", PairKindMismatch },
+        { "R((x, x, (a, b)), acc) = acc\nreduce([(1, 2, 7)], R, 0)", PairKindMismatch },
         { "P((x, x), (a, b)) = [a]\nreduce([(1, 2)], P, 7)", "BadArity in []" },
         // The counted collecting list: prefix, then suffix, then the cross merge.
-        { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, 7)], P)", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, 7)], P)", PairKindMismatch },
+        { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, (7, 8, 9))], P)", "ArityMismatch(2, 3) in [(a, b)]" },
         { "P((x, x, *m, (a, b))) = [a]\nmap([(1, 2, 9, 7)], P)", "BadArity in []" },
         { "P((x, *m, x)) = [x]\nmap([(1, 9, 2)], P)", "BadArity in []" },
         // The reducer is an ordinary two-argument callback: a flat reducer needing three
@@ -134,7 +144,7 @@ public class PatternBindingErrorPrecedenceTests
         // explicit accumulator pattern binds the accumulator's items through the same
         // order: the suffix (a, b) fails before the unequal x is merged.
         { "R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))", "ArityMismatch(3, 2) in []" },
-        { "R(e, (x, *m, x, (a, b))) = [a]\nreduce([1], R, (9, 3, 2, 7))", "ArityMismatch(2, 1) in [(a, b)]" },
+        { "R(e, (x, *m, x, (a, b))) = [a]\nreduce([1], R, (9, 3, 2, 7))", PairKindMismatch },
     };
 
     [Theory]
@@ -153,7 +163,10 @@ public class PatternBindingErrorPrecedenceTests
         // state slot outranks the unequal x of the first two.
         var result = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, 7)");
         Assert.True(result.IsError);
-        Assert.Equal("ArityMismatch(2, 1) in [(a, b)]", BindingReason(result.Error));
+        Assert.Equal(PairKindMismatch, BindingReason(result.Error));
+        var arity = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, (7, 8, 9))");
+        Assert.True(arity.IsError);
+        Assert.Equal("ArityMismatch(2, 3) in [(a, b)]", BindingReason(arity.Error));
 
         AssertDisplay("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 1, (2, 3))", "1\n1\n(2, 3)");
     }
@@ -163,11 +176,11 @@ public class PatternBindingErrorPrecedenceTests
     {
         // The nested failure still renders against the WRITTEN group, and the call/callback
         // frames around it are unchanged.
-        var direct = KatLangError.FromEvalError(Run("P((x, x, (a, b))) = a\nP((1, 2, 7))").Error);
-        Assert.Equal("Sequence-value parameter pattern `(a, b)` expects 2 values, but received 1 value.", direct.Message);
+        var direct = KatLangError.FromEvalError(Run("P((x, x, (a, b))) = a\nP((1, 2, (7, 8, 9)))").Error);
+        Assert.Equal("Sequence pattern `(a, b)` expects 2 elements, but received 3 elements.", direct.Message);
         Assert.NotNull(direct.Span);
 
-        var callback = Run("P((x, x, (a, b))) = [a]\nmap([(1, 2, 7)], P)");
+        var callback = Run("P((x, x, (a, b))) = [a]\nmap([(1, 2, (7, 8, 9))], P)");
         var frames = new List<string>();
         for (var current = callback.Error; current is EvalError.WithContext context; current = context.Inner)
             frames.Add(context.Context);
@@ -213,7 +226,7 @@ public class PatternBindingErrorPrecedenceTests
         var result = Evaluator.RunCounted(
             new Expr.AlgorithmExpr(parsed.Root), new RunScopedZeroArgPropertyResultCache(), hostOperations: operations);
         Assert.True(result.IsError);
-        Assert.Equal("ArityMismatch(2, 1) in [(a, b)]", BindingReason(result.Error));
+        Assert.Equal(PairKindMismatch, BindingReason(result.Error));
         Assert.Equal([(Decimal128)1, 2, 7], ticks);
     }
 
@@ -303,10 +316,11 @@ public class PatternBindingErrorPrecedenceTests
     public void ThreeOccurrenceName_IsDecidedOnlyOnceEveryOccurrenceIsBound(string program)
     {
         // Which occurrence holds the odd value no longer decides whether the later (a, b)
-        // failure is reported first: the name is decided once, after the suffix has bound.
+        // failure (the scalar 7 is its kind mismatch) is reported first: the name is decided
+        // once, after the suffix has bound.
         var result = Run(program);
         Assert.True(result.IsError);
-        Assert.Equal("ArityMismatch(2, 1) in [(a, b)]", BindingReason(result.Error));
+        Assert.Equal(PairKindMismatch, BindingReason(result.Error));
     }
 
     [Theory]
@@ -579,7 +593,11 @@ public class PatternBindingErrorPrecedenceTests
             Output: [new Expr.ListLiteral([new Expr.Param("a")])]);
 
         Assert.Equal("ArityMismatch(1, 0) in [(*a, *b)]", BindingReason(RunHostMap(callee, new Expr.EmptySequence(0)).Error));
-        Assert.Equal("BadArity in []", BindingReason(RunHostMap(callee, new Expr.Num(7)).Error));
+        Assert.Equal("BadArity in []", BindingReason(RunHostMap(callee, new Expr.Capture([new Expr.Num(1), new Expr.Num(2)])).Error));
+        // A scalar is the sequence pattern's kind mismatch, before any of its items bind.
+        Assert.Equal(
+            "TypeMismatch(sequence pattern `(*a, *b)` expects a sequence value, but received numeric value 7) in []",
+            BindingReason(RunHostMap(callee, new Expr.Num(7)).Error));
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

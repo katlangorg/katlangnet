@@ -161,6 +161,8 @@ internal static class LoopDiagnosticParityAssertions
                 $"DeconstructionBinding[{TextList(targets)}|{hasCollecting}]",
             SequenceValueParameterBindingContext(var patternDisplayName, var hasCollectingItem) =>
                 $"SequenceValueParameterBinding[{Text(patternDisplayName)}|{hasCollectingItem}]",
+            ListValueParameterBindingContext(var patternDisplayName, var hasCollectingItem) =>
+                $"ListValueParameterBinding[{Text(patternDisplayName)}|{hasCollectingItem}]",
             OpenResolutionContext(var openDescription) => $"Open[{Text(openDescription)}]",
             ImplicitParameterContext(var paramNames, var providedCount) =>
                 $"ImplicitParameter[{TextList(paramNames)}|{providedCount}]",
@@ -250,6 +252,8 @@ internal static class LoopDiagnosticParityAssertions
                 + $"|collectSpan={SpanText(capture.CollectMarkerSpan)}"
                 + $"|provenance={DescribeProvenance(capture.InferredProvenance)}]",
             SequenceValueParameterPattern sequence => $"Sequence[{DescribePatterns(sequence.Items)}]",
+            ListValueParameterPattern list => $"List[{DescribePatterns(list.Items)}]",
+            UnpackingParameterPattern unpacking => $"Unpacking[{DescribePatterns(unpacking.Items)}]",
         };
 
     private static string DescribeProvenances(IReadOnlyList<ImplicitParameterProvenance>? provenances)

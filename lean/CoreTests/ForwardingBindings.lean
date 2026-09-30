@@ -58,8 +58,11 @@ def chainPv01 : List OwnerLevel :=
 #guard forwardingSource [fwdLevel [] [], fwdLevel ["n"] ["G"], fwdLevel [] ["A", "F"], fwdPrelude] true "n"
   == .capturedParameter 1
 
--- A CLOSED body (`F(x) = A` inside G, whose rows use `y`) forwards the captured `y`
--- too; with no parameter binding of the name it forwards nothing.
+-- A CLOSED body whose FORMULA uses `A` (`F(x) = A + 0` inside G, whose rows use `y`)
+-- forwards the captured `y` too; with no parameter binding of the name it forwards nothing.
+-- (A lone row `F(x) = A` is not a formula: it is bare forwarding, FWD-02, which reuses the
+-- same bindings by name — A's `y` from the enclosing `y`, never F's `x` renamed — and adds
+-- none: `bareForwardingArgument`, `CoreTests/AliasForwarding.lean`.)
 #guard forwardingSource [fwdLevel ["x"] [], fwdLevel ["y"] ["F"], fwdLevel [] ["A", "G"], fwdPrelude] false "y"
   == .capturedParameter 1
 #guard forwardingSource [fwdLevel ["m", "d", "t"] [], fwdLevel [] ["Speed", "KE"], fwdPrelude] false "distance"

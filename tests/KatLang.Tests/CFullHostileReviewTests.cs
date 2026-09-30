@@ -110,8 +110,9 @@ public class CFullHostileReviewTests
         AssertValue(await AcrossStrategies(defs + $"Forward(Alias, {initial})"), expected);
         AssertValue(await AcrossStrategies(defs + $"[7, 8].reduce(R, {initial})"), expected);
 
-        // Explicit structure, on the accumulator side alone, opens exactly one level.
-        AssertValue(await AcrossStrategies($"R(x, (*acc)) = [acc*, x]\nreduce([7, 8], R, [{initial}])"), $"[{initial}, 7, 8]");
+        // Explicit structure — a LIST pattern on the list accumulator — on the accumulator side
+        // alone, opens exactly one level.
+        AssertValue(await AcrossStrategies($"R(x, [*acc]) = [acc*, x]\nreduce([7, 8], R, [{initial}])"), $"[{initial}, 7, 8]");
     }
 
     [Theory]
@@ -156,8 +157,8 @@ public class CFullHostileReviewTests
     {
         var body = operation == "filter" ? "Observe(xs).count == 1" : "Observe(xs)";
         var call = operation == "reduce" ? "reduce(xs, f, [])" : $"{operation}(xs, f)";
-        // The forwarding alias is written: since Q-03 a bare `Alias = F` would be a value
-        // demand of the zero-argument-accepting `F`, not a forwarding callable.
+        // The forwarding alias is written out (the bare exact alias `Alias = F` is the same
+        // callable, FWD-02).
         var source = $"F(*xs) = {body}\nAlias(*xs) = F(xs*)\nApply(f, xs) = {call}\nForward(g, xs) = Apply(g, xs)\nForward(Alias, [(1, 2), (), [], [1, 2]])";
         var syncSeen = new List<Result>();
         var syncOps = HostOperations.Create(HostOperation.Create("Observe", (args, _) =>

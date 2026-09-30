@@ -771,7 +771,7 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_ConditionalBranch_AllBindersBound_NoDiagnostic()
     {
-        var diags = ParseAndDetectDiagnostics("F((a), b) = a + b");
+        var diags = ParseAndDetectDiagnostics("F([a], b) = a + b");
 
         Assert.Empty(diags);
     }

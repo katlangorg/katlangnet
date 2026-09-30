@@ -201,25 +201,35 @@ public class TutorialSemanticContractTests
     }
 
     [Fact]
-    public void SequenceValuePattern_OpensLoneListsInOrdinaryDefinitions_ButMatchesSequenceValuesOnlyInFamilies()
+    public void StructuralPatterns_MatchOnlyTheirOwnKind_InOrdinaryDefinitionsAndFamiliesAlike()
     {
-        // Ordinary definition: one clause, no family — an explicit sequence-value parameter pattern.
-        var pairSum = PropertyOf(SourceProvenance.ParseValid("PairSum((x, y)) = x + y\nPairSum([2, 3])").Root, "PairSum").Value;
+        // Ordinary definition: one clause, no family — an explicit sequence parameter pattern.
+        var pairSum = PropertyOf(SourceProvenance.ParseValid("PairSum((x, y)) = x + y\nPairSum((2, 3))").Root, "PairSum").Value;
         Assert.Empty(pairSum.Branches);
         var pairSumWritten = Assert.IsType<Algorithm.User>(pairSum);
         Assert.True(pairSumWritten.HasExplicitParameterList);
-        Assert.Single(pairSumWritten.ParameterPatterns);
-        Assert.Equal("5\n5", Display("PairSum((x, y)) = x + y\nPairSum((2, 3))\nPairSum([2, 3])"));
-        RunFailure("PairSum((x, y)) = x + y\nPairSum([1, 2, 3])", KatLangErrorCode.ArityMismatch);
-        RunFailure("PairSum((x, y)) = x + y\nPairSum(7)", KatLangErrorCode.ArityMismatch);
+        Assert.IsType<SequenceValueParameterPattern>(Assert.Single(pairSumWritten.ParameterPatterns));
+        Assert.Equal("5", Display("PairSum((x, y)) = x + y\nPairSum((2, 3))"));
+        // The sequence pattern opens a SEQUENCE only: a list or a scalar is its kind mismatch,
+        // a sequence of the wrong length its arity mismatch.
+        RunFailure("PairSum((x, y)) = x + y\nPairSum([2, 3])", KatLangErrorCode.TypeMismatch);
+        RunFailure("PairSum((x, y)) = x + y\nPairSum(7)", KatLangErrorCode.TypeMismatch);
+        RunFailure("PairSum((x, y)) = x + y\nPairSum((1, 2, 3))", KatLangErrorCode.ArityMismatch);
+        // The list pattern is the list twin, and a single list clause is an ordinary callable too.
+        var listSum = PropertyOf(SourceProvenance.ParseValid("ListSum([x, y]) = x + y\nListSum([2, 3])").Root, "ListSum").Value;
+        Assert.IsType<ListValueParameterPattern>(Assert.Single(Assert.IsType<Algorithm.User>(listSum).ParameterPatterns));
+        Assert.Equal("5", Display("ListSum([x, y]) = x + y\nListSum([2, 3])"));
+        RunFailure("ListSum([x, y]) = x + y\nListSum((2, 3))", KatLangErrorCode.TypeMismatch);
 
-        // Clause family: the same written pattern matches sequence values only.
+        // Clause family: the same kind law, where a mismatch only rejects the clause.
         var family = PropertyOf(SourceProvenance.ParseValid("F((x, y)) = x + y\nF(z) = 0\n\nF([2, 3])").Root, "F").Value;
         Assert.Equal(2, family.Branches.Count);
         Assert.Equal("5\n0", Display("F((x, y)) = x + y\nF(z) = 0\n\nF((2, 3))\nF([2, 3])"));
         RunFailure("F((x, y)) = x + y\nF((x, y, z)) = 0\n\nF([2, 3])", KatLangErrorCode.NoMatchingBranch);
-        // The singleton pattern matches any ONE argument whole, never opening it.
-        Assert.Equal("[2, 3]", Display("F((x)) = x\nF(z) = 0\n\nF([2, 3])"));
+        // The one-element list pattern matches a one-element list only; a plain binder takes
+        // any ONE argument whole, never opening it.
+        Assert.Equal("7\n0", Display("F([x]) = x\nF(z) = 0\n\nF([7])\nF([2, 3])"));
+        Assert.Equal("[2, 3]", Display("F(0) = 0\nF(z) = z\n\nF([2, 3])"));
 
         // A literal keeps even a single definition a clause, and the tutorial's shape-matching
         // family likewise refuses the list spelling of a shape it accepts as a sequence.
@@ -379,15 +389,15 @@ public class TutorialSemanticContractTests
         Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(Assert.IsType<Expr.Call>(sum.Right).Args)).Name);
         Assert.Equal("10", Display("F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nH(3)"));
 
-        // "in the same way `Some = Common` means `Some(x) = Common(x, x)`: `Some` takes one input and
-        // hands it to both places where `Common` names `x`, so `Some` is called with one argument".
-        var some = Assert.IsType<Algorithm.User>(
-            PropertyOf(SourceProvenance.ParseValid(RepeatedNameFormula + "Some = Common\n\nSome(7)").Root, "Some").Value);
-        Assert.Equal(["x"], some.Params);
-        var call = Assert.IsType<Expr.Call>(Assert.Single(some.Output));
+        // "in the same way `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2`: `Twice` takes one
+        // input and hands it to both places where `Common` names `x`, so `Twice` is called with one argument".
+        var twice = Assert.IsType<Algorithm.User>(
+            PropertyOf(SourceProvenance.ParseValid(RepeatedNameFormula + "Twice = Common * 2\n\nTwice(7)").Root, "Twice").Value);
+        Assert.Equal(["x"], twice.Params);
+        var call = Assert.IsType<Expr.Call>(Assert.IsType<Expr.Binary>(Assert.Single(twice.Output)).Left);
         Assert.Equal(["x", "x"], call.Args.Select(static argument => Assert.IsType<Expr.Param>(argument).Name));
-        Assert.Equal("7", Display(RepeatedNameFormula + "Some = Common\n\nSome(7)"));
-        RunFailure(RepeatedNameFormula + "Some = Common\n\nSome(7, 7)", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("14", Display(RepeatedNameFormula + "Twice = Common * 2\n\nTwice(7)"));
+        RunFailure(RepeatedNameFormula + "Twice = Common * 2\n\nTwice(7, 7)", KatLangErrorCode.ArityMismatch);
 
         // "`Common(7, 8)` supplies two separate arguments, and two arguments for the same name must
         // be equal, so it is an error" — and a wrapper with two parameters of its own keeps them
@@ -398,14 +408,137 @@ public class TutorialSemanticContractTests
 
         // "both places receive that same input, so they cannot differ — and if that input fails, or
         // is a function that needs arguments, the error is that input's own".
-        var failing = RunFailure("Bad = 1 / 0\n" + RepeatedNameFormula + "Some = Common\n\nSome(Bad)", KatLangErrorCode.DivisionByZero);
-        Assert.Contains("while evaluating call to Some:", failing.Message);
-        var callable = RunFailure("Inc(y) = y + 1\n" + RepeatedNameFormula + "Some = Common\n\nSome(Inc)", KatLangErrorCode.ArityMismatch);
+        var failing = RunFailure("Bad = 1 / 0\n" + RepeatedNameFormula + "Twice = Common * 2\n\nTwice(Bad)", KatLangErrorCode.DivisionByZero);
+        Assert.Contains("while evaluating call to Twice:", failing.Message);
+        var callable = RunFailure("Inc(y) = y + 1\n" + RepeatedNameFormula + "Twice = Common * 2\n\nTwice(Inc)", KatLangErrorCode.ArityMismatch);
         Assert.Contains("Property 'Inc' expects 1 parameter, but was called with 0 arguments.", callable.Message);
+
+        // "An alias is different: `Same = Common` takes two separate arguments, exactly like `Common`."
+        Assert.Equal("7", Display(RepeatedNameFormula + "Same = Common\n\nSame(7, 7)"));
+        var aliasDirect = RunFailure(RepeatedNameFormula + "Same = Common\n\nSame(7, 8)", KatLangErrorCode.ArityMismatch);
+        Assert.Equal("while evaluating call to Same: " + direct.Message.Replace("while evaluating call to Common: ", "", StringComparison.Ordinal), aliasDirect.Message);
 
         // Calling `Common` with its arguments, or passing `Common` itself to another function, is unchanged.
         Assert.Equal("7", Display(RepeatedNameFormula + "\nCommon(7, 7)"));
         Assert.Equal("5", Display(RepeatedNameFormula + "Apply(f) = f(5, 5)\n\nApply(Common)"));
+    }
+
+    // ── "Aliases, Forwarding, and Explicit Calls": the signature of each form, and what forwarding by name cannot do ──
+
+    private const string SingleFormula = "Single([x]) = x\n";
+
+    private static string Signature(Algorithm algorithm)
+        => string.Join(", ", Assert.IsType<Algorithm.User>(algorithm).ParameterPatterns.Select(static pattern => pattern.DisplayName));
+
+    [Fact]
+    public void AliasesForwardingAndExplicitCalls_EachFormHasTheSignatureTheTutorialStates()
+    {
+        const string formulas = "Double(x) = x * 2\nOther(y) = y * 2\n";
+        var root = SourceProvenance.ParseValid(formulas
+            + "Alias = Double\nForward(x) = Double\nExplicit(x) = Other(x)\nFormula = Double + 1\n\n0").Root;
+
+        // "`Alias = Double` ... is `Double` under another name, with Double's parameters".
+        Assert.Equal("x", Signature(PropertyOf(root, "Alias").Value));
+        Assert.True(Assert.IsType<Algorithm.User>(PropertyOf(root, "Alias").Value).InheritsCalleeSignature);
+
+        // "`Forward(x) = Double` ... `Double` receives the parameter of the same name", and
+        // "`Explicit(x) = Other(x)` ... the arguments are passed exactly as written": both keep their
+        // own written signature, and each call reads the definition's own `x`.
+        foreach (var name in new[] { "Forward", "Explicit" })
+        {
+            var algorithm = Assert.IsType<Algorithm.User>(PropertyOf(root, name).Value);
+            Assert.Equal("x", Signature(algorithm));
+            Assert.Null(algorithm.ForwardingParameterStart);
+            var call = Assert.IsType<Expr.Call>(Assert.Single(algorithm.Output));
+            Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(call.Args)).Name);
+        }
+
+        // "`Formula = Double + 1` ... means `Formula(x) = Double(x) + 1`".
+        Assert.Equal(["x"], PropertyOf(root, "Formula").Value.Params);
+
+        // "Nothing is added to the list, and nothing is renamed: `Bad(x) = Other` is an error".
+        FrontEndRejection(formulas + "Bad(x) = Other\n\nBad(5)",
+            DiagnosticCode.UnforwardableParameter, KatLangErrorCode.UnforwardableParameter);
+
+        // "a parameter the called formula does not need simply stays unused (with `Ten = 10`,
+        // `Always(p) = Ten` is `10` whatever it is given)".
+        Assert.Equal("10", Display("Ten = 10\nAlways(p) = Ten\n\nAlways(999)"));
+
+        // "`G(x, y) = Sub` ... `G(10, 3)` is ... `-7`, while `G(x, y) = Sub(x, y)` ... gives `7`".
+        Assert.Equal("-7", Display("Sub(y, x) = y - x\nG(x, y) = Sub\n\nG(10, 3)"));
+        Assert.Equal("7", Display("Sub(y, x) = y - x\nG(x, y) = Sub(x, y)\n\nG(10, 3)"));
+    }
+
+    [Fact]
+    public void AliasesForwardingAndExplicitCalls_StructuralParametersAreMatchedWhole()
+    {
+        var root = SourceProvenance.ParseValid(SingleFormula
+            + "Alias = Single\nSameShape([x]) = Single\nExplicit(x) = Single(x)\nConstruct = Single([x])\n\n0").Root;
+
+        // "`Alias = Single` has Single's parameter `[x]` ... `Alias(7)` is an error, just like `Single(7)`".
+        Assert.Equal("[x]", Signature(PropertyOf(root, "Alias").Value));
+        RunFailure(SingleFormula + "Alias = Single\n\nAlias(7)", KatLangErrorCode.TypeMismatch);
+        RunFailure(SingleFormula + "\nSingle(7)", KatLangErrorCode.TypeMismatch);
+
+        // "`SameShape([x]) = Single` forwards by name ... `Single` receives it as the list it matched".
+        Assert.Equal("[x]", Signature(PropertyOf(root, "SameShape").Value));
+        var sameShape = Assert.IsType<Expr.Call>(Assert.Single(PropertyOf(root, "SameShape").Value.Output));
+        Assert.IsType<Expr.ListLiteral>(Assert.Single(sameShape.Args));
+
+        // "`Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument".
+        Assert.Equal("x", Signature(PropertyOf(root, "Explicit").Value));
+        var explicitCall = Assert.IsType<Expr.Call>(Assert.Single(PropertyOf(root, "Explicit").Value.Output));
+        Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(explicitCall.Args)).Name);
+
+        // "`Construct = Single([x])` ... its parameter `x` comes from the `[x]` written in it, and it
+        // builds the list before calling `Single`".
+        Assert.Equal("x", Signature(PropertyOf(root, "Construct").Value));
+        var construct = Assert.IsType<Expr.Call>(Assert.Single(PropertyOf(root, "Construct").Value.Output));
+        Assert.IsType<Expr.ListLiteral>(Assert.Single(construct.Args));
+
+        // "`Bad(x) = Single` is an error ... write `Bad(x) = Single(x)` ... or ... `Bad([x]) = Single`".
+        FrontEndRejection(SingleFormula + "Bad(x) = Single\n\nBad([7])",
+            DiagnosticCode.UnforwardableParameter, KatLangErrorCode.UnforwardableParameter);
+        Assert.Equal("7", Display(SingleFormula + "Bad(x) = Single(x)\n\nBad([7])"));
+        Assert.Equal("7", Display(SingleFormula + "Bad([x]) = Single\n\nBad([7])"));
+
+        // "`Pair(a, b) = Add` is an error ... `Pair((a, b)) = Add` forwards the pair, and
+        // `Pair(a, b) = Add((a, b))` builds it".
+        const string add = "Add((a, b)) = a + b\n";
+        FrontEndRejection(add + "Pair(a, b) = Add\n\nPair(2, 3)",
+            DiagnosticCode.UnforwardableParameter, KatLangErrorCode.UnforwardableParameter);
+        Assert.Equal("5", Display(add + "Pair((a, b)) = Add\n\nPair((2, 3))"));
+        Assert.Equal("5", Display(add + "Pair(a, b) = Add((a, b))\n\nPair(2, 3)"));
+
+        // "`Many(*vs) = Coll` with `Coll(*vs) = vs` means `Coll(vs*)`".
+        Assert.Equal("[1, 2]", Display("Coll(*vs) = vs\nMany(*vs) = Coll\n\nMany(1, 2)"));
+    }
+
+    [Fact]
+    public void AliasesForwardingAndExplicitCalls_RenamingAffectsEachFormAsTheTutorialStates()
+    {
+        const string original = "Double(x) = x * 2\n";
+        const string renamed = "Double(value) = value * 2\n";
+
+        // "An alias takes the new names with it, and a formula that uses it takes them as its inputs."
+        Assert.Equal("value", Signature(PropertyOf(SourceProvenance.ParseValid(renamed + "Alias = Double\n\n0").Root, "Alias").Value));
+        Assert.Equal(["value"], PropertyOf(SourceProvenance.ParseValid(renamed + "Formula = Double + 1\n\n0").Root, "Formula").Value.Params);
+
+        // "Forwarding by name must be updated to match, or it becomes an error."
+        Assert.Equal("10", Display(original + "Forward(x) = Double\n\nForward(5)"));
+        FrontEndRejection(renamed + "Forward(x) = Double\n\nForward(5)",
+            DiagnosticCode.UnforwardableParameter, KatLangErrorCode.UnforwardableParameter);
+
+        // "An explicit call is unaffected ... renaming `Add`'s parameters to `left` and `right` changes
+        // nothing about `G`".
+        foreach (var callee in new[] { original, renamed })
+            Assert.Equal("10", Display(callee + "Explicit(x) = Double(x)\n\nExplicit(5)"));
+        foreach (var callee in new[] { "Add((a, b)) = a + b\n", "Add((left, right)) = left + right\n" })
+        {
+            var g = PropertyOf(SourceProvenance.ParseValid(callee + "G = Add((x, y))\n\nG(2, 3)").Root, "G").Value;
+            Assert.Equal(["x", "y"], g.Params);
+            Assert.Equal("5", Display(callee + "G = Add((x, y))\n\nG(2, 3)"));
+        }
     }
 
     // ── "Members Come First", "Callbacks Receive One Element": which names an inferred signature takes ──

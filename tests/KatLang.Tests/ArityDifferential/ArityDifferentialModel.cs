@@ -128,8 +128,8 @@ public enum ReceiverLaw
     /// </summary>
     CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT,
 
-    /// <summary>A nested sequence-value parameter pattern opens exactly one boundary of a sequence OR list element.</summary>
-    CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY,
+    /// <summary>A nested SEQUENCE pattern opens exactly one boundary of a sequence element; a list or scalar element is its kind mismatch.</summary>
+    CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE,
 
     /// <summary>The reduce initial accumulator is one written value slot, reified at the value boundary before reduction.</summary>
     REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT,
@@ -199,8 +199,8 @@ public static class ReceiverLaws
             "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial \"Callbacks Receive One Element\" (each element, a nested pair included, is passed whole)",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT] =
             "KatLang.lean evalUserCallbackCallCounted (the ONE ordinary counted binder bindCountedParameterPatternList over the supplied callback arguments; no row convention); CoreArityAlgebra: bindCallback; CoreArityAlgebraProofs: callback_is_the_ordinary_call, callback_element_is_one_ordinary_argument, callback_two_fixed_rejects_structured_element; CoreTests ExplicitValueOpening callbacksPassEachElementAsOneArgument / callbackBindingMatchesTheDirectCall; ExplicitValueOpeningTests",
-        [ReceiverLaw.CALLBACK_NESTED_PATTERN_OPENS_ONE_BOUNDARY] =
-            "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.sequenceValuePatternItems: structureItems? with the scalar one-item fallback at every group size, the SAME rule bindParameterPattern uses for the ordinary call)",
+        [ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE] =
+            "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.sequencePatternItems?: a SEQUENCE value's elements; a list or any other value is structuralPatternKindMismatch — the SAME rule bindParameterPattern uses for the ordinary call); KatLangArityLaws: sequence_pattern_items_never_open_a_list, sequence_pattern_items_never_open_a_scalar",
         [ReceiverLaw.REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT] =
             "KatLang.lean reduceLoop (reCountValueBoundary initOut); AGENTS.md written-slot reification incl. reduce initial accumulator",
         [ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS] =

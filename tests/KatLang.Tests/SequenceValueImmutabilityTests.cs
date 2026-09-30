@@ -4,7 +4,7 @@ namespace KatLang.Tests;
 /// Observable immutability of sequence values (<see cref="Result.SequenceValue"/>),
 /// following the same model as <see cref="ListValueImmutabilityTests"/>:
 /// public construction snapshots untrusted input, and no public item view
-/// (<c>Items</c>, <c>ToItems</c>, <c>SpreadItems</c>, <c>StructureItems</c>,
+/// (<c>Items</c>, <c>ToItems</c>, <c>SpreadItems</c>, the pattern views,
 /// enumeration) exposes storage through which a published value can be
 /// mutated. These tests assert semantic guarantees — display, count, value
 /// equality, and semantic hash stability — not a specific storage
@@ -61,7 +61,7 @@ public class SequenceValueImmutabilityTests
         ProbeViewForMutation(value.Items);
         ProbeViewForMutation(value.ToItems());
         ProbeViewForMutation(value.SpreadItems());
-        var structure = value.StructureItems();
+        var structure = value.SequencePatternItems();
         Assert.NotNull(structure);
         ProbeViewForMutation(structure);
     }
@@ -71,7 +71,7 @@ public class SequenceValueImmutabilityTests
     {
         ProbeViewForMutation(value.Items);
         ProbeViewForMutation(value.SpreadItems());
-        var structure = value.StructureItems();
+        var structure = value.ListPatternItems();
         Assert.NotNull(structure);
         ProbeViewForMutation(structure);
     }

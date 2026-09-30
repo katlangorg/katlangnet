@@ -51,6 +51,8 @@ public class CallableBindingPlanQueryTests
             CaptureBindingNode capture => $"Capture({capture.Name}:{capture.Source})",
             CollectingCaptureBindingNode variadic => $"Variadic({variadic.Name}:{variadic.Source}:{(variadic.IsTopLevel ? "top" : "nested")})",
             SequenceValueBindingNode group => $"SequenceValue({DescribePatternList(group.Children)})",
+            ListValueBindingNode list => $"ListValue({DescribePatternList(list.Children)})",
+            UnpackingBindingNode unpacking => $"Unpacking({DescribePatternList(unpacking.Children)})",
         };
 
     private static string DescribePatternList(PatternListBindingPlan plan)

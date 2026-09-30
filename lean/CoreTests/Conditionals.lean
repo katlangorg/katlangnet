@@ -500,40 +500,64 @@ def conditionalHigherOrderThunkReferenceFails : Bool :=
 #guard conditionalHigherOrderThunkReferenceFails
 
 --------------------------------------------------------------------------------
--- Singleton sequence-value patterns match identically in direct and callback calls
+-- One-element LIST patterns match identically in direct and callback calls
 --------------------------------------------------------------------------------
 
--- G((0)) = 100; G((x)) = x. Result normalization collapses singleton sequence values,
--- so the singleton sequence-value pattern must accept a plain scalar argument.
-def singletonSequenceValueConditionalAlg : Algorithm :=
+-- G([0]) = 100; G([x]) = x. The one-element structural pattern is the LIST pattern
+-- `[x]`; a one-item SEQUENCE pattern `(x)` is invalid (no one-item sequence value
+-- exists), so the former singleton adaptation — `(x)` taking any non-sequence
+-- value whole — is gone. A list pattern matches only a list of its length.
+def oneElementListConditionalAlg : Algorithm :=
   .conditional none [] [
-    ⟨ .sequenceValue [.sequenceValue [.litInt 0]], alg [] [] [] [.num 100] ⟩,
-    ⟨ .sequenceValue [.sequenceValue [.bind "x"]], alg [] [] [] [.param "x"] ⟩
+    ⟨ .sequenceValue [.listValue [.litInt 0]], alg [] [] [] [.num 100] ⟩,
+    ⟨ .sequenceValue [.listValue [.bind "x"]], alg [] [] [] [.param "x"] ⟩
   ]
 
-def singletonSequenceValuePatternMatchesDirectCall : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
-    .call (resolve "G") [.num 0],
-    .call (resolve "G") [.num 5]
+def oneElementListPatternMatchesDirectCall : Bool :=
+  (match runFlat (.algorithmExpr (algPrivate [] [] [("G", oneElementListConditionalAlg)] [
+    .call (resolve "G") [.listLiteral [.num 0]],
+    .call (resolve "G") [.listLiteral [.num 5]]
   ])) with
   | Except.ok [100, 5] => true
-  | _ => false
+  | _ => false) &&
+  -- A scalar, a sequence and a list of another length match no clause.
+  [KatLang.Expr.num 5, .capture [.num 0, .num 5], .listLiteral [], .listLiteral [.num 0, .num 5]].all fun arg =>
+    match runFlat (.algorithmExpr (algPrivate [] [] [("G", oneElementListConditionalAlg)] [
+      .call (resolve "G") [arg]
+    ])) with
+    | Except.error err => innermostIsNoMatchingBranch "G" err
+    | _ => false
 
-#guard singletonSequenceValuePatternMatchesDirectCall
+#guard oneElementListPatternMatchesDirectCall
 
 -- The same conditional must accept the same shapes through map callbacks.
-def singletonSequenceValuePatternMatchesMapCallback : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("G", singletonSequenceValueConditionalAlg)] [
-    .call (resolve "map") [sequenceItems [.num 0, .num 5], resolve "G"]
+def oneElementListPatternMatchesMapCallback : Bool :=
+  match runFlat (.algorithmExpr (algPrivate [] [] [("G", oneElementListConditionalAlg)] [
+    .call (resolve "map") [.listLiteral [.listLiteral [.num 0], .listLiteral [.num 5]], resolve "G"]
   ])) with
   | Except.ok [100, 5] => true
   | _ => false
 
-#guard singletonSequenceValuePatternMatchesMapCallback
+#guard oneElementListPatternMatchesMapCallback
 
--- Multi-member sequence-value patterns still reject scalars; only the singleton
--- adaptation is permitted.
-def multiMemberSequenceValuePatternStillRejectsScalars : Bool :=
+-- A family holding a one-item sequence pattern `(x)` anywhere in a head is rejected
+-- before evaluation (the singleton rule); the head's own parentheses are not a
+-- sequence pattern, so `F(x)` and `F((a, b))` stay valid.
+def singletonSequencePatternInAFamilyIsRejected : Bool :=
+  let family : Algorithm :=
+    .conditional none [] [
+      ⟨ .sequenceValue [.sequenceValue [.bind "x"]], alg [] [] [] [.param "x"] ⟩,
+      ⟨ .litInt 0, alg [] [] [] [.num 0] ⟩
+    ]
+  match runFlat (.algorithmExpr (algPrivate [] [] [("W", family)] [.num 1])) with
+  | Except.error err => innermostIsIllegalInEval KatLang.singletonSequencePatternMessage err
+  | _ => false
+
+#guard singletonSequencePatternInAFamilyIsRejected
+
+-- Multi-member sequence patterns reject scalars, as every sequence pattern does:
+-- a scalar is never a structure (September 2026).
+def multiMemberSequencePatternRejectsScalars : Bool :=
   let pairFirst : Algorithm :=
     .conditional none [] [
       ⟨ .sequenceValue [.sequenceValue [.bind "a", .bind "b"]], alg [] [] [] [.num 1] ⟩,
@@ -545,7 +569,7 @@ def multiMemberSequenceValuePatternStillRejectsScalars : Bool :=
   | Except.ok [2] => true
   | _ => false
 
-#guard multiMemberSequenceValuePatternStillRejectsScalars
+#guard multiMemberSequencePatternRejectsScalars
 
 --------------------------------------------------------------------------------
 -- Conditional branch arity invariants are Lean-enforced before evaluation

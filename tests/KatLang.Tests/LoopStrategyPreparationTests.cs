@@ -305,7 +305,10 @@ public class LoopStrategyPreparationTests
         {
             new CaptureParameterPattern("state"),
         };
-        var pattern = new SequenceValueParameterPattern(nestedItems);
+        // A one-element LIST pattern (a one-item sequence pattern is invalid): mutating its
+        // host-owned membership to two items mid-loop must not change the snapshot this loop
+        // invocation binds with.
+        var pattern = new ListValueParameterPattern(nestedItems);
         var calls = 0;
         var operation = HostOperation.Create("ChangeNestedShape", (_, _) =>
         {
@@ -315,7 +318,7 @@ public class LoopStrategyPreparationTests
                 nestedItems.Clear();
                 nestedItems.Add(new CaptureParameterPattern("left"));
                 nestedItems.Add(new CaptureParameterPattern("right"));
-                return new Result.SequenceValue([new Result.Atom(1)]);
+                return new Result.ListValue([new Result.Atom(1)]);
             }
 
             return new Result.Atom(9);
@@ -331,7 +334,7 @@ public class LoopStrategyPreparationTests
         };
         var expression = new Expr.Call(
             new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Capture([new Expr.Num(0)])]);
+            [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.ListLiteral([new Expr.Num(0)])]);
         var observations = new EvaluationObservations();
 
         var (result, _) = Evaluator.RunCountedObserved(

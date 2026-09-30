@@ -196,7 +196,7 @@ public static partial class Evaluator
     }
 
     private static bool HasStructuredParameterPattern(Algorithm algorithm)
-        => algorithm.ParameterPatterns.Any(static parameter => parameter is SequenceValueParameterPattern);
+        => algorithm.ParameterPatterns.Any(static parameter => ParameterPattern.StructuralItems(parameter) is not null);
 
     // User-call routing uses CallableBindingPlan.RequiresPatternedBinding.
     // This helper remains for runtime paths that inspect Algorithm patterns
@@ -206,7 +206,7 @@ public static partial class Evaluator
             || ParameterPattern.HasRepeatedCaptureNames(algorithm.ParameterPatterns);
 
     private static bool UsesPatternBinding(IReadOnlyList<ParameterPattern> parameterPatterns)
-        => parameterPatterns.Any(static parameter => parameter is SequenceValueParameterPattern)
+        => parameterPatterns.Any(static parameter => ParameterPattern.StructuralItems(parameter) is not null)
             || ParameterPattern.HasRepeatedCaptureNames(parameterPatterns);
 
     private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm step)
@@ -325,8 +325,9 @@ public static partial class Evaluator
 
     /// <summary>
     /// Iterative, DAG-preserving snapshot of recursive pattern-list membership. Capture
-    /// records are immutable and can be shared; sequence-pattern nodes are rebuilt so a
-    /// host cannot mutate a retained nested <c>Items</c> list during the loop.
+    /// records are immutable and can be shared; structural nodes (sequence and list
+    /// patterns) are rebuilt with their kind so a host cannot mutate a retained nested
+    /// <c>Items</c> list during the loop.
     /// Structural preflight has already rejected cycles before evaluation reaches this
     /// helper.
     /// </summary>
@@ -336,18 +337,18 @@ public static partial class Evaluator
         if (source.Count == 0)
             return [];
 
-        var snapshots = new Dictionary<SequenceValueParameterPattern, SequenceValueParameterPattern>(
+        var snapshots = new Dictionary<ParameterPattern, ParameterPattern>(
             ReferenceEqualityComparer.Instance);
-        var states = new Dictionary<SequenceValueParameterPattern, byte>(
+        var states = new Dictionary<ParameterPattern, byte>(
             ReferenceEqualityComparer.Instance);
-        var stack = new Stack<(SequenceValueParameterPattern Group, bool Expanded)>();
+        var stack = new Stack<(ParameterPattern Group, bool Expanded)>();
 
         foreach (var pattern in source)
         {
-            if (pattern is not SequenceValueParameterPattern root || snapshots.ContainsKey(root))
+            if (ParameterPattern.StructuralItems(pattern) is null || snapshots.ContainsKey(pattern))
                 continue;
 
-            stack.Push((root, Expanded: false));
+            stack.Push((pattern, Expanded: false));
             while (stack.Count != 0)
             {
                 var (group, expanded) = stack.Pop();
@@ -361,9 +362,11 @@ public static partial class Evaluator
 
                     states[group] = 1;
                     stack.Push((group, Expanded: true));
-                    for (var index = group.Items.Count - 1; index >= 0; index--)
+                    var groupItems = ParameterPattern.StructuralItems(group)!;
+                    for (var index = groupItems.Count - 1; index >= 0; index--)
                     {
-                        if (group.Items[index] is SequenceValueParameterPattern child
+                        var child = groupItems[index];
+                        if (ParameterPattern.StructuralItems(child) is not null
                             && !snapshots.ContainsKey(child))
                         {
                             stack.Push((child, Expanded: false));
@@ -373,16 +376,17 @@ public static partial class Evaluator
                     continue;
                 }
 
-                var items = new ParameterPattern[group.Items.Count];
-                for (var index = 0; index < group.Items.Count; index++)
+                var sourceItems = ParameterPattern.StructuralItems(group)!;
+                var items = new ParameterPattern[sourceItems.Count];
+                for (var index = 0; index < sourceItems.Count; index++)
                 {
-                    var item = group.Items[index];
-                    items[index] = item is SequenceValueParameterPattern child
-                        ? snapshots[child]
+                    var item = sourceItems[index];
+                    items[index] = ParameterPattern.StructuralItems(item) is not null
+                        ? snapshots[item]
                         : item;
                 }
 
-                snapshots[group] = new SequenceValueParameterPattern(items);
+                snapshots[group] = ParameterPattern.WithStructuralItems(group, items);
                 states[group] = 2;
             }
         }
@@ -391,8 +395,8 @@ public static partial class Evaluator
         for (var index = 0; index < source.Count; index++)
         {
             var pattern = source[index];
-            result[index] = pattern is SequenceValueParameterPattern group
-                ? snapshots[group]
+            result[index] = ParameterPattern.StructuralItems(pattern) is not null
+                ? snapshots[pattern]
                 : pattern;
         }
 
@@ -725,45 +729,67 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The items a sequence-value parameter pattern binds against: the slot's VALUE,
-    /// opened one level. PATTERN PARENTHESES ARE CALL-SHAPE SYNTAX, NOT A RUNTIME
-    /// BOUNDARY (September 2026): a received sequence value or exact list value opens to
-    /// its immediate items (Lean: <c>Result.structureItems?</c> — the deconstruction
-    /// receiver opens ONE lone structure boundary of either kind, so
-    /// <c>x, y, z = [1, 2, 3]</c> binds like <c>x, y, z = [1, 2, 3]*</c>), and any other
-    /// value is a one-item supply for the prefix/collecting/suffix matcher. Nothing about
-    /// how the slot was WRITTEN survives here: <c>F((1, 2))</c>, <c>F(S)</c> with
+    /// The elements a STRUCTURAL parameter pattern binds against: the slot's VALUE, opened one
+    /// level when it is of the pattern's own kind. STRUCTURAL PATTERN DELIMITERS SELECT THE
+    /// VALUE KIND THEY DESTRUCTURE (September 2026): a sequence pattern <c>(…)</c> opens a
+    /// SEQUENCE value only and a list pattern <c>[…]</c> a LIST value only; any other value —
+    /// the other kind or a scalar — is the pattern's kind mismatch
+    /// (<see cref="StructuralPatternKindMismatch"/>), never an opened list and never a one-item
+    /// supply. Pattern parentheses remain call-shape syntax, not a runtime boundary: nothing
+    /// about how the slot was WRITTEN survives here — <c>F((1, 2))</c>, <c>F(S)</c> with
     /// <c>S = 1, 2</c>, <c>F(((1, 2)))</c>, <c>F({S})</c>, and <c>F((S*))</c> all bind the
-    /// value <c>(1, 2)</c>. (The former written-slot view, which let a group's own written
-    /// rows override its value, is gone: parentheses group syntax and never suspend
-    /// normalization.) Lean: the <c>.sequenceValue</c> arm of <c>bindParameterPattern</c>.
+    /// value <c>(1, 2)</c>. Only a slot with no value at all fails with its retained value
+    /// error. Lean: the <c>.sequenceValue</c> / <c>.listValue</c> arms of
+    /// <c>bindParameterPattern</c>.
     /// </summary>
-    private static EvalResult<IReadOnlyList<Result>> GetSequenceValuePatternItems(ParameterPatternInput input)
+    private static EvalResult<IReadOnlyList<Result>> GetStructuralPatternItems(
+        ParameterPattern pattern,
+        ParameterPatternInput input)
     {
-        if (input.Value is { } value)
-            return EvalResult<IReadOnlyList<Result>>.Ok(SequenceValuePatternItems(value));
+        if (input.Value is not { } value)
+            return SurfacedSlotValueError(input);
 
-        return SurfacedSlotValueError(input);
+        return StructuralPatternItems(pattern, value) is { } elements
+            ? EvalResult<IReadOnlyList<Result>>.Ok(elements)
+            : StructuralPatternKindMismatch(pattern, value);
     }
 
     /// <summary>
-    /// NESTED-PATTERN OPENING (September 2026, S3): the items a sequence-value parameter
-    /// pattern binds against, given the ONE value its slot supplies. This is the ONE rule
-    /// shared by the ordinary binder (<see cref="GetSequenceValuePatternItems"/>) and the
-    /// counted callback binder (<see cref="BindCountedParameterPattern"/>), so a callback
-    /// that supplies one value <c>V</c> to a pattern <c>P</c> binds exactly as the ordinary
-    /// call <c>P(V)</c> does — callback provenance changes nothing. A sequence value or exact
-    /// list value opens to its immediate items (<see cref="Result.StructureItems"/>, ONE
-    /// boundary of either kind); any other value — a number, a string, a Boolean — is a
-    /// ONE-item supply (the scalar one-item fallback), at every pattern level and for every
-    /// group size: <c>(x)</c>, <c>(x, *rest)</c>, <c>(*xs)</c>, and <c>(*init, z)</c> bind it,
-    /// while <c>(x, y)</c> and <c>(x, *r, z)</c> reject it through the nested group's
-    /// ordinary arity check (one value supplied). The fallback supplies one value, never
-    /// zero, and it never opens anything further.
-    /// Lean: <c>Result.sequenceValuePatternItems</c>.
+    /// STRUCTURAL PATTERN OPENING: the elements a structural pattern binds against, given the
+    /// ONE value its slot supplies — a sequence value's elements for a sequence pattern, a list
+    /// value's for a list pattern, and <c>null</c> for any other value. This is the ONE rule
+    /// shared by the ordinary binder (<see cref="GetStructuralPatternItems"/>) and the counted
+    /// callback binder (<see cref="BindCountedParameterPattern"/>), so a callback that supplies
+    /// one value <c>V</c> to a pattern <c>P</c> binds exactly as the ordinary call <c>P(V)</c>
+    /// does — callback provenance changes nothing (S3). A sequence value has zero or at least
+    /// two elements (there is no one-item sequence), which is why a one-item sequence pattern
+    /// is invalid, while a list keeps every cardinality.
+    /// Lean: <c>Result.sequencePatternItems?</c> / <c>Result.listPatternItems?</c>.
     /// </summary>
-    private static IReadOnlyList<Result> SequenceValuePatternItems(Result value)
-        => value.StructureItems() ?? [value];
+    private static IReadOnlyList<Result>? StructuralPatternItems(ParameterPattern pattern, Result value)
+        => pattern switch
+        {
+            SequenceValueParameterPattern => value.SequencePatternItems(),
+            ListValueParameterPattern => value.ListPatternItems(),
+            // The deconstruction unpacking receiver opens either kind one level and never
+            // mismatches (its binders use their own arms; this keeps the view total).
+            UnpackingParameterPattern => value.SpreadItems(),
+            CaptureParameterPattern => null,
+        };
+
+    /// <summary>
+    /// An ordinary structural pattern that received a value of another kind — a sequence
+    /// pattern given a list or a scalar, a list pattern given a sequence or a scalar — fails
+    /// its binding with this <see cref="EvalError.TypeMismatch"/>, naming the written pattern
+    /// and the value received. A right-kind value with the wrong number of elements is the
+    /// group's ordinary arity mismatch instead (<see cref="StructuralPatternArityMismatch"/>).
+    /// A clause family never raises it: there a mismatch only rejects the clause.
+    /// Lean: <c>structuralPatternKindMismatch</c>.
+    /// </summary>
+    private static EvalError StructuralPatternKindMismatch(ParameterPattern pattern, Result value)
+        => new EvalError.TypeMismatch(pattern is ListValueParameterPattern
+            ? $"list pattern `{pattern.DisplayName}` expects a list value, but received {DescribeOperand(value)}"
+            : $"sequence pattern `{pattern.DisplayName}` expects a sequence value, but received {DescribeOperand(value)}");
 
     /// <summary>
     /// Raises a written slot's retained value error at the demand that needs its VALUE,
@@ -780,23 +806,28 @@ public static partial class Evaluator
                 : valueError;
 
     /// <summary>
-    /// Arity mismatch produced by binding one nested sequence-value parameter
-    /// pattern group's OWN items. The structured payload keeps the innermost
-    /// Lean-aligned <see cref="EvalError.ArityMismatch"/> unchanged; the added
-    /// context only attributes the failure to the written group (e.g.
-    /// <c>(b, c)</c>) instead of the enclosing call's argument count.
-    /// Genuine top-level call-arity mismatches and argument evaluation errors
-    /// passing through the binder are never wrapped.
+    /// Arity mismatch produced by binding one nested structural pattern's OWN items — a
+    /// right-kind value with the wrong number of elements. The structured payload keeps the
+    /// innermost Lean-aligned <see cref="EvalError.ArityMismatch"/> unchanged; the added
+    /// context only attributes the failure to the written pattern (e.g. <c>(b, c)</c> or
+    /// <c>[b, c]</c>) instead of the enclosing call's argument count: a sequence pattern
+    /// through <see cref="SequenceValueParameterBindingContext"/>, a list pattern through
+    /// <see cref="ListValueParameterBindingContext"/>. Genuine top-level call-arity mismatches
+    /// and argument evaluation errors passing through the binder are never wrapped.
     /// </summary>
-    private static EvalError SequenceValuePatternArityMismatch(
-        SequenceValueParameterPattern group,
+    private static EvalError StructuralPatternArityMismatch(
+        ParameterPattern group,
         int required,
         int actual)
-        => new EvalError.WithContext(
-            new SequenceValueParameterBindingContext(
-                group.DisplayName,
-                group.Items.Any(static item => item is CaptureParameterPattern { Kind: ParameterKind.Collecting })),
-            new EvalError.ArityMismatch(required, actual));
+    {
+        var items = ParameterPattern.StructuralItems(group)
+            ?? throw new InvalidOperationException("Only a structural pattern has its own items to bind.");
+        var hasCollecting = items.Any(static item => item is CaptureParameterPattern { Kind: ParameterKind.Collecting });
+        ErrorContext context = group is ListValueParameterPattern
+            ? new ListValueParameterBindingContext(group.DisplayName, hasCollecting)
+            : new SequenceValueParameterBindingContext(group.DisplayName, hasCollecting);
+        return new EvalError.WithContext(context, new EvalError.ArityMismatch(required, actual));
+    }
 
     /// <summary>
     /// Binds ONE pattern of the pattern <paramref name="level"/> (the complete list of
@@ -847,26 +878,48 @@ public static partial class Evaluator
             case CaptureParameterPattern { Kind: ParameterKind.Collecting }:
                 return new EvalError.BadArity();
 
-            case SequenceValueParameterPattern group:
+            case SequenceValueParameterPattern or ListValueParameterPattern:
                 {
-                    // A non-structure value is a one-item supply for the
-                    // prefix/collecting/suffix matcher (SequenceValuePatternItems, the
-                    // rule the counted callback binder shares), so a scalar right-hand
-                    // side binds a collecting pattern that captures zero items, e.g.
-                    // `first, *tail = 1` (first = 1, tail = []). Only a slot with no
-                    // value at all fails here, with its retained value error.
-                    var itemsR = GetSequenceValuePatternItems(input);
+                    // A structural pattern opens only a value of its OWN kind
+                    // (GetStructuralPatternItems, the rule the counted callback binder
+                    // shares): the other kind or a scalar is its kind mismatch, and only a
+                    // slot with no value at all fails with its retained value error.
+                    var itemsR = GetStructuralPatternItems(pattern, input);
                     if (itemsR.IsError) return itemsR.Error;
 
                     var nestedInputs = itemsR.Value
                         .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null))
                         .ToList();
                     return BindParameterPatternList(
-                        group.Items,
+                        ParameterPattern.StructuralItems(pattern)!,
                         nestedInputs,
                         ctx,
                         allowAlgorithmBindings: false,
-                        (required, actual) => SequenceValuePatternArityMismatch(group, required, actual));
+                        (required, actual) => StructuralPatternArityMismatch(pattern, required, actual));
+                }
+
+            case UnpackingParameterPattern unpacking:
+                {
+                    // THE UNPACKING RECEIVER of assignment deconstruction (Lean `.unpacking`):
+                    // it demands the ONE supplied value like any pattern that opens a value — a
+                    // slot without one fails with its retained outcome, so a right-hand side
+                    // without output is that missing output, never a spread failure — and binds
+                    // the targets against the value's ONE-LEVEL items: a sequence or a list
+                    // opens one level and any other value is one item. Its arity failure is the
+                    // bare mismatch the helper call re-words against the written assignment
+                    // pattern (TryGetDeconstructionShapeMismatch).
+                    if (input.Value is not { } value)
+                        return SurfacedSlotValueError(input);
+
+                    var nestedInputs = value.SpreadItems()
+                        .Select(static item => new ParameterPatternInput(item, Algorithm: null, ValueError: null))
+                        .ToList();
+                    return BindParameterPatternList(
+                        unpacking.Items,
+                        nestedInputs,
+                        ctx,
+                        allowAlgorithmBindings: false,
+                        static (required, actual) => new EvalError.ArityMismatch(required, actual));
                 }
 
             default:
@@ -1461,10 +1514,11 @@ public static partial class Evaluator
         // ArityMismatch is (or reflects) that argument's own value-evaluation
         // error — re-wording it would misattribute unrelated numbers to the
         // written pattern (e.g. `x, y = sum` leaking sum's 0/0 arity error).
-        // The helper binds through one synthetic inline sequence-value pattern,
-        // so its shape failure may arrive wrapped in that pattern's
-        // SequenceValueParameterBindingContext — the assignment-focused
-        // DeconstructionBindingContext takes precedence and replaces it.
+        // The helper binds its targets through its unpacking receiver against
+        // the one-level items of the shared right-hand side, so its shape
+        // failure is the receiver's own bare arity mismatch; the
+        // assignment-focused DeconstructionBindingContext phrases it against
+        // the written targets.
         if (bindingsR.IsError
             && callee is Algorithm.User { AssignmentDeconstructionTarget: not null }
             && TryGetDeconstructionShapeMismatch(bindingsR.Error) is { } deconstructionMismatch
@@ -1481,21 +1535,15 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Recognize a deconstruction helper's genuine binding-shape failure: either
-    /// a bare top-level <see cref="EvalError.ArityMismatch"/>, or one wrapped in
-    /// the nested-group <see cref="SequenceValueParameterBindingContext"/> the
-    /// helper's synthetic inline pattern produced (at most one such layer exists:
-    /// only the innermost failing group attaches its context). Returns the inner
-    /// mismatch to re-wrap in the assignment-focused context, or null when the
-    /// error is not a shape mismatch (e.g. a passed-through argument error).
+    /// Recognize a deconstruction helper's genuine binding-shape failure: its unpacking
+    /// receiver's bare <see cref="EvalError.ArityMismatch"/> (assignment deconstruction binds
+    /// its targets as ONE flat pattern list against the one-level items of the shared
+    /// right-hand side, <see cref="UnpackingParameterPattern"/>). Returns that mismatch to
+    /// re-wrap in the assignment-focused context, or null when the error is not a shape
+    /// mismatch (e.g. a passed-through argument error).
     /// </summary>
     private static EvalError.ArityMismatch? TryGetDeconstructionShapeMismatch(EvalError error)
-        => error switch
-        {
-            EvalError.ArityMismatch direct => direct,
-            EvalError.WithContext { ErrorContext: SequenceValueParameterBindingContext, Inner: EvalError.ArityMismatch nested } => nested,
-            _ => null,
-        };
+        => error as EvalError.ArityMismatch;
 
     /// <summary>
     /// Shared lazy binding of one assignment-deconstruction group. All N target helpers of a
@@ -1636,7 +1684,7 @@ public static partial class Evaluator
             // ONE EvalCounted — a capture, a block, a name, a call, and a literal
             // alike. No callee shape receives a second, written-slot view of a
             // slot (PARENTHESES GROUP SYNTAX, September 2026: a patterned callee
-            // opens the slot's value in GetSequenceValuePatternItems, never the
+            // opens the slot's value in GetStructuralPatternItems, never the
             // rows a group was written with).
             var evaluatedR = EvalCounted(argExpr, ctx, valEnv);
             if (evaluatedR.IsOk)

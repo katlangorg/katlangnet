@@ -69,8 +69,9 @@
 --   Elaboration / classification rule:
 --     - a same-name clause group elaborates to ordinary `Algorithm.mk` only
 --       when the group contains exactly one clause and that sole head is a
---       recursive parameter pattern made only of captures and structural sequence-value patterns
---       (for example `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
+--       recursive parameter pattern made only of captures and structural
+--       (sequence or list) patterns (for example `Apply(f) = f(4)`,
+--       `PairSum((x, y)) = x + y`, `Only([x]) = x`, or
 --       `CountSequenceValue((*values)) = values.count`)
 --     - multi-clause families and clause heads that require literal or
 --       whole-argument conditional matching elaborate to `Algorithm.conditional`
@@ -78,6 +79,24 @@
 --   This split is intentional: ordinary elaboration preserves dual-view call
 --   binding for higher-order arguments, while true conditional algorithms keep
 --   their full-input-specification and whole-argument matching semantics.
+--
+-- Structural patterns (September 2026): STRUCTURAL PATTERN DELIMITERS SELECT
+--   THE VALUE KIND THEY DESTRUCTURE. In both pattern languages a
+--   parenthesized structural pattern `(p1, …, pn)` (`sequenceValue`) matches
+--   SEQUENCE values only and a bracketed structural pattern `[p1, …, pn]`
+--   (`listValue`) matches LIST values only; neither destructures the other
+--   kind, and neither treats a scalar as a one-item structure. A bare
+--   binder is the only pattern that takes a value whole, whatever its kind.
+--   Because there is no one-item sequence value (`Result.normalize`), a
+--   sequence pattern with exactly one non-collecting item — `(x)`, `((x, y))`,
+--   `([x])` — describes a boundary no value has and is INVALID
+--   (`ParameterPattern.hasSingletonSequenceGroup`,
+--   `Pattern.headHasSingletonSequenceGroup`, rejected before evaluation by
+--   `validateExplicitParamOutputInvariant`; the C# parser reports
+--   `SingletonSequencePattern`), while a collector-only `(*xs)` stays valid
+--   because a collector is variadic. The one-element pattern is the list
+--   pattern `[x]`. The call head's own parentheses are the call's argument
+--   list, never a structural pattern.
 --
 -- Algorithm output (surface syntax):
 --   Every non-definition expression row in an algorithm body contributes to
@@ -124,9 +143,33 @@ structure CallableParameter where
   kind : ParameterKind := .normal
   deriving Repr, BEq
 
+/-- A parameter pattern of the ORDINARY pattern language: a capture, or a
+    structural pattern whose delimiter selects the value kind it destructures —
+    `sequenceValue` is the parenthesized sequence pattern `(p1, …, pn)`, which
+    opens SEQUENCE values only, and `listValue` is the bracketed list pattern
+    `[p1, …, pn]`, which opens LIST values only (see the file header, Structural
+    patterns).
+
+    `unpacking` is NOT written syntax: it is the UNPACKING RECEIVER of assignment
+    deconstruction (`x, *rest, z = RHS`), which the front end elaborates into one
+    per-target helper whose single parameter pattern is `unpacking [targets]`,
+    applied to the hoisted right-hand side. It binds its target list against the
+    ONE-LEVEL items of the supplied value — a sequence or a list opens one level,
+    and any other value is one item (`Result.spreadItems`) — so a lone structure
+    of either kind is split while a scalar is one target's value
+    (`x, *rest = 1` binds `rest = []`). It has no delimiter that could select a
+    value kind, so it opens both kinds alike; the kind-specific structural
+    patterns never do. (The algebra's `CoreArityAlgebra.bindDeconstruct` /
+    `openLoneStructure` is this receiver.) The right-hand side is demanded as an
+    ORDINARY value, so a right-hand side without output is its own missing-output
+    failure — never a spread failure.
+    C#: `CaptureParameterPattern` / `SequenceValueParameterPattern` /
+    `ListValueParameterPattern` / `UnpackingParameterPattern`. -/
 inductive ParameterPattern where
   | capture : CallableParameter -> ParameterPattern
   | sequenceValue : List ParameterPattern -> ParameterPattern
+  | listValue : List ParameterPattern -> ParameterPattern
+  | unpacking : List ParameterPattern -> ParameterPattern
   deriving Repr, BEq
 
 structure CallableSignature where
@@ -143,6 +186,8 @@ namespace ParameterPattern
   partial def captures : ParameterPattern -> List CallableParameter
     | .capture parameter => [parameter]
     | .sequenceValue items => items.flatMap captures
+    | .listValue items => items.flatMap captures
+    | .unpacking items => items.flatMap captures
 
   def fromParameters (parameters : List CallableParameter) : List ParameterPattern :=
     parameters.map .capture
@@ -150,13 +195,20 @@ namespace ParameterPattern
   def normalPatterns (ps : List Ident) : List ParameterPattern :=
     ps.map (fun p => .capture { name := p })
 
+  /-- Whether a pattern is a structural pattern — a sequence pattern `(…)`, a
+      list pattern `[…]`, or the deconstruction unpacking receiver — rather than
+      a capture. -/
+  def isStructural : ParameterPattern -> Bool
+    | .capture _ => false
+    | .sequenceValue _ => true
+    | .listValue _ => true
+    | .unpacking _ => true
+
   def hasStructured (patterns : List ParameterPattern) : Bool :=
-    patterns.any (fun
-      | .sequenceValue _ => true
-      | _ => false)
+    patterns.any isStructural
 
   /-- True when the pattern list itself contains a collecting binding (nested
-      captures inside sequence-value patterns do not count).
+      captures inside structural patterns do not count).
       C#: `ParameterPattern.HasCollectingCaptureAtCurrentLevel`. -/
   def hasCollectingCaptureAtCurrentLevel (patterns : List ParameterPattern) : Bool :=
     patterns.any (fun
@@ -168,8 +220,9 @@ namespace ParameterPattern
       enforces, factored out so no other layer can re-derive it:
 
       * every pattern consumes exactly ONE supplied slot, whatever it contains —
-        a sequence-value group is one slot that the binder opens afterwards, so
-        nested structure never changes the count at this level;
+        a structural pattern (sequence or list) is one slot that the binder
+        opens afterwards, so nested structure never changes the count at this
+        level;
       * a collecting capture at THIS level consumes NONE: it collects whatever
         slots are left over after the fixed prefix and suffix bind, and an empty
         leftover is the exact empty list (`collectSegment [] = []`).
@@ -185,19 +238,17 @@ namespace ParameterPattern
     let names := (patterns.flatMap captures).map (fun parameter => parameter.name)
     names.length != names.eraseDups.length
 
-  partial def containsCaptureName (name : Ident) : ParameterPattern -> Bool
-    | .capture parameter => parameter.name = name
-    | .sequenceValue items => items.any (containsCaptureName name)
-
   mutual
     /-- Whether a pattern binds `name` at any depth — the STATIC fact the
         pattern-list binders read to tell whether every contribution of a
         repeated name at one level is already known (see
-        `settlePatternRange`). A total twin of `containsCaptureName`, so the
-        binder bridge laws can unfold it. C#: `ParameterPatternBindsName`. -/
+        `settlePatternRange`). Total, so the binder bridge laws can unfold
+        it. C#: `ParameterPatternBindsName`. -/
     def bindsName (name : Ident) : ParameterPattern -> Bool
       | .capture parameter => parameter.name == name
       | .sequenceValue items => anyBindsName name items
+      | .listValue items => anyBindsName name items
+      | .unpacking items => anyBindsName name items
 
     /-- Whether any pattern of a list binds `name` at any depth. -/
     def anyBindsName (name : Ident) : List ParameterPattern -> Bool
@@ -219,6 +270,52 @@ namespace ParameterPattern
     | .capture parameter :: rest =>
         if parameter.name = name then some parameter.kind else topLevelCaptureKind? name rest
     | .sequenceValue _ :: rest => topLevelCaptureKind? name rest
+    | .listValue _ :: rest => topLevelCaptureKind? name rest
+    | .unpacking _ :: rest => topLevelCaptureKind? name rest
+
+  /-- The written form of a pattern, for diagnostics: `x`, `*xs`, `(x, y)`,
+      `[x, *rest]`, and a deconstruction's written target list `x, *rest`.
+      C#: `ParameterPattern.DisplayName`. -/
+  partial def displayName : ParameterPattern -> String
+    | .capture parameter => parameter.displayName
+    | .sequenceValue items => "(" ++ String.intercalate ", " (items.map displayName) ++ ")"
+    | .listValue items => "[" ++ String.intercalate ", " (items.map displayName) ++ "]"
+    | .unpacking items => String.intercalate ", " (items.map displayName)
+
+  /-- THE SINGLETON RULE (September 2026): a sequence pattern whose items are
+      exactly ONE non-collecting pattern describes a one-item sequence boundary,
+      and KatLang has no one-item sequence value (`Result.normalize` collapses
+      it), so no value could ever match it. `(x)`, `((x, y))` and `([x])` are
+      therefore invalid, while the collector-only `(*xs)` is valid: a collector
+      is variadic and stands for a sequence's elements, not for a sequence of
+      one. A list pattern has no such rule — lists keep every cardinality, so
+      `[x]` is the one-element structural pattern.
+      C#: `ParameterPattern.IsSingletonSequenceItems`. -/
+  def isSingletonSequenceItems : List ParameterPattern -> Bool
+    | [.capture parameter] =>
+        match parameter.kind with
+        | .normal => true
+        | .collecting => false
+    | [.sequenceValue _] => true
+    | [.listValue _] => true
+    | [.unpacking _] => true
+    | _ => false
+
+  mutual
+    /-- Whether a pattern contains an invalid singleton sequence pattern at any
+        depth (the singleton rule above). -/
+    def hasSingletonSequenceGroup : ParameterPattern -> Bool
+      | .capture _ => false
+      | .sequenceValue items => isSingletonSequenceItems items || anyHasSingletonSequenceGroup items
+      | .listValue items => anyHasSingletonSequenceGroup items
+      | .unpacking items => anyHasSingletonSequenceGroup items
+
+    /-- Whether any pattern of a list contains an invalid singleton sequence
+        pattern at any depth. -/
+    def anyHasSingletonSequenceGroup : List ParameterPattern -> Bool
+      | [] => false
+      | pattern :: rest => hasSingletonSequenceGroup pattern || anyHasSingletonSequenceGroup rest
+  end
 end ParameterPattern
 
 def callableParameterNameStartChar (c : Char) : Bool :=
@@ -674,7 +771,7 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
 --------------------------------------------------------------------------------
 
 /-- Pattern language for clause heads and conditional algorithm branch matching.
-    Recursive capture/sequence-value patterns can elaborate to ordinary explicit
+    Recursive capture/structural patterns can elaborate to ordinary explicit
     parameter patterns. Conditional patterns match against Result values at
     call time.
     - `bind x`: matches any Result and binds it to name `x`
@@ -682,10 +779,19 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     - `litBool b`: matches only `Result.bool b` (the reserved literals `true` /
       `false` in a clause head; a Boolean is never a number, so `F(1)` and
       `F(true)` are different clauses)
-    - `sequenceValue ps`: matches `Result.sequenceValue rs` with same arity, each sub-pattern
-      matching; a singleton sequence-value pattern also matches a non-sequence-value
-      result because normalization collapses singleton sequence values
-      (see `patternSequenceValueMembers?`)
+    - `sequenceValue ps` (a nested `(p1, …, pn)`): matches ONLY a
+      `Result.sequenceValue rs` of the same length, each sub-pattern matching
+      its element; never a list and never a scalar. `()` matches only the empty
+      sequence value. A one-item `(p)` is invalid (the singleton rule,
+      `headHasSingletonSequenceGroup`): no one-item sequence value exists.
+    - `listValue ps` (`[p1, …, pn]`): matches ONLY a `Result.listValue rs` of
+      the same length, each sub-pattern matching its element; never a sequence
+      and never a scalar. `[]` matches only the empty list, `[p]` a one-element
+      list.
+    At the TOP of a clause head a `sequenceValue` is the head's own argument
+    list (`F(x, y)` is `sequenceValue [bind x, bind y]`, `F((x, y))` is
+    `sequenceValue [sequenceValue [bind x, bind y]]`, `F([x])` is
+    `sequenceValue [listValue [bind x]]`), never a structural pattern.
 
     Patterns are a separate semantic type, distinct from Expr.
     They do not appear in executable expression positions.
@@ -698,8 +804,8 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
       property / open / builtin resolution) are available in the body.
     - Unused pattern-bound names are allowed.
     - Grace `~` is NOT permitted in patterns or branch bodies.  Patterns
-      contain only matching constructs (binders, integer literals, nested
-      sequence-value patterns).  Branch bodies must not use Grace because conditional branches
+      contain only matching constructs (binders, literals, nested sequence and
+      list patterns).  Branch bodies must not use Grace because conditional branches
       have no implicit parameter inference or reordering to apply it to.
 
     This keeps conditional algorithms self-contained: branch selection and
@@ -710,7 +816,8 @@ inductive Pattern where
   | litInt    : Int -> Pattern
   | litString : String -> Pattern    -- matches only Result.str s (exact string equality)
   | litBool   : Bool -> Pattern      -- matches only Result.bool b (C#: Pattern.LitBool)
-  | sequenceValue     : List Pattern -> Pattern
+  | sequenceValue     : List Pattern -> Pattern   -- `(p1, …, pn)`: sequence values only (C#: Pattern.SequenceValue)
+  | listValue         : List Pattern -> Pattern   -- `[p1, …, pn]`: list values only (C#: Pattern.ListValue)
   deriving Repr, BEq
 
 namespace Pattern
@@ -721,10 +828,38 @@ namespace Pattern
     | .litString _ => []
     | .litBool _   => []
     | .sequenceValue ps    => ps.flatMap boundNames
+    | .listValue ps        => ps.flatMap boundNames
+
+  mutual
+    /-- THE SINGLETON RULE for the family pattern language (see
+        `ParameterPattern.isSingletonSequenceItems`): a NESTED sequence pattern
+        with exactly one item describes a one-item sequence, which no value is,
+        so it is invalid. A family pattern has no collecting binder, so every
+        one-item sequence pattern is a singleton. A list pattern `[p]` is valid. -/
+    def hasSingletonSequenceGroup : Pattern -> Bool
+      | .sequenceValue ps => ps.length == 1 || anyHasSingletonSequenceGroup ps
+      | .listValue ps => anyHasSingletonSequenceGroup ps
+      | .bind _ => false
+      | .litInt _ => false
+      | .litString _ => false
+      | .litBool _ => false
+
+    def anyHasSingletonSequenceGroup : List Pattern -> Bool
+      | [] => false
+      | p :: ps => hasSingletonSequenceGroup p || anyHasSingletonSequenceGroup ps
+  end
+
+  /-- The singleton rule over a whole clause HEAD: a top-level `sequenceValue`
+      is the head's own argument list (the call's parentheses), never a
+      structural pattern, so only the patterns inside it are checked; any other
+      head is one argument position checked as a pattern. -/
+  def headHasSingletonSequenceGroup : Pattern -> Bool
+    | .sequenceValue ps => anyHasSingletonSequenceGroup ps
+    | p => hasSingletonSequenceGroup p
 
   /-- Compute the top-level arity of a pattern.
-      - `sequenceValue [p1, ..., pn] ⟹ n`
-      - any non-sequence-value pattern  ⟹ 1
+      - `sequenceValue [p1, ..., pn] ⟹ n` (the head's own argument list)
+      - any other pattern, a list pattern included  ⟹ 1
 
       This defines the outer call interface of a conditional algorithm branch.
       Conditional algorithms require a uniform top-level interface across branches:
@@ -760,7 +895,7 @@ namespace Pattern
     | _ => none
 
   /-- Return parameter names when a sole surface clause head consists only of
-      recursive binder/sequence-value parameter patterns.
+      recursive binder/structural (sequence or list) parameter patterns.
 
       This is only an eligibility helper for the whole same-name clause-group
       elaboration rule; it does not by itself decide ordinary-vs-conditional.
@@ -768,19 +903,25 @@ namespace Pattern
       Rejected on purpose:
       - literal or mixed non-binder pattern structure
 
-      This is the ordinary clause-elaboration boundary: capture/sequence-value-only
+      This is the ordinary clause-elaboration boundary: capture/structural-only
       recursive parameter patterns elaborate as ordinary algorithms, while
-      literal or mixed patterns stay conditional. -/
+      literal or mixed patterns stay conditional. Each structural pattern keeps
+      its kind: a sequence pattern stays a sequence pattern and a list pattern a
+      list pattern. -/
   partial def parameterPattern? : Pattern -> Option ParameterPattern
     | .bind x => some (.capture { name := x })
     | .sequenceValue ps => do
         let patterns <- ps.mapM parameterPattern?
         some (.sequenceValue patterns)
+    | .listValue ps => do
+        let patterns <- ps.mapM parameterPattern?
+        some (.listValue patterns)
     | _ => none
 
   partial def plainClauseParameterPatterns? : Pattern -> Option (List ParameterPattern)
     | .bind x => some [.capture { name := x }]
     | .sequenceValue ps => ps.mapM parameterPattern?
+    | .listValue ps => (parameterPattern? (.listValue ps)).map (fun pattern => [pattern])
     | _ => none
 
   def plainClauseParamNames? : Pattern -> Option (List Ident)
@@ -791,14 +932,14 @@ namespace Pattern
       - `bind _` ≡ `bind _` (any binder matches everything)
       - `litInt m` ≡ `litInt n` iff `m = n` (likewise `litString`, `litBool`)
       - `sequenceValue ps` ≡ `sequenceValue qs` iff same length and pairwise match-equivalent
+      - `listValue ps` ≡ `listValue qs` iff same length and pairwise match-equivalent
 
       Used to detect duplicate branch patterns in conditional algorithms.
 
-      Equivalence is structural, not extensional: because matching adapts
-      singleton sequence-value patterns to non-sequence-value values (`patternSequenceValueMembers?`),
-      `sequenceValue [bind _]` accepts the same runtime inputs as `bind _`, yet the
-      two are not considered equivalent here.  Duplicate detection therefore
-      flags only structurally identical match behavior. -/
+      Equivalence is structural, not extensional, and the structural KIND is part
+      of the shape: a sequence pattern is never match-equivalent to a list
+      pattern (`(x, y)` and `[a, b]`, `()` and `[]` match disjoint values), while
+      renaming binders never makes two patterns of one shape distinct. -/
   def binderRenaming? (name : Ident) : List (Ident × Ident) -> Option Ident
     | [] => none
     | (left, right) :: rest =>
@@ -808,6 +949,7 @@ namespace Pattern
     | [] => false
     | (_, right) :: rest => right = name || binderTargetUsed name rest
 
+  mutual
   partial def matchEquivalentWithRenaming : Pattern -> Pattern ->
       List (Ident × Ident) -> Option (List (Ident × Ident))
     | .bind left, .bind right, pairs =>
@@ -823,17 +965,25 @@ namespace Pattern
     | .litBool b, .litBool c, pairs =>
         if b = c then some pairs else none
     | .sequenceValue ps, .sequenceValue qs, pairs =>
-        if ps.length != qs.length then
-          none
-        else
-          let rec go : List (Pattern × Pattern) ->
-              List (Ident × Ident) -> Option (List (Ident × Ident))
-            | [], current => some current
-            | (p, q) :: rest, current => do
-                let next <- matchEquivalentWithRenaming p q current
-                go rest next
-          go (ps.zip qs) pairs
+        matchEquivalentItemsWithRenaming ps qs pairs
+    | .listValue ps, .listValue qs, pairs =>
+        matchEquivalentItemsWithRenaming ps qs pairs
     | _, _, _ => none
+
+  /-- Pairwise match-equivalence of two structural patterns' items of ONE kind. -/
+  partial def matchEquivalentItemsWithRenaming (ps qs : List Pattern)
+      (pairs : List (Ident × Ident)) : Option (List (Ident × Ident)) :=
+    if ps.length != qs.length then
+      none
+    else
+      let rec go : List (Pattern × Pattern) ->
+          List (Ident × Ident) -> Option (List (Ident × Ident))
+        | [], current => some current
+        | (p, q) :: rest, current => do
+            let next <- matchEquivalentWithRenaming p q current
+            go rest next
+      go (ps.zip qs) pairs
+  end
 
   def isMatchEquivalent (left right : Pattern) : Bool :=
     (matchEquivalentWithRenaming left right []).isSome
@@ -1073,8 +1223,8 @@ mutual
         `Name(pattern) = body`. The ordinary-vs-conditional split is decided
         for the whole same-name clause group, not per clause. A group
         elaborates to `Algorithm.mk` only when it contains exactly one clause
-        and that sole head is a recursive capture/sequence-value parameter pattern such
-        as `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, or
+        and that sole head is a recursive capture/structural parameter pattern such
+        as `Apply(f) = f(4)`, `PairSum((x, y)) = x + y`, `Only([x]) = x`, or
         `CountSequenceValue((*values)) = values.count`. Multi-clause families and
         literal/mixed heads such as
 
@@ -1155,7 +1305,8 @@ def Expr.compare (op : ComparisonOp) (left right : Expr) : Expr :=
 
   A same-name clause group elaborates as ordinary only when:
   - the group contains exactly one clause, and
-  - that sole clause head is a recursive capture/sequence-value parameter pattern
+  - that sole clause head is a recursive capture/structural (sequence or list)
+    parameter pattern
 
   This is intentional. Later clauses may force the whole family to remain
   conditional, for example:
@@ -1289,12 +1440,15 @@ namespace Result
       binding never uses it (every non-spread argument is ONE item) — it only
       recovers the rows a multi-output body emitted (`countedTopLevelValues`)
       and serves as the non-list branch of the one-level views below. The
-      explicit openers are the spread marker (`spreadItems`), explicit
-      sequence-value patterns and deconstruction (`structureItems?`), the
-      indexing `:` TARGET position view (`projectionItems` — the target's
-      positions, never the selected element), and the post-binding builtin
-      collection view (`builtinCollectionItems`, applied to the bound
-      `collection` argument); each opens a sequence and a list alike. -/
+      explicit openers are the spread marker (`spreadItems`, which assignment
+      deconstruction's elaboration also uses), the kind-specific structural
+      patterns (`sequencePatternItems?` for `(…)`, `listPatternItems?` for
+      `[…]`), the indexing `:` TARGET position view (`projectionItems` — the
+      target's positions, never the selected element), and the post-binding
+      builtin collection view (`builtinCollectionItems`, applied to the bound
+      `collection` argument). Every opener except the structural patterns opens
+      a sequence and a list alike; a structural pattern opens only its own
+      kind. -/
   def toItems : Result -> List Result
     | atom n   => [atom n]
     | str s    => [str s]
@@ -1310,35 +1464,46 @@ namespace Result
     | listValue rs => rs
     | r => r.toItems
 
-  /-- Deconstruction-openable structure view shared by the sequence-value
-      parameter pattern binders: a received sequence value or exact list value
-      opens to its immediate items; atoms, strings, and Booleans are not
-      openable (`sequenceValuePatternItems` adds the ONE scalar one-item
-      fallback both binders share). Call-argument binding never uses this
-      view — every non-spread argument stays one argument, a sequence or a
-      list alike; only an explicit pattern or spread opens it.
-      C#: `Result.StructureItems`. -/
+  /-- The openable-structure view: a sequence value or exact list value opens
+      to its immediate items; atoms, strings, and Booleans are not structures.
+      Its total extension is the spread view (`(structureItems? v).getD [v] =
+      spreadItems v`, `spreadItems_extends_structureItems`), which is what
+      assignment deconstruction's unpacking receiver (`ParameterPattern.unpacking`)
+      opens its lone right-hand side with; the structural patterns open only
+      their own kind (`sequencePatternItems?`, `listPatternItems?`), and
+      call-argument binding never opens an argument. It anchors the arity
+      algebra's `structureItems?` (`CoreArityAlgebra.lean`); no evaluator path
+      reads it, so it has no C# counterpart. -/
   def structureItems? : Result -> Option (List Result)
     | sequenceValue rs => some rs
     | listValue rs => some rs
     | _ => none
 
-  /-- NESTED-PATTERN OPENING (September 2026, S3): the items a sequence-value
-      parameter pattern binds against, given the ONE value its slot supplies.
-      This is the ONE rule shared by the ordinary binder (`bindParameterPattern`)
-      and the counted callback binder (`bindCountedParameterPattern`), so a
-      callback that supplies one value `V` to a pattern `P` binds exactly as
-      the ordinary call `P(V)` does — callback provenance changes nothing.
-      A sequence value or exact list value opens to its immediate items
-      (`structureItems?`, ONE boundary of either kind); any other value — a
-      number, a string, a Boolean — is a ONE-item supply (the scalar one-item
-      fallback), at every pattern level and for every group size: `(x)`,
-      `(x, *rest)`, `(*xs)`, and `(*init, z)` bind it, while `(x, y)` and
-      `(x, *r, z)` reject it through the nested group's ordinary arity check
-      (one value supplied). The fallback supplies one value, never zero, and
-      it never opens anything further. C#: `Evaluator.SequenceValuePatternItems`. -/
-  def sequenceValuePatternItems (value : Result) : List Result :=
-    (structureItems? value).getD [value]
+  /-- STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE
+      (September 2026): the elements a SEQUENCE pattern `(p1, …, pn)` binds
+      against, given the ONE value its slot supplies — a sequence value's
+      elements, and nothing for any other value. A list value is NOT opened
+      (`[x, y]` is the list pattern) and a scalar is NOT a one-item supply: the
+      only pattern that takes a value whole is a bare binder. This is the ONE
+      rule shared by the ordinary binder (`bindParameterPattern`), the counted
+      callback binder (`bindCountedParameterPattern`) and the family matchers
+      (`matchPatternInto`, `matchCountedPatternInto`), so a callback that
+      supplies one value `V` to a pattern `P` binds exactly as the ordinary call
+      `P(V)` does. A sequence value has 0 or at least 2 elements (there is no
+      one-item sequence), which is why a one-item sequence pattern is invalid.
+      C#: `Result.SequencePatternItems`. -/
+  def sequencePatternItems? : Result -> Option (List Result)
+    | sequenceValue rs => some rs
+    | _ => none
+
+  /-- The elements a LIST pattern `[p1, …, pn]` binds against: a list value's
+      elements, and nothing for any other value — never a sequence value and
+      never a scalar. Lists keep every cardinality, so `[]`, `[x]` and
+      `[x, *rest]` match lists of zero, one and at least one element.
+      C#: `Result.ListPatternItems`. -/
+  def listPatternItems? : Result -> Option (List Result)
+    | listValue rs => some rs
+    | _ => none
 
   /-- Count emitted top-level values when a result is already in hand.
       Empty results emit 0. Any non-empty atomic, string, or sequence value
@@ -1854,9 +2019,6 @@ namespace Algorithm
   def topLevelParameterKind? (a : Algorithm) (name : Ident) : Option ParameterKind :=
     ParameterPattern.topLevelCaptureKind? name (parameterPatterns a)
 
-  def declaresParameterName (a : Algorithm) (name : Ident) : Bool :=
-    (parameterPatterns a).any (ParameterPattern.containsCaptureName name)
-
   def collectingParam? (a : Algorithm) : Option (Nat × Ident) :=
     if hasStructuredParameterPattern a then
       none
@@ -1880,7 +2042,7 @@ namespace Algorithm
       This is the real ordinary-vs-conditional decision boundary.
 
       A same-name clause group is ordinary only when it contains exactly one
-      clause and that sole head is a recursive capture/sequence-value parameter pattern.
+      clause and that sole head is a recursive capture/structural parameter pattern.
       Otherwise the whole group remains conditional. This prevents regressions
       where an early ordinary-looking clause is committed as ordinary before
       later clauses reveal true pattern semantics, such as:
@@ -1897,14 +2059,15 @@ namespace Algorithm
   /-- Elaborate a whole same-name clause family.
       Front-ends should collect all clauses of a same-name family first, then
       call this helper exactly once. A family elaborates as ordinary only when
-      it has exactly one clause and that sole head is a recursive capture/sequence-value
+      it has exactly one clause and that sole head is a recursive capture/structural
       parameter pattern; otherwise the whole family elaborates as
       `Algorithm.conditional`.
 
       This preserves higher-order ordinary call semantics for single-clause
       families such as `Apply(f) = f(4)` and
-      `Choose(x, predicate) = if(predicate(x), x, 0)`, and preserves sequence-value
-      ordinary parameter shapes such as `PairSum((x, y)) = x + y`, while keeping
+      `Choose(x, predicate) = if(predicate(x), x, 0)`, and preserves structural
+      ordinary parameter shapes such as `PairSum((x, y)) = x + y` and
+      `Only([x]) = x`, while keeping
       multi-clause and literal/mixed families conditional.
 
       Opens are BRANCH-OWNED: every branch body keeps its own opens, and the
@@ -2085,10 +2248,28 @@ def validateConditionalBranchArities (name : Ident) (a : Algorithm) : EvalM Unit
       | some (expected, actual) => .error (Error.branchOutputArityMismatch name expected actual)
       | none => pure ()
 
+/-- The one message of an invalid singleton sequence pattern (the singleton rule,
+    `ParameterPattern.isSingletonSequenceItems`). C#: the parser's
+    `SingletonSequencePattern` diagnostic and the pre-evaluation violation
+    `PreEvaluationAstViolation.SingletonSequencePattern` share its wording. -/
+def singletonSequencePatternMessage : String :=
+  "A sequence pattern with exactly one non-collecting item is invalid: KatLang has no one-item sequence value. Bind the whole value with a plain name, or use the list pattern `[x]` for a one-element list."
+
+/-- The singleton rule over an algorithm's OWN patterns: its explicit parameter
+    patterns, or every branch head of a clause family. -/
+def Algorithm.hasSingletonSequencePattern : Algorithm -> Bool
+  | .mk _ parameters _ _ _ _ => ParameterPattern.anyHasSingletonSequenceGroup parameters
+  | .builtin _ => false
+  | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.headHasSingletonSequenceGroup)
+
 mutual
   /-- Pre-evaluation structural validation over a whole algorithm tree:
       - explicit algorithm parameters only appear on algorithms that define
         output (`explicitParamsRequireOutput`)
+      - no parameter pattern or branch pattern contains a one-item sequence
+        pattern (the singleton rule; `illegalInEval`
+        `singletonSequencePatternMessage`) — a host-built tree cannot give such
+        a pattern a meaning the surface language refuses it
       - conditional algorithms have uniform top-level branch pattern arity and
         uniform top-level branch output arity (`branchArityMismatch`,
         `branchOutputArityMismatch`)
@@ -2098,6 +2279,8 @@ mutual
       `conditional`. -/
   partial def validateExplicitParamOutputInvariant (a : Algorithm)
       (name : Ident := "conditional") : EvalM Unit := do
+    if a.hasSingletonSequencePattern then
+      .error (Error.illegalInEval singletonSequencePatternMessage)
     match a with
     | .mk _ parameters op pr out _ =>
         if !parameters.isEmpty && out.isEmpty then
@@ -2487,6 +2670,23 @@ def operandDescription : Result -> String
   | .atom value => s!"numeric value {value}"
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
 
+/-- An ordinary structural pattern that received a value of another kind —
+    a sequence pattern given a list or a scalar, a list pattern given a
+    sequence or a scalar — fails its binding with this `typeMismatch`, naming
+    the written pattern and the value received (STRUCTURAL PATTERN DELIMITERS
+    SELECT THE VALUE KIND THEY DESTRUCTURE). A right-kind value with the wrong
+    number of elements is the group's ordinary `arityMismatch` instead. In a
+    clause family neither is raised: a mismatch only rejects the clause.
+    C#: `Evaluator.StructuralPatternKindMismatch`. -/
+def structuralPatternKindMismatch (pattern : ParameterPattern) (value : Result) : Error :=
+  match pattern with
+  | .listValue _ =>
+      Error.typeMismatch
+        s!"list pattern `{pattern.displayName}` expects a list value, but received {operandDescription value}"
+  | _ =>
+      Error.typeMismatch
+        s!"sequence pattern `{pattern.displayName}` expects a sequence value, but received {operandDescription value}"
+
 /-- The numeric-scalar operand rule of the arithmetic operators and the ordering
     comparisons, keyed by the operator's spelling. C#: `Evaluator.RequireNumericScalarOperand`. -/
 def requireNumericScalarOperandOf (operatorSymbol : String) (side : String) (value : Result) : EvalM Int :=
@@ -2759,9 +2959,10 @@ def settlePatternRange (outside : Ident -> Bool)
   values stay intact as single items.
   Applied strictly AFTER ordinary fixed parameter binding, to the already
   bound `collection` parameter only — argument boundaries are never altered
-  before binding. Call parameter binding never uses this view, and
-  assignment deconstruction opens its received value through the
-  sequence-value parameter pattern instead. C#: `BuiltinCollectionItems`. -/
+  before binding. Call parameter binding never uses this view, assignment
+  deconstruction opens its received value through the spread view
+  (`Result.spreadItems`), and a structural pattern opens only its own kind.
+  C#: `BuiltinCollectionItems`. -/
 def builtinCollectionItems : Result -> List Result
   | .sequenceValue elems => elems
   | .listValue elems => elems
@@ -2797,9 +2998,9 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
     * a user algorithm accepts iff its top-level pattern list's
       `ParameterPattern.minimumSuppliedSlots` is zero — so `Only(*xs)` accepts
       (`Only()` binds `xs = []`) while `Head(x, *rest)`, `Tail(*rest, z)`,
-      `P((x, *rest))`, `P((x))` and `Pair(x, y)` do not. A COLLECTING parameter
+      `P((x, *rest))`, `P([x])` and `Pair(x, y)` do not. A COLLECTING parameter
       contributes ZERO required slots; a nested pattern still consumes one, and
-      its scalar one-item fallback binds ONE supplied value, never none;
+      binds ONE supplied value of its own kind, never none;
     * a clause family accepts iff some branch's top-level pattern has arity
       zero — exactly the branch `matchCallBranches` selects for an empty
       argument list. A flat multi-binder core equivalent
@@ -2980,9 +3181,10 @@ def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
     `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`, and
     `Coll([])` is `[[]]` — only the caller's explicit spread turns a value into
     several items (`Coll((1, 2)*)` and `Coll([1, 2]*)` are `[1, 2]`).
-    Deconstruction and nested sequence-value patterns open their one value
-    BEFORE allocation, as explicit structural syntax, and the collector then
-    collects the opened items exactly. The round trip
+    Deconstruction (through the spread view) and nested structural patterns
+    (a sequence pattern a sequence value, a list pattern a list value) open
+    their one value BEFORE allocation, as explicit structural syntax, and the
+    collector then collects the opened items exactly. The round trip
     `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter
     forwarding ordinary list spread: `Forward(*items) = Target(items*)`
     re-supplies exactly the collected items with no hidden raw-supply
@@ -3080,18 +3282,31 @@ partial def bindCountedParameterPattern (pattern : ParameterPattern) (input : Co
       | .collecting => .error Error.badArity
   | .sequenceValue items =>
       -- This counted matcher is the callback binding path, and it opens the
-      -- callback value through the SAME nested-pattern rule as the ordinary
-      -- binder `bindParameterPattern` (`Result.sequenceValuePatternItems`):
-      -- a sequence or list value opens one level, and any other value is a
-      -- one-item supply at every level and for every group size, so
-      -- `map([7], P)` with `P((x, *rest))` binds `x = 7, rest = []` exactly
-      -- like `P(7)`, and `P((x, y))` rejects a scalar with the nested group's
-      -- ordinary `arityMismatch 2 1` in both (September 2026, S3; the
-      -- callback path formerly fell back only for one-item groups).
-      -- The pattern's explicit structure opens exactly this one boundary; a
-      -- nested collecting binding collects the opened items exactly.
-      let nestedInputs := (Result.sequenceValuePatternItems input.fst).map (fun value =>
-        (value, Result.valueCount value))
+      -- callback value through the SAME kind-specific rule as the ordinary
+      -- binder `bindParameterPattern` (`Result.sequencePatternItems?`): a
+      -- sequence pattern opens a SEQUENCE value only; a list or a scalar is the
+      -- pattern's kind mismatch in both, so `map([7], P)` with `P((x, *rest))`
+      -- fails exactly like `P(7)` (September 2026; S3 made the two binders one
+      -- rule). The pattern's explicit structure opens exactly this one
+      -- boundary; a nested collecting binding collects the opened items exactly.
+      match Result.sequencePatternItems? input.fst with
+      | none => .error (structuralPatternKindMismatch pattern input.fst)
+      | some elements =>
+          let nestedInputs := elements.map (fun value => (value, Result.valueCount value))
+          bindCountedParameterPatternList items nestedInputs
+  | .listValue items =>
+      -- The list pattern's twin: a LIST value opens, anything else is the
+      -- pattern's kind mismatch (`Result.listPatternItems?`).
+      match Result.listPatternItems? input.fst with
+      | none => .error (structuralPatternKindMismatch pattern input.fst)
+      | some elements =>
+          let nestedInputs := elements.map (fun value => (value, Result.valueCount value))
+          bindCountedParameterPatternList items nestedInputs
+  | .unpacking items =>
+      -- The deconstruction unpacking receiver opens ONE level of either kind and
+      -- treats any other value as one item (`Result.spreadItems`), exactly as
+      -- the ordinary binder does.
+      let nestedInputs := (Result.spreadItems input.fst).map (fun value => (value, Result.valueCount value))
       bindCountedParameterPatternList items nestedInputs
 
 partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
@@ -3103,6 +3318,8 @@ partial def bindCountedParameterPatternList (patterns : List ParameterPattern)
         | .collecting => some (index, parameter)
         | .normal => findCollecting rest (index + 1)
     | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
+    | (.listValue _) :: rest, index => findCollecting rest (index + 1)
+    | (.unpacking _) :: rest, index => findCollecting rest (index + 1)
   -- The same binding and merge order as `bindParameterPatternList`: every
   -- pattern of a range binds before anything merges, and each repeated name
   -- is decided once, symmetrically, when its last contribution joins
@@ -3756,26 +3973,29 @@ structure OpenPropertyHit where
 -- Pattern matching (for conditional algorithms)
 --------------------------------------------------------------------------------
 
-/-- Recover the member list a sequence-value pattern should match against.
-    `Result.normalize` collapses `sequenceValue [x]` -> `x` at every algorithm boundary,
-    so singleton sequence values never exist at runtime. A singleton sequence-value
-    pattern such as `(b)` therefore must also match a non-sequence-value result by
-    treating it as `sequenceValue [result]`.
+/-- The elements a family structural pattern of `patternCount` items matches
+    against: a value of the pattern's OWN kind (`Result.sequencePatternItems?`
+    for `(…)`, `Result.listPatternItems?` for `[…]`) with exactly that many
+    elements, and nothing otherwise — never a value of the other kind and never
+    a scalar (STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY
+    DESTRUCTURE, September 2026; the former singleton fallback, under which a
+    one-item `(b)` took any non-sequence value whole, is gone with the
+    one-item sequence pattern itself). Shared by `matchPattern` and
+    `matchCountedPattern`, so direct conditional calls and counted callback
+    calls (map/filter/reduce) accept exactly the same input shapes. -/
+def patternStructureMembers? (elements? : Option (List Result)) (patternCount : Nat)
+    : Option (List Result) :=
+  match elements? with
+  | some rs => if rs.length == patternCount then some rs else none
+  | none => none
 
-    This rule is shared by `matchPattern` and `matchCountedPattern` so direct
-    conditional calls and counted callback calls (map/filter/reduce) accept
-    exactly the same input shapes. -/
-def patternSequenceValueMembers? (patternCount : Nat) (r : Result) : Option (List Result) :=
-  match r with
-  | .sequenceValue rs => if rs.length == patternCount then some rs else none
-  | _ => if patternCount == 1 then some [r] else none
-
+mutual
 /-- Match a pattern against a Result, returning accumulated bindings on success.
     - `bind x` matches any Result, binding x → r
     - `litInt n` matches only `Result.atom n`; `litBool b` only `Result.bool b`
-    - `sequenceValue ps` matches `Result.sequenceValue rs` with same length, recursively;
-      a singleton sequence-value pattern also matches a non-sequence-value result because
-      normalization collapses singleton sequence values (`patternSequenceValueMembers?`)
+    - `sequenceValue ps` matches only `Result.sequenceValue rs` with the same length,
+      recursively; `listValue ps` matches only `Result.listValue rs` with the same
+      length, recursively (`patternStructureMembers?`)
 
     Bindings accumulate left-to-right. Repeated names compare against the
     first bound value and do not add another environment entry. -/
@@ -3798,17 +4018,24 @@ partial def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
       match r with
       | .bool v => if v = b then some env else none
       | _       => none
-  | .sequenceValue ps  =>
-      match patternSequenceValueMembers? ps.length r with
-      | none => none
-      | some rs =>
-          let rec go : List Pattern -> List Result -> ValEnv -> Option ValEnv
-            | [], [], current => some current
-            | p::ps', r::rs', current => do
-                let next <- matchPatternInto p r current
-                go ps' rs' next
-            | _, _, _ => none
-          go ps rs env
+  | .sequenceValue ps  => matchStructureInto ps (patternStructureMembers? (Result.sequencePatternItems? r) ps.length) env
+  | .listValue ps  => matchStructureInto ps (patternStructureMembers? (Result.listPatternItems? r) ps.length) env
+
+/-- Match a structural pattern's items against the elements its value supplied
+    (`none` when the value is not of the pattern's kind or length). -/
+partial def matchStructureInto (ps : List Pattern) (members? : Option (List Result)) (env : ValEnv)
+    : Option ValEnv :=
+  match members? with
+  | none => none
+  | some rs =>
+      let rec go : List Pattern -> List Result -> ValEnv -> Option ValEnv
+        | [], [], current => some current
+        | p::ps', r::rs', current => do
+            let next <- matchPatternInto p r current
+            go ps' rs' next
+        | _, _, _ => none
+      go ps rs env
+end
 
 def matchPattern (p : Pattern) (r : Result) : Option ValEnv :=
   matchPatternInto p r []
@@ -3848,6 +4075,7 @@ def matchCallBranches (bs : List CondBranch) (args : List Result) : Option (Cond
       | some env => some (b, env)
       | none     => matchCallBranches bs' args
 
+mutual
 partial def matchCountedPatternInto (p : Pattern) (arg : CountedResult)
     (env : CountedParamEnv) : Option CountedParamEnv :=
   match p with
@@ -3868,17 +4096,26 @@ partial def matchCountedPatternInto (p : Pattern) (arg : CountedResult)
       | .bool v => if v = b then some env else none
       | _ => none
   | .sequenceValue ps =>
-      match patternSequenceValueMembers? ps.length arg.fst with
-      | none => none
-      | some rs =>
-          let rec go : List Pattern -> List Result ->
-              CountedParamEnv -> Option CountedParamEnv
-            | [], [], current => some current
-            | p'::ps', r::rs', current => do
-                let next <- matchCountedPatternInto p' (r, Result.valueCount r) current
-                go ps' rs' next
-            | _, _, _ => none
-          go ps rs env
+      matchCountedStructureInto ps (patternStructureMembers? (Result.sequencePatternItems? arg.fst) ps.length) env
+  | .listValue ps =>
+      matchCountedStructureInto ps (patternStructureMembers? (Result.listPatternItems? arg.fst) ps.length) env
+
+/-- Counted twin of `matchStructureInto`: each element crosses the ordinary
+    value boundary (`Result.valueCount`) before its sub-pattern matches. -/
+partial def matchCountedStructureInto (ps : List Pattern) (members? : Option (List Result))
+    (env : CountedParamEnv) : Option CountedParamEnv :=
+  match members? with
+  | none => none
+  | some rs =>
+      let rec go : List Pattern -> List Result ->
+          CountedParamEnv -> Option CountedParamEnv
+        | [], [], current => some current
+        | p'::ps', r::rs', current => do
+            let next <- matchCountedPatternInto p' (r, Result.valueCount r) current
+            go ps' rs' next
+        | _, _, _ => none
+      go ps rs env
+end
 
 def matchCountedPattern (p : Pattern) (arg : CountedResult) : Option CountedParamEnv :=
   matchCountedPatternInto p arg []
@@ -4020,8 +4257,8 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
     whether to lift a bare reference (`liftsBareValueReference`): it never
     rewrites a reference to a callable this accepts into a fresh forwarding
     call, so such a reference reaches this cache in EVERY position — an
-    operand, a list element, a selection target, a strict Math argument, an
-    alias row — and not only in the neutral ones.
+    operand, a list element, a selection target, a strict Math argument — and
+    not only in the neutral ones.
     C#: the zero-argument property access path
     (`GetOrEvaluateZeroArgPropertyResult`), entered by callers only after the
     law accepted. -/
@@ -5066,29 +5303,50 @@ mutual
               pure { argEnv := argEnv, countedParamEnv := [], algEnv := algEnv }
         | .collecting => .error Error.badArity
     | .sequenceValue items => do
-        -- PATTERN PARENTHESES ARE CALL-SHAPE SYNTAX, NOT A RUNTIME BOUNDARY: a
-        -- sequence-value pattern consumes ONE argument slot and opens that
-        -- slot's VALUE (September 2026). A received sequence value or exact
-        -- list value opens to its immediate items (`Result.structureItems?`)
-        -- — the deconstruction receiver opens ONE lone structure boundary of
-        -- either kind, so `x, y, z = [1, 2, 3]` binds like
-        -- `x, y, z = [1, 2, 3]*` — and any other value is a one-item supply
-        -- for the prefix/collecting/suffix matcher. Nothing about how the slot
-        -- was WRITTEN survives here: `F((1, 2))`, `F(S)` with `S = 1, 2`,
-        -- `F(((1, 2)))`, `F({S})`, and `F((S*))` all bind the value `(1, 2)`
-        -- (the former written-slot view, which let a group's own written
-        -- rows override the value, is gone: parentheses group syntax and
-        -- never suspend normalization). The opening is the ONE nested-pattern
-        -- rule `Result.sequenceValuePatternItems`, shared with the counted
-        -- callback binder `bindCountedParameterPattern` (S3).
-        let sequenceValueItems? :=
-          match input.value? with
-          | some value => some (Result.sequenceValuePatternItems value)
-          | none => none
-        match sequenceValueItems? with
+        -- STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE
+        -- (September 2026): a sequence pattern `(…)` consumes ONE argument slot
+        -- and opens that slot's VALUE only when it is a SEQUENCE value
+        -- (`Result.sequencePatternItems?`); a list value or a scalar is the
+        -- pattern's kind mismatch (`structuralPatternKindMismatch`), never an
+        -- implicit one-item supply and never an opened list. Pattern parentheses
+        -- are still call-shape syntax, not a runtime boundary: nothing about how
+        -- the slot was WRITTEN survives here — `F((1, 2))`, `F(S)` with
+        -- `S = 1, 2`, `F(((1, 2)))`, `F({S})`, and `F((S*))` all bind the value
+        -- `(1, 2)`. The opening rule is shared with the counted callback binder
+        -- `bindCountedParameterPattern` (S3).
+        match input.value? with
         | none => .error (input.error?.getD Error.badArity)
-        | some sequenceValueItems =>
-            let nestedInputs := sequenceValueItems.map (fun value => { value? := some value : ParameterPatternInput })
+        | some value =>
+            match Result.sequencePatternItems? value with
+            | none => .error (structuralPatternKindMismatch pattern value)
+            | some elements =>
+                let nestedInputs := elements.map (fun element => { value? := some element : ParameterPatternInput })
+                bindParameterPatternList items nestedInputs false
+    | .listValue items => do
+        -- The list pattern `[…]`: opens the slot's value only when it is a LIST
+        -- value (`Result.listPatternItems?`), keeping every cardinality — `[]`,
+        -- `[x]`, `[x, *rest]` — and rejects a sequence or a scalar as its kind
+        -- mismatch.
+        match input.value? with
+        | none => .error (input.error?.getD Error.badArity)
+        | some value =>
+            match Result.listPatternItems? value with
+            | none => .error (structuralPatternKindMismatch pattern value)
+            | some elements =>
+                let nestedInputs := elements.map (fun element => { value? := some element : ParameterPatternInput })
+                bindParameterPatternList items nestedInputs false
+    | .unpacking items => do
+        -- THE UNPACKING RECEIVER of assignment deconstruction: it demands the ONE
+        -- supplied value like any pattern that opens a value (a slot without one
+        -- fails with its own recorded outcome, so a right-hand side without output
+        -- is that missing output — never a spread failure) and binds the target
+        -- list against the value's ONE-LEVEL items: a sequence or a list opens one
+        -- level and any other value is one item (`Result.spreadItems`). It is the
+        -- only receiver that opens both kinds; no written pattern does.
+        match input.value? with
+        | none => .error (input.error?.getD Error.badArity)
+        | some value =>
+            let nestedInputs := (Result.spreadItems value).map (fun element => { value? := some element : ParameterPatternInput })
             bindParameterPatternList items nestedInputs false
   -- Termination: the pattern-side `sizeOf` shrinks around the recursion cycle;
   -- the +1 tag on the list function breaks the tie for same-list entry calls.
@@ -5107,6 +5365,8 @@ mutual
           | .collecting => some (index, parameter)
           | .normal => findCollecting rest (index + 1)
       | (.sequenceValue _) :: rest, index => findCollecting rest (index + 1)
+      | (.listValue _) :: rest, index => findCollecting rest (index + 1)
+      | (.unpacking _) :: rest, index => findCollecting rest (index + 1)
     -- `bindPairs` binds EVERY pattern of a range, left to right, before
     -- anything merges: the first binding failure wins over any repeated-name
     -- conflict of the range (September 2026). `settle` then decides the
@@ -5626,7 +5886,8 @@ mutual
       supply — `map(xs, F)` calls `F(E)` for each element `E`, `reduce` calls
       `R(E, Acc)` — so fixed parameters take their values unchanged, a
       collector collects the supplied values exactly, and only the callee's
-      explicit sequence-value patterns open a value. There is no callback row
+      explicit structural patterns open a value (a sequence pattern a sequence
+      element, a list pattern a list element). There is no callback row
       convention: `map([(1, 2)], Add)` with `Add(x, y)` is the ordinary arity
       error of `Add((1, 2))`, while `AddPair((x, y))` opens the element
       explicitly. -/
@@ -7251,6 +7512,16 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
     completed signatures, so a lifted parameter captured same-named written
     references — PV-01.)
 
+    An EXACT ALIAS's inherited signature (FWD-02, decided 2026-09-29;
+    `aliasesLoneBareReference`) is in NEITHER list: the alias takes its callee's
+    parameter patterns verbatim, and their names are the callee's private binder
+    names — owned by no written name, like `forwarded`, but colliding with no
+    property either, so renaming the callee's binders can never make the alias a
+    declaration error. The
+    surface layer builds the alias's level without them (C#
+    `Algorithm.User.InheritsCalleeSignature`, read by
+    `ParameterPropertyCollisionValidator`).
+
     A `ScopeCtx` cannot serve as this chain: it carries `props` but no
     parameters, since by the time an `Algorithm` exists every ancestor-parameter
     reference in it is already an `Expr.param` and the binding lives in
@@ -7272,7 +7543,8 @@ def OwnerLevel.signature (level : OwnerLevel) : List Ident :=
 
 /-- Surface declaration validity, checked after parameter-signature completion and
     before evaluation. Each property whose name is bound by this or an enclosing owner's
-    completed signature — forwarded parameters included — is a declaration error,
+    completed signature — forwarded parameters included, an exact alias's inherited
+    signature excluded (it is in no list, see `OwnerLevel`) — is a declaration error,
     regardless of visibility or reference order. Pattern binders belong to their branch
     body. Open targets are not declarations and never conflict, but their HEAD name obeys
     the same owner chain (`elaborateOpenHead`). The surface layer reports each written
@@ -7400,16 +7672,33 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    (`KatLangArityLaws.lean`) states that an unlifted reference is always a
    cacheable demand.
 
-   Forwarding is by BINDING NAME, regardless of how many times a name occurs
-   in the sibling's parameter patterns (decided 2026-09-29, reversing the same
-   day's Q-72 refusal): the referencing body receives ONE parameter per name
-   (first occurrence first, skipping names already bound, inside a group too),
-   and the rewritten call supplies that one binding to every occurrence —
-   `P(x, x) = x` / `Some = P` becomes `Some(x) = P(x, x)`, exactly as
-   `H = F + G` with `F(x)` and `G(x)` becomes `H(x) = F(x) + G(x)`. The
-   evaluator binds `P`'s two slots as it binds any call: both read the same
-   caller binding, so nothing is merged — the repeated-name constraint of
-   `bindParameterPattern` (Q-05) concerns independently supplied arguments.
+   Formula lifting is by BINDING NAME, regardless of how many times a name
+   occurs in the sibling's parameter patterns (decided 2026-09-29, reversing
+   the same day's Q-72 refusal): the referencing body receives ONE parameter
+   per name (first occurrence first, skipping names already bound, inside a
+   group too), and the rewritten call supplies that one binding to every
+   occurrence — `P(x, x) = x` / `D = [P]:0` becomes `D(x) = [P(x, x)]:0`,
+   exactly as `H = F + G` with `F(x)` and `G(x)` becomes
+   `H(x) = F(x) + G(x)`. The evaluator binds `P`'s two slots as it binds any
+   call: both read the same caller binding, so nothing is merged — the
+   repeated-name constraint of `bindParameterPattern` (Q-05) concerns
+   independently supplied arguments.
+
+   THE ALIAS AND BARE-FORWARDING RULES (FWD-02, decided 2026-09-29–30) come
+   first: a body whose ONE written row is a bare reference to
+   a callable that DECLARES parameters (`aliasesLoneBareReference`) is not a
+   formula. An open body is an EXACT ALIAS — `A = P` takes `P`'s patterns
+   verbatim, `A(x, x) = P(x, x)` (`sourceCall`), so it keeps `P`'s two
+   independent arguments. A written parameter list or a clause branch is BARE
+   FORWARDING (`bareForwardingRow`): each of the callee's parameters is supplied
+   from an EXISTING compatible binding of the SAME NAME — `Q(x) = P` is
+   `Q(x) = P(x, x)`, `G(x, y) = F` with `F(y, x)` is `F(y, x)` — never renamed,
+   never matched by position, never added to the closed list, and never
+   reshaped from same-named leaves (`G(x) = Single` with `Single([x])` is
+   rejected). The explicit call `A(p) = F(p)` is deliberately different: an
+   ordinary written call, whose arguments need not match the callee's names. A
+   written call `G = F(exprs)` is an ordinary formula whose parameters are the
+   free names written in `exprs`.
 
    Example:
      Surface:   `{ A = x + 1  B = A * 2 }`
@@ -7483,6 +7772,211 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
 def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
   ParameterPattern.minimumSuppliedSlots signature != 0
 
+/-- **Lone-row eligibility** (FWD-02, decided 2026-09-29; surface syntax support —
+    the specification of the surface pass's decision for a body whose ONE written row
+    is a bare reference). Such a row names the callable ITSELF, so the decision reads
+    the callee's DECLARED signature, not zero-argument acceptance: a callee with at
+    least one parameter pattern is aliased (an open body, `sourceCall`) or forwarded
+    by name (a written parameter list or a clause branch, `bareForwardingRow`) — a
+    callable that also works with no arguments, `Only(*xs)`, included, which
+    supersedes Q-03's alias clause. Every OTHER bare reference keeps
+    `liftsBareValueReference`, and a signature that lifts is always one that aliases
+    (`lifting_signature_is_an_alias_signature`, `KatLangArityLaws.lean`). A clause
+    family's lifting signature is empty, so a family is never an alias or forwarding
+    target (PV-14). C#: `ImplicitArgumentResolver.DeclaresParameters`. -/
+def aliasesLoneBareReference (signature : List ParameterPattern) : Bool :=
+  !signature.isEmpty
+
+/-- The tree of a WRITTEN sequence group `(e1, …, en)` (SYN-06): `()` for no
+    items, the one item itself for a lone non-spread item (a one-slot group IS
+    its content; there is no one-item sequence value), and otherwise a capture of
+    the slots — a lone spread slot `(xs*)` included, which a group keeps.
+    C#: `ImplicitArgumentResolver.BuildSequenceArgument`. -/
+def sequenceArgument : List Expr -> Expr
+  | [] => .emptySequence 0
+  | [only] =>
+      match only with
+      | .sequenceSpread operand => .capture [.sequenceSpread operand]
+      | _ => only
+  | first :: second :: rest => .capture (first :: second :: rest)
+
+mutual
+  /-- **Pattern reconstruction** (FWD-02; surface syntax support — the ONE
+      reconstruction the alias and bare-forwarding rules share). The argument that
+      rebuilds one parameter pattern from its own bindings — exactly the argument a
+      programmer would write:
+
+      * a fixed capture is its binding, `x`;
+      * a collecting capture re-spreads the items it collected, `xs*`, at any
+        level — so a `[first, *middle, last]` pattern rebuilds
+        `[first, middle*, last]`;
+      * a sequence pattern rebuilds a sequence (`sequenceArgument`) and a list
+        pattern a list, of the same shape, at every depth — never the other kind;
+      * the unpacking receiver (never written in a signature) rebuilds the list of
+        its items.
+
+      An EXACT ALIAS `A = F` takes `F`'s patterns verbatim as its signature and calls
+      `F(sourceArguments signature)` (`sourceCall`); binding a supply `S` against the
+      copied patterns and rebuilding reproduces exactly the values `F`'s own patterns
+      bind from `S`, so `A(S)` behaves as `F(S)`. BARE FORWARDING rebuilds a callee's
+      structural parameter this way only when the forwarding body declares the SAME
+      pattern (`bareForwardingArgument`). C#: `ImplicitArgumentResolver.BuildSourceArguments`
+      (through `BuildPatternArgument`); `CoreTests/AliasForwarding.lean`. -/
+  def ParameterPattern.sourceArgument : ParameterPattern -> Expr
+    | .capture parameter =>
+        match parameter.kind with
+        | .normal => .param parameter.name
+        | .collecting => .sequenceSpread (.param parameter.name)
+    | .sequenceValue items => sequenceArgument (ParameterPattern.sourceArguments items)
+    | .listValue items => .listLiteral (ParameterPattern.sourceArguments items)
+    | .unpacking items => .listLiteral (ParameterPattern.sourceArguments items)
+
+  /-- The rebuilt arguments of a pattern list: one per pattern, in order. -/
+  def ParameterPattern.sourceArguments : List ParameterPattern -> List Expr
+    | [] => []
+    | pattern :: rest => ParameterPattern.sourceArgument pattern :: ParameterPattern.sourceArguments rest
+end
+
+/-- The one call the ALIAS rule synthesizes: `callee` applied to its own signature,
+    inherited verbatim as the alias's, rebuilt. -/
+def sourceCall (callee : Ident) (source : List ParameterPattern) : Expr :=
+  .call (.resolve callee) (ParameterPattern.sourceArguments source)
+
+mutual
+  /-- Whether two parameter patterns declare the same CONTRACT — the same kind and
+      shape, the same names and the same collectors at every depth. Bare forwarding
+      compares whole TOP-LEVEL patterns by this relation, never their leaf names alone
+      (C#: `ParameterPattern.ContractComparer`, never display equality). -/
+  def ParameterPattern.sameContract : ParameterPattern -> ParameterPattern -> Bool
+    | .capture left, .capture right => left.name == right.name && left.kind == right.kind
+    | .sequenceValue left, .sequenceValue right => ParameterPattern.sameContracts left right
+    | .listValue left, .listValue right => ParameterPattern.sameContracts left right
+    | .unpacking left, .unpacking right => ParameterPattern.sameContracts left right
+    | _, _ => false
+
+  /-- Pairwise `sameContract` over two pattern lists of equal length. -/
+  def ParameterPattern.sameContracts : List ParameterPattern -> List ParameterPattern -> Bool
+    | [], [] => true
+    | left :: lefts, right :: rights =>
+        ParameterPattern.sameContract left right && ParameterPattern.sameContracts lefts rights
+    | _, _ => false
+end
+
+/-- BARE FORWARDING's verdict for one callee parameter pattern (`bareForwardingArgument`). -/
+inductive BareForwardingVerdict where
+  /-- An existing compatible binding supplies the parameter: this argument. -/
+  | supplied (argument : Expr)
+  /-- A collector that no binding of its name supplies: it receives no argument. -/
+  | optional
+  /-- No existing compatible binding supplies the parameter: the definition is a
+      front-end error (C# `DiagnosticCode.UnforwardableParameter`). -/
+  | unforwardable
+  deriving Repr
+
+/-- The argument that forwards an existing binding named like the capture
+    `destination`: a collecting SOURCE binding re-spreads into a collecting destination
+    (FWD-01, `spread (collect S) = S`); every other pair passes the binding as ONE
+    argument, unchanged — only the source binding's kind decides a spread (FWD-02). -/
+def bareForwardedBinding (destination : CallableParameter) (sourceKind : ParameterKind) : Expr :=
+  if destination.kind == .collecting && sourceKind == .collecting then
+    .sequenceSpread (.param destination.name)
+  else
+    .param destination.name
+
+/-- **Bare forwarding** (FWD-02, decided 2026-09-30; surface syntax support — the
+    specification of the surface pass's decision for a CLOSED body whose ONE written
+    row is a bare reference to a callable that declares parameters: a written
+    parameter list `A(p) = F` or a clause branch `A(head) = F`). Bare forwarding
+    REUSES EXISTING COMPATIBLE BINDINGS BY NAME: it never renames a binding, never
+    adds one to the closed list, never matches by position, and never converts an
+    incompatible top-level parameter pattern because nested leaf names coincide. The
+    inputs:
+
+    * `own` — the closed body's own TOP-LEVEL parameter patterns (a branch: its
+      literal-free top-level head items, `Pattern.bareForwardingOwn`);
+    * `ownNames` — every name the body binds, at any depth;
+    * `captured` — the ENCLOSING parameter bindings a written name would denote
+      in the body when the body binds no such name itself (Q-04: the
+      `.capturedParameter` results of `forwardingSource`), with their kinds.
+
+    One callee parameter pattern is then:
+
+    * a capture `n`: supplied by the body's own top-level capture `n`
+      (`bareForwardedBinding` decides a re-spread from that SOURCE's kind); if the
+      body binds `n` only INSIDE one of its structural patterns, that `n` is an
+      element, not a whole-value parameter — unforwardable; otherwise supplied by
+      the enclosing binding `n`, if any; otherwise a collector is OPTIONAL (it
+      accepts no argument) and a fixed capture is unforwardable;
+    * a structural pattern: supplied only by one of the body's own top-level
+      patterns with the SAME contract (`ParameterPattern.sameContract`), rebuilt as
+      itself (`ParameterPattern.sourceArgument`) — never assembled from same-named
+      leaves, and never from enclosing bindings, which are plain named values.
+
+    So `F(p) = p * 2` / `A(p) = F` forwards `A.p` to `F.p`, while `F(q) = q * 2` /
+    `A(p) = F` is rejected (never `F(p)`), `F(p, q)` / `A(p) = F` is rejected (never
+    an inferred `q`), `F(y, x)` / `G(x, y) = F` is `F(y, x)` BY NAME (never positional),
+    `Single([x])` / `G(x) = Single` is rejected while `G([x]) = Single` forwards, and an
+    unused parameter of the body (`A(p, unused) = F`) stays unused. The explicit call
+    `A(p) = F(p)` is an ordinary written call and never reaches this rule; formula
+    lifting (`forwardingSource`) is a separate mechanism, which infers into an OPEN
+    body what bare forwarding refuses to add to a closed one.
+    C#: `ImplicitArgumentResolver.BareForwardingArgument`;
+    `KatLangArityLaws.lean`, `CoreTests/AliasForwarding.lean`. -/
+def bareForwardingArgument (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) : ParameterPattern -> BareForwardingVerdict
+  | .capture parameter =>
+      match ParameterPattern.topLevelCaptureKind? parameter.name own with
+      | some kind => .supplied (bareForwardedBinding parameter kind)
+      | none =>
+          if ownNames.contains parameter.name then
+            .unforwardable
+          else
+            match captured.find? (fun binding => binding.name == parameter.name) with
+            | some binding => .supplied (bareForwardedBinding parameter binding.kind)
+            | none => if parameter.kind == .collecting then .optional else .unforwardable
+  | pattern =>
+      if own.any (ParameterPattern.sameContract pattern) then
+        .supplied (ParameterPattern.sourceArgument pattern)
+      else
+        .unforwardable
+
+/-- Bare forwarding of a whole callee signature: the supplied arguments in the
+    callee's parameter order (an optional collector contributes none), or `none` when
+    any parameter is unforwardable — the front-end rejection. -/
+def bareForwardingArguments (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) : List ParameterPattern -> Option (List Expr)
+  | [] => some []
+  | parameter :: rest =>
+      match bareForwardingArgument own ownNames captured parameter,
+            bareForwardingArguments own ownNames captured rest with
+      | .supplied argument, some arguments => some (argument :: arguments)
+      | .optional, some arguments => some arguments
+      | _, _ => none
+
+/-- The row a bare-forwarding body elaborates to: the call of `callee` with the
+    forwarded arguments; the BARE NAME when nothing is forwarded (every callee
+    parameter an optional collector, so the callee works with no arguments and the
+    row is Q-03's cached value read, never an invented call); or `none` when a
+    parameter is unforwardable (C# `DiagnosticCode.UnforwardableParameter`, the row
+    left as written). -/
+def bareForwardingRow (callee : Ident) (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) (signature : List ParameterPattern) : Option Expr :=
+  match bareForwardingArguments own ownNames captured signature with
+  | none => none
+  | some [] => some (.resolve callee)
+  | some arguments => some (.call (.resolve callee) arguments)
+
+/-- A clause branch's OWN inputs for bare forwarding: a top-level sequence pattern IS
+    the branch's parameter list and any other head is its one parameter; an item that
+    holds a literal at any depth declares no literal-free pattern, so it offers
+    nothing (its binders still count as bound names, `Pattern.boundNames`). C#:
+    `BareForwardingSources.OfBranchHead`. -/
+def Pattern.bareForwardingOwn (head : Pattern) : List ParameterPattern :=
+  let items := match head with
+    | .sequenceValue items => items
+    | other => [other]
+  items.filterMap Pattern.parameterPattern?
+
 /-- Where AUTOMATIC PARAMETER FORWARDING takes the argument for one callee parameter
     (Q-04, decided 2026-09-28): see `forwardingSource`. -/
 inductive ForwardingSource where
@@ -7524,16 +8018,22 @@ inductive ForwardingSource where
     `BuildImplicitCallArguments`; laws in `KatLangArityLaws.lean`, guards in
     `CoreTests/ForwardingBindings.lean`.
 
-    IMPLICIT FORWARDING IS BY BINDING NAME, regardless of how many times the name
+    FORMULA LIFTING IS BY BINDING NAME, regardless of how many times the name
     occurs in the callee's parameter patterns: every capture occurrence of `name`
     receives the one source this function returns, so a callee that repeats a
     name (`P(x, x)`, `P((x, a), x)`) receives the caller's ONE binding at every
-    occurrence — `Some = P` is `Some(x) = P(x, x)` — the rule by-name sharing
+    occurrence — `D = [P]:0` is `D(x) = [P(x, x)]:0` — the rule by-name sharing
     ACROSS callees already follows (`H = F + G` is `H(x) = F(x) + G(x)`). Each
     occurrence is then an ordinary argument slot reading that binding; the
     binder's repeated-name constraint (Q-05) concerns independently supplied
     arguments and merges nothing. (Decided 2026-09-29, reversing the same day's
-    Q-72 refusal of such callees; Lean models no signature construction.) -/
+    Q-72 refusal of such callees; Lean models no signature construction.) This
+    decision is FORMULA lifting's: a body whose one row is the bare callee is an
+    exact alias (`aliasesLoneBareReference`, `sourceCall`), which reuses no
+    binding, or bare forwarding (`bareForwardingArgument`), which reuses the same
+    parameter bindings by name — the body's own, else the `.capturedParameter`
+    this function selects — but never adds one: what a formula in an OPEN body
+    infers (`.forwardedParameter`), a closed body's bare row rejects. -/
 def forwardingSource (chain : List OwnerLevel) (inferring : Bool) (name : Ident) : ForwardingSource :=
   match selectOwnedDeclaration chain name with
   | .parameter 0 => .ownParameter

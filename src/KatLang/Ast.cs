@@ -310,13 +310,20 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
 
 /// <summary>
 /// Recursive explicit parameter pattern for ordinary user-call binding.
-/// Capture nodes bind names; sequence-value nodes preserve one parent-level
-/// slot and destructure that slot's immediate sequence elements.
-/// A C# <c>closed</c> hierarchy: <see cref="CaptureParameterPattern"/> and
-/// <see cref="SequenceValueParameterPattern"/> (top-level records of this
-/// assembly) are its only variants, no other assembly can derive from it, and a
-/// switch EXPRESSION naming both is compiler-exhaustive with no catch-all arm
-/// (the signature/binding planners are written that way).
+/// Capture nodes bind names; structural nodes preserve one parent-level slot and
+/// destructure that slot's immediate elements, and their delimiter selects the value
+/// kind they destructure (September 2026): a <see cref="SequenceValueParameterPattern"/>
+/// <c>(p1, …, pn)</c> opens a SEQUENCE value only and a <see cref="ListValueParameterPattern"/>
+/// <c>[p1, …, pn]</c> a LIST value only; neither opens the other kind or treats a scalar as
+/// a one-item structure. A sequence pattern with exactly one non-collecting item is invalid
+/// (<see cref="IsSingletonSequenceItems"/>): there is no one-item sequence value.
+/// A C# <c>closed</c> hierarchy: <see cref="CaptureParameterPattern"/>,
+/// <see cref="SequenceValueParameterPattern"/>, <see cref="ListValueParameterPattern"/> and
+/// the never-written deconstruction receiver <see cref="UnpackingParameterPattern"/>
+/// (top-level records of this assembly) are its only variants, no other assembly can
+/// derive from it, and a switch EXPRESSION naming all four is compiler-exhaustive with
+/// no catch-all arm (the signature/binding planners are written that way).
+/// Lean: <c>ParameterPattern</c>.
 /// </summary>
 public closed record ParameterPattern
 {
@@ -327,7 +334,7 @@ public closed record ParameterPattern
     /// <summary>
     /// The capture declarations this pattern binds, left to right and depth first
     /// (Lean: <c>ParameterPattern.captures</c>). A capture leaf yields the declaration it
-    /// holds; a sequence-value pattern yields the flattened captures of its items. Never a
+    /// holds; a structural pattern yields the flattened captures of its items. Never a
     /// cache: a host that mutates a retained <see cref="SequenceValueParameterPattern.Items"/>
     /// list sees the current captures on the next read.
     /// </summary>
@@ -358,7 +365,7 @@ public closed record ParameterPattern
     /// <summary>
     /// The number of captures a pattern list binds — <c>FlattenCaptures(patterns).Count</c>
     /// without materializing the list (Lean: <c>(patterns.flatMap captures).length</c>).
-    /// Allocation-free for a flat list of capture leaves; a nested sequence-value pattern is
+    /// Allocation-free for a flat list of capture leaves; a nested structural pattern is
     /// walked with an explicit stack like <see cref="FlattenCaptures"/>.
     /// </summary>
     internal static int CountCaptures(IReadOnlyList<ParameterPattern> patterns)
@@ -371,35 +378,145 @@ public closed record ParameterPattern
         Stack<ParameterPattern>? pending = null;
         for (var index = 0; index < patterns.Count; index++)
         {
-            switch (patterns[index])
+            if (StructuralItems(patterns[index]) is not { } groupItems)
             {
-                case CaptureParameterPattern:
+                count++;
+                continue;
+            }
+
+            pending ??= new Stack<ParameterPattern>();
+            PushItems(pending, groupItems);
+            while (pending.Count > 0)
+            {
+                if (StructuralItems(pending.Pop()) is { } nestedItems)
+                    PushItems(pending, nestedItems);
+                else
                     count++;
-                    break;
-                case SequenceValueParameterPattern group:
-                    pending ??= new Stack<ParameterPattern>();
-                    PushItems(pending, group);
-                    while (pending.Count > 0)
-                    {
-                        switch (pending.Pop())
-                        {
-                            case CaptureParameterPattern:
-                                count++;
-                                break;
-                            case SequenceValueParameterPattern nested:
-                                PushItems(pending, nested);
-                                break;
-                            case var unhandled:
-                                throw UnhandledPattern(unhandled);
-                        }
-                    }
-                    break;
-                case var unhandled:
-                    throw UnhandledPattern(unhandled);
             }
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// The items of a STRUCTURAL pattern — a sequence pattern <c>(…)</c>, a list pattern
+    /// <c>[…]</c>, or the deconstruction unpacking receiver — or <c>null</c> for a capture
+    /// leaf: the ONE accessor every kind-agnostic walk (capture flattening, name searches,
+    /// collector scans) reads, so a walk that does not depend on the kind cannot forget one.
+    /// Compiler-exhaustive over the closed hierarchy. Lean: <c>ParameterPattern.isStructural</c>
+    /// with the constructor's items.
+    /// </summary>
+    internal static IReadOnlyList<ParameterPattern>? StructuralItems(ParameterPattern pattern)
+        => pattern switch
+        {
+            CaptureParameterPattern => null,
+            SequenceValueParameterPattern group => group.Items,
+            ListValueParameterPattern list => list.Items,
+            UnpackingParameterPattern unpacking => unpacking.Items,
+        };
+
+    /// <summary>
+    /// A structural pattern of the SAME kind as <paramref name="pattern"/> over
+    /// <paramref name="items"/>: the one rebuild every structure-preserving rewrite uses, so a
+    /// rewrite can never turn a list pattern into a sequence pattern or back.
+    /// </summary>
+    internal static ParameterPattern WithStructuralItems(ParameterPattern pattern, IReadOnlyList<ParameterPattern> items)
+        => pattern switch
+        {
+            SequenceValueParameterPattern => new SequenceValueParameterPattern(items),
+            ListValueParameterPattern => new ListValueParameterPattern(items),
+            UnpackingParameterPattern => new UnpackingParameterPattern(items),
+            CaptureParameterPattern => throw new InvalidOperationException("A capture pattern has no structural items."),
+        };
+
+    /// <summary>
+    /// Contract equality for forwarding: kind, shape, binding names and collecting kinds,
+    /// recursively; declaration spans and other source metadata do not participate. Display text
+    /// is not an identity: an unpacking receiver has no delimiters and can print like its items.
+    /// Lean: <c>ParameterPattern.sameContract</c> / <c>sameContracts</c>.
+    /// </summary>
+    internal static IEqualityComparer<ParameterPattern> ContractComparer { get; } = new ContractEqualityComparer();
+
+    private sealed class ContractEqualityComparer : IEqualityComparer<ParameterPattern>
+    {
+        public bool Equals(ParameterPattern? left, ParameterPattern? right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+            return (left, right) switch
+            {
+                (CaptureParameterPattern a, CaptureParameterPattern b) => a.Name == b.Name && a.Kind == b.Kind,
+                (SequenceValueParameterPattern a, SequenceValueParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
+                (ListValueParameterPattern a, ListValueParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
+                (UnpackingParameterPattern a, UnpackingParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
+                _ => false,
+            };
+        }
+
+        public int GetHashCode(ParameterPattern pattern)
+        {
+            var hash = new HashCode();
+            hash.Add(pattern switch
+            {
+                CaptureParameterPattern => 0,
+                SequenceValueParameterPattern => 1,
+                ListValueParameterPattern => 2,
+                UnpackingParameterPattern => 3,
+            });
+            if (pattern is CaptureParameterPattern capture)
+            {
+                hash.Add(capture.Name, StringComparer.Ordinal);
+                hash.Add(capture.Kind);
+            }
+            else
+            {
+                foreach (var item in StructuralItems(pattern)!)
+                    hash.Add(GetHashCode(item));
+            }
+            return hash.ToHashCode();
+        }
+    }
+
+    /// <summary>
+    /// THE SINGLETON RULE (September 2026): whether the items of a SEQUENCE pattern are exactly
+    /// ONE non-collecting pattern. Such a pattern describes a one-item sequence boundary, and
+    /// KatLang has no one-item sequence value (normalization collapses it), so no value could
+    /// ever match it: <c>(x)</c>, <c>((x, y))</c> and <c>([x])</c> are invalid, while the
+    /// collector-only <c>(*xs)</c> is valid (a collector is variadic: it stands for a
+    /// sequence's elements, not for a sequence of one). A list pattern has no such rule —
+    /// lists keep every cardinality, so <c>[x]</c> is the one-element structural pattern.
+    /// Lean: <c>ParameterPattern.isSingletonSequenceItems</c>.
+    /// </summary>
+    internal static bool IsSingletonSequenceItems(IReadOnlyList<ParameterPattern> items)
+        => items.Count == 1 && items[0] is not CaptureParameterPattern { Kind: ParameterKind.Collecting };
+
+    /// <summary>
+    /// Whether an invalid one-item SEQUENCE pattern (<see cref="IsSingletonSequenceItems"/>)
+    /// occurs at any depth of a pattern list. Walked with an explicit stack: patterns are
+    /// host-constructible to arbitrary depth. Lean: <c>ParameterPattern.anyHasSingletonSequenceGroup</c>.
+    /// </summary>
+    internal static bool HasSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns)
+    {
+        Stack<ParameterPattern>? pending = null;
+        for (var index = patterns.Count - 1; index >= 0; index--)
+        {
+            if (patterns[index] is CaptureParameterPattern)
+                continue;
+            pending ??= new Stack<ParameterPattern>();
+            pending.Push(patterns[index]);
+        }
+
+        while (pending is { Count: > 0 })
+        {
+            var pattern = pending.Pop();
+            if (pattern is SequenceValueParameterPattern sequence && IsSingletonSequenceItems(sequence.Items))
+                return true;
+
+            if (StructuralItems(pattern) is { } items)
+                PushItems(pending, items);
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -418,17 +535,11 @@ public closed record ParameterPattern
                 continue;
 
             cursors.Push((cursor.Items, cursor.Index + 1));
-            switch (cursor.Items[cursor.Index])
-            {
-                case CaptureParameterPattern capture:
-                    yield return capture.Parameter;
-                    break;
-                case SequenceValueParameterPattern group:
-                    cursors.Push((group.Items, 0));
-                    break;
-                case var unhandled:
-                    throw UnhandledPattern(unhandled);
-            }
+            var item = cursor.Items[cursor.Index];
+            if (StructuralItems(item) is { } groupItems)
+                cursors.Push((groupItems, 0));
+            else
+                yield return ((CaptureParameterPattern)item).Parameter;
         }
     }
 
@@ -437,46 +548,30 @@ public closed record ParameterPattern
         List<ParameterDeclaration> captures,
         ref Stack<ParameterPattern>? pending)
     {
-        switch (pattern)
+        if (StructuralItems(pattern) is not { } groupItems)
         {
-            case CaptureParameterPattern capture:
-                captures.Add(capture.Parameter);
-                return;
-            case SequenceValueParameterPattern group:
-                pending ??= new Stack<ParameterPattern>();
-                PushItems(pending, group);
-                while (pending.Count > 0)
-                {
-                    switch (pending.Pop())
-                    {
-                        case CaptureParameterPattern capture:
-                            captures.Add(capture.Parameter);
-                            break;
-                        case SequenceValueParameterPattern nested:
-                            PushItems(pending, nested);
-                            break;
-                        case var unhandled:
-                            throw UnhandledPattern(unhandled);
-                    }
-                }
-                return;
-            case var unhandled:
-                throw UnhandledPattern(unhandled);
+            captures.Add(((CaptureParameterPattern)pattern).Parameter);
+            return;
+        }
+
+        pending ??= new Stack<ParameterPattern>();
+        PushItems(pending, groupItems);
+        while (pending.Count > 0)
+        {
+            var item = pending.Pop();
+            if (StructuralItems(item) is { } nestedItems)
+                PushItems(pending, nestedItems);
+            else
+                captures.Add(((CaptureParameterPattern)item).Parameter);
         }
     }
 
     // Items are pushed last-first so the pop order is the written left-to-right order.
-    private static void PushItems(Stack<ParameterPattern> pending, SequenceValueParameterPattern group)
+    private static void PushItems(Stack<ParameterPattern> pending, IReadOnlyList<ParameterPattern> items)
     {
-        var items = group.Items;
         for (var index = items.Count - 1; index >= 0; index--)
             pending.Push(items[index]);
     }
-
-    // The runtime guard of the statement-form walks above: the hierarchy is closed, so this
-    // is unreachable until a variant is added — and then it fails loudly here.
-    private static InvalidOperationException UnhandledPattern(ParameterPattern pattern)
-        => new($"Unhandled parameter pattern: {pattern.GetType().Name}");
 
     public static bool HasCollectingCaptureAtCurrentLevel(IEnumerable<ParameterPattern> patterns)
         => patterns is ImplicitSignatureTemplate template
@@ -490,8 +585,8 @@ public closed record ParameterPattern
     /// factored out here so no other layer re-derives it:
     /// <list type="bullet">
     ///   <item>every pattern consumes exactly ONE supplied slot, whatever it contains — a
-    ///   sequence-value group is one slot that the binder opens afterwards, so nested
-    ///   structure never changes the count at this level;</item>
+    ///   structural pattern (sequence or list) is one slot that the binder opens afterwards,
+    ///   so nested structure never changes the count at this level;</item>
     ///   <item>a collecting capture at THIS level consumes NONE: it collects whatever
     ///   slots are left after the fixed prefix and suffix bind, and an empty leftover is
     ///   the exact empty list.</item>
@@ -541,9 +636,9 @@ public closed record ParameterPattern
                     if (++collectingAtLevel > 1)
                         return true;
                 }
-                else if (pattern is SequenceValueParameterPattern group)
+                else if (StructuralItems(pattern) is { } groupItems)
                 {
-                    pending.Push(group.Items);
+                    pending.Push(groupItems);
                 }
             }
         }
@@ -614,6 +709,14 @@ public sealed record CaptureParameterPattern(ParameterDeclaration Parameter) : P
     public override IReadOnlyList<ParameterDeclaration> Captures => [Parameter];
 }
 
+/// <summary>
+/// A SEQUENCE structural pattern <c>(p1, …, pn)</c> (Lean: <c>ParameterPattern.sequenceValue</c>):
+/// consumes ONE supplied slot and binds its items against that slot's value only when it is a
+/// SEQUENCE value — a list or a scalar is the pattern's kind mismatch, never an opened list and
+/// never a one-item supply. <c>()</c> matches the empty sequence; a pattern of exactly one
+/// non-collecting item is invalid (<see cref="ParameterPattern.IsSingletonSequenceItems"/>),
+/// while the collector-only <c>(*xs)</c> is valid.
+/// </summary>
 public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
     : ParameterPattern
 {
@@ -623,6 +726,51 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
     /// Left-to-right depth-first capture flatten of <see cref="Items"/>
     /// (<see cref="ParameterPattern.FlattenCaptures"/>): the declarations the nested capture
     /// leaves hold, in written order, duplicates included.
+    /// </summary>
+    public override IReadOnlyList<ParameterDeclaration> Captures => FlattenCaptures(Items);
+}
+
+/// <summary>
+/// A LIST structural pattern <c>[p1, …, pn]</c> (Lean: <c>ParameterPattern.listValue</c>):
+/// consumes ONE supplied slot and binds its items against that slot's value only when it is a
+/// LIST value — a sequence or a scalar is the pattern's kind mismatch. Lists keep every
+/// cardinality, so <c>[]</c>, <c>[x]</c> and <c>[x, *rest]</c> match lists of zero, one and
+/// at least one element; <c>[x]</c> is the one-element structural pattern.
+/// </summary>
+public sealed record ListValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
+    : ParameterPattern
+{
+    public override string DisplayName => $"[{string.Join(", ", Items.Select(static item => item.DisplayName))}]";
+
+    /// <summary>
+    /// Left-to-right depth-first capture flatten of <see cref="Items"/>
+    /// (<see cref="ParameterPattern.FlattenCaptures"/>).
+    /// </summary>
+    public override IReadOnlyList<ParameterDeclaration> Captures => FlattenCaptures(Items);
+}
+
+/// <summary>
+/// The UNPACKING RECEIVER of assignment deconstruction (Lean: <c>ParameterPattern.unpacking</c>):
+/// never written — the front end elaborates <c>x, *rest, z = RHS</c> into one per-target helper
+/// whose single parameter pattern is this receiver over the written targets, applied to the
+/// hoisted right-hand side. It consumes ONE supplied slot, demands its VALUE like any pattern
+/// that opens a value (a slot without one fails with its own recorded outcome, so a right-hand
+/// side without output is that missing output — never a spread failure), and binds
+/// <see cref="Items"/> against the value's ONE-LEVEL items (the spread view, Lean <c>Result.spreadItems</c>):
+/// a sequence or a list opens one level and any other value is one item, so
+/// <c>x, y, z = A</c> splits a stored sequence or list and <c>x, *rest = 1</c> binds
+/// <c>rest = []</c>. It has no delimiter that could select a value kind, so it opens both
+/// kinds alike — the written structural patterns (<see cref="SequenceValueParameterPattern"/>,
+/// <see cref="ListValueParameterPattern"/>) never do. Its display is the written target list.
+/// </summary>
+public sealed record UnpackingParameterPattern(IReadOnlyList<ParameterPattern> Items)
+    : ParameterPattern
+{
+    public override string DisplayName => string.Join(", ", Items.Select(static item => item.DisplayName));
+
+    /// <summary>
+    /// Left-to-right depth-first capture flatten of <see cref="Items"/>
+    /// (<see cref="ParameterPattern.FlattenCaptures"/>).
     /// </summary>
     public override IReadOnlyList<ParameterDeclaration> Captures => FlattenCaptures(Items);
 }
@@ -974,11 +1122,20 @@ public closed record Expr
 /// that sole head is a supported recursive explicit parameter pattern; multi-clause
 /// families and literal/mixed heads elaborate as <see cref="Algorithm.Conditional"/>.
 ///
+/// STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE (September 2026):
+/// a nested <see cref="SequenceValue"/> <c>(p1, …, pn)</c> matches SEQUENCE values only and
+/// a <see cref="ListValue"/> <c>[p1, …, pn]</c> LIST values only, each of exactly its
+/// length; a one-item sequence pattern is invalid (no one-item sequence value exists). At the
+/// TOP of a clause head a <see cref="SequenceValue"/> is the head's own argument list —
+/// <c>F(x, y)</c> is <c>SequenceValue[x, y]</c>, and a lone structural pattern is wrapped in
+/// it (<c>F((x, y))</c> is <c>SequenceValue[SequenceValue[x, y]]</c>, <c>F([x])</c> is
+/// <c>SequenceValue[ListValue[x]]</c>) — never a structural pattern.
+///
 /// A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Bind"/>,
-/// <see cref="LitInt"/>, <see cref="LitString"/>, <see cref="LitBool"/>, and
-/// <see cref="SequenceValue"/> are its only variants, no other assembly can derive from
-/// it, and a switch EXPRESSION naming all five is compiler-exhaustive with no catch-all
-/// arm — the evaluator's
+/// <see cref="LitInt"/>, <see cref="LitString"/>, <see cref="LitBool"/>,
+/// <see cref="SequenceValue"/>, and <see cref="ListValue"/> are its only variants, no other
+/// assembly can derive from it, and a switch EXPRESSION naming all six is compiler-exhaustive
+/// with no catch-all arm — the evaluator's
 /// pattern matchers are written that way, so a new pattern kind fails the build
 /// there until decided; statement-form pattern walks need separate coverage review.
 /// </summary>
@@ -1020,8 +1177,19 @@ public closed record Pattern
     /// </summary>
     public sealed record LitBool(bool Value) : Pattern;
 
-    /// <summary>Matches <c>Result.SequenceValue(items)</c> with same arity, each sub-pattern matching.</summary>
+    /// <summary>
+    /// Nested: matches only a <c>Result.SequenceValue(items)</c> of the same length, each
+    /// sub-pattern matching its element — never a list and never a scalar (Lean:
+    /// <c>Pattern.sequenceValue</c>). At the top of a clause head: the head's argument list.
+    /// </summary>
     public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern;
+
+    /// <summary>
+    /// Matches only a <c>Result.ListValue(items)</c> of the same length, each sub-pattern
+    /// matching its element — never a sequence and never a scalar (Lean:
+    /// <c>Pattern.listValue</c>).
+    /// </summary>
+    public sealed record ListValue(IReadOnlyList<Pattern> Items) : Pattern;
 
     /// <summary>
     /// Collect all binder names in this pattern (left-to-right). Walked with an
@@ -1045,6 +1213,10 @@ public closed record Pattern
                     for (var i = items.Count - 1; i >= 0; i--)
                         pending.Push(items[i]);
                     break;
+                case ListValue(var items):
+                    for (var i = items.Count - 1; i >= 0; i--)
+                        pending.Push(items[i]);
+                    break;
             }
         }
 
@@ -1052,11 +1224,59 @@ public closed record Pattern
     }
 
     /// <summary>
+    /// THE SINGLETON RULE over the items of one SEQUENCE clause pattern — the <see cref="Pattern"/>
+    /// twin of <see cref="ParameterPattern.IsSingletonSequenceItems"/>: exactly one item that is not
+    /// a collecting binder. Shared by the parser's report and <see cref="HeadHasSingletonSequenceGroup"/>.
+    /// </summary>
+    internal static bool IsSingletonSequenceItems(IReadOnlyList<Pattern> items)
+        => items is [var only] && only is not Bind { ParameterKind: ParameterKind.Collecting };
+
+    /// <summary>
+    /// THE SINGLETON RULE over a whole clause HEAD (Lean:
+    /// <c>Pattern.headHasSingletonSequenceGroup</c>): whether a NESTED sequence pattern has
+    /// exactly one item that is not a collecting binder. A top-level
+    /// <see cref="SequenceValue"/> is the head's own argument list and is not itself checked.
+    /// Walked with an explicit stack.
+    /// </summary>
+    internal bool HeadHasSingletonSequenceGroup()
+    {
+        var pending = new Stack<Pattern>();
+        if (this is SequenceValue(var headItems))
+        {
+            for (var i = headItems.Count - 1; i >= 0; i--)
+                pending.Push(headItems[i]);
+        }
+        else
+        {
+            pending.Push(this);
+        }
+
+        while (pending.Count > 0)
+        {
+            switch (pending.Pop())
+            {
+                case SequenceValue sequence:
+                    if (IsSingletonSequenceItems(sequence.Items))
+                        return true;
+                    for (var i = sequence.Items.Count - 1; i >= 0; i--)
+                        pending.Push(sequence.Items[i]);
+                    break;
+                case ListValue(var items):
+                    for (var i = items.Count - 1; i >= 0; i--)
+                        pending.Push(items[i]);
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Compute the top-level arity of a pattern.
     /// Lean: <c>Pattern.topLevelArity</c>.
     /// <list type="bullet">
-    ///   <item><c>SequenceValue [p1, ..., pn]</c> → n</item>
-    ///   <item>Any non-sequence-value pattern -> 1</item>
+    ///   <item><c>SequenceValue [p1, ..., pn]</c> → n (the head's own argument list)</item>
+    ///   <item>Any other pattern, a list pattern included -> 1</item>
     /// </list>
     /// This defines the outer call interface of a conditional algorithm branch.
     /// All branches of the same conditional algorithm must have the same
@@ -1103,7 +1323,7 @@ public closed record Pattern
 
     /// <summary>
     /// Returns declared parameter names when a sole surface clause head
-    /// consists only of recursive binder/sequence-value parameter patterns.
+    /// consists only of recursive binder/structural (sequence or list) parameter patterns.
     ///
     /// This is only an eligibility helper for the whole same-name
     /// clause-group rule. Front-ends must still classify at the family level:
@@ -1114,7 +1334,8 @@ public closed record Pattern
     /// <list type="bullet">
     ///   <item><c>Bind(x)</c>, corresponding to <c>F(x) = ...</c></item>
     ///   <item><c>SequenceValue [Bind(x), Bind(y), ...]</c></item>
-    ///   <item>Nested binder-only sequence-value patterns such as <c>F((head, *tail))</c></item>
+    ///   <item>Nested binder-only structural patterns such as <c>F((head, *tail))</c> or
+    ///   <c>F([x, [y]])</c>, each keeping its kind</item>
     /// </list>
     ///
     /// Rejected on purpose:
@@ -1132,7 +1353,14 @@ public closed record Pattern
             _ => TryGetFlatMultiBinderBindings(),
         };
 
-    private static bool TryCreateOrdinaryClauseParameterPattern(
+    /// <summary>
+    /// One clause-head item as the parameter pattern it declares — a binder as a capture, a
+    /// structural pattern as the same kind over its converted items — or <c>false</c> when the
+    /// item holds a literal at any depth (a literal-holding item declares no literal-free
+    /// pattern). Shared by the ordinary-clause classification below and by bare forwarding's
+    /// branch-head contracts (<c>ImplicitArgumentResolver.BareForwardingSources</c>).
+    /// </summary>
+    internal static bool TryCreateOrdinaryClauseParameterPattern(
         Pattern pattern,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ParameterPattern? parameterPattern)
     {
@@ -1146,10 +1374,16 @@ public closed record Pattern
             return true;
         }
 
-        if (pattern is SequenceValue(var items))
+        var (structuralItems, isList) = pattern switch
         {
-            var childPatterns = new List<ParameterPattern>(items.Count);
-            foreach (var item in items)
+            SequenceValue(var items) => (items, false),
+            ListValue(var items) => (items, true),
+            _ => ((IReadOnlyList<Pattern>?)null, false),
+        };
+        if (structuralItems is not null)
+        {
+            var childPatterns = new List<ParameterPattern>(structuralItems.Count);
+            foreach (var item in structuralItems)
             {
                 if (!TryCreateOrdinaryClauseParameterPattern(item, out var childPattern))
                 {
@@ -1160,7 +1394,11 @@ public closed record Pattern
                 childPatterns.Add(childPattern);
             }
 
-            parameterPattern = new SequenceValueParameterPattern(childPatterns);
+            // Each structural pattern keeps its KIND: a sequence pattern stays a sequence
+            // pattern and a list pattern a list pattern (Lean: `Pattern.parameterPattern?`).
+            parameterPattern = isList
+                ? new ListValueParameterPattern(childPatterns)
+                : new SequenceValueParameterPattern(childPatterns);
             return true;
         }
 
@@ -1169,23 +1407,16 @@ public closed record Pattern
     }
 
     /// <summary>
-    /// Returns declared parameters for ordinary explicit clause heads.
-    /// In addition to flat binders, this accepts recursive sequence-value parameter patterns.
+    /// Returns declared parameters for ordinary explicit clause heads: a top-level
+    /// <see cref="SequenceValue"/> is the head's own argument list, one parameter per item; any
+    /// other head is one parameter (a top-level list pattern only in a host-built tree — the parser
+    /// wraps a lone structural pattern in the head's argument list). Recursive structural patterns
+    /// keep their kind. Lean: <c>Pattern.plainClauseParameterPatterns?</c>.
     /// </summary>
     internal IReadOnlyList<ParameterPattern>? TryGetOrdinaryClauseParameterPatterns()
     {
-        if (this is Bind binder)
-            return
-            [
-                new CaptureParameterPattern(new ParameterDeclaration(binder.Name, binder.NameSpan, binder.ParameterKind)
-                {
-                    CollectMarkerSpan = binder.CollectMarkerSpan,
-                    IsRecoveryPlaceholder = binder.IsRecoveryPlaceholder,
-                })
-            ];
-
         if (this is not SequenceValue(var items))
-            return null;
+            return TryCreateOrdinaryClauseParameterPattern(this, out var single) ? [single] : null;
 
         var parameterPatterns = new List<ParameterPattern>(items.Count);
         foreach (var item in items)
@@ -1217,7 +1448,9 @@ public closed record Pattern
     /// <summary>
     /// Check whether two patterns are match-equivalent, i.e., they match
     /// the same set of inputs. Binder spelling is irrelevant, but repeated
-    /// binder names impose equality constraints whose position must agree.
+    /// binder names impose equality constraints whose position must agree, and the
+    /// structural KIND is part of the shape: a sequence pattern is never
+    /// match-equivalent to a list pattern. Lean: <c>Pattern.isMatchEquivalent</c>.
     /// </summary>
     internal bool IsMatchEquivalent(Pattern other)
     {
@@ -1253,20 +1486,28 @@ public closed record Pattern
                     return leftBool.Value == rightBool.Value;
 
                 case (SequenceValue leftGroup, SequenceValue rightGroup):
-                    if (leftGroup.Items.Count != rightGroup.Items.Count)
-                        return false;
+                    return MatchItems(leftGroup.Items, rightGroup.Items);
 
-                    for (var index = 0; index < leftGroup.Items.Count; index++)
-                    {
-                        if (!Match(leftGroup.Items[index], rightGroup.Items[index]))
-                            return false;
-                    }
-
-                    return true;
+                case (ListValue leftList, ListValue rightList):
+                    return MatchItems(leftList.Items, rightList.Items);
 
                 default:
                     return false;
             }
+        }
+
+        bool MatchItems(IReadOnlyList<Pattern> left, IReadOnlyList<Pattern> right)
+        {
+            if (left.Count != right.Count)
+                return false;
+
+            for (var index = 0; index < left.Count; index++)
+            {
+                if (!Match(left[index], right[index]))
+                    return false;
+            }
+
+            return true;
         }
 
         return Match(this, other);
@@ -1376,6 +1617,14 @@ public closed record Pattern
                         Mix(4);
                         Mix((uint)sequence.Items.Count);
                         foreach (var item in sequence.Items)
+                            Visit(item);
+                        break;
+                    case ListValue list:
+                        // A distinct tag: the kind is part of the shape, so a list pattern and
+                        // a sequence pattern of one length never share a fingerprint by design.
+                        Mix(6);
+                        Mix((uint)list.Items.Count);
+                        foreach (var item in list.Items)
                             Visit(item);
                         break;
                 }
@@ -1995,6 +2244,27 @@ public closed record Algorithm
             init => _forwardingParameterStart = new(value);
         }
 
+        private readonly RuntimeStateSlot<bool> _inheritsCalleeSignature;
+
+        /// <summary>
+        /// FWD-02 (decided September 29 2026): true exactly for an EXACT ALIAS <c>A = F</c> — a body
+        /// whose one written row is the bare callable <c>F</c> and which owns no parameter of its own —
+        /// completed by <see cref="ImplicitArgumentResolver"/>: its whole signature is <c>F</c>'s,
+        /// inherited verbatim and forwarded (<see cref="ForwardingParameterStart"/> is 0). The inherited
+        /// parameter NAMES are <c>F</c>'s private binder names, so they are ENCAPSULATED: no written
+        /// name denotes them (like every forwarded parameter), and — unlike a formula's lifted
+        /// parameter, whose name IS the binding name it forwards — they never collide with a property
+        /// the alias or a body nested in it declares (<c>ParameterPropertyCollisionValidator</c>), so
+        /// renaming <c>F</c>'s binders can never make the alias a declaration error. A front-end
+        /// fact with no Lean counterpart,
+        /// carried in an equality-transparent slot like <see cref="ForwardingParameterStart"/>.
+        /// </summary>
+        internal bool InheritsCalleeSignature
+        {
+            get => _inheritsCalleeSignature.Value;
+            init => _inheritsCalleeSignature = new(value);
+        }
+
         /// <summary>
         /// The <see cref="ParameterPatterns"/> NAME RESOLUTION established — every pattern before
         /// <see cref="ForwardingParameterStart"/>, or all of them when forwarding appended none.
@@ -2258,6 +2528,14 @@ internal closed record PreEvaluationAstViolation
 
     /// <summary>Lean: <c>Error.branchOutputArityMismatch name expected actual</c>.</summary>
     internal sealed record ConditionalBranchOutputArityMismatch(string AlgorithmName, int Expected, int Actual) : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A parameter pattern or branch pattern holding a one-item SEQUENCE pattern (the singleton
+    /// rule; the parser reports <see cref="DiagnosticCode.SingletonSequencePattern"/> for the
+    /// written form, so only a host-built tree reaches this). Lean:
+    /// <c>Error.illegalInEval singletonSequencePatternMessage</c>.
+    /// </summary>
+    internal sealed record SingletonSequencePattern() : PreEvaluationAstViolation;
 }
 
 internal static class AlgorithmValidation
@@ -2426,6 +2704,20 @@ internal static class AlgorithmValidation
 
         protected override void VisitUserAlgorithm(Algorithm.User algorithm)
         {
+            // Lean: `a.hasSingletonSequencePattern` is checked FIRST, before the explicit-
+            // parameter output invariant (validateExplicitParamOutputInvariant). A pattern list
+            // shared by several algorithms (an assignment deconstruction's N target helpers share
+            // one N-capture list; FE-3 templates) is validated once, like a shared node, so a
+            // wide deconstruction stays linear.
+            if (checkConditionalBranchArities
+                && _visited.Add(algorithm.ParameterPatterns)
+                && ParameterPattern.HasSingletonSequenceGroup(algorithm.ParameterPatterns))
+            {
+                Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern());
+                if (stopAfterFirst)
+                    return;
+            }
+
             // Test the STORED parameter-pattern list, Lean's actual Algorithm.mk field
             // (validateExplicitParamOutputInvariant checks !parameterPatterns.isEmpty):
             // a legal pattern may contain zero captures (SequenceValueParameterPattern([])),
@@ -2468,8 +2760,17 @@ internal static class AlgorithmValidation
 
         protected override void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)
         {
-            // Lean: validateConditionalBranchArities runs BEFORE the conditional's
-            // opens and branch bodies are walked.
+            // Lean: the singleton rule over every branch head runs first
+            // (`a.hasSingletonSequencePattern`), then validateConditionalBranchArities, both
+            // BEFORE the conditional's opens and branch bodies are walked.
+            if (checkConditionalBranchArities
+                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasSingletonSequenceGroup()))
+            {
+                Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern());
+                if (stopAfterFirst)
+                    return;
+            }
+
             if (checkConditionalBranchArities)
                 ValidateConditionalBranchArities(algorithm);
 

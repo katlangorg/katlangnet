@@ -129,6 +129,11 @@ internal static class FrontEndFingerprint
                 foreach (var it in sv.Items) Pattern(sb, it);
                 sb.Append(']');
                 break;
+            case Pattern.ListValue lv:
+                sb.Append("PList[");
+                foreach (var it in lv.Items) Pattern(sb, it);
+                sb.Append(']');
+                break;
             default:
                 throw new InvalidOperationException($"Unhandled pattern variant {p.GetType().Name}.");
         }

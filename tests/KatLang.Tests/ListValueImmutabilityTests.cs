@@ -3,7 +3,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// Observable immutability of exact list values (<see cref="Result.ListValue"/>):
 /// public construction snapshots untrusted input, and no public item view
-/// (<c>Items</c>, <c>SpreadItems</c>, <c>StructureItems</c>, enumeration)
+/// (<c>Items</c>, <c>SpreadItems</c>, <c>ListPatternItems</c>, enumeration)
 /// exposes storage through which a published value can be mutated.
 /// These tests assert semantic guarantees — display, count, value equality,
 /// and semantic hash stability — not a specific storage implementation.
@@ -181,13 +181,13 @@ public class ListValueImmutabilityTests
             Display("A = [1, 2, 3]\nA*"));
     }
 
-    // ── 4. Structure/deconstruction view cannot mutate the original list ────
+    // ── 4. The list-pattern view cannot mutate the original list ────────────
 
     [Fact]
-    public void StructureView_CannotMutateOriginalList()
+    public void ListPatternView_CannotMutateOriginalList()
     {
         var value = EvaluateList("[1, 2, 3]");
-        var structure = value.StructureItems();
+        var structure = value.ListPatternItems();
 
         Assert.NotNull(structure);
         ProbeViewForMutation(structure);
@@ -259,7 +259,7 @@ public class ListValueImmutabilityTests
         constructorInput.Add(Atom(2));
         ProbeViewForMutation(value.Items);
         ProbeViewForMutation(value.SpreadItems());
-        var structure = value.StructureItems();
+        var structure = value.ListPatternItems();
         Assert.NotNull(structure);
         ProbeViewForMutation(structure);
 

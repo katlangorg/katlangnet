@@ -288,4 +288,12 @@ public enum KatLangErrorCode
     /// <see cref="SourceProcessingLimits.MaxDiagnosticCount"/> allows one list to keep.
     /// </summary>
     DiagnosticCountExceeded = 68,
+
+    // 69 is permanently unused (a removed family).
+
+    /// <summary>Front-end <see cref="DiagnosticCode.SingletonSequencePattern"/>.</summary>
+    SingletonSequencePattern = 70,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnforwardableParameter"/>.</summary>
+    UnforwardableParameter = 71,
 }

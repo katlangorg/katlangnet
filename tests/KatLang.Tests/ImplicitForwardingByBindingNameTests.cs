@@ -7,19 +7,25 @@ using KatLang.Tests.LanguageSpec;
 namespace KatLang.Tests;
 
 /// <summary>
-/// IMPLICIT FORWARDING IS BY BINDING NAME, regardless of how many times that name occurs in a
-/// callee's parameter patterns (decided September 29 2026; it replaces the Q-72 refusal of the
-/// same day, which rejected implicit forwarding into a callee that repeats a name).
+/// FORMULA LIFTING IS BY BINDING NAME, regardless of how many times that name occurs in a callee's
+/// parameter patterns (decided September 29 2026, replacing the same day's Q-72 refusal; narrowed to
+/// formulas by the alias and bare-forwarding rules, FWD-02).
 ///
-/// <para>A caller owns ONE binding for a given parameter name. When a formula uses another formula
-/// without arguments where its inputs are handed on (a lifting position), the inputs are forwarded
-/// by name: the caller receives one parameter per binding NAME the callee needs (PAR-05's
-/// first-occurrence order, skipping names already bound), and the synthesized call supplies that one
+/// <para>A caller owns ONE binding for a given parameter name. When a formula USES another formula
+/// without arguments inside an expression (a lifting position: an operand, a list element, an index
+/// target, a strict Math argument, a callback body, several dependencies at once), the inputs are
+/// forwarded by name: the caller receives one parameter per binding NAME the callees need (PAR-05's
+/// first-occurrence order, skipping names already bound), and each synthesized call supplies that one
 /// binding to every occurrence of the name in the callee's patterns. The same rule governs a name
 /// shared ACROSS callees (<c>F(x)</c>, <c>G(x)</c>, <c>H = F + G</c> is <c>H(x) = F(x) + G(x)</c>) and
-/// a name repeated WITHIN one callee (<c>P(x, x) = x</c>, <c>Some = P</c> is
-/// <c>Some(x) = P(x, x)</c>): the language does not distinguish them. There is no repeated-name
-/// exception anywhere in forwarding.</para>
+/// a name repeated WITHIN one callee (<c>P(x, x) = x</c>, <c>D = [P]:0</c> is
+/// <c>D(x) = [P(x, x)]:0</c>): the language does not distinguish them. There is no repeated-name
+/// exception anywhere in formula lifting.</para>
+///
+/// <para>A body whose ONE row is the bare callee is NOT a formula: <c>A = P</c> is an exact alias
+/// (<c>A(x, x)</c>, P's own contract) and <c>Q(x) = P</c> is bare forwarding, which reuses Q's one
+/// binding named x by name — <c>P(x, x)</c> — and never adds or renames a parameter
+/// (<see cref="AliasAndBareForwardingTests"/>).</para>
 ///
 /// <para>Q-05 is unchanged: a repeated name stays a compatibility constraint over INDEPENDENTLY
 /// supplied arguments, so the direct <c>P(7, 8)</c> still fails. Forwarding supplies the SAME
@@ -32,7 +38,8 @@ namespace KatLang.Tests;
 /// arguments), six execution routes with host-call logs, the metamorphic law that implicit
 /// forwarding is observationally the explicit call that writes the same caller binding into every
 /// matching callee slot, the rename-apart law, and an invariant — checked over every program here
-/// and the whole executable specification — that no inferred signature repeats a name.</para>
+/// and the whole executable specification — that no inferred signature repeats a name, an exact
+/// alias's inherited signature (its callee's own) excepted.</para>
 /// </summary>
 public class ImplicitForwardingByBindingNameTests
 {
@@ -47,7 +54,7 @@ public class ImplicitForwardingByBindingNameTests
     private static string Signature(Algorithm.User algorithm)
         => string.Join(", ", algorithm.ParameterPatterns.Select(static pattern => pattern.DisplayName));
 
-    /// <summary>An argument list as written, spans ignored (<c>x, (x, a)</c>, <c>x, rest*, x</c>).</summary>
+    /// <summary>An argument list as written, spans ignored (<c>x, [x, a]</c>, <c>x, rest*, x</c>).</summary>
     private static string Arguments(IEnumerable<Expr> arguments)
         => string.Join(", ", arguments.Select(ArgumentShape));
 
@@ -56,7 +63,11 @@ public class ImplicitForwardingByBindingNameTests
         Expr.Param param => param.Name,
         Expr.Resolve resolve => resolve.Name,
         Expr.SequenceSpread spread => ArgumentShape(spread.Operand) + "*",
+        // A forwarded structural group is rebuilt as the SAME kind (FWD-02): a sequence group as
+        // a sequence (a capture), a list group as a list literal.
         Expr.Capture capture => "(" + Arguments(capture.Body) + ")",
+        Expr.ListLiteral list => "[" + Arguments(list.Items) + "]",
+        Expr.EmptySequence => "()",
         _ => expr.GetType().Name,
     };
 
@@ -75,62 +86,74 @@ public class ImplicitForwardingByBindingNameTests
     private static async Task<string> Outcome(string source, long? seed = null)
         => RepeatedNameConstraintTests.Rendered(await RepeatedNameConstraintTests.OnEveryRouteAsync(source, seed));
 
-    // ── 1. The motivating alias ─────────────────────────────────────────────────────
+    // ── 1. The motivating formula ───────────────────────────────────────────────────
+
+    /// <summary>A formula that uses P without arguments: a list element selected back out, so its
+    /// value is P's own whatever P returns.</summary>
+    private const string Formula = "Some = [P]:0\n";
 
     [Fact]
-    public async Task AliasOfARepeatedNameCallee_ForwardsOneBindingToEveryOccurrence()
+    public async Task FormulaOfARepeatedNameCallee_ForwardsOneBindingToEveryOccurrence()
     {
-        var root = SourceProvenance.ParseValid(P + "Some = P\nSome(7)").Root;
+        var root = SourceProvenance.ParseValid(P + Formula + "Some(7)").Root;
         var some = Property(root, "Some");
 
         // One binding name, one caller parameter — a forwarded one (nothing was written) — and the
-        // synthesized call supplies it to both of P's occurrences: `Some(x) = P(x, x)`.
+        // synthesized call supplies it to both of P's occurrences: `Some(x) = [P(x, x)]:0`.
         Assert.Equal(["x"], some.Params);
         Assert.Equal(0, some.ForwardingParameterStart);
         Assert.Equal("x, x", Arguments(CallTo(some).Args));
-        AssertNoInferredSignatureRepeatsAName(root, "alias");
+        AssertNoInferredSignatureRepeatsAName(root, "formula");
 
-        Assert.Equal("ok 7", await Outcome(P + "Some = P\nSome(7)"));
+        Assert.Equal("ok 7", await Outcome(P + Formula + "Some(7)"));
         // Some takes the ONE argument its one binding needs, never one per occurrence.
         Assert.Equal(
             "err ArityMismatch: Callable `Some(x)` expects 1 argument, but was called with 2 arguments.",
-            await Outcome(P + "Some = P\nSome(7, 7)"));
+            await Outcome(P + Formula + "Some(7, 7)"));
+
+        // The bare row is not a formula: an exact alias keeps P's two independent arguments.
+        Assert.Equal("ok 7", await Outcome(P + "Some = P\nSome(7, 7)"));
     }
 
     [Fact]
     public void ForwardedReference_StillResolvesToTheCalleeForEditorTooling()
     {
-        var parsed = SourceProvenance.ParseValid(P + "Some = P\nSome(7)").Parsed;
+        var parsed = SourceProvenance.ParseValid(P + Formula + "Some(7)").Parsed;
         var model = SemanticModelBuilder.Build(parsed);
 
-        var reference = model.FindResolutionAt(new SourcePosition(2, 8));
+        var reference = model.FindResolutionAt(new SourcePosition(2, 9));
         Assert.NotNull(reference);
         Assert.Equal("P", reference.ResolvedProperty?.Name);
         Assert.Equal(new SourceSpan(1, 1, 1, 2), reference.ResolvedDeclaration!.Span);
     }
 
-    /// <summary>The editor shows the forwarded alias's signature: one parameter per binding name.</summary>
+    /// <summary>The editor shows the formula's forwarded signature: one parameter per binding name.</summary>
     [Theory]
     [InlineData("P(x, x) = x", "Some(x)")]
     [InlineData("P(x, x, x) = x", "Some(x)")]
     [InlineData("P((x, a), x) = a", "Some((x, a))")]
-    [InlineData("P(x, (x, a)) = a", "Some(x, (a))")]
-    [InlineData("P((x, x)) = x", "Some((x))")]
+    // A sequence group left with one binding IS that binding: there is no one-item sequence.
+    [InlineData("P(x, (x, a)) = a", "Some(x, a)")]
+    [InlineData("P((x, x)) = x", "Some(x)")]
+    // A list group keeps its brackets at every cardinality.
+    [InlineData("P(x, [x, a]) = a", "Some(x, [a])")]
+    [InlineData("P([x, x]) = x", "Some([x])")]
     [InlineData("P(x, *rest, x) = rest", "Some(x, *rest)")]
-    public void EditorSignature_OfAForwardedAlias_HasOneParameterPerBindingName(string declaration, string signature)
+    public void EditorSignature_OfAForwardingFormula_HasOneParameterPerBindingName(string declaration, string signature)
     {
-        var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(declaration + "\nSome = P\n0").Parsed);
+        var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(declaration + "\n" + Formula + "0").Parsed);
         Assert.Equal(signature, Assert.Single(model.FindProperties("Some")).DisplaySignature);
     }
 
     // ── 2. One binding name, one caller parameter — at any depth ────────────────────
 
     /// <summary>
-    /// A generated repeated-name callee: its parameters and body, the signature an alias lifts
+    /// A generated repeated-name callee: its parameters and body, the signature a formula lifts
     /// from it (one capture per binding name, in first-occurrence order, group shapes kept for the
-    /// names that are new there), the arguments the synthesized call passes (the callee's own
-    /// patterns rebuilt from the caller's bindings), a satisfying call of the alias with its
-    /// outcome, and the callee with every repeated occurrence renamed apart.
+    /// names that are new there — a sequence group left with ONE binding is that binding, a list
+    /// group keeps its brackets), the arguments the synthesized call passes (the callee's own
+    /// patterns rebuilt from the caller's bindings, each group as its own kind), a satisfying call
+    /// of the formula with its outcome, and the callee with every repeated occurrence renamed apart.
     /// </summary>
     public sealed record RepeatedShape(
         string Parameters,
@@ -149,15 +172,23 @@ public class ImplicitForwardingByBindingNameTests
         new("x, x, y", "[x, y]", "x, y", "x, x, y", "7, 1", "ok L[7, 1]", "x, x2, y"),
         new("y, x, x", "[x, y]", "y, x", "y, x, x", "1, 7", "ok L[7, 1]", "y, x, x2"),
         new("x, y, y, x", "[x, y]", "x, y", "x, y, y, x", "7, 1", "ok L[7, 1]", "x, y, y2, x2"),
+        // A forwarded group is rebuilt as its own kind (FWD-02): a sequence group as a sequence,
+        // a list group as a list. A lifted sequence group left with ONE binding is that binding.
         new("(x, a), x", "a", "(x, a)", "(x, a), x", "(7, 1)", "ok 1", "(x, a), x2"),
-        new("x, (x, a)", "a", "x, (a)", "x, (x, a)", "7, 1", "ok 1", "x, (x2, a)"),
-        new("(x, y), (z, x)", "[y, z]", "(x, y), (z)", "(x, y), (z, x)", "(7, 1), 2", "ok L[1, 2]", "(x, y), (z, x2)"),
+        new("x, (x, a)", "a", "x, a", "x, (x, a)", "7, 1", "ok 1", "x, (x2, a)"),
+        new("(x, y), (z, x)", "[y, z]", "(x, y), z", "(x, y), (z, x)", "(7, 1), 2", "ok L[1, 2]", "(x, y), (z, x2)"),
         new("(x, *rest), x", "rest", "(x, *rest)", "(x, rest*), x", "(7, 1, 2)", "ok L[1, 2]", "(x, *rest), x2"),
         new("x, *rest, x", "rest", "x, *rest", "x, rest*, x", "7, 1, 2", "ok L[1, 2]", "x, *rest, x2"),
-        new("(x, x)", "x", "(x)", "(x, x)", "7", "ok 7", "(x, x2)"),
+        new("(x, x)", "x", "x", "(x, x)", "7", "ok 7", "(x, x2)"),
         new("(x, y), x, y", "[x, y]", "(x, y)", "(x, y), x, y", "(7, 1)", "ok L[7, 1]", "(x, y), x2, y2"),
         new("a, (b, c), (c, a)", "[a, b, c]", "a, (b, c)", "a, (b, c), (c, a)", "1, (2, 3)", "ok L[1, 2, 3]", "a, (b, c), (c2, a2)"),
-        new("((x, y), x)", "[x, y]", "((x, y))", "((x, y), x)", "[(7, 1)]", "ok L[7, 1]", "((x, y), x2)"),
+        new("((x, y), x)", "[x, y]", "(x, y)", "((x, y), x)", "(7, 1)", "ok L[7, 1]", "((x, y), x2)"),
+        // List groups keep their brackets at every cardinality, the one-element list included.
+        new("[x, x]", "x", "[x]", "[x, x]", "[7]", "ok 7", "[x, x2]"),
+        new("x, [x, a]", "a", "x, [a]", "x, [x, a]", "7, [1]", "ok 1", "x, [x2, a]"),
+        new("[x, a], x", "a", "[x, a]", "[x, a], x", "[7, 1]", "ok 1", "[x, a], x2"),
+        new("([x, y], x)", "[x, y]", "[x, y]", "([x, y], x)", "[7, 1]", "ok L[7, 1]", "([x, y], x2)"),
+        new("[(x, y), x]", "[x, y]", "[(x, y)]", "[(x, y), x]", "[(7, 1)]", "ok L[7, 1]", "[(x, y), x2]"),
     ];
 
     public static TheoryData<int> ShapeIndexes()
@@ -172,43 +203,45 @@ public class ImplicitForwardingByBindingNameTests
 
     /// <summary>
     /// THE NAME DEDUPLICATION LAW: whatever the number of occurrences of a name in the callee's
-    /// patterns — at the top level, inside one group, across groups, beside a collector — lifting
-    /// introduces ONE caller binding for it, in first-occurrence order; the synthesized call feeds
-    /// that binding to every occurrence; and the alias evaluates on every route.
+    /// patterns — at the top level, inside one group, across groups, beside a collector — formula
+    /// lifting introduces ONE caller binding for it, in first-occurrence order; the synthesized call
+    /// feeds that binding to every occurrence; and the formula evaluates on every route. (The exact
+    /// alias of the same callee inherits its signature verbatim instead.)
     /// </summary>
     [Theory]
     [MemberData(nameof(ShapeIndexes))]
     public async Task EveryShape_LiftsOneCallerBindingPerName(int shapeIndex)
     {
         var shape = Shapes[shapeIndex];
-        var source = Declaration(shape) + $"Alias = P\nAlias({shape.AliasArguments})";
+        var source = Declaration(shape) + $"Lifted = [P]:0\nAlias = P\nLifted({shape.AliasArguments})";
         var root = SourceProvenance.ParseValid(source).Root;
-        var alias = Property(root, "Alias");
+        var lifted = Property(root, "Lifted");
         var callee = Property(root, "P");
 
-        Assert.Equal(shape.Lifted, Signature(alias));
-        Assert.Equal(callee.Params.Distinct(StringComparer.Ordinal), alias.Params);
-        Assert.Equal(0, alias.ForwardingParameterStart);
-        Assert.Equal(shape.ForwardedArguments, Arguments(CallTo(alias).Args));
+        Assert.Equal(shape.Lifted, Signature(lifted));
+        Assert.Equal(callee.Params.Distinct(StringComparer.Ordinal), lifted.Params);
+        Assert.Equal(0, lifted.ForwardingParameterStart);
+        Assert.Equal(shape.ForwardedArguments, Arguments(CallTo(lifted).Args));
+        Assert.Equal(shape.Parameters, Signature(Property(root, "Alias")));
         AssertNoInferredSignatureRepeatsAName(root, shape.Parameters);
 
         Assert.Equal(shape.Expected, await Outcome(source));
     }
 
     /// <summary>
-    /// THE EXPLICIT-FORWARDING EQUIVALENCE LAW: <c>Alias = P</c> is observationally the wrapper that
-    /// writes the caller's binding into every matching callee slot — <c>Alias(x) = P(x, x)</c>, subject
-    /// to the ordinary surrounding pattern shapes — on satisfying arguments and on a traced, a failing,
-    /// and a callable-only argument alike: same signature, same synthesized arguments, same outcome and
-    /// host-call log on every route.
+    /// THE EXPLICIT-FORWARDING EQUIVALENCE LAW: <c>Lifted = [P]:0</c> is observationally the formula
+    /// that writes the caller's binding into every matching callee slot — <c>Lifted(x) = [P(x, x)]:0</c>,
+    /// subject to the ordinary surrounding pattern shapes — on satisfying arguments and on a traced, a
+    /// failing, and a callable-only argument alike: same signature, same synthesized arguments, same
+    /// outcome and host-call log on every route.
     /// </summary>
     [Theory]
     [MemberData(nameof(ShapeIndexes))]
     public async Task EveryShape_ImplicitForwardingIsTheExplicitSameBindingCall(int shapeIndex)
     {
         var shape = Shapes[shapeIndex];
-        var implicitAlias = Vocabulary + Declaration(shape) + "Alias = P\n";
-        var explicitAlias = Vocabulary + Declaration(shape) + $"Alias({shape.Lifted}) = P({shape.ForwardedArguments})\n";
+        var implicitAlias = Vocabulary + Declaration(shape) + "Alias = [P]:0\n";
+        var explicitAlias = Vocabulary + Declaration(shape) + $"Alias({shape.Lifted}) = [P({shape.ForwardedArguments})]:0\n";
 
         var implicitOwner = Property(SourceProvenance.ParseValid(implicitAlias + "0").Root, "Alias");
         var explicitOwner = Property(SourceProvenance.ParseValid(explicitAlias + "0").Root, "Alias");
@@ -230,7 +263,7 @@ public class ImplicitForwardingByBindingNameTests
 
     /// <summary>
     /// THE RENAME-APART LAW: renaming the repeated occurrences apart gives each fresh name its own
-    /// caller parameter by ordinary inference — the alias then lifts the callee's whole signature as
+    /// caller parameter by ordinary inference — the formula then lifts the callee's whole signature as
     /// written. No repeated-name transition is involved: the rule reads binding names only.
     /// </summary>
     [Theory]
@@ -238,7 +271,7 @@ public class ImplicitForwardingByBindingNameTests
     public void EveryShape_RenamedApart_LiftsEveryFreshName(int shapeIndex)
     {
         var shape = Shapes[shapeIndex];
-        var root = SourceProvenance.ParseValid($"P({shape.Distinct}) = {shape.Body}\nAlias = P\n0").Root;
+        var root = SourceProvenance.ParseValid($"P({shape.Distinct}) = {shape.Body}\nAlias = [P]:0\n0").Root;
         var alias = Property(root, "Alias");
         Assert.Equal(shape.Distinct, Signature(alias));
         Assert.Equal(Property(root, "P").Params, alias.Params);
@@ -283,21 +316,26 @@ public class ImplicitForwardingByBindingNameTests
     // ── 4. Existing bindings and closed parameter lists ─────────────────────────────
 
     /// <summary>
-    /// A closed list that declares the name supplies its OWN binding to every occurrence:
-    /// <c>Q(x) = P</c> is <c>Q(x) = P(x, x)</c>, exactly as a closed list forwards to any callee.
+    /// A closed list that declares the name supplies its OWN binding to every occurrence of a
+    /// formula's callee: <c>Q(x) = P + 0</c> is <c>Q(x) = P(x, x) + 0</c>. The lone row
+    /// <c>Q(x) = P</c> is bare forwarding, which is by name too: <c>P(x, x)</c> — the one binding
+    /// named x reaches every occurrence, and nothing is added or renamed.
     /// </summary>
     [Fact]
     public async Task ClosedListDeclaringTheName_ForwardsItsBindingToEveryOccurrence()
     {
-        var root = SourceProvenance.ParseValid(P + "Q(x) = P\nQ(7)").Root;
-        var q = Property(root, "Q");
-        Assert.True(q.HasExplicitParameterList);
-        Assert.Equal(["x"], q.Params);
-        Assert.Null(q.ForwardingParameterStart);
-        Assert.Equal("x, x", Arguments(CallTo(q).Args));
+        foreach (var body in new[] { "P + 0", "P" })
+        {
+            var root = SourceProvenance.ParseValid(P + $"Q(x) = {body}\nQ(7)").Root;
+            var q = Property(root, "Q");
+            Assert.True(q.HasExplicitParameterList);
+            Assert.Equal(["x"], q.Params);
+            Assert.Null(q.ForwardingParameterStart);
+            Assert.Equal("x, x", Arguments(CallTo(q).Args));
+            Assert.Equal("ok 7", await Outcome(P + $"Q(x) = {body}\nQ(7)"));
+        }
 
-        Assert.Equal("ok 7", await Outcome(P + "Q(x) = P\nQ(7)"));
-        Assert.Equal("ok 1", await Outcome("P((x, a), x) = a\nQ(x, a) = P\nQ(7, 1)"));
+        Assert.Equal("ok 1", await Outcome("P((x, a), x) = a\nQ(x, a) = P + 0\nQ(7, 1)"));
     }
 
     /// <summary>
@@ -307,9 +345,9 @@ public class ImplicitForwardingByBindingNameTests
     /// demand; in a strict Math position the front end names the missing parameter once.
     /// </summary>
     [Theory]
-    [InlineData("Q(y) = @\nQ(7)")]
+    [InlineData("Q(y) = [@]:0\nQ(7)")]
     [InlineData("Q(y) = @ + y\nQ(7)")]
-    [InlineData("F(0) = 0\nF(y) = @\nF(7)")]
+    [InlineData("F(0) = 0\nF(y) = @ + y\nF(7)")]
     public async Task ClosedListLackingTheName_FollowsTheOrdinaryClosedListRule(string template)
     {
         var repeated = P + template.Replace("@", "P", StringComparison.Ordinal);
@@ -342,7 +380,7 @@ public class ImplicitForwardingByBindingNameTests
     /// </summary>
     [Theory]
     [InlineData(P + "Q = x + P\nQ(7)", "Q", new[] { "x" }, "ok 14")]
-    [InlineData(P + "Outer(x) = {\n  Inner = P\n  Inner\n}\nOuter(7)", "Outer", new[] { "x" }, "ok 7")]
+    [InlineData(P + "Outer(x) = {\n  Inner = [P]:0\n  Inner\n}\nOuter(7)", "Outer", new[] { "x" }, "ok 7")]
     [InlineData(P + "F(0) = 0\nF(x) = P + x\nF(7)", "F", new string[0], "ok 14")]
     [InlineData(P + "Outer(x) = {\n  Inner = P + 1\n  Inner\n}\nOuter(7)", "Outer", new[] { "x" }, "ok 8")]
     public async Task ExistingBinding_IsTheOneBindingEveryOccurrenceReceives(string source, string owner, string[] parameters, string expected)
@@ -359,25 +397,29 @@ public class ImplicitForwardingByBindingNameTests
     [Fact]
     public void CapturedEnclosingBinding_MakesTheHelperAnOrdinaryProperty()
     {
-        var outer = Property(SourceProvenance.ParseValid(P + "Outer(x) = {\n  Inner = P\n  Inner\n}\nOuter(7)").Root, "Outer");
+        var outer = Property(SourceProvenance.ParseValid(P + "Outer(x) = {\n  Inner = [P]:0\n  Inner\n}\nOuter(7)").Root, "Outer");
         var inner = Property(outer, "Inner");
         Assert.Empty(inner.Params);
         Assert.Equal("x, x", Arguments(CallTo(inner).Args));
+
+        // A bare local alias is not a formula: it keeps P's own signature, whatever Outer binds.
+        var alias = Property(Property(SourceProvenance.ParseValid(P + "Outer(x) = {\n  Inner = P\n  Inner(x, x)\n}\nOuter(7)").Root, "Outer"), "Inner");
+        Assert.Equal("x, x", Signature(alias));
     }
 
     // ── 5. Every lifting position: implicit forwarding is the explicit call ─────────
 
     /// <summary>
     /// (template, a satisfying argument). <c>@</c> marks the callee reference, <c>#</c> the argument
-    /// of the call that runs it. Every position where implicit forwarding applies: alias rows,
-    /// operator, comparison and unary operands, list elements, index targets and selectors, row
-    /// spreads, strict Math arguments and a Math dot-fallback receiver, a deconstruction right-hand
-    /// side, block bodies and nested properties, a closed list and a branch pattern that bind the
-    /// name, transitive aliases and sibling formulas, a loop step and a callback.
+    /// of the call that runs it. Every position where formula lifting applies: operator, comparison
+    /// and unary operands, list elements, index targets and selectors, row spreads, strict Math
+    /// arguments and a Math dot-fallback receiver, a deconstruction right-hand side, a block body
+    /// and a nested property that use the callee, a closed list and a branch pattern that bind the
+    /// name, sibling formulas, a loop step and a callback. (A LONE bare row — an alias row, a lone
+    /// block or helper row, bare forwarding — is not a lifting position: AliasAndBareForwardingTests.)
     /// </summary>
     public static TheoryData<string, string> LiftingPositions => new()
     {
-        { "Alias = @\nAlias(#)", "7" },
         { "D = @ + 1\nD(#)", "7" },
         { "D = 1 + @\nD(#)", "7" },
         { "D = @ == 7\nD(#)", "7" },
@@ -392,17 +434,16 @@ public class ImplicitForwardingByBindingNameTests
         { "D = Math.Pow(@, 2)\nD(#)", "3" },
         { "D = @.sin\nD(#)", "0" },
         { "D = {\n  u, v = @\n  u\n}\nD(#)", "(7, 8)" },
-        { "D = { @ }\nD(#)", "7" },
-        { "D = {\n  Inner = @\n  Inner\n}\nD(#)", "7" },
-        { "Apply(f) = f(#)\nApply({ @ })", "7" },
+        { "D = { @ + 0 }\nD(#)", "7" },
+        { "D = {\n  Inner = [@]:0\n  Inner\n}\nD(#)", "7" },
+        { "Apply(f) = f(#)\nApply({ [@]:0 })", "7" },
         { "D = @ + @\nD(#)", "7" },
-        { "Q(x) = @\nQ(#)", "7" },
+        { "Q(x) = [@]:0\nQ(#)", "7" },
         { "F(0) = 0\nF(x) = @ + x\nF(#)", "7" },
-        { "Outer(x) = {\n  Inner = @\n  Inner\n}\nOuter(#)", "7" },
-        { "A = @\nB = A\nB(#)", "7" },
-        { "A = @\nB = A + 1\nC = [B, A]\nC(#)", "7" },
+        { "Outer(x) = {\n  Inner = [@]:0\n  Inner\n}\nOuter(#)", "7" },
+        { "A = [@]:0\nB = A + 1\nC = [B, A]\nC(#)", "7" },
         { "Step = @ + 1\nrepeat(Step, 2, #)", "0" },
-        { "Some = @\nmap([#, 2], Some)", "7" },
+        { "Some = [@]:0\nmap([#, 2], Some)", "7" },
     };
 
     /// <summary>
@@ -474,15 +515,15 @@ public class ImplicitForwardingByBindingNameTests
 
     private static readonly string[] ShapePositions =
     [
-        "D = @\n0",
+        "D = [@]:0\n0",
         "D = @ + 0\n0",
         "D = [@]\n0",
         "D = @:0\n0",
         "D = sin(@)\n0",
-        "D = { @ }\n0",
-        "D = {\n  Inner = @\n  Inner\n}\n0",
+        "D = { @ + 0 }\n0",
+        "D = {\n  Inner = [@]:0\n  Inner\n}\n0",
         "D = {\n  u, v = @\n  u\n}\n0",
-        "D(@@) = @\n0",
+        "D(@@) = [@]:0\n0",
         "D(@@) = [@, @]\n0",
     ];
 
@@ -511,19 +552,22 @@ public class ImplicitForwardingByBindingNameTests
     {
         { "direct-unequal", P + "P(7, 8)", "err ArityMismatch: while evaluating call to P: Bad arity" },
         { "direct-equal", P + "P(7, 7)", "ok 7" },
-        { "forwarded", P + "Some = P\nSome(7)", "ok 7" },
-        { "forwarded-once", P + "Some = P\nSome(trace(7))", "ok 7 [trace(7)]" },
-        { "forwarded-tick-once", P + "Some = P\nSome(tick())", "ok 1 [tick#1]" },
-        { "forwarded-failed", "Bad = trace(1) / 0\n" + P + "Some = P\nSome(Bad)",
+        { "forwarded", P + "Some = [P]:0\nSome(7)", "ok 7" },
+        { "forwarded-once", P + "Some = [P]:0\nSome(trace(7))", "ok 7 [trace(7)]" },
+        { "forwarded-tick-once", P + "Some = [P]:0\nSome(tick())", "ok 1 [tick#1]" },
+        { "forwarded-failed", "Bad = trace(1) / 0\n" + P + "Some = [P]:0\nSome(Bad)",
             "err DivisionByZero: while evaluating call to Some: while evaluating call to P: Division by zero [trace(1)]" },
-        { "forwarded-callable-only", "Inc(y) = y + 1\nPC(x, x) = x, x(5)\nSome = PC\nSome(Inc)",
+        { "forwarded-callable-only", "Inc(y) = y + 1\nPC(x, x) = x, x(5)\nSome = [PC]:0\nSome(Inc)",
             "err ArityMismatch: while evaluating call to Some: while evaluating call to PC: Property 'Inc' expects 1 parameter, but was called with 0 arguments." },
-        { "forwarded-accompanying-callable", "A = 5\nPF(f, f) = f, f()\nSome = PF\nSome(A)", "ok S[5, 5]" },
-        { "forwarded-distinct-values-impossible", P + "Some = P\nSome(7), Some(8)", "ok S[7, 8]" },
+        { "forwarded-accompanying-callable", "A = 5\nPF(f, f) = f, f()\nSome = [PF]:0\nSome(A)", "ok S[5, 5]" },
+        { "forwarded-distinct-values-impossible", P + "Some = [P]:0\nSome(7), Some(8)", "ok S[7, 8]" },
         { "explicit-same", P + "Same(x) = P(x, x)\nSame(7)", "ok 7" },
         { "explicit-two", P + "Both(a, b) = P(a, b)\nBoth(7, 8)", "err ArityMismatch: while evaluating call to Both: while evaluating call to P: Bad arity" },
-        { "nested-group-forwarded", "N(x, (x, y)) = y\nSome = N\nSome(7, 8)", "ok 8" },
-        { "collector-forwarded", "C(x, *r, x) = x, r\nSome = C\nSome(7, 9)", "ok S[7, L[9]]" },
+        { "nested-group-forwarded", "N(x, (x, y)) = y\nSome = [N]:0\nSome(7, 8)", "ok 8" },
+        { "collector-forwarded", "C(x, *r, x) = x, r\nSome = [C]:0\nSome(7, 9)", "ok S[7, L[9]]" },
+        // The exact alias is not a formula: it keeps P's two independent arguments (Q-05).
+        { "alias-equal", P + "Some = P\nSome(7, 7)", "ok 7" },
+        { "alias-unequal", P + "Some = P\nSome(7, 8)", "err ArityMismatch: while evaluating call to Some: Bad arity" },
     };
 
     [Theory]
@@ -535,8 +579,8 @@ public class ImplicitForwardingByBindingNameTests
     }
 
     /// <summary>
-    /// <c>Some = P</c> and the written <c>Same(x) = P(x, x)</c> are the same program: same signature,
-    /// same synthesized call, and the same outcome for every argument kind, on every route.
+    /// <c>Some = [P]:0</c> and the written <c>Some(x) = [P(x, x)]:0</c> are the same program: same
+    /// signature, same synthesized call, and the same outcome for every argument kind, on every route.
     /// </summary>
     [Theory]
     [InlineData("7")]
@@ -551,8 +595,8 @@ public class ImplicitForwardingByBindingNameTests
     public async Task SomeEqualsSame_ForEveryArgumentKind(string argument)
     {
         const string Prelude = "Bad = trace(1) / 0\nInc(y) = y + 1\nA = 5\nP(x, x) = x, x.string\n";
-        var implicitOutcome = await Outcome(Prelude + $"Some = P\nSome({argument})");
-        var explicitOutcome = await Outcome(Prelude + $"Some(x) = P(x, x)\nSome({argument})");
+        var implicitOutcome = await Outcome(Prelude + $"Some = [P]:0\nSome({argument})");
+        var explicitOutcome = await Outcome(Prelude + $"Some(x) = [P(x, x)]:0\nSome({argument})");
         Assert.Equal(explicitOutcome, implicitOutcome);
     }
 
@@ -562,7 +606,7 @@ public class ImplicitForwardingByBindingNameTests
     /// Removing the refusal widens nothing: neutral positions still pass the callable itself,
     /// callees and dot fallbacks still receive written arguments, opened and structural names are
     /// still never implicitly forwarded, a bare root row is still the callable's own zero-argument
-    /// demand, and a clause family is still never lifted.
+    /// demand, and a clause family is still never lifted nor aliased (PV-14).
     /// </summary>
     [Theory]
     [InlineData(P + "Apply(f) = f(4, 4)\nApply(P)", "ok 4")]
@@ -583,22 +627,22 @@ public class ImplicitForwardingByBindingNameTests
     }
 
     /// <summary>
-    /// FWD-02 is unchanged: a callable that accepts zero supplied arguments is read, never lifted
-    /// (Q-03), and a reused binding's KIND decides a re-spread — a repeated name never introduces
-    /// one. A collector beside a repeated name is forwarded by spread exactly because it is a
-    /// collector, while the repeated fixed name is forwarded as one argument at every occurrence.
+    /// In a formula a callable that accepts zero supplied arguments is read, never lifted (Q-03),
+    /// and a reused binding's KIND decides a re-spread — a repeated name never introduces one. A
+    /// collector beside a repeated name is forwarded by spread exactly because it is a collector,
+    /// while the repeated fixed name is forwarded as one argument at every occurrence.
     /// </summary>
     [Theory]
-    [InlineData("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias", "ok 0")]
-    [InlineData("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias == Alias", "ok true")]
+    [InlineData("Cnt(*xs) = xs.count\nD = Cnt + 0\nD", "ok 0")]
+    [InlineData("Cnt(*xs) = xs.count\nD = Cnt == Cnt\nD", "ok true")]
     [InlineData("Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nAlias(1, 2, 3)", "ok 3")]
-    [InlineData("Cnt(*xs) = xs.count\nUse(t, *items) = Cnt\nUse(0, 1, 2)", "ok 0")]
+    [InlineData("Cnt(*xs) = xs.count\nUse(t, *items) = Cnt + 0\nUse(0, 1, 2)", "ok 0")]
     [InlineData("Coll(*xs) = xs\nFwd(*ys) = Coll(ys*)\nFwd((1, 2), 3)", "ok L[S[1, 2], 3]")]
-    [InlineData("Head(x, *rest) = x\nAlias = Head\nAlias(5, 6, 7)", "ok 5")]
-    [InlineData("H((*xs)) = xs.count\nAlias = H\nAlias((1, 2))", "ok 2")]
-    [InlineData("P(x, *rest, x) = rest.count\nAlias = P\nAlias((1, 2), (3, 4), 5)", "ok 2")]
-    [InlineData("P((x, *rest), x) = rest\nAlias = P\nAlias(((1, 2), 3))", "ok L[3]")]
-    public async Task CollectingForwarding_IsUnchanged(string source, string expected)
+    [InlineData("Head(x, *rest) = x\nD = [Head]:0\nD(5, 6, 7)", "ok 5")]
+    [InlineData("H((*xs)) = xs.count\nD = [H]:0\nD((1, 2))", "ok 2")]
+    [InlineData("P(x, *rest, x) = rest.count\nD = [P]:0\nD((1, 2), (3, 4), 5)", "ok 2")]
+    [InlineData("P((x, *rest), x) = rest\nD = [P]:0\nD(((1, 2), 3))", "ok L[3]")]
+    public async Task CollectingForwarding_InAFormula(string source, string expected)
     {
         SourceProvenance.ParseValid(source);
         Assert.Equal(expected, await Outcome(source));
@@ -607,17 +651,17 @@ public class ImplicitForwardingByBindingNameTests
     [Fact]
     public void RepeatedNameBesideACollector_ForwardsTheCollectorBySpreadAndTheNameOnce()
     {
-        var alias = Property(SourceProvenance.ParseValid("P(x, *rest, x) = rest\nAlias = P\n0").Root, "Alias");
-        Assert.Equal("x, *rest", Signature(alias));
-        Assert.Equal("x, rest*, x", Arguments(CallTo(alias).Args));
+        var formula = Property(SourceProvenance.ParseValid("P(x, *rest, x) = rest\nD = [P]:0\n0").Root, "D");
+        Assert.Equal("x, *rest", Signature(formula));
+        Assert.Equal("x, rest*, x", Arguments(CallTo(formula).Args));
     }
 
     // ── 8. Module text ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Module text is elaborated by the same resolver: an alias of a repeated-name callee inside a
-    /// loaded module forwards by binding name exactly like one in the document, and the module's
-    /// explicit same-binding wrapper agrees.
+    /// Module text is elaborated by the same resolver: a formula over a repeated-name callee inside
+    /// a loaded module forwards by binding name exactly like one in the document, and the module's
+    /// explicit same-binding formula agrees.
     /// </summary>
     [Fact]
     public async Task LoadedModuleText_ForwardsByBindingNameToo()
@@ -626,9 +670,9 @@ public class ImplicitForwardingByBindingNameTests
         const string Document = "M = load('https://katlang.org/forwarding/module.kat')\nM.Both(7), M.Both(8)";
 
         var lifted = Assert.IsType<RunResult.Success>(
-            await KatLangEngine.RunAsync(Document, Serving("public P(x, x) = x\npublic Both = P")));
+            await KatLangEngine.RunAsync(Document, Serving("public P(x, x) = x\npublic Both = [P]:0")));
         var written = Assert.IsType<RunResult.Success>(
-            await KatLangEngine.RunAsync(Document, Serving("public P(x, x) = x\npublic Both(x) = P(x, x)")));
+            await KatLangEngine.RunAsync(Document, Serving("public P(x, x) = x\npublic Both(x) = [P(x, x)]:0")));
         Assert.Equal([7m, 8m], lifted.Atoms);
         Assert.Equal(written.Atoms, lifted.Atoms);
     }
@@ -639,10 +683,10 @@ public class ImplicitForwardingByBindingNameTests
     [InlineData(4)]
     [InlineData(17)]
     [InlineData(64)]
-    public async Task MultiplicityAndAliasDepth_DoNotCreateBindingsOrRepeatEffects(int occurrences)
+    public async Task MultiplicityAndFormulaDepth_DoNotCreateBindingsOrRepeatEffects(int occurrences)
     {
         var parameters = string.Join(", ", Enumerable.Repeat("x", occurrences));
-        var chain = "A0 = P\n" + string.Concat(Enumerable.Range(1, 16).Select(i => $"A{i} = A{i - 1}\n"));
+        var chain = "A0 = [P]:0\n" + string.Concat(Enumerable.Range(1, 16).Select(i => $"A{i} = [A{i - 1}]:0\n"));
         var source = $"P({parameters}) = x\n" + chain;
         var root = SourceProvenance.ParseValid(source + "A15(7)").Root;
         for (var i = 0; i < 16; i++)
@@ -672,38 +716,76 @@ public class ImplicitForwardingByBindingNameTests
             lifted = $"({lifted}, a{i})";
             argument = $"({argument}, {i})";
         }
-        var source = $"P({pattern}) = x\nSome = P\nSome({argument})";
+        var source = $"P({pattern}) = x\nSome = [P]:0\nSome({argument})";
         var some = Property(SourceProvenance.ParseValid(source).Root, "Some");
         Assert.Equal(lifted, Signature(some));
         Assert.Equal(new[] { "x" }.Concat(Enumerable.Range(0, depth).Select(i => $"a{i}")), some.Params);
         Assert.Equal("ok 7", await Outcome(source));
     }
 
+    /// <summary>
+    /// A repeated name inside ONE sequence group leaves that group with one binding, and a
+    /// sequence group with one binding IS the binding (there is no one-item sequence value): the
+    /// formula takes the whole value, and its call rebuilds the callee's pair from it —
+    /// <c>Some(x) = [P((x, x))]:0</c>, never the invalid <c>Some((x))</c>.
+    /// </summary>
     [Theory]
     [InlineData("7", "ok 7")]
-    [InlineData("[7]", "ok 7")]
-    [InlineData("[(7, 8)]", "ok S[7, 8]")]
-    [InlineData("(7, 8)", "err ArityMismatch:")]
-    [InlineData("[]", "err ArityMismatch:")]
-    public async Task DeduplicationRetainsTheOneNameGroupsValueOpening(string argument, string expected)
+    [InlineData("[7]", "ok L[7]")]
+    [InlineData("[(7, 8)]", "ok L[S[7, 8]]")]
+    [InlineData("(7, 8)", "ok S[7, 8]")]
+    [InlineData("[]", "ok L[]")]
+    public async Task RepeatedNameInsideOneSequenceGroup_LiftsTheBareBinding(string argument, string expected)
     {
         const string declaration = "P((x, x)) = x\n";
-        var implicitResult = await Outcome(declaration + $"Some = P\nSome({argument})");
-        var explicitResult = await Outcome(declaration + $"Some((x)) = P((x, x))\nSome({argument})");
+        var implicitResult = await Outcome(declaration + $"Some = [P]:0\nSome({argument})");
+        var explicitResult = await Outcome(declaration + $"Some(x) = [P((x, x))]:0\nSome({argument})");
         Assert.Equal(explicitResult, implicitResult);
-        Assert.StartsWith(expected, implicitResult);
-        // Group erasure would incorrectly accept the two-item argument, or preserve [7] as a list.
-        Assert.Equal("(x)", Signature(Property(SourceProvenance.ParseValid(declaration + "Some = P\n0").Root, "Some")));
+        Assert.Equal(expected, implicitResult);
+        Assert.Equal("x", Signature(Property(SourceProvenance.ParseValid(declaration + "Some = [P]:0\n0").Root, "Some")));
     }
 
-    [Fact]
-    public async Task AnotherAliasOfTheSurvivingGroup_StillHasTheSeparatePv08Boundary()
+    /// <summary>
+    /// A repeated name inside ONE list group keeps the list: <c>Some([x]) = [P([x, x])]:0</c> takes
+    /// exactly a one-element list, whose element is the binding.
+    /// </summary>
+    [Theory]
+    [InlineData("[7]", "ok 7")]
+    [InlineData("[(7, 8)]", "ok S[7, 8]")]
+    [InlineData("[[7]]", "ok L[7]")]
+    [InlineData("7", "err TypeMismatch:")]
+    [InlineData("(7, 8)", "err TypeMismatch:")]
+    [InlineData("[7, 8]", "err ArityMismatch:")]
+    [InlineData("[]", "err ArityMismatch:")]
+    public async Task RepeatedNameInsideOneListGroup_KeepsTheOneElementList(string argument, string expected)
     {
-        const string source = "P((x, x)) = x\nSome = P\nNext = Some\n";
-        Assert.Equal("ok S[7, 8]", await Outcome(source + "Some([(7, 8)])"));
-        // Existing PV-08: Next reconstructs Some's ONE-item capture, which normalizes
-        // before Some's pattern opens it. P's two-item reconstruction does not do that.
-        Assert.StartsWith("err ArityMismatch:", await Outcome(source + "Next([(7, 8)])"));
+        const string declaration = "P([x, x]) = x\n";
+        var implicitResult = await Outcome(declaration + $"Some = [P]:0\nSome({argument})");
+        var explicitResult = await Outcome(declaration + $"Some([x]) = [P([x, x])]:0\nSome({argument})");
+        Assert.Equal(explicitResult, implicitResult);
+        Assert.StartsWith(expected, implicitResult, StringComparison.Ordinal);
+        Assert.Equal("[x]", Signature(Property(SourceProvenance.ParseValid(declaration + "Some = [P]:0\n0").Root, "Some")));
+    }
+
+    /// <summary>
+    /// A chain of formulas forwards each surviving group as its own kind at every step: Next
+    /// rebuilds Some's list group as a list and its sequence group as a sequence, so each
+    /// structural pattern opens its argument exactly once, like the direct call.
+    /// </summary>
+    [Fact]
+    public async Task AnotherFormulaOverASurvivingGroup_RebuildsItAsTheSameKind()
+    {
+        const string list = "P([x, x]) = x\nSome = [P]:0\nNext = [Some]:0\n";
+        Assert.Equal("ok S[7, 8]", await Outcome(list + "Some([(7, 8)])"));
+        Assert.Equal("ok S[7, 8]", await Outcome(list + "Next([(7, 8)])"));
+        Assert.Equal(await Outcome(list + "Some([[7]])"), await Outcome(list + "Next([[7]])"));
+        Assert.StartsWith("err TypeMismatch:", await Outcome(list + "Next(7)"), StringComparison.Ordinal);
+        Assert.Equal("[x]", Arguments(CallTo(Property(SourceProvenance.ParseValid(list + "0").Root, "Next"), "Some").Args));
+
+        const string sequence = "P((x, x, y)) = [x, y]\nSome = [P]:0\nNext = [Some]:0\n";
+        Assert.Equal("ok L[7, 8]", await Outcome(sequence + "Next((7, 8))"));
+        Assert.StartsWith("err TypeMismatch:", await Outcome(sequence + "Next([7, 8])"), StringComparison.Ordinal);
+        Assert.Equal("(x, y)", Arguments(CallTo(Property(SourceProvenance.ParseValid(sequence + "0").Root, "Next"), "Some").Args));
     }
 
     [Fact]
@@ -763,7 +845,8 @@ public class ImplicitForwardingByBindingNameTests
     /// <summary>
     /// Across the whole executable specification, every algorithm whose signature is INFERRED (no
     /// written parameter list) binds each parameter name once — forwarding never turns a callee's
-    /// repeated occurrences into repeated caller parameters.
+    /// repeated occurrences into repeated caller parameters. An exact alias is exempt: its signature
+    /// is not inferred but INHERITED, verbatim, from its callee.
     /// </summary>
     [Fact]
     public void NoInferredSignatureRepeatsAName_AcrossTheLanguageSpecCorpus()
@@ -785,13 +868,32 @@ public class ImplicitForwardingByBindingNameTests
     {
         foreach (var algorithm in AllUserAlgorithms(root))
         {
-            if (algorithm.HasExplicitParameterList)
+            if (algorithm.HasExplicitParameterList || IsExactAlias(algorithm))
                 continue;
             var names = algorithm.Params;
             Assert.True(
                 names.Distinct(StringComparer.Ordinal).Count() == names.Count,
                 $"{context}: an inferred signature repeats a name: ({string.Join(", ", names)})");
         }
+    }
+
+    /// <summary>
+    /// An exact alias: every parameter inherited (forwarded, none written or inferred), and one row
+    /// that calls the callee with exactly those parameters rebuilt.
+    /// </summary>
+    private static bool IsExactAlias(Algorithm.User algorithm)
+    {
+        if (algorithm.ForwardingParameterStart != 0 || algorithm.Output.Count != 1)
+            return false;
+        var arguments = algorithm.Output[0] switch
+        {
+            Expr.Call call => call.Args,
+            Expr.DotCall { Args: { } args } => args,
+            _ => null,
+        };
+        var rebuilt = System.Text.RegularExpressions.Regex.Replace(
+            Signature(algorithm), @"\*([A-Za-z_][A-Za-z_0-9]*)", "$1*");
+        return arguments is not null && Arguments(arguments) == rebuilt;
     }
 
     private static IEnumerable<Algorithm.User> AllUserAlgorithms(Algorithm root)

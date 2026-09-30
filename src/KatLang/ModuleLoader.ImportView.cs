@@ -134,6 +134,10 @@ internal sealed partial class ModuleLoader
                     && ReferenceEquals(items, sequence.Items)
                     ? sequence
                     : new Pattern.SequenceValue(items),
+                Pattern.ListValue list => RewriteList(list.Items, RewritePattern) is var listItems
+                    && ReferenceEquals(listItems, list.Items)
+                    ? list
+                    : new Pattern.ListValue(listItems),
             };
             _patterns[pattern] = rewritten;
             return rewritten;
@@ -155,6 +159,14 @@ internal sealed partial class ModuleLoader
                     && ReferenceEquals(items, sequence.Items)
                     ? sequence
                     : new SequenceValueParameterPattern(items),
+                ListValueParameterPattern list => RewriteList(list.Items, RewriteParameterPattern) is var listItems
+                    && ReferenceEquals(listItems, list.Items)
+                    ? list
+                    : new ListValueParameterPattern(listItems),
+                UnpackingParameterPattern unpacking => RewriteList(unpacking.Items, RewriteParameterPattern) is var targets
+                    && ReferenceEquals(targets, unpacking.Items)
+                    ? unpacking
+                    : new UnpackingParameterPattern(targets),
             };
             _parameterPatterns[pattern] = rewritten;
             return rewritten;

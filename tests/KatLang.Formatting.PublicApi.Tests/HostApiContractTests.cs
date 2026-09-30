@@ -37,8 +37,10 @@ public class HostApiContractTests
         "KatLang.CallableSignatureDiagnostics",
         "KatLang.CaptureBindingNode",
         "KatLang.CollectingCaptureBindingNode",
+        "KatLang.ListValueBindingNode",
         "KatLang.PatternListBindingPlan",
         "KatLang.SequenceValueBindingNode",
+        "KatLang.UnpackingBindingNode",
         "KatLang.Semantics.SyntaxWalker",
     ];
 

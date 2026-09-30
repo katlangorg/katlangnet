@@ -258,7 +258,9 @@ internal sealed class ParameterPropertyCollisionValidator(
     protected override void VisitUserAlgorithm(Algorithm.User algorithm)
     {
         var saved = _parameters;
-        _parameters = Extend(algorithm.ParameterPatterns);
+        // An exact alias's inherited signature is its callee's, whose binder names are
+        // encapsulated (FWD-02): they collide with nothing the alias declares.
+        _parameters = algorithm.InheritsCalleeSignature ? _parameters : Extend(algorithm.ParameterPatterns);
         try
         {
             if (!_parameters.IsEmpty)
@@ -289,6 +291,10 @@ internal sealed class ParameterPropertyCollisionValidator(
                     case Pattern.SequenceValue group:
                         for (var i = group.Items.Count - 1; i >= 0; i--)
                             pending.Push(group.Items[i]);
+                        break;
+                    case Pattern.ListValue list:
+                        for (var i = list.Items.Count - 1; i >= 0; i--)
+                            pending.Push(list.Items[i]);
                         break;
                     case Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                         break;

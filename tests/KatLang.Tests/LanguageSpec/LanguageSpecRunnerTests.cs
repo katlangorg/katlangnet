@@ -251,6 +251,12 @@ public class LanguageSpecRunnerTests
             "ownership-lifted-parameter-property-collision",
             // Q-04: a forwarded parameter never gives a closed body's written name a meaning.
             "forwarded-parameter-names-nothing-in-a-closed-body",
+            // FWD-02 bare forwarding (decided September 30 2026): an unforwardable parameter is a
+            // front-end rejection, parse-level by construction.
+            "bare-forwarding-never-renames-a-parameter",
+            "bare-forwarding-never-adds-a-parameter",
+            "bare-forwarding-never-reshapes-a-structural-parameter",
+            "bare-forwarding-never-manufactures-a-sequence",
             // Static-open ownership (SYN-03 / F2): a parameter-owned open head is a
             // front-end rejection, so these are parse-level by construction.
             "ownership-open-target-parameter-rejected",
@@ -261,6 +267,9 @@ public class LanguageSpecRunnerTests
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",
             "trailing-comma-in-parens-rejected",
+            // The singleton rule (structural patterns, September 2026): a one-item sequence
+            // pattern is a front-end rejection, parse-level by construction.
+            "singleton-sequence-pattern-is-invalid",
             // The same-line separator rule (SYN-07A): surface-lexical,
             // parse-level by construction.
             "same-line-slots-need-comma",

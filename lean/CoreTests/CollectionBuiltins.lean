@@ -1490,9 +1490,9 @@ def markSequenceValueRangeDirectCallAlg151oa : Algorithm :=
     ⟨ .bind "x", alg [] [] [] [.num 0] ⟩
   ]
 
--- `range(1, 3)` is now an exact list value, and multi-clause conditional groups
--- match sequence values only (list patterns are deferred), so the list argument
--- takes the fallback clause.
+-- `range(1, 3)` is now an exact list value, and a sequence clause pattern
+-- matches sequence values only (a list is matched by a list pattern `[…]`), so
+-- the list argument takes the fallback clause.
 def test151oa : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("MarkSequenceValueRange", markSequenceValueRangeDirectCallAlg151oa)] [
     .call (resolve "MarkSequenceValueRange") [

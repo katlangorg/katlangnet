@@ -539,7 +539,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         // suggestion because exposure used to remove the nearer provider.)
         const string source = "open Good\nGood = { public Lib = { public Other = 1 } }\n"
             + "Outer(seed) = { Bad = { public Lib = { public Double(x) = x * 2\nseed } }\n"
-            + "Inner = { open Bad\nLib.Dubel(4) }\nInner }\nOuter(1)";
+            + "Inner = { open Bad\nLib.Dubel(4) }\nInner + 0 }\nOuter(1)";
         var (_, error) = FailWithParity(source);
         Assert.Equal("Lib.Double", SingleNote(error).SuggestedName);
     }
@@ -578,7 +578,7 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
     public async Task DeferredSuspendedModuleLoad_FinalizesTheSelectedBranchMemberOrigin()
     {
         const string definitions = "F(0) = 0\nF(n) = { Lib = load('https://katlang.org/g24.kat')\n"
-            + "Use = Lib.Dubel(4)\nUse }\n";
+            + "Use = Lib.Dubel(4)\nUse + 0 }\n";
         var download = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var downloads = 0;
         var options = new RunOptions

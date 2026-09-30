@@ -237,6 +237,27 @@ internal static class ImplicitArgumentResolver
 
         private Dictionary<(ForwardableParameters, ImplicitSignatureTemplate), bool>? _tailMeetsForwardable;
 
+        /// <summary>
+        /// THE EXACT-ALIAS RULE: the call arguments that rebuild one alias signature — the callee's own
+        /// parameter-pattern list — from its own bindings (<see cref="BuildSourceArguments"/>), by list
+        /// reference. A pure function of the list, so every alias of one callee (whose signature is that
+        /// callee's interned list) shares ONE immutable bundle, like the FE-2/FE-3 lifted bundles.
+        /// </summary>
+        public OutputBundle SourceArguments(IReadOnlyList<ParameterPattern> source)
+        {
+            _sourceArguments ??= new(ReferenceEqualityComparer.Instance);
+            if (!_sourceArguments.TryGetValue(source, out var arguments))
+            {
+                arguments = OutputBundle.From(BuildSourceArguments(source));
+                Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
+                _sourceArguments.Add(source, arguments);
+            }
+
+            return arguments;
+        }
+
+        private Dictionary<IReadOnlyList<ParameterPattern>, OutputBundle>? _sourceArguments;
+
         public readonly NameSetInterner ReferenceNameSets = new();
         public readonly SignatureFootprints Footprints = new();
         public readonly BranchContextInterner BranchContexts = new();
@@ -251,7 +272,10 @@ internal static class ImplicitArgumentResolver
     /// canonical <see cref="ForwardableParameters"/> content, names and collecting names — a
     /// synthesized argument carries only a binding's spelling and kind, never its owner); for a
     /// conditional branch body the closed binder specification the pattern imposes, by CONTENT
-    /// (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>); and the reporting mode. Two
+    /// (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>) — the head's whole structure,
+    /// literal POSITIONS included, when the body is shaped like a bare-forwarding row
+    /// (<see cref="FrontEndRegionKeys.BareForwardingBranchHead"/>, <see cref="HasLoneBareRowShape"/>);
+    /// and the reporting mode. Two
     /// reaches with equal keys observe identical inputs, whatever path led to them and whatever
     /// else the property loop rewrote in between.
     /// </summary>
@@ -577,15 +601,16 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// A completed algorithm region: the rewritten algorithm and, for a conditional branch
-    /// body, the blocked strict-value forwarding diagnostics its own output rewrite reported
-    /// — the one diagnostic whose wording names the family — as re-issuable templates.
+    /// body, the diagnostics its own rewrite reported whose wording names the family — blocked
+    /// strict-value forwarding and unforwardable bare-forwarding parameters — as re-issuable
+    /// templates.
     /// </summary>
-    private sealed record AlgorithmRegion(Algorithm.User Rewritten, IReadOnlyList<BlockedForwardingTemplate>? DiagnosticTemplates);
+    private sealed record AlgorithmRegion(Algorithm.User Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates);
 
-    /// <summary>One blocked strict-value forwarding report, minus the family name that words it.</summary>
-    private readonly record struct BlockedForwardingTemplate(
-        string ReferenceDisplayName,
-        IReadOnlyList<string> MissingParameterNames,
+    /// <summary>One branch-body report, minus the family name that words it.</summary>
+    private readonly record struct BranchDiagnosticTemplate(
+        DiagnosticCode Code,
+        Func<string?, string> FormatMessage,
         SourceSpan? Span);
 
     /// <summary>
@@ -890,10 +915,11 @@ internal static class ImplicitArgumentResolver
 
         /// <summary>
         /// Non-null only for a conditional branch body's own output-rewrite region: the
-        /// templates of the blocked strict-value reports it issues, kept on the region so a
-        /// further family sharing the body re-issues them under its own name (M4).
+        /// templates of the diagnostics it issues that name the branch (blocked strict-value and
+        /// unforwardable-parameter reports), kept on the region so a further family sharing the
+        /// body re-issues them under its own name (M4).
         /// </summary>
-        public List<BlockedForwardingTemplate>? BranchDiagnosticTemplates;
+        public List<BranchDiagnosticTemplate>? BranchDiagnosticTemplates;
 
         private static readonly string RewriteContextViolationMessage =
             $"{nameof(ImplicitArgumentResolver)} memo soundness violation: one rewrite region observed two "
@@ -1235,7 +1261,9 @@ internal static class ImplicitArgumentResolver
             run.Footprints.Capture(FreeReferenceNames(alg, run), run.ReferenceNameSets, parentParamMap.Version, observations),
             forwardable.Names,
             forwardable.CollectingNames,
-            branchContext is null ? null : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
+            branchContext is null ? null
+                : HasLoneBareRowShape(alg) ? run.BranchContexts.BareForwardingHeadId(branchContext.Pattern)
+                : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
             ReportsDiagnostics: diagnostics is not null);
         var regions = run.AlgorithmRegions ??= new();
         if (regions.TryGetValue(regionKey, out var completedRegion))
@@ -1251,7 +1279,7 @@ internal static class ImplicitArgumentResolver
             observations?.RecordResolverBranchBodyRegionExpansion();
 
         var diagnosticTemplates = branchContext is not null && diagnostics is not null
-            ? new List<BlockedForwardingTemplate>()
+            ? new List<BranchDiagnosticTemplate>()
             : null;
         var rewritten = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
         // Admitted only after the whole body completed (acyclic by the structural preflight).
@@ -1268,7 +1296,7 @@ internal static class ImplicitArgumentResolver
         DiagnosticBag? diagnostics,
         ConditionalBranchContext? branchContext,
         ResolutionRun run,
-        List<BlockedForwardingTemplate>? diagnosticTemplates)
+        List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
         var newOpens = ProcessOpenExprs(alg.Opens, observations, run);
 
@@ -1362,6 +1390,20 @@ internal static class ImplicitArgumentResolver
             BranchDiagnosticTemplates = diagnosticTemplates,
             NestedForwarding = nestedForwarding,
         };
+
+        // A LONE BARE ROW (FWD-02): a body whose ONE written row is a bare reference to a callable
+        // that declares parameters is an exact alias (an open body) or bare forwarding (a written
+        // parameter list or a clause branch: the callee receives the existing bindings of its
+        // parameters' names, never renamed, reshaped or added). Every other body keeps formula
+        // lifting below.
+        if (!isRoot && TryCompleteLoneCalleeRow(alg, branchContext, visibleParamMap, ownForwarding, walkMemos) is { } completed)
+        {
+            return completed with
+            {
+                Opens = newOpens,
+                Properties = newProperties,
+            };
+        }
 
         if (alg.HasExplicitParameterList || branchContext is not null)
         {
@@ -1560,12 +1602,9 @@ internal static class ImplicitArgumentResolver
 
         foreach (var template in region.DiagnosticTemplates)
         {
-            diagnostics.Add(new Diagnostic(
-                FormatBlockedStrictValueForwarding(template.ReferenceDisplayName, template.MissingParameterNames, branchName),
-                DiagnosticSeverity.Error,
-                template.Span)
+            diagnostics.Add(new Diagnostic(template.FormatMessage(branchName), DiagnosticSeverity.Error, template.Span)
             {
-                Code = DiagnosticCode.UndeclaredIdentifier,
+                Code = template.Code,
             });
         }
     }
@@ -1715,7 +1754,7 @@ internal static class ImplicitArgumentResolver
     /// <para>A callee that accepts zero supplied arguments — no parameters, or only a top-level
     /// collecting parameter such as <c>Roll(*xs)</c> — is NEVER lifted, whatever position it
     /// stands in (an operator or comparison operand, a list element, an index target, a spread
-    /// operand, a strict Math argument, an alias row, a block body): declaring a parameter does
+    /// operand, a strict Math argument, a block body): declaring a parameter does
     /// not by itself make a bare reference a call. The reference stays a property-style value
     /// demand, which the evaluator accepts (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/>
     /// reads the SAME rule, <see cref="ParameterPattern.AcceptsZeroSuppliedSlots"/>) and serves
@@ -1727,6 +1766,13 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static bool RequiresSuppliedArguments(CallableSignature signature)
         => !signature.AcceptsZeroSuppliedArguments;
+
+    /// <summary>
+    /// The eligibility of the alias and bare-forwarding rules (<see cref="TryCompleteLoneCalleeRow"/>):
+    /// the callee declares at least one parameter pattern. Lean: <c>aliasesLoneBareReference</c>.
+    /// </summary>
+    private static bool DeclaresParameters(CallableSignature signature)
+        => signature.ParameterPatterns.Count > 0;
 
     /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
     private readonly record struct LiftedSignature(
@@ -1849,15 +1895,18 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// IMPLICIT FORWARDING IS BY BINDING NAME, regardless of how many times a name occurs in a
+    /// FORMULA LIFTING IS BY BINDING NAME, regardless of how many times a name occurs in a
     /// callee's parameter patterns: the merge walks the captures left to right — across dependencies,
     /// across one dependency's patterns, and inside a group alike — and keeps a capture only when no
     /// earlier capture (the owner's own, an earlier dependency's, or an earlier one of the same
     /// pattern) and no reused enclosing binding already binds its name. So one binding name is ONE
     /// caller parameter: <c>P(x, x)</c> lifts <c>x</c> once exactly as <c>H = F + G</c> with
-    /// <c>F(x)</c> and <c>G(x)</c> does, and <c>P((x, x))</c> lifts the group <c>(x)</c>, never a
-    /// caller pattern that repeats <c>x</c>. The synthesized call supplies the one binding to every
-    /// occurrence (<see cref="BuildImplicitCallArguments"/>).
+    /// <c>F(x)</c> and <c>G(x)</c> does, and <c>P((x, x))</c> lifts the bare binder <c>x</c> (a
+    /// sequence group left with one binder IS that binder), never a caller pattern that repeats
+    /// <c>x</c>. The synthesized call supplies the one binding to every occurrence
+    /// (<see cref="BuildImplicitCallArguments"/>). A lone bare row never reaches this merge: it is an
+    /// exact alias or bare forwarding, which reuses existing bindings by name and adds none
+    /// (<see cref="TryCompleteLoneCalleeRow"/>).
     /// </summary>
     private static void AppendMissingPatterns(
         IReadOnlyList<ParameterPattern> patterns,
@@ -1886,17 +1935,29 @@ internal static class ImplicitArgumentResolver
         {
             CaptureParameterPattern capture
                 => forwardable.Binds(capture.Name) || !existing.Add(capture.Name) ? null : capture,
-            SequenceValueParameterPattern group => MissingGroupCapturePattern(group, existing, forwardable),
+            SequenceValueParameterPattern or ListValueParameterPattern or UnpackingParameterPattern
+                => MissingGroupCapturePattern(pattern, existing, forwardable),
         };
 
-    private static SequenceValueParameterPattern? MissingGroupCapturePattern(
-        SequenceValueParameterPattern group,
+    /// <summary>
+    /// The part of a structural group whose captures no earlier capture binds. The group keeps
+    /// its KIND for the names that are new there (a list group stays a list group, a sequence
+    /// group a sequence group), with one consequence of the value model: a SEQUENCE group left
+    /// with exactly one non-collecting item IS that item, because there is no one-item sequence
+    /// (the singleton rule) — <c>P((x, x))</c> lifts <c>x</c> and <c>P(x, (x, a))</c> lifts
+    /// <c>x, a</c>, exactly as a redundant one-slot group is its content (SYN-06). A list group
+    /// keeps its brackets at every cardinality (<c>P(x, [x, a])</c> lifts <c>x, [a]</c>), and a
+    /// group with no new name contributes no caller parameter.
+    /// </summary>
+    private static ParameterPattern? MissingGroupCapturePattern(
+        ParameterPattern group,
         HashSet<string> existing,
         ForwardableParameters forwardable)
     {
-        var missingItems = new List<ParameterPattern>(group.Items.Count);
+        var groupItems = ParameterPattern.StructuralItems(group)!;
+        var missingItems = new List<ParameterPattern>(groupItems.Count);
         var unchanged = true;
-        foreach (var item in group.Items)
+        foreach (var item in groupItems)
         {
             var missingItem = MissingCapturePattern(item, existing, forwardable);
             unchanged &= ReferenceEquals(missingItem, item);
@@ -1906,9 +1967,13 @@ internal static class ImplicitArgumentResolver
 
         // A group none of whose captures is already bound lifts AS ITSELF — the callee's record,
         // exactly like a lifted capture leaf — so owners lifting it share one record (FE-3).
-        return missingItems.Count == 0
-            ? null
-            : unchanged ? group : new SequenceValueParameterPattern(missingItems);
+        if (missingItems.Count == 0)
+            return null;
+        if (unchanged)
+            return group;
+        if (group is SequenceValueParameterPattern && ParameterPattern.IsSingletonSequenceItems(missingItems))
+            return missingItems[0];
+        return ParameterPattern.WithStructuralItems(group, missingItems);
     }
 
     private static bool TryGetSingleTopLevelCollectingCapture(
@@ -1928,8 +1993,8 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// The callee half of forwarding by shape: a callee whose whole parameter list is ONE
-    /// sequence-value group holding a lone collecting capture (<c>H((*xs))</c>), which requires
-    /// its one supplied slot. A callee whose whole list is a lone TOP-LEVEL collector
+    /// structural group of either kind holding a lone collecting capture (<c>H((*xs))</c>,
+    /// <c>H([*xs])</c>), which requires its one supplied slot. A callee whose whole list is a lone TOP-LEVEL collector
     /// (<c>H(*xs)</c>) accepts zero supplied arguments and is therefore never lifted (Q-03,
     /// <see cref="RequiresSuppliedArguments"/>), so it never reaches forwarding at all: a bare
     /// reference to it is a cached value read, and forwarding its caller's items is written
@@ -1939,9 +2004,10 @@ internal static class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> patterns,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CaptureParameterPattern? capture)
     {
+        // A grouped stream of either structural kind — `H((*xs))` or `H([*xs])` — is re-supplied
+        // by a caller's lone collecting stream, rebuilt as that group's own kind.
         if (patterns.Count == 1
-            && patterns[0] is SequenceValueParameterPattern { Items.Count: 1 } group
-            && group.Items[0] is CaptureParameterPattern { Kind: ParameterKind.Collecting } groupedCollecting)
+            && ParameterPattern.StructuralItems(patterns[0]) is [CaptureParameterPattern { Kind: ParameterKind.Collecting } groupedCollecting])
         {
             capture = groupedCollecting;
             return true;
@@ -2095,7 +2161,10 @@ internal static class ImplicitArgumentResolver
         });
         // A conditional branch body's own region keeps the report re-issuable for further
         // families sharing the body (M4; see ConditionalBranchContext.DiagnosticTemplates).
-        memos.BranchDiagnosticTemplates?.Add(new BlockedForwardingTemplate(referenceDisplayName, missing, span));
+        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(
+            DiagnosticCode.UndeclaredIdentifier,
+            family => FormatBlockedStrictValueForwarding(referenceDisplayName, missing, family),
+            span));
     }
 
     /// <summary>
@@ -2173,8 +2242,9 @@ internal static class ImplicitArgumentResolver
     /// forwarding SOURCE shape of a branch body, mirroring
     /// <see cref="Pattern.TryGetOrdinaryClauseParameterPatterns"/> but total over mixed
     /// heads: literal items bind nothing, so they contribute no capture,
-    /// while binders keep their kind and nested binder groups keep their sequence-value
-    /// structure, including empty groups. The closed-specification name check consumes only
+    /// while binders keep their kind and nested binder groups keep their structural kind
+    /// (a sequence pattern stays a sequence pattern, a list pattern a list pattern),
+    /// including empty groups. The closed-specification name check consumes only
     /// captures, but single-collecting forwarding also depends on those group boundaries.
     /// Collecting binders in conditional families are host-AST-only; the parser rejects them.
     /// </summary>
@@ -2208,14 +2278,13 @@ internal static class ImplicitArgumentResolver
 
             case Pattern.SequenceValue(var items):
             {
-                var childPatterns = new List<ParameterPattern>(items.Count);
-                foreach (var item in items)
-                {
-                    if (TryCreateBinderParameterPattern(item, out var childPattern))
-                        childPatterns.Add(childPattern);
-                }
+                parameterPattern = new SequenceValueParameterPattern(BinderChildPatterns(items));
+                return true;
+            }
 
-                parameterPattern = new SequenceValueParameterPattern(childPatterns);
+            case Pattern.ListValue(var items):
+            {
+                parameterPattern = new ListValueParameterPattern(BinderChildPatterns(items));
                 return true;
             }
 
@@ -2229,6 +2298,416 @@ internal static class ImplicitArgumentResolver
                 throw new InvalidOperationException(
                     $"Unhandled Pattern variant in {nameof(BranchBinderParameterPatterns)}: {pattern.GetType().Name}.");
         }
+
+        static List<ParameterPattern> BinderChildPatterns(IReadOnlyList<Pattern> items)
+        {
+            var childPatterns = new List<ParameterPattern>(items.Count);
+            foreach (var item in items)
+            {
+                if (TryCreateBinderParameterPattern(item, out var childPattern))
+                    childPatterns.Add(childPattern);
+            }
+
+            return childPatterns;
+        }
+    }
+
+    /// <summary>
+    /// A LONE BARE ROW (FWD-02, decided September 29–30 2026). A NON-ROOT body — a named definition,
+    /// a clause branch, or an inline block — whose ONE written row is a bare reference to a callable
+    /// that DECLARES parameters (<see cref="DeclaresParameters"/>) is completed here, never by formula
+    /// lifting. The row names the callable itself, so the rule reads the callee's DECLARED signature,
+    /// not zero-argument acceptance. Declarations and opens beside the row do not change what the row
+    /// means.
+    /// <list type="bullet">
+    ///   <item><b>Exact alias.</b> An OPEN body — no written parameter list, no parameter of its own
+    ///   (<c>A = F</c>) — takes the callee's parameter patterns VERBATIM as its signature (repeated
+    ///   names, binderless groups, collectors and structural kinds included; interned as one shared
+    ///   template, FE-3) and calls the callee with those patterns rebuilt
+    ///   (<see cref="BuildSourceArguments"/>), so <c>A(S) ≡ F(S)</c> for every argument supply. Its
+    ///   parameters are all forwarded ones (<see cref="Algorithm.User.ForwardingParameterStart"/> = 0):
+    ///   no written name denotes them, no enclosing binding is reused, and their names — the callee's
+    ///   private binder names — collide with no property
+    ///   (<see cref="Algorithm.User.InheritsCalleeSignature"/>).</item>
+    ///   <item><b>Bare forwarding.</b> A CLOSED body — a written parameter list (<c>A(p) = F</c>) or a
+    ///   clause branch (<c>A(head) = F</c>) — forwards the callee the EXISTING bindings of its
+    ///   parameters' names (<see cref="BareForwardingArgument"/>): by name, never by position; nothing
+    ///   is renamed and nothing is added to the closed list; and a callee parameter pattern is supplied
+    ///   only by a binding that declares the SAME pattern, so a same-named leaf never reshapes an
+    ///   argument. A callee parameter that cannot be supplied is the front-end error
+    ///   <see cref="DiagnosticCode.UnforwardableParameter"/>, and the row is left as written. When
+    ///   nothing is forwarded to a callee that works with no arguments, the row is its bare name —
+    ///   Q-03's cached value read, never an invented call. The explicit call <c>A(p) = F(p)</c> is an
+    ///   ordinary written call and never reaches this rule.</item>
+    /// </list>
+    /// Returns null for every other body (formula lifting, <see cref="LiftSignature"/>) and for a
+    /// bare-forwarding row that forwards nothing.
+    /// </summary>
+    private static Algorithm.User? TryCompleteLoneCalleeRow(
+        Algorithm.User alg,
+        ConditionalBranchContext? branchContext,
+        SignatureMap paramMap,
+        ForwardableParameters ownForwarding,
+        ResolverWalkMemos memos)
+    {
+        if (!HasLoneBareRowShape(alg))
+            return null;
+
+        var run = memos.Run;
+
+        var row = alg.Output[0];
+        if (!TryGetLoneCalleeSignature(row, paramMap, out var calleePatterns, out var calleeDisplayName))
+            return null;
+
+        if (branchContext is null && !alg.HasExplicitParameterList)
+        {
+            // An inferring body that already owns parameters (none can come from a lone bare
+            // reference, but a host tree may carry them) keeps formula lifting.
+            if (alg.ParameterPatterns.Count != 0)
+                return null;
+
+            var signature = calleePatterns is ImplicitSignatureTemplate template
+                ? template
+                : run.Templates.InternFlat(calleePatterns);
+            return alg with
+            {
+                ParameterPatterns = signature,
+                ForwardingParameterStart = 0,
+                InheritsCalleeSignature = true,
+                Output = [memos.SynthesizedImplicitCall(LoneRowCall(row, run.SourceArguments(signature)))],
+            };
+        }
+
+        var sources = branchContext is null
+            ? BareForwardingSources.OfParameterList(alg.ParameterPatterns)
+            : BareForwardingSources.OfBranchHead(branchContext.Pattern);
+        var forwarded = new List<Expr>(calleePatterns.Count);
+        List<(ParameterPattern Parameter, bool DifferentPattern)>? unforwardable = null;
+        foreach (var parameter in calleePatterns)
+        {
+            var verdict = BareForwardingArgument(parameter, sources, ownForwarding);
+            if (verdict.Argument is { } argument)
+                forwarded.Add(argument);
+            else if (verdict.Unforwardable)
+                (unforwardable ??= []).Add((parameter, verdict.DifferentPattern));
+        }
+
+        if (unforwardable is not null)
+        {
+            ReportUnforwardableParameters(row, calleeDisplayName, unforwardable, branchContext?.BranchName, memos);
+            return alg;
+        }
+
+        // Nothing to forward: every callee parameter is a collector that no binding of its name
+        // supplies, so the callee works with no arguments and the row is its bare name.
+        if (forwarded.Count == 0)
+            return null;
+
+        var arguments = OutputBundle.From(forwarded);
+        run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
+        return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(row, arguments))] };
+    }
+
+    /// <summary>The call a completed lone row makes: the written callee applied to <paramref name="arguments"/>.</summary>
+    private static Expr LoneRowCall(Expr row, OutputBundle arguments) => row switch
+    {
+        Expr.DotCall bareDotCall => bareDotCall with { Args = arguments },
+        _ => new Expr.Call(new Expr.Resolve(((Expr.Resolve)row).Name) { Span = row.Span }, arguments) { Span = row.Span },
+    };
+
+    /// <summary>
+    /// The context-free half of the lone-row rule's eligibility: the body's ONE written row is a bare
+    /// name or a bare dot reference (whatever it resolves to; declarations and opens do not count as
+    /// rows, while a hoisted deconstruction right-hand side does — <see cref="AstHelpers.WrittenRows"/>
+    /// — so a body with a deconstruction beside the bare callee is a formula). A property of the node
+    /// alone, so a region key may read it before the body is rewritten.
+    /// </summary>
+    private static bool HasLoneBareRowShape(Algorithm.User alg)
+        => alg.Output.Count == 1
+            && alg.Output[0] is Expr.Resolve or Expr.DotCall { Args: null }
+            && AstHelpers.WrittenRows(alg).Count == 1;
+
+    /// <summary>
+    /// The callee a lone body row names, when that row is a bare reference to a callable that
+    /// declares parameters: a property with a parameter-pattern signature, a registry-proven Math
+    /// alias, or the bare canonical <c>Math.X</c> shape (the resolution arms of
+    /// <see cref="RewriteBareReference"/> and <see cref="TryGetBareBuiltinCallableSignature"/>, in
+    /// the same order; every Math function requires its arguments), with the name the program wrote.
+    /// A clause family has no parameter-pattern signature and is never an alias or forwarding target
+    /// (PV-14).
+    /// </summary>
+    private static bool TryGetLoneCalleeSignature(
+        Expr row,
+        SignatureMap paramMap,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IReadOnlyList<ParameterPattern>? calleePatterns,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? calleeDisplayName)
+    {
+        switch (row)
+        {
+            case Expr.Resolve(var name)
+                when paramMap.TryGetValue(name, out var signature) && DeclaresParameters(signature):
+                calleePatterns = signature.ParameterPatterns;
+                calleeDisplayName = name;
+                return true;
+
+            case Expr.Resolve
+                when row.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var aliasFacts)
+                    && DeclaresParameters(aliasFacts.Signature):
+                calleePatterns = aliasFacts.Signature.ParameterPatterns;
+                calleeDisplayName = aliasFacts.SpelledName;
+                return true;
+
+            case Expr.DotCall { Args: null }
+                when TryGetBareBuiltinCallableSignature(row, paramMap, out var builtinKey, out var builtinSignature):
+                calleePatterns = builtinSignature.ParameterPatterns;
+                calleeDisplayName = builtinKey;
+                return true;
+
+            default:
+                calleePatterns = null;
+                calleeDisplayName = null;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// The call arguments that REBUILD a parameter-pattern list from its own bindings — the exact
+    /// alias's call (FWD-02): a fixed capture is its binding (<c>x</c>), a collecting capture
+    /// re-spreads the items it collected (<c>xs*</c>) at any level, a sequence pattern rebuilds a
+    /// sequence and a list pattern a list, of the same shape (<see cref="BuildPatternArgument"/> with
+    /// every capture naming its own binding). Binding the rebuilt supply against the same patterns
+    /// therefore reproduces the same bindings, which is what makes an alias exact. Lean:
+    /// <c>ParameterPattern.sourceArguments</c>.
+    /// </summary>
+    private static IReadOnlyList<Expr> BuildSourceArguments(IReadOnlyList<ParameterPattern> source)
+        => source.Select(BuildSourceArgument).ToList();
+
+    /// <summary>
+    /// ONE pattern rebuilt from its own bindings (<see cref="BuildSourceArguments"/>) — also the
+    /// argument bare forwarding passes for a structural pattern the body declares with the same
+    /// contract. Lean: <c>ParameterPattern.sourceArgument</c>.
+    /// </summary>
+    private static Expr BuildSourceArgument(ParameterPattern pattern)
+        => BuildPatternArgument(
+            pattern,
+            static capture => capture.Name,
+            static capture => capture.Kind == ParameterKind.Collecting);
+
+    /// <summary>
+    /// What a CLOSED body's own inputs offer BARE FORWARDING: the kind of every TOP-LEVEL capture it
+    /// declares (first occurrence of a repeated name wins, as for a caller's own signature), the
+    /// contract of every top-level structural pattern it declares that holds no literal (a clause
+    /// head item that holds a literal, <c>[0, x]</c>, declares no literal-free pattern), and every
+    /// name it binds at any depth — a name bound only inside a structural pattern is an element of
+    /// that pattern, never a whole-value parameter. Lean: the <c>own</c> / <c>ownNames</c> inputs of
+    /// <c>bareForwardingArguments</c>.
+    /// </summary>
+    private sealed class BareForwardingSources
+    {
+        private BareForwardingSources(
+            Dictionary<string, ParameterKind> topLevelCaptureKinds,
+            HashSet<ParameterPattern> structuralContracts,
+            HashSet<string> boundNames)
+        {
+            TopLevelCaptureKinds = topLevelCaptureKinds;
+            StructuralContracts = structuralContracts;
+            BoundNames = boundNames;
+        }
+
+        public IReadOnlyDictionary<string, ParameterKind> TopLevelCaptureKinds { get; }
+
+        /// <summary>Every literal-free top-level structural pattern, compared by its complete contract.</summary>
+        public IReadOnlySet<ParameterPattern> StructuralContracts { get; }
+
+        public IReadOnlySet<string> BoundNames { get; }
+
+        public static BareForwardingSources OfParameterList(IReadOnlyList<ParameterPattern> patterns)
+        {
+            var boundNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var capture in ParameterPattern.FlattenCaptures(patterns))
+                boundNames.Add(capture.Name);
+            return Of(patterns, boundNames);
+        }
+
+        public static BareForwardingSources OfBranchHead(Pattern head)
+        {
+            // A top-level sequence pattern IS the branch's parameter list; any other top-level
+            // pattern is one single parameter position.
+            var items = head is Pattern.SequenceValue(var topLevelItems) ? topLevelItems : [head];
+            var patterns = new List<ParameterPattern>(items.Count);
+            foreach (var item in items)
+            {
+                // An item that holds a literal at any depth declares no literal-free contract.
+                if (Pattern.TryCreateOrdinaryClauseParameterPattern(item, out var pattern))
+                    patterns.Add(pattern);
+            }
+
+            return Of(patterns, new HashSet<string>(head.BoundNames(), StringComparer.Ordinal));
+        }
+
+        private static BareForwardingSources Of(IReadOnlyList<ParameterPattern> topLevelPatterns, HashSet<string> boundNames)
+        {
+            var captureKinds = new Dictionary<string, ParameterKind>(StringComparer.Ordinal);
+            var structuralContracts = new HashSet<ParameterPattern>(ParameterPattern.ContractComparer);
+            foreach (var pattern in topLevelPatterns)
+            {
+                if (pattern is CaptureParameterPattern capture)
+                    captureKinds.TryAdd(capture.Name, capture.Kind);
+                else
+                    structuralContracts.Add(pattern);
+            }
+
+            return new(captureKinds, structuralContracts, boundNames);
+        }
+    }
+
+    /// <summary>BARE FORWARDING's verdict for one callee parameter pattern (<see cref="BareForwardingArgument"/>).</summary>
+    private readonly record struct BareForwardingVerdict(Expr? Argument, bool Unforwardable, bool DifferentPattern)
+    {
+        public static BareForwardingVerdict Supplied(Expr argument) => new(argument, Unforwardable: false, DifferentPattern: false);
+
+        /// <summary>A collector that no binding of its name supplies: it receives no argument.</summary>
+        public static BareForwardingVerdict Optional => new(null, Unforwardable: false, DifferentPattern: false);
+
+        public static BareForwardingVerdict Unsupplied(bool differentPattern) => new(null, Unforwardable: true, differentPattern);
+    }
+
+    /// <summary>
+    /// BARE FORWARDING's verdict for ONE callee parameter pattern (FWD-02): the argument that supplies
+    /// it from an EXISTING binding, by name; no argument for a collector that nothing of its name
+    /// supplies (a collector accepts none); or unforwardable.
+    /// <list type="bullet">
+    ///   <item>A capture <c>n</c> reads the binding a written <c>n</c> would denote (Q-04): the body's
+    ///   own TOP-LEVEL parameter <c>n</c>, else — when the body binds no <c>n</c> at all — the nearest
+    ///   enclosing parameter binding (<paramref name="enclosing"/>). A collecting source re-spreads
+    ///   into a collecting destination (FWD-01); every other pair passes the binding as ONE argument,
+    ///   unchanged (FWD-02's source-kind rule). A body that binds <c>n</c> only INSIDE one of its
+    ///   structural patterns holds an element, not a whole-value parameter: unforwardable.</item>
+    ///   <item>A structural pattern is supplied only by one of the body's own top-level patterns with
+    ///   the SAME contract — kind, shape, names and collectors — rebuilt as itself, never assembled
+    ///   from same-named leaves; captured enclosing bindings are plain named values and supply
+    ///   none.</item>
+    /// </list>
+    /// Lean: <c>bareForwardingArgument</c>.
+    /// </summary>
+    private static BareForwardingVerdict BareForwardingArgument(
+        ParameterPattern parameter,
+        BareForwardingSources sources,
+        ForwardableParameters enclosing)
+    {
+        if (parameter is CaptureParameterPattern capture)
+        {
+            if (sources.TopLevelCaptureKinds.TryGetValue(capture.Name, out var ownKind))
+                return BareForwardingVerdict.Supplied(ForwardedBinding(capture, ownKind));
+            if (sources.BoundNames.Contains(capture.Name))
+                return BareForwardingVerdict.Unsupplied(differentPattern: true);
+            if (enclosing.TryGetKind(capture.Name, out var enclosingKind))
+                return BareForwardingVerdict.Supplied(ForwardedBinding(capture, enclosingKind));
+            return capture.Kind == ParameterKind.Collecting
+                ? BareForwardingVerdict.Optional
+                : BareForwardingVerdict.Unsupplied(differentPattern: false);
+        }
+
+        if (sources.StructuralContracts.Contains(parameter))
+            return BareForwardingVerdict.Supplied(BuildSourceArgument(parameter));
+
+        var bindsAName = false;
+        foreach (var leaf in ParameterPattern.FlattenCaptures([parameter]))
+        {
+            if (sources.BoundNames.Contains(leaf.Name) || enclosing.Binds(leaf.Name))
+            {
+                bindsAName = true;
+                break;
+            }
+        }
+
+        return BareForwardingVerdict.Unsupplied(differentPattern: bindsAName);
+
+        static Expr ForwardedBinding(CaptureParameterPattern destination, ParameterKind sourceKind)
+            => destination.Kind == ParameterKind.Collecting && sourceKind == ParameterKind.Collecting
+                ? new Expr.SequenceSpread(new Expr.Param(destination.Name))
+                : new Expr.Param(destination.Name);
+    }
+
+    /// <summary>
+    /// Reports every callee parameter bare forwarding cannot supply, once per parameter, at the bare
+    /// reference (a row inside imported content at the import site). A conditional branch body's own
+    /// region keeps each report re-issuable for further families sharing the body (M4).
+    /// </summary>
+    private static void ReportUnforwardableParameters(
+        Expr row,
+        string calleeDisplayName,
+        IReadOnlyList<(ParameterPattern Parameter, bool DifferentPattern)> unforwardable,
+        string? branchName,
+        ResolverWalkMemos memos)
+    {
+        if (memos.Diagnostics is not { } diagnostics)
+            return;
+
+        var span = row.Span ?? memos.Run.ImportSite;
+        var reported = new HashSet<ParameterPattern>(ParameterPattern.ContractComparer);
+        foreach (var (parameter, differentPattern) in unforwardable)
+        {
+            if (!reported.Add(parameter))
+                continue;
+            var parameterDisplayName = parameter.DisplayName;
+
+            string Format(string? family)
+                => FormatUnforwardableParameter(calleeDisplayName, parameterDisplayName, differentPattern, family);
+            diagnostics.Add(new Diagnostic(Format(branchName), DiagnosticSeverity.Error, span)
+            {
+                Code = DiagnosticCode.UnforwardableParameter,
+            });
+            memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnforwardableParameter, Format, span));
+        }
+    }
+
+    /// <summary>
+    /// Wording for <see cref="ReportUnforwardableParameters"/>, parallel to the closed-list wording of
+    /// <see cref="FormatBlockedStrictValueForwarding"/>: what bare forwarding could not supply, why
+    /// (the list is closed; nothing is renamed or reshaped), and the two repairs.
+    /// </summary>
+    private static string FormatUnforwardableParameter(
+        string calleeDisplayName,
+        string parameterDisplayName,
+        bool differentPattern,
+        string? conditionalBranchName)
+    {
+        calleeDisplayName = ExprNameRenderer.BoundName(calleeDisplayName);
+        parameterDisplayName = ExprNameRenderer.BoundName(parameterDisplayName);
+        conditionalBranchName = conditionalBranchName is null ? null : ExprNameRenderer.BoundName(conditionalBranchName);
+        if (conditionalBranchName is not null)
+        {
+            return differentPattern
+                ? string.Join(
+                    Environment.NewLine,
+                    $"'{calleeDisplayName}' is forwarded by name here, but the pattern of conditional branch '{conditionalBranchName}' "
+                        + $"does not bind its parameter '{parameterDisplayName}' in that form.",
+                    "Bare forwarding reuses an existing binding only with the same pattern and never reshapes an argument. "
+                        + $"Bind '{parameterDisplayName}' in the branch pattern, or call '{calleeDisplayName}' with explicit arguments.")
+                : string.Join(
+                    Environment.NewLine,
+                    $"'{calleeDisplayName}' is forwarded by name here, but its parameter '{parameterDisplayName}' "
+                        + $"is not bound by the pattern of conditional branch '{conditionalBranchName}'.",
+                    "Bare forwarding reuses an existing binding only under its own name, and conditional branch patterns are closed, "
+                        + $"so '{parameterDisplayName}' is neither renamed nor added. Bind '{parameterDisplayName}' in the branch pattern, "
+                        + $"or call '{calleeDisplayName}' with explicit arguments.");
+        }
+
+        return differentPattern
+            ? string.Join(
+                Environment.NewLine,
+                $"'{calleeDisplayName}' is forwarded by name here, but the enclosing explicit parameter list "
+                    + $"does not declare its parameter '{parameterDisplayName}' in that form.",
+                "Bare forwarding reuses an existing parameter only with the same pattern and never reshapes an argument. "
+                    + $"Declare the parameter '{parameterDisplayName}', or call '{calleeDisplayName}' with explicit arguments.")
+            : string.Join(
+                Environment.NewLine,
+                $"'{calleeDisplayName}' is forwarded by name here, but its parameter '{parameterDisplayName}' "
+                    + "is not a parameter of the enclosing explicit parameter list.",
+                "Bare forwarding reuses an existing parameter only under its own name, and explicit parameter lists are closed, "
+                    + $"so '{parameterDisplayName}' is neither renamed nor added. Declare '{parameterDisplayName}' in the parameter list, "
+                    + $"or call '{calleeDisplayName}' with explicit arguments.");
     }
 
     /// <summary>
@@ -2245,6 +2724,16 @@ internal static class ImplicitArgumentResolver
     /// repeats (<c>P(x, x)</c>, <c>P((x, a), x)</c>) receives that one binding at every occurrence —
     /// exactly the call <c>P(x, x)</c> a programmer would write — and the callee's binder then checks
     /// the occurrences as the ordinary independently evaluated argument slots they are (Q-05).
+    /// <para>FORWARDING PRESERVES EACH BINDING AND EACH STRUCTURAL KIND (FWD-02, September 2026):
+    /// every binding is forwarded as itself — a fixed binding as one <c>Param</c>, a collecting
+    /// source into a collecting destination re-spread — never wrapped in a structure of its own;
+    /// and a callee structural pattern is rebuilt around those bindings as the SAME kind it
+    /// matches (<see cref="BuildPatternArgument"/>): a sequence pattern as a sequence, a list
+    /// pattern as a list — never the other kind. So <c>Add((x, y))</c> / <c>A = [Add]:0</c> is
+    /// <c>A((x, y)) = [Add((x, y))]:0</c> and <c>Single([x])</c> / <c>B = Single + 0</c> is
+    /// <c>B([x]) = Single([x]) + 0</c>. The rebuilt group is the tree the explicit written call
+    /// has, so implicit forwarding is observationally the explicit call that writes the same
+    /// bindings into the callee's pattern.</para>
     /// </summary>
     private static IReadOnlyList<Expr> BuildImplicitCallArguments(
         IReadOnlyList<ParameterPattern> calleePatterns,
@@ -2259,7 +2748,7 @@ internal static class ImplicitArgumentResolver
             out var forwardedCallerName);
 
         // TryGetSingleCollectingForwarding succeeds only when the callee shape
-        // contains exactly one capture: a lone collector inside one sequence-value
+        // contains exactly one capture: a lone collector inside one structural
         // group (a lone TOP-LEVEL collector accepts zero supplied arguments and is
         // never lifted, Q-03). Consequently there is no second callee capture to
         // discriminate here; when forwarding is active, every reachable capture is
@@ -2306,12 +2795,38 @@ internal static class ImplicitArgumentResolver
                 when forwardAsSpread(collecting) =>
                 new Expr.SequenceSpread(new Expr.Param(mapCaptureName(collecting))),
             CaptureParameterPattern capture => new Expr.Param(mapCaptureName(capture)),
-            // A forwarded sequence-value pattern groups its item arguments as one
-            // written capture boundary — a value grouping, not a scope.
-            SequenceValueParameterPattern group => new Expr.Capture(new OutputBundle(
-                BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread))),
+            // A forwarded structural pattern is rebuilt as the SAME kind it matches (FWD-02):
+            // STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE, so the only
+            // argument the callee pattern can open is a value of its own kind, and
+            // reconstruction never converts between sequence and list.
+            SequenceValueParameterPattern group
+                => BuildSequenceArgument(BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread)),
+            ListValueParameterPattern list => new Expr.ListLiteral(new OutputBundle(
+                BuildPatternArgumentOutput(list.Items, mapCaptureName, forwardAsSpread))),
+            // The deconstruction unpacking receiver (never written; only a host-built callee can
+            // carry one here) opens a list one level at every cardinality, so the exact list of
+            // its items is the argument it re-binds exactly.
+            UnpackingParameterPattern unpacking => new Expr.ListLiteral(new OutputBundle(
+                BuildPatternArgumentOutput(unpacking.Items, mapCaptureName, forwardAsSpread))),
         };
     }
+
+    /// <summary>
+    /// A sequence pattern's rebuilt argument: exactly the tree the explicit written group
+    /// <c>(e1, …, en)</c> has — <c>()</c> for no items, the one item itself for a lone non-spread
+    /// item (a one-slot group IS its content, SYN-06; there is no one-item sequence), and
+    /// otherwise a capture of the slots (a spread slot contributes its items). A valid sequence
+    /// pattern matched a sequence of zero or at least two elements, so rebuilding a COPIED
+    /// pattern reproduces that very sequence; a lone forwarded binding is the explicit call
+    /// <c>C((x))</c>, which is <c>C(x)</c>.
+    /// </summary>
+    private static Expr BuildSequenceArgument(IReadOnlyList<Expr> items)
+        => items switch
+        {
+            [] => new Expr.EmptySequence(0),
+            [var only] when only is not Expr.SequenceSpread => only,
+            _ => new Expr.Capture(new OutputBundle(items)),
+        };
 
     private static IReadOnlyList<Expr> BuildPatternArgumentOutput(
         IReadOnlyList<ParameterPattern> patterns,

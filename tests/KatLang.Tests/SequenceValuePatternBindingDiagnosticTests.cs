@@ -1,12 +1,15 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// A mismatch produced at a nested <see cref="SequenceValueParameterPattern"/>
-/// level is attributed to the WRITTEN pattern group via
-/// <see cref="SequenceValueParameterBindingContext"/> — never to the enclosing
+/// A length mismatch produced at a nested structural pattern level — a
+/// <see cref="SequenceValueParameterPattern"/> or a <see cref="ListValueParameterPattern"/>
+/// given a value of its own kind with the wrong number of elements — is attributed to
+/// the WRITTEN pattern group via <see cref="SequenceValueParameterBindingContext"/> /
+/// <see cref="ListValueParameterBindingContext"/> — never to the enclosing
 /// call's argument count: <c>F((b, c)) = b</c> called as <c>F((1, 2, 3))</c>
-/// describes <c>(b, c)</c> receiving three values instead of claiming
-/// <c>F</c> was called with three arguments. The innermost Lean-aligned
+/// describes <c>(b, c)</c> receiving three elements instead of claiming
+/// <c>F</c> was called with three arguments. A value of the OTHER kind (or a scalar)
+/// is the pattern's kind mismatch instead. The innermost Lean-aligned
 /// <c>ArityMismatch(Expected, Actual)</c> and the outer call/dot-call contexts
 /// are preserved; genuine top-level call-arity mismatches are never wrapped;
 /// assignment deconstruction keeps its own
@@ -68,7 +71,7 @@ public class SequenceValuePatternBindingDiagnosticTests
             F((1, 2, 3))
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(b, c)` expects 2 values, but received 3 values.", message);
+        Assert.Equal("Sequence pattern `(b, c)` expects 2 elements, but received 3 elements.", message);
         Assert.DoesNotContain("was called with 3 arguments", message, StringComparison.Ordinal);
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
@@ -89,15 +92,42 @@ public class SequenceValuePatternBindingDiagnosticTests
         var (message, error) = FailWithParity(
             """
             F(a, (b, c)) = a
-            F(1, 2)
+            F(1, ())
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(b, c)` expects 2 values, but received 1 value.", message);
-        Assert.DoesNotContain("was called with 1 argument", message, StringComparison.Ordinal);
+        Assert.Equal("Sequence pattern `(b, c)` expects 2 elements, but received 0 elements.", message);
+        Assert.DoesNotContain("was called with", message, StringComparison.Ordinal);
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(2, arity.Expected);
-        Assert.Equal(1, arity.Actual);
+        Assert.Equal(0, arity.Actual);
+
+        // A scalar is never a one-item structure: it is the pattern's KIND mismatch.
+        var (scalarMessage, scalarError) = FailWithParity(
+            """
+            F(a, (b, c)) = a
+            F(1, 2)
+            """);
+        Assert.Contains("sequence pattern `(b, c)` expects a sequence value, but received numeric value 2", scalarMessage, StringComparison.Ordinal);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(scalarError));
+    }
+
+    [Fact]
+    public void NestedListGroup_IsAttributedToTheListPattern()
+    {
+        var (message, error) = FailWithParity(
+            """
+            F([b, c]) = b
+            F([1, 2, 3])
+            """);
+
+        Assert.Equal("List pattern `[b, c]` expects 2 elements, but received 3 elements.", message);
+        var patternContext = Assert.Single(Contexts(error).OfType<ListValueParameterBindingContext>());
+        Assert.Equal("[b, c]", patternContext.PatternDisplayName);
+        Assert.False(patternContext.HasCollectingItem);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
+        Assert.Equal(2, arity.Expected);
+        Assert.Equal(3, arity.Actual);
     }
 
     [Fact]
@@ -111,7 +141,7 @@ public class SequenceValuePatternBindingDiagnosticTests
             Lib.F((1, 2, 3))
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(b, c)` expects 2 values, but received 3 values.", message);
+        Assert.Equal("Sequence pattern `(b, c)` expects 2 elements, but received 3 elements.", message);
 
         var contexts = Contexts(error);
         Assert.Single(contexts.OfType<SequenceValueParameterBindingContext>());
@@ -128,7 +158,7 @@ public class SequenceValuePatternBindingDiagnosticTests
             F((1, (2, 3, 4)))
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(c, d)` expects 2 values, but received 3 values.", message);
+        Assert.Equal("Sequence pattern `(c, d)` expects 2 elements, but received 3 elements.", message);
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(2, arity.Expected);
@@ -141,16 +171,16 @@ public class SequenceValuePatternBindingDiagnosticTests
         var (message, error) = FailWithParity(
             """
             F((b, *c, d)) = b
-            F((1))
+            F(())
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(b, *c, d)` expects at least 2 values, but received 1 value.", message);
+        Assert.Equal("Sequence pattern `(b, *c, d)` expects at least 2 elements, but received 0 elements.", message);
 
         var patternContext = Assert.Single(Contexts(error).OfType<SequenceValueParameterBindingContext>());
         Assert.True(patternContext.HasCollectingItem);
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(2, arity.Expected);
-        Assert.Equal(1, arity.Actual);
+        Assert.Equal(0, arity.Actual);
     }
 
     [Fact]
@@ -171,17 +201,17 @@ public class SequenceValuePatternBindingDiagnosticTests
     [Fact]
     public void AssignmentDeconstruction_KeepsAssignmentWordingWithPrecedence()
     {
-        // The parser-elaborated deconstruction helper binds through an inline
-        // sequence-value pattern; its failures must STILL surface as the
-        // assignment-focused wording, with DeconstructionBindingContext
-        // replacing the nested pattern context.
+        // The parser-elaborated deconstruction helper binds its flat target list
+        // against the spread right-hand side; its failures must surface as the
+        // assignment-focused wording, with DeconstructionBindingContext and no
+        // structural pattern context.
         var (message, error) = FailWithParity("x, y = (1, 2, 3)\nx");
 
         Assert.Contains(
             "Assignment pattern `x, y` expects 2 values from the right-hand side, but it supplied 3 values.",
             message,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("Sequence-value parameter pattern", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Sequence pattern", message, StringComparison.Ordinal);
 
         var contexts = Contexts(error);
         Assert.Single(contexts.OfType<DeconstructionBindingContext>());
@@ -200,7 +230,7 @@ public class SequenceValuePatternBindingDiagnosticTests
             Step.repeat(3, (1, 2, 3))
             """);
 
-        Assert.Equal("Sequence-value parameter pattern `(x, y)` expects 2 values, but received 3 values.", message);
+        Assert.Equal("Sequence pattern `(x, y)` expects 2 elements, but received 3 elements.", message);
         Assert.Single(Contexts(error).OfType<SequenceValueParameterBindingContext>());
     }
 }

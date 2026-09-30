@@ -274,10 +274,13 @@ public class CollectingBindingTests
     // parameter always forwards as ONE argument, even into a collecting destination —
     // which collects it as one item, a sequence and a list alike.
     //
-    // Forwarding happens only into a callee that REQUIRES supplied arguments (Q-03), so these
-    // callees carry a required `tag` beside their collecting destination; a callee whose only
-    // parameter is a top-level collector is read as a value instead (see
-    // ImplicitForwarding_ZeroArgumentCallee_IsReadNotForwarded).
+    // A LONE bare row under an explicit list, `Use(params) = Target`, is BARE FORWARDING
+    // (FWD-02): each of Target's parameters is supplied from the existing binding of the
+    // SAME name, never by position, and an unused parameter of Use stays unused. A FORMULA
+    // that uses the callee (`[Target]:0`) lifts by binding name too. The source binding's
+    // kind decides the spread in both. Formula lifting happens only into a callee that
+    // REQUIRES supplied arguments (Q-03), so the formula cases carry a required `tag`
+    // beside their collecting destination.
 
     [Fact]
     public void ImplicitForwarding_OrdinarySourceParameterIsOneArgument()
@@ -286,8 +289,13 @@ public class CollectingBindingTests
         AssertCollects(defs + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects(defs + "Use(0, (1, 2))", List(Seq(Atom(1), Atom(2))));
         AssertCollects(defs + "Use(0, 7)", List(Atom(7)));
+        // Bare forwarding is by name: z is not one of Target's binders, so it stays unused,
+        // exactly like the formula.
         AssertCollects(
             "Target(tag, *items) = items\nUse(tag, items, z) = Target\nUse(0, (1, 2), 3)",
+            List(Seq(Atom(1), Atom(2))));
+        AssertCollects(
+            "Target(tag, *items) = items\nUse(tag, items, z) = [Target]:0\nUse(0, (1, 2), 3)",
             List(Seq(Atom(1), Atom(2))));
     }
 
@@ -326,9 +334,9 @@ public class CollectingBindingTests
     [Fact]
     public void ImplicitForwarding_LiftedCollectingParameterForwardsAsSpread()
     {
-        // With no explicit caller parameters, the callee's parameters are lifted as copies of
-        // its own patterns, so its collecting parameter becomes a caller collecting parameter
-        // and the lifted source legitimately forwards as spread.
+        // With no parameter of its own, `Use = Target` is an exact alias: it inherits Target's
+        // patterns verbatim, so its collecting parameter is a caller collecting parameter and the
+        // rebuilt call legitimately forwards it as spread.
         const string defs = "Target(tag, *items) = items\nUse = Target\n";
         AssertCollects(defs + "Use(0, 1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));
@@ -338,21 +346,23 @@ public class CollectingBindingTests
     public void ImplicitForwarding_ZeroArgumentCallee_IsReadNotForwarded()
     {
         // Q-03: a callee whose only parameter is a top-level collector accepts zero supplied
-        // arguments, so its bare name is a property-style value demand — its own collected
-        // empty list — and never a forwarding call, whatever the caller binds: a same-named
-        // collecting parameter, a same-named fixed one, or nothing (an alias).
-        AssertCollects("Target(*items) = items\nUse(*items) = Target\nUse(1, 2)", List());
-        AssertCollects("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", List());
-        AssertCollects("Target(*items) = items\nUse = Target\nUse", List());
+        // arguments, so its bare name in a FORMULA is a property-style value demand — its own
+        // collected empty list — and never a forwarding call, whatever the caller binds.
+        AssertCollects("Target(*items) = items\nUse(*items) = [Target]:0\nUse(1, 2)", List());
+        AssertCollects("Target(*items) = items\nUse(items) = [Target]:0\nUse([1, 2])", List());
+        AssertCollects("Target(*items) = items\nUse = [Target]:0\nUse", List());
 
-        // Forwarding is written explicitly, and then it is the ordinary call.
+        // As a LONE row the callee is forwarded by name or aliased (FWD-02): the same-named
+        // binding reaches Target's collector, re-spread only from a collecting source.
+        AssertCollects("Target(*items) = items\nUse(*items) = Target\nUse(1, 2)", List(Atom(1), Atom(2)));
         AssertCollects("Target(*items) = items\nUse(*items) = Target(items*)\nUse(1, 2)", List(Atom(1), Atom(2)));
+        AssertCollects("Target(*items) = items\nUse(items) = Target\nUse([1, 2])", List(List(Atom(1), Atom(2))));
         AssertCollects("Target(*items) = items\nUse(items) = Target(items)\nUse([1, 2])", List(List(Atom(1), Atom(2))));
 
-        // The alias is a zero-parameter property: it takes no arguments.
-        var aliasCall = KatLangEngine.Run("Target(*items) = items\nUse = Target\nUse(1, 2)");
-        var failure = Assert.IsType<RunResult.EvalFailure>(aliasCall);
-        Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
+        // The alias keeps the collecting signature: bare it is its zero-argument value, and it
+        // takes arguments like Target.
+        AssertCollects("Target(*items) = items\nUse = Target\nUse", List());
+        AssertCollects("Target(*items) = items\nUse = Target\nUse(1, 2)", List(Atom(1), Atom(2)));
     }
 
     [Fact]
@@ -369,27 +379,43 @@ public class CollectingBindingTests
     public void ImplicitForwarding_NestedFixedNameMatchingCollectingDestinationStaysOneValue()
     {
         // Caller `a` is a nested FIXED pattern name; destination `*a` is a
-        // collecting binding. The list-valued source must remain one argument.
+        // collecting binding. In a formula the list-valued source must remain one argument.
         AssertCollects(
-            "Target(b, *a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))",
+            "Target(b, *a) = a\nUse((a, b)) = [Target]:0\nUse(([1, 2], 5))",
             List(List(Atom(1), Atom(2))));
+        // A lone row forwards by name only a TOP-LEVEL binding of the same pattern: Use binds
+        // a and b only inside its group, so bare forwarding cannot supply Target's whole-value
+        // parameters and the front end rejects the row instead of reshaping the argument.
+        AssertUnforwardable("Target(b, *a) = a\nUse((a, b)) = Target\nUse(([1, 2], 5))");
     }
 
     [Fact]
     public void ImplicitForwarding_NestedCollectingSourceForwardsItsCollectedItems()
     {
         AssertCollects(
-            "Target(first, *r) = r\nUse((first, *r)) = Target\nUse((1, 2, 3))",
+            "Target(first, *r) = r\nUse((first, *r)) = [Target]:0\nUse((1, 2, 3))",
             List(Atom(2), Atom(3)));
+        // Bare forwarding reuses only a top-level binding of the same pattern; first and r
+        // are elements of Use's one group.
+        AssertUnforwardable("Target(first, *r) = r\nUse((first, *r)) = Target\nUse((1, 2, 3))");
     }
+
+    private static void AssertUnforwardable(string source)
+        => Assert.Contains(
+            SourceProvenance.ExpectFrontEndError(source),
+            diagnostic => diagnostic.Code == DiagnosticCode.UnforwardableParameter);
 
     [Fact]
     public void ImplicitForwarding_CrossedNamesFollowEachSourceKind()
     {
         // Caller: a is fixed, b collecting. Callee: b is fixed, a collecting.
-        // The fixed destination b receives the caller's collected list as one
-        // value; the collecting destination a receives the ordinary source a as one
-        // collected slot (never spread).
+        // The fixed destination b receives the caller's collected list as one value; the
+        // collecting destination a receives the ordinary source a as one collected slot
+        // (never spread) — in a formula and in bare forwarding alike, because both are by
+        // name: T2(b, a).
+        AssertCollects(
+            "T2(b, *a) = (b, a)\nUse(a, *b) = [T2]:0\nUse([5, 6], 2, 3)",
+            Seq(List(Atom(2), Atom(3)), List(List(Atom(5), Atom(6)))));
         AssertCollects(
             "T2(b, *a) = (b, a)\nUse(a, *b) = T2\nUse([5, 6], 2, 3)",
             Seq(List(Atom(2), Atom(3)), List(List(Atom(5), Atom(6)))));
@@ -399,8 +425,18 @@ public class CollectingBindingTests
     public void ImplicitForwarding_CollectingSourceIntoFixedDestinationIsOneListArgument()
     {
         AssertCollects(
+            "TargetOne(items) = items\nUse(*items) = [TargetOne]:0\nUse(1, 2)",
+            List(Atom(1), Atom(2)));
+        // Bare forwarding passes the collected list whole to the fixed destination, like the
+        // formula: TargetOne(items).
+        AssertCollects(
             "TargetOne(items) = items\nUse(*items) = TargetOne\nUse(1, 2)",
             List(Atom(1), Atom(2)));
+        // The written re-spread is a different, explicit call, which the one-parameter callee
+        // rejects.
+        var failure = Assert.IsType<RunResult.EvalFailure>(
+            KatLangEngine.Run("TargetOne(items) = items\nUse(*items) = TargetOne(items*)\nUse(1, 2)"));
+        Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
     }
 
     [Fact]
@@ -524,10 +560,15 @@ public class CollectingBindingTests
         AssertCollects(
             "Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
             Seq(Seq(Seq(Atom(1), Atom(2)), Atom(3)), Atom(4)));
-        // Only the reducer's explicit pattern opens a structured accumulator.
+        // Only the reducer's explicit pattern opens a structured accumulator — a sequence
+        // pattern a sequence accumulator (a scalar would be its kind mismatch, so the
+        // accumulator starts as a pair), a list pattern a list accumulator.
         AssertCollects(
-            "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)",
-            Seq(Atom(1), Atom(2), Atom(3), Atom(4)));
+            "Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, (0, 1))",
+            Seq(Atom(0), Atom(1), Atom(2), Atom(3), Atom(4)));
+        AssertCollects(
+            "Append(item, [*history]) = [history*, item]\nreduce((2, 3, 4), Append, [1])",
+            List(Atom(1), Atom(2), Atom(3), Atom(4)));
         AssertCollects(
             "R(el, acc, *extra) = (acc, el, extra)\nreduce((5), R, 0)",
             Seq(Atom(0), Atom(5), List()));
@@ -551,8 +592,11 @@ public class CollectingBindingTests
             "AddPair((x, y)) = x + y\n((1, 2), (3, 4)).map(AddPair)",
             List(Atom(3), Atom(7)));
         AssertCollects(
-            "AddPair((x, y)) = x + y\n[[1, 2], [3, 4]].map(AddPair)",
+            "LAddPair([x, y]) = x + y\n[[1, 2], [3, 4]].map(LAddPair)",
             List(Atom(3), Atom(7)));
+        // Each explicit pattern opens only its own kind.
+        var mismatch = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("AddPair((x, y)) = x + y\n[[1, 2], [3, 4]].map(AddPair)"));
+        Assert.Equal(KatLangErrorCode.TypeMismatch, mismatch.Errors[0].Code);
     }
 
     // ── Receiver distinction ────────────────────────────────────────────────
@@ -730,9 +774,9 @@ public class CollectingBindingTests
         // Public view, interface downcasts, and nested aliases reject mutation.
         ProbeViewForMutation(value.Items);
         ProbeViewForMutation(value.SpreadItems());
-        var structureItems = value.StructureItems();
-        Assert.NotNull(structureItems);
-        ProbeViewForMutation(structureItems!);
+        var patternItems = value.ListPatternItems();
+        Assert.NotNull(patternItems);
+        ProbeViewForMutation(patternItems!);
         foreach (var element in value.Items)
         {
             if (element is Result.ListValue nested)

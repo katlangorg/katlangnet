@@ -312,11 +312,14 @@ def mixedVariadicCallKeepsLoneListWhole : Bool :=
 
 #guard mixedVariadicCallKeepsLoneListWhole
 
--- Deconstruction (the sequence-value parameter pattern) opens a lone LIST
--- exactly like a lone sequence value: `x, y, z = [1, 2, 3]` binds elementwise.
+-- Deconstruction (the unpacking receiver `.unpacking [targets]` over the shared
+-- right-hand side) opens a lone LIST exactly like a lone sequence value:
+-- `x, y, z = [1, 2, 3]` binds elementwise. It is not a written structural
+-- pattern, so it opens both kinds (the list pattern `[x, y, z]` would open only
+-- the list, the sequence pattern `(x, y, z)` only a sequence).
 def deconstructionOpensLoneList : Bool :=
   let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
-    [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]]
+    [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]]
     [] [] [.param "y"])
   expectFlat (runFlat (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
@@ -328,7 +331,7 @@ def deconstructionOpensLoneList : Bool :=
 -- immutable list: `x, *rest = [1, 2, 3]` binds `rest = [2, 3]`.
 def listCollectingCaptureCollectsExactList : Bool :=
   let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
-    [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
+    [.unpacking [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]]
     [] [] [.param "rest"])
   match runResult (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.num 1, .num 2, .num 3]])]
@@ -341,7 +344,7 @@ def listCollectingCaptureCollectsExactList : Bool :=
 -- Deconstruction opens only the OUTER lone structure: nested lists stay whole.
 def deconstructionDoesNotOpenListRecursively : Bool :=
   let helper := KatLang.Expr.algorithmExpr (algWithParameterPatterns
-    [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]]
+    [.unpacking [.capture { name := "x" }, .capture { name := "y" }]]
     [] [] [.param "x"])
   match runResult (.algorithmExpr (algPrivate [] []
     [("d", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .num 3]])]

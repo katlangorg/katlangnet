@@ -37,6 +37,8 @@ public class LeanCoreTestsCompositionTests
         "ForwardingBindings",
         "RepeatedNameConstraints",
         "BuiltinArgumentRoles",
+        "StructuralPatterns",
+        "AliasForwarding",
     ];
 
     [Fact]

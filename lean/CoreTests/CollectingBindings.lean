@@ -13,11 +13,14 @@ open KatLang (Pattern CondBranch)
 -- operations. C# parity: tests/KatLang.Tests/DeconstructionBindingTests.cs and
 -- EvaluatorTests variadic sections; binder laws: KatLangArityLaws.lean.
 
--- Parser-elaborated deconstruction helper: `targets = RHS` binds through an
--- inline sequence-value parameter pattern over the shared RHS value.
+-- Parser-elaborated deconstruction helper: `targets = RHS` binds through its
+-- UNPACKING RECEIVER (`.unpacking targets`) over the one shared RHS value: a lone
+-- sequence or list opens one level and any other value is one item.
+-- Deconstruction is not a written structural pattern — it has no delimiter that
+-- could select a value kind — so it opens both kinds alike.
 def collectDeconHelper (targets : List KatLang.ParameterPattern) (observed : String)
     : KatLang.Expr :=
-  .algorithmExpr (algWithParameterPatterns [.sequenceValue targets] [] [] [.param observed])
+  .algorithmExpr (algWithParameterPatterns [.unpacking targets] [] [] [.param observed])
 
 def collectFix (name : String) : KatLang.ParameterPattern :=
   .capture { name := name }
@@ -28,9 +31,20 @@ def collectVar (name : String) : KatLang.ParameterPattern :=
 def runCollectDecon (targets : List KatLang.ParameterPattern) (observed : String)
     (rhs : List KatLang.Expr) : Except KatLang.Error Result :=
   -- Mirror parser elaboration: the RHS is evaluated once into a shared
-  -- property, and the pattern helper opens that single shared value.
+  -- property, and the unpacking receiver opens that single shared value.
   runResult (.algorithmExpr (algPrivate [] [] [("sharedRhs", alg [] [] [] rhs)]
     [.call (collectDeconHelper targets observed) [resolve "sharedRhs"]]))
+
+-- The unpacking receiver demands its right-hand side as an ordinary VALUE, so a
+-- right-hand side without output is that `missingOutput` — never the spread-only
+-- `spreadMissingOutput` (no spread is involved) — exactly like the ordinary
+-- assignment `x = { }`.
+def deconRightHandSideWithoutOutputIsItsOwnMissingOutput : Bool :=
+  match runCollectDecon [collectFix "x", collectFix "y"] "x" [] with
+  | Except.error err => KatLang.isMissingOutputError err
+  | _ => false
+
+#guard deconRightHandSideWithoutOutputIsItsOwnMissingOutput
 
 -- Empty, singleton, and multi-item collection: `head, *rest = [1] / [1, 2] / [1, 2, 3]`.
 def deconCollectingCollectsEmptySingletonMultiple : Bool :=

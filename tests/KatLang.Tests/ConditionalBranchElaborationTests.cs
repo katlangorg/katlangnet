@@ -26,22 +26,29 @@ public class ConditionalBranchElaborationTests
         var items = new Pattern.Bind("items");
         var collectedItems = items with { ParameterKind = ParameterKind.Collecting };
         Pattern.SequenceValue Group(params Pattern[] patterns) => new(patterns);
-        // The callee's one parameter is a GROUP holding the collector, so it REQUIRES its one
-        // supplied slot and is lifted/forwarded; a lone top-level collector (`Target(*items)`)
-        // accepts zero supplied arguments and is never lifted (Q-03), so it could not exercise
-        // the branch-binder forwarding source at all. The synthesized argument is therefore the
-        // group's capture of the forwarded binding.
+        Pattern.ListValue List(params Pattern[] patterns) => new(patterns);
+        // In a FORMULA position (strict: `Math.Abs(Target)`) the branch body is lifted like an
+        // ordinary body whose closed list is the branch's binder projection. The callee's one
+        // parameter is a GROUP holding the collector, so it REQUIRES its one supplied slot and is
+        // lifted/forwarded; a lone top-level collector (`Target(*items)`) accepts zero supplied
+        // arguments and is never lifted (Q-03), so it could not exercise the branch-binder
+        // forwarding source at all. The synthesized argument is therefore the callee's SEQUENCE
+        // group rebuilt, as a sequence, from exactly the items the forwarded binding stands for
+        // (FWD-02): a collecting binder's collected items re-spread into a capture, or a fixed
+        // binder as ONE item — which IS that binding, since there is no one-item sequence value.
+        // A LONE bare row (non-strict) is instead BARE FORWARDING by name (FWD-02): Target's one
+        // parameter is the group `(*items)`, which no head below declares with that pattern — a
+        // same-named leaf never reshapes an argument — so each is rejected at the bare reference.
         var (branchPattern, ordinaryPattern, argument) = shape switch
         {
             "flat" => ((Pattern)rest, (Pattern)rest, "(.capture [(.sequenceSpread (.param \"rest\"))])"),
             "literal-flat" => (Group(new Pattern.LitInt(0), rest), rest, "(.capture [(.sequenceSpread (.param \"rest\"))])"),
-            "literal-group" => (Group(new Pattern.LitInt(0), Group(new Pattern.LitString("tag"), rest)),
-                Group(Group(rest)), null),
-            "literal-empty-group" => (Group(Group(new Pattern.LitInt(0)), rest), Group(Group(), rest), null),
+            "literal-group" => (Group(new Pattern.LitInt(0), Group(new Pattern.LitString("tag"), rest)), Group(Group(rest)), null),
+            "literal-empty-group" => (Group(List(new Pattern.LitInt(0)), rest), Group(List(), rest), null),
             "named-group" => (Group(new Pattern.LitInt(0), Group(new Pattern.LitString("tag"), collectedItems)),
                 Group(Group(collectedItems)), "(.capture [(.sequenceSpread (.param \"items\"))])"),
-            "repeated" => (Group(new Pattern.LitInt(0), items, items), Group(items, items), "(.capture [.param \"items\"])"),
-            "deep" => (Group(new Pattern.LitInt(0), Group(Group(items))), Group(Group(Group(items))), "(.capture [.param \"items\"])"),
+            "repeated" => (Group(new Pattern.LitInt(0), items, items), Group(items, items), ".param \"items\""),
+            "deep" => (Group(new Pattern.LitInt(0), List(List(items))), Group(List(List(items))), ".param \"items\""),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         var body = Body(SourceProvenance.ParseSyntaxValidRoot(strict ? "Math.Abs(Target)" : "Target").Output.ToArray());
@@ -64,6 +71,18 @@ public class ConditionalBranchElaborationTests
         var ordinary = resolved.Properties.Single(property => property.Name == "Ordinary").Value;
         var branch = Assert.Single(resolved.Properties.Single(property => property.Name == "Branch").Value.Branches).Body;
         Assert.Empty(branch.Params);
+        if (!strict)
+        {
+            Assert.Equal("Target", Assert.IsType<Expr.Resolve>(Assert.Single(branch.Output)).Name);
+            Assert.All(diagnostics, diagnostic =>
+            {
+                Assert.Equal(DiagnosticCode.UnforwardableParameter, diagnostic.Code);
+                Assert.Contains("'(*items)'", diagnostic.Message, StringComparison.Ordinal);
+            });
+            Assert.NotEmpty(diagnostics);
+            return;
+        }
+
         Assert.Equal(LeanAstEncoder.EncodeExpr(Assert.Single(ordinary.Output)), LeanAstEncoder.EncodeExpr(Assert.Single(branch.Output)));
         var reference = strict
             ? Assert.Single(Assert.IsType<Expr.DotCall>(Assert.Single(branch.Output)).Args!)
@@ -78,6 +97,35 @@ public class ConditionalBranchElaborationTests
             Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
             Assert.Contains("'items'", diagnostic.Message, StringComparison.Ordinal);
         });
+    }
+
+    /// <summary>
+    /// A clause head that DOES declare the callee's pattern forwards it by name: the head item
+    /// `(*items)` is Target's own `(*items)`, rebuilt as the sequence it matched, while the literal
+    /// beside it is never forwarded.
+    /// </summary>
+    [Fact]
+    public void HostBranch_SamePatternHead_ForwardsByName()
+    {
+        var items = new Pattern.Bind("items") { ParameterKind = ParameterKind.Collecting };
+        var body = Body(SourceProvenance.ParseSyntaxValidRoot("Target").Output.ToArray());
+        var root = SourceProvenance.ParseSyntaxValidRoot("Target((*items)) = items");
+        var head = new Pattern.SequenceValue([new Pattern.LitInt(0), new Pattern.SequenceValue([items])]);
+        root = root with
+        {
+            Properties = [.. root.Properties, new Property("Branch", new Algorithm.Conditional(null, [], [new CondBranch(head, body)]))],
+        };
+        var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
+        Assert.Empty(detectorDiagnostics);
+        var diagnostics = new DiagnosticBag();
+
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+
+        var branch = Assert.Single(resolved.Properties.Single(property => property.Name == "Branch").Value.Branches).Body;
+        var call = Assert.IsType<Expr.Call>(Assert.Single(branch.Output));
+        Assert.Equal("Target", Assert.IsType<Expr.Resolve>(call.Function).Name);
+        Assert.Equal("(.capture [(.sequenceSpread (.param \"items\"))])", LeanAstEncoder.EncodeExpr(Assert.Single(call.Args)));
+        Assert.Empty(diagnostics);
     }
 
     // ── An inline open written in a branch body exposes its public members to that branch ──
@@ -404,7 +452,7 @@ public class ConditionalBranchElaborationTests
     [InlineData("Lib = { public Inc(x) = x + 1 }\nF(0) = { open Lib\nG(0) = Inc(4)\nG(n) = n\nG(0) }\nF(n) = n\nF(0)", "5")]
     [InlineData("F(0) = Math.Abs(-5)\nF(n) = count([n])\nF(0), F(3)", "5\n1")]
     [InlineData("A = x + y\nF(0, ((x, y), x)) = Math.Abs(A)\nF(k, rest) = 0\nF(0, ((2, 3), 2))", "5")]
-    [InlineData("A = x + 1\nF(0, ('tag', x)) = A\nF(k, rest) = 0\nF(0, ('tag', 4))", "5")]
+    [InlineData("A = x + 1\nF(0, ('tag', x)) = A + 0\nF(k, rest) = 0\nF(0, ('tag', 4))", "5")]
     [InlineData("Apply(f) = f(4)\nF(0) = Apply({ x + 1 })\nF(n) = n\nF(0)", "5")]
     public void Source_NestedBodies_RespectScopeAndClosedInputs(string source, string expected)
     {
@@ -567,10 +615,16 @@ public class ConditionalBranchElaborationTests
         Expr Reference(Expr output) => strict
             ? Assert.Single(Assert.IsType<Expr.DotCall>(output).Args!)
             : output;
+        // Either way the closed head supplies nothing Target can take: in a formula the lift is
+        // blocked (the strict position reports it), and a LONE bare row is bare forwarding by name,
+        // which finds no parameter of `((), *rest)` declared as Target's `(*items)` — so both
+        // spellings are rejected at the bare reference and the row stays as written.
         Assert.IsType<Expr.Resolve>(Reference(Assert.Single(ordinaryOutput)));
         Assert.IsType<Expr.Resolve>(Reference(Assert.Single(branch.Output)));
-        Assert.Equal(strict ? 2 : 0, diagnostics.Count);
-        Assert.All(diagnostics, diagnostic => Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code));
+        Assert.Equal(2, diagnostics.Count);
+        Assert.All(diagnostics, diagnostic => Assert.Equal(
+            strict ? DiagnosticCode.UndeclaredIdentifier : DiagnosticCode.UnforwardableParameter,
+            diagnostic.Code));
     }
 
     [Fact]
@@ -718,15 +772,17 @@ public class ConditionalBranchElaborationTests
     // reason even though the binder is dynamically live in that call.
     [InlineData("Apply(f) = f.X\nF(0) = 0\nF(n) = {\n    Lib = { public X = n }\n    Apply(Lib)\n}\nF(5)", typeof(EvalError.LocalOnlyProperty))]
     // A private member is not provided by `open` merely because the library is branch-local:
-    // the nested body's X is unresolved, so it becomes that body's implicit parameter and the
-    // bare `G` fails the ordinary zero-argument arity check.
-    [InlineData("F(0) = {\n    Lib = { X = 1 }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(n) = n\nF(0)", typeof(EvalError.ArityMismatch))]
+    // the nested body's X is unresolved, so it becomes that body's implicit parameter and `G`
+    // read in a formula fails the ordinary zero-argument arity check. (A LONE row `G` would be
+    // bare forwarding, which the head `0` cannot supply: a front-end rejection, FWD-02.)
+    [InlineData("F(0) = {\n    Lib = { X = 1 }\n    G = {\n        open Lib\n        X\n    }\n    G + 0\n}\nF(n) = n\nF(0)", typeof(EvalError.ArityMismatch))]
     // Opened callables are never implicitly forwarded, in a branch exactly as anywhere else.
     [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = k }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)", typeof(EvalError.ArityMismatch))]
     // A nested brace body keeps its own open implicit-parameter list: an unbound `n` in a
     // nested consumer becomes THAT body's implicit parameter (the branch acquires none), so
-    // the bare `G` fails the zero-argument arity check exactly as an unforwarded helper does.
-    [InlineData("F(0) = {\n    Lib = { public X(k) = k }\n    G = {\n        open Lib\n        X(n)\n    }\n    G\n}\nF(k) = k\nF(0)", typeof(EvalError.ArityMismatch))]
+    // `G` read in a formula fails the zero-argument arity check exactly as an unforwarded
+    // helper does.
+    [InlineData("F(0) = {\n    Lib = { public X(k) = k }\n    G = {\n        open Lib\n        X(n)\n    }\n    G + 0\n}\nF(k) = k\nF(0)", typeof(EvalError.ArityMismatch))]
     public void Source_BranchLocalLibrary_KeepsCaptureAndPrivacyRules(string source, Type innermostError)
     {
         var root = SourceProvenance.ParseValid(source).Root;

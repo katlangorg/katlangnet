@@ -149,9 +149,14 @@ public class ParserNestingDepthTests
     [Fact]
     public void PatternBoundary_AtMaximumParses_OneBeyondDiagnoses()
     {
-        AssertParses("F" + Rep("(", 384) + "x" + Rep(")", 384) + " = x\nF(1)");
+        // Nested sequence patterns (each a pair: a one-item sequence pattern is invalid) and
+        // nested list patterns charge the same one unit per level.
+        AssertParses("F(" + Rep("(", 383) + "x" + Rep(", y)", 383) + ") = x\nF(1)");
         Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
-            "F" + Rep("(", 385) + "x" + Rep(")", 385) + " = x\nF(1)")));
+            "F(" + Rep("(", 384) + "x" + Rep(", y)", 384) + ") = x\nF(1)")));
+        AssertParses("F(" + Rep("[", 383) + "x" + Rep("]", 383) + ") = x\nF(1)");
+        Assert.True(HasNestingDiagnostic(Parser.ParseSyntax(
+            "F(" + Rep("[", 384) + "x" + Rep("]", 384) + ") = x\nF(1)")));
     }
 
     [Fact]

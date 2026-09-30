@@ -82,10 +82,12 @@ public class StaticOpenOwnershipTests
         Assert.DoesNotContain("lookup", rejection.Message, StringComparison.OrdinalIgnoreCase);
 
         // No misleading secondary verdict: nothing collides, nothing resolves to the farther
-        // declaration, and the only other report possible is the closed-list consequence of a
-        // target that provides nothing (the same recovery rule as a rejected capture target).
+        // declaration, and the only other reports possible are the closed-list consequences of a
+        // target that provides nothing (the same recovery rule as a rejected capture target): an
+        // undeclared name in a closed body, or — when the unprovided name makes a nested body
+        // infer it — a closed body's lone bare row that cannot forward it (FWD-02).
         Assert.All(diagnostics, d => Assert.Contains(
-            d.Code, new[] { DiagnosticCode.OpenTargetIsParameter, DiagnosticCode.UndeclaredIdentifier }));
+            d.Code, new[] { DiagnosticCode.OpenTargetIsParameter, DiagnosticCode.UndeclaredIdentifier, DiagnosticCode.UnforwardableParameter }));
 
         // The elaborated head IS the parameter binding — Expr.Param at the reported span — and
         // it is the only rewritten head in the whole program.
@@ -101,7 +103,7 @@ public class StaticOpenOwnershipTests
             var failure = Assert.IsType<RunResult.ParseFailure>(result);
             Assert.Equal(KatLangErrorCode.OpenTargetIsParameter, failure.Errors[0].Code);
             Assert.All(failure.Errors, e => Assert.Contains(
-                e.Code, new[] { KatLangErrorCode.OpenTargetIsParameter, KatLangErrorCode.UndeclaredIdentifier }));
+                e.Code, new[] { KatLangErrorCode.OpenTargetIsParameter, KatLangErrorCode.UndeclaredIdentifier, KatLangErrorCode.UnforwardableParameter }));
         }
 
         // J. the editor agrees: the open head resolves to the PARAMETER — never to a farther

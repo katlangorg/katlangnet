@@ -272,10 +272,11 @@ public static class SemanticExplorerCorpus
             v => $"M(a) = a\nmap({v.Source}, M)"),
         // S3 (September 2026): a callback binds its ONE supplied value exactly as the
         // ordinary call binds it. Each template of the direct/callback pairs is pinned
-        // against Lean per value — a nested head-plus-collector pattern (the scalar
-        // one-item fallback binds it) and a nested fixed pair (the same fallback is one
-        // item too few) — so a Lean/C# divergence in either binder shows up against its
-        // own spelling; CallbackNestedPatternBindingTests
+        // against Lean per value — a nested head-plus-collector pattern and a nested fixed
+        // pair, of BOTH structural kinds: a sequence pattern opens sequence values only and a
+        // list pattern list values only, every other value being the pattern's kind mismatch
+        // — so a Lean/C# divergence in either binder shows up against its own spelling;
+        // CallbackNestedPatternBindingTests
         // .ExplorerTemplatePairs_MapEveryValueExactlyAsTheDirectCall relates the two
         // spellings of each pair value by value.
         new("patternHead",
@@ -286,6 +287,14 @@ public static class SemanticExplorerCorpus
             v => $"P((x, y)) = [x, y]\nP({v.Source})"),
         new("patternPairMap",
             v => $"P((x, y)) = [x, y]\nmap([{v.Source}], P)"),
+        new("listPatternHead",
+            v => $"P([h, *t]) = [h, t]\nP({v.Source})"),
+        new("listPatternHeadMap",
+            v => $"P([h, *t]) = [h, t]\nmap([{v.Source}], P)"),
+        new("listPatternPair",
+            v => $"P([x, y]) = [x, y]\nP({v.Source})"),
+        new("listPatternPairMap",
+            v => $"P([x, y]) = [x, y]\nmap([{v.Source}], P)"),
         new("filterKeep",
             v => $"T(a) = true\nfilter({v.Source}, T)"),
         new("atoms",
@@ -476,9 +485,8 @@ public static class SemanticExplorerCorpus
         Special("listSpreadCaptureRoundTrip", "A = [1, 2, 3]\nB = { A* }\nB == (1, 2, 3)"),
         Special("listCollectingNotSequenceKind", "x, *rest = [1, 2, 3]\nrest == (2, 3)"),
         Special("listCollectingCollectsExactList", "x, *rest = [1, 2, 3]\nrest == [2, 3]"),
-        // Target requires its `tag`, so Use forwards to it (a callee that works with no
-        // arguments is read as a value instead, Q-03: see the LanguageSpecCorpus case
-        // `zero-argument-callable-name-is-read-not-lifted`).
+        // The lone row under a written list is bare forwarding: Use's same-named bindings supply
+        // Target's `tag` and `*items` (FWD-02).
         Special("implicitForwardOrdinarySource", "Target(tag, *items) = items\nUse(tag, items) = Target\nUse(0, [1, 2])"),
         Special("callbackSingleCollectingMap", "Collect(*items) = items\n[7].map(Collect)"),
         Special("callbackMixedCollectingRow", "F(first, *middle, last) = middle\n[(1, 2, 3, 4)].map(F)"),
@@ -730,22 +738,47 @@ public static class SemanticExplorerCorpus
         Special("repeatedNameDotReceiverFailed", "Bad = 1 / 0\nQ(x, x) = x\nBad.Q(7)"),
         Special("repeatedNameValuelessBeforeVerdict", "Bad = 1 / 0\nQ2(x, x, y, y) = 0\nQ2(Bad, 7, 1, 2)"),
         Special("repeatedNameAccompanyingChannel", "A = 5\nP(f, f) = f, f()\nP(5, A)"),
-        // Implicit forwarding is by binding name (September 29 2026, reversing the Q-72 refusal):
-        // a callee that repeats a name — at the top level, inside one group, across groups, beside
-        // a collector, under a closed list that binds it — receives the caller's ONE binding at every
-        // occurrence (`Some = P` is `Some(x) = P(x, x)`), exactly as a name shared across callees
-        // does; a failed or callable-only argument stays its own failure. Pinned against Lean on the
-        // elaborated trees.
-        Special("forwardByNameAlias", "P(x, x) = x\nSome = P\nSome(7)"),
-        Special("forwardByNameThreeOccurrences", "P(x, x, x) = x\nSome = P\nSome(7)"),
-        Special("forwardByNameNestedGroup", "P((x, a), x) = a\nSome = P\nSome((7, 8))"),
-        Special("forwardByNameAcrossGroup", "P(x, (x, a)) = a\nSome = P\nSome(7, 8)"),
-        Special("forwardByNameInsideOneGroup", "P((x, x)) = x\nSome = P\nSome(7)"),
-        Special("forwardByNameBesideCollector", "P(x, *rest, x) = rest\nSome = P\nSome(7, 1, 2)"),
-        Special("forwardByNameClosedList", "P(x, x) = x\nQ(x) = P\nQ(7)"),
+        // Formula lifting is by binding name (September 29 2026, reversing the Q-72 refusal): a
+        // callee a formula USES that repeats a name — at the top level, inside one group, across
+        // groups, beside a collector, under a closed list that binds it — receives the caller's ONE
+        // binding at every occurrence (`Some = [P]:0` is `Some(x) = [P(x, x)]:0`), exactly as a name
+        // shared across callees does; a failed or callable-only argument stays its own failure.
+        // Pinned against Lean on the elaborated trees.
+        Special("forwardByNameAlias", "P(x, x) = x\nSome = [P]:0\nSome(7)"),
+        Special("forwardByNameThreeOccurrences", "P(x, x, x) = x\nSome = [P]:0\nSome(7)"),
+        Special("forwardByNameNestedGroup", "P((x, a), x) = a\nSome = [P]:0\nSome((7, 8))"),
+        Special("forwardByNameAcrossGroup", "P(x, (x, a)) = a\nSome = [P]:0\nSome(7, 8)"),
+        Special("forwardByNameInsideOneGroup", "P((x, x)) = x\nSome = [P]:0\nSome(7)"),
+        Special("forwardByNameBesideCollector", "P(x, *rest, x) = rest\nSome = [P]:0\nSome(7, 1, 2)"),
+        Special("forwardByNameClosedList", "P(x, x) = x\nQ(x) = [P]:0\nQ(7)"),
         Special("forwardByNameAcrossCallees", "P(x, x) = x\nF(x) = x + 1\nH = P + F\nH(3)"),
-        Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad)"),
-        Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = P\nSome(Inc)"),
+        Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = [P]:0\nSome(Bad)"),
+        Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = [P]:0\nSome(Inc)"),
+        // FWD-02 (September 29–30 2026): a body whose ONE row is a bare callable that declares
+        // parameters is an EXACT ALIAS (an open body: the callee's signature inherited verbatim and
+        // rebuilt into the call) or BARE FORWARDING (a written list or a clause branch: each callee
+        // parameter supplied BY NAME from an existing compatible binding — never renamed, never
+        // positional, never added), and a written call infers only the names it writes. Pinned
+        // against Lean on the elaborated trees; the rejected forms are front-end diagnostics, pinned
+        // by the spec corpus's `bare-forwarding-never-*` cases and by Lean's `bareForwardingRow`.
+        Special("aliasKeepsRepeatedSignature", "P(x, x) = x\nA = P\nA(7, 7)"),
+        Special("aliasKeepsRepeatedConstraint", "P(x, x) = x\nA = P\nA(7, 8)"),
+        Special("aliasKeepsListPattern", "Single([x]) = x\nA = Single\nA([7]), A([[7]])"),
+        Special("aliasKeepsListPatternRejection", "Single([x]) = x\nA = Single\nA(7)"),
+        Special("aliasKeepsBinderlessSignature", "E((), []) = 1\nA = E\nA((), [])"),
+        Special("aliasOfCollectorKeepsSignature", "C(*xs) = xs\nA = C\nA(1, 2)"),
+        Special("aliasChainKeepsSignature", "Single([x]) = x\nA = Single\nB = A\nC = B\nC([[7]])"),
+        Special("bareForwardingSameName", "Double(x) = x * 2\nForward(x) = Double\nForward(5)"),
+        Special("bareForwardingIsNotPositional", "Sub(y, x) = y - x\nG(x, y) = Sub\nG(10, 3)"),
+        Special("bareForwardingIgnoresUnusedParameter", "Double(x) = x * 2\nForward(x, unused) = Double\nForward(5, 999)"),
+        Special("bareForwardingOfAZeroParameterTarget", "Ten = 10\nAlways(p) = Ten\nAlways(999)"),
+        Special("bareForwardingSamePattern", "Single([x]) = x\nG([x]) = Single\nG([7]), G([[7]])"),
+        Special("bareForwardingRespreadsItsCollector", "Coll(*vs) = vs\nG(*vs) = Coll\nG(1, 2)"),
+        Special("bareForwardingBranchForwardsItsBinder", "F(n) = n * 10\nG(0) = 0\nG(n) = F\nG(0), G(3)"),
+        Special("bareForwardingReusesEnclosingBinding", "A = y + 1\nG = {\n  F(x) = A\n  F(1) + y\n}\nG(10)"),
+        Special("bareForwardingRepeatedName", "P(x, x) = x\nQ(x) = P\nQ(7)"),
+        Special("writtenCallInfersWrittenNames", "Add((a, b)) = a + b\nG = Add((x, y))\nG(2, 3)"),
+        Special("writtenCallIgnoresCalleeBinderNames", "Add((left, right)) = left + right\nG = Add((x, y))\nG(2, 3)"),
     ];
 
     // ----- Direct internal-node cases (Expr.SequenceConstruct) -----------------

@@ -79,7 +79,8 @@ internal sealed record CallableSignature
     /// <summary>The flattened capture count, without materializing <see cref="Parameters"/>.</summary>
     public int FlattenedParameterCount => _derived.Value.FlattenedParameterCount(this);
 
-    public bool HasSequenceValueParameterPattern => ParameterPatterns.Any(ContainsSequenceValuePattern);
+    /// <summary>Whether a top-level parameter pattern is structural — a sequence pattern <c>(…)</c> or a list pattern <c>[…]</c>.</summary>
+    public bool HasStructuralParameterPattern => ParameterPatterns.Any(static pattern => ParameterPattern.StructuralItems(pattern) is not null);
 
     public CallableArityFacts ArityFacts => _derived.Value.ArityFacts(this);
 
@@ -285,17 +286,18 @@ internal sealed record CallableSignature
                 foreach (var item in sequenceValue.Items)
                     AddParameters(item, source, parameters);
                 break;
+            case ListValueParameterPattern listValue:
+                foreach (var item in listValue.Items)
+                    AddParameters(item, source, parameters);
+                break;
+            case UnpackingParameterPattern unpacking:
+                foreach (var item in unpacking.Items)
+                    AddParameters(item, source, parameters);
+                break;
             default:
                 throw new InvalidOperationException("Unknown parameter pattern.");
         }
     }
-
-    private static bool ContainsSequenceValuePattern(ParameterPattern parameterPattern)
-        => parameterPattern switch
-        {
-            SequenceValueParameterPattern => true,
-            CaptureParameterPattern => false,
-        };
 
     /// <summary>
     /// Whether <paramref name="name"/> is identifier-SHAPED under the lexer's one

@@ -152,10 +152,10 @@ public class LeanAstEncoderTests
     }
 
     /// <summary>
-    /// Pattern SHAPE is load-bearing: <c>F((x))</c> is a singleton
-    /// sequence-value pattern, a DIFFERENT program from flat <c>F(x)</c>, and
-    /// the flattened parameter list cannot distinguish the two — the original
-    /// Track 9 erase-the-pattern failure mode.
+    /// Pattern SHAPE is load-bearing: <c>F((x, y))</c> takes ONE sequence
+    /// argument, a DIFFERENT program from flat <c>F(x, y)</c>, and the flattened
+    /// parameter list cannot distinguish the two — the original Track 9
+    /// erase-the-pattern failure mode.
     /// </summary>
     [Fact]
     public void SequenceValueParameterPattern_EncodesAsAlgWithParameterPatterns()
@@ -189,10 +189,30 @@ public class LeanAstEncoderTests
             Properties: [],
             Output: [new Expr.Num(1)]);
 
+        // A host-built one-item SEQUENCE pattern is encoded faithfully (both evaluators reject
+        // it before evaluation: there is no one-item sequence value); the one-element LIST
+        // pattern is the valid one-element structural shape.
         Assert.Equal(
             "(algWithParameterPatterns [.sequenceValue [.capture { name := \"x\" }]] [] [] [.num 1])",
             LeanAstEncoder.EncodeAlgorithm(AlgorithmWith(
                 new SequenceValueParameterPattern([new CaptureParameterPattern("x")]))));
+        Assert.Equal(
+            "(algWithParameterPatterns [.listValue [.capture { name := \"x\" }]] [] [] [.num 1])",
+            LeanAstEncoder.EncodeAlgorithm(AlgorithmWith(
+                new ListValueParameterPattern([new CaptureParameterPattern("x")]))));
+        Assert.Equal(
+            "(algWithParameterPatterns [.sequenceValue [.listValue [.capture { name := \"x\" }, "
+            + ".capture { name := \"r\", kind := .collecting }], .capture { name := \"y\" }]] [] [] [.num 1])",
+            LeanAstEncoder.EncodeAlgorithm(AlgorithmWith(
+                new SequenceValueParameterPattern(
+                [
+                    new ListValueParameterPattern(
+                    [
+                        new CaptureParameterPattern("x"),
+                        new CaptureParameterPattern("r", Kind: ParameterKind.Collecting),
+                    ]),
+                    new CaptureParameterPattern("y"),
+                ]))));
 
         Assert.Equal(
             "(algWithParameterPatterns [.capture { name := \"head\" }, .sequenceValue "
@@ -230,10 +250,10 @@ public class LeanAstEncoderTests
             ".algorithmExpr (alg [] [] ["
             + "privateProp \"$deconstruct$0\" (alg [] [] [] [(.capture [.num 1, .num 2])]), "
             + "privateProp \"x\" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns "
-            + "[.sequenceValue [.capture { name := \"x\" }, .capture { name := \"y\" }]] [] [] [.param \"x\"])) "
+            + "[.unpacking [.capture { name := \"x\" }, .capture { name := \"y\" }]] [] [] [.param \"x\"])) "
             + "[.resolve \"$deconstruct$0\"])]), "
             + "privateProp \"y\" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns "
-            + "[.sequenceValue [.capture { name := \"x\" }, .capture { name := \"y\" }]] [] [] [.param \"y\"])) "
+            + "[.unpacking [.capture { name := \"x\" }, .capture { name := \"y\" }]] [] [] [.param \"y\"])) "
             + "[.resolve \"$deconstruct$0\"])])"
             + "] [.resolve \"x\"])",
             EncodeSource("x, y = (1, 2)\nx"));
@@ -721,6 +741,9 @@ public class LeanAstEncoderTests
             [nameof(Pattern.SequenceValue)] = (
                 new Pattern.SequenceValue([new Pattern.Bind("x"), new Pattern.LitInt(2)]),
                 ".sequenceValue [.bind \"x\", .litInt 2]"),
+            [nameof(Pattern.ListValue)] = (
+                new Pattern.ListValue([new Pattern.Bind("x"), new Pattern.LitInt(2)]),
+                ".listValue [.bind \"x\", .litInt 2]"),
         };
         Assert.Equal(patternVariants.OrderBy(n => n, StringComparer.Ordinal), patterns.Keys.OrderBy(n => n, StringComparer.Ordinal));
         foreach (var variant in patternVariants)
@@ -732,7 +755,7 @@ public class LeanAstEncoderTests
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToList();
         Assert.Equal(
-            new[] { nameof(CaptureParameterPattern), nameof(SequenceValueParameterPattern) }.OrderBy(n => n, StringComparer.Ordinal),
+            new[] { nameof(CaptureParameterPattern), nameof(ListValueParameterPattern), nameof(SequenceValueParameterPattern), nameof(UnpackingParameterPattern) }.OrderBy(n => n, StringComparer.Ordinal),
             parameterPatternVariants);
     }
 

@@ -775,12 +775,14 @@ public closed record Result
     /// an opening operation — call binding never uses it (every non-spread argument
     /// is ONE item) — it only recovers the rows a multi-output body emitted and
     /// serves as the non-list branch of the one-level views below. The explicit
-    /// openers are the spread marker (<see cref="SpreadItems"/>), explicit
-    /// sequence-value patterns and deconstruction (<see cref="StructureItems"/>),
+    /// openers are the spread marker (<see cref="SpreadItems"/>, which assignment
+    /// deconstruction's unpacking receiver also uses), the kind-specific structural
+    /// patterns (<see cref="SequencePatternItems"/>, <see cref="ListPatternItems"/>),
     /// the indexing <c>:</c> TARGET position view (<see cref="ProjectionItems"/> —
     /// the target's positions, never the selected element), and the builtin
     /// collection-item view (the bound collection argument after ordinary fixed
-    /// binding); each opens a sequence and a list alike.
+    /// binding); every opener except the structural patterns opens a sequence and a
+    /// list alike, and a structural pattern opens only its own kind.
     /// Lean: <c>Result.toItems</c>.
     /// </summary>
     internal IReadOnlyList<Result> ToItems()
@@ -810,24 +812,23 @@ public closed record Result
     }
 
     /// <summary>
-    /// Deconstruction-openable structure view shared by the sequence-value
-    /// parameter pattern binders: a received sequence value or exact list
-    /// value opens to its immediate items; numbers, Booleans, and strings are not openable
-    /// (<c>Evaluator.SequenceValuePatternItems</c> adds the ONE scalar one-item fallback
-    /// both binders share). Call-argument binding never uses this view — every non-spread
-    /// argument stays one argument, a sequence or a list alike; only an explicit pattern or
-    /// spread opens it.
-    /// Lean: <c>Result.structureItems?</c>.
+    /// STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE (September 2026):
+    /// the elements a SEQUENCE pattern <c>(p1, …, pn)</c> binds against — a sequence value's
+    /// elements, and <c>null</c> for every other value. A list is never opened by a sequence
+    /// pattern and a scalar is never a one-item structure. The ONE rule shared by the ordinary
+    /// binder, the counted callback binder and the family matchers.
+    /// Lean: <c>Result.sequencePatternItems?</c>.
     /// </summary>
-    internal IReadOnlyList<Result>? StructureItems()
-    {
-        return this switch
-        {
-            SequenceValue(var items) => items,
-            ListValue(var items) => items,
-            _ => null,
-        };
-    }
+    internal IReadOnlyList<Result>? SequencePatternItems()
+        => this is SequenceValue(var items) ? items : null;
+
+    /// <summary>
+    /// The elements a LIST pattern <c>[p1, …, pn]</c> binds against — a list value's elements,
+    /// and <c>null</c> for every other value (never a sequence, never a scalar). Lists keep
+    /// every cardinality. Lean: <c>Result.listPatternItems?</c>.
+    /// </summary>
+    internal IReadOnlyList<Result>? ListPatternItems()
+        => this is ListValue(var items) ? items : null;
 
     /// <summary>
     /// Selectable-position view of an indexing <c>:</c> TARGET: a sequence

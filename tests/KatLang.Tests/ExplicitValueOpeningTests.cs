@@ -11,8 +11,9 @@ namespace KatLang.Tests;
 /// <para>A non-spread argument supplies exactly ONE item — its value, whatever that
 /// value is (a scalar, a sequence, a list, <c>()</c>, <c>[]</c>). Only an explicit
 /// spread <c>v*</c> turns one value into several supplied items (one level, a sequence
-/// and a list alike), and only an explicit structural pattern (<c>F((x, y))</c>,
-/// <c>x, *r = v</c>) opens a received value. Fixed parameters bind their allocated item
+/// and a list alike), and only an explicit structural pattern (<c>F((x, y))</c> for a
+/// sequence value, <c>F([x, y])</c> for a list value — each opens only its own kind) or an
+/// assignment deconstruction (<c>x, *r = v</c>) opens a received value. Fixed parameters bind their allocated item
 /// unchanged; a collecting parameter collects exactly its allocated items as one list
 /// (THE EXACT COLLECTOR LAW); a callback receives each element — and a reducer its
 /// accumulator — as ONE ordinary argument (THE CALLBACK LAW). No collector, callback,
@@ -283,8 +284,8 @@ public class ExplicitValueOpeningTests
     [InlineData("((1, 2), 3)")]
     public void Values_StayValues_ThroughReturnsStorageAndSelection(string value)
     {
-        // `Target` requires its `tag`, so the bare reference in `Use` is an implicit forwarding
-        // call (a callee accepting zero supplied arguments would be read instead, Q-03).
+        // `Use(tag, xs) = Target` is bare forwarding: Use's same-named bindings supply Target's
+        // `tag` and `*xs` (FWD-02).
         var definitions = Coll + "V = " + value + "\nId(x) = x\n" +
             "Stored = Id([V]*)\nTarget(tag, *xs) = xs\nUse(tag, xs) = Target\n";
         var one = "[" + value + "]";
@@ -404,49 +405,72 @@ public class ExplicitValueOpeningTests
 
     // ── 6. Explicit structural patterns remain the openers ──────────────────
 
+    /// <summary>
+    /// Each structural pattern opens ONE level of its OWN kind: <c>(…)</c> a sequence value,
+    /// <c>[…]</c> a list value (the one-element list included).
+    /// </summary>
+    private const string StructuralDefinitions =
+        "Pair((x, y)) = (x, y)\nParts((*xs)) = xs\nHeadTail((x, *xs)) = (x, xs)\n" +
+        "LPair([x, y]) = (x, y)\nLParts([*xs]) = xs\nLHeadTail([x, *xs]) = (x, xs)\n";
+
     [Theory]
     [InlineData("Pair((1, 2))", "(1, 2)")]
-    [InlineData("Pair([1, 2])", "(1, 2)")]
+    [InlineData("LPair([1, 2])", "(1, 2)")]
     [InlineData("Pair(((1, 2), 3))", "((1, 2), 3)")]
-    [InlineData("Pair([[1, 2], 3])", "([1, 2], 3)")]
+    [InlineData("LPair([[1, 2], 3])", "([1, 2], 3)")]
     [InlineData("Parts((1, 2))", "[1, 2]")]
-    [InlineData("Parts([1, 2])", "[1, 2]")]
+    [InlineData("LParts([1, 2])", "[1, 2]")]
     [InlineData("Parts(())", "[]")]
-    [InlineData("Parts([])", "[]")]
+    [InlineData("LParts([])", "[]")]
+    [InlineData("LParts([7])", "[7]")]
     [InlineData("Parts(((1, 2), 3))", "[(1, 2), 3]")]
-    [InlineData("Parts([[1, 2], 3])", "[[1, 2], 3]")]
-    [InlineData("Parts(7)", "[7]")]
+    [InlineData("LParts([[1, 2], 3])", "[[1, 2], 3]")]
     [InlineData("HeadTail((1, 2))", "(1, [2])")]
-    [InlineData("HeadTail([1, 2])", "(1, [2])")]
+    [InlineData("LHeadTail([1, 2])", "(1, [2])")]
+    [InlineData("LHeadTail([7])", "(7, [])")]
     [InlineData("HeadTail(((1, 2), 3))", "((1, 2), [3])")]
-    [InlineData("HeadTail([[1, 2], 3])", "([1, 2], [3])")]
-    [InlineData("HeadTail(7)", "(7, [])")]
-    public void StructuralPatterns_OpenSequencesAndListsAlike(string call, string expected)
+    [InlineData("LHeadTail([[1, 2], 3])", "([1, 2], [3])")]
+    public void StructuralPatterns_OpenOnlyTheirOwnKind(string call, string expected)
     {
-        const string defs = "Pair((x, y)) = (x, y)\nParts((*xs)) = xs\nHeadTail((x, *xs)) = (x, xs)\n";
-        Assert.Equal(expected, Display(defs + call));
+        Assert.Equal(expected, Display(StructuralDefinitions + call));
         // The callback spelling binds exactly like the direct call.
-        Assert.Equal("[" + expected + "]", Display(defs + "map([" + call[(call.IndexOf('(') + 1)..^1] + "], " + call[..call.IndexOf('(')] + ")"));
-        AssertStrategiesAgree(defs + call);
+        Assert.Equal("[" + expected + "]", Display(StructuralDefinitions + "map([" + call[(call.IndexOf('(') + 1)..^1] + "], " + call[..call.IndexOf('(')] + ")"));
+        AssertStrategiesAgree(StructuralDefinitions + call);
     }
 
     [Theory]
     [InlineData("Pair(())")]
-    [InlineData("Pair([])")]
-    [InlineData("Pair(7)")]
     [InlineData("HeadTail(())")]
+    [InlineData("Pair((1, 2, 3))")]
+    [InlineData("LPair([])")]
+    [InlineData("LPair([7])")]
+    [InlineData("LPair([1, 2, 3])")]
+    [InlineData("LHeadTail([])")]
+    public void StructuralPatterns_RejectTheWrongNumberOfElements(string call)
+        => Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(StructuralDefinitions + call));
+
+    [Theory]
+    [InlineData("Pair([1, 2])")]
+    [InlineData("Pair(7)")]
+    [InlineData("Parts([1, 2])")]
+    [InlineData("Parts([])")]
+    [InlineData("Parts(7)")]
     [InlineData("HeadTail([])")]
-    public void StructuralPatterns_RejectTooFewOpenedItems(string call)
-    {
-        const string defs = "Pair((x, y)) = (x, y)\nHeadTail((x, *xs)) = (x, xs)\n";
-        Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(defs + call));
-    }
+    [InlineData("HeadTail(7)")]
+    [InlineData("LPair((1, 2))")]
+    [InlineData("LParts((1, 2))")]
+    [InlineData("LParts(())")]
+    [InlineData("LParts(7)")]
+    [InlineData("LHeadTail('s')")]
+    public void StructuralPatterns_RejectTheOtherKindAndScalars(string call)
+        => Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(StructuralDefinitions + call));
 
     // ── 7. Callbacks: each element is ONE ordinary argument ─────────────────
 
     private const string CallbackDefinitions =
         "Only(*xs) = xs\nCnt(*xs) = xs.count\nId(x) = x\nAdd(x, y) = x + y\n" +
-        "AddPair((x, y)) = x + y\nNested((*xs)) = xs\nRest(a, *rest) = rest\n";
+        "AddPair((x, y)) = x + y\nNested((*xs)) = xs\nRest(a, *rest) = rest\n" +
+        "LAddPair([x, y]) = x + y\nLNested([*xs]) = xs\n";
 
     [Fact]
     public void Callbacks_RequiredRelationships()
@@ -454,11 +478,15 @@ public class ExplicitValueOpeningTests
         Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(CallbackDefinitions + "map([(1, 2)], Add)"));
         Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(CallbackDefinitions + "map([[1, 2]], Add)"));
         Assert.Equal("[3]", Display(CallbackDefinitions + "map([(1, 2)], AddPair)"));
-        Assert.Equal("[3]", Display(CallbackDefinitions + "map([[1, 2]], AddPair)"));
+        Assert.Equal("[3]", Display(CallbackDefinitions + "map([[1, 2]], LAddPair)"));
+        Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(CallbackDefinitions + "map([[1, 2]], AddPair)"));
+        Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(CallbackDefinitions + "map([(1, 2)], LAddPair)"));
         Assert.Equal("[1]", Display(CallbackDefinitions + "map([(1, 2)], Cnt)"));
         Assert.Equal("[1]", Display(CallbackDefinitions + "map([[1, 2]], Cnt)"));
         Assert.Equal("[[(1, 2)], [[3, 4]]]", Display(CallbackDefinitions + "((1, 2), [3, 4]).map(Only)"));
-        Assert.Equal("[[1, 2], [3, 4]]", Display(CallbackDefinitions + "((1, 2), [3, 4]).map(Nested)"));
+        Assert.Equal("[[1, 2], [3, 4]]", Display(CallbackDefinitions + "((1, 2), (3, 4)).map(Nested)"));
+        Assert.Equal("[[1, 2], [3], []]", Display(CallbackDefinitions + "([1, 2], [3], []).map(LNested)"));
+        Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(CallbackDefinitions + "((1, 2), [3, 4]).map(Nested)"));
         Assert.Equal("[[], []]", Display(CallbackDefinitions + "((1, (2, 3)), (4, 5)).map(Rest)"));
         AssertStrategiesAgree(CallbackDefinitions + "map([(1, 2)], AddPair), map([[1, 2]], Cnt), ((1, 2), [3, 4]).map(Only)");
     }
@@ -467,7 +495,7 @@ public class ExplicitValueOpeningTests
     {
         var data = new TheoryData<string, string>();
         foreach (var element in new[] { "1", "()", "[]", "(1, 2)", "[1, 2]", "((1, 2), 3)", "[[1, 2], 3]" })
-            foreach (var callee in new[] { "Only", "Cnt", "Id", "Add", "AddPair", "Nested", "Rest" })
+            foreach (var callee in new[] { "Only", "Cnt", "Id", "Add", "AddPair", "Nested", "Rest", "LAddPair", "LNested" })
                 data.Add(element, callee);
         return data;
     }
@@ -511,6 +539,8 @@ public class ExplicitValueOpeningTests
         "AddPair" => name + "((x, y)) = true\n",
         "Nested" => name + "((*xs)) = true\n",
         "Rest" => name + "(a, *rest) = true\n",
+        "LAddPair" => name + "([x, y]) = true\n",
+        "LNested" => name + "([*xs]) = true\n",
         _ => throw new ArgumentOutOfRangeException(nameof(callee)),
     };
 
@@ -579,14 +609,15 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void ReducerAccumulator_IsOneValue_OpenedOnlyByAnExplicitPattern()
     {
-        const string defs = "Acc(x, *acc) = acc\nSum2(x, (a, b)) = (a + x, b + 1)\nApp(item, *hist) = (hist*, item)\n";
+        const string defs = "Acc(x, *acc) = acc\nSum2(x, (a, b)) = (a + x, b + 1)\nLSum2(x, [a, b]) = [a + x, b + 1]\nApp(item, *hist) = (hist*, item)\n";
         Assert.Equal("[(1, 2)]", Display(defs + "reduce([9], Acc, (1, 2))"));
         Assert.Equal("[[1, 2]]", Display(defs + "reduce([9], Acc, [1, 2])"));
         Assert.Equal("[()]", Display(defs + "reduce([9], Acc, ())"));
         Assert.Equal("[[]]", Display(defs + "reduce([9], Acc, [])"));
         Assert.Equal("[((1, 2), 3)]", Display(defs + "reduce([9], Acc, ((1, 2), 3))"));
         Assert.Equal("(6, 3)", Display(defs + "reduce([1, 2, 3], Sum2, (0, 0))"));
-        Assert.Equal("(6, 3)", Display(defs + "reduce([1, 2, 3], Sum2, [0, 0])"));
+        Assert.Equal("[6, 3]", Display(defs + "reduce([1, 2, 3], LSum2, [0, 0])"));
+        Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(defs + "reduce([1, 2, 3], Sum2, [0, 0])"));
         Assert.Equal("((1, 2), 9)", Display(defs + "reduce([9], App, (1, 2))"));
         AssertStrategiesAgree(defs + "reduce([1, 2, 3], Sum2, (0, 0)), reduce([9], Acc, (1, 2))");
     }
@@ -611,7 +642,7 @@ public class ExplicitValueOpeningTests
     [InlineData("repeat(Id, 1, (1, 2))", "(1, 2)")]
     [InlineData("repeat(Id, 1, [1, 2])", "[1, 2]")]
     [InlineData("repeat(Swap, 1, (1, 2))", "(2, 1)")]
-    [InlineData("repeat(Swap, 1, [1, 2])", "(2, 1)")]
+    [InlineData("repeat(LSwap, 1, [1, 2])", "[2, 1]")]
     [InlineData("repeat(Swap, 2, (1, 2))", "(1, 2)")]
     [InlineData("repeat(Fib, 5, 0, 1)", "5\n8")]
     [InlineData("repeat(Cnt, 1, (1, 2))", "1")]
@@ -624,7 +655,7 @@ public class ExplicitValueOpeningTests
     public void LoopStateSlots_AreEstablishedItems(string call, string expected)
     {
         // A lone multi-slot loop result displays one root row per state slot.
-        const string defs = "Id(x) = x\nSwap((a, b)) = (b, a)\nFib(a, b) = b, a + b\nCnt(*xs) = xs.count\n" +
+        const string defs = "Id(x) = x\nSwap((a, b)) = (b, a)\nLSwap([a, b]) = [b, a]\nFib(a, b) = b, a + b\nCnt(*xs) = xs.count\n" +
             "W(n, *xs) = n + 1, xs.count, n < 1\n";
         Assert.Equal(expected, Display(defs + call));
         AssertStrategiesAgree(defs + call);
@@ -711,11 +742,12 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void Selection_FeedsEveryConsumerAsOneValue()
     {
-        const string defs = Coll + "A = ((1, 2), 3)\nL = [[1, 2], 3]\nId(x) = x\nAdd(x, y) = x + y\nAddPair((x, y)) = x + y\n";
-        foreach (var (selection, value) in new[]
+        const string defs = Coll + "A = ((1, 2), 3)\nL = [[1, 2], 3]\nId(x) = x\nAdd(x, y) = x + y\nAddPair((x, y)) = x + y\nLAddPair([x, y]) = x + y\n";
+        // Each selected pair is opened by the structural pattern of ITS kind.
+        foreach (var (selection, value, pairAdder) in new[]
         {
-            ("A:0", "(1, 2)"), ("first(A)", "(1, 2)"), ("last((3, A:0))", "(1, 2)"),
-            ("L:0", "[1, 2]"), ("first(L)", "[1, 2]"),
+            ("A:0", "(1, 2)", "AddPair"), ("first(A)", "(1, 2)", "AddPair"), ("last((3, A:0))", "(1, 2)", "AddPair"),
+            ("L:0", "[1, 2]", "LAddPair"), ("first(L)", "[1, 2]", "LAddPair"),
         })
         {
             Assert.Equal(value, Display(defs + selection));
@@ -725,21 +757,26 @@ public class ExplicitValueOpeningTests
             Assert.Equal("[" + value + "]", Display(defs + "X = " + selection + "\nColl(X)"));
             Assert.Equal("[1, 2]", Display(defs + "Coll((" + selection + ")*)"));
             Assert.Equal("[1, 2]", Display(defs + "(" + selection + ")*.Coll"));
-            Assert.Equal("3", Display(defs + "AddPair(" + selection + ")"));
+            Assert.Equal("3", Display(defs + pairAdder + "(" + selection + ")"));
             Assert.Equal("3", Display(defs + "Add((" + selection + ")*)"));
-            Assert.Equal("[3]", Display(defs + "map([" + selection + "], AddPair)"));
+            Assert.Equal("[3]", Display(defs + "map([" + selection + "], " + pairAdder + ")"));
             Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(defs + "Add(" + selection + ")"));
+            // The other kind's pattern rejects the selected value: selection never converts.
+            var otherAdder = pairAdder == "AddPair" ? "LAddPair" : "AddPair";
+            Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(defs + otherAdder + "(" + selection + ")"));
         }
 
         // first(A) ≡ A:0 and last(A) ≡ A:(A.count - 1) through every consumer.
-        foreach (var consumer in new[] { "Coll({0})", "({0}).Coll", "Coll(({0})*)", "AddPair({0})", "map([{0}], Coll)" })
+        foreach (var consumer in new[] { "Coll({0})", "({0}).Coll", "Coll(({0})*)", "map([{0}], Coll)" })
         {
             Assert.Equal(Display(defs + string.Format(consumer, "A:0")), Display(defs + string.Format(consumer, "first(A)")));
             Assert.Equal(Display(defs + string.Format(consumer, "L:0")), Display(defs + string.Format(consumer, "first(L)")));
         }
 
+        Assert.Equal(Display(defs + "AddPair(A:0)"), Display(defs + "AddPair(first(A))"));
+        Assert.Equal(Display(defs + "LAddPair(L:0)"), Display(defs + "LAddPair(first(L))"));
         Assert.Equal(Display(defs + "Coll(A:(A.count - 1))"), Display(defs + "Coll(last(A))"));
-        AssertStrategiesAgree(defs + "Coll(A:0), Coll(first(A)), Coll((A:0)*), map([first(L)], AddPair)");
+        AssertStrategiesAgree(defs + "Coll(A:0), Coll(first(A)), Coll((A:0)*), map([first(L)], LAddPair)");
     }
 
     // ── 12. Forwarding, aliases, and nested capture ─────────────────────────
@@ -770,9 +807,9 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void AliasesAndForwarding_KeepTheCallbackLaw()
     {
-        // A forwarding alias of a callable that accepts zero supplied arguments is WRITTEN
-        // (`Alias(*xs) = Cnt(xs*)`): since Q-03 the bare `Alias = Cnt` is a value demand of
-        // `Cnt` (see the end of this test), never a manufactured forwarding callable.
+        // The written forwarding alias `Alias(*xs) = Cnt(xs*)` and the bare exact alias
+        // `Bare = Cnt` (FWD-02: it inherits Cnt's collecting signature — see the end of this
+        // test) both keep the callback law.
         const string defs =
             "Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nApply(f, xs) = map(xs, f)\n" +
             "Forward(g, xs) = Apply(g, xs)\nForward2(h, xs) = Forward(h, xs)\n" +
@@ -799,15 +836,15 @@ public class ExplicitValueOpeningTests
         Assert.Equal("2", Display(defs + "Cnt([10, 7]*)"));
         Assert.Equal("2", Display(defs + "Alias([10, 7]*)"));
 
-        // The BARE alias reads Cnt's zero-argument value and takes no arguments, so a
-        // callback slot that supplies one argument rejects it by the ordinary arity rule.
+        // The BARE alias is an exact alias of Cnt (FWD-02, superseding Q-03's alias clause):
+        // read bare it is its zero-argument value, and a callback slot passes each element as
+        // ONE argument to it exactly as to Cnt.
         const string bare = "Cnt(*xs) = xs.count\nBare = Cnt\n";
         Assert.Equal("0", Display(bare + "Bare"));
-        foreach (var call in new[] { "map([(10, 7), 20], Bare)", "Bare([10, 7])" })
-        {
-            var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(bare + call));
-            Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
-        }
+        Assert.Equal("[1, 1]", Display(bare + "map([(10, 7), 20], Bare)"));
+        Assert.Equal("1", Display(bare + "Bare([10, 7])"));
+        Assert.Equal("2", Display(bare + "Bare([10, 7]*)"));
+        AssertStrategiesAgree(bare + "map([(10, 7), 20], Bare)");
     }
 
     // ── 13. Deconstruction and builtins keep their explicit structure views ──

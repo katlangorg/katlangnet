@@ -351,4 +351,32 @@ public enum DiagnosticCode
     /// truncated — never a fact about any one place in the source.
     /// </summary>
     DiagnosticCountExceeded = 46,
+
+    // 47 is permanently unused (a removed family).
+
+    /// <summary>
+    /// A SEQUENCE pattern with exactly one non-collecting item — <c>F((x)) = …</c>,
+    /// <c>F(((x, y))) = …</c>, <c>F(([x])) = …</c>, at any nesting level of a clause head.
+    /// KatLang has no one-item sequence value (a one-item sequence IS its item), so such a
+    /// pattern describes a boundary no value has and could never match; the one-element
+    /// structural pattern is the list pattern <c>[x]</c>, and a plain name binds a whole value.
+    /// The collector-only <c>(*xs)</c> is valid (a collector is variadic), and the head's own
+    /// parentheses are the call's argument list, never a sequence pattern. Reported over the
+    /// pattern's parentheses. Expression grouping is unaffected: <c>(x)</c> in an expression is
+    /// <c>x</c>.
+    /// </summary>
+    SingletonSequencePattern = 48,
+
+    /// <summary>
+    /// BARE FORWARDING cannot supply a parameter of the forwarded callable (FWD-02). A definition
+    /// with an explicit parameter list or a clause-branch pattern whose ONE row is a bare callable
+    /// (<c>A(p) = F</c>) forwards <c>F</c> the EXISTING bindings of <c>F</c>'s parameter names — by
+    /// name, never by position — and the list is closed: a required parameter that no existing
+    /// binding has the name of (<c>F(q)</c> under <c>A(p) = F</c>) is never renamed from another
+    /// parameter or added to the list, and a parameter whose pattern the definition does not declare
+    /// (<c>Single([x])</c> under <c>G(x) = Single</c>) is never reshaped from a same-named binding.
+    /// The explicit call (<c>A(p) = F(p)</c>, <c>G(x) = Single(x)</c>) passes arguments as written.
+    /// Reported at the bare reference, once per parameter that cannot be supplied.
+    /// </summary>
+    UnforwardableParameter = 49,
 }

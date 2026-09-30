@@ -13,11 +13,12 @@ public class ParameterPropertyCollisionTests
         { "Outer((q, *v)) = {\n    v = 5\n    0\n}\n0", 2, 5, 1, 12 },
         { "F(0) = 0\nF(v) = {\n    v = 5\n    0\n}\n0", 3, 5, 2, 3 },
         { "F((0, v)) = {\n    v = 5\n    0\n}\n0", 2, 5, 1, 7 },
-        // A parameter of Need is lifted into Outer's COMPLETED signature.
-        { "Need(v) = v\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 6 },
-        { "Need((v, w)) = v + w\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 7 },
+        // A parameter of Need is lifted into Outer's COMPLETED signature by formula lifting (a
+        // lone row `Need` would make Outer an exact alias, whose inherited names are encapsulated).
+        { "Need(v) = v\nOuter = {\n    v = 5\n    Need + 0\n}\n0", 3, 5, 1, 6 },
+        { "Need((v, w)) = v + w\nOuter = {\n    v = 5\n    Need + 0\n}\n0", 3, 5, 1, 7 },
         // (A collecting destination lifts only from a callee that requires an argument, Q-03.)
-        { "Need(q, *v) = v.count\nOuter = {\n    v = 5\n    Need\n}\n0", 3, 5, 1, 10 },
+        { "Need(q, *v) = v.count\nOuter = {\n    v = 5\n    Need + 0\n}\n0", 3, 5, 1, 10 },
         { "Need(v) = v\nv = 5\nNeed + 1", 2, 1, 1, 6 },
         // Hoisted deconstruction targets remain properties of the written owner.
         { "Outer(v) = {\n    v, w = 5, 6\n    w\n}\n0", 2, 5, 1, 7 },
@@ -51,18 +52,34 @@ public class ParameterPropertyCollisionTests
     [Fact]
     public void ZeroArgumentCallee_LiftsNothing_SoNoCollisionArises()
     {
-        // Q-03: `Need(*v)` works with no arguments, so `Need` inside Outer is a value read
-        // and lifts no `v` that could collide with Outer's own property `v`.
-        const string source = "Need(*v) = v.count\nOuter = {\n    v = 5\n    Need\n}\nOuter";
+        // Q-03: `Need(*v)` works with no arguments, so `Need` in a formula inside Outer is a
+        // value read and lifts no `v` that could collide with Outer's own property `v`.
+        const string source = "Need(*v) = v.count\nOuter = {\n    v = 5\n    Need + 0\n}\nOuter";
         var parsed = SourceProvenance.ParseValid(source);
         Assert.Empty(parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Params);
         Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 
+    [Theory]
+    [InlineData("Need(*v) = v.count", "Outer", "0")]
+    [InlineData("Need(v) = v * 2", "Outer(4)", "8")]
+    [InlineData("Need(w) = w * 2", "Outer(4)", "8")]
+    public void AnExactAlias_InheritsEncapsulatedNames_SoNoCollisionArises(string need, string call, string expected)
+    {
+        // FWD-02: the lone row makes Outer an exact alias of Need. Its inherited parameter names
+        // are Need's private binder names, so they collide with no property Outer declares — and
+        // renaming Need's binder (`v` to `w`) changes nothing.
+        var source = need + "\nOuter = {\n    v = 5\n    Need\n}\n" + call;
+        var parsed = SourceProvenance.ParseValid(source);
+        var outer = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Outer").Value);
+        Assert.True(outer.InheritsCalleeSignature);
+        Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+    }
+
     [Fact]
     public void InferredLift_PreservesGraceOrder_AndDoesNotInventADeclarationLocation()
     {
-        const string source = "Need = a~ + v\nOuter = { v = 5\nNeed }\n0";
+        const string source = "Need = a~ + v\nOuter = { v = 5\nNeed + 0 }\n0";
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);

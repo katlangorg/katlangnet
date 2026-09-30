@@ -361,19 +361,22 @@ public class DotCallValueBoundaryTests
         // Ordinary call assembly may retain a value error for the algorithm channel.
         // Compare its actual trace, including the fatal spread path that stops assembly,
         // rather than assuming that every value error must stop every callable shape.
+        // The patterned callee opens its third argument with a LIST pattern (a structural
+        // pattern opens only its own kind, so that argument is written as a one-element list).
         foreach (var spread in new[] { false, true })
-        foreach (var declaration in new[]
+        foreach (var (declaration, patternedThird) in new[]
         {
-            "F(a, b, c) = [a, b, c]",
-            "F(*xs) = xs",
-            "F((a), b, c) = [a, b, c]",
-            "F(0, b, c) = 0\nF(a, b, c) = [a, b, c]",
+            ("F(a, b, c) = [a, b, c]", false),
+            ("F(*xs) = xs", false),
+            ("F(a, b, [c]) = [a, b, c]", true),
+            ("F(0, b, c) = 0\nF(a, b, c) = [a, b, c]", false),
         })
         {
             string Slot(int n) => failingSlot == n ? $"(Probe({n}) / 0)" : $"Probe({n})";
             var receiver = Slot(1) + (spread ? "*" : "");
-            var direct = $"{declaration}\nF({receiver}, {Slot(2)}, {Slot(3)})";
-            var dotted = $"{declaration}\n{receiver}.F({Slot(2)}, {Slot(3)})";
+            var third = patternedThird ? $"[{Slot(3)}]" : Slot(3);
+            var direct = $"{declaration}\nF({receiver}, {Slot(2)}, {third})";
+            var dotted = $"{declaration}\n{receiver}.F({Slot(2)}, {third})";
             var baseline = await ObserveEffects(direct, suspend: false);
             foreach (var (source, suspend) in new[] { (dotted, false), (direct, true), (dotted, true) })
             {

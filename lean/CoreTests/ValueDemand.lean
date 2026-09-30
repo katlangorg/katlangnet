@@ -363,8 +363,8 @@ def demandRejectsWithMinimum (name : KatLang.Ident) (minimum : Nat) : Bool :=
 #guard demandRejectsWithMinimum "Mid" 2
 #guard demandRejectsWithMinimum "Pair" 2
 #guard demandRejectsWithMinimum "Grouped" 1
--- A nested pattern's scalar one-item fallback binds ONE supplied value; it never
--- means the callable accepts zero.
+-- A nested pattern binds ONE supplied value of its own kind; it never means
+-- the callable accepts zero.
 #guard demandRejectsWithMinimum "GroupedCollecting" 1
 #guard demandRejectsWithMinimum "GroupedOnly" 1
 #guard demandRejectsWithMinimum "GroupThenCollecting" 1

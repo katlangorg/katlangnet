@@ -126,21 +126,36 @@ public sealed record DeconstructionBindingContext(
 }
 
 /// <summary>
-/// Binding failure of one nested sequence-value parameter pattern group
-/// (<c>F((b, c)) = ...</c> receiving the wrong number of values for
-/// <c>(b, c)</c>). Wraps ONLY the arity mismatch produced by binding that
-/// group's own items, so the failure is attributed to the written pattern
-/// instead of the enclosing call's argument count.
-/// <see cref="PatternDisplayName"/> is the group's display form, e.g.
-/// <c>(b, c)</c>; <see cref="HasCollectingItem"/> is true when the group
-/// contains a collecting binding at this level (an "at least N" expectation).
+/// Binding failure of one nested SEQUENCE pattern (<c>F((b, c)) = ...</c> receiving a
+/// sequence value with the wrong number of elements for <c>(b, c)</c>). Wraps ONLY the arity
+/// mismatch produced by binding that pattern's own items, so the failure is attributed to the
+/// written pattern instead of the enclosing call's argument count. (A value of the wrong KIND
+/// is a <see cref="EvalError.TypeMismatch"/> naming the pattern, never this context.)
+/// <see cref="PatternDisplayName"/> is the pattern's display form, e.g. <c>(b, c)</c>;
+/// <see cref="HasCollectingItem"/> is true when the pattern contains a collecting binding at
+/// this level (an "at least N" expectation).
 /// </summary>
 public sealed record SequenceValueParameterBindingContext(
     string PatternDisplayName,
     bool HasCollectingItem) : ErrorContext
 {
     internal override string FormatMessage()
-        => $"while binding sequence-value parameter pattern {PatternDisplayName}";
+        => $"while binding sequence pattern {PatternDisplayName}";
+}
+
+/// <summary>
+/// Binding failure of one nested LIST pattern (<c>F([b, c]) = ...</c> receiving a list value
+/// with the wrong number of elements for <c>[b, c]</c>) — the list-pattern twin of
+/// <see cref="SequenceValueParameterBindingContext"/>, wrapping only the arity mismatch of the
+/// pattern's own items. <see cref="PatternDisplayName"/> is the pattern's display form, e.g.
+/// <c>[b, c]</c>; <see cref="HasCollectingItem"/> marks an "at least N" expectation.
+/// </summary>
+public sealed record ListValueParameterBindingContext(
+    string PatternDisplayName,
+    bool HasCollectingItem) : ErrorContext
+{
+    internal override string FormatMessage()
+        => $"while binding list pattern {PatternDisplayName}";
 }
 
 public sealed record OpenResolutionContext(string OpenDescription) : ErrorContext

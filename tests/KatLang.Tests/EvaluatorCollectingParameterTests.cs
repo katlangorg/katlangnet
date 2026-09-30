@@ -442,32 +442,37 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_NestedSequenceValueCollectingParameter_OpensOneRealBoundaryPerLevel()
+    public void Eval_NestedCollectingPattern_OpensOneBoundaryOfItsOwnKindPerLevel()
     {
-        // A nested pattern `((*values))` opens two boundaries: the argument must open
-        // to exactly ONE item that itself opens. Unary sequence structure never
-        // survives normalization (`(((1, 2, 3)))` IS `(1, 2, 3)`), so only a
-        // one-element LIST can supply a real outer structural level. Scalars also
-        // bind via the ordinary one-item fallback (no sequence wrapper is created).
+        // A nested pattern `[(*values)]` opens two boundaries, each of its OWN kind: a
+        // one-element LIST whose element is a SEQUENCE. Unary sequence structure never
+        // survives normalization (`(((1, 2, 3)))` IS `(1, 2, 3)`), so a one-element outer
+        // level is always a list; a sequence pattern never opens a list, and no scalar is
+        // ever a one-item structure.
         AssertEval(
             """
-            CountSequenceValue3(((*values))) = values.count
+            CountSequenceValue3([(*values)]) = values.count
             CountSequenceValue3([(1, 2, 3)])
-            CountSequenceValue3([[1, 2, 3]])
+            CountSequenceValue3([()])
             """,
-            3, 3);
+            3, 0);
 
-        foreach (var argument in new[] { "(1, 2, 3)", "((1, 2, 3))", "(((1, 2, 3)))" })
+        foreach (var argument in new[] { "(1, 2, 3)", "((1, 2, 3))", "(((1, 2, 3)))", "[[1, 2, 3]]", "[7]", "7" })
         {
             var result = EvalFull(
-                "CountSequenceValue3(((*values))) = values.count\n"
+                "CountSequenceValue3([(*values)]) = values.count\n"
                 + $"CountSequenceValue3({argument})");
 
             Assert.True(result.IsError);
-            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-            Assert.Equal(1, arity.Expected);
-            Assert.Equal(3, arity.Actual);
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
         }
+
+        // Of the right kinds but the wrong length: the outer list's own arity mismatch.
+        var twoElements = EvalFull("CountSequenceValue3([(*values)]) = values.count\nCountSequenceValue3([(1, 2), (3, 4)])");
+        Assert.True(twoElements.IsError);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(twoElements.Error));
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(2, arity.Actual);
     }
 
     [Fact]
@@ -587,14 +592,20 @@ public class EvaluatorCollectingParameterTests
     public void Eval_SequenceValueParameterBinding_SpreadOfEmptyStillContributesNoItems()
     {
         // Only an explicit spread contributes zero items: E* with E = ()
-        // vanishes, so the pattern sees the single item 6.
+        // vanishes, so the pattern sees the two items 6 and 7.
         AssertEval(
             """
             E = ()
             F((*xs)) = xs.count
-            F((E*, 6))
+            F((E*, 6, 7))
             """,
-            1);
+            2);
+
+        // With a single remaining item the capture IS that item (there is no one-item
+        // sequence value), which the sequence pattern rejects as its kind mismatch.
+        var single = EvalFull("E = ()\nF((*xs)) = xs.count\nF((E*, 6))");
+        Assert.True(single.IsError);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(single.Error));
     }
 
     [Fact]
@@ -644,24 +655,24 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_SequenceValueParameterBinding_SingletonPatternOpensTheArgumentValue()
+    public void Eval_OneElementListPattern_BindsTheElementValue()
     {
-        // A singleton sequence-value pattern `(x)` opens the argument's VALUE to
-        // exactly one item: a pair opens to two (arity error, in every redundant
-        // grouping), while a one-element list opens to its element — the canonical
-        // (1, 2), never a literal-unwritable orphan ((1, 2)).
+        // The one-element structural pattern is the LIST pattern `[x]` (a one-item
+        // sequence pattern `(x)` is invalid): it opens a one-element list to its element —
+        // the canonical (1, 2), never a literal-unwritable orphan ((1, 2)) — while a pair
+        // is a sequence value, which a list pattern never opens (in every redundant
+        // grouping).
         foreach (var argument in new[] { "(1, 2)", "((1, 2))", "(((1, 2)))" })
         {
-            AssertEvalFailsWithArityMismatch(
-                "IdSeq((x)) = x\n" + $"IdSeq({argument})",
-                expected: 1,
-                actual: 2);
+            var mismatch = EvalFull("IdList([x]) = x\n" + $"IdList({argument})");
+            Assert.True(mismatch.IsError);
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(mismatch.Error));
         }
 
         var result = EvalFull(
             """
-            IdSeq((x)) = x
-            IdSeq([(1, 2)])
+            IdList([x]) = x
+            IdList([(1, 2)])
             """);
 
         if (result.IsError)
@@ -675,8 +686,8 @@ public class EvaluatorCollectingParameterTests
         // navigation all agree with the canonical (1, 2).
         AssertEvalResults(
             """
-            IdSeq((x)) = x
-            R = IdSeq([((1, 2))])
+            IdList([x]) = x
+            R = IdList([((1, 2))])
             R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
             """,
             ResultFromAtoms(1, 2), new Result.Atom(2), new Result.Atom(2), new Result.Bool(true), new Result.Bool(true), new Result.Atom(1));
@@ -717,8 +728,8 @@ public class EvaluatorCollectingParameterTests
         // identical results through the sequence-value pattern binding repros.
         const string singleCaptureRepro =
             """
-            IdSeq((x)) = x
-            IdSeq([((1, 2))])
+            IdList([x]) = x
+            IdList([((1, 2))])
             """;
         AssertEvalResultLoopModes(singleCaptureRepro, ResultFromAtoms(1, 2));
         AssertEvalResultSequenceModes(singleCaptureRepro, ResultFromAtoms(1, 2));
@@ -748,10 +759,12 @@ public class EvaluatorCollectingParameterTests
     [Fact]
     public void Eval_NestedSequenceValueParameter_WrongShapeFailsWithInnerArityMismatch()
     {
+        // `[(x, y)]` is a one-element list holding a pair: two elements are the outer
+        // list pattern's own arity mismatch.
         var result = EvalFull(
             """
-            F(((x, y))) = x + y
-            F((1, 2))
+            F([(x, y)]) = x + y
+            F([(1, 2), (3, 4)])
             """);
 
         Assert.True(result.IsError);
@@ -797,9 +810,9 @@ public class EvaluatorCollectingParameterTests
     {
         AssertEval(
             """
-            Apply(f, (x)) = f(x)
+            Apply(f, [x]) = f(x)
             Double(n) = n * 2
-            Apply(Double, (4))
+            Apply(Double, [4])
             """,
             8);
     }
@@ -809,21 +822,23 @@ public class EvaluatorCollectingParameterTests
     {
         AssertEval(
             """
-            Apply(f, (x)) = f(x)
+            Apply(f, [x]) = f(x)
             Pair(n) = n, n + 1
-            Apply(Pair, (4)).count
+            Apply(Pair, [4]).count
             """,
             2);
     }
 
     [Fact]
-    public void Eval_PatternedUserCall_SequenceValueNestedCaptureDoesNotBindAlgorithmChannel()
+    public void Eval_PatternedUserCall_StructuralNestedCaptureDoesNotBindAlgorithmChannel()
     {
+        // A capture nested in a structural pattern binds an ELEMENT of the opened value: a
+        // value, never the algorithm that computed it.
         var result = EvalFull(
             """
-            ApplySequenceValue((f)) = f()
+            ApplyListValue([f]) = f()
             Thunk = 42
-            ApplySequenceValue((Thunk))
+            ApplyListValue([Thunk])
             """);
 
         Assert.True(result.IsError);
@@ -832,14 +847,23 @@ public class EvaluatorCollectingParameterTests
     }
 
     [Fact]
-    public void Eval_PatternedUserCall_SingletonSequenceValuePatternAcceptsScalarFallback()
+    public void Eval_PatternedUserCall_StructuralPatternRejectsAScalar()
     {
+        // No scalar is a one-item structure: a plain name binds a whole value, while a
+        // structural pattern of either kind rejects a scalar as its kind mismatch.
         AssertEval(
             """
-            F((x)) = x
+            F(x) = x
             F(5)
             """,
             5);
+
+        foreach (var declaration in new[] { "F([x]) = x", "F((x, *rest)) = x", "F((*xs)) = xs" })
+        {
+            var result = EvalFull(declaration + "\nF(5)");
+            Assert.True(result.IsError);
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
+        }
     }
 
     [Fact]
