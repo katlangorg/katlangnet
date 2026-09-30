@@ -300,7 +300,9 @@ public class DeconstructionDiagnosticTransparencyTests
     [InlineData("x, y = 'a' - 1, 2\nx", KatLangErrorCode.TypeMismatch)]
     [InlineData("x, y = { }\nx", KatLangErrorCode.MissingOutput)]
     [InlineData("x, y = 1\nx", KatLangErrorCode.ArityMismatch)]
-    [InlineData("x, y = sum\nx", KatLangErrorCode.ArityMismatch)]
+    // A bare builtin right-hand side is a value position an inferring root would lift
+    // (`sum(collection)`), so its own zero-argument demand is pinned under a closed list.
+    [InlineData("P(u) = {\n    x, y = sum\n    x\n}\nP(0)", KatLangErrorCode.ArityMismatch)]
     [InlineData("x, y = reduce([1, 2, 3], 1/0)\nx", KatLangErrorCode.ArityMismatch)]
     [InlineData("R(n) = R(n + 1)\nx, y = R(1)\nx", KatLangErrorCode.EvaluationDepthExceeded)]
     public void EveryErrorKindThroughADeconstruction_LosesOnlyTheSyntheticFrames(

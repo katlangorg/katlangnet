@@ -598,16 +598,22 @@ public class DeconstructionBindingTests
         // A right-hand side whose VALUE evaluation fails (a bare builtin here)
         // surfaces its own error — the assignment-pattern wording applies only
         // to genuine binding-shape failures, never to leaked argument errors
-        // (re-wording would misattribute unrelated numbers to the pattern).
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("a, b = sum\na"));
+        // (re-wording would misattribute unrelated numbers to the pattern). The right-hand
+        // side is a value position an inferring body lifts (`sum(collection)`), so the
+        // demand is pinned under a closed list.
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("P(u) = {\n    a, b = sum\n    a\n}\nP(0)"));
         var message = failure.ToDisplayString();
         Assert.DoesNotContain("Assignment pattern", message, StringComparison.Ordinal);
         // The builtin's own signature-worded arity error (final audit, September 2026: the
         // signature is rendered first wherever it is carried, never the raw placeholder pair).
         Assert.Contains("Callable `sum(collection)` expects 1 argument, but was called with 0 arguments", message, StringComparison.Ordinal);
 
-        var bindingFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("x, *rest = sum\nx"));
+        var bindingFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("P(u) = {\n    x, *rest = sum\n    x\n}\nP(0)"));
         Assert.DoesNotContain("Assignment pattern", bindingFailure.ToDisplayString(), StringComparison.Ordinal);
+
+        // In an inferring root the bare builtin lifts like every callable: the root needs `collection`.
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams,
+            Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("a, b = sum\na")).Errors).Code);
     }
 
     // ───────────────────── Call-parameter deconstruction ──────────────────

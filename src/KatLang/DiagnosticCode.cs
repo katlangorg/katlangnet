@@ -379,4 +379,16 @@ public enum DiagnosticCode
     /// Reported at the bare reference, once per parameter that cannot be supplied.
     /// </summary>
     UnforwardableParameter = 49,
+
+    /// <summary>
+    /// A clause family is used as a value in a formula (<c>F = G + 1</c>), but formula lifting cannot
+    /// name its argument positions. Formula lifting forwards arguments by parameter NAME, and a
+    /// family's lifting signature is one whole-value slot per top-level position, named by the plain
+    /// parameter the clauses bind there — literal, structural and binderless patterns name nothing.
+    /// A position no clause binds with a plain parameter, clauses that bind it under different names,
+    /// or two positions taking one name leave the family without a formula-lifting signature, and no
+    /// name is ever invented for it. The family stays explicitly callable
+    /// (<c>F(n) = G(n) + 1</c>). Reported at the reference.
+    /// </summary>
+    UnliftableClauseFamily = 50,
 }

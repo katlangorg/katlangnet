@@ -115,6 +115,17 @@ public class MaintainedDocumentationConsistencyTests
         { @"`?\b(?:Some|Alias|A)\s*=\s*P`?\s+(?:is|elaborates\s+to|becomes)\s+`?(?:Some|Alias|A)\(x\)\s*=\s*P\(x,\s*x\)", "an alias of a repeated-name callee deduplicated by binding name (before the alias rule)" },
         { @"`?\bG\(x\)\s*=\s*Single`?\s+(?:is|elaborates\s+to|becomes)\s+`?G\(x\)\s*=\s*Single\(\[x\]\)", "a lone row completed by the callee's binder name (before the alias and bare-forwarding rules)" },
         { @"\bAlias\s*=\s*Cnt`?\s+(?:is|elaborates\s+to|becomes)\s+a\s+zero-parameter\s+property", "a zero-parameter alias of a collecting-only callable (Q-03's alias clause, before the alias rule)" },
+        // The unified formula-lifting law (September 30 2026): a formula lifts a reference whenever
+        // its immediate consumer uses it as a VALUE and the callable it resolves to — whatever its
+        // category and route — has a lifting signature; builtin value slots, capture elements and
+        // nested argument expressions are value positions, and clause families lift when their
+        // clauses name them.
+        { @"\bnever\s+implicitly\s+forwarded\b", "opened callables excluded from formula lifting (before the unified law)" },
+        { @"\bregistry-strict\s+Math\s+positions\s+lift\b", "only Math arguments lifting among call arguments (before the unified law)" },
+        { @"\bProcessValueDemandingArgumentBundle\b", "the removed Math-only value-context lifting helper (before the unified law)" },
+        { @"\bclause\s+famil(?:y|ies)\s+(?:is\s+|are\s+)?(?:still\s+)?never\s+lifted\b", "clause families excluded from formula lifting (before the unified law)" },
+        { @"\bcapture\s+rows?\s+(?:intentionally\s+)?(?:do|does)\s+not\s+lift\b", "capture elements excluded from formula lifting (before the unified law)" },
+        { @"\blifting\s+a\s+bare\s+Math\s+function\s+(?:stays|is)\s+route-based\b", "route-based Math lifting (before the unified law)" },
     };
 
     [Theory]

@@ -1805,6 +1805,74 @@ theorem one_element_list_pattern_is_valid (x : Ident) :
   simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.anyHasSingletonSequenceGroup]
 
 /-
+## Inferred signatures are held to the rules of written ones (X-02, September 30 2026)
+
+`ParameterPattern.signatureViolation?` is THE validity of a parameter-pattern list as a callable
+signature — the singleton rule, at most one collecting capture per pattern level, and no repeated
+name that includes a collecting binding — and the C# front end holds every INFERRED signature to
+it: formula lifting that would compose `K(a, *p, b, *q)` from `C1(a, *p)` and `C2(b, *q)` is the
+definition's front-end error, never a signature that reaches a binder. The laws pin the X-02
+composition as invalid at every top-level position, the controls as valid (a collecting name two
+callees share is ONE binding; a collector nested in its own group is that group's level), and the
+bridge the binders rely on: a valid signature has at most one collecting capture at its top level,
+so the binder's collector search finds THE collector.
+-/
+
+private abbrev lawCapture (name : Ident) : ParameterPattern := .capture { name := name }
+private abbrev lawCollecting (name : Ident) : ParameterPattern := .capture { name := name, kind := .collecting }
+
+theorem x02_distinct_top_level_collectors_are_an_invalid_signature :
+    ParameterPattern.signatureViolation?
+        [lawCapture "a", lawCollecting "p", lawCapture "b", lawCollecting "q"]
+      = some .multipleCollectingAtOneLevel
+    ∧ ParameterPattern.signatureViolation?
+        [lawCollecting "p", lawCapture "a", lawCapture "b", lawCollecting "q"]
+      = some .multipleCollectingAtOneLevel
+    ∧ ParameterPattern.signatureViolation?
+        [lawCapture "a", lawCollecting "p", lawCapture "c", lawCapture "b", lawCollecting "q"]
+      = some .multipleCollectingAtOneLevel := by
+  decide
+
+theorem shared_collecting_name_is_one_valid_binding :
+    ParameterPattern.signatureViolation? [lawCapture "a", lawCollecting "rest", lawCapture "b"] = none := by
+  decide
+
+theorem collectors_in_their_own_groups_are_valid :
+    ParameterPattern.signatureViolation?
+        [.sequenceValue [lawCapture "a", lawCollecting "p"], .sequenceValue [lawCapture "b", lawCollecting "q"]]
+      = none
+    ∧ ParameterPattern.signatureViolation?
+        [.sequenceValue [lawCapture "a", lawCollecting "p"], lawCapture "d", lawCollecting "r"]
+      = none := by
+  decide
+
+theorem nested_level_with_two_collectors_is_invalid :
+    ParameterPattern.signatureViolation? [.listValue [lawCollecting "r", lawCollecting "s"]]
+      = some .multipleCollectingAtOneLevel := by
+  decide
+
+theorem repeated_name_with_a_collector_is_invalid_while_fixed_repeats_are_constraints :
+    ParameterPattern.signatureViolation? [lawCapture "x", lawCollecting "x"]
+      = some .repeatedNameIncludesCollecting
+    ∧ ParameterPattern.signatureViolation? [lawCapture "x", lawCapture "x"] = none := by
+  decide
+
+/-- The bridge the binders rely on: a VALID signature has at most one collecting capture at its
+top level, so `bindParameterPatternList`'s collector search finds THE collector (the prefix and
+suffix around it are fixed). -/
+theorem valid_signature_has_at_most_one_top_level_collector (ps : List ParameterPattern)
+    (h : ParameterPattern.signatureViolation? ps = none) :
+    ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1 := by
+  simp only [ParameterPattern.signatureViolation?] at h
+  by_cases hs : ParameterPattern.anyHasSingletonSequenceGroup ps = true
+  · simp [hs] at h
+  · by_cases hm : ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel ps = true
+    · simp [hs, hm] at h
+    · simp only [ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel, Bool.or_eq_true,
+        decide_eq_true_eq, not_or] at hm
+      omega
+
+/-
 ## Repeated-name binding is order-independent (September 2026)
 
 A repeated name is decided ONCE per pattern level, when its last contribution joins, by
@@ -3006,3 +3074,118 @@ theorem value_control_reports_its_recorded_failure
   cases b <;>
     simp [prepareSequenceBuiltinSuffixArgItem, hk, sequenceBuiltinValueDemandErrorWith?,
       CallableCallItem.named?, runEvalM] <;> rfl
+
+/-
+## The unified formula-lifting law (decided 2026-09-30)
+
+A resolved callable reference is lifted when its occurrence is used as a VALUE, and its lifting
+signature is its resolved callable's contract (`Algorithm.liftingSignature?`), whatever its
+category. The laws pin the role table the C# front end classifies with (`FormulaLiftingRoles`),
+the derived signature of a clause family (whole-value slots named by the clauses, never an
+invented name), and Q-03's complement for every kind that has a lifting signature: such a
+reference lifts exactly when the callable cannot satisfy a zero-argument demand.
+-/
+
+/-- A clause family demands every argument's value before any clause is tried (PAT-07), so a
+reference passed to it is used as a value, whatever the position. -/
+theorem family_arguments_are_value_slots (position : Nat) (known : Bool) :
+    liftingSlotRole .family position known = .value := by
+  cases known <;> rfl
+
+/-- A Math member or a host operation demands every argument's value. -/
+theorem strict_value_arguments_are_value_slots (position : Nat) (known : Bool) :
+    liftingSlotRole .strictValue position known = .value := by
+  cases known <;> rfl
+
+/-- A user callable's whole argument stays neutral (its binder decides at run time; a plain
+capture keeps the callable channel), and so does an argument of a callee known only at run time:
+`Twice(A)` passes `A` itself. -/
+theorem user_and_dynamic_arguments_stay_neutral (position : Nat) (known : Bool) :
+    liftingSlotRole .user position known = .callable
+    ∧ liftingSlotRole .dynamic position known = .callable := by
+  cases known <;> exact ⟨rfl, rfl⟩
+
+/-- A builtin reads its registry roles: `map`'s collection is a value and its mapper a callback
+the builtin invokes; `reduce`'s initial accumulator is a value; `if`'s condition and both
+branches are values (laziness does not change a role); a loop's step is invoked while its count
+and initial state are values; and a SURPLUS position beyond the signature is a value (it is
+value-evaluated before the arity verdict), so no role depends on how many arguments a call
+supplies. -/
+theorem builtin_slot_roles_follow_the_registry :
+    liftingSlotRole (.builtin .mapBuiltin) 0 true = .value
+    ∧ liftingSlotRole (.builtin .mapBuiltin) 1 true = .callable
+    ∧ liftingSlotRole (.builtin .reduceBuiltin) 1 true = .callable
+    ∧ liftingSlotRole (.builtin .reduceBuiltin) 2 true = .value
+    ∧ liftingSlotRole (.builtin .ifBuiltin) 0 true = .value
+    ∧ liftingSlotRole (.builtin .ifBuiltin) 1 true = .value
+    ∧ liftingSlotRole (.builtin .ifBuiltin) 2 true = .value
+    ∧ liftingSlotRole (.builtin .repeatBuiltin) 0 true = .callable
+    ∧ liftingSlotRole (.builtin .repeatBuiltin) 1 true = .value
+    ∧ liftingSlotRole (.builtin .sumBuiltin) 0 true = .value
+    ∧ liftingSlotRole (.builtin .mapBuiltin) 2 true = .value
+    ∧ liftingSlotRole (.builtin .reduceBuiltin) 3 true = .value
+    ∧ liftingSlotRole (.builtin .ifBuiltin) 3 true = .value := by
+  decide
+
+/-- After a spread slot a position is known only at run time: it is a value slot only for a
+builtin whose every slot is one. -/
+theorem unknown_builtin_position_is_a_value_only_when_every_slot_is :
+    liftingSlotRole (.builtin .sumBuiltin) 3 false = .value
+    ∧ liftingSlotRole (.builtin .mapBuiltin) 3 false = .callable := by
+  decide
+
+private def lawBranch (pattern : Pattern) : CondBranch := { pattern := pattern, body := alg [] [] [] [num 0] }
+
+/-- A literal base case names nothing, so the general clause names the one slot:
+`G(0) = …` / `G(n) = …` lifts as `G(n)`. -/
+theorem family_literal_base_is_named_by_its_general_clause :
+    familyLiftingSignature? [lawBranch (.litInt 0), lawBranch (.bind "n")]
+      = some [.capture { name := "n" }] := by
+  rfl
+
+/-- Different clauses may name different positions: `P(a, 0)` / `P(0, b)` lifts as `P(a, b)`. -/
+theorem family_positions_are_named_by_the_clauses_that_bind_them :
+    familyLiftingSignature?
+        [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.litInt 0, .bind "b"])]
+      = some [.capture { name := "a" }, .capture { name := "b" }] := by
+  rfl
+
+/-- Two positions never share one name: `P(a, 0)` / `P(0, a)` has no lifting signature — by-name
+lifting would feed one binding to two independent positions. -/
+theorem family_one_name_for_two_positions_is_unnameable :
+    familyLiftingSignature?
+        [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.litInt 0, .bind "a"])]
+      = none := by
+  rfl
+
+/-- Clauses that name a position differently leave it unnamed: `H(a, 0)` / `H(b, c)`. -/
+theorem family_conflicting_names_are_unnameable :
+    familyLiftingSignature?
+        [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.bind "b", .bind "c"])]
+      = none := by
+  rfl
+
+/-- Structural and binderless clause patterns are dispatch detail and name nothing: a family of
+list patterns alone has no lifting signature, while a capture clause beside binderless groups
+names the slot (`F(()) = …` / `F([]) = …` / `F(x) = …` lifts as `F(x)`). -/
+theorem structural_clauses_do_not_name_a_slot :
+    familyLiftingSignature? [lawBranch (.listValue []), lawBranch (.listValue [.bind "x"])] = none
+    ∧ familyLiftingSignature?
+        [lawBranch (.sequenceValue [.sequenceValue []]), lawBranch (.listValue []), lawBranch (.bind "x")]
+      = some [.capture { name := "x" }] := by
+  exact ⟨rfl, rfl⟩
+
+/-- A user algorithm's lifting signature is its parameter patterns, so Q-03's complement law
+(`bare_reference_lifts_iff_not_cacheable`) is the user case of the kind-independent law. A builtin
+never accepts a zero-argument call, and its interface always requires an argument, so a builtin
+reference in a value role always lifts; so does a clause family with a lifting signature, whose
+every clause needs its arguments. -/
+theorem builtin_reference_lifts_and_is_never_cacheable (b : Builtin) :
+    Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false
+    ∧ liftsBareValueReference (builtinLiftingSignature b) = true := by
+  cases b <;> decide
+
+theorem nameable_family_reference_lifts :
+    (familyLiftingSignature? [lawBranch (.litInt 0), lawBranch (.bind "n")]).map liftsBareValueReference
+      = some true := by
+  rfl

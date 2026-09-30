@@ -347,7 +347,7 @@ internal static class FrontEndPipeline
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-            parameterizedRoot, observations: null, passDiagnostics);
+            parameterizedRoot, observations: null, passDiagnostics, hostOperations);
 
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
         // The open PROVIDER rule needs completed signatures (an inferred parameter list is

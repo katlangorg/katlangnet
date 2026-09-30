@@ -243,14 +243,13 @@ public class ConditionalBranchElaborationTests
     [InlineData("public Helper(x) = x", "Helper(5)", 5)]
     [InlineData("public Helper = x", "Helper(5)", 5)]
     [InlineData("public Helper = x", "Helper", null)]
-    [InlineData("public Helper = x", "Math.Abs(Helper)", null)]
     public void Source_InlineBranchOpen_MatchesNamedOuterOpen(string member, string reference, int? expected)
     {
         // The inline block and an equivalent outer library make the SAME decisions inside the
-        // branch: the same elaborated branch output (a bare opened helper is never implicitly
-        // forwarded, in either form — even under a strict-value demand — so it stays bare) and
-        // the same outcome, a value or the same structured zero-argument arity failure. Only the
-        // provider's lifetime differs: the inline block exists for this branch alone.
+        // branch: the same elaborated branch output (a bare opened helper row is never an alias
+        // or forwarding target, in either form, so it stays bare) and the same outcome, a value
+        // or the same structured zero-argument arity failure. Only the provider's lifetime
+        // differs: the inline block exists for this branch alone.
         var named = $"Helpers = {{\n    {member}\n}}\nF(0) = {{\n    open Helpers\n    {reference}\n}}\nF(n) = n\n\nF(0)";
         var inline = $"F(0) = {{\n    open {{\n        {member}\n    }}\n\n    {reference}\n}}\nF(n) = n\n\nF(0)";
         var namedRoot = SourceProvenance.ParseValid(named).Root;
@@ -273,6 +272,29 @@ public class ConditionalBranchElaborationTests
             Assert.IsType<EvalError.ArityMismatch>(EvaluatorTestSupport.Innermost(namedResult.Error));
             Assert.IsType<EvalError.ArityMismatch>(EvaluatorTestSupport.Innermost(inlineResult.Error));
         }
+    }
+
+    [Fact]
+    public void Source_InlineBranchOpen_StrictValueDemand_IsDiagnosedLikeNamedOuterOpen()
+    {
+        // THE UNIFIED FORMULA-LIFTING LAW: an opened member lifts like every callable, so under a
+        // strict-value demand a branch pattern — a closed input list — that cannot supply the
+        // helper's `x` is the closed-list diagnostic, and the inline block and the named library
+        // report the SAME one.
+        const string Member = "public Helper = x";
+        const string Reference = "Math.Abs(Helper)";
+        var named = $"Helpers = {{\n    {Member}\n}}\nF(0) = {{\n    open Helpers\n    {Reference}\n}}\nF(n) = n\n\nF(0)";
+        var inline = $"F(0) = {{\n    open {{\n        {Member}\n    }}\n\n    {Reference}\n}}\nF(n) = n\n\nF(0)";
+        static string Blocked(string source)
+        {
+            var diagnostic = Assert.Single(Parser.Parse(source).Diagnostics);
+            Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+            Assert.Contains("'Helper' is required as a value here", diagnostic.Message, StringComparison.Ordinal);
+            Assert.Contains("'x'", diagnostic.Message, StringComparison.Ordinal);
+            return diagnostic.Message;
+        }
+
+        Assert.Equal(Blocked(named), Blocked(inline));
     }
 
     [Theory]

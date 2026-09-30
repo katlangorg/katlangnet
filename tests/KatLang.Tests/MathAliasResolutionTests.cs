@@ -59,10 +59,15 @@ public class MathAliasResolutionTests
         Assert.Equal(["y", "x"], ElaboratedPropertyParams("K = atan2\nK(1, 2)", "K"));
         AssertAliasAgreesWithCanonical("K = atan2\nK(1, 2)", "K = Math.Atan2\nK(1, 2)");
 
-        // A bare alias at ROOT output lifts too, exactly like bare `Math.Abs`:
-        // both leave the run with the same unresolved implicit parameter.
-        var aliasError = SourceProvenance.ParseValid("abs").ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
-        var canonicalError = SourceProvenance.ParseValid("Math.Abs").ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
+        // A bare alias as a ROOT row is preserved exactly like bare `Math.Abs` (the root
+        // clause holds for every callable category): both report the member's own
+        // zero-argument arity rejection. In a root formula both lift alike and leave the run
+        // with the same unresolved implicit parameter.
+        var aliasRow = SourceProvenance.ParseValid("abs").ExpectEvaluationError<EvalError.ArityMismatch>();
+        var canonicalRow = SourceProvenance.ParseValid("Math.Abs").ExpectEvaluationError<EvalError.ArityMismatch>();
+        Assert.Equal((canonicalRow.Expected, canonicalRow.Actual), (aliasRow.Expected, aliasRow.Actual));
+        var aliasError = SourceProvenance.ParseValid("abs + 0").ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
+        var canonicalError = SourceProvenance.ParseValid("Math.Abs + 0").ExpectEvaluationError<EvalError.UnresolvedImplicitParams>();
         Assert.Equal(canonicalError.ParamNames, aliasError.ParamNames);
     }
 

@@ -1297,9 +1297,9 @@ public static class CountedMatrixCorpus
             "#", 1,
             "PARENTHESES GROUP SYNTAX: `(Inc)` IS `Inc`, so the grouped argument carries Inc's callable identity exactly like the bare name"),
         Err("ho/capture-suppresses-identity", HigherOrderChannel, One, CaptureWrapped,
-            "Inc(x) = x + 1\nApply1(f) = f(5)\nApply1((Inc, Inc))",
+            "Inc(x) = x + 1\nApply1(f) = f(5)\nProbe(u) = Apply1((Inc, Inc))\nProbe(0)",
             "arity",
-            "a genuine capture (several slots) exposes only a zero-parameter value thunk, never the contained callable identity — its value evaluation demands Inc with zero arguments"),
+            "a genuine capture (several slots) exposes only a zero-parameter value thunk, never the contained callable identity — its value evaluation demands Inc with zero arguments (a capture's elements are value positions an inferring body would lift, so the call sits under a closed list)"),
 
         // ── Nesting matrix (boundaries must not depend on AST depth) ─────────
         Shape("nest/producer-in-producer-spread", RootOutputRows, Many, Nested,

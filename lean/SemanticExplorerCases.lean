@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2473
+- surface corpus cases: 2486
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2431
+- Lean-representable surface cases: 2444
 - internal-node cases: 14
-- total generated guards: 2445 case guards + 2 count guards
+- total generated guards: 2458 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -11939,24 +11939,24 @@ def case_special__openLocalOnlyMemberIsASecondProvider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"]), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 202))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyMemberIsASecondProvider == "err ambiguousOpen"
 
--- special__ifSelectedParameterizedBranchIsArity: Inc(x) = x + 1 \n if(true, Inc, 0)
+-- special__ifSelectedParameterizedBranchIsArity: Inc(x) = x + 1 \n Probe(u) = if(true, Inc, 0) \n Probe(0)
 def case_special__ifSelectedParameterizedBranchIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifSelectedParameterizedBranchIsArity == "err arity"
 
--- special__ifSelectedParameterizedFalseBranchIsArity: Inc(x) = x + 1 \n if(false, 0, Inc)
+-- special__ifSelectedParameterizedFalseBranchIsArity: Inc(x) = x + 1 \n Probe(u) = if(false, 0, Inc) \n Probe(0)
 def case_special__ifSelectedParameterizedFalseBranchIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral false, .num 0, .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral false, .num 0, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifSelectedParameterizedFalseBranchIsArity == "err arity"
 
--- special__ifParameterizedConditionIsArity: Inc(x) = x + 1 \n if(Inc, 1, 0)
+-- special__ifParameterizedConditionIsArity: Inc(x) = x + 1 \n Probe(u) = if(Inc, 1, 0) \n Probe(0)
 def case_special__ifParameterizedConditionIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.resolve "Inc", .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.resolve "Inc", .num 1, .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifParameterizedConditionIsArity == "err arity"
 
--- special__ifUnselectedParameterizedBranchStaysLazy: Inc(x) = x + 1 \n if(false, Inc, 7)
+-- special__ifUnselectedParameterizedBranchStaysLazy: Inc(x) = x + 1 \n Probe(u) = if(false, Inc, 7) \n Probe(0)
 def case_special__ifUnselectedParameterizedBranchStaysLazy : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral false, .resolve "Inc", .num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral false, .resolve "Inc", .num 7])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifUnselectedParameterizedBranchStaysLazy == "ok raw=7 n=1"
 
 -- special__ifZeroParameterBranchIsValue: A = 7 \n if(true, A, 0)
@@ -11964,9 +11964,9 @@ def case_special__ifZeroParameterBranchIsValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 7])] [(.call (.resolve "if") [.boolLiteral true, .resolve "A", .num 0])])
 #guard obs case_special__ifZeroParameterBranchIsValue == "ok raw=7 n=1"
 
--- special__ifParameterIgnoringBodyStillArity: K(x) = 5 \n if(true, K, 0)
+-- special__ifParameterIgnoringBodyStillArity: K(x) = 5 \n Probe(u) = if(true, K, 0) \n Probe(0)
 def case_special__ifParameterIgnoringBodyStillArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5])] [(.call (.resolve "if") [.boolLiteral true, .resolve "K", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "K", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifParameterIgnoringBodyStillArity == "err arity"
 
 -- special__ifCollectingCallableSlotIsCollectedValue: Collect(*xs) = xs \n if(true, Collect, 0)
@@ -11989,19 +11989,19 @@ def case_special__bareCollectingCallableCountAgreesWithDottedForm : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "count") [.resolve "Only"]), (.dotCall (.resolve "Only") "count" none)])
 #guard obs case_special__bareCollectingCallableCountAgreesWithDottedForm == "ok raw=S[0, 0] n=2"
 
--- special__ifRequiredPrefixBesideCollectorIsArity: Head(x, *rest) = x \n if(true, Head, 0)
+-- special__ifRequiredPrefixBesideCollectorIsArity: Head(x, *rest) = x \n Probe(u) = if(true, Head, 0) \n Probe(0)
 def case_special__ifRequiredPrefixBesideCollectorIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "x"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Head", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "x"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Head", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifRequiredPrefixBesideCollectorIsArity == "err arity"
 
--- special__ifRequiredSuffixBesideCollectorIsArity: Tail(*rest, z) = z \n if(true, Tail, 0)
+-- special__ifRequiredSuffixBesideCollectorIsArity: Tail(*rest, z) = z \n Probe(u) = if(true, Tail, 0) \n Probe(0)
 def case_special__ifRequiredSuffixBesideCollectorIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Tail" (algWithParameters [{ name := "rest", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Tail", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Tail" (algWithParameters [{ name := "rest", kind := .collecting }, { name := "z" }] [] [] [.param "z"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Tail", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifRequiredSuffixBesideCollectorIsArity == "err arity"
 
--- special__ifNestedCollectingPatternIsArity: P((x, *rest)) = x \n if(true, P, 0)
+-- special__ifNestedCollectingPatternIsArity: P((x, *rest)) = x \n Probe(u) = if(true, P, 0) \n Probe(0)
 def case_special__ifNestedCollectingPatternIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "P", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "P", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifNestedCollectingPatternIsArity == "err arity"
 
 -- special__collectingCallableStaysACallbackAlgorithm: Only(*xs) = xs \n map((1, 2), Only)
@@ -12014,50 +12014,115 @@ def case_special__ifAlgorithmChannelParameterSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["g"] [] [] [(.call (.resolve "if") [.boolLiteral true, .param "g", .num 0])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_special__ifAlgorithmChannelParameterSlotIsArity == "err arity"
 
--- special__repeatInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n repeat(Step, 1, Inc)
+-- special__repeatInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, 1, Inc) \n Probe(0)
 def case_special__repeatInitialParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatInitialParameterizedSlotIsArity == "err arity"
 
--- special__repeatCountParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n repeat(Step, Inc, 0)
+-- special__repeatCountParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, Inc, 0) \n Probe(0)
 def case_special__repeatCountParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Step", .resolve "Inc", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatCountParameterizedSlotIsArity == "err arity"
 
--- special__whileInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Down(s) = s - 1, s \n while(Down, Inc)
+-- special__whileInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Down(s) = s - 1, s \n Probe(u) = while(Down, Inc) \n Probe(0)
 def case_special__whileInitialParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Down" (alg ["s"] [] [] [(.binary .sub (.param "s") (.num 1)), .param "s"])] [(.call (.resolve "while") [.resolve "Down", .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Down" (alg ["s"] [] [] [(.binary .sub (.param "s") (.num 1)), .param "s"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "while") [.resolve "Down", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__whileInitialParameterizedSlotIsArity == "err arity"
 
--- special__atomsParameterizedSlotIsArity: Inc(x) = x + 1 \n atoms(Inc)
+-- special__atomsParameterizedSlotIsArity: Inc(x) = x + 1 \n Probe(u) = atoms(Inc) \n Probe(0)
 def case_special__atomsParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "atoms") [.resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "atoms") [.resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__atomsParameterizedSlotIsArity == "err arity"
 
--- special__rangeParameterizedSlotIsArity: Inc(x) = x + 1 \n range(1, Inc)
+-- special__rangeParameterizedSlotIsArity: Inc(x) = x + 1 \n Probe(u) = range(1, Inc) \n Probe(0)
 def case_special__rangeParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "range") [.num 1, .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "range") [.num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__rangeParameterizedSlotIsArity == "err arity"
 
--- special__dotStringParameterizedReceiverIsArity: Inc(x) = x + 1 \n Inc.string
+-- special__dotStringParameterizedReceiverIsArity: Inc(x) = x + 1 \n Probe(u) = Inc.string \n Probe(0)
 def case_special__dotStringParameterizedReceiverIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "Inc") "string" none)])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.resolve "Inc") "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__dotStringParameterizedReceiverIsArity == "err arity"
 
--- special__dotStringNavigatedParameterizedMemberIsArity: Lib = { Sub(x) = x } \n Lib.Sub.string
+-- special__dotStringNavigatedParameterizedMemberIsArity: Lib = { Sub(x) = x } \n Probe(u) = Lib.Sub.string \n Probe(0)
 def case_special__dotStringNavigatedParameterizedMemberIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg ["x"] [] [] [.param "x"])] [])] [(.dotCall (.dotCall (.resolve "Lib") "Sub" none) "string" none)])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg ["x"] [] [] [.param "x"])] []), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.dotCall (.resolve "Lib") "Sub" none) "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__dotStringNavigatedParameterizedMemberIsArity == "err arity"
 
--- special__reduceParameterIgnoringInitialStillRejected: K(x) = 5 \n Add(e, a) = e + a \n reduce([1, 2], Add, K)
+-- special__reduceParameterIgnoringInitialStillRejected: K(x) = 5 \n Add(e, a) = e + a \n Probe(u) = reduce([1, 2], Add, K) \n Probe(0)
 def case_special__reduceParameterIgnoringInitialStillRejected : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "K"])])
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "K"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__reduceParameterIgnoringInitialStillRejected == "err arity"
 
 -- special__repeatParameterizedStepIsCallback: Inc(x) = x + 1 \n repeat(Inc, 2, 0)
 def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
+
+-- special__formulaLiftingIfBranchLiftsWhileStayingLazy: Inc(x) = x + 1 \n G = if(false, Inc, 7) \n G(4)
+def case_special__formulaLiftingIfBranchLiftsWhileStayingLazy : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral false, (.call (.resolve "Inc") [.param "x"]), .num 7])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingIfBranchLiftsWhileStayingLazy == "ok raw=7 n=1"
+
+-- special__formulaLiftingRootValuePositionNeedsTheParameter: Inc(x) = x + 1 \n if(true, Inc, 0)
+def case_special__formulaLiftingRootValuePositionNeedsTheParameter : Expr :=
+  .algorithmExpr (alg ["x"] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Inc") [.param "x"]), .num 0])])
+#guard obs case_special__formulaLiftingRootValuePositionNeedsTheParameter == "err unresolvedImplicitParams"
+
+-- special__formulaLiftingBuiltinValueSlot: Inc(x) = x + 1 \n G = count(Inc) \n G(4)
+def case_special__formulaLiftingBuiltinValueSlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.call (.resolve "count") [(.call (.resolve "Inc") [.param "x"])])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingBuiltinValueSlot == "ok raw=1 n=1"
+
+-- special__formulaLiftingBuiltinSignature: G = count + 0 \n G((1, 2, 3))
+def case_special__formulaLiftingBuiltinSignature : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["collection"] [] [] [(.binary .add (.call (.resolve "count") [.param "collection"]) (.num 0))])] [(.call (.resolve "G") [(.capture [.num 1, .num 2, .num 3])])])
+#guard obs case_special__formulaLiftingBuiltinSignature == "ok raw=3 n=1"
+
+-- special__formulaLiftingLoopSignature: Step(s) = s + 1 \n G = repeat + 0 \n G(Step, 2, 0)
+def case_special__formulaLiftingLoopSignature : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (algWithParameters [{ name := "step" }, { name := "count" }, { name := "init", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "repeat") [.param "step", .param "count", (.sequenceSpread (.param "init"))]) (.num 0))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "G") [.resolve "Step", .num 2, .num 0])])
+#guard obs case_special__formulaLiftingLoopSignature == "ok raw=2 n=1"
+
+-- special__formulaLiftingDottedMember: Lib = { \n     public Inc(x) = x + 1 \n } \n G = Lib.Inc + 0 \n G(4)
+def case_special__formulaLiftingDottedMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "G" (alg ["x"] [] [] [(.binary .add (.dotCall (.resolve "Lib") "Inc" (some [.param "x"])) (.num 0))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingDottedMember == "ok raw=5 n=1"
+
+-- special__formulaLiftingOpenedMember: Lib = { \n     public Inc(x) = x + 1 \n } \n G = { \n     open Lib \n     Inc + 0 \n } \n G(4)
+def case_special__formulaLiftingOpenedMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "G" (alg ["x"] [.resolve "Lib"] [] [(.binary .add (.call (.resolve "Inc") [.param "x"]) (.num 0))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingOpenedMember == "ok raw=5 n=1"
+
+-- special__formulaLiftingClauseFamily: E(0) = 100 \n E(n) = n \n G = E + 1 \n G(0), G(5)
+def case_special__formulaLiftingClauseFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["n"] [] [] [(.binary .add (.call (.resolve "E") [.param "n"]) (.num 1))]), privateProp "E" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "G") [.num 0]), (.call (.resolve "G") [.num 5])])
+#guard obs case_special__formulaLiftingClauseFamily == "ok raw=S[101, 6] n=2"
+
+-- special__formulaLiftingCaptureElement: Inc(x) = x + 1 \n G = (Inc, 0) \n G(4)
+def case_special__formulaLiftingCaptureElement : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.capture [(.call (.resolve "Inc") [.param "x"]), .num 0])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingCaptureElement == "ok raw=S[5, 0] n=1"
+
+-- special__formulaLiftingStringReceiver: Inc(x) = x + 1 \n G = Inc.string \n G(3000)
+def case_special__formulaLiftingStringReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.dotCall (.call (.resolve "Inc") [.param "x"]) "string" none)]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 3000])])
+#guard obs case_special__formulaLiftingStringReceiver == "ok raw='3001' n=1"
+
+-- special__formulaLiftingNestedInUserArgument: Inc(x) = x + 1 \n Id(v) = v \n G = Id(Inc + 0) \n G(4)
+def case_special__formulaLiftingNestedInUserArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.call (.resolve "Id") [(.binary .add (.call (.resolve "Inc") [.param "x"]) (.num 0))])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__formulaLiftingNestedInUserArgument == "ok raw=5 n=1"
+
+-- special__formulaLiftingKeepsCallbacks: Inc(x) = x + 1 \n G = map([1, 2], Inc) \n G
+def case_special__formulaLiftingKeepsCallbacks : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "Inc"])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [.resolve "G"])
+#guard obs case_special__formulaLiftingKeepsCallbacks == "ok raw=L[2, 3] n=1"
+
+-- special__formulaLiftingKeepsUserArguments: Inc(x) = x + 1 \n Apply(f) = f(10) \n G = Apply(Inc) \n G
+def case_special__formulaLiftingKeepsUserArguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [] [(.call (.resolve "Apply") [.resolve "Inc"])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 10])])] [.resolve "G"])
+#guard obs case_special__formulaLiftingKeepsUserArguments == "ok raw=11 n=1"
 
 -- special__repeatedNameCallableThenValue: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n P(Inc, 1)
 def case_special__repeatedNameCallableThenValue : Expr :=
@@ -12249,7 +12314,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2431 differential cases.
+-- 2444 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14650,6 +14715,19 @@ def surfaceCaseIds : List String := [
   "special__dotStringNavigatedParameterizedMemberIsArity",
   "special__reduceParameterIgnoringInitialStillRejected",
   "special__repeatParameterizedStepIsCallback",
+  "special__formulaLiftingIfBranchLiftsWhileStayingLazy",
+  "special__formulaLiftingRootValuePositionNeedsTheParameter",
+  "special__formulaLiftingBuiltinValueSlot",
+  "special__formulaLiftingBuiltinSignature",
+  "special__formulaLiftingLoopSignature",
+  "special__formulaLiftingDottedMember",
+  "special__formulaLiftingOpenedMember",
+  "special__formulaLiftingClauseFamily",
+  "special__formulaLiftingCaptureElement",
+  "special__formulaLiftingStringReceiver",
+  "special__formulaLiftingNestedInUserArgument",
+  "special__formulaLiftingKeepsCallbacks",
+  "special__formulaLiftingKeepsUserArguments",
   "special__repeatedNameCallableThenValue",
   "special__repeatedNameValueThenCallable",
   "special__repeatedNameFailedThenValue",
@@ -14689,7 +14767,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2431
+#guard surfaceCaseIds.length == 2444
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -14791,5 +14869,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2445 case guards (2431 surface + 14 internal-node).
+-- Total: 2458 case guards (2444 surface + 14 internal-node).
 end SemanticExplorerCases

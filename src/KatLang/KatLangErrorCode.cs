@@ -296,4 +296,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnforwardableParameter"/>.</summary>
     UnforwardableParameter = 71,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnliftableClauseFamily"/>.</summary>
+    UnliftableClauseFamily = 72,
 }

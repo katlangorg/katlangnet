@@ -411,6 +411,7 @@ public class KatLangErrorCodeTests
             // 47 is permanently retired (the withdrawn Q-72 repeated-name refusal), never reused.
             ["SingletonSequencePattern"] = 48,
             ["UnforwardableParameter"] = 49,
+            ["UnliftableClauseFamily"] = 50,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -494,6 +495,7 @@ public class KatLangErrorCodeTests
             // 69 is permanently retired (the withdrawn Q-72 repeated-name refusal), never reused.
             ["SingletonSequencePattern"] = 70,
             ["UnforwardableParameter"] = 71,
+            ["UnliftableClauseFamily"] = 72,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

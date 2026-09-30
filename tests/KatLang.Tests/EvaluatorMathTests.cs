@@ -272,7 +272,12 @@ public class EvaluatorMathTests
     [Fact]
     public void Eval_MathRandom_RequiresBoundsForPropertyStyleAccess()
     {
-        var error = GetEvalError("Math.Random");
+        // A bare ROOT row is never lifted into the never-called root, whatever the callable's
+        // category (the root clause): it reports the member's own zero-argument arity rejection.
+        AssertEvalFailsWithArityMismatch("Math.Random", expected: 2, actual: 0);
+
+        // Used as a value in a formula, it lifts its declared bounds into the root.
+        var error = GetEvalError("Math.Random + 0");
         Assert.NotNull(error);
         while (error is EvalError.WithContext context)
             error = context.Inner;

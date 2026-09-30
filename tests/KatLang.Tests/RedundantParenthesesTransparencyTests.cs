@@ -445,7 +445,10 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("", "P:9", KatLangErrorCode.BadIndex)]
     [InlineData("", "'s' + 1", KatLangErrorCode.TypeMismatch)]
     [InlineData("", "Two(1)", KatLangErrorCode.ArityMismatch)]
-    [InlineData("", "count(Two)", KatLangErrorCode.ArityMismatch)]
+    // `count`'s collection is a value slot: an inferring root lifts `Two` into itself, while a
+    // closed list keeps the bare reference's own zero-argument demand.
+    [InlineData("", "count(Two)", KatLangErrorCode.UnresolvedImplicitParams)]
+    [InlineData("Probe(u) = count(Two)\n", "Probe(0)", KatLangErrorCode.ArityMismatch)]
     public void GroupingPreservesStructuredErrorCode(string declarations, string expression, KatLangErrorCode code)
     {
         for (var depth = 0; depth <= 3; depth++)

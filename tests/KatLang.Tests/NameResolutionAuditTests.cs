@@ -491,15 +491,18 @@ public class NameResolutionAuditTests
     }
 
     [Fact]
-    public void BareMathFunction_Lifts_OnlyThroughOwnerWalkAndQualifiedRoutes()
+    public void BareMathFunction_Lifts_ThroughEveryRoute_LikeEveryCallable()
     {
-        // The alias (a prelude property) and the qualified spelling lift the member's own
-        // parameter; a callable reached through `open` is never implicitly forwarded — the
-        // opened Math member exactly like an opened user callable.
+        // THE UNIFIED FORMULA-LIFTING LAW: the lifting signature is keyed by the resolved
+        // callable, never by the route that reached it. The alias (a prelude property), the
+        // qualified spelling, and the opened member all lift the member's own parameter — and
+        // an opened user callable lifts its own exactly the same way.
         Assert.Equal(["radians"], SourceProvenance.ParseValid("A = sin * 2\nA(0)").Root.Properties.Single(p => p.Name == "A").Value.Params);
         Assert.Equal(["radians"], SourceProvenance.ParseValid("A = Math.Sin * 2\nA(0)").Root.Properties.Single(p => p.Name == "A").Value.Params);
-        Assert.Empty(SourceProvenance.ParseValid("A = {\n    open Math\n    Sin * 2\n}\nA").Root.Properties.Single(p => p.Name == "A").Value.Params);
-        Assert.Empty(SourceProvenance.ParseValid("Lib = {\n    public G = x + 1\n}\nA = {\n    open Lib\n    G * 2\n}\nA").Root.Properties.Single(p => p.Name == "A").Value.Params);
+        Assert.Equal(["radians"], SourceProvenance.ParseValid("A = {\n    open Math\n    Sin * 2\n}\nA(0)").Root.Properties.Single(p => p.Name == "A").Value.Params);
+        const string openedUser = "Lib = {\n    public G = x + 1\n}\nA = {\n    open Lib\n    G * 2\n}\nA(3)";
+        Assert.Equal(["x"], SourceProvenance.ParseValid(openedUser).Root.Properties.Single(p => p.Name == "A").Value.Params);
+        Assert.Equal("8", Assert.IsType<RunResult.Success>(KatLangEngine.Run(openedUser)).ToDisplayString());
     }
 
     // ── D5: host operations are prelude members in EVERY layer ───────────────

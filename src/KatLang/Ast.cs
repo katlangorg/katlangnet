@@ -256,6 +256,23 @@ public enum ParameterKind
     Collecting,
 }
 
+/// <summary>
+/// The rule a parameter-pattern list breaks as a callable signature
+/// (<see cref="ParameterPattern.FindSignatureViolation"/>), in rule order.
+/// Lean: <c>ParameterPattern.SignatureViolation</c>.
+/// </summary>
+internal enum ParameterSignatureViolation
+{
+    /// <summary>A one-item SEQUENCE pattern at some depth (the singleton rule).</summary>
+    SingletonSequencePattern,
+
+    /// <summary>More than one collecting capture at one pattern level.</summary>
+    MultipleCollectingAtOneLevel,
+
+    /// <summary>A repeated capture name one of whose occurrences is a collecting binding.</summary>
+    RepeatedNameIncludesCollecting,
+}
+
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
     private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
@@ -657,6 +674,82 @@ public closed record ParameterPattern
             .GroupBy(static capture => capture.Name, StringComparer.Ordinal)
             .Any(static captures => captures.Count() > 1
                 && captures.Any(static capture => capture.Kind == ParameterKind.Collecting));
+
+    /// <summary>
+    /// THE STRUCTURAL VALIDITY OF A SIGNATURE (X-02, September 30 2026): the first rule a
+    /// parameter-pattern list breaks as a callable signature, or <c>null</c> for a valid one. The
+    /// rules are exactly the ones a WRITTEN parameter list is held to — the parser reports each for a
+    /// written head (<see cref="DiagnosticCode.SingletonSequencePattern"/>, and
+    /// <see cref="DiagnosticCode.InvalidCollectingBinding"/> for the two collector rules) — and an
+    /// INFERRED signature satisfies them too: formula lifting reports a violation where it would
+    /// synthesize one (<see cref="ImplicitArgumentResolver"/>), never manufacturing a contract no
+    /// source may declare. Checked in the parser's order:
+    /// <list type="number">
+    ///   <item>no one-item SEQUENCE pattern at any depth (<see cref="HasSingletonSequenceGroup"/>);</item>
+    ///   <item>at most ONE collecting capture per pattern level
+    ///   (<see cref="HasMultipleCollectingCapturesAtAnyLevel"/>): the binder allocates a level's
+    ///   supply around one movable collector, so a second one leaves the allocation undefined;</item>
+    ///   <item>no repeated name that includes a collecting binding
+    ///   (<see cref="HasRepeatedCaptureNameIncludingCollecting"/>).</item>
+    /// </list>
+    /// A shared implicit-signature template answers from its facts, computed once (FE-3).
+    /// Lean: <c>ParameterPattern.signatureViolation?</c>.
+    /// </summary>
+    internal static ParameterSignatureViolation? FindSignatureViolation(IReadOnlyList<ParameterPattern> patterns)
+        => patterns is ImplicitSignatureTemplate template
+            ? template.Facts.SignatureViolation
+            : SignatureViolationOf(
+                HasSingletonSequenceGroup(patterns),
+                HasMultipleCollectingCapturesAtAnyLevel(patterns),
+                HasRepeatedCaptureNameIncludingCollecting(patterns));
+
+    /// <summary>The first violated rule of <see cref="FindSignatureViolation"/>, from its three facts in rule order.</summary>
+    internal static ParameterSignatureViolation? SignatureViolationOf(
+        bool singletonSequenceGroup,
+        bool multipleCollectingAtOneLevel,
+        bool repeatedNameIncludesCollecting)
+        => singletonSequenceGroup ? ParameterSignatureViolation.SingletonSequencePattern
+            : multipleCollectingAtOneLevel ? ParameterSignatureViolation.MultipleCollectingAtOneLevel
+            : repeatedNameIncludesCollecting ? ParameterSignatureViolation.RepeatedNameIncludesCollecting
+            : null;
+
+    /// <summary>
+    /// The recovery shape of a signature with several collecting captures at one level — the
+    /// parameter-pattern twin of the parser's recovery for a written head: the first collecting
+    /// capture of every level is kept and every later one becomes an ordinary fixed capture (its
+    /// collect marker dropped), so no recovered tree carries a signature the binding plans behind
+    /// evaluation and editor signatures refuse. Applied only AFTER the violation was reported: it is
+    /// error recovery, never a meaning of the program. The same list instance when nothing changes.
+    /// </summary>
+    internal static IReadOnlyList<ParameterPattern> KeepFirstCollectingCapturePerLevel(IReadOnlyList<ParameterPattern> patterns)
+    {
+        List<ParameterPattern>? kept = null;
+        var levelHasCollecting = false;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            var pattern = patterns[index];
+            var recovered = pattern switch
+            {
+                CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting when levelHasCollecting
+                    => new CaptureParameterPattern(collecting.Parameter with { Kind = ParameterKind.Normal, CollectMarkerSpan = null }),
+                CaptureParameterPattern => pattern,
+                _ => KeepFirstCollectingCapturePerGroupLevel(pattern),
+            };
+            levelHasCollecting |= pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting };
+            if (kept is null && !ReferenceEquals(recovered, pattern))
+                kept = [.. patterns.Take(index)];
+            kept?.Add(recovered);
+        }
+
+        return kept ?? patterns;
+
+        static ParameterPattern KeepFirstCollectingCapturePerGroupLevel(ParameterPattern group)
+        {
+            var items = StructuralItems(group)!;
+            var recoveredItems = KeepFirstCollectingCapturePerLevel(items);
+            return ReferenceEquals(recoveredItems, items) ? group : WithStructuralItems(group, recoveredItems);
+        }
+    }
 }
 
 /// <summary>
@@ -2503,7 +2596,7 @@ internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 /// preconstructed AST. Lean: the error cases of
 /// <c>validateExplicitParamOutputInvariant</c> / <c>validateConditionalBranchArities</c>
 /// in <c>lean/KatLang.lean</c>, which <c>runResultM</c> raises before any evaluation.
-/// A C# <c>closed</c> record: its three sealed nested records are its only kinds, so the
+/// A C# <c>closed</c> record: its sealed nested records are its only kinds, so the
 /// evaluator's translation to <see cref="EvalError"/> names each one with no catch-all arm.
 /// </summary>
 internal closed record PreEvaluationAstViolation
@@ -2536,6 +2629,15 @@ internal closed record PreEvaluationAstViolation
     /// <c>Error.illegalInEval singletonSequencePatternMessage</c>.
     /// </summary>
     internal sealed record SingletonSequencePattern() : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A parameter-pattern level holding more than one collecting capture (X-02: the binders
+    /// allocate a level around ONE movable collector). The parser reports
+    /// <see cref="DiagnosticCode.InvalidCollectingBinding"/> for a written head and formula lifting
+    /// for an inferred signature, so only a host-built tree reaches this. Lean:
+    /// <c>Error.illegalInEval multipleCollectingBindingsPerLevelMessage</c>.
+    /// </summary>
+    internal sealed record MultipleCollectingCaptures() : PreEvaluationAstViolation;
 }
 
 internal static class AlgorithmValidation
@@ -2709,13 +2811,22 @@ internal static class AlgorithmValidation
             // shared by several algorithms (an assignment deconstruction's N target helpers share
             // one N-capture list; FE-3 templates) is validated once, like a shared node, so a
             // wide deconstruction stays linear.
-            if (checkConditionalBranchArities
-                && _visited.Add(algorithm.ParameterPatterns)
-                && ParameterPattern.HasSingletonSequenceGroup(algorithm.ParameterPatterns))
+            // Lean then checks `a.hasMultipleCollectingCaptures` (X-02) on the same once-per-list
+            // visit: the binders allocate a level around ONE collector.
+            if (checkConditionalBranchArities && _visited.Add(algorithm.ParameterPatterns))
             {
-                Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern());
-                if (stopAfterFirst)
-                    return;
+                PreEvaluationAstViolation? patternViolation =
+                    ParameterPattern.HasSingletonSequenceGroup(algorithm.ParameterPatterns)
+                        ? new PreEvaluationAstViolation.SingletonSequencePattern()
+                        : ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(algorithm.ParameterPatterns)
+                            ? new PreEvaluationAstViolation.MultipleCollectingCaptures()
+                            : null;
+                if (patternViolation is not null)
+                {
+                    Violations.Add(patternViolation);
+                    if (stopAfterFirst)
+                        return;
+                }
             }
 
             // Test the STORED parameter-pattern list, Lean's actual Algorithm.mk field

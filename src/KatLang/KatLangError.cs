@@ -168,6 +168,7 @@ public sealed class KatLangError
             DiagnosticCode.DiagnosticCountExceeded => KatLangErrorCode.DiagnosticCountExceeded,
             DiagnosticCode.SingletonSequencePattern => KatLangErrorCode.SingletonSequencePattern,
             DiagnosticCode.UnforwardableParameter => KatLangErrorCode.UnforwardableParameter,
+            DiagnosticCode.UnliftableClauseFamily => KatLangErrorCode.UnliftableClauseFamily,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

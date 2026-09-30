@@ -1471,19 +1471,20 @@ def repeatedCountedBindingChecksTheCompletePair : Bool :=
 
 #guard repeatedCountedBindingChecksTheCompletePair
 
--- A host-built group with TWO collecting captures (the parser rejects the shape): the
--- FIRST is the collector, so the arity check runs first (`()` supplies 0 of at least 1),
--- and the second collector is an ordinary suffix pattern that fails to bind.
-def secondCollectingCaptureIsASuffixPattern : Bool :=
+-- A host-built group with TWO collecting captures (the parser rejects the written shape and
+-- the C# front end an inferred one): a rejected signature (X-02,
+-- `ParameterPattern.signatureViolation?`), refused by the pre-evaluation validation before
+-- any argument is bound — never a binder allocation around two collectors.
+def secondCollectingCaptureIsIllegalBeforeEvaluation : Bool :=
   let twoCollectors := [KatLang.ParameterPattern.sequenceValue [precedenceColl "a", precedenceColl "b"]]
   let viaMap (item : KatLang.Expr) :=
     precedenceRun twoCollectors (.listLiteral [.param "a"]) (.call (resolve "map") [.listLiteral [item], .resolve "P"])
-  (match viaMap (.emptySequence 0) with
-   | .error err => innermostIsArityMismatch 1 0 err | _ => false) &&
-  (match viaMap (.capture [.num 7, .num 8]) with
-   | .error err => innermostIsBadArity err | _ => false)
+  let illegal : Except Error Result -> Bool
+    | .error (.illegalInEval message) => message == KatLang.multipleCollectingBindingsPerLevelMessage
+    | _ => false
+  illegal (viaMap (.emptySequence 0)) && illegal (viaMap (.capture [.num 7, .num 8])) && illegal (viaMap (.num 7))
 
-#guard secondCollectingCaptureIsASuffixPattern
+#guard secondCollectingCaptureIsIllegalBeforeEvaluation
 
 def repeatedFlatClauseUsesStructuralSequenceValueEquality : Bool :=
   let sequenceValueAlg := Algorithm.elaborateClauseGroup [{

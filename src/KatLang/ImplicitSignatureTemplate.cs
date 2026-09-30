@@ -188,6 +188,43 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         }
 
         /// <summary>
+        /// X-02: the structural validity of the signature (<see cref="ParameterPattern.FindSignatureViolation"/>),
+        /// computed on first read and composed like every other fact — a composed signature's head facts
+        /// plus its shared tail's, the top-level collector count spanning both. A repeated name never
+        /// spans them: the head's capture names are disjoint from the tail's (<see cref="ImplicitSignatureTemplate.Compose"/>).
+        /// </summary>
+        public ParameterSignatureViolation? SignatureViolation => Validity.Violation;
+
+        private SignatureValidity Validity
+        {
+            get
+            {
+                var validity = Volatile.Read(ref _validity);
+                if (validity is not null)
+                    return validity;
+                validity = new SignatureValidity(
+                    ParameterPattern.HasSingletonSequenceGroup(_headPatterns) || (_tail?.Validity.SingletonSequenceGroup ?? false),
+                    TopLevelCollectingCount > 1
+                        || ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(_headPatterns)
+                        || (_tail?.Validity.MultipleCollectingAtOneLevel ?? false),
+                    ParameterPattern.HasRepeatedCaptureNameIncludingCollecting(_headPatterns)
+                        || (_tail?.Validity.RepeatedNameIncludesCollecting ?? false));
+                return Interlocked.CompareExchange(ref _validity, validity, null) ?? validity;
+            }
+        }
+
+        private SignatureValidity? _validity;
+
+        private sealed record SignatureValidity(
+            bool SingletonSequenceGroup,
+            bool MultipleCollectingAtOneLevel,
+            bool RepeatedNameIncludesCollecting)
+        {
+            public ParameterSignatureViolation? Violation { get; } = ParameterPattern.SignatureViolationOf(
+                SingletonSequenceGroup, MultipleCollectingAtOneLevel, RepeatedNameIncludesCollecting);
+        }
+
+        /// <summary>
         /// The first-occurrence binding kind of each name — the forwarding SOURCE kinds of an owner
         /// whose signature this is (the resolver's <c>BuildSourceBindingKinds</c>), as a read-only view.
         /// </summary>

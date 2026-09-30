@@ -39,16 +39,20 @@ public class CollectionBuiltinBindingTests
     [InlineData("take([1, 2, 3])", "take(collection, count)", 2, 1, 1)]
     [InlineData("take((1, 2, 3))", "take(collection, count)", 2, 1, 1)]
     [InlineData("take([1, 2, 3]*, 2)", "take(collection, count)", 2, 4, 1)]
-    [InlineData("F(x) = x\nmap(1, 2, 3, F)", "map(collection, mapper)", 2, 4, 2)]
-    [InlineData("P(x) = x\nfilter(1, 2, 3, P)", "filter(collection, predicate)", 2, 4, 2)]
+    // A callable written in a surplus slot stands in a value position (a surplus slot is
+    // value-evaluated before the arity verdict), which an inferring root would lift into itself;
+    // the arity error is pinned under a closed list.
+    [InlineData("F(x) = x\nProbe(u) = map(1, 2, 3, F)\nProbe(0)", "map(collection, mapper)", 2, 4, 2, 12)]
+    [InlineData("P(x) = x\nProbe(u) = filter(1, 2, 3, P)\nProbe(0)", "filter(collection, predicate)", 2, 4, 2, 12)]
     [InlineData("contains(1, 2, 3, 2)", "contains(collection, item)", 2, 4, 1)]
-    [InlineData("F(x, acc) = x + acc\nreduce(2, 3, 4, F, 1)", "reduce(collection, reducer, initial)", 3, 5, 2)]
+    [InlineData("F(x, acc) = x + acc\nProbe(u) = reduce(2, 3, 4, F, 1)\nProbe(0)", "reduce(collection, reducer, initial)", 3, 5, 2, 12)]
     public void InvalidDirectAndSpreadForms_ReportExactFixedArityAtCallSite(
         string source,
         string signatureDisplay,
         int expected,
         int actual,
-        int expectedLine)
+        int expectedLine,
+        int expectedColumn = 1)
     {
         var eval = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.True(eval.IsError, "Expected an arity failure.");
@@ -64,7 +68,7 @@ public class CollectionBuiltinBindingTests
         var run = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         var diagnostic = Assert.Single(run.Errors);
         Assert.Equal(expectedLine, Assert.NotNull(diagnostic.Span).Start.Line);
-        Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Column);
+        Assert.Equal(expectedColumn, Assert.NotNull(diagnostic.Span).Start.Column);
     }
 
     // ───────────────────────── Single-collection builtins ───────────────────────
@@ -164,7 +168,8 @@ public class CollectionBuiltinBindingTests
     [Fact]
     public void Map_TakesCollectionAndMapper()
     {
-        AssertArityError("Double = n * 2\nmap(1, 2, 3, Double)", "map(collection, mapper)");
+        // A surplus slot is a value position an inferring root would lift `Double` into.
+        AssertArityError("Double = n * 2\nProbe(u) = map(1, 2, 3, Double)\nProbe(0)", "map(collection, mapper)");
         AssertAtoms("Double = n * 2\nmap((1, 2, 3), Double)", 2, 4, 6);
     }
 
@@ -172,14 +177,15 @@ public class CollectionBuiltinBindingTests
     public void ControlAndCallbackBuiltins_RequireOneGroupedCollection()
     {
         // Callback execution stays a separate phase after the fixed top-level
-        // arguments are bound.
+        // arguments are bound. (A callable written in a surplus slot is a value position an
+        // inferring root would lift, so those arity errors are pinned under a closed list.)
         AssertArityError("skip(1, 2, 3, 1)", "skip(collection, count)");
         AssertAtoms("skip((1, 2, 3), 1)", 2, 3);
 
-        AssertArityError("IsEven = x mod 2 == 0\nfilter(1, 2, 3, 4, IsEven)", "filter(collection, predicate)");
+        AssertArityError("IsEven = x mod 2 == 0\nProbe(u) = filter(1, 2, 3, 4, IsEven)\nProbe(0)", "filter(collection, predicate)");
         AssertAtoms("IsEven = x mod 2 == 0\nfilter((1, 2, 3, 4), IsEven)", 2, 4);
 
-        AssertArityError("Add = x + total\nreduce(1, 2, 3, Add, 0)", "reduce(collection, reducer, initial)");
+        AssertArityError("Add = x + total\nProbe(u) = reduce(1, 2, 3, Add, 0)\nProbe(0)", "reduce(collection, reducer, initial)");
         AssertAtoms("Add = x + total\nreduce((1, 2, 3), Add, 0)", 6);
     }
 
@@ -203,9 +209,12 @@ public class CollectionBuiltinBindingTests
         // The dot receiver binds the `collection` parameter, so the dot form
         // passes exactly the remaining control arguments.
         AssertAtoms("Add = x + total\nValues = (1, 2, 3)\nValues.reduce(Add, 0)", 6);
-        // Sibling or spread collection arguments overflow the fixed arity.
+        // Sibling or spread collection arguments overflow the fixed arity. (Written third,
+        // `Add` stands in the initial accumulator's VALUE slot, which an inferring root would
+        // lift it into, so the direct form is pinned under a closed list; after a spread every
+        // position is unknown and reduce's callback keeps `Add` bare.)
         AssertArityError(
-            "Add = x + total\nA = 1, 2\nB = 3, 4\nreduce(A, B, Add, 0)",
+            "Add = x + total\nA = 1, 2\nB = 3, 4\nProbe(u) = reduce(A, B, Add, 0)\nProbe(0)",
             "reduce(collection, reducer, initial)");
         AssertArityError(
             "Add = x + total\nA = 1, 2\nB = 3, 4\nreduce(A*, B*, Add, 0)",

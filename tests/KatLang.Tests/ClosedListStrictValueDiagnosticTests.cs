@@ -304,30 +304,49 @@ public class ClosedListStrictValueDiagnosticTests
     }
 
     /// <summary>
-    /// Positions the resolver never lifts in ANY caller are OUT of scope: they are not
-    /// blocked by the closed list, so the closed list is not what to blame. Both spellings
-    /// fail identically with an open list and with the required name declared, which is the
-    /// evidence that they are a different (caller-independent) matter and belong to the
+    /// A genuine capture as the strict argument is OUT of scope. Its elements are value
+    /// positions — an inferring body lifts them (<c>F = Math.Abs((A, A))</c> is <c>F(q)</c>)
+    /// and a closed list that cannot supply <c>q</c> keeps them bare — but the strict demand
+    /// is the CAPTURE's: the Math member receives one sequence and rejects it whatever the
+    /// caller supplies, so the closed list is not what to blame and the failure belongs to the
     /// runtime.
     /// </summary>
-    [Theory]
-    [InlineData("A = q + 1\nF(CALLER) = Math.Abs((A, A))\nF(7)")]
-    [InlineData("A = q + 1\nF(CALLER) = Id(Math.Abs(A))\nId(v) = v\nF(7)")]
-    public void PositionsThatNeverLift_AreNotAttributedToTheClosedList(string template)
+    [Fact]
+    public void CaptureArgument_IsNotAttributedToTheClosedList()
     {
+        const string Template = "A = q + 1\nF(CALLER) = Math.Abs((A, A))\nF(7)";
         foreach (var caller in new[] { "x", "q" })
-            AssertNotDiagnosed(template.Replace("CALLER", caller, StringComparison.Ordinal));
+            AssertNotDiagnosed(Template.Replace("CALLER", caller, StringComparison.Ordinal));
 
-        // ... and with no explicit list at all the reference is not lifted either, so the
-        // caller's interface was never the reason.
-        AssertNotDiagnosed(template.Replace("F(CALLER)", "F", StringComparison.Ordinal));
+        AssertNotDiagnosed(Template.Replace("F(CALLER)", "F", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A Math call NESTED in a neutral argument slot keeps its strict position: under the
+    /// unified formula-lifting law a nested expression takes its own consumer's role, whatever
+    /// slot encloses it (<c>Id(A)</c> keeps <c>A</c>, <c>Id(Math.Abs(A))</c> lifts it). So the
+    /// closed list is blamed exactly as for the unnested call, the declared name forwards, and
+    /// an inferring body lifts it.
+    /// </summary>
+    [Fact]
+    public void NestedMathCallInANeutralArgument_IsDiagnosedLikeTheUnnestedCall()
+    {
+        var diagnostic = SingleBlocked("A = q + 1\nF(x) = Id(Math.Abs(A))\nId(v) = v\nF(7)");
+        Assert.Contains("'A'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("'q'", diagnostic.Message, StringComparison.Ordinal);
+
+        AssertNotDiagnosed("A = q + 1\nF(q) = Id(Math.Abs(A))\nId(v) = v\nF(7)");
+        Assert.Equal("8", Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("A = q + 1\nF(q) = Id(Math.Abs(A))\nId(v) = v\nF(7)")).ToDisplayString());
+        Assert.Equal("8", Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("A = q + 1\nF = Id(Math.Abs(A))\nId(v) = v\nF(7)")).ToDisplayString());
     }
 
     /// <summary>
     /// PARENTHESES GROUP SYNTAX: redundant parentheses around the strict-value argument
     /// leave it the very same registry-strict position, so `Math.Abs((A))` is diagnosed
-    /// exactly like `Math.Abs(A)` (a genuine capture `(A, A)` is a different, non-lifting
-    /// position — see <see cref="PositionsThatNeverLift_AreNotAttributedToTheClosedList"/>).
+    /// exactly like `Math.Abs(A)` (a genuine capture `(A, A)` is a different position whose
+    /// strict demand is the capture's — see <see cref="CaptureArgument_IsNotAttributedToTheClosedList"/>).
     /// </summary>
     [Theory]
     [InlineData("Math.Abs((A))")]
@@ -639,6 +658,80 @@ public class ClosedListStrictValueDiagnosticTests
         Assert.Same(
             Assert.IsType<Expr.Unary>(rewrittenRows[0]).Operand,
             Assert.IsType<Expr.Unary>(rewrittenStrictArgument).Operand);
+    }
+
+    // ── Lazy slots ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A demand a run may never make is no statically impossible demand: beneath a LAZY slot —
+    /// a branch of <c>if</c>, in the direct and the dotted spelling — the closed list's refused
+    /// lift is left to the runtime, where an unselected branch is simply never evaluated. The
+    /// unified formula-lifting law is blind to laziness (the same branch lifts in an inferring
+    /// formula), so only this diagnostic reads the slot's laziness; the eager condition stays
+    /// diagnosed.
+    /// </summary>
+    [Fact]
+    public void LazyBranch_IsNotDiagnosed_WhileTheEagerConditionIs()
+    {
+        const string Unselected = "A = x + 1\nK(y) = if(false, abs(A), 0)\nK(1)";
+        AssertNotDiagnosed(Unselected);
+        Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(Unselected)).ToDisplayString());
+        AssertNotDiagnosed("A = x + 1\nId(v) = v\nK(y) = if(true, 0, Id(abs(A)))\nK(1)");
+        AssertNotDiagnosed("A = x + 1\nK(y) = false.if(abs(A), 0)\nK(1)");
+
+        // Selected at run time, the reference is its ordinary zero-argument demand.
+        const string Selected = "A = x + 1\nK(y) = if(true, abs(A), 0)\nK(1)";
+        AssertNotDiagnosed(Selected);
+        Assert.Equal(
+            KatLangErrorCode.ArityMismatch,
+            Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(Selected)).Errors).Code);
+
+        var diagnostic = SingleBlocked("A = x + 1\nK(y) = if(abs(A) > 0, 1, 2)\nK(1)");
+        Assert.Contains("'A'", diagnostic.Message, StringComparison.Ordinal);
+
+        // The inferring formula lifts the same branch.
+        Assert.Equal("0", Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("A = x + 1\nK = if(false, abs(A), 0)\nK(1)")).ToDisplayString());
+    }
+
+    /// <summary>
+    /// A shared host node reached beneath a lazy slot AND outside every lazy slot reports exactly
+    /// once whichever reach comes first: the eager reach replays diagnostic observation through a
+    /// subtree first rewritten lazily, and a lazy reach never reports.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void HostSharedStrictCall_ReachedLazilyAndEagerly_ReportsIndependentlyOfOrder(bool eagerRowFirst)
+    {
+        var shared = new Expr.DotCall(new Expr.Resolve("Math"), "Abs", new OutputBundle([new Expr.Resolve("A")]));
+        Expr lazyRow = new Expr.Call(
+            new Expr.Resolve("if"),
+            new OutputBundle([new Expr.BoolLiteral(false), shared, new Expr.Num(0)]));
+        Expr eagerRow = new Expr.Binary(BinaryOp.Add, shared, new Expr.Num(0));
+
+        Assert.Single(ResolveClosedCaller(eagerRowFirst ? [eagerRow, lazyRow] : [lazyRow, eagerRow]));
+        Assert.Empty(ResolveClosedCaller([lazyRow, lazyRow]));
+    }
+
+    private static DiagnosticBag ResolveClosedCaller(IReadOnlyList<Expr> rows)
+    {
+        var parameterized = new Algorithm.User(
+            null, Algorithm.NormalParameters(["q"]), [], [], [new Expr.Param("q")]);
+        var closedCaller = new Algorithm.User(null, Algorithm.NormalParameters(["x"]), [], [], [.. rows])
+        {
+            HasExplicitParameterList = true,
+        };
+        var root = new Algorithm.User(
+            null,
+            [],
+            [],
+            [new Property("A", parameterized), new Property("F", closedCaller)],
+            []);
+
+        var diagnostics = new DiagnosticBag();
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(root, observations: null, diagnostics);
+        return diagnostics;
     }
 
     // ── Front-end surface integration ────────────────────────────────────────

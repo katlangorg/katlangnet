@@ -294,8 +294,12 @@ public class OutputBundleSplitTests
         // A group whose parentheses DO something is a capture: evaluating
         // `(Increment, Increment)` as the argument VALUE calls the one-parameter
         // property with zero arguments, and no callable identity crosses the
-        // capture boundary.
-        var error = Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nApply((Increment, Increment))"));
+        // capture boundary. A capture's elements are VALUE positions, so an inferring
+        // body lifts them (the root then needs `x`); a closed list keeps the bare
+        // references and pins the runtime demand.
+        Assert.IsType<EvalError.UnresolvedImplicitParams>(
+            Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nApply((Increment, Increment))")));
+        var error = Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nProbe(u) = Apply((Increment, Increment))\nProbe(0)"));
         var arity = Assert.IsType<EvalError.ArityMismatch>(error);
         Assert.Equal(1, arity.Expected);
         Assert.Equal(0, arity.Actual);

@@ -556,14 +556,15 @@ public class EvaluatorSequenceCallbackTests
         // A fully supplied reduce(collection, reducer, initial) whose `initial`
         // argument is a parameterized algorithm cannot evaluate the starting
         // accumulator, so the call-site hint fires (rather than a generic
-        // unknown-name error).
-        var result = EvalFull("Add = x + total\nreduce((1, 2, 3), {a + b}, Add)");
+        // unknown-name error). The initial accumulator is a VALUE slot an inferring
+        // root would lift `Add` into, so the call sits under a closed list.
+        var result = EvalFull("Add = x + total\nProbe(u) = reduce((1, 2, 3), {a + b}, Add)\nProbe(0)");
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error);
         Assert.Equal(2, Assert.NotNull(formatted.Span).Start.Line);
-        Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
+        Assert.Equal(12, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Contains("the last argument must be an initial accumulator value", formatted.Message);
         Assert.Contains("still needs 'x' and 'total'", formatted.Message);
         Assert.DoesNotContain("Unknown name: x", formatted.Message);
@@ -579,18 +580,21 @@ public class EvaluatorSequenceCallbackTests
         // as the written one — positioned at the dotted call site.
         AssertEvalFailsWithArityMismatch("Add = x + total\nValues = 1, 2, 3\nValues.reduce(Add)", expected: 3, actual: 2);
 
+        // (The initial accumulator is a VALUE slot an inferring root would lift `Add` into,
+        // so both spellings sit under a closed list.)
         var result = EvalFull(
             """
             Add = x + total
             Values = 1, 2, 3
-            Values.reduce({a + b}, Add)
+            Probe(u) = Values.reduce({a + b}, Add)
+            Probe(0)
             """);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error);
         Assert.Equal(3, Assert.NotNull(formatted.Span).Start.Line);
-        Assert.Equal(1, Assert.NotNull(formatted.Span).Start.Column);
+        Assert.Equal(12, Assert.NotNull(formatted.Span).Start.Column);
         Assert.Contains("`reduce` is `reduce(collection, reducer, initial)`", formatted.Message);
         Assert.Contains("still needs 'x' and 'total'", formatted.Message);
         Assert.Contains("add an initial accumulator", formatted.Message);
@@ -598,7 +602,7 @@ public class EvaluatorSequenceCallbackTests
         Assert.DoesNotContain("Bad arity", formatted.Message);
 
         var written = KatLangError.FromEvalError(
-            EvalFull("Add = x + total\nValues = 1, 2, 3\nreduce(Values, {a + b}, Add)").Error);
+            EvalFull("Add = x + total\nValues = 1, 2, 3\nProbe(u) = reduce(Values, {a + b}, Add)\nProbe(0)").Error);
         Assert.Equal(written.Message, formatted.Message);
     }
 

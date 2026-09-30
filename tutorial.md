@@ -465,6 +465,58 @@ Twice(7)
 
 `H = F + G` means `H(x) = F(x) + G(x)`, and in the same way `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2`: `Twice` takes one input and hands it to both places where `Common` names `x`, so `Twice` is called with one argument. Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error.
 
+Every kind of callable a formula uses as a value hands its inputs on the same way — your own formulas, builtins, members reached with a dot or through `open`, Math functions, and conditional algorithms alike. A builtin hands on its own parameter names, and a conditional algorithm's inputs are named by the parameters its clauses use:
+
+<!-- spec:formula-lifting-is-one-law-for-every-callable -->
+```
+Lib = {
+    public Inc(x) = x + 1
+}
+E(0) = 100
+E(n) = n
+Total = count + 0
+Next = Lib.Inc + 0
+Fam = E + 1
+
+Total((1, 2, 3))
+Next(4)
+Fam(0)
+```
+
+**Results:**
+```
+3
+5
+101
+```
+
+`Total = count + 0` means `Total(collection) = count(collection) + 0`, and `Fam = E + 1` means `Fam(n) = E(n) + 1`, because the general clause of `E` names its input `n`. A conditional algorithm whose clauses do not name an input — only literals, as in `S(1) = 1` and `S(-1) = -1` — cannot be used this way: `G = S + 0` is an error at `S`, so call it with an explicit argument instead (`G(v) = S(v) + 0`).
+
+Whether a name is handed the formula's inputs depends on what the expression around it does with it. Where its VALUE is needed — in arithmetic, a comparison, a list, an `if`, a builtin's collection or value argument, a Math function's argument, `.string` — it is called with them. Where it is passed on as a function — to your own algorithm (`Apply(Inc)`), as the function of `map`, `filter` or `reduce`, or as a loop step — it is passed as it is:
+
+<!-- spec:formula-lifting-follows-the-consumers-role -->
+```
+Inc(x) = x + 1
+Apply(f) = f(10)
+
+Values = [Inc, Inc * 2]
+Kept = Apply(Inc)
+Branch = if(true, Inc, 0)
+
+Values(4)
+Kept
+Branch(4)
+```
+
+**Results:**
+```
+[5, 10]
+11
+5
+```
+
+`Values` and `Branch` take the input `x` of `Inc`, while `Kept` passes `Inc` itself to `Apply` and takes no input. A name inside a larger argument is judged by that expression: in `Apply(Inc + 0)` the `+` needs the value of `Inc`, so `Inc` is handed `x`. An `if` branch hands its inputs on even when it is not the branch chosen, but it is still evaluated only when chosen. A name written alone on a top-level line is not a formula: `count` or `abs` on its own reports that it needs an argument.
+
 All of this is about formulas that *use* another formula inside an expression. A definition whose whole body is just the name of a formula is different, as the next section shows.
 
 ### Aliases, Forwarding, and Explicit Calls
@@ -1982,12 +2034,13 @@ Inc(y) = y + 1
 Same(x, x) = true
 Same(x, y) = false
 
-Same(Inc, 1)
+Check(n) = Same(Inc, n)
+Check(1)
 ```
 
 **Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.
 
-A callable that accepts zero arguments can supply its value through the ordinary cached read.
+A callable that accepts zero arguments can supply its value through the ordinary cached read. `Check` declares its parameter list, so nothing is handed on to `Inc`; a formula without one would pass its own input on instead — `Check = Same(Inc, 1)` means `Check(y) = Same(Inc(y), 1)` (see [Formulas That Use Formulas](#formulas-that-use-formulas)).
 
 The check is about arguments that are supplied separately. When one input is handed on to both places, as `Twice = Common * 2` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own. An alias is different: `Same = Common` takes two separate arguments, exactly like `Common`.
 

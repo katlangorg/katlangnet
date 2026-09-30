@@ -13,9 +13,19 @@ internal readonly record struct OwnerQualifiedParameter(string Name, Algorithm? 
     public override int GetHashCode() => HashCode.Combine(Name, Owner is null ? 0 : RuntimeHelpers.GetHashCode(Owner));
 }
 
+/// <summary>
+/// One property of the sibling-order channel: the siblings whose processed signature it READS
+/// (hard edges: the topological order processes them first), and the siblings it MAY read
+/// through a callee or an <c>open</c> this channel cannot classify (soft preferences: honored
+/// among the properties the hard edges leave ready, so they never block the order; a cycle they
+/// close is still a sibling cycle, see <see cref="PropertyDependencyGraph.CyclicIndices"/>).
+/// </summary>
 internal sealed record PropertyDependencyNode(
     int PropertyIndex,
-    IReadOnlyList<int> SiblingDependencyIndices);
+    IReadOnlyList<int> SiblingDependencyIndices)
+{
+    public IReadOnlyList<int> SoftSiblingDependencyIndices { get; init; } = [];
+}
 
 internal sealed record PropertyDependencySummaryNode(
     int PropertyIndex,
@@ -204,6 +214,104 @@ internal sealed class PropertyDependencyGraph
     public IReadOnlyList<int> TopologicalOrder
         => topologicalOrder ??= BuildTopologicalOrder();
 
+    /// <summary>
+    /// The properties the resolver never processes ahead of their turn on demand: every member of a
+    /// sibling CYCLE — closed by the reads this channel classifies (hard edges) or by the ones it
+    /// only anticipates (soft preferences) alike — and everything that hard-depends on one. A cycle
+    /// keeps its processing-order fallback (a member processed first reads the others unprocessed),
+    /// whichever reads close it: processing a member early would only move which member reads
+    /// another one unprocessed, and around a long ring it would stack one processing inside the
+    /// next. Computed on first use, so a level without demands never pays for it.
+    /// </summary>
+    public IReadOnlySet<int> CyclicIndices => cyclicIndices ??= BuildCyclicIndices();
+
+    private HashSet<int>? cyclicIndices;
+
+    private HashSet<int> BuildCyclicIndices()
+    {
+        // Tarjan's strongly connected components over hard and soft edges, iteratively (a long
+        // chain of siblings never grows the host stack).
+        var count = nodes.Length;
+        var order = new int[count];
+        var low = new int[count];
+        var onStack = new bool[count];
+        Array.Fill(order, -1);
+        var components = new Stack<int>();
+        var work = new Stack<(int Property, int Edge)>();
+        var cyclic = new HashSet<int>();
+        var nextOrder = 0;
+
+        void Enter(int property)
+        {
+            order[property] = low[property] = nextOrder++;
+            components.Push(property);
+            onStack[property] = true;
+            work.Push((property, 0));
+        }
+
+        for (var start = 0; start < count; start++)
+        {
+            if (order[start] >= 0)
+                continue;
+
+            Enter(start);
+            while (work.TryPop(out var frame))
+            {
+                var hard = nodes[frame.Property].SiblingDependencyIndices;
+                var soft = nodes[frame.Property].SoftSiblingDependencyIndices;
+                if (frame.Edge < hard.Count + soft.Count)
+                {
+                    work.Push((frame.Property, frame.Edge + 1));
+                    var dependency = frame.Edge < hard.Count ? hard[frame.Edge] : soft[frame.Edge - hard.Count];
+                    if (order[dependency] < 0)
+                        Enter(dependency);
+                    else if (onStack[dependency])
+                        low[frame.Property] = Math.Min(low[frame.Property], order[dependency]);
+                    continue;
+                }
+
+                if (work.TryPeek(out var parent))
+                    low[parent.Property] = Math.Min(low[parent.Property], low[frame.Property]);
+                if (low[frame.Property] != order[frame.Property])
+                    continue;
+
+                var members = 0;
+                int member;
+                do
+                {
+                    member = components.Pop();
+                    onStack[member] = false;
+                    members++;
+                    if (member != frame.Property || members > 1)
+                        cyclic.Add(member);
+                }
+                while (member != frame.Property);
+            }
+        }
+
+        // Everything that hard-depends on a cycle member.
+        var dependents = new List<int>?[count];
+        foreach (var node in nodes)
+        {
+            foreach (var dependency in node.SiblingDependencyIndices)
+                (dependents[dependency] ??= []).Add(node.PropertyIndex);
+        }
+
+        var pending = new Queue<int>(cyclic);
+        while (pending.TryDequeue(out var property))
+        {
+            if (dependents[property] is not { } waiting)
+                continue;
+            foreach (var dependent in waiting)
+            {
+                if (cyclic.Add(dependent))
+                    pending.Enqueue(dependent);
+            }
+        }
+
+        return cyclic;
+    }
+
     private IReadOnlyList<int> BuildTopologicalOrder()
     {
         var inDegree = new int[nodes.Length];
@@ -220,23 +328,72 @@ internal sealed class PropertyDependencyGraph
             }
         }
 
+        // SOFT preferences (reads this channel cannot classify): among the properties the hard edges
+        // leave ready, one whose soft dependencies are all processed goes first, in readiness order;
+        // only when none is, the earliest ready one does (a soft edge never blocks the order, so it
+        // can never create a cycle). A level without soft edges orders exactly as plain Kahn does.
+        var softDependents = new List<int>?[nodes.Length];
+        var softPending = new int[nodes.Length];
+        foreach (var node in nodes)
+        {
+            foreach (var softIndex in node.SoftSiblingDependencyIndices)
+            {
+                (softDependents[softIndex] ??= []).Add(node.PropertyIndex);
+                softPending[node.PropertyIndex]++;
+            }
+        }
+
         var queue = new Queue<int>();
+        var blocked = new SortedSet<(long Sequence, int Index)>();
+        var blockedSequence = new long[nodes.Length];
+        var nextSequence = 0L;
+        void MakeReady(int index)
+        {
+            if (softPending[index] == 0)
+            {
+                queue.Enqueue(index);
+                return;
+            }
+
+            blockedSequence[index] = nextSequence++;
+            blocked.Add((blockedSequence[index], index));
+        }
+
         for (var i = 0; i < nodes.Length; i++)
         {
             if (inDegree[i] == 0)
-                queue.Enqueue(i);
+                MakeReady(i);
         }
 
         var result = new List<int>(nodes.Length);
-        while (queue.Count > 0)
+        while (queue.Count > 0 || blocked.Count > 0)
         {
-            var propertyIndex = queue.Dequeue();
+            int propertyIndex;
+            if (queue.Count > 0)
+            {
+                propertyIndex = queue.Dequeue();
+            }
+            else
+            {
+                (_, propertyIndex) = blocked.Min;
+                blocked.Remove(blocked.Min);
+            }
+
             result.Add(propertyIndex);
             foreach (var dependentIndex in dependents[propertyIndex])
             {
                 inDegree[dependentIndex]--;
                 if (inDegree[dependentIndex] == 0)
-                    queue.Enqueue(dependentIndex);
+                    MakeReady(dependentIndex);
+            }
+
+            if (softDependents[propertyIndex] is { } waiting)
+            {
+                foreach (var dependentIndex in waiting)
+                {
+                    if (--softPending[dependentIndex] == 0 && blocked.Remove((blockedSequence[dependentIndex], dependentIndex)))
+                        queue.Enqueue(dependentIndex);
+                }
             }
         }
 
@@ -1156,13 +1313,13 @@ internal static class PropertyDependencyGraphBuilder
             public int GetHashCode((int Context, Algorithm Body) value)
                 => HashCode.Combine(value.Context, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Body));
         }
-        private readonly Dictionary<(int Shadow, SiblingWalkPosition Position), HashSet<Expr>> _visited = new();
+        private readonly Dictionary<(int Shadow, LiftingRole Role), HashSet<Expr>> _visited = new();
 
         private readonly Dictionary<int, HashSet<Algorithm>> _algorithms = new();
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
-        public HashSet<Expr> Visited(int shadowKey, SiblingWalkPosition position)
+        public HashSet<Expr> Visited(int shadowKey, LiftingRole position)
         {
             if (!_visited.TryGetValue((shadowKey, position), out var visited))
                 _visited[(shadowKey, position)] = visited = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
@@ -1186,7 +1343,8 @@ internal static class PropertyDependencyGraphBuilder
     public static PropertyDependencyGraph BuildDependencyOrder(
         Algorithm.User algorithm,
         Func<string, bool>? preludeNameShadowedByCaller = null,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        SiblingOrderLookup? lookup = null)
     {
         var propertyNameToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < algorithm.Properties.Count; i++)
@@ -1221,11 +1379,19 @@ internal static class PropertyDependencyGraphBuilder
             // conditional branch bodies alike — is a processing-order dependency, because the
             // resolver rewrites all of it while processing this property.
             var dependencyIndices = new HashSet<int>();
+            var softDependencyIndices = new HashSet<int>();
             CollectAlgorithmSiblingDependencyIndices(
                 algorithm.Properties[i].Value,
-                new SiblingWalkContext(siblingNames, propertyNameToIndex, dependencyIndices, i, new SiblingWalkMemo(observations)),
+                new SiblingWalkContext(siblingNames, propertyNameToIndex, dependencyIndices, i, new SiblingWalkMemo(observations), lookup)
+                {
+                    SoftDependencyIndices = softDependencyIndices,
+                },
                 ShadowScope.Level(shadowNames, PreludeNameShadowed));
-            nodes[i] = new PropertyDependencyNode(i, dependencyIndices.OrderBy(static idx => idx).ToArray());
+            softDependencyIndices.ExceptWith(dependencyIndices);
+            nodes[i] = new PropertyDependencyNode(i, dependencyIndices.OrderBy(static idx => idx).ToArray())
+            {
+                SoftSiblingDependencyIndices = softDependencyIndices.OrderBy(static idx => idx).ToArray(),
+            };
         }
 
         return new PropertyDependencyGraph(algorithm.Properties, propertyNameToIndex, nodes);
@@ -2403,7 +2569,12 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlyDictionary<string, int> PropertyNameToIndex,
         HashSet<int> DependencyIndices,
         int PropertyIndex,
-        SiblingWalkMemo Memo);
+        SiblingWalkMemo Memo,
+        SiblingOrderLookup? Lookup)
+    {
+        /// <summary>The siblings this property MAY read through what the channel cannot classify (see <see cref="PropertyDependencyNode"/>).</summary>
+        public HashSet<int> SoftDependencyIndices { get; init; } = [];
+    }
 
     /// <summary>
     /// The names bound by the bodies between a property's value and the node being walked
@@ -2464,30 +2635,19 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// The position a walked expression stands in, which decides what a name contributes —
-    /// mirroring what the resolver reads there: a VALUE-position sibling reference is lifted
-    /// (its signature is read); a CALLEE is not (called siblings are not order
-    /// dependencies, the same rule as Call function position); a TRANSPARENT context (neutral
-    /// call arguments, capture rows — <c>ImplicitArgumentResolver.ProcessExprNested</c>)
-    /// lifts nothing, so only the nested algorithms inside it contribute.
-    /// </summary>
-    private enum SiblingWalkPosition
-    {
-        Value,
-        Callee,
-        Transparent,
-    }
-
-    /// <summary>
-    /// Collects the sibling dependencies of ONE property value: every value-position sibling
-    /// reference anywhere in the value's subtree that no nested body shadows — its output
-    /// rows, its nested property values, block literals and capture rows in expression
-    /// position, and every branch body of a conditional family — because the resolver
-    /// rewrites all of those while processing the property and reads each referenced
-    /// sibling's CURRENT signature there. Complete edges are what make the topological order
-    /// process a sibling before every consumer, whatever the declaration order, so no
-    /// consumer's rewrite depends on where it was written. Memoized per (node, shadow
-    /// context, position): a shared subtree is walked once per context, never once per path.
+    /// Collects the sibling dependencies of ONE property value: every sibling reference anywhere in
+    /// the value's subtree whose processed signature the resolver READS — a VALUE-role reference
+    /// (THE role classifier, <see cref="FormulaLiftingRoles"/>, the one the rewrite uses), the head of
+    /// a value-role structural dotted callee, and the sibling heading the level's own open provider of
+    /// a value-role opened name — that no nested body shadows: its output rows, its nested property
+    /// values, block literals and capture rows in expression position, and every branch body of a
+    /// conditional family, because the resolver rewrites all of those while processing the property.
+    /// Complete edges are what make the topological order process a sibling before every consumer,
+    /// whatever the declaration order, so no consumer's rewrite depends on where it was written; a
+    /// read this channel can only anticipate (a body's own <c>open</c> of a sibling, a bare sibling
+    /// argument of a callee it cannot classify) is a soft preference, and a read that still reaches a
+    /// pending sibling is processed on demand by the resolver. Memoized per (node, shadow context,
+    /// role): a shared subtree is walked once per context, never once per path.
     /// </summary>
     private static void CollectAlgorithmSiblingDependencyIndices(
         Algorithm value,
@@ -2502,8 +2662,17 @@ internal static class PropertyDependencyGraphBuilder
                 if (!context.Memo.Algorithms(inner.Key).Add(user))
                     return;
 
+                // A body's own `open` of a sibling (its head resolves through the body's direct
+                // chain): the resolver reads an opened member's PROCESSED signature through it, and
+                // this channel cannot tell which names reach that provider — a soft preference.
+                foreach (var open in user.Opens)
+                {
+                    if (open.OpenTargetHead() is Expr.Resolve(var head) && !inner.Shadows(head))
+                        AddSoftSiblingDependency(context, head);
+                }
+
                 foreach (var row in user.Output)
-                    CollectSiblingDependencyIndices(row, context, inner, SiblingWalkPosition.Value);
+                    CollectSiblingDependencyIndices(row, context, inner, LiftingRole.Value);
 
                 foreach (var property in user.Properties)
                     CollectAlgorithmSiblingDependencyIndices(property.Value, context, inner);
@@ -2536,153 +2705,151 @@ internal static class PropertyDependencyGraphBuilder
         Expr expr,
         SiblingWalkContext context,
         ShadowScope shadow,
-        SiblingWalkPosition position)
+        LiftingRole role)
     {
         // DAG-safety: contributions are index-set idempotent, so a completed node reference
-        // reached again under the same shadow context and position is skipped (see
+        // reached again under the same shadow context and role is skipped (see
         // SiblingWalkMemo).
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
         {
-            CollectSiblingDependencyIndicesCore(expr, context, shadow, position);
+            CollectSiblingDependencyIndicesCore(expr, context, shadow, role);
             return;
         }
 
-        var visited = context.Memo.Visited(shadow.Key, position);
+        var visited = context.Memo.Visited(shadow.Key, role);
         if (visited.Contains(expr))
             return;
 
         context.Memo.Observations?.RecordDependencySiblingExpansion();
-        CollectSiblingDependencyIndicesCore(expr, context, shadow, position);
+        CollectSiblingDependencyIndicesCore(expr, context, shadow, role);
         visited.Add(expr);
     }
-
-    /// <summary>A child of a value or callee expression stands in value position; a child of a transparent one stays transparent.</summary>
-    private static SiblingWalkPosition ChildPosition(SiblingWalkPosition position)
-        => position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Value;
 
     private static void CollectSiblingDependencyIndicesCore(
         Expr expr,
         SiblingWalkContext context,
         ShadowScope shadow,
-        SiblingWalkPosition position)
+        LiftingRole role)
     {
-        var child = ChildPosition(position);
         switch (expr)
         {
             case Expr.Resolve(var name):
-                if (position == SiblingWalkPosition.Value
-                    && !shadow.Shadows(name)
-                    && context.SiblingNames.Contains(name)
-                    && context.PropertyNameToIndex.TryGetValue(name, out var dependencyIndex)
-                    && dependencyIndex != context.PropertyIndex)
+                if (role == LiftingRole.Value && !shadow.Shadows(name))
                 {
-                    context.DependencyIndices.Add(dependencyIndex);
+                    if (context.SiblingNames.Contains(name))
+                        AddSiblingDependency(context, context.PropertyNameToIndex.TryGetValue(name, out var dependencyIndex) ? dependencyIndex : null);
+                    else if (context.Lookup?.OpenedSiblingProvider(name) is { } providerIndex)
+                        AddSiblingDependency(context, providerIndex);
                 }
                 break;
 
-            case Expr.Call(var function, var callArgs) call:
-                CollectSiblingDependencyIndices(
-                    function, context, shadow, position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent : SiblingWalkPosition.Callee);
+            case Expr.Call(var function, var callArgs):
+            {
+                CollectSiblingDependencyIndices(function, context, shadow, LiftingRole.Callable);
+                var roles = FormulaLiftingRoles.ArgumentRoles(SiblingWalkCalleeKind(function, context, shadow), callArgs);
+                var unclassified = IsUnclassifiedCallee(function, context, shadow);
+                for (var i = 0; i < callArgs.Count; i++)
+                {
+                    if (unclassified && roles[i] == LiftingRole.Callable)
+                        AddSoftBareSiblingReference(context, shadow, callArgs[i]);
+                    CollectSiblingDependencyIndices(callArgs[i], context, shadow, roles[i]);
+                }
 
-                // An unshadowed Math-ALIAS call has the same registry-proven
-                // strict-value argument contract as the written `Math.X(...)`
-                // dot shape (the DotCall arm below), classified by the shared
-                // alias-call twin: the resolver lifts its argument slots as value
-                // positions, so those slots contribute the same sibling
-                // processing-order dependencies here. Ordinary neutral call
-                // arguments lift nothing (transparent), so only the nested
-                // algorithms inside them contribute.
-                CollectArgumentSiblingDependencyIndices(
-                    callArgs,
-                    context,
-                    shadow,
-                    position != SiblingWalkPosition.Transparent && call.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed)
-                        ? SiblingWalkPosition.Value
-                        : SiblingWalkPosition.Transparent);
                 break;
+            }
 
             case Expr.Binary(_, var left, var right):
-                CollectSiblingDependencyIndices(left, context, shadow, child);
-                CollectSiblingDependencyIndices(right, context, shadow, child);
+                CollectSiblingDependencyIndices(left, context, shadow, LiftingRole.Value);
+                CollectSiblingDependencyIndices(right, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.Comparison(var first, var links):
-                CollectSiblingDependencyIndices(first, context, shadow, child);
+                CollectSiblingDependencyIndices(first, context, shadow, LiftingRole.Value);
                 foreach (var link in links)
-                    CollectSiblingDependencyIndices(link.Operand, context, shadow, child);
+                    CollectSiblingDependencyIndices(link.Operand, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectSiblingDependencyIndices(operand, context, shadow, child);
+                CollectSiblingDependencyIndices(operand, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectSiblingDependencyIndices(target, context, shadow, child);
-                CollectSiblingDependencyIndices(selector, context, shadow, child);
+                CollectSiblingDependencyIndices(target, context, shadow, LiftingRole.Value);
+                CollectSiblingDependencyIndices(selector, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectSiblingDependencyIndices(operand, context, shadow, child);
+                CollectSiblingDependencyIndices(operand, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectSiblingDependencyIndices(left, context, shadow, child);
-                CollectSiblingDependencyIndices(right, context, shadow, child);
+                CollectSiblingDependencyIndices(left, context, shadow, LiftingRole.Value);
+                CollectSiblingDependencyIndices(right, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectSiblingDependencyIndices(item, context, shadow, child);
+                    CollectSiblingDependencyIndices(item, context, shadow, LiftingRole.Value);
                 break;
 
-            case Expr.DotCall(var target, _, null):
-                CollectSiblingDependencyIndices(target, context, shadow, child);
+            case Expr.Capture(var captureBody):
+                // A capture element is a value: the resolver lifts it.
+                foreach (var row in captureBody)
+                    CollectSiblingDependencyIndices(row, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.DotCall dotCall:
             {
-                // A lexical fallback that must be selected on a Math member makes the edge the
-                // call `x(receiver, args)` (dotted-call equivalence): the resolver lifts its
-                // receiver and arguments as strict value positions, so they are processing-order
-                // dependencies exactly like the direct call's arguments.
-                var strictFallback = position != SiblingWalkPosition.Transparent
-                    && dotCall.HasRegistryProvenStrictValueFallback(shadow.PreludeNameShadowed);
-                CollectSiblingDependencyIndices(
-                    dotCall.Target,
-                    context,
-                    shadow,
-                    position == SiblingWalkPosition.Transparent ? SiblingWalkPosition.Transparent
-                        : strictFallback ? SiblingWalkPosition.Value
-                        : SiblingWalkPosition.Callee);
+                var kind = FormulaLiftingRoles.EdgeKind(
+                    dotCall,
+                    dotCall.ElaboratedFallbackSelection
+                        ?? dotCall.GetLexicalFallbackSelection(dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider()));
+                if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
+                {
+                    // A dotted callee: in a value role the resolver reads its member's PROCESSED
+                    // signature through its receiver, so a sibling receiver is a dependency; in a
+                    // callable role the receiver is only navigated.
+                    CollectSiblingDependencyIndices(dotCall.Target, context, shadow, role);
+                    break;
+                }
+
+                var callee = kind switch
+                {
+                    DotEdgeKind.StructuralMember => SiblingWalkCalleeKind(dotCall with { Args = null }, context, shadow),
+                    DotEdgeKind.Fallback => SiblingWalkCalleeKind(dotCall.EffectiveLexicalFallback, context, shadow),
+                    _ => LiftingCallee.Dynamic,
+                };
+                var unclassified = kind switch
+                {
+                    DotEdgeKind.StructuralMember => IsUnclassifiedCallee(dotCall with { Args = null }, context, shadow),
+                    DotEdgeKind.Fallback => IsUnclassifiedCallee(dotCall.EffectiveLexicalFallback, context, shadow),
+                    _ => false,
+                };
+                var receiverRole = FormulaLiftingRoles.ReceiverRole(kind, callee);
+                if (unclassified && kind == DotEdgeKind.Fallback && receiverRole == LiftingRole.Callable)
+                    AddSoftBareSiblingReference(context, shadow, dotCall.Target);
+                CollectSiblingDependencyIndices(dotCall.Target, context, shadow, receiverRole);
                 if (dotCall.Args is { } args)
                 {
-                    CollectArgumentSiblingDependencyIndices(
-                        args,
-                        context,
-                        shadow,
-                        position != SiblingWalkPosition.Transparent
-                            && (strictFallback || dotCall.HasRegistryProvenStrictValueArguments(shadow.PreludeNameShadowed))
-                            ? SiblingWalkPosition.Value
-                            : SiblingWalkPosition.Transparent);
+                    var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
+                    for (var i = 0; i < args.Count; i++)
+                    {
+                        if (unclassified && roles[i] == LiftingRole.Callable)
+                            AddSoftBareSiblingReference(context, shadow, args[i]);
+                        CollectSiblingDependencyIndices(args[i], context, shadow, roles[i]);
+                    }
                 }
                 break;
             }
 
             case Expr.Grace(var inner, _):
-                CollectSiblingDependencyIndices(inner, context, shadow, position);
+                CollectSiblingDependencyIndices(inner, context, shadow, role);
                 break;
 
             case Expr.AlgorithmExpr(var nested):
                 // A block literal is a body of its own in every position: the resolver
                 // rewrites it (and reads sibling signatures inside it) wherever it stands.
                 CollectAlgorithmSiblingDependencyIndices(nested, context, shadow);
-                break;
-
-            case Expr.Capture(var captureBody):
-                // Capture rows are transparent (no lifting at this level); their nested
-                // algorithms still contribute.
-                foreach (var row in captureBody)
-                    CollectSiblingDependencyIndices(row, context, shadow, SiblingWalkPosition.Transparent);
                 break;
 
             // Intentional leaves: no sibling references.
@@ -2705,14 +2872,93 @@ internal static class PropertyDependencyGraphBuilder
         }
     }
 
-    private static void CollectArgumentSiblingDependencyIndices(
-        OutputBundle args,
-        SiblingWalkContext context,
-        ShadowScope shadow,
-        SiblingWalkPosition position)
+    /// <summary>
+    /// Whether a callee's KIND is beyond this channel's resolution power — a callee a nested body
+    /// declares, one only an <c>open</c> provides, or a structural member — while the resolver
+    /// knows it (and so may classify a whole argument as a value it reads). A parameter or a computed
+    /// callee is dynamic to the resolver as well, so it is not unclassified.
+    /// </summary>
+    private static bool IsUnclassifiedCallee(Expr callee, SiblingWalkContext context, ShadowScope shadow)
+        => callee.UnwrapGraceOperand() switch
+        {
+            Expr.Resolve { ElaboratedMathMember: not null } opened => shadow.Shadows(opened.Name),
+            Expr.Resolve resolve => shadow.Shadows(resolve.Name)
+                || SiblingWalkCalleeKind(resolve, context, shadow).Kind == LiftingCalleeKind.Dynamic,
+            Expr.DotCall { Args: null } edge => !edge.TryGetRegistryProvenCanonicalMathFacts(shadow.PreludeNameShadowed, out _),
+            _ => false,
+        };
+
+    /// <summary>A bare unshadowed sibling reference in a slot of an unclassified callee: a soft preference (see <see cref="PropertyDependencyNode"/>).</summary>
+    private static void AddSoftBareSiblingReference(SiblingWalkContext context, ShadowScope shadow, Expr slot)
     {
-        foreach (var expression in args)
-            CollectSiblingDependencyIndices(expression, context, shadow, position);
+        if (slot.UnwrapGraceOperand() is Expr.Resolve(var name) && !shadow.Shadows(name))
+            AddSoftSiblingDependency(context, name);
+    }
+
+    private static void AddSoftSiblingDependency(SiblingWalkContext context, string name)
+    {
+        if (context.SiblingNames.Contains(name)
+            && context.PropertyNameToIndex.TryGetValue(name, out var index)
+            && index != context.PropertyIndex)
+        {
+            context.SoftDependencyIndices.Add(index);
+        }
+    }
+
+    private static void AddSiblingDependency(SiblingWalkContext context, int? dependencyIndex)
+    {
+        if (dependencyIndex is { } index && index != context.PropertyIndex)
+            context.DependencyIndices.Add(index);
+    }
+
+    /// <summary>
+    /// The kind of a callee as this channel resolves it: a name no nested body shadows through the
+    /// level's owner walk (<see cref="SiblingOrderLookup.CalleeKindOf"/>), an opened Math member by
+    /// parameter detection's stamp, and the canonical <c>Math.X</c> shape; anything else — a callee a
+    /// nested body declares, a member only an open provides — is <see cref="LiftingCalleeKind.Dynamic"/>
+    /// here, which classifies no slot as a value, so this channel never orders a read the rewrite does
+    /// not make (the rewrite demands what this channel leaves unordered).
+    /// </summary>
+    private static LiftingCallee SiblingWalkCalleeKind(Expr callee, SiblingWalkContext context, ShadowScope shadow)
+    {
+        switch (callee.UnwrapGraceOperand())
+        {
+            case Expr.Resolve { ElaboratedMathMember: not null } opened when !shadow.Shadows(opened.Name):
+                return LiftingCallee.StrictValue;
+
+            case Expr.Resolve resolve:
+                return shadow.Shadows(resolve.Name)
+                    ? LiftingCallee.Dynamic
+                    : context.Lookup?.CalleeKindOf(resolve.Name) ?? SiblingWalkPreludeCalleeKind(resolve, shadow);
+
+            case Expr.DotCall { Args: null } edge when edge.TryGetRegistryProvenCanonicalMathFacts(shadow.PreludeNameShadowed, out _):
+                return LiftingCallee.StrictValue;
+
+            case Expr.AlgorithmExpr:
+                return LiftingCallee.User;
+
+            default:
+                return LiftingCallee.Dynamic;
+        }
+    }
+
+    /// <summary>
+    /// Without the resolver's lookup (a standalone build): the prelude by the registry — an
+    /// unshadowed Math alias is a strict-value callee, an unshadowed builtin name the builtin.
+    /// </summary>
+    private static LiftingCallee SiblingWalkPreludeCalleeKind(Expr.Resolve callee, ShadowScope shadow)
+    {
+        if (shadow.PreludeNameShadowed(callee.Name))
+            return LiftingCallee.Dynamic;
+        if (callee.TryGetRegistryProvenMathAliasFacts(shadow.PreludeNameShadowed, out _))
+            return LiftingCallee.StrictValue;
+        foreach (var descriptor in BuiltinRegistry.AllBuiltins)
+        {
+            if (descriptor.Name == callee.Name)
+                return LiftingCallee.OfBuiltin(descriptor.Id);
+        }
+
+        return LiftingCallee.Dynamic;
     }
 
     private static HashSet<string> CreateNameSet(IEnumerable<string>? names = null)

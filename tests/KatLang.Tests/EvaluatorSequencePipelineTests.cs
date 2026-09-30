@@ -806,10 +806,13 @@ public class EvaluatorSequencePipelineTests
     {
         // filter(collection, predicate) is fixed two-argument: the extra `0`
         // over-supplies the call, an ordinary arity error in both the generic
-        // and the sequence-pipeline-optimized evaluator.
+        // and the sequence-pipeline-optimized evaluator. (`IsEven` then stands in a
+        // surplus slot, a value position an inferring root would lift it into, so the
+        // pipeline sits under a closed list.)
         var source = """
             IsEven = x mod 2 == 0
-            count(filter(range(1, 10), 0, IsEven))
+            Probe(u) = count(filter(range(1, 10), 0, IsEven))
+            Probe(0)
             """;
 
         foreach (var enableSequencePipelineOptimization in new[] { false, true })

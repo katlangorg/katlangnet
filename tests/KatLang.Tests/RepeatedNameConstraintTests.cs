@@ -293,7 +293,9 @@ public class RepeatedNameConstraintTests
         { "family-unequal", "E(x, x) = true\nE(x, y) = false\nE(7, 8)", "ok false" },
         { "family-failed-first", Bad + "E(x, x) = true\nE(x, y) = false\nE(Bad, 7)", DivisionByZero(Call("E")) + BadTraced },
         { "family-failed-second", Bad + "E(x, x) = true\nE(x, y) = false\nE(7, Bad)", DivisionByZero(Call("E")) + BadTraced },
-        { "family-callable", Inc + "E(x, x) = true\nE(x, y) = false\nE(Inc, 1)", IncValueDemand(Call("E")) },
+        // A family argument is a value position an inferring root would lift (`Inc(y)`), so the
+        // callable-only argument is pinned under a closed list.
+        { "family-callable", Inc + "E(x, x) = true\nE(x, y) = false\nCheck(n) = E(Inc, n)\nCheck(1)", IncValueDemand(Call("Check") + Call("E")) },
         { "family-distinct-callables", "A = 5\nB = 5\nE(x, x) = true\nE(x, y) = false\nE(A, B)", "ok true" },
 
         // 9. Lists and sequences: the ONE structural, kind-sensitive value equality.

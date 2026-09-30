@@ -1351,7 +1351,9 @@ public static class LanguageSpecCorpus
                 // Error kinds agree between the spellings.
                 new SpecProbe("Two(a, b) = a + b\nTwo(((1, 2)))", "err arity"),
                 new SpecProbe("Two(a, b) = a + b\nTwo((1, 2))", "err arity"),
-                new SpecProbe("Inc(x) = x + 1\ncount((Inc))", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = count((Inc))\nProbe(0)", "err arity"),
+                // A grouped reference lifts exactly like the bare one.
+                new SpecProbe("Inc(x) = x + 1\nG = count((Inc)), count(Inc)\nG(4)", "ok raw=S[1, 1] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression — `(S)`, `((S))`, `(L)`, `(E)`, `(A):0`, `(Obj).V`, `(Inc)(1)` mean `S`, `L`, `E`, `A:0`, `Obj.V`, `Inc(1)` — with the same value, the same emitted count, the same binding (each is ONE argument: `Collect(((S)))` is `[(1, 2)]` like `Collect(S)`), the same caching, the same selection, the same dot-call receiver, the same spread, and the same error kind. Normalization never stops at a parenthesis (`((S))` is the pair, `(())` is `()`). Only a group whose parentheses do something is a sequence-valued capture: several slots (`((1, 2), 3)` is the pair beside 3) or a lone spread (`(A*)` captures the spread items into one value). Pattern parentheses are call-shape syntax (`F((a, b))` takes one argument that opens to two items), never a runtime boundary. Selection chooses a value, dot-call passes a value, spread opens a value — and parentheses group syntax.",
@@ -1688,6 +1690,86 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A formula that USES another formula hands its inputs on by binding name, regardless of how many times that name occurs in the callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Twice = Common * 2` is `Twice(x) = Common(x, x) * 2`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Twice(7)` is 14, and Twice takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error. A definition whose whole body is the callee is not a formula: `Same = Common` is an exact alias that keeps Common's two independent arguments, and bare forwarding `Q(x) = P` reuses Q's one binding named x by name, `P(x, x)`.",
+        },
+        new()
+        {
+            Id = "formula-lifting-is-one-law-for-every-callable",
+            Category = "variadic-calls",
+            Source = "Lib = {\n    public Inc(x) = x + 1\n}\nE(0) = 100\nE(n) = n\nTotal = count + 0\nNext = Lib.Inc + 0\nFam = E + 1\n\nTotal((1, 2, 3))\nNext(4)\nFam(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n5\n101",
+            ExpectedRaw = "S[3, 5, 101]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A member reached through `open`, a loop builtin, `if`, a Math function and a host
+                // operation lift from their own signatures exactly the same way.
+                new SpecProbe("Lib = {\n    public Inc(x) = x + 1\n}\nG = {\n    open Lib\n    Inc + 0\n}\nG(4)", "ok raw=5 n=1"),
+                new SpecProbe("Step(s) = s + 1\nG = repeat + 0\nG(Step, 2, 0)", "ok raw=2 n=1"),
+                new SpecProbe("G = if + 0\nG(false, 1, 2)", "ok raw=2 n=1"),
+                new SpecProbe("G = abs + 0\nG(0 - 4)", "ok raw=4 n=1"),
+                new SpecProbe("G = Math.Abs * 2\nG(0 - 4)", "ok raw=8 n=1"),
+                // A clause family is named by its clauses, one whole-value input per position.
+                new SpecProbe("P(0, y) = y\nP(x, y) = x + y\nG = P * 10\nG(2, 5), G(0, 5)", "ok raw=S[70, 50] n=2"),
+                // A closed list forwards a builtin's input by its own name, like a user formula's.
+                new SpecProbe("G(collection) = count + 0\nG((1, 2, 3))", "ok raw=3 n=1"),
+                new SpecProbe("G(items) = count + 0\nG((1, 2, 3))", "err arity"),
+                // Not formulas: a bare top-level row is the callable's own demand, and a whole body
+                // that is only a builtin's name is no alias (only user formulas and Math functions are).
+                new SpecProbe("count", "err arity"),
+                new SpecProbe("E(0) = 1\nE(n) = n\nE", "err branch"),
+                new SpecProbe("C = count\nC((1, 2))", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "The unified formula-lifting law (decided September 30 2026; constitution Q-11, Q-12 and Q-13 for formulas). Formerly only document properties and the two Math spellings lifted: `count`, an opened or dotted member, a host operation and a clause family stayed bare references.",
+            Explanation = "A formula that uses a callable as a value hands the callable's inputs on, whatever kind of callable it is and however its name was reached: a builtin (`Total = count + 0` is `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), a member reached through a dot path or `open`, a Math function, a host operation, and a clause family, whose inputs are named by its clauses (`E(n) = n` names `E`'s one input `n`, so `Fam = E + 1` is `Fam(n) = E(n) + 1`). A bare top-level row is not a formula — writing `count` alone reports that `count` needs its argument — and a definition whose whole body is only a builtin's name (`C = count`) stays an ordinary property.",
+        },
+        new()
+        {
+            Id = "formula-lifting-follows-the-consumers-role",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f) = f(10)\n\nValues = [Inc, Inc * 2]\nKept = Apply(Inc)\nBranch = if(true, Inc, 0)\n\nValues(4)\nKept\nBranch(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[5, 10]\n11\n5",
+            ExpectedRaw = "S[L[5, 10], 11, 5]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Callbacks and loop steps are called, never lifted.
+                new SpecProbe("Inc(x) = x + 1\nG = map([1, 2], Inc)\nG", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = repeat(Inc, 2, 0)\nG", "ok raw=2 n=1"),
+                // A nested expression takes its own consumer's role, whatever slot encloses it.
+                new SpecProbe("Inc(x) = x + 1\nId(v) = v\nG = Id(Inc + 0)\nG(4)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = (Inc, 0)\nG(4)", "ok raw=S[5, 0] n=1"),
+                new SpecProbe("Inc(x) = x + 1\nS = Inc.string\nS(4)", "ok raw='5' n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = Inc.count\nG(4)", "ok raw=1 n=1"),
+                // An unselected branch still lifts, and is still evaluated only when selected.
+                new SpecProbe("Bad(x) = x / 0\nG = if(c, 1, Bad)\nG(true, 5)", "ok raw=1 n=1"),
+                new SpecProbe("Bad(x) = x / 0\nG = if(c, 1, Bad)\nG(false, 5)", "err div0"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "The unified formula-lifting law (decided September 30 2026): the role is the immediate consumer's, recursive, and blind to laziness. Formerly builtin value slots, capture elements, nested call arguments and the `.string` receiver never lifted.",
+            Explanation = "Whether a reference lifts is decided by what its immediate consumer does with it. A consumer that needs the VALUE — an operator, a list or capture element, an `if` argument, a builtin's collection or value control, a Math or host argument, a clause family's argument, the `.string` receiver — lifts it: `Values = [Inc, Inc * 2]` is `Values(x) = [Inc(x), Inc(x) * 2]`. A consumer that CALLS it or passes it on keeps it: `Apply(Inc)` hands `Inc` itself to `Apply`, and `map([1, 2], Inc)` calls it for each element. A nested expression is judged by its own consumer, so `Id(Inc + 0)` lifts while `Id(Inc)` does not. Laziness does not change the decision: an `if` branch lifts whether or not a run selects it, and it is still evaluated only when selected.",
+        },
+        new()
+        {
+            Id = "unliftable-clause-family",
+            Category = "variadic-calls",
+            Source = "S(1) = 1\nS(-1) = -1\nG = S + 0\n\nG(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "has no formula-lifting signature",
+            ExpectedDiagnosticCode = DiagnosticCode.UnliftableClauseFamily,
+            Probes =
+            [
+                // The family stays explicitly callable, and a family its clauses name lifts.
+                new SpecProbe("S(1) = 1\nS(-1) = -1\nG(v) = S(v) + 0\nG(0 - 1)", "ok raw=-1 n=1"),
+                new SpecProbe("E(0) = 100\nE(n) = n\nG = E + 0\nG(0)", "ok raw=100 n=1"),
+                // A closed list forwards nothing to a family that names nothing: its runtime demand.
+                new SpecProbe("S(1) = 1\nS(-1) = -1\nP(u) = S + 0\nP(0)", "err branch"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "The unified formula-lifting law (decided September 30 2026): a clause family's lifting signature is derived from its clauses, and no name is ever invented. Source-level front-end diagnostic; no elaborated Lean program exists.",
+            Explanation = "A formula hands its inputs on by parameter name, so lifting a clause family needs one name per argument position: the plain parameters its clauses bind there. Literal, structural and empty clause patterns name nothing, the clauses must agree on a position's name, and two positions cannot share one. `S(1) = 1` and `S(-1) = -1` name nothing, so the formula `G = S + 0` is rejected at `S`: call the family with explicit arguments (`G(v) = S(v) + 0`), or name the position with a plain parameter in a general clause.",
         },
         new()
         {
@@ -2719,7 +2801,7 @@ public static class LanguageSpecCorpus
         {
             Id = "capture-suppresses-higher-order-identity",
             Category = "access-boundaries",
-            Source = "Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment, Increment))",
+            Source = "Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment, Increment))\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
@@ -2727,9 +2809,11 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(Increment)", "ok raw=10 n=1"),
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))", "ok raw=10 n=1"),
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))", "ok raw=10 n=1"),
-                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment*))", "err arity"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment*))\nProbe(0)", "err arity"),
+                // A capture's elements are value positions: a formula that infers its parameters lifts them.
+                new SpecProbe("Id(v) = v\nIncrement(x) = x + 1\nG = Id((Increment, Increment))\nG(4)", "ok raw=S[5, 5] n=1"),
             ],
-            Explanation = "A capture — a group of several slots such as `(Increment, Increment)`, or a lone spread `(Increment*)` — supplies only a zero-parameter value thunk on the algorithm channel, so it suppresses the enclosed callable identity, and evaluating its rows demands `Increment` with zero arguments. Redundant parentheses are not a capture: parentheses group syntax, so `Apply((Increment))` and `Apply(((Increment)))` forward Increment's callable identity exactly like `Apply(Increment)`.",
+            Explanation = "A capture — a group of several slots such as `(Increment, Increment)`, or a lone spread `(Increment*)` — supplies only a zero-parameter value thunk on the algorithm channel, so it suppresses the enclosed callable identity, and evaluating its rows demands `Increment` with zero arguments wherever nothing forwards to it (here a closed parameter list); in a formula that infers its parameters a capture's elements are value positions and lift instead (`G = Id((Increment, Increment))` is `G(x) = Id((Increment(x), Increment(x)))`). Redundant parentheses are not a capture: parentheses group syntax, so `Apply((Increment))` and `Apply(((Increment)))` forward Increment's callable identity exactly like `Apply(Increment)`.",
         },
         new()
         {
@@ -3121,7 +3205,7 @@ public static class LanguageSpecCorpus
                 // failure, and a callable it cannot read keeps reduce's own report.
                 new SpecProbe("Add(a, b) = a + b\nreduce([], Add, 1 / 0)", "err div0"),
                 new SpecProbe("Add(a, b) = a + b\nreduce([1, 2], Add, 1 / 0)", "err div0"),
-                new SpecProbe("Inc(x) = x + 1\nAdd(a, b) = a + b\nreduce([1, 2], Add, Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nAdd(a, b) = a + b\nProbe(u) = reduce([1, 2], Add, Inc)\nProbe(0)", "err arity"),
                 // A SPREAD either supplies exactly its items or its failure is the call's
                 // failure, before the arity check — never one phantom argument.
                 new SpecProbe("Bad = 1 / 0\ntake(Bad*)", "err div0"),
@@ -3504,7 +3588,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Append(item, (*history)) = (history*, item)\nreduce(2, 3, 4, Append, (0, 1))", "err arity"),
+                new SpecProbe("Append(item, (*history)) = (history*, item)\nProbe(u) = reduce(2, 3, 4, Append, (0, 1))\nProbe(0)", "err arity"),
                 new SpecProbe("Append(item, *history) = (history*, item)\nreduce((2, 3, 4), Append, 1)", "ok raw=S[S[S[1, 2], 3], 4] n=1"),
                 new SpecProbe("Append(item, [*history]) = [history*, item]\nreduce((2, 3, 4), Append, [1])", "ok raw=L[1, 2, 3, 4] n=1"),
                 new SpecProbe("Append(item, (*history)) = (history*, item)\nreduce((2, 3, 4), Append, 1)", "err type"),
@@ -5186,10 +5270,15 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A clause family has no value with zero arguments, so the ordinary
-                // conditional value-access failure surfaces.
-                new SpecProbe("C(0) = 1\nC(n) = 2\nMath.Abs(C)", "err branch"),
+                // conditional value-access failure surfaces — here through a parameter bound on
+                // the callable channel, which nothing lifts.
+                new SpecProbe("C(0) = 1\nC(n) = 2\nF(g) = Math.Abs(g)\nF(C)", "err branch"),
                 // A builtin argument reports the builtin's own arity failure.
-                new SpecProbe("Math.Abs(count)", "err arity"),
+                new SpecProbe("F(g) = Math.Abs(g)\nF(count)", "err arity"),
+                // Written directly as the Math argument, a family or a builtin is a value position
+                // an inferring root lifts (`C(n)`, `count(collection)`), like every callable.
+                new SpecProbe("C(0) = 1\nC(n) = 2\nMath.Abs(C)", "err unresolvedImplicitParams"),
+                new SpecProbe("Math.Abs(count)", "err unresolvedImplicitParams"),
                 // Where the reference's parameters CAN be inferred, the math argument is an
                 // ordinary value position and the program simply works.
                 new SpecProbe("A = q + 1\nF(q) = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
@@ -5512,58 +5601,63 @@ public static class LanguageSpecCorpus
         {
             Id = "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
             Category = "conditionals",
-            Source = "Inc(x) = x + 1\nif(true, Inc, 0)",
+            Source = "Inc(x) = x + 1\nProbe(u) = if(true, Inc, 0)\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
                 // The false branch and the condition are the same demand.
-                new SpecProbe("Inc(x) = x + 1\nif(false, 0, Inc)", "err arity"),
-                new SpecProbe("Inc(x) = x + 1\nif(Inc, 1, 0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = if(false, 0, Inc)\nProbe(0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = if(Inc, 1, 0)\nProbe(0)", "err arity"),
                 // An unselected slot is never demanded: laziness is untouched.
-                new SpecProbe("Inc(x) = x + 1\nif(false, Inc, 7)", "ok raw=7 n=1"),
-                new SpecProbe("Inc(x) = x + 1\nif(true, 7, Inc)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = if(false, Inc, 7)\nProbe(0)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = if(true, 7, Inc)\nProbe(0)", "ok raw=7 n=1"),
                 // A zero-parameter algorithm is an ordinary value, even one that captures an enclosing binding.
                 new SpecProbe("A = 7\nif(true, A, 0)", "ok raw=7 n=1"),
                 new SpecProbe("Outer(v) = { Inner = v + 1\n if(true, Inner, 0) }\nOuter(7)", "ok raw=8 n=1"),
                 // The decision is the signature's, not the body's: K never reads x.
-                new SpecProbe("K(x) = 5\nif(true, K, 0)", "err arity"),
+                new SpecProbe("K(x) = 5\nProbe(u) = if(true, K, 0)\nProbe(0)", "err arity"),
                 // An explicit call is a value; an explicit zero-argument call is the ordinary call arity error.
                 new SpecProbe("Inc(x) = x + 1\nif(true, Inc(4), 0)", "ok raw=5 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nif(true, Inc(), 0)", "err arity"),
                 // An inferred parameter counts exactly like an explicit one.
-                new SpecProbe("A = q + 1\nif(true, A, 0)", "err arity"),
+                new SpecProbe("A = q + 1\nProbe(u) = if(true, A, 0)\nProbe(0)", "err arity"),
                 // A COLLECTING parameter requires no supplied argument, so the bare
                 // callable and its explicit zero-argument call agree (September 2026).
                 new SpecProbe("Collect(*xs) = xs\nif(true, Collect, 0)", "ok raw=L[] n=1"),
                 new SpecProbe("Collect(*xs) = xs\nif(true, Collect(), 0)", "ok raw=L[] n=1"),
                 // A required fixed parameter beside a collector still needs one value.
-                new SpecProbe("Head(x, *rest) = x\nif(true, Head, 0)", "err arity"),
+                new SpecProbe("Head(x, *rest) = x\nProbe(u) = if(true, Head, 0)\nProbe(0)", "err arity"),
                 // A clause family cannot be accessed as a value at all.
-                new SpecProbe("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)", "err branch"),
+                new SpecProbe("F(0) = 10\nF(x) = x + 1\nProbe(u) = if(true, F, 0)\nProbe(0)", "err branch"),
                 // A parameter bound only on the callable channel is the same demand.
                 new SpecProbe("Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)", "err arity"),
                 // A zero-parameter branch that fails still reports its own failure.
                 new SpecProbe("Boom = 1 / 0\nif(true, Boom, 0)", "err div0"),
+                // In a formula that infers its parameters every `if` argument is a value position,
+                // selected or not, so the reference lifts instead (the unified formula-lifting law).
+                new SpecProbe("Inc(x) = x + 1\nG = if(true, Inc, 0)\nG(4)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = if(false, Inc, 7)\nG(4)", "ok raw=7 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nif(true, Inc, 0)", "err unresolvedImplicitParams"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.",
+            Explanation = "Where nothing forwards to it — here a closed parameter list — the selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless at run time, and an explicit call (`Inc(4)`) is an ordinary value. In a formula that infers its parameters, every `if` argument is a value position whether or not a run selects it, so the reference lifts instead: `G = if(false, Inc, 7)` is `G(x) = if(false, Inc(x), 7)`, and the root program `if(true, Inc, 0)` needs `x` itself.",
         },
         new()
         {
             Id = "lazy-slot-demand-covers-every-builtin-value-slot",
             Category = "collection-builtins",
-            Source = "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)",
+            Source = "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, 1, Inc)\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
                 // The repeat count and while's initial state are value slots too.
-                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)", "err arity"),
-                new SpecProbe("Inc(x) = x + 1\nDown(s) = s - 1, s\nwhile(Down, Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, Inc, 0)\nProbe(0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nDown(s) = s - 1, s\nProbe(u) = while(Down, Inc)\nProbe(0)", "err arity"),
                 // So are the atoms and range arguments.
-                new SpecProbe("Inc(x) = x + 1\natoms(Inc)", "err arity"),
-                new SpecProbe("Inc(x) = x + 1\nrange(1, Inc)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = atoms(Inc)\nProbe(0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nProbe(u) = range(1, Inc)\nProbe(0)", "err arity"),
                 // Zero-parameter controls evaluate as before.
                 new SpecProbe("A = 0\nStep(s) = s + 1\nrepeat(Step, 1, A)", "ok raw=1 n=1"),
                 new SpecProbe("A = 7\natoms(A)", "ok raw=L[7] n=1"),
@@ -5572,21 +5666,26 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inc(x) = x + 1\nmap([1, 2], Inc)", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Add(e, a) = e + a\nreduce([1, 2], Add, 0)", "ok raw=3 n=1"),
                 // reduce's initial accumulator keeps its dedicated hint, decided from the signature: K never runs.
-                new SpecProbe("K(x) = 5\nAdd(e, a) = e + a\nreduce([1, 2], Add, K)", "err arity"),
+                new SpecProbe("K(x) = 5\nAdd(e, a) = e + a\nProbe(u) = reduce([1, 2], Add, K)\nProbe(0)", "err arity"),
                 // Collection and fixed value controls use the same demand law after binding.
-                new SpecProbe("K(x) = 5\ncount(K)", "err arity"),
-                new SpecProbe("K(x) = 5\ncontains([1], K)", "err arity"),
-                new SpecProbe("K(x) = 5\ntake([1], K)", "err arity"),
-                new SpecProbe("K(x) = 5\nskip([1], K)", "err arity"),
+                new SpecProbe("K(x) = 5\nProbe(u) = count(K)\nProbe(0)", "err arity"),
+                new SpecProbe("K(x) = 5\nProbe(u) = contains([1], K)\nProbe(0)", "err arity"),
+                new SpecProbe("K(x) = 5\nProbe(u) = take([1], K)\nProbe(0)", "err arity"),
+                new SpecProbe("K(x) = 5\nProbe(u) = skip([1], K)\nProbe(0)", "err arity"),
+                // In a formula that infers its parameters each value slot lifts the reference instead,
+                // while a callback slot keeps it (the unified formula-lifting law).
+                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nG = repeat(Step, 1, Inc)\nG(4)", "ok raw=6 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = count(Inc)\nG(4)", "ok raw=1 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = map([1, 2], Inc)\nG", "ok raw=L[2, 3] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument. An algorithm that still needs arguments is rejected at its reference before its body runs; `reduce` keeps its dedicated initial-accumulator hint. Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected.",
+            Explanation = "Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected either way.",
         },
         new()
         {
             Id = "dot-string-receiver-is-a-zero-argument-value-demand",
             Category = "strings",
-            Source = "Inc(x) = x + 1\nInc.string",
+            Source = "Inc(x) = x + 1\nProbe(u) = Inc.string\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
@@ -5594,10 +5693,12 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = 7\nA.string", "ok raw='7' n=1"),
                 new SpecProbe("Inc(x) = x + 1\nInc(4).string", "ok raw='5' n=1"),
                 // A navigated parameterized member and a callable-channel parameter receiver are the same demand.
-                new SpecProbe("Lib = { Sub(x) = x }\nLib.Sub.string", "err arity"),
+                new SpecProbe("Lib = { Sub(x) = x }\nProbe(u) = Lib.Sub.string\nProbe(0)", "err arity"),
                 new SpecProbe("Inc(x) = x + 1\nF(g) = g.string\nF(Inc)", "err arity"),
+                // In a formula that infers its parameters the receiver is a value position and lifts.
+                new SpecProbe("Inc(x) = x + 1\nS = Inc.string\nS(4)", "ok raw='5' n=1"),
             ],
-            Explanation = "`.string` demands its receiver as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result.",
+            Explanation = "`.string` converts its receiver's VALUE. Where nothing forwards to the receiver — here a closed parameter list — it is demanded as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result. In a formula that infers its parameters the receiver lifts like any operand: `S = Inc.string` is `S(x) = Inc(x).string`.",
         },
         new()
         {

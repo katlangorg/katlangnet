@@ -1997,6 +1997,15 @@ public sealed class Parser
         "The collect marker `*` must be followed by a binding name, as in `*items`.";
 
     /// <summary>
+    /// <see cref="DiagnosticCode.InvalidCollectingBinding"/> for a written head with more than one
+    /// collecting binding at a pattern level (X-02: at most one per level). Shares its wording with
+    /// the Lean model's <c>multipleCollectingBindingsPerLevelMessage</c> and the pre-evaluation
+    /// violation <see cref="PreEvaluationAstViolation.MultipleCollectingCaptures"/>.
+    /// </summary>
+    internal const string MultipleCollectingBindingsPerLevelDiagnostic =
+        "Only one collecting binding is allowed per pattern level.";
+
+    /// <summary>
     /// <see cref="DiagnosticCode.SingletonSequencePattern"/>: a structural pattern restriction,
     /// never a statement about expression grouping. Shares its wording with the Lean model's
     /// <c>singletonSequencePatternMessage</c> and the pre-evaluation violation.
@@ -3027,7 +3036,7 @@ public sealed class Parser
         {
             ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
-                "Only one collecting binding is allowed per pattern level.",
+                MultipleCollectingBindingsPerLevelDiagnostic,
                 nameToken);
             return recovered;
         }

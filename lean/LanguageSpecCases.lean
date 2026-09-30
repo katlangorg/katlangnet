@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 330
-- excluded parse-level cases (Lean has no surface parser): 48
+- specification surface cases: 333
+- excluded parse-level cases (Lean has no surface parser): 49
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 264
-- probe observations (C#-only by design): 1040
+- Lean-guarded cases: 266
+- probe observations (C#-only by design): 1073
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -500,6 +500,16 @@ def case_implicit_forwarding_is_by_binding_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "F") [.param "x"]) (.call (.resolve "G") [.param "x"]))]), privateProp "Twice" (alg ["x"] [] [] [(.binary .mul (.call (.resolve "Common") [.param "x", .param "x"]) (.num 2))]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "H") [.num 3]), (.call (.resolve "Twice") [.num 7])])
 #guard obs case_implicit_forwarding_is_by_binding_name == "ok raw=S[10, 14] n=2"
 
+-- formula-lifting-is-one-law-for-every-callable [variadic-calls]: Lib = { \n     public Inc(x) = x + 1 \n } \n E(0) = 100 \n E(n) = n \n Total = count + 0 \n Next = Lib.Inc + 0 \n Fam = E + 1 \n  \n Total((1, 2, 3)) \n Next(4) \n Fam(0)
+def case_formula_lifting_is_one_law_for_every_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "Total" (alg ["collection"] [] [] [(.binary .add (.call (.resolve "count") [.param "collection"]) (.num 0))]), privateProp "Next" (alg ["x"] [] [] [(.binary .add (.dotCall (.resolve "Lib") "Inc" (some [.param "x"])) (.num 0))]), privateProp "Fam" (alg ["n"] [] [] [(.binary .add (.call (.resolve "E") [.param "n"]) (.num 1))]), privateProp "E" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "Total") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "Next") [.num 4]), (.call (.resolve "Fam") [.num 0])])
+#guard obs case_formula_lifting_is_one_law_for_every_callable == "ok raw=S[3, 5, 101] n=3"
+
+-- formula-lifting-follows-the-consumers-role [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(10) \n  \n Values = [Inc, Inc * 2] \n Kept = Apply(Inc) \n Branch = if(true, Inc, 0) \n  \n Values(4) \n Kept \n Branch(4)
+def case_formula_lifting_follows_the_consumers_role : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Values" (alg ["x"] [] [] [(.listLiteral [(.call (.resolve "Inc") [.param "x"]), (.binary .mul (.call (.resolve "Inc") [.param "x"]) (.num 2))])]), privateProp "Kept" (alg [] [] [] [(.call (.resolve "Apply") [.resolve "Inc"])]), privateProp "Branch" (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Inc") [.param "x"]), .num 0])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 10])])] [(.call (.resolve "Values") [.num 4]), .resolve "Kept", (.call (.resolve "Branch") [.num 4])])
+#guard obs case_formula_lifting_follows_the_consumers_role == "ok raw=S[L[5, 10], 11, 5] n=3"
+
 -- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9, 9)
 def case_repeated_name_wrapper_keeps_independent_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x", "x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9, .num 9])])
@@ -745,9 +755,9 @@ def case_inline_headed_open_paths_keep_distinct_providers : Expr :=
   .algorithmExpr (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])] [])) "S" none), (.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] [])] [])) "S" none)] [] [.resolve "X"])
 #guard obs case_inline_headed_open_paths_keep_distinct_providers == "err ambiguousOpen"
 
--- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Apply((Increment, Increment))
+-- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Probe(u) = Apply((Increment, Increment)) \n Probe(0)
 def case_capture_suppresses_higher_order_identity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "Apply") [(.capture [.resolve "Increment", .resolve "Increment"])])])
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "Apply") [(.capture [.resolve "Increment", .resolve "Increment"])])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_capture_suppresses_higher_order_identity == "err arity"
 
 -- capture-suppresses-structural-members [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 7 \n     0 \n } \n  \n Obj.V \n (Obj).V \n (Obj*).V
@@ -1360,19 +1370,19 @@ def case_if_laziness_follows_the_resolved_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Boom" (alg [] [] [] [(.binary .div (.num 1) (.num 0))])] [(.call (.resolve "if") [.boolLiteral true, .num 10, .resolve "Boom"]), (.dotCall (.boolLiteral false) "if" (some [.resolve "Boom", .num 20]))])
 #guard obs case_if_laziness_follows_the_resolved_identity == "ok raw=S[10, 20] n=2"
 
--- lazy-slot-demand-is-the-ordinary-zero-argument-demand [conditionals]: Inc(x) = x + 1 \n if(true, Inc, 0)
+-- lazy-slot-demand-is-the-ordinary-zero-argument-demand [conditionals]: Inc(x) = x + 1 \n Probe(u) = if(true, Inc, 0) \n Probe(0)
 def case_lazy_slot_demand_is_the_ordinary_zero_argument_demand : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_lazy_slot_demand_is_the_ordinary_zero_argument_demand == "err arity"
 
--- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n repeat(Step, 1, Inc)
+-- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, 1, Inc) \n Probe(0)
 def case_lazy_slot_demand_covers_every_builtin_value_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_lazy_slot_demand_covers_every_builtin_value_slot == "err arity"
 
--- dot-string-receiver-is-a-zero-argument-value-demand [strings]: Inc(x) = x + 1 \n Inc.string
+-- dot-string-receiver-is-a-zero-argument-value-demand [strings]: Inc(x) = x + 1 \n Probe(u) = Inc.string \n Probe(0)
 def case_dot_string_receiver_is_a_zero_argument_value_demand : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "Inc") "string" none)])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.resolve "Inc") "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_dot_string_receiver_is_a_zero_argument_value_demand == "err arity"
 
 -- zero-argument-demand-follows-actual-call-arity [variadic-calls]: Only(*xs) = xs \n Only
@@ -1420,7 +1430,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 264 canonical Lean-guarded specification cases.
+-- 266 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1508,6 +1518,8 @@ def specCaseIds : List String := [
   "repeated-name-is-a-constraint-not-a-merge",
   "repeated-equal-values-require-one-callable-identity",
   "implicit-forwarding-is-by-binding-name",
+  "formula-lifting-is-one-law-for-every-callable",
+  "formula-lifting-follows-the-consumers-role",
   "repeated-name-wrapper-keeps-independent-arguments",
   "implicit-forwarding-preserves-structural-kind",
   "alias-forwarding-and-explicit-call",
@@ -1693,6 +1705,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 264
+#guard specCaseIds.length == 266
 
 end LanguageSpecCases

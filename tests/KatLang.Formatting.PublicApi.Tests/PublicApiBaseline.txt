@@ -299,6 +299,7 @@ public enum KatLang.DiagnosticCode : int
   DiagnosticCountExceeded = 46
   SingletonSequencePattern = 48
   UnforwardableParameter = 49
+  UnliftableClauseFamily = 50
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1409,6 +1410,7 @@ public enum KatLang.KatLangErrorCode : int
   DiagnosticCountExceeded = 68
   SingletonSequencePattern = 70
   UnforwardableParameter = 71
+  UnliftableClauseFamily = 72
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

@@ -604,9 +604,8 @@ public class ImplicitForwardingByBindingNameTests
 
     /// <summary>
     /// Removing the refusal widens nothing: neutral positions still pass the callable itself,
-    /// callees and dot fallbacks still receive written arguments, opened and structural names are
-    /// still never implicitly forwarded, a bare root row is still the callable's own zero-argument
-    /// demand, and a clause family is still never lifted nor aliased (PV-14).
+    /// callees and dot fallbacks still receive written arguments, a bare root row is still the
+    /// callable's own zero-argument demand, and a clause family is still never aliased (PV-14).
     /// </summary>
     [Theory]
     [InlineData(P + "Apply(f) = f(4, 4)\nApply(P)", "ok 4")]
@@ -617,10 +616,26 @@ public class ImplicitForwardingByBindingNameTests
     [InlineData(P + "P", "err ArityMismatch: Property 'P' expects 2 parameters, but was called with 0 arguments.")]
     [InlineData(P + "7.P", "err ArityMismatch: Callable `P(x, x)` expects 2 arguments, but was called with 1 argument.")]
     [InlineData(P + "map([1, 2], P)", "err ArityMismatch: while evaluating call to map: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Expected 2 parameters, but was called with 1 argument.")]
-    [InlineData("M = {\n  public P(x, x) = x\n}\nD = {\n  open M\n  P + 1\n}\nD", "err ArityMismatch: Property 'P' expects 2 parameters, but was called with 0 arguments.")]
-    [InlineData("M = {\n  public P(x, x) = x\n}\nD = M.P + 1\nD", "err ArityMismatch: Property 'P' on `M` expects 2 parameters, but was called with 0 arguments.")]
     [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 1)", "err ArityMismatch: Callable `Alias` expects 0 arguments, but was called with 2 arguments.")]
     public async Task PositionsThatNeverForward_AreUnchanged(string source, string expected)
+    {
+        SourceProvenance.ParseValid(source);
+        Assert.Equal(expected, await Outcome(source));
+    }
+
+    /// <summary>
+    /// THE UNIFIED FORMULA-LIFTING LAW: the lifting signature is keyed by the resolved callable,
+    /// never by the route that reached it, so an opened member and a structural dotted member lift
+    /// by binding name exactly like a lexical property — one binding per name (<c>D(x)</c> is
+    /// <c>P(x, x) + 1</c>) — and the bare root row naming the formula is its own zero-argument
+    /// demand. Formerly opened and structural names were never implicitly forwarded.
+    /// </summary>
+    [Theory]
+    [InlineData("M = {\n  public P(x, x) = x\n}\nD = {\n  open M\n  P + 1\n}\nD(3)", "ok 4")]
+    [InlineData("M = {\n  public P(x, x) = x\n}\nD = M.P + 1\nD(3)", "ok 4")]
+    [InlineData("M = {\n  public P(x, x) = x\n}\nD = {\n  open M\n  P + 1\n}\nD", "err ArityMismatch: Property 'D' expects 1 parameter, but was called with 0 arguments.")]
+    [InlineData("M = {\n  public P(x, x) = x\n}\nD = M.P + 1\nD", "err ArityMismatch: Property 'D' expects 1 parameter, but was called with 0 arguments.")]
+    public async Task OpenedAndDottedMembers_LiftByBindingName_LikeEveryCallable(string source, string expected)
     {
         SourceProvenance.ParseValid(source);
         Assert.Equal(expected, await Outcome(source));

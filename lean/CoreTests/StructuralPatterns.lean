@@ -264,4 +264,57 @@ def singletonRuleOverHeads : Bool :=
 
 #guard singletonRuleOverHeads
 
+-- 10. X-02: ONE VALIDITY RULE FOR EVERY SIGNATURE, written or inferred
+--     (`ParameterPattern.signatureViolation?`, C# `ParameterPattern.FindSignatureViolation`).
+--     The C# front end rejects formula lifting that would compose `K(a, *p, b, *q)` from
+--     `C1(a, *p)` and `C2(b, *q)`; a collecting name two callees share is ONE binding, and
+--     a collector nested in its own group is that group's level. C# twin:
+--     `InferredSignatureValidityTests`.
+private def spCap (name : String) : KatLang.ParameterPattern := .capture { name := name }
+private def spColl (name : String) : KatLang.ParameterPattern := .capture { name := name, kind := .collecting }
+
+def signatureValidityWitnesses : Bool :=
+  -- The X-02 composition, and every position of a second top-level collector.
+  KatLang.ParameterPattern.signatureViolation? [spCap "a", spColl "p", spCap "b", spColl "q"]
+      == some .multipleCollectingAtOneLevel &&
+  KatLang.ParameterPattern.signatureViolation? [spColl "p", spCap "a", spCap "b", spColl "q"]
+      == some .multipleCollectingAtOneLevel &&
+  -- One lifted binding for the shared collecting name; one collector per group level.
+  KatLang.ParameterPattern.signatureViolation? [spCap "a", spColl "rest", spCap "b"] == none &&
+  KatLang.ParameterPattern.signatureViolation?
+      [.sequenceValue [spCap "a", spColl "p"], .sequenceValue [spCap "b", spColl "q"]] == none &&
+  KatLang.ParameterPattern.signatureViolation?
+      [.sequenceValue [spCap "a", spColl "p"], spCap "d", spColl "r"] == none &&
+  -- A nested level is its own level.
+  KatLang.ParameterPattern.signatureViolation? [.listValue [spColl "r", spColl "s"]]
+      == some .multipleCollectingAtOneLevel &&
+  -- Repeated fixed names are Q-05's constraints; a repeated name with a collector is not.
+  KatLang.ParameterPattern.signatureViolation? [spCap "x", spCap "x"] == none &&
+  KatLang.ParameterPattern.signatureViolation? [spCap "x", spColl "x"]
+      == some .repeatedNameIncludesCollecting &&
+  -- Rule order: the singleton rule, then the collector rule, then repeated collecting names.
+  KatLang.ParameterPattern.signatureViolation? [.sequenceValue [spCap "x"], spColl "p", spColl "q"]
+      == some .singletonSequencePattern &&
+  KatLang.ParameterPattern.signatureViolation? [spColl "x", spCap "x", spColl "q"]
+      == some .multipleCollectingAtOneLevel
+
+#guard signatureValidityWitnesses
+
+-- A host-built algorithm cannot reach a binder with two collectors at one level: the
+-- pre-evaluation validation rejects it, like the singleton rule (C#:
+-- `PreEvaluationAstViolation.MultipleCollectingCaptures`).
+def twoCollectorSignatureIsIllegalBeforeEvaluation : Bool :=
+  let k := algWithParameterPatterns [spCap "a", spColl "p", spCap "b", spColl "q"] [] [] [param "a"]
+  let nested := algWithParameterPatterns [.listValue [spColl "p", spColl "q"]] [] [] [num 0]
+  let valid := algWithParameterPatterns [spCap "a", spColl "rest", spCap "b"] [] [] [param "a"]
+  (match runResult (.algorithmExpr (algPrivate [] [] [("K", k)] [.call (resolve "K") [num 1, num 2]])) with
+   | .error (.illegalInEval message) => message == KatLang.multipleCollectingBindingsPerLevelMessage
+   | _ => false) &&
+  (match runResult (.algorithmExpr (algPrivate [] [] [("K", nested)] [num 1])) with
+   | .error (.illegalInEval message) => message == KatLang.multipleCollectingBindingsPerLevelMessage
+   | _ => false) &&
+  spIs [("K", valid)] (.atom 1) (.call (resolve "K") [num 1, num 2, num 3])
+
+#guard twoCollectorSignatureIsIllegalBeforeEvaluation
+
 end KatLangTests

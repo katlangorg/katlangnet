@@ -2693,6 +2693,8 @@ public static partial class Evaluator
                 new EvalError.BranchArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
             PreEvaluationAstViolation.SingletonSequencePattern =>
                 new EvalError.IllegalInEval(Parser.SingletonSequencePatternDiagnostic),
+            PreEvaluationAstViolation.MultipleCollectingCaptures =>
+                new EvalError.IllegalInEval(Parser.MultipleCollectingBindingsPerLevelDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
         };

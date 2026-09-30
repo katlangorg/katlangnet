@@ -275,8 +275,11 @@ public class AutomaticForwardingBindingTests
         // A nearer explicit owner decides: Mid forwards its own `y` to the alias Inner, not Outer's.
         { "nearest-enclosing-parameter-is-reused", "A = y + 1\nOuter(y) = {\n    Mid(y) = {\n        Inner = A\n        Inner\n    }\n    Mid(10) + y\n}\nOuter(3)", "ok 14" },
         { "alias-chain-reuses-ancestor", "A = y + 1\nF(y) = {\n    G = A + 0\n    H = G\n    K = H\n    if(true, K, 0)\n}\nF(3)", "ok 4" },
-        // alias: bare aliases of A keep A's parameter, so the neutral argument cannot read K.
-        { "local-alias-chain-keeps-the-parameter", "A = y + 1\nF(y) = {\n    G = A\n    H = G\n    K = H\n    if(true, K, 0)\n}\nF(3)", "err ArityMismatch" },
+        // alias: bare aliases of A keep A's parameter (K is K(y)); `if`'s whenTrue is a builtin
+        // VALUE slot (the unified formula-lifting law), so K lifts there and F's closed list
+        // forwards its own `y` by name — the same outcome as the formula chain above. Formerly
+        // ArityMismatch, when builtin argument slots were neutral.
+        { "local-alias-chain-keeps-the-parameter", "A = y + 1\nF(y) = {\n    G = A\n    H = G\n    K = H\n    if(true, K, 0)\n}\nF(3)", "ok 4" },
         // Callback and loop-step blocks reuse the enclosing parameter (formerly ArityMismatch:
         // the block took the lifted `y` as a second callback parameter).
         { "reduce-callback-reuses-ancestor", "A = y + 1\nF(y) = reduce([1, 2], { e + acc + A }, 0)\nF(3)", "ok 11" },

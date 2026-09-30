@@ -294,11 +294,19 @@ public class EvaluatorConditionalTests
     public void Eval_Conditional_BareReferenceInSequenceBuiltinArg_NoMatchingBranch()
     {
         // Forcing a conditional through a sequence-builtin collection argument
-        // fails instead of silently contributing nothing to the collection.
+        // fails instead of silently contributing nothing to the collection. The
+        // collection is a value slot and this family's clauses name no parameter, so an
+        // inferring body cannot lift it (the front end's UnliftableClauseFamily at the
+        // root); a closed list keeps the bare reference's own zero-argument demand.
+        Assert.Contains(
+            Parser.Parse("Sign(1) = 1\nSign(-1) = -1\nsum(Sign)").Diagnostics,
+            static diagnostic => diagnostic.Code == DiagnosticCode.UnliftableClauseFamily);
+
         var source = """
             Sign(1) = 1
             Sign(-1) = -1
-            sum(Sign)
+            Probe(u) = sum(Sign)
+            Probe(0)
             """;
         var error = GetEvalError(source);
         Assert.NotNull(error);

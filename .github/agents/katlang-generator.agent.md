@@ -744,6 +744,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - For implicit-parameter algorithms, parameters are handed on transitively through the formulas a property USES inside an expression (automatic parameter forwarding). Only a used callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears in an expression (an operand, a list element, a Math argument), so hand arguments on to it with an explicit call (`Count(items*)`). A definition whose WHOLE body is the bare name of a formula with parameters is not a formula: `Alias = F` is an exact alias with F's own parameters (repeated names, structural `(...)`/`[...]` parameters and collectors included — `Alias = Count` takes arguments like `Count`, and read bare is its value), while `Forward(x) = F`, with an explicit parameter list, forwards BY NAME: each of F's parameters must be an existing parameter of the SAME name and the SAME pattern — one of Forward's own, or an enclosing algorithm's — and nothing is renamed, matched by position, or added to the list. So with `Sub(y, x) = y - x`, `G(x, y) = Sub` is `Sub(y, x)` (`G(10, 3)` is -7), while `Other(y)` / `Bad(x) = Other`, `F(p, q)` / `A(p) = F`, `Single([x])` / `Bad(x) = Single` and `Add((a, b))` / `Pair(a, b) = Add` are errors. An explicit call is different — its arguments are exactly what is written, whatever the callee calls its parameters: write `Bad(x) = Other(x)`, `Bad(x) = Single(x)` or `Pair(a, b) = Add((a, b))`, and PREFER the explicit call whenever the parameter names or shapes differ. A written call `G = Add((x, y))` takes the names written in it: `G(x, y)`.
 - Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
 - Automatic parameter forwarding in a formula is by binding name: one name is one input, however many times a callee's parameter list uses it. `Common(x, x) = x` / `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2` and takes ONE argument, exactly as `H = F + G` with `F(x)` and `G(x)` means `H(x) = F(x) + G(x)`. The bare alias `Same = Common` instead keeps Common's two arguments. To pass two separate values that must be equal, write the call with two parameters: `Both(a, b) = Common(a, b)` (`Both(7, 8)` fails like `Common(7, 8)`).
+- Automatic parameter forwarding applies to EVERY kind of callable a formula uses as a VALUE: your own formulas, builtins (`Total = count + 0` means `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), Math functions in any spelling, host operations, members reached with a dot (`Lib.Inc + 0`) or through `open`, and conditional algorithms whose clauses name their inputs (`E(0) = 100` / `E(n) = n` / `Fam = E + 1` means `Fam(n) = E(n) + 1`). A conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1`) cannot be used as a value in a formula — call it explicitly: `G(v) = S(v) + 0`. A name is handed the inputs where its VALUE is needed — an operand, a comparison, a list or tuple element, an `if` argument (the branch not taken too; evaluation stays lazy), a builtin's collection or value argument, a Math argument, `.string`, the receiver of a builtin dot call (`Inc.count` is `count(Inc)`) — and is passed as it is where it is itself a function: a callee, an argument of your own algorithm (`Apply(Inc)`), a `map`/`filter`/`reduce` function, or a loop step. A name inside a larger argument is judged by that expression (`Apply(Inc + 0)` hands `x` to `Inc`). A bare name alone on a top-level line is not a formula (`count` alone is an arity error), and `C = count` stays an ordinary property — write `C = count + 0` or `C(collection) = count(collection)`.
 
 Teaching contrast:
 
@@ -1564,7 +1565,7 @@ Repeated parameter names use one order-independent compatibility rule over indep
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (124 of the 330-case canonical language specification,
+Verified reference examples (127 of the 333-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2052,6 +2053,54 @@ Regenerate this block from the repo root with:
   Displays:
     10
     14
+
+[formula-lifting-is-one-law-for-every-callable] A formula that uses a callable as a value hands the callable's inputs on, whatever kind of callable it is and however its name was reached: a builtin (`Total = count + 0` is `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), a member reached through a dot path or `open`, a Math function, a host operation, and a clause family, whose inputs are named by its clauses (`E(n) = n` names `E`'s one input `n`, so `Fam = E + 1` is `Fam(n) = E(n) + 1`). A bare top-level row is not a formula — writing `count` alone reports that `count` needs its argument — and a definition whose whole body is only a builtin's name (`C = count`) stays an ordinary property.
+
+    Lib = {
+        public Inc(x) = x + 1
+    }
+    E(0) = 100
+    E(n) = n
+    Total = count + 0
+    Next = Lib.Inc + 0
+    Fam = E + 1
+
+    Total((1, 2, 3))
+    Next(4)
+    Fam(0)
+
+  Displays:
+    3
+    5
+    101
+
+[formula-lifting-follows-the-consumers-role] Whether a reference lifts is decided by what its immediate consumer does with it. A consumer that needs the VALUE — an operator, a list or capture element, an `if` argument, a builtin's collection or value control, a Math or host argument, a clause family's argument, the `.string` receiver — lifts it: `Values = [Inc, Inc * 2]` is `Values(x) = [Inc(x), Inc(x) * 2]`. A consumer that CALLS it or passes it on keeps it: `Apply(Inc)` hands `Inc` itself to `Apply`, and `map([1, 2], Inc)` calls it for each element. A nested expression is judged by its own consumer, so `Id(Inc + 0)` lifts while `Id(Inc)` does not. Laziness does not change the decision: an `if` branch lifts whether or not a run selects it, and it is still evaluated only when selected.
+
+    Inc(x) = x + 1
+    Apply(f) = f(10)
+
+    Values = [Inc, Inc * 2]
+    Kept = Apply(Inc)
+    Branch = if(true, Inc, 0)
+
+    Values(4)
+    Kept
+    Branch(4)
+
+  Displays:
+    [5, 10]
+    11
+    5
+
+[unliftable-clause-family] A formula hands its inputs on by parameter name, so lifting a clause family needs one name per argument position: the plain parameters its clauses bind there. Literal, structural and empty clause patterns name nothing, the clauses must agree on a position's name, and two positions cannot share one. `S(1) = 1` and `S(-1) = -1` name nothing, so the formula `G = S + 0` is rejected at `S`: call the family with explicit arguments (`G(v) = S(v) + 0`), or name the position with a plain parameter in a general clause.
+
+    S(1) = 1
+    S(-1) = -1
+    G = S + 0
+
+    G(1)
+
+  Rejected by the parser: "has no formula-lifting signature ..."
 
 [repeated-name-wrapper-keeps-independent-arguments] Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is an exact alias with Common's own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common]:0` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.
 
@@ -2945,18 +2994,20 @@ Regenerate this block from the repo root with:
     10
     20
 
-[lazy-slot-demand-is-the-ordinary-zero-argument-demand] The selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered — the same report writing `Inc` alone produces. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless, and an explicit call (`Inc(4)`) is an ordinary value.
+[lazy-slot-demand-is-the-ordinary-zero-argument-demand] Where nothing forwards to it — here a closed parameter list — the selected branch is demanded exactly like a bare property reference: `Inc` still needs its `x`, so the ordinary zero-argument arity error is reported at the reference and `Inc`'s body is never entered. Only the selected slot is demanded, so a parameterized algorithm in the unselected branch is harmless at run time, and an explicit call (`Inc(4)`) is an ordinary value. In a formula that infers its parameters, every `if` argument is a value position whether or not a run selects it, so the reference lifts instead: `G = if(false, Inc, 7)` is `G(x) = if(false, Inc(x), 7)`, and the root program `if(true, Inc, 0)` needs `x` itself.
 
     Inc(x) = x + 1
-    if(true, Inc, 0)
+    Probe(u) = if(true, Inc, 0)
+    Probe(0)
 
   Fails with an evaluation error (arity).
 
-[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument. An algorithm that still needs arguments is rejected at its reference before its body runs; `reduce` keeps its dedicated initial-accumulator hint. Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected.
+[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected either way.
 
     Inc(x) = x + 1
     Step(s) = s + 1
-    repeat(Step, 1, Inc)
+    Probe(u) = repeat(Step, 1, Inc)
+    Probe(0)
 
   Fails with an evaluation error (arity).
 

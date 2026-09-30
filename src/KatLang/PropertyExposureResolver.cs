@@ -664,8 +664,71 @@ internal static class PropertyExposureResolver
             return true;
         }
 
-        public RequirementSet Resolve(PendingReference pending, SummaryScope level, SummaryScope? site = null,
-            IReadOnlySet<Algorithm>? boundOwners = null)
+        /// <summary>The settlement of <paramref name="pending"/> at <paramref name="level"/> (a top-level settlement).</summary>
+        public RequirementSet Resolve(PendingReference pending, SummaryScope level)
+            => Run(ReferenceFrame(pending, level, site: null, boundOwners: null));
+
+        /// <summary>
+        /// ONE suspended settlement — a pending reference's or a seed's. Settlements nest as deep as a
+        /// chain of member reads (`P1.A1` charging `P2.A2` charging `P3.A3`…, or the same through
+        /// `open`s), so they never recurse on the host stack: each is a heap frame whose body yields the
+        /// nested frame it needs next, and <see cref="Run"/> resumes it with that frame's
+        /// <see cref="Result"/> exactly where the recursive form would have returned — the evaluation
+        /// order, every recorded read, every in-progress cut, and every observation are those of the
+        /// recursive form, whatever the chain's length.
+        /// </summary>
+        private sealed class Frame
+        {
+            public IEnumerator<Frame> Body = null!;
+            public RequirementSet Result;
+        }
+
+        /// <summary>
+        /// Runs <paramref name="root"/> to completion over an explicit stack: a frame yielding a nested
+        /// frame is suspended until that frame completes. An exception unwinds every suspended frame
+        /// innermost first, so each one's in-progress key is released exactly as the recursion's
+        /// <c>finally</c> blocks released it.
+        /// </summary>
+        private static RequirementSet Run(Frame root)
+        {
+            var frames = new Stack<Frame>();
+            frames.Push(root);
+            try
+            {
+                while (frames.TryPeek(out var frame))
+                {
+                    if (frame.Body.MoveNext())
+                        frames.Push(frame.Body.Current);
+                    else
+                        frames.Pop();
+                }
+            }
+            finally
+            {
+                while (frames.TryPop(out var suspended))
+                    suspended.Body.Dispose();
+            }
+
+            return root.Result;
+        }
+
+        private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, IReadOnlySet<Algorithm>? boundOwners)
+        {
+            var frame = new Frame();
+            frame.Body = ResolveReference(frame, pending, level, site, boundOwners);
+            return frame;
+        }
+
+        private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        {
+            var frame = new Frame();
+            frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
+            return frame;
+        }
+
+        /// <summary>The settlement of one pending reference (see the class summary); its result is <paramref name="self"/>'s.</summary>
+        private IEnumerator<Frame> ResolveReference(Frame self, PendingReference pending, SummaryScope level, SummaryScope? site,
+            IReadOnlySet<Algorithm>? boundOwners)
         {
             site ??= level;
             if (pending.BoundOwners.Count > 0)
@@ -677,21 +740,29 @@ internal static class PropertyExposureResolver
             var key = (pending.ContentKey, level, site,
                 boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
             if (!_inProgress.Add(key))
-                return default;
+            {
+                self.Result = default;
+                yield break;
+            }
 
             try
             {
                 if (TryLookupSummary(level, pending.Head, out var found, out var hit, out var summary))
                 {
                     if (pending.Members.Count == 0)
-                        return sets.Adopt(summary);
+                    {
+                        self.Result = sets.Adopt(summary);
+                        yield break;
+                    }
 
                     var (charged, navigated) = PropertyDependencyGraphBuilder.ChargePath(
                         hit.Property.Value,
                         PropertyDependencyGraphBuilder.StructuralSteps(pending.Members),
                         memos);
-                    var names = ResolveSeed(charged, found, site, boundOwners);
-                    return navigated == 0 ? sets.Union(names, summary) : names;
+                    var names = SeedFrame(charged, found, site, boundOwners);
+                    yield return names;
+                    self.Result = navigated == 0 ? sets.Union(names.Result, summary) : names.Result;
+                    yield break;
                 }
 
                 var result = default(RequirementSet);
@@ -712,10 +783,45 @@ internal static class PropertyExposureResolver
 
                     var group = new OpenLevelSettlement();
                     for (var i = start; i < end; i++)
-                        group.Offer(Provides(candidates[i], pending, level, site, boundOwners));
+                    {
+                        // Whether the carried candidate provides the pending head, and its charge: a
+                        // resolved candidate exists only because its target provides the head, while
+                        // an unresolved one is settled here, from the owning level outward (no level
+                        // it escaped declared the head).
+                        switch (candidates[i])
+                        {
+                            case ResolvedOpenCandidate resolved:
+                            {
+                                var charge = SeedFrame(resolved.Seed, level, site, boundOwners);
+                                yield return charge;
+                                group.Offer((true, charge.Result));
+                                break;
+                            }
+
+                            case UnresolvedOpenCandidate unresolved:
+                            {
+                                if (TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, out var provided, out var providerLevel))
+                                {
+                                    var charge = SeedFrame(provided, providerLevel, site, boundOwners);
+                                    yield return charge;
+                                    group.Offer((true, charge.Result));
+                                }
+                                else
+                                {
+                                    group.Offer(default);
+                                }
+
+                                break;
+                            }
+                        }
+                    }
 
                     if (group.Decides(sets, ref result))
-                        return result;
+                    {
+                        self.Result = result;
+                        yield break;
+                    }
+
                     start = end;
                 }
 
@@ -750,8 +856,20 @@ internal static class PropertyExposureResolver
                             }
 
                             case Expr.Resolve(var head):
-                                group.Offer(TryProvide(current, head, steps, pending, site, boundOwners));
+                            {
+                                if (TryProvide(current, head, steps, pending, out var provided, out var providerLevel))
+                                {
+                                    var charge = SeedFrame(provided, providerLevel, site, boundOwners);
+                                    yield return charge;
+                                    group.Offer((true, charge.Result));
+                                }
+                                else
+                                {
+                                    group.Offer(default);
+                                }
+
                                 break;
+                            }
 
                             default:
                                 group.Offer(default);
@@ -760,28 +878,19 @@ internal static class PropertyExposureResolver
                     }
 
                     if (group.Decides(sets, ref result))
-                        return result;
+                    {
+                        self.Result = result;
+                        yield break;
+                    }
                 }
 
-                return result;
+                self.Result = result;
             }
             finally
             {
                 _inProgress.Remove(key);
             }
         }
-
-        /// <summary>
-        /// Whether one carried candidate provides the pending head, and its charge: a resolved
-        /// candidate exists only because its target provides the head, while an unresolved one is
-        /// settled here, from the owning level outward (no level it escaped declared the head).
-        /// </summary>
-        private (bool Provides, RequirementSet Charge) Provides(OpenCandidate candidate, PendingReference pending, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
-            => candidate switch
-            {
-                ResolvedOpenCandidate resolved => (true, ResolveSeed(resolved.Seed, level, site, boundOwners)),
-                UnresolvedOpenCandidate unresolved => TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, site, boundOwners),
-            };
 
         /// <summary>
         /// ONE open lookup level's verdict (the evaluator's <c>LookupOpens</c>): every deduplicated
@@ -816,14 +925,20 @@ internal static class PropertyExposureResolver
         /// publicly provides the pending head: its head resolves through the direct chain from
         /// the opening level outward (the evaluator's <c>lookupLexicalDirect</c>), its dotted
         /// steps are public members, and the provider publicly declares the head. The charged
-        /// seed — the navigated steps' and the provided member's requirements — is relative to
-        /// the level that declares the target's head and is resolved from there.
+        /// <paramref name="seed"/> — the navigated steps' and the provided member's requirements —
+        /// is relative to <paramref name="providerLevel"/>, the level that declares the target's head,
+        /// and the caller resolves it from there.
         /// </summary>
-        private (bool Provides, RequirementSet Charge) TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        private bool TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out PropertyDependencyGraphBuilder.SummarySeed? seed,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SummaryScope? providerLevel)
         {
+            seed = null;
+            providerLevel = null;
+
             // The head's DECLARATION is what matters here, never its summary.
             if (!openingLevel.TryLookup(head, out var found, out var hit, out _))
-                return default;
+                return false;
 
             var headNode = hit.Property.Value;
             var (providerSeed, providerNavigated) = PropertyDependencyGraphBuilder.ChargePath(
@@ -831,33 +946,53 @@ internal static class PropertyExposureResolver
                 PropertyDependencyGraphBuilder.PublicSteps(steps),
                 memos);
             if (providerNavigated < steps.Count)
-                return default;
+                return false;
 
             var provider = PropertyDependencyGraphBuilder.NavigateNode(headNode, steps);
             if (provider is null
                 || PropertyDependencyGraphBuilder.TryChargeProvidedMember(provider, pending, memos) is not { } memberSeed)
-                return default;
+                return false;
 
-            var seed = PropertyDependencyGraphBuilder.ExpandThroughNodes(
+            seed = PropertyDependencyGraphBuilder.ExpandThroughNodes(
                 memberSeed,
                 PropertyDependencyGraphBuilder.NodePath(headNode, steps),
                 memos);
             seed.UnionWith(providerSeed);
-            return (true, ResolveSeed(seed, found, site, boundOwners));
+            providerLevel = found;
+            return true;
         }
 
-        /// <summary>The requirements of a seed relative to <paramref name="level"/>, resolved from there outward.</summary>
-        private RequirementSet ResolveSeed(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        /// <summary>
+        /// The requirements of a seed relative to <paramref name="level"/>, resolved from there outward;
+        /// the result is <paramref name="self"/>'s (see <see cref="Frame"/>).
+        /// </summary>
+        private IEnumerator<Frame> ResolveSeed(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level,
+            SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
                 .Concat(site.ResolveRequirements(seed.OwnerQualifiedParameters, boundOwners)));
             foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
-                names = sets.Union(names, ResolveVisibleName(dependencyName, level, site, boundOwners));
+            {
+                // A bare visible name (see ResolveVisibleName): the chain's property first.
+                if (TryLookupSummary(level, dependencyName, out _, out _, out var summary))
+                {
+                    names = sets.Union(names, sets.Adopt(summary));
+                    continue;
+                }
+
+                var provided = ReferenceFrame(new PendingReference(dependencyName, [], []), level, site, boundOwners);
+                yield return provided;
+                names = sets.Union(names, provided.Result);
+            }
 
             foreach (var pending in seed.PendingReferences)
-                names = sets.Union(names, Resolve(pending, level, site, boundOwners));
+            {
+                var settled = ReferenceFrame(pending, level, site, boundOwners);
+                yield return settled;
+                names = sets.Union(names, settled.Result);
+            }
 
-            return names;
+            self.Result = names;
         }
 
         /// <summary>
@@ -868,13 +1003,12 @@ internal static class PropertyExposureResolver
         /// its own requirements. A name provided by nothing (an unresolvable name, or one the
         /// prelude declares) contributes no requirement.
         /// </summary>
-        public RequirementSet ResolveVisibleName(string name, SummaryScope level, SummaryScope? site = null,
-            IReadOnlySet<Algorithm>? boundOwners = null)
+        public RequirementSet ResolveVisibleName(string name, SummaryScope level)
         {
             if (TryLookupSummary(level, name, out _, out _, out var summary))
                 return sets.Adopt(summary);
 
-            return Resolve(new PendingReference(name, [], []), level, site, boundOwners);
+            return Run(ReferenceFrame(new PendingReference(name, [], []), level, site: null, boundOwners: null));
         }
     }
 

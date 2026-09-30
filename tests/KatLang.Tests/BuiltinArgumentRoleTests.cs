@@ -335,14 +335,17 @@ public class BuiltinArgumentRoleTests
     public async Task InitialRejections_KeepTheirReports()
     {
         // A parameterized callable is the reducer written where the accumulator belongs:
-        // reduce's dedicated hint, decided from the signature without entering the body.
-        var inc = await OnEveryRouteAsync(Add + "Inc(x) = trace(x) + 1\nreduce([1, 2], Add, Inc)");
+        // reduce's dedicated hint, decided from the signature without entering the body. The
+        // initial accumulator is a VALUE slot an inferring root would lift the callable into
+        // (the unified formula-lifting law), so the bare demand is pinned under a closed list.
+        var inc = await OnEveryRouteAsync(Add + "Inc(x) = trace(x) + 1\nProbe(u) = reduce([1, 2], Add, Inc)\nProbe(0)");
         AssertFails(inc, KatLangErrorCode.ArityMismatch);
         Assert.Contains("the last argument must be an initial accumulator value", Message(inc));
         Assert.Contains("still needs 'x'", Message(inc));
         // A clause family keeps the law's report; a collecting-only callable is demanded as
-        // the value it denotes (its own body, one evaluation).
-        AssertFails(await OnEveryRouteAsync(Add + "Fam(0) = 0\nFam(n) = n\nreduce([1, 2], Add, Fam)"), KatLangErrorCode.NoMatchingBranch);
+        // the value it denotes (its own body, one evaluation) — it accepts zero arguments, so
+        // it never lifts, root or not.
+        AssertFails(await OnEveryRouteAsync(Add + "Fam(0) = 0\nFam(n) = n\nProbe(u) = reduce([1, 2], Add, Fam)\nProbe(0)"), KatLangErrorCode.NoMatchingBranch);
         AssertOk(await OnEveryRouteAsync("Keep(e, a) = a\nOnly(*xs) = trace(xs)\nreduce([1, 2], Keep, Only)"), "L[]", "trace(L[])");
     }
 
@@ -474,8 +477,9 @@ public class BuiltinArgumentRoleTests
     public async Task FailedSpread_OfACallable_IsItsOwnZeroArgumentRejection_NotAPhantomArity()
     {
         // `take(Inc*)` fails with ArityMismatch either way, so the MESSAGE decides: the spread's
-        // own demand of `Inc`, never `take`'s "called with 1 argument".
-        var observation = await OnEveryRouteAsync("Inc(x) = x + 1\ntake(Inc*)");
+        // own demand of `Inc`, never `take`'s "called with 1 argument". A spread operand is a
+        // value position an inferring root would lift `Inc` into, so it sits under a closed list.
+        var observation = await OnEveryRouteAsync("Inc(x) = x + 1\nProbe(u) = take(Inc*)\nProbe(0)");
         AssertFails(observation, KatLangErrorCode.ArityMismatch);
         Assert.Contains("Property 'Inc' expects 1 parameter", Message(observation));
         Assert.DoesNotContain("take(collection, count)", Message(observation));

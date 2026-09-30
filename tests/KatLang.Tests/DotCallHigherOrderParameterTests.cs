@@ -297,18 +297,21 @@ public class DotCallHigherOrderParameterTests
     {
         // `(Inc, Inc)` is a genuine capture: the algorithm channel sees only a
         // zero-parameter value thunk, so both spellings fail evaluating the
-        // thunk's bare `Inc` output rows identically.
+        // thunk's bare `Inc` output rows identically. A capture's elements are value
+        // positions an inferring body would lift, so the call sits under a closed list.
         var dotError = AssertBothEvaluatorsFail(
             """
             Inc(x) = x + 1
             K(a, t) = a.t
-            K(7, (Inc, Inc))
+            Probe(u) = K(7, (Inc, Inc))
+            Probe(0)
             """);
         var plainError = AssertBothEvaluatorsFail(
             """
             Inc(x) = x + 1
             K(a, t) = t(a)
-            K(7, (Inc, Inc))
+            Probe(u) = K(7, (Inc, Inc))
+            Probe(0)
             """);
         Assert.IsType<EvalError.ArityMismatch>(dotError);
         Assert.IsType<EvalError.ArityMismatch>(plainError);

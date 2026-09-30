@@ -201,9 +201,11 @@ public class ImplicitParameterProvenanceAttachmentTests
         // 1:19-1:25 of the member token), so the importing document's report — built from
         // the module property's declarations at the local demand — keeps the demand span,
         // while the receiver-aware wording and suggestion survive on the same object and no
-        // module coordinate is rendered into the message.
+        // module coordinate is rendered into the message. (An opened member lifts like every
+        // callable, so the demand sits under a closed list: an inferring root would lift
+        // `Ceiling` instead.)
         var parsed = await SourceProvenance.ParseValidAsync(
-            "open 'https://katlang.org/g24.kat'\nUse + 1",
+            "open 'https://katlang.org/g24.kat'\nP(u) = Use + 1\nP(0)",
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Use = Math.Ceiling(2.1)") });
         var edge = SingleNotedEdge(parsed.Root);
         var note = edge.InferredFallbackProvenance!;
@@ -216,7 +218,7 @@ public class ImplicitParameterProvenanceAttachmentTests
         Assert.Same(note, Assert.Single(Notes(error)));
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         Assert.Equal(2, error.Span?.Start.Line);
-        Assert.Equal(1, error.Span?.Start.Column);
+        Assert.Equal(8, error.Span?.Start.Column);
         var message = KatLangError.FromEvalError(error).Message;
         Assert.Contains("Did you mean 'Math.Ceil'?", message, StringComparison.Ordinal);
         Assert.DoesNotContain("[1:19]", message, StringComparison.Ordinal);

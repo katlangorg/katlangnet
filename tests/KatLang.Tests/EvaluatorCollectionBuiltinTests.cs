@@ -388,11 +388,14 @@ public class EvaluatorCollectionBuiltinTests
             1);
 
         // The old bare three-argument form over-supplies the fixed
-        // filter(collection, predicate) signature.
+        // filter(collection, predicate) signature. (`KeepEmpty` then stands in a surplus
+        // slot, a value position an inferring root would lift it into, so the call sits
+        // under a closed list.)
         AssertEvalFailsWithArityMismatch(
             """
             KeepEmpty(x) = x.count == 0
-            filter((), 1, KeepEmpty)
+            Probe(u) = filter((), 1, KeepEmpty)
+            Probe(0)
             """,
             expected: 2,
             actual: 3);

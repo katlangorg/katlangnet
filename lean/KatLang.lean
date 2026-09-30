@@ -316,6 +316,104 @@ namespace ParameterPattern
       | [] => false
       | pattern :: rest => hasSingletonSequenceGroup pattern || anyHasSingletonSequenceGroup rest
   end
+
+  /-- The number of collecting captures at ONE pattern level; captures nested
+      inside a structural pattern belong to that pattern's own level. -/
+  def collectingCaptureCountAtCurrentLevel : List ParameterPattern -> Nat
+    | [] => 0
+    | .capture parameter :: rest =>
+        (if parameter.kind == ParameterKind.collecting then 1 else 0)
+          + collectingCaptureCountAtCurrentLevel rest
+    | .sequenceValue _ :: rest => collectingCaptureCountAtCurrentLevel rest
+    | .listValue _ :: rest => collectingCaptureCountAtCurrentLevel rest
+    | .unpacking _ :: rest => collectingCaptureCountAtCurrentLevel rest
+
+  mutual
+    /-- Whether some pattern level NESTED in a pattern holds more than one
+        collecting capture. -/
+    def hasMultipleCollectingLevel : ParameterPattern -> Bool
+      | .capture _ => false
+      | .sequenceValue items =>
+          1 < collectingCaptureCountAtCurrentLevel items || anyHasMultipleCollectingLevel items
+      | .listValue items =>
+          1 < collectingCaptureCountAtCurrentLevel items || anyHasMultipleCollectingLevel items
+      | .unpacking items =>
+          1 < collectingCaptureCountAtCurrentLevel items || anyHasMultipleCollectingLevel items
+
+    /-- Whether some pattern level nested in any pattern of a list holds more
+        than one collecting capture. -/
+    def anyHasMultipleCollectingLevel : List ParameterPattern -> Bool
+      | [] => false
+      | pattern :: rest => hasMultipleCollectingLevel pattern || anyHasMultipleCollectingLevel rest
+  end
+
+  /-- AT MOST ONE COLLECTING CAPTURE PER PATTERN LEVEL: whether a pattern list,
+      or some level nested in it, holds more than one. The binders allocate a
+      level's supply around ONE movable collector (`findCollecting`), so a second
+      collector at the same level leaves the allocation undefined: such a list is
+      a rejected signature, never a lower minimum (`minimumSuppliedSlots`).
+      C#: `ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel`. -/
+  def hasMultipleCollectingCapturesAtAnyLevel (patterns : List ParameterPattern) : Bool :=
+    1 < collectingCaptureCountAtCurrentLevel patterns || anyHasMultipleCollectingLevel patterns
+
+  mutual
+    /-- The names of the COLLECTING captures of a pattern, at any depth, left to
+        right. Total (unlike `captures`), so the validity laws evaluate. -/
+    def collectingNames : ParameterPattern -> List Ident
+      | .capture parameter => if parameter.kind == ParameterKind.collecting then [parameter.name] else []
+      | .sequenceValue items => anyCollectingNames items
+      | .listValue items => anyCollectingNames items
+      | .unpacking items => anyCollectingNames items
+
+    def anyCollectingNames : List ParameterPattern -> List Ident
+      | [] => []
+      | pattern :: rest => collectingNames pattern ++ anyCollectingNames rest
+  end
+
+  mutual
+    /-- How many captures of a pattern bind `name`, at any depth. -/
+    def nameOccurrences (name : Ident) : ParameterPattern -> Nat
+      | .capture parameter => if parameter.name == name then 1 else 0
+      | .sequenceValue items => anyNameOccurrences name items
+      | .listValue items => anyNameOccurrences name items
+      | .unpacking items => anyNameOccurrences name items
+
+    def anyNameOccurrences (name : Ident) : List ParameterPattern -> Nat
+      | [] => 0
+      | pattern :: rest => nameOccurrences name pattern + anyNameOccurrences name rest
+  end
+
+  /-- Whether a repeated capture name includes a collecting binding: a written
+      head may repeat a name only among fixed captures (Q-05's constraints), never
+      with a collector. C#: `ParameterPattern.HasRepeatedCaptureNameIncludingCollecting`. -/
+  def hasRepeatedCaptureNameIncludingCollecting (patterns : List ParameterPattern) : Bool :=
+    (anyCollectingNames patterns).any (fun name => 2 ≤ anyNameOccurrences name patterns)
+
+  /-- The rule a parameter-pattern list breaks as a callable SIGNATURE, in rule
+      order. C#: `ParameterSignatureViolation`. -/
+  inductive SignatureViolation where
+    | singletonSequencePattern
+    | multipleCollectingAtOneLevel
+    | repeatedNameIncludesCollecting
+    deriving Repr, DecidableEq, BEq
+
+  /-- THE STRUCTURAL VALIDITY OF A SIGNATURE (X-02, September 30 2026): the first
+      rule a parameter-pattern list breaks as a callable signature, or `none` for
+      a valid one — no one-item sequence pattern at any depth (the singleton
+      rule), at most one collecting capture per pattern level, and no repeated
+      name that includes a collecting binding. These are exactly the rules a
+      WRITTEN parameter list is held to, and the C# front end holds every
+      INFERRED signature to them too: formula lifting that would compose an
+      invalid contract (`C1(a, *p)`, `C2(b, *q)`, `K = C1 + C2` would give
+      `K(a, *p, b, *q)`) is the definition's front-end error, never a signature
+      that reaches a binder. A collecting name two callees share is ONE binding
+      (`K(a, *rest, b)` is valid), and a collector nested in its own group is its
+      group's level. C#: `ParameterPattern.FindSignatureViolation`. -/
+  def signatureViolation? (patterns : List ParameterPattern) : Option SignatureViolation :=
+    if anyHasSingletonSequenceGroup patterns then some .singletonSequencePattern
+    else if hasMultipleCollectingCapturesAtAnyLevel patterns then some .multipleCollectingAtOneLevel
+    else if hasRepeatedCaptureNameIncludingCollecting patterns then some .repeatedNameIncludesCollecting
+    else none
 end ParameterPattern
 
 def callableParameterNameStartChar (c : Char) : Bool :=
@@ -2262,6 +2360,20 @@ def Algorithm.hasSingletonSequencePattern : Algorithm -> Bool
   | .builtin _ => false
   | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.headHasSingletonSequenceGroup)
 
+/-- The one message of a parameter-pattern level with more than one collecting
+    capture — the parser's wording for a written head. C#:
+    `Parser.MultipleCollectingBindingsPerLevelDiagnostic`, shared by the
+    pre-evaluation violation `PreEvaluationAstViolation.MultipleCollectingCaptures`. -/
+def multipleCollectingBindingsPerLevelMessage : String :=
+  "Only one collecting binding is allowed per pattern level."
+
+/-- The collector rule over an algorithm's OWN parameter patterns (X-02): some
+    pattern level holds more than one collecting capture. -/
+def Algorithm.hasMultipleCollectingCaptures : Algorithm -> Bool
+  | .mk _ parameters _ _ _ _ => ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel parameters
+  | .builtin _ => false
+  | .conditional _ _ _ _ => false
+
 mutual
   /-- Pre-evaluation structural validation over a whole algorithm tree:
       - explicit algorithm parameters only appear on algorithms that define
@@ -2270,6 +2382,10 @@ mutual
         pattern (the singleton rule; `illegalInEval`
         `singletonSequencePatternMessage`) — a host-built tree cannot give such
         a pattern a meaning the surface language refuses it
+      - no parameter-pattern level holds more than one collecting capture (X-02;
+        `illegalInEval` `multipleCollectingBindingsPerLevelMessage`): the
+        binders allocate a level around ONE movable collector, so a host-built
+        tree cannot reach them with a second one
       - conditional algorithms have uniform top-level branch pattern arity and
         uniform top-level branch output arity (`branchArityMismatch`,
         `branchOutputArityMismatch`)
@@ -2281,6 +2397,8 @@ mutual
       (name : Ident := "conditional") : EvalM Unit := do
     if a.hasSingletonSequencePattern then
       .error (Error.illegalInEval singletonSequencePatternMessage)
+    if a.hasMultipleCollectingCaptures then
+      .error (Error.illegalInEval multipleCollectingBindingsPerLevelMessage)
     match a with
     | .mk _ parameters op pr out _ =>
         if !parameters.isEmpty && out.isEmpty then
@@ -7761,16 +7879,153 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
     halves, and they cannot disagree about a callable (see
     `bare_reference_lifts_iff_not_cacheable`).
 
-    The argument is the callee's LIFTING signature, the list the surface pass
-    reads for a sibling (a user algorithm's `parameterPatterns`; a Math
-    function's registry signature, which always requires its arguments). A
-    clause family's lifting signature is empty, so a family reference is never
-    lifted — an open question of its own (PV-14 / Q-13), unchanged by this
-    rule. C#: `ImplicitArgumentResolver.RequiresSuppliedArguments` over
+    The argument is the callee's LIFTING signature (`Algorithm.liftingSignature?`,
+    one contract for every kind since the unified formula-lifting law of
+    2026-09-30): a user algorithm's `parameterPatterns`, a builtin's callable
+    interface, a clause family's derived whole-slot signature. C#:
+    `ImplicitArgumentResolver.RequiresSuppliedArguments` over
     `CallableSignature.AcceptsZeroSuppliedArguments` /
     `ParameterPattern.AcceptsZeroSuppliedSlots`. -/
 def liftsBareValueReference (signature : List ParameterPattern) : Bool :=
   ParameterPattern.minimumSuppliedSlots signature != 0
+
+/-!
+### The unified formula-lifting law (decided 2026-09-30)
+
+In an inferring formula, a resolved callable reference is lifted when that occurrence is used as
+a VALUE, and its lifting signature is derived from the resolved callable's contract, independent
+of the callable's category or the route that resolved it. Two operations, both specified here and
+implemented by the C# front end (Lean has no front end):
+
+- `LiftingRole` / `liftingSlotRole` — the role a slot gives the reference that fills it, decided
+  by the slot's IMMEDIATE consumer (C# `FormulaLiftingRoles`). Every operator operand, index part,
+  spread operand, list and capture element and output row is a VALUE slot; a call's callee is
+  CALLABLE; a call's arguments take the roles `liftingSlotRole` gives them. A compound expression
+  in a callable slot is still examined: its own children take the roles of THEIR consumers
+  (`Twice(A)` keeps `A`, `Twice(A + 0)` lifts it). Laziness does not change a role: an `if` branch
+  is a value slot whether or not a run selects it, exactly as a free name written there is a
+  parameter (PAR-03).
+- `Algorithm.liftingSignature?` — the one lifting signature of every kind.
+
+A lone bare row is not a formula (FWD-02 completes it, `aliasesLoneBareReference`), and the
+never-called root keeps a bare row as the callable's own rejection. -/
+
+/-- The role a slot gives the reference that fills it (C#: `LiftingRole`). -/
+inductive LiftingRole where
+  | value
+  | callable
+  deriving Repr, BEq, DecidableEq
+
+/-- What a consumer needs to know about the callable it calls: its KIND, which elaboration never
+    changes (C#: `LiftingCalleeKind`). A `strictValue` callee is a Math member or a host
+    operation (neither is modeled here beyond this kind). -/
+inductive LiftingCalleeKind where
+  | dynamic
+  | user
+  | family
+  | builtin (b : Builtin)
+  | strictValue
+  deriving Repr, BEq
+
+/-- A loop builtin invokes its step (position 0); its count and initial state are values. -/
+def Builtin.isLoop : Builtin -> Bool
+  | .whileBuiltin | .repeatBuiltin => true
+  | _ => false
+
+/-- The role of supplied position `position` of a builtin: only a callback keeps its callable
+    identity. The collection, the value controls and a SURPLUS position beyond the signature are
+    values — a surplus slot is value-evaluated like a value slot before the arity verdict, just as
+    every argument of a Math member, a host operation and a clause family is a value whatever the
+    call's arity, so no role depends on how many arguments a call supplies. A loop's step is
+    invoked and every later position is a value; `if`, `atoms` and `range` take values only. -/
+def builtinLiftingSlotRole (b : Builtin) (position : Nat) : LiftingRole :=
+  match sequenceBuiltinMetadata? b with
+  | some metadata => if metadata.slotRole position == .callback then .callable else .value
+  | none => if b.isLoop && position == 0 then .callable else .value
+
+/-- Whether every position of a builtin is a value slot (a position after a spread slot is known
+    only at run time, so it is a value slot only then). -/
+def builtinEverySlotIsValue (b : Builtin) : Bool :=
+  match sequenceBuiltinMetadata? b with
+  | some metadata => metadata.suffixArgs.all (fun suffix => suffix.kind != .algorithm)
+  | none => !b.isLoop
+
+/-- THE ROLE TABLE of a call's supplied positions (C#: `FormulaLiftingRoles.SlotRole`): a clause
+    family, a Math member and a host operation demand every argument's value (a family before any
+    clause is tried, PAT-07); a builtin reads its registry role; a user callable's argument stays
+    NEUTRAL — its binder decides at run time, a plain capture keeping both channels — and so does
+    a callee known only at run time. `positionKnown` is false once a spread slot precedes it. -/
+def liftingSlotRole (callee : LiftingCalleeKind) (position : Nat) (positionKnown : Bool) : LiftingRole :=
+  match callee with
+  | .family | .strictValue => .value
+  | .builtin b =>
+      if positionKnown then builtinLiftingSlotRole b position
+      else if builtinEverySlotIsValue b then .value else .callable
+  | .user | .dynamic => .callable
+
+/-- The top-level argument positions of a clause head: the head's own argument list
+    (`sequenceValue`), or its lone pattern (`Pattern.topLevelArity`). -/
+def Pattern.topLevelPositions : Pattern -> List Pattern
+  | .sequenceValue ps => ps
+  | p => [p]
+
+/-- The name one clause votes for a position: the plain binder it binds there. A literal, a
+    structural pattern and a binderless group name nothing. -/
+def Pattern.positionName? : Pattern -> Option Ident
+  | .bind x => some x
+  | _ => none
+
+/-- The name the clauses agree on for position `position`: every vote equal, at least one vote. -/
+def familyPositionName? (heads : List Pattern) (position : Nat) : Option Ident :=
+  match heads.filterMap (fun head => (head.topLevelPositions[position]?).bind Pattern.positionName?) with
+  | [] => none
+  | first :: rest => if rest.all (· == first) then some first else none
+
+/-- A CLAUSE FAMILY'S LIFTING SIGNATURE (decided 2026-09-30): one whole-value slot per top-level
+    argument position (the family's common arity, PAT-03), each named by the plain parameter the
+    clauses that bind it agree on, the names of different positions distinct. The lifted call hands
+    the family the caller's arguments whole, so dispatch is exactly the explicit call's. A family
+    whose clauses leave a position unnamed, name it differently, or give two positions one name has
+    none (`none`): it stays explicitly callable, and a formula that would lift it is the C# front
+    end's `UnliftableClauseFamily`. No name is ever invented.
+    C#: `ImplicitArgumentResolver.DeriveFamilyLiftingSignature`. -/
+def familyLiftingSignature? (branches : List CondBranch) : Option (List ParameterPattern) :=
+  match branches with
+  | [] => none
+  | first :: _ =>
+      let heads := branches.map (·.pattern)
+      let arity := first.pattern.topLevelArity
+      if heads.any (fun head => head.topLevelArity != arity) then none
+      else
+        let names := (List.range arity).map (familyPositionName? heads)
+        let named := names.filterMap id
+        if named.length == arity && named.eraseDups.length == named.length
+        then some (named.map (fun name => ParameterPattern.capture { name := name }))
+        else none
+
+/-- A builtin's callable interface as formula lifting reads it (C#: `ToolingPlainSignature`): a
+    collection builtin's registry parameters, `if`'s three, `atoms`' value, `range`'s bounds, and a
+    loop's step (and count) with its variadic initial state `*init`. -/
+def builtinLiftingSignature (b : Builtin) : List ParameterPattern :=
+  let fixed (names : List Ident) := names.map (fun name => ParameterPattern.capture { name := name })
+  match sequenceBuiltinMetadata? b with
+  | some metadata => metadata.parameters.map ParameterPattern.capture
+  | none =>
+      match b with
+      | .ifBuiltin => fixed ["condition", "whenTrue", "whenFalse"]
+      | .whileBuiltin => fixed ["step"] ++ [.capture { name := "init", kind := .collecting }]
+      | .repeatBuiltin => fixed ["step", "count"] ++ [.capture { name := "init", kind := .collecting }]
+      | .atomsBuiltin => fixed ["value"]
+      | .rangeBuiltin => fixed ["start", "stop"]
+      | _ => []
+
+/-- THE ONE LIFTING SIGNATURE of every algorithm kind (the unified formula-lifting law): a user
+    algorithm's parameter patterns, a builtin's callable interface, a clause family's derived
+    whole-slot signature (or none). C#: `ImplicitArgumentResolver.TryResolveLiftable`. -/
+def Algorithm.liftingSignature? : Algorithm -> Option (List ParameterPattern)
+  | .mk _ parameters _ _ _ _ => some parameters
+  | .builtin b => some (builtinLiftingSignature b)
+  | .conditional _ _ branches _ => familyLiftingSignature? branches
 
 /-- **Lone-row eligibility** (FWD-02, decided 2026-09-29; surface syntax support —
     the specification of the surface pass's decision for a body whose ONE written row

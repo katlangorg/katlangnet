@@ -89,17 +89,19 @@ internal static class ImplicitArgumentResolver
     internal static Algorithm ResolvePrevalidated(
         Algorithm root,
         FrontEndTraversalObservations? observations = null,
-        DiagnosticBag? diagnostics = null)
+        DiagnosticBag? diagnostics = null,
+        HostOperations? hostOperations = null)
     {
+        var run = new ResolutionRun { Observations = observations, Prelude = PreludeContext.For(hostOperations) };
         return ProcessAlgorithm(
             root,
-            parentParamMap: SignatureMap.Empty(observations),
+            parentParamMap: SignatureMap.Empty(observations, run.Pending),
             ForwardableParameters.None,
             isRoot: true,
             observations,
             diagnostics,
             branchContext: null,
-            new ResolutionRun { Observations = observations });
+            run);
     }
 
     /// <summary>
@@ -111,7 +113,7 @@ internal static class ImplicitArgumentResolver
     /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
     /// garbage afterwards — never static, never ambient.
     /// </summary>
-    private sealed class ResolutionRun(SourceSpan? importSite = null)
+    private sealed class ResolutionRun(SourceSpan? importSite = null, PendingProperties? outerPending = null)
     {
         /// <summary>
         /// The import site of the module content the walk is currently inside (see
@@ -261,6 +263,302 @@ internal static class ImplicitArgumentResolver
         public readonly NameSetInterner ReferenceNameSets = new();
         public readonly SignatureFootprints Footprints = new();
         public readonly BranchContextInterner BranchContexts = new();
+
+        /// <summary>The prelude a name the owner walk leaves to it resolves in (builtins, Math, host operations).</summary>
+        public required PreludeContext Prelude { get; init; }
+
+        /// <summary>The properties whose owners' loops have not processed them yet (the demand table).</summary>
+        public readonly PendingProperties Pending = new(outerPending);
+
+        /// <summary>The live structural depth and the on-demand processing it admits.</summary>
+        public readonly DemandDepthBudget DepthBudget = new();
+
+        /// <summary>Admits a demand for <paramref name="property"/> (see <see cref="DemandDepthBudget.TryEnter"/>).</summary>
+        public bool TryEnterDemand(Property property, DiagnosticBag? diagnostics)
+            => DepthBudget.TryEnter(property, diagnostics, ImportSite);
+
+        public void ExitDemand() => DepthBudget.Exit();
+
+        /// <summary>The first-PUBLIC member index of each open provider, by exact provider reference.</summary>
+        public OpenMemberIndexCache OpenMemberIndexes => _openMemberIndexes ??= new(Observations);
+        private OpenMemberIndexCache? _openMemberIndexes;
+
+        /// <summary>The lifting signature of each resolved algorithm outside the document's map (prelude, opened and dotted members, families), by reference.</summary>
+        public readonly Dictionary<Algorithm, LiftingSignature> LiftingSignatures = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The import site the current property loop started under (a demanded property is processed under it).</summary>
+        public ImportSiteScope EnterImportSiteExactly(SourceSpan? site)
+        {
+            var saved = ImportSite;
+            ImportSite = site;
+            return new ImportSiteScope(this, saved);
+        }
+    }
+
+    /// <summary>
+    /// The prelude as formula lifting sees it: the members a program can call at run time — the
+    /// builtins, the <c>Math</c> module and its aliases, and the run's host operations — resolved in
+    /// the signature-only semantic prelude parameter detection used. <c>load</c> is a front-end
+    /// directive, not a runtime callable, so it has no lifting signature. A Math member (whichever
+    /// spelling reaches it — the alias and the canonical member share one algorithm) and a host
+    /// operation demand every argument's value.
+    /// </summary>
+    internal sealed class PreludeContext
+    {
+        private static readonly Lazy<PreludeContext> SharedDefault =
+            new(() => new PreludeContext(BuiltinRegistry.CreateSemanticPreludeAlgorithm(), hostOperations: null));
+
+        private readonly Algorithm.User _prelude;
+        private readonly HashSet<string> _callableNames;
+        private readonly HashSet<Algorithm> _strictValue = new(ReferenceEqualityComparer.Instance);
+
+        private PreludeContext(Algorithm.User prelude, HostOperations? hostOperations)
+        {
+            _prelude = prelude;
+            _callableNames = new HashSet<string>(BuiltinRegistry.BuiltinNames, StringComparer.Ordinal);
+            _callableNames.UnionWith(BuiltinRegistry.RuntimePreludeExtraNames);
+            if (ElaboratedScopeLookup.TryLookupProperty(prelude, BuiltinRegistry.MathModuleName)?.Property.Value is { } math)
+            {
+                foreach (var member in math.Properties)
+                    _strictValue.Add(member.Value);
+            }
+
+            foreach (var operation in hostOperations?.Operations ?? [])
+            {
+                _callableNames.Add(operation.Name);
+                if (ElaboratedScopeLookup.TryLookupProperty(prelude, operation.Name) is { } hostMember)
+                    _strictValue.Add(hostMember.Property.Value);
+            }
+        }
+
+        public static PreludeContext For(HostOperations? hostOperations)
+            => hostOperations is null ? SharedDefault.Value : new PreludeContext(hostOperations.SemanticPreludeAlgorithm, hostOperations);
+
+        /// <summary>The prelude member a name the owner walk leaves undecided resolves to, if it is a runtime callable.</summary>
+        public bool TryGetMember(string name, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Property? member)
+        {
+            member = _callableNames.Contains(name) ? ElaboratedScopeLookup.TryLookupProperty(_prelude, name)?.Property : null;
+            return member is not null;
+        }
+
+        /// <summary>Whether a resolved algorithm is a Math member or a host operation (every argument a value).</summary>
+        public bool IsStrictValue(Algorithm algorithm) => _strictValue.Contains(algorithm);
+    }
+
+    /// <summary>
+    /// HOST SAFETY OF ON-DEMAND PROCESSING (one per resolution run). A demand processes a pending
+    /// property in the MIDDLE of another property's rewrite, so the two recursions stack — the one
+    /// place the resolver's depth is not the tree's own, which the structural preflight bounded. A
+    /// demand is admitted only when the demanded property's structural height fits the depth left
+    /// under the pass's structural gate (<see cref="EvaluationLimits.MaxSupportedAstDepth"/>) after
+    /// the live depth and this demand's own frames (<see cref="FrameWeight"/>, charged to the live
+    /// depth while it runs): however demands chain, the stack never exceeds what one legal traversal
+    /// of that depth may use. A refused demand is the front-end error
+    /// <see cref="DiagnosticCode.AstDepthLimitExceeded"/> at the demanded property, reported once —
+    /// never a silent stale read and never a host stack overflow. Deterministic: the live depth is a
+    /// function of the program and the traversal order alone.
+    /// </summary>
+    internal sealed class DemandDepthBudget
+    {
+        /// <summary>
+        /// The resolver's LIVE structural depth: the algorithms, rewritten expressions and collected
+        /// expressions currently on its recursion path, one unit each — the depth the structural
+        /// preflight bounds for one traversal — plus <see cref="FrameWeight"/> units for every active
+        /// on-demand processing's own frames.
+        /// </summary>
+        public int LiveDepth;
+
+        private HashSet<Property>? _refused;
+
+        /// <summary>
+        /// The depth units one on-demand processing's own frames are charged: measured in September
+        /// 2026 at about 7.9 KB of frames per demand beside about 0.96 KB per live-depth unit of the
+        /// rewrite (debug build), so one demand weighs a little over eight units; ten keep a margin.
+        /// </summary>
+        internal const int FrameWeight = 10;
+
+        /// <summary>
+        /// Admits a demand for <paramref name="property"/>, charging its frames to the live depth
+        /// until <see cref="Exit"/>; otherwise reports the refusal once (at the property's declaration,
+        /// or <paramref name="importSite"/> for imported content) and returns false.
+        /// </summary>
+        public bool TryEnter(Property property, DiagnosticBag? diagnostics, SourceSpan? importSite)
+        {
+            if (_refused?.Contains(property) == true)
+                return false;
+
+            var remaining = EvaluationLimits.MaxSupportedAstDepth - LiveDepth - FrameWeight;
+            if (remaining >= 1
+                && AstStructuralPreflight.Check(property.Value, remaining, AstConsumerProfile.FullyRecursive) is null)
+            {
+                LiveDepth += FrameWeight;
+                return true;
+            }
+
+            (_refused ??= new(ReferenceEqualityComparer.Instance)).Add(property);
+            diagnostics?.Report(
+                DiagnosticCode.AstDepthLimitExceeded,
+                property.FirstDeclarationSpan ?? importSite,
+                property.Name,
+                static name => BeyondBudgetMessage(name));
+            return false;
+        }
+
+        /// <summary>Ends an admitted demand, releasing its frames' charge.</summary>
+        public void Exit() => LiveDepth -= FrameWeight;
+
+        internal static string BeyondBudgetMessage(string name)
+        {
+            var property = ExprNameRenderer.BoundName(name);
+            return $"'{property}' is reached through a chain of definitions that is too deep to elaborate safely: "
+                + $"formula lifting needs the signature of '{property}' while the definitions that lead to it are still being elaborated, "
+                + $"and elaborating it there would exceed the structural depth limit of {EvaluationLimits.MaxSupportedAstDepth} nodes. "
+                + "Shorten this chain of definitions that depend on one another.";
+        }
+    }
+
+    /// <summary>
+    /// The DEMAND TABLE of one resolution: every property entry a level's loop has not processed yet,
+    /// with its loop. The sibling-order channel orders a level's properties so every read it can
+    /// classify sees processed siblings, and honors a soft preference for every read it can only
+    /// anticipate (a callee resolved only by name resolution's full power — an opened member, a
+    /// callee a nested body declares); a read that still reaches a pending property processes it on
+    /// demand (<see cref="PropertyLoop.EnsureOnDemand"/>), so no formula reads an unprocessed
+    /// signature outside a sibling cycle (whose members keep the processing-order fallback).
+    /// </summary>
+    internal sealed class PendingProperties(PendingProperties? outer = null)
+    {
+        private readonly Dictionary<VisibleProperty, (PropertyLoop Loop, int Index)> _entries = new(ReferenceEqualityComparer.Instance);
+
+        public void Register(VisibleProperty entry, PropertyLoop loop, int index) => _entries[entry] = (loop, index);
+
+        /// <summary>
+        /// The current entry of the property <paramref name="entry"/> was recorded for, processing it
+        /// first when allowed. A deferred branch's run consults the eager run's table for the entries
+        /// its snapshot recorded (their loops completed long before).
+        /// </summary>
+        public VisibleProperty Current(VisibleProperty entry)
+        {
+            if (!_entries.TryGetValue(entry, out var pending))
+                return outer?.Current(entry) ?? entry;
+            pending.Loop.EnsureOnDemand(pending.Index);
+            return pending.Loop.CurrentEntry(pending.Index);
+        }
+    }
+
+    /// <summary>
+    /// One level's property loop: processes each property once — in the order channel's topological
+    /// order, or earlier when a read demands it — and records its processed entry.
+    /// </summary>
+    internal sealed class PropertyLoop(PropertyDependencyGraph order, Action<int> process, Func<int, bool> tryEnterDemand, Action exitDemand)
+    {
+        private readonly byte[] _states = new byte[order.Count];   // 0 pending, 1 in progress, 2 done
+        private readonly VisibleProperty?[] _current = new VisibleProperty?[order.Count];
+
+        // How many properties of this level have completed: a refused demand stays refused until the
+        // next completion, because until then every property it reached in progress still is.
+        private int _completions;
+        private int[]? _refusedAtCompletion;   // 1 + the completion count a demand was refused at; 0 = never
+
+        public void Initialize(int index, VisibleProperty entry) => _current[index] = entry;
+
+        public VisibleProperty CurrentEntry(int index) => _current[index]!;
+
+        public void Complete(int index, VisibleProperty entry) => _current[index] = entry;
+
+        /// <summary>The loop driver: processes <paramref name="index"/> unless done or in progress.</summary>
+        public void Ensure(int index)
+        {
+            if (_states[index] != 0)
+                return;
+            _states[index] = 1;
+            process(index);
+            _states[index] = 2;
+            _completions++;
+        }
+
+        /// <summary>
+        /// A read's demand: processes the property ahead of its turn, together with every sibling it
+        /// hard-depends on that is still pending — dependencies first, exactly the order its turn would
+        /// have — so what it reads is what it would have read in order. Refused (the read sees the
+        /// property's current entry) for a member of a sibling cycle or a property depending on one
+        /// (<see cref="PropertyDependencyGraph.CyclicIndices"/>: the cycle keeps its processing-order
+        /// fallback); when that closure reaches a sibling still IN PROGRESS — the demanding read comes
+        /// from inside a property the demanded one depends on, so processing it now would read that
+        /// property unprocessed (a cycle no channel edge closed; the in-progress property is the one
+        /// that reads the unprocessed entry, as its turn came first); and when the run's depth budget
+        /// refuses (<see cref="DemandDepthBudget.TryEnter"/>).
+        /// </summary>
+        public void EnsureOnDemand(int index)
+        {
+            if (_states[index] != 0
+                || order.CyclicIndices.Contains(index)
+                || _refusedAtCompletion?[index] == _completions + 1)
+            {
+                return;
+            }
+
+            if (PendingClosure(index) is not { } closure)
+            {
+                (_refusedAtCompletion ??= new int[_states.Length])[index] = _completions + 1;
+                return;
+            }
+
+            foreach (var member in closure)
+            {
+                // A nested demand may have processed a later member meanwhile.
+                if (_states[member] != 0)
+                    continue;
+                if (!tryEnterDemand(member))
+                    return;
+                try
+                {
+                    Ensure(member);
+                }
+                finally
+                {
+                    exitDemand();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The pending hard-dependency closure of <paramref name="root"/> in dependency-first order
+        /// (<paramref name="root"/> last), or null when it reaches a property in progress. Iterative:
+        /// a long dependency chain never grows the host stack. A dependency of a property outside
+        /// every cycle is outside every cycle too (the cyclic set includes a cycle's dependents).
+        /// </summary>
+        private List<int>? PendingClosure(int root)
+        {
+            var closure = new List<int>();
+            var entered = new HashSet<int> { root };
+            var stack = new Stack<(int Property, int Next)>();
+            stack.Push((root, 0));
+            while (stack.TryPop(out var frame))
+            {
+                var dependencies = order[frame.Property].SiblingDependencyIndices;
+                var next = frame.Next;
+                var descended = false;
+                while (next < dependencies.Count)
+                {
+                    var dependency = dependencies[next++];
+                    if (_states[dependency] == 1)
+                        return null;
+                    if (_states[dependency] == 2 || !entered.Add(dependency))
+                        continue;
+
+                    stack.Push((frame.Property, next));
+                    stack.Push((dependency, 0));
+                    descended = true;
+                    break;
+                }
+
+                if (!descended)
+                    closure.Add(frame.Property);
+            }
+
+            return closure;
+        }
     }
 
     /// <summary>
@@ -285,7 +583,8 @@ internal static class ImplicitArgumentResolver
         CanonicalNameSet ForwardableNames,
         CanonicalNameSet ForwardableCollectingNames,
         int? ClosedSpecification,
-        bool ReportsDiagnostics)
+        bool ReportsDiagnostics,
+        OpenLevel? Opens)
     {
         public bool Equals(AlgorithmRegionKey? other)
             => other is not null
@@ -294,7 +593,8 @@ internal static class ImplicitArgumentResolver
                 && ForwardableNames.Equals(other.ForwardableNames)
                 && ForwardableCollectingNames.Equals(other.ForwardableCollectingNames)
                 && ClosedSpecification == other.ClosedSpecification
-                && ReportsDiagnostics == other.ReportsDiagnostics;
+                && ReportsDiagnostics == other.ReportsDiagnostics
+                && ReferenceEquals(Opens, other.Opens);
 
         public override int GetHashCode()
             => HashCode.Combine(
@@ -303,7 +603,8 @@ internal static class ImplicitArgumentResolver
                 ForwardableNames.GetHashCode(),
                 ForwardableCollectingNames.GetHashCode(),
                 ClosedSpecification,
-                ReportsDiagnostics);
+                ReportsDiagnostics,
+                Opens is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Opens));
     }
 
     /// <summary>
@@ -317,56 +618,160 @@ internal static class ImplicitArgumentResolver
     /// every later write to the map it came from — exactly the copy-on-entry semantics the former
     /// dictionary copy had.
     /// </summary>
-    private sealed class SignatureMap
+    internal sealed class SignatureMap
     {
-        private ImmutableDictionary<string, CallableSignature> _entries;
+        private ImmutableDictionary<string, VisibleProperty> _entries;
         public SignatureVersion Version { get; private set; }
         private readonly FrontEndTraversalObservations? _observations;
+        private readonly PendingProperties? _pending;
 
-        private SignatureMap(ImmutableDictionary<string, CallableSignature> entries, FrontEndTraversalObservations? observations)
+        private SignatureMap(
+            ImmutableDictionary<string, VisibleProperty> entries,
+            OpenLevel? opens,
+            PendingProperties? pending,
+            FrontEndTraversalObservations? observations)
         {
             _entries = entries;
             Version = new(entries, null, []);
+            Opens = opens;
+            _pending = pending;
             _observations = observations;
         }
 
         /// <summary>A fresh map with no visible signature (a root, an open-target region).</summary>
-        public static SignatureMap Empty(FrontEndTraversalObservations? observations)
-            => new(ImmutableDictionary.Create<string, CallableSignature>(StringComparer.Ordinal), observations);
+        public static SignatureMap Empty(FrontEndTraversalObservations? observations, PendingProperties? pending = null)
+            => new(ImmutableDictionary.Create<string, VisibleProperty>(StringComparer.Ordinal), opens: null, pending, observations);
 
-        /// <summary>A map over a recorded <see cref="Snapshot"/> (a deferred branch's demand-time run).</summary>
-        public static SignatureMap FromSnapshot(ImmutableDictionary<string, CallableSignature> snapshot, FrontEndTraversalObservations? observations)
-            => new(snapshot, observations);
+        /// <summary>
+        /// A map over a recorded <see cref="Snapshot"/> (a deferred branch's demand-time run), answering
+        /// pending questions through <paramref name="pending"/> — that run's table, chained to the one
+        /// the snapshot was recorded under.
+        /// </summary>
+        public static SignatureMap FromSnapshot(MapSnapshot snapshot, FrontEndTraversalObservations? observations, PendingProperties pending)
+            => new(snapshot.Entries, snapshot.Opens, pending, observations);
 
-        /// <summary>The current entries, frozen: later writes to this map never reach the snapshot.</summary>
-        public ImmutableDictionary<string, CallableSignature> Snapshot => _entries;
+        /// <summary>The current entries and open chain, frozen: later writes to this map never reach the snapshot.</summary>
+        public MapSnapshot Snapshot => new(_entries, Opens, _pending);
 
-        public bool TryGetValue(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out CallableSignature signature)
-            => _entries.TryGetValue(name, out signature);
+        /// <summary>
+        /// The <c>open</c> levels visible here, innermost first: consulted for a name only after the
+        /// whole owner walk (the entries, then the prelude) found nothing, one level at a time.
+        /// </summary>
+        public OpenLevel? Opens { get; private set; }
+
+        /// <summary>The entry as recorded in THIS map — a kind question, which processing never changes.</summary>
+        public bool TryGetValue(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out VisibleProperty entry)
+            => _entries.TryGetValue(name, out entry);
+
+        /// <summary>
+        /// The entry as it stands NOW — a signature question. A property its owner's loop has not
+        /// processed yet is processed on demand first when that is allowed
+        /// (<see cref="PropertyLoop.EnsureOnDemand"/>); otherwise — a cycle member, a property in
+        /// progress, one that depends on a property in progress — it answers with its current entry.
+        /// </summary>
+        public bool TryGetCurrent(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out VisibleProperty entry)
+        {
+            if (!_entries.TryGetValue(name, out entry))
+                return false;
+            if (_pending is { } pending)
+                entry = pending.Current(entry);
+            return true;
+        }
 
         public bool ContainsKey(string name) => _entries.ContainsKey(name);
 
-        /// <summary>A NEW map: these entries overlaid with <paramref name="locals"/> (local wins).</summary>
-        public SignatureMap Extend(IReadOnlyDictionary<string, CallableSignature> locals)
+        /// <summary>A NEW map: these entries overlaid with <paramref name="locals"/> (local wins), the open chain inherited.</summary>
+        public SignatureMap Extend(IReadOnlyDictionary<string, VisibleProperty> locals)
         {
             var extended = _entries.ToBuilder();
-            foreach (var (name, signature) in locals)
+            foreach (var (name, entry) in locals)
             {
-                extended[name] = signature;
+                extended[name] = entry;
                 _observations?.RecordContextEntryWritten();
             }
 
-            var result = new SignatureMap(extended.ToImmutable(), _observations);
+            var result = new SignatureMap(extended.ToImmutable(), Opens, _pending, _observations);
             result.Version = new(result._entries, Version, locals.Keys.ToArray());
             return result;
         }
 
-        /// <summary>Records a processed property's signature in THIS map (its creator's property loop only).</summary>
-        public void Set(string name, CallableSignature signature)
+        /// <summary>
+        /// Makes <paramref name="providers"/> (built over THIS map, whose entries the opener level's
+        /// loop keeps current) the innermost open level. Only on a map the opener level itself just
+        /// created, before anything reads it: its property loop writes to it and every nested body
+        /// extends it, so both see the level's opens.
+        /// </summary>
+        public void AttachOpens(Func<SignatureMap, IReadOnlyList<OpenProvider>> providers)
+            => Opens = new OpenLevel(providers(this), Opens);
+
+        /// <summary>Records a processed property's entry in THIS map (its creator's property loop only).</summary>
+        public void Set(string name, VisibleProperty entry)
         {
-            _entries = _entries.SetItem(name, signature);
+            _entries = _entries.SetItem(name, entry);
             Version = new(_entries, Version, [name]);
             _observations?.RecordContextEntryWritten();
+        }
+    }
+
+    /// <summary>A frozen <see cref="SignatureMap"/>: entries, open chain, and the demand table its pending entries answer through.</summary>
+    internal sealed record MapSnapshot(
+        ImmutableDictionary<string, VisibleProperty> Entries,
+        OpenLevel? Opens,
+        PendingProperties? Pending);
+
+    /// <summary>
+    /// One visible property of a rewrite: its signature and its algorithm — the INPUT value until its
+    /// owner's property loop has processed it, the processed value afterwards (a new entry). The
+    /// algorithm answers kind questions (a clause family, a user algorithm) and member questions (a
+    /// dotted or opened callee's own signature); an entry's identity is a region-key token.
+    /// </summary>
+    internal sealed class VisibleProperty(CallableSignature signature, Algorithm value)
+    {
+        public CallableSignature Signature { get; } = signature;
+
+        public Algorithm Value { get; } = value;
+    }
+
+    /// <summary>
+    /// One level's <c>open</c> providers, deduplicated first-occurrence-wins by the evaluator's key
+    /// (<see cref="Evaluator.OpenTargetDedupKey"/>), and the enclosing levels' chain.
+    /// </summary>
+    internal sealed record OpenLevel(IReadOnlyList<OpenProvider> Providers, OpenLevel? Outer);
+
+    /// <summary>
+    /// One <c>open</c> target, resolved LAZILY against the opener's map as it stands when a name is
+    /// looked up: its head (a property of the opener's chain, a prelude module, or an inline block or
+    /// module), then each dotted step's PUBLIC member — the evaluator's <c>ResolveAlgForOpen</c>. A
+    /// target that provides nothing (a parameter head, an unknown name, a non-open shape) resolves to
+    /// null. Its members are the provider's own properties, so a demanded provider is processed first.
+    /// </summary>
+    internal sealed class OpenProvider(Expr target, SignatureMap openerMap, PreludeContext prelude)
+    {
+        /// <summary>The target's head (a name, a block, …): <see cref="AstHelpers.OpenTargetHead(Expr)"/>.</summary>
+        public Expr Head => target.OpenTargetHead();
+
+        /// <summary>
+        /// The provider algorithm, or null. <paramref name="current"/> asks for the processed provider
+        /// (a signature question: a pending head property is processed on demand); otherwise the entry
+        /// as recorded suffices (a kind or membership question).
+        /// </summary>
+        public Algorithm? Resolve(bool current)
+        {
+            var head = target.OpenTargetHead(out var steps);
+            Algorithm? provider = head switch
+            {
+                Expr.Resolve(var name) => (current
+                        ? openerMap.TryGetCurrent(name, out var entry)
+                        : openerMap.TryGetValue(name, out entry))
+                    ? entry.Value
+                    : prelude.TryGetMember(name, out var preludeMember) ? preludeMember.Value : null,
+                Expr.AlgorithmExpr(var block) => block,
+                _ => null,
+            };
+
+            for (var i = 0; provider is not null && i < steps.Count; i++)
+                provider = ElaboratedScopeLookup.TryLookupPublicProperty(provider, steps[i])?.Property.Value;
+            return provider;
         }
     }
 
@@ -523,8 +928,8 @@ internal static class ImplicitArgumentResolver
     /// One immutable map version and the names changed since its parent. Retained only by the
     /// resolution run; deferred regions retain the immutable dictionary alone.
     /// </summary>
-    private sealed record SignatureVersion(
-        ImmutableDictionary<string, CallableSignature> Entries,
+    internal sealed record SignatureVersion(
+        ImmutableDictionary<string, VisibleProperty> Entries,
         SignatureVersion? Parent,
         IReadOnlyList<string> ChangedNames);
 
@@ -539,11 +944,11 @@ internal static class ImplicitArgumentResolver
     private sealed class SignatureFootprints
     {
         private readonly NameSetInterner _tokens = new();
-        private readonly Dictionary<string, Dictionary<CallableSignature, CanonicalNameSet>> _bindings = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Dictionary<VisibleProperty, CanonicalNameSet>> _bindings = new(StringComparer.Ordinal);
         private readonly Dictionary<int, Dictionary<SignatureVersion, CanonicalNameSet>> _projections = [];
         private int _nextToken;
 
-        private CanonicalNameSet Binding(string name, CallableSignature signature)
+        private CanonicalNameSet Binding(string name, VisibleProperty signature)
         {
             if (!_bindings.TryGetValue(name, out var signatures))
                 _bindings.Add(name, signatures = new(ReferenceEqualityComparer.Instance));
@@ -631,6 +1036,23 @@ internal static class ImplicitArgumentResolver
         public void Add(string name) => Set = interner.With(Set, [name]);
         public void Remove(string name) => Set = interner.Except(Set, interner.With(NameSetInterner.Empty, [name]));
         public void UnionWith(CanonicalNameSet other) => Set = interner.Union(Set, other);
+    }
+
+    /// <summary>
+    /// The open chain a nested algorithm's rewrite can read: the map's, when one of its free names is
+    /// neither a visible property nor a prelude member (only then does resolution consult opens).
+    /// </summary>
+    private static OpenLevel? OpensReadBy(CanonicalNameSet freeNames, SignatureMap map, ResolutionRun run)
+    {
+        if (map.Opens is not { } opens)
+            return null;
+        foreach (var name in freeNames.Names)
+        {
+            if (!map.ContainsKey(name) && !run.Prelude.TryGetMember(name, out _))
+                return opens;
+        }
+
+        return null;
     }
 
     private static CanonicalNameSet FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
@@ -724,8 +1146,11 @@ internal static class ImplicitArgumentResolver
 
             case Expr.DotCall dotCall:
                 // The target is read (a bare `Math` receiver is a shadow check, a called
-                // receiver is a name); the stored lexical fallback is never rewritten.
+                // receiver is a name). The stored lexical fallback is never rewritten, but its
+                // KIND classifies the edge's receiver and argument roles, so its name is read.
                 CollectReferenceNames(dotCall.Target, names, visited, run);
+                if (dotCall.EffectiveLexicalFallback is Expr.Resolve(var fallbackName))
+                    names.Add(fallbackName);
                 if (dotCall.Args is { } dotArgs)
                 {
                     foreach (var arg in dotArgs)
@@ -773,12 +1198,14 @@ internal static class ImplicitArgumentResolver
     /// them, and its closed-explicit-list gate. Every rewrite decision that is not a property
     /// of the node itself or of the visible signature map reads this record, so it must travel
     /// unchanged into every sub-context of the same algorithm — including value-demanding
-    /// (Math) argument bundles, which are ordinary value positions of the SAME caller.
+    /// argument slots (a Math, host-operation, builtin value or family argument), which are
+    /// ordinary value positions of the SAME caller: a value-demanding consumer decides WHERE
+    /// lifting happens, never HOW (an earlier revision erased this context for Math arguments,
+    /// and a neutral <c>Math.Abs(...)</c> wrapper then changed forwarding).
     ///
     /// <para>Bundling the values is deliberate: they are one semantic unit, and the
     /// defect this record replaces was exactly a call site that supplied some of them
-    /// degenerately and silently defaulted the others away
-    /// (see <see cref="ProcessValueDemandingArgumentBundle"/>).</para>
+    /// degenerately and silently defaulted the others away.</para>
     /// </summary>
     /// <param name="CallerParameterPatterns">
     /// The enclosing algorithm's parameter patterns — the forwarding SOURCE shape.
@@ -945,6 +1372,32 @@ internal static class ImplicitArgumentResolver
         /// observation once without changing or duplicating the rewritten node.
         /// </summary>
         public HashSet<Expr>? StrictValueDiagnosticVisits;
+
+        /// <summary>
+        /// Family reports already issued in this region. Strict/eager diagnostic replay may
+        /// revisit a value rewrite, but must not report its unnameable family a second time.
+        /// </summary>
+        public HashSet<Expr>? UnliftableFamilyDiagnosticVisits;
+
+        /// <summary>
+        /// How many LAZY value slots — the branches of the builtin <c>if</c>
+        /// (<see cref="FormulaLiftingRoles.IsLazySlot"/>) — enclose the current rewrite position
+        /// within this region. Lifting is blind to laziness, so the depth never changes a rewrite;
+        /// it only suppresses the closed-list strict-value diagnostic, because a demand a run may
+        /// never make is no statically impossible demand (Q-15).
+        /// </summary>
+        public int LazyDepth;
+
+        /// <summary>
+        /// Nodes first rewritten beneath a lazy slot and not yet reached outside one. The first
+        /// later reach outside every lazy slot (a shared host subtree) replays diagnostic
+        /// observation once — the eager twin of <see cref="StrictValueDiagnosticVisits"/> — so
+        /// whether the strict-value diagnostic is reported never depends on which reach of a
+        /// shared node came first.
+        /// </summary>
+        public HashSet<Expr>? LazilyRewritten;
+
+        public bool InLazySlot => LazyDepth > 0;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -1155,8 +1608,8 @@ internal static class ImplicitArgumentResolver
             return call;
         }
 
-        public Dictionary<Expr, Expr> RewriteMapFor(bool inCallPosition)
-            => inCallPosition
+        public Dictionary<Expr, Expr> RewriteMapFor(LiftingRole role)
+            => role == LiftingRole.Callable
                 ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
                 : ValueRewrites ??= new(ReferenceEqualityComparer.Instance);
 
@@ -1176,25 +1629,115 @@ internal static class ImplicitArgumentResolver
     /// Every contribution is seen-set deduplicated, so a revisit of a completed node — split
     /// by call position, which changes what a node contributes — adds nothing and is skipped.
     /// </summary>
-    private sealed class DepsWalkMemo(FrontEndTraversalObservations? observations)
+    private sealed class DepsWalkMemo(FrontEndTraversalObservations? observations, ResolverWalkMemos walk)
     {
         public readonly HashSet<Expr> ValueVisited = new(ReferenceEqualityComparer.Instance);
 
         public HashSet<Expr>? CalleeVisited;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+
+        /// <summary>
+        /// The owner's rewrite region: the dependency walk resolves callees exactly as its rewrite
+        /// will (a block receiver of a dotted callee is processed once, through this region's memo).
+        /// </summary>
+        public readonly ResolverWalkMemos Walk = walk;
     }
 
     /// <summary>
-    /// Builds a map from property name to its parameter-pattern signature for one level of properties.
+    /// The INPUT entries of one level's properties, per declaration index and by name (a later
+    /// declaration of a name wins the map, as ownership-first lookup reads one declaration).
     /// </summary>
-    private static Dictionary<string, CallableSignature> BuildPropertyParamMap(
+    private static (VisibleProperty[] ByIndex, Dictionary<string, VisibleProperty> ByName) BuildPropertyEntries(
         IReadOnlyList<Property> properties)
     {
-        var map = new Dictionary<string, CallableSignature>();
-        foreach (var prop in properties)
-            map[prop.Name] = CallableSignature.FromAlgorithm(prop.Name, prop.Value);
-        return map;
+        var byIndex = new VisibleProperty[properties.Count];
+        var byName = new Dictionary<string, VisibleProperty>(StringComparer.Ordinal);
+        for (var i = 0; i < properties.Count; i++)
+        {
+            var property = properties[i];
+            byIndex[i] = new VisibleProperty(CallableSignature.FromAlgorithm(property.Name, property.Value), property.Value);
+            byName[property.Name] = byIndex[i];
+        }
+
+        return (byIndex, byName);
+    }
+
+    /// <summary>
+    /// One level's <c>open</c> providers over its processed targets, deduplicated first-occurrence-
+    /// wins by the evaluator's key: two opens of one target are one provider, never an ambiguity.
+    /// </summary>
+    private static IReadOnlyList<OpenProvider> OpenProvidersOf(IReadOnlyList<Expr> opens, SignatureMap openerMap, PreludeContext prelude)
+    {
+        var providers = new List<OpenProvider>(opens.Count);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < opens.Count; i++)
+        {
+            if (keys.Add(Evaluator.OpenTargetDedupKey(opens[i], i)))
+                providers.Add(new OpenProvider(opens[i], openerMap, prelude));
+        }
+
+        return providers;
+    }
+
+    /// <summary>
+    /// The sibling-order channel's view of a callee NAME at a level: the owner walk over the level's
+    /// map (its own properties, then every enclosing level's) and the prelude — the same resolution
+    /// the rewrite reads, so its value-role reads coincide. A name only an <c>open</c> provides is
+    /// left <see cref="LiftingCalleeKind.Dynamic"/> here: a nested body's opens are consulted before
+    /// the level's, so only the rewrite knows which provider decides; the channel records a soft
+    /// preference for what it can anticipate, and a read that still reaches a pending sibling is
+    /// processed on demand (<see cref="PendingProperties"/>).
+    /// </summary>
+    private static LiftingCallee CalleeKindByOwnerWalk(string name, SignatureMap map, PreludeContext prelude)
+        => map.TryGetValue(name, out var entry)
+            ? LiftingCallee.OfAlgorithm(entry.Value, prelude.IsStrictValue(entry.Value))
+            : prelude.TryGetMember(name, out var member)
+                ? LiftingCallee.OfAlgorithm(member.Value, prelude.IsStrictValue(member.Value))
+                : LiftingCallee.Dynamic;
+
+    /// <summary>
+    /// The sibling whose value a name this level's OWN <c>open</c> provides comes from: the owner walk
+    /// leaves the name to the opens (no property of any level, no prelude member), and exactly one
+    /// provider of this level's innermost open level publicly declares it, headed by one of this
+    /// level's properties. A reference to it needs that sibling processed first, like a reference to
+    /// the sibling itself. Null otherwise (the rewrite demands anything else it reads).
+    /// </summary>
+    private static int? OpenedSiblingProvider(string name, OpenLevel? ownOpens, SignatureMap levelMap, IReadOnlyList<Property> siblings, ResolutionRun run)
+    {
+        // Only the level's OWN open level can be headed by one of its siblings: an enclosing
+        // level's opens resolve their heads in that level's scope.
+        if (ownOpens is not { } level || levelMap.ContainsKey(name) || run.Prelude.TryGetMember(name, out _))
+            return null;
+
+        int? provider = null;
+        var hits = 0;
+        foreach (var open in level.Providers)
+        {
+            if (open.Resolve(current: false) is not { } algorithm
+                || run.OpenMemberIndexes.IndexOf(algorithm).Lookup(name) is null)
+            {
+                continue;
+            }
+
+            hits++;
+            provider = SiblingHeadIndex(open, siblings);
+        }
+
+        return hits == 1 ? provider : null;
+    }
+
+    private static int? SiblingHeadIndex(OpenProvider open, IReadOnlyList<Property> siblings)
+    {
+        if (open.Head is not Expr.Resolve(var headName))
+            return null;
+        for (var i = siblings.Count - 1; i >= 0; i--)
+        {
+            if (siblings[i].Name == headName)
+                return i;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -1253,18 +1796,27 @@ internal static class ImplicitArgumentResolver
     {
         // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
         if (isRoot)
-            return ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
+        {
+            run.DepthBudget.LiveDepth++;
+            var root = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
+            run.DepthBudget.LiveDepth--;
+            return root;
+        }
 
         forwardable = forwardable.Rebase(run.ReferenceNameSets);
+        var freeNames = FreeReferenceNames(alg, run);
         var regionKey = new AlgorithmRegionKey(
             alg,
-            run.Footprints.Capture(FreeReferenceNames(alg, run), run.ReferenceNameSets, parentParamMap.Version, observations),
+            run.Footprints.Capture(freeNames, run.ReferenceNameSets, parentParamMap.Version, observations),
             forwardable.Names,
             forwardable.CollectingNames,
             branchContext is null ? null
                 : HasLoneBareRowShape(alg) ? run.BranchContexts.BareForwardingHeadId(branchContext.Pattern)
                 : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
-            ReportsDiagnostics: diagnostics is not null);
+            ReportsDiagnostics: diagnostics is not null,
+            // The open chain is an input exactly when a free name reaches it: one the owner walk
+            // (the map and the prelude) leaves undecided.
+            OpensReadBy(freeNames, parentParamMap, run));
         var regions = run.AlgorithmRegions ??= new();
         if (regions.TryGetValue(regionKey, out var completedRegion))
         {
@@ -1281,7 +1833,9 @@ internal static class ImplicitArgumentResolver
         var diagnosticTemplates = branchContext is not null && diagnostics is not null
             ? new List<BranchDiagnosticTemplate>()
             : null;
+        run.DepthBudget.LiveDepth++;
         var rewritten = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
+        run.DepthBudget.LiveDepth--;
         // Admitted only after the whole body completed (acyclic by the structural preflight).
         regions[regionKey] = new AlgorithmRegion(rewritten, diagnosticTemplates);
         return rewritten;
@@ -1313,33 +1867,43 @@ internal static class ImplicitArgumentResolver
                 : ParameterPattern.FlattenCaptures(BranchBinderParameterPatterns(branchContext.Pattern)),
             run.ReferenceNameSets);
 
-        // Build local param map
-        var localParamMap = BuildPropertyParamMap(alg.Properties);
-        // The sibling-order channel consults the same Math-alias shadow knowledge
-        // this pass's own visibleParamMap carries (ancestor property names here,
-        // sibling names inside the builder), so dependency ordering and the
-        // rewriting below cannot disagree about which calls are alias calls.
-        // This pass consumes ONLY the dependency/order channel: the builder's
-        // recursive property-summary channel belongs to the exposure resolver
-        // and is deliberately never computed here (M17).
+        // The level's own entries: every property's INPUT signature and value until the loop below
+        // processes it.
+        var (localEntries, localEntriesByName) = BuildPropertyEntries(alg.Properties);
+
+        // Visible map = parent + local (local overrides), plus this level's `open` providers as the
+        // innermost open level. When there are neither local properties nor opens — the common leaf
+        // case, e.g. every simple property value `A = expr` — nothing overrides the parent map and the
+        // per-property loop below (the only writer of visibleParamMap) is empty, so the parent map is
+        // shared instead of copied. Cloning this O(P) parent map once per leaf property is what made
+        // this pass O(P^2) in the property count.
+        var visibleParamMap = localEntriesByName.Count == 0 && newOpens.Count == 0
+            ? parentParamMap
+            : parentParamMap.Extend(localEntriesByName);
+        if (newOpens.Count > 0)
+            visibleParamMap.AttachOpens(map => OpenProvidersOf(newOpens, map, run.Prelude));
+
+        // The sibling-order channel classifies every slot with THE role classifier the rewriting
+        // below uses (FormulaLiftingRoles), resolving callee kinds by the owner walk over this
+        // level's map, and records which sibling each value-role read needs processed first. This
+        // pass consumes ONLY the dependency/order channel: the builder's recursive property-summary
+        // channel belongs to the exposure resolver and is deliberately never computed here (M17).
+        var levelMap = visibleParamMap;
+        var ownOpens = newOpens.Count > 0 ? visibleParamMap.Opens : null;
         var dependencyGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(
             alg,
             preludeNameShadowedByCaller: parentParamMap.ContainsKey,
-            observations);
+            observations,
+            new SiblingOrderLookup(
+                name => CalleeKindByOwnerWalk(name, levelMap, run.Prelude),
+                name => OpenedSiblingProvider(name, ownOpens, levelMap, alg.Properties, run)));
 
-        // Visible map = parent + local (local overrides). When there are no local properties —
-        // the common leaf case, e.g. every simple property value `A = expr` — nothing overrides
-        // the parent map and the per-property loop below (the only writer of visibleParamMap) is
-        // empty, so the parent map is shared instead of copied. Cloning this O(P) parent map once
-        // per leaf property is what made this pass O(P^2) in the property count.
-        var visibleParamMap = localParamMap.Count == 0 ? parentParamMap : parentParamMap.Extend(localParamMap);
-
-        // Topological sort of properties
-        var topoOrder = dependencyGraph.TopologicalOrder;
-
-        // Process properties in topological order
+        // Process properties in topological order, or earlier on demand (PendingProperties): a read
+        // the order channel could not classify processes its pending sibling first.
         var processedProperties = new Property[alg.Properties.Count];
-        foreach (var idx in topoOrder)
+        var loopImportSite = run.ImportSite;
+        PropertyLoop? loop = null;
+        loop = new PropertyLoop(dependencyGraph, idx =>
         {
             var prop = alg.Properties[idx];
 
@@ -1352,8 +1916,13 @@ internal static class ImplicitArgumentResolver
             }
             else if (prop.Value is Algorithm.Conditional condAlg)
             {
-                processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
-                    condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run));
+                // A family's entry keeps its input value: processing rewrites branch bodies, never
+                // the heads its kind and lifting signature are read from.
+                using (run.EnterImportSiteExactly(ImportSite.OfProperty(prop) ?? loopImportSite))
+                {
+                    processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
+                        condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run));
+                }
             }
             else
             {
@@ -1362,23 +1931,35 @@ internal static class ImplicitArgumentResolver
                 // reached between two writes it depends on. The run's region memo keys each
                 // value on the signatures its FREE names actually see (M4), so a shared value
                 // rewrites once per distinct observation and never once per referencing
-                // property — and the dependency order above processes every referenced
-                // sibling first, so within an acyclic property graph every reach observes the
-                // same, final signatures.
+                // property — and the dependency order (with demand for what it could not
+                // classify) processes every referenced sibling first, so within an acyclic
+                // property graph every reach observes the same, final signatures.
                 Algorithm processedBody;
-                using (run.EnterImportSite(ImportSite.OfProperty(prop)))
+                using (run.EnterImportSiteExactly(ImportSite.OfProperty(prop) ?? loopImportSite))
                 {
                     processedBody = ProcessAlgorithm(
                         prop.Value, visibleParamMap, nestedForwarding, isRoot: false, observations, diagnostics, branchContext: null, run);
                 }
 
-                // Update param maps with the processed, potentially augmented signature.
-                var processedSignature = CallableSignature.FromAlgorithm(prop.Name, processedBody);
-                visibleParamMap.Set(prop.Name, processedSignature);
+                // Update the map with the processed, potentially augmented signature.
+                var processedEntry = new VisibleProperty(CallableSignature.FromAlgorithm(prop.Name, processedBody), processedBody);
+                visibleParamMap.Set(prop.Name, processedEntry);
+                loop!.Complete(idx, processedEntry);
 
                 processedProperties[idx] = prop.WithValue(processedBody);
             }
+        },
+        idx => run.TryEnterDemand(alg.Properties[idx], diagnostics),
+        run.ExitDemand);
+
+        for (var idx = 0; idx < localEntries.Length; idx++)
+        {
+            loop.Initialize(idx, localEntries[idx]);
+            run.Pending.Register(localEntries[idx], loop, idx);
         }
+
+        foreach (var idx in dependencyGraph.TopologicalOrder)
+            loop.Ensure(idx);
 
         var newProperties = processedProperties.ToList();
 
@@ -1404,6 +1985,13 @@ internal static class ImplicitArgumentResolver
                 Properties = newProperties,
             };
         }
+
+        // A lone bare row FWD-02 did not complete stays what it is — a bare reference, the cached
+        // zero-argument read — and is never formula-lifted: which callables a lone row can alias or
+        // forward to is FWD-02's question, never the formula law's (the bare lone row is not a
+        // formula). Its reference therefore takes the CALLABLE role; a dot edge that is a CALL
+        // (`L.sum` is `sum(L)`) still classifies its receiver by the call's slot.
+        var rowRole = !isRoot && HasLoneBareRowShape(alg) ? LiftingRole.Callable : LiftingRole.Value;
 
         if (alg.HasExplicitParameterList || branchContext is not null)
         {
@@ -1436,14 +2024,14 @@ internal static class ImplicitArgumentResolver
                         expr,
                         visibleParamMap,
                         explicitContext,
-                        inCallPosition: false,
+                        rowRole,
                         walkMemos));
             }
 
             AstHelpers.RewriteDeconstructionSourceRows(
                 alg,
                 newProperties,
-                expr => RewriteImplicitCalls(expr, visibleParamMap, explicitContext, inCallPosition: false, walkMemos));
+                expr => RewriteImplicitCalls(expr, visibleParamMap, explicitContext, LiftingRole.Value, walkMemos));
 
             return alg with
             {
@@ -1456,13 +2044,13 @@ internal static class ImplicitArgumentResolver
         // Collect implicit dependencies from the algorithm's output and lift
         // them into its parameter list. One deps memo spans all rows (they share
         // the seen/deps accumulators, so the walk context is one region).
-        var deps = new List<(string Name, CallableSignature Signature)>();
-        var seen = new HashSet<string>();
-        var depsMemo = new DepsWalkMemo(observations);
+        var deps = new List<LiftedDependency>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var depsMemo = new DepsWalkMemo(observations, walkMemos);
         foreach (var expr in AstHelpers.WrittenRows(
-            alg, isRoot ? expr => !ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot: true) : null))
+            alg, isRoot ? expr => !ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot: true, walkMemos) : null))
         {
-            CollectImplicitDeps(expr, visibleParamMap, seen, deps, inCallPosition: false, depsMemo);
+            CollectImplicitDeps(expr, visibleParamMap, seen, deps, rowRole, depsMemo);
         }
 
         // Compute lifted parameter patterns: existing patterns first, then new
@@ -1470,6 +2058,11 @@ internal static class ImplicitArgumentResolver
         // signature template (FE-3, see LiftSignature). A capture an enclosing
         // parameter binding supplies is reused, never lifted (Q-04).
         var lifting = LiftSignature(alg.ParameterPatterns, deps, ownForwarding, run);
+        // X-02: an inferred signature satisfies the rules a written one is held to. A lift that
+        // would compose an invalid contract — two collecting parameters at one pattern level — is
+        // this definition's front-end error, reported here at elaboration, never at a later call.
+        if (lifting.Lifted && ParameterPattern.FindSignatureViolation(lifting.Patterns) is { } violation)
+            lifting = RejectInvalidLiftedSignature(lifting, violation, deps, walkMemos);
         var finalPatterns = lifting.Patterns;
 
         // Rewrite output expressions. Source binding kinds come from the
@@ -1490,20 +2083,20 @@ internal static class ImplicitArgumentResolver
         foreach (var expr in alg.Output)
         {
             rewrittenOutput.Add(
-                ShouldPreserveBareRootResolve(expr, visibleParamMap, isRoot)
+                ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot, walkMemos)
                     ? expr
                     : RewriteImplicitCalls(
                         expr,
                         visibleParamMap,
                         liftedContext,
-                        inCallPosition: false,
+                        rowRole,
                         walkMemos));
         }
 
         AstHelpers.RewriteDeconstructionSourceRows(
             alg,
             newProperties,
-            expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, inCallPosition: false, walkMemos));
+            expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos));
 
         // Lean: withParameterPatterns on the rewritten body — the lifted list replaces the
         // stored channel; Parameters/Params follow it. The patterns forwarding appended are
@@ -1568,7 +2161,8 @@ internal static class ImplicitArgumentResolver
                             parentParamMap.Snapshot,
                             propertyName,
                             branch.Pattern,
-                            forwardable)),
+                            forwardable,
+                            run.Prelude)),
                     },
                 });
                 continue;
@@ -1616,10 +2210,11 @@ internal static class ImplicitArgumentResolver
     /// forwarding rules.
     /// </summary>
     internal sealed record DeferredBranchContext(
-        ImmutableDictionary<string, CallableSignature> ParentParamMap,
+        MapSnapshot ParentParamMap,
         string BranchName,
         Pattern Pattern,
-        ForwardableParameters Forwardable);
+        ForwardableParameters Forwardable,
+        PreludeContext Prelude);
 
     /// <summary>
     /// Demand-time implicit-argument resolution of a deferred region's DETECTED body: the
@@ -1632,10 +2227,10 @@ internal static class ImplicitArgumentResolver
         FrontEndTraversalObservations? observations = null,
         SourceSpan? importSite = null)
     {
-        var run = new ResolutionRun(importSite) { Observations = observations };
+        var run = new ResolutionRun(importSite, context.ParentParamMap.Pending) { Observations = observations, Prelude = context.Prelude };
         return ProcessAlgorithm(
             detectedBody,
-            SignatureMap.FromSnapshot(context.ParentParamMap, observations),
+            SignatureMap.FromSnapshot(context.ParentParamMap, observations, run.Pending),
             // The eager run recorded these bindings; this run keys them with its own interner.
             context.Forwardable.Rebase(run.ReferenceNameSets),
             isRoot: false,
@@ -1668,7 +2263,7 @@ internal static class ImplicitArgumentResolver
         {
             Expr.AlgorithmExpr block => block with
             {
-                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations), memos),
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
             },
 
             // Capture targets own no scope; rows recurse without lifting,
@@ -1677,7 +2272,7 @@ internal static class ImplicitArgumentResolver
             {
                 Body = new OutputBundle(
                     capture.Body
-                        .Select(row => ProcessExprNested(row, SignatureMap.Empty(memos.Observations), memos))
+                        .Select(row => ProcessExprNested(row, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos))
                         .ToList()),
             },
 
@@ -1687,7 +2282,7 @@ internal static class ImplicitArgumentResolver
             {
                 Target = ProcessOpenExpr(dotCall.Target, memos),
                 Args = dotCall.Args is { } dotArgs
-                    ? ProcessArgumentBundle(dotArgs, SignatureMap.Empty(memos.Observations), memos)
+                    ? ProcessArgumentBundle(dotArgs, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos)
                     : null,
             },
 
@@ -1704,7 +2299,7 @@ internal static class ImplicitArgumentResolver
             Expr.Call call => call with
             {
                 Function = ProcessOpenExpr(call.Function, memos),
-                Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations), memos),
+                Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
             },
 
             // Operator forms are never valid open targets (open-form validation
@@ -1715,7 +2310,7 @@ internal static class ImplicitArgumentResolver
             // block inside `open -{ ... }` is resolved exactly as one inside
             // `open ({ ... }, 1)`.
             Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index
-                => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations), memos),
+                => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
@@ -1727,28 +2322,30 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// A bare ROOT output row naming a callable that requires supplied arguments stays an
-    /// unlifted reference, so evaluation reports the callable's own zero-argument demand
-    /// rejection at the reference instead of lifting its parameters into the never-called
-    /// root. A callable that accepts zero supplied arguments is never lifted anywhere
-    /// (<see cref="RequiresSuppliedArguments"/>), so it needs no preservation.
+    /// THE ROOT CLAUSE of the formula-lifting law: a bare ROOT output row naming a callable that
+    /// requires supplied arguments stays an unlifted reference — whatever its category (a property,
+    /// a builtin, a Math member, a host operation, a dotted or opened member, a clause family) — so
+    /// evaluation reports that callable's own zero-argument demand rejection at the reference
+    /// instead of lifting its parameters into the never-called root. A callable that accepts zero
+    /// supplied arguments is never lifted anywhere (<see cref="RequiresSuppliedArguments"/>), so it
+    /// needs no preservation.
     /// </summary>
-    private static bool ShouldPreserveBareRootResolve(
+    private static bool ShouldPreserveBareRootRow(
         Expr expr,
         SignatureMap paramMap,
-        bool isRoot)
+        bool isRoot,
+        ResolverWalkMemos memos)
         => isRoot
-            && expr is Expr.Resolve(var name)
-            && paramMap.TryGetValue(name, out var ps)
-            && RequiresSuppliedArguments(ps);
+            && expr is Expr.Resolve or Expr.DotCall { Args: null }
+            && TryResolveLiftable(expr, paramMap, memos) is { } liftable
+            && (liftable.Signature.Unnameable is not null || RequiresSuppliedArguments(liftable.Signature.Signature!));
 
     /// <summary>
-    /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted by
-    /// every liftable arm — a bare property reference (<see cref="CollectImplicitDepsCore"/>,
-    /// <see cref="RewriteBareReference"/>), a bare Math alias, and the bare canonical
-    /// <c>Math.X</c> shape (<see cref="TryGetBareBuiltinCallableSignature"/>) — and by root-row
-    /// preservation (<see cref="ShouldPreserveBareRootResolve"/>): a bare value-position
-    /// reference lifts to an implicit forwarding call ONLY when its callee REQUIRES supplied
+    /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted for
+    /// every value-role reference whatever its category (<see cref="CollectImplicitDepsCore"/>,
+    /// <see cref="RewriteBareReference"/>, <see cref="RewriteDotCall"/>) and by root-row
+    /// preservation (<see cref="ShouldPreserveBareRootRow"/>): a value-role reference lifts to an
+    /// implicit forwarding call ONLY when its callee's lifting signature REQUIRES supplied
     /// arguments, that is, when an ordinary call supplying zero arguments could NOT bind it.
     ///
     /// <para>A callee that accepts zero supplied arguments — no parameters, or only a top-level
@@ -1773,6 +2370,14 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static bool DeclaresParameters(CallableSignature signature)
         => signature.ParameterPatterns.Count > 0;
+
+    /// <summary>
+    /// One callee a formula lifts: its name (a Math function's canonical key), its signature, and the
+    /// FIRST reference that lifts it, in traversal order — the position a report about the lifted
+    /// signature names. Held as the node itself, never a span copy, so the collecting walk's frames
+    /// stay span-free.
+    /// </summary>
+    private readonly record struct LiftedDependency(string Name, CallableSignature Signature, Expr Reference);
 
     /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
     private readonly record struct LiftedSignature(
@@ -1806,17 +2411,17 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static LiftedSignature LiftSignature(
         IReadOnlyList<ParameterPattern> own,
-        List<(string Name, CallableSignature Signature)> deps,
+        List<LiftedDependency> deps,
         ForwardableParameters forwardable,
         ResolutionRun run)
     {
         // A dependency whose whole shape the owner's own single collecting stream forwards
         // contributes no capture (the same per-dependency test as always, O(1) each).
         List<IReadOnlyList<ParameterPattern>>? included = null;
-        foreach (var (_, signature) in deps)
+        foreach (var dependency in deps)
         {
-            if (!CanForwardSingleCollectingStream(own, signature.ParameterPatterns))
-                (included ??= []).Add(signature.ParameterPatterns);
+            if (!CanForwardSingleCollectingStream(own, dependency.Signature.ParameterPatterns))
+                (included ??= []).Add(dependency.Signature.ParameterPatterns);
         }
 
         var tail = included is null ? null : run.Templates.LiftedTail(included, MergeLiftedTail);
@@ -1857,6 +2462,145 @@ internal static class ImplicitArgumentResolver
         var distinct = run.Templates.InternFlat(merged);
         run.Observations?.RecordOwnerSignatureMaterialized(merged.Length);
         return new(distinct, distinct.Facts.BindingKinds, Lifted: true);
+    }
+
+    /// <summary>
+    /// X-02 (decided September 30 2026): INFERRED SIGNATURES ARE HELD TO THE RULES OF WRITTEN ONES.
+    /// Formula lifting composes an owner's signature from its callees' contracts, and the composition
+    /// can describe a contract no source may declare — <c>C1(a, *p)</c> and <c>C2(b, *q)</c> make
+    /// <c>K = C1 + C2</c> the signature <c>K(a, *p, b, *q)</c>, with two collecting parameters at one
+    /// level, whose argument allocation is undefined. Such a signature is the definition's front-end
+    /// error, reported where lifting builds it (<see cref="ParameterPattern.FindSignatureViolation"/>,
+    /// the one validity rule every written parameter list is held to), never deferred to a call: a
+    /// collecting binding is never chosen, merged, split or turned fixed to make the lift succeed.
+    /// Two callees that collect under the SAME name share one binding (by-name lifting), so
+    /// <c>K(a, *rest, b)</c> is valid, and so is a collector nested in its own structural group.
+    ///
+    /// <para>The report is <see cref="DiagnosticCode.InvalidCollectingBinding"/> (the code of the
+    /// same rule for a written head; the singleton rule keeps
+    /// <see cref="DiagnosticCode.SingletonSequencePattern"/>), positioned at the reference whose lift
+    /// completes the violation — the second collecting parameter's callee — or at the import site
+    /// inside imported content. The returned signature is the parser's recovery shape for a written
+    /// head (<see cref="ParameterPattern.KeepFirstCollectingCapturePerLevel"/>), so the erroneous tree
+    /// still carries only signatures the binding plans behind evaluation and editor tooling accept;
+    /// the reported error keeps it from being evaluated.</para>
+    /// </summary>
+    private static LiftedSignature RejectInvalidLiftedSignature(
+        LiftedSignature lifting,
+        ParameterSignatureViolation violation,
+        IReadOnlyList<LiftedDependency> deps,
+        ResolverWalkMemos memos)
+    {
+        if (memos.Diagnostics is { } diagnostics)
+        {
+            var (message, reference) = DescribeInvalidLiftedSignature(lifting.Patterns, violation, deps);
+            diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, reference?.Span ?? memos.Run.ImportSite)
+            {
+                Code = violation == ParameterSignatureViolation.SingletonSequencePattern
+                    ? DiagnosticCode.SingletonSequencePattern
+                    : DiagnosticCode.InvalidCollectingBinding,
+            });
+        }
+
+        var recovered = memos.Run.Templates.InternFlat(ParameterPattern.KeepFirstCollectingCapturePerLevel(lifting.Patterns));
+        return new(recovered, recovered.Facts.BindingKinds, Lifted: true);
+    }
+
+    /// <summary>
+    /// The wording and position of <see cref="RejectInvalidLiftedSignature"/>: for the collector rule,
+    /// the collecting parameters at the offending level with the callee that needs each (the first
+    /// callee whose own top level collects under that name) and the reference of the callee that
+    /// adds the second one; otherwise the rule and the first lifted reference. Everything a callee
+    /// contributes is echoed bounded.
+    /// </summary>
+    private static (string Message, Expr? Reference) DescribeInvalidLiftedSignature(
+        IReadOnlyList<ParameterPattern> signature,
+        ParameterSignatureViolation violation,
+        IReadOnlyList<LiftedDependency> deps)
+    {
+        const string Repair = "Call the callable with explicit arguments, or declare this definition's parameters explicitly.";
+        var firstReference = deps.Count > 0 ? deps[0].Reference : null;
+        switch (violation)
+        {
+            case ParameterSignatureViolation.MultipleCollectingAtOneLevel:
+            {
+                var collectors = new List<(string Name, LiftedDependency? Callee)>();
+                foreach (var pattern in signature)
+                {
+                    if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting)
+                        collectors.Add((collecting.Name, FirstTopLevelCollector(deps, collecting.Name)));
+                }
+
+                if (collectors.Count < 2)
+                    break;
+
+                var sink = new Rendering.BoundedDiagnosticSink(ExprNameRenderer.MaxRenderedNameLength);
+                for (var index = 0; index < collectors.Count; index++)
+                {
+                    var separator = index == 0 ? ""
+                        : collectors.Count == 2 ? " and "
+                        : index == collectors.Count - 1 ? ", and "
+                        : ", ";
+                    var (name, callee) = collectors[index];
+                    if (!sink.Append(separator) || !sink.Append("'*") || !sink.Append(name) || !sink.Append("'"))
+                        break;
+                    if (callee is { } needing
+                        && (!sink.Append(" (needed by '") || !sink.Append(needing.Name) || !sink.Append("')")))
+                    {
+                        break;
+                    }
+                }
+
+                var offending = collectors[1].Callee;
+                return (string.Join(
+                        Environment.NewLine,
+                        $"Formula lifting cannot complete this definition's signature: it would need the collecting parameters {sink.Finish()} "
+                            + "at the same pattern level, but a signature may declare at most one collecting parameter per pattern level.",
+                        offending is { } second
+                            ? $"Call '{ExprNameRenderer.BoundName(second.Name)}' with explicit arguments, or declare this definition's parameters explicitly."
+                            : Repair),
+                    offending?.Reference ?? firstReference);
+            }
+
+            case ParameterSignatureViolation.RepeatedNameIncludesCollecting:
+                return (string.Join(
+                        Environment.NewLine,
+                        "Formula lifting cannot complete this definition's signature: it would repeat a parameter name with a collecting binding, "
+                            + "which a signature may not declare.",
+                        Repair),
+                    firstReference);
+
+            case ParameterSignatureViolation.SingletonSequencePattern:
+                return (string.Join(
+                        Environment.NewLine,
+                        "Formula lifting cannot complete this definition's signature: it would contain a sequence pattern with exactly one "
+                            + "non-collecting item, which a signature may not declare (KatLang has no one-item sequence value).",
+                        Repair),
+                    firstReference);
+        }
+
+        // A collector violation below the top level: every lifted group is a callee's own valid group
+        // (or part of one), so only a host-built callee can reach this.
+        return (string.Join(
+                Environment.NewLine,
+                "Formula lifting cannot complete this definition's signature: it would place more than one collecting parameter "
+                    + "at one pattern level, but a signature may declare at most one collecting parameter per pattern level.",
+                Repair),
+            firstReference);
+
+        static LiftedDependency? FirstTopLevelCollector(IReadOnlyList<LiftedDependency> deps, string name)
+        {
+            foreach (var dependency in deps)
+            {
+                foreach (var pattern in dependency.Signature.ParameterPatterns)
+                {
+                    if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting && collecting.Name == name)
+                        return dependency;
+                }
+            }
+
+            return null;
+        }
     }
 
     /// <summary>The first-occurrence binding kinds of an owner's own list (a template's are cached).</summary>
@@ -2445,8 +3189,8 @@ internal static class ImplicitArgumentResolver
         switch (row)
         {
             case Expr.Resolve(var name)
-                when paramMap.TryGetValue(name, out var signature) && DeclaresParameters(signature):
-                calleePatterns = signature.ParameterPatterns;
+                when paramMap.TryGetCurrent(name, out var entry) && DeclaresParameters(entry.Signature):
+                calleePatterns = entry.Signature.ParameterPatterns;
                 calleeDisplayName = name;
                 return true;
 
@@ -2837,155 +3581,443 @@ internal static class ImplicitArgumentResolver
             .ToList();
 
     /// <summary>
-    /// Collects implicit dependencies from an expression: bare value-position
-    /// <see cref="Expr.Resolve"/> nodes pointing to visible algorithms that REQUIRE supplied
-    /// arguments (<see cref="RequiresSuppliedArguments"/>). A reference to an algorithm that
-    /// accepts zero supplied arguments contributes nothing: it is read, never forwarded.
+    /// The lifting signature of one resolved callable (<see cref="TryResolveLiftable"/>), or — for a
+    /// clause family whose clauses do not name every argument position unambiguously — why it has
+    /// none (<see cref="Unnameable"/>).
+    /// </summary>
+    internal sealed record LiftingSignature(CallableSignature? Signature, UnnameableFamily? Unnameable)
+    {
+        public static LiftingSignature Of(CallableSignature signature) => new(signature, null);
+    }
+
+    /// <summary>
+    /// Why a clause family has no formula-lifting signature: at <see cref="Position"/> (0-based) no
+    /// clause binds a plain parameter, the clauses that do disagree on its name, or the name one
+    /// position takes is already another position's (<see cref="OtherPosition"/>).
+    /// </summary>
+    internal sealed record UnnameableFamily(
+        int Position,
+        UnnameableFamilyReason Reason,
+        IReadOnlyList<string> Names,
+        int? OtherPosition = null);
+
+    internal enum UnnameableFamilyReason
+    {
+        NoName,
+        ConflictingNames,
+        SharedWithAnotherPosition,
+    }
+
+    /// <summary>
+    /// A value-role reference's resolved callable as formula lifting reads it: an identity (one per
+    /// resolved declaration, whatever spelling reached it), the written name, and its lifting
+    /// signature.
+    /// </summary>
+    private readonly record struct LiftableReference(object Identity, string DisplayName, LiftingSignature Signature);
+
+    /// <summary>
+    /// THE IDENTITY-KEYED LIFTING SIGNATURE (the unified formula-lifting law, decided September 30
+    /// 2026): what the callable a reference resolves to — by the language's own resolution order, the
+    /// owner walk over the document's properties, then the prelude, then <c>open</c> — contributes to
+    /// a formula that uses it as a value, whatever its category or the route that reached it.
+    /// <list type="bullet">
+    ///   <item>a user algorithm (an exact alias included): its parameter patterns, as processed;</item>
+    ///   <item>a builtin: its callable interface (<see cref="BuiltinDescriptor.ToolingPlainSignature"/>:
+    ///   the registry's parameter names, a loop's variadic initial state as <c>*init</c>);</item>
+    ///   <item>a Math member (alias, <c>Math.X</c>, or opened) or a host operation: its declared
+    ///   parameters;</item>
+    ///   <item>a member reached through <c>open</c> or a structural dot path: that member's own
+    ///   signature, from its PROCESSED provider;</item>
+    ///   <item>a clause family: one whole-value slot per top-level position, named by the clauses
+    ///   (<see cref="FamilyLiftingSignature"/>), or unnameable.</item>
+    /// </list>
+    /// Null for a reference that resolves to nothing static (a parameter, an unresolved name, an
+    /// ambiguous open, a runtime receiver's member): a callable known only at run time has no
+    /// lifting signature.
+    /// </summary>
+    private static LiftableReference? TryResolveLiftable(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        var run = memos.Run;
+        switch (reference)
+        {
+            case Expr.Resolve(var name):
+                if (paramMap.TryGetCurrent(name, out var entry))
+                {
+                    return entry.Value is Algorithm.Conditional family
+                        ? new LiftableReference(family, name, FamilyLiftingSignature(name, family, run))
+                        : new LiftableReference(entry, name, LiftingSignature.Of(entry.Signature));
+                }
+
+                if (run.Prelude.TryGetMember(name, out var preludeMember))
+                    return new LiftableReference(preludeMember.Value, name, LiftingSignatureOf(name, preludeMember.Value, run));
+
+                return TryResolveOpened(name, paramMap, run, current: true, out var opened)
+                    ? new LiftableReference(opened.Value, name, LiftingSignatureOf(name, opened.Value, run))
+                    : null;
+
+            case Expr.DotCall { Args: null } edge
+                when EdgeKindOf(edge, paramMap, run) == DotEdgeKind.StructuralMember
+                    && StructuralMemberOf(edge, paramMap, memos, current: true) is { } member:
+                return new LiftableReference(member, DottedDisplayName(edge), LiftingSignatureOf(edge.Name, member, run));
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>The lifting signature of an algorithm outside the document's map (cached per algorithm by reference).</summary>
+    private static LiftingSignature LiftingSignatureOf(string name, Algorithm algorithm, ResolutionRun run)
+    {
+        if (run.LiftingSignatures.TryGetValue(algorithm, out var cached))
+            return cached;
+
+        var signature = algorithm switch
+        {
+            Algorithm.User user => LiftingSignature.Of(CallableSignature.FromUserAlgorithm(name, user)),
+            Algorithm.Builtin(var builtin) => LiftingSignature.Of(BuiltinRegistry.GetBuiltin(builtin).ToolingPlainSignature),
+            Algorithm.Conditional family => DeriveFamilyLiftingSignature(name, family),
+        };
+        run.LiftingSignatures.Add(algorithm, signature);
+        return signature;
+    }
+
+    /// <summary>The lifting signature of a clause family (cached per family by reference).</summary>
+    private static LiftingSignature FamilyLiftingSignature(string name, Algorithm.Conditional family, ResolutionRun run)
+        => LiftingSignatureOf(name, family, run);
+
+    /// <summary>
+    /// A CLAUSE FAMILY'S LIFTING SIGNATURE (decided September 30 2026): a family is lifted like every
+    /// other callable once its contract is derived from its clauses — ONE WHOLE-VALUE SLOT per
+    /// top-level argument position (the family's common arity), passed whole, so the lifted call hands
+    /// the family the caller's argument unchanged and dispatch is exactly the explicit call's.
+    /// Formula lifting is by binding NAME, so each slot needs one name:
+    /// <list type="bullet">
+    ///   <item>each clause that binds a PLAIN parameter at a position votes that name; a literal, a
+    ///   structural pattern and a binderless group name nothing (they are dispatch detail, never
+    ///   leaves of the signature);</item>
+    ///   <item>every vote for a position must agree, and every position needs one;</item>
+    ///   <item>the names of different positions must be distinct — otherwise by-name lifting would feed
+    ///   one binding to independent positions (<c>P(a, 0)</c> / <c>P(0, a)</c> is not <c>P(a, a)</c>).</item>
+    /// </list>
+    /// Otherwise the family has no lifting signature (<see cref="UnnameableFamily"/>): it stays
+    /// explicitly callable, and a formula that would lift it is the front-end error
+    /// <see cref="DiagnosticCode.UnliftableClauseFamily"/>. No name is ever invented.
+    /// Lean: <c>familyLiftingSignature?</c>.
+    /// </summary>
+    internal static LiftingSignature DeriveFamilyLiftingSignature(string name, Algorithm.Conditional family)
+    {
+        static IReadOnlyList<Pattern> Positions(Pattern head) => head is Pattern.SequenceValue(var items) ? items : [head];
+
+        if (family.Branches.Count == 0)
+            return new(null, new UnnameableFamily(0, UnnameableFamilyReason.NoName, []));
+
+        var arity = Positions(family.Branches[0].Pattern).Count;
+        var names = new string?[arity];
+        List<string>?[] conflicts = new List<string>?[arity];
+        foreach (var branch in family.Branches)
+        {
+            var positions = Positions(branch.Pattern);
+            if (positions.Count != arity)
+                return new(null, new UnnameableFamily(System.Math.Min(arity, positions.Count), UnnameableFamilyReason.NoName, []));
+
+            for (var position = 0; position < arity; position++)
+            {
+                if (positions[position] is not Pattern.Bind { ParameterKind: ParameterKind.Normal, IsRecoveryPlaceholder: false } binder)
+                    continue;
+                if (names[position] is null)
+                {
+                    names[position] = binder.Name;
+                }
+                else if (names[position] != binder.Name)
+                {
+                    var voted = conflicts[position] ??= [names[position]!];
+                    if (!voted.Contains(binder.Name))
+                        voted.Add(binder.Name);
+                }
+            }
+        }
+
+        for (var position = 0; position < arity; position++)
+        {
+            if (names[position] is null)
+                return new(null, new UnnameableFamily(position, UnnameableFamilyReason.NoName, []));
+            if (conflicts[position] is { } voted)
+                return new(null, new UnnameableFamily(position, UnnameableFamilyReason.ConflictingNames, voted));
+        }
+
+        var first = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var position = 0; position < arity; position++)
+        {
+            if (!first.TryAdd(names[position]!, position))
+            {
+                return new(null, new UnnameableFamily(
+                    position, UnnameableFamilyReason.SharedWithAnotherPosition, [names[position]!], first[names[position]!]));
+            }
+        }
+
+        return LiftingSignature.Of(new CallableSignature(name, names.Select(static parameter => new CallableParameter(parameter!)).ToArray()));
+    }
+
+    /// <summary>
+    /// The member a name resolves to through <c>open</c>: after the whole owner walk found nothing,
+    /// the open levels innermost first; at a level, exactly one provider publicly declaring the name
+    /// selects it, two select nothing (the evaluator's <c>ambiguousOpen</c>), none defers outward.
+    /// <paramref name="current"/> reads processed providers (a signature question).
+    /// </summary>
+    private static bool TryResolveOpened(
+        string name,
+        SignatureMap paramMap,
+        ResolutionRun run,
+        bool current,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Property? member)
+    {
+        for (var level = paramMap.Opens; level is not null; level = level.Outer)
+        {
+            Property? found = null;
+            var hits = 0;
+            foreach (var provider in level.Providers)
+            {
+                if (provider.Resolve(current) is { } algorithm
+                    && run.OpenMemberIndexes.IndexOf(algorithm).Lookup(name) is { } hit)
+                {
+                    hits++;
+                    found = hit.Property;
+                }
+            }
+
+            if (hits == 1)
+            {
+                member = found!;
+                return true;
+            }
+
+            if (hits > 1)
+                break;
+        }
+
+        member = null;
+        return false;
+    }
+
+    /// <summary>
+    /// The KIND of the callee a call or dot edge names — never a signature, so it reads entries as
+    /// recorded (elaboration never changes a kind) and demands nothing.
+    /// </summary>
+    private static LiftingCallee ResolveCalleeKind(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        var run = memos.Run;
+        switch (callee)
+        {
+            case Expr.Grace(var inner, _):
+                return ResolveCalleeKind(inner, paramMap, memos);
+
+            case Expr.Resolve(var name):
+                if (paramMap.TryGetValue(name, out var entry))
+                    return LiftingCallee.OfAlgorithm(entry.Value, run.Prelude.IsStrictValue(entry.Value));
+                if (run.Prelude.TryGetMember(name, out var preludeMember))
+                    return LiftingCallee.OfAlgorithm(preludeMember.Value, run.Prelude.IsStrictValue(preludeMember.Value));
+                return TryResolveOpened(name, paramMap, run, current: false, out var opened)
+                    ? LiftingCallee.OfAlgorithm(opened.Value, run.Prelude.IsStrictValue(opened.Value))
+                    : LiftingCallee.Dynamic;
+
+            case Expr.DotCall { Args: null } edge
+                when EdgeKindOf(edge, paramMap, run) == DotEdgeKind.StructuralMember
+                    && StructuralMemberOf(edge, paramMap, memos, current: false) is { } member:
+                return LiftingCallee.OfAlgorithm(member, run.Prelude.IsStrictValue(member));
+
+            case Expr.AlgorithmExpr:
+                return LiftingCallee.User;
+
+            default:
+                return LiftingCallee.Dynamic;
+        }
+    }
+
+    /// <summary>
+    /// How a dot edge dispatches (<see cref="FormulaLiftingRoles.EdgeKind"/>): the detector's stamped
+    /// fallback-selection verdict, or — for an unstamped host tree — this pass's own static receiver
+    /// resolution (a name through the map and the prelude).
+    /// </summary>
+    private static DotEdgeKind EdgeKindOf(Expr.DotCall edge, SignatureMap paramMap, ResolutionRun run)
+        => FormulaLiftingRoles.EdgeKind(
+            edge,
+            edge.ElaboratedFallbackSelection
+                ?? edge.GetLexicalFallbackSelection(edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(
+                    name => paramMap.TryGetValue(name, out var entry)
+                        ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, entry.Value)
+                        : run.Prelude.TryGetMember(name, out var member)
+                            ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, member.Value)
+                            : new(StaticStructuralMemberProviderKind.LexicalReference))));
+
+    /// <summary>
+    /// The member algorithm a STRUCTURAL dot edge selects: its receiver resolved statically — a name
+    /// (the map, the prelude's <c>Math</c>, an opened member), an inner structural edge, or a block —
+    /// then the receiver's declared member (any visibility: structural access selects declared
+    /// members, and accessibility is decided after selection). <paramref name="current"/> reads
+    /// processed receivers (a signature question); a block receiver is processed through the region's
+    /// memo, so the dependency walk and the rewrite read the same processed block.
+    /// </summary>
+    private static Algorithm? StructuralMemberOf(Expr.DotCall edge, SignatureMap paramMap, ResolverWalkMemos memos, bool current)
+    {
+        var receiver = edge.Target.UnwrapGraceOperand() switch
+        {
+            Expr.Resolve(var name) => (current ? paramMap.TryGetCurrent(name, out var entry) : paramMap.TryGetValue(name, out entry))
+                ? entry.Value
+                : memos.Run.Prelude.TryGetMember(name, out var preludeMember)
+                    ? preludeMember.Value
+                    : TryResolveOpened(name, paramMap, memos.Run, current, out var opened) ? opened.Value : null,
+            Expr.DotCall { Args: null } inner when EdgeKindOf(inner, paramMap, memos.Run) == DotEdgeKind.StructuralMember
+                => StructuralMemberOf(inner, paramMap, memos, current),
+            Expr.AlgorithmExpr block => current
+                ? ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos)
+                : block.Algorithm,
+            _ => null,
+        };
+
+        return receiver is null ? null : ElaboratedScopeLookup.TryLookupProperty(receiver, edge.Name)?.Property.Value;
+    }
+
+    /// <summary>The written spelling of a dotted callee (<c>Lib.Inc</c>, <c>Math.Abs</c>) for diagnostics, bounded.</summary>
+    private static string DottedDisplayName(Expr.DotCall edge)
+        => ExprNameRenderer.BoundName(edge.Target.UnwrapGraceOperand() switch
+        {
+            Expr.Resolve(var head) => head + "." + edge.Name,
+            Expr.DotCall { Args: null } inner => DottedDisplayName(inner) + "." + edge.Name,
+            _ => edge.Name,
+        });
+
+    /// <summary>
+    /// Collects the implicit dependencies of a formula's rows: every VALUE-role reference
+    /// (<see cref="FormulaLiftingRoles"/>) whose resolved callable has a lifting signature that
+    /// REQUIRES supplied arguments (<see cref="RequiresSuppliedArguments"/>), once per resolved
+    /// identity. A reference in a CALLABLE role, one to a callable that accepts zero supplied
+    /// arguments (a cached read, Q-03), and one to an unnameable family contribute nothing.
     /// </summary>
     private static void CollectImplicitDeps(
         Expr expr,
         SignatureMap paramMap,
-        HashSet<string> seen,
-        List<(string Name, CallableSignature Signature)> deps,
-        bool inCallPosition,
+        HashSet<object> seen,
+        List<LiftedDependency> deps,
+        LiftingRole role,
         DepsWalkMemo memo)
     {
-        // DAG-safety: every contribution of this walk is seen-set deduplicated, so a
-        // completed node reference reached again — under the same call-position flavor,
-        // which is the one context dimension that changes what a node contributes — adds
-        // nothing and is skipped. Childless leaves decide in place.
+        // DAG-safety: every contribution of this walk is identity deduplicated, so a completed node
+        // reference reached again under the same role — the one context dimension that changes what a
+        // node contributes — adds nothing and is skipped. Childless leaves decide in place.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
         {
-            CollectImplicitDepsCore(expr, paramMap, seen, deps, inCallPosition, memo);
+            CollectImplicitDepsCore(expr, paramMap, seen, deps, role, memo);
             return;
         }
 
-        var visited = inCallPosition
+        var visited = role == LiftingRole.Callable
             ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
             : memo.ValueVisited;
         if (visited.Contains(expr))
             return;
 
         memo.Observations?.RecordResolverCollectExpansion();
-        CollectImplicitDepsCore(expr, paramMap, seen, deps, inCallPosition, memo);
+        memo.Walk.Run.DepthBudget.LiveDepth++;
+        CollectImplicitDepsCore(expr, paramMap, seen, deps, role, memo);
+        memo.Walk.Run.DepthBudget.LiveDepth--;
         visited.Add(expr);
     }
 
     private static void CollectImplicitDepsCore(
         Expr expr,
         SignatureMap paramMap,
-        HashSet<string> seen,
-        List<(string Name, CallableSignature Signature)> deps,
-        bool inCallPosition,
+        HashSet<object> seen,
+        List<LiftedDependency> deps,
+        LiftingRole role,
         DepsWalkMemo memo)
     {
         switch (expr)
         {
-            case Expr.Resolve(var name):
-                if (inCallPosition)
-                    break;
-
-                if (paramMap.TryGetValue(name, out var ps))
-                {
-                    if (RequiresSuppliedArguments(ps) && seen.Add(name))
-                        deps.Add((name, ps));
-                }
-                else if (expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
-                    && RequiresSuppliedArguments(bareAliasFacts.Signature)
-                    && seen.Add(bareAliasFacts.CanonicalKey))
-                {
-                    // A bare Math ALIAS in value position lifts exactly like the
-                    // bare canonical `Math.X` spelling (the DotCall arm below),
-                    // from the same registry facts. The canonical key dedups the
-                    // two spellings into ONE lifted dependency. Any visible user
-                    // property — even a zero-parameter one — shadows the alias
-                    // through the paramMap branch above.
-                    //
-                    // The resolver's shadow predicate for every Math-shape
-                    // classification (this arm, the alias-call arms, and the
-                    // canonical `Math.X` arms) is `paramMap.ContainsKey`: the map
-                    // carries every visible user property — local or ancestor —
-                    // and a parameter reference is an Expr.Param after detection,
-                    // so a surviving bare Expr.Resolve outside the map can only
-                    // resolve to the prelude. A user-defined `sin` or `Math`
-                    // therefore stays an ordinary neutral callable/container.
-                    deps.Add((bareAliasFacts.CanonicalKey, bareAliasFacts.Signature));
-                }
+            case Expr.Resolve:
+                if (role == LiftingRole.Value)
+                    AddLiftedDependency(expr, paramMap, seen, deps, memo);
                 break;
 
-            case Expr.Call(var func, var callArgs) call:
-                // Every callee is consumed on the algorithm channel, including
-                // the qualified native reference in `(Math.Abs)(A)`. Its own
-                // parameters are supplied by this call, never implicitly lifted.
-                CollectImplicitDeps(func, paramMap, seen, deps, inCallPosition: true, memo);
-                if (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey))
-                {
-                    CollectArgumentImplicitDeps(callArgs, paramMap, seen, deps, memo);
-                }
+            case Expr.Call(var function, var callArgs):
+            {
+                CollectImplicitDeps(function, paramMap, seen, deps, LiftingRole.Callable, memo);
+                var roles = FormulaLiftingRoles.ArgumentRoles(ResolveCalleeKind(function, paramMap, memo.Walk), callArgs);
+                for (var i = 0; i < callArgs.Count; i++)
+                    CollectImplicitDeps(callArgs[i], paramMap, seen, deps, roles[i], memo);
                 break;
+            }
 
             case Expr.Binary(_, var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, false, memo);
-                CollectImplicitDeps(right, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(left, paramMap, seen, deps, LiftingRole.Value, memo);
+                CollectImplicitDeps(right, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.Comparison(var first, var links):
-                CollectImplicitDeps(first, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(first, paramMap, seen, deps, LiftingRole.Value, memo);
                 foreach (var link in links)
-                    CollectImplicitDeps(link.Operand, paramMap, seen, deps, false, memo);
+                    CollectImplicitDeps(link.Operand, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(operand, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.Index(var target, var selector):
-                CollectImplicitDeps(target, paramMap, seen, deps, false, memo);
-                CollectImplicitDeps(selector, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(target, paramMap, seen, deps, LiftingRole.Value, memo);
+                CollectImplicitDeps(selector, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(operand, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, false, memo);
-                CollectImplicitDeps(right, paramMap, seen, deps, false, memo);
+                CollectImplicitDeps(left, paramMap, seen, deps, LiftingRole.Value, memo);
+                CollectImplicitDeps(right, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.ListLiteral(var listItems):
                 foreach (var item in listItems)
-                    CollectImplicitDeps(item, paramMap, seen, deps, false, memo);
+                    CollectImplicitDeps(item, paramMap, seen, deps, LiftingRole.Value, memo);
+                break;
+
+            case Expr.Capture(var rows):
+                // A capture element is a value: a capture has no algorithm identity to transport.
+                foreach (var row in rows)
+                    CollectImplicitDeps(row, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.DotCall dotCall:
-                if (!inCallPosition
-                    && TryGetBareBuiltinCallableSignature(dotCall, paramMap, out var callableKey, out var signature))
+            {
+                var kind = EdgeKindOf(dotCall, paramMap, memo.Walk.Run);
+                if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
                 {
-                    if (seen.Add(callableKey))
-                        deps.Add((callableKey, signature));
+                    // A dotted callable reference: the edge itself lifts in a value role; its
+                    // receiver is navigated.
+                    if (role == LiftingRole.Value)
+                        AddLiftedDependency(dotCall, paramMap, seen, deps, memo);
+                    CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, LiftingRole.Callable, memo);
+                    break;
                 }
 
-                // DotCall target is in algorithm position (resolveAlg, not eval) — unless the
-                // edge must fall back to a Math member, where it is the leading ARGUMENT of the
-                // call `x(receiver, args)` (dotted-call equivalence) and a strict value position.
-                var strictFallback = dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
-                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, inCallPosition: !strictFallback, memo);
-                if (dotCall.Args is { } dotArgs
-                    && (strictFallback || dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)))
+                var callee = DotEdgeCallee(dotCall, kind, paramMap, memo.Walk);
+                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, FormulaLiftingRoles.ReceiverRole(kind, callee), memo);
+                if (dotCall.Args is { } dotArgs)
                 {
-                    CollectArgumentImplicitDeps(dotArgs, paramMap, seen, deps, memo);
+                    var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
+                    for (var i = 0; i < dotArgs.Count; i++)
+                        CollectImplicitDeps(dotArgs[i], paramMap, seen, deps, roles[i], memo);
                 }
+
                 break;
+            }
 
             case Expr.Grace(var inner, _):
-                CollectImplicitDeps(inner, paramMap, seen, deps, inCallPosition, memo);
+                CollectImplicitDeps(inner, paramMap, seen, deps, role, memo);
                 break;
 
-            case Expr.AlgorithmExpr or Expr.Capture:
-                // A scoped block owns its names; a capture suppresses callable
-                // lifting for everything inside it (pre-split behavior for
-                // grouped expressions). Neither contributes deps here.
+            case Expr.AlgorithmExpr:
+                // A scoped block is its own inferring level: its references lift into ITS signature.
                 break;
 
             // Intentional leaves: no bare callable references to lift.
@@ -3008,72 +4040,91 @@ internal static class ImplicitArgumentResolver
         }
     }
 
-    private static void CollectArgumentImplicitDeps(
-        OutputBundle args,
-        SignatureMap paramMap,
-        HashSet<string> seen,
-        List<(string Name, CallableSignature Signature)> deps,
-        DepsWalkMemo memo)
+    /// <summary>Adds a value-role reference's callee to the dependencies when it lifts (once per identity).</summary>
+    private static void AddLiftedDependency(Expr reference, SignatureMap paramMap, HashSet<object> seen, List<LiftedDependency> deps, DepsWalkMemo memo)
     {
-        foreach (var argExpr in args)
-            CollectImplicitDeps(argExpr, paramMap, seen, deps, inCallPosition: false, memo);
+        if (TryResolveLiftable(reference, paramMap, memo.Walk) is { Signature.Signature: { } signature } liftable
+            && RequiresSuppliedArguments(signature)
+            && seen.Add(liftable.Identity))
+        {
+            deps.Add(new LiftedDependency(liftable.DisplayName, signature, reference));
+        }
     }
 
+    /// <summary>The callee whose slots a non-reference dot edge's receiver and arguments fill.</summary>
+    private static LiftingCallee DotEdgeCallee(Expr.DotCall dotCall, DotEdgeKind kind, SignatureMap paramMap, ResolverWalkMemos memos)
+        => kind switch
+        {
+            DotEdgeKind.StructuralMember => ResolveCalleeKind(dotCall with { Args = null }, paramMap, memos),
+            DotEdgeKind.Fallback => ResolveCalleeKind(dotCall.EffectiveLexicalFallback, paramMap, memos),
+            _ => LiftingCallee.Dynamic,
+        };
+
     /// <summary>
-    /// Rewrites bare <see cref="Expr.Resolve"/> nodes into <see cref="Expr.Call"/> nodes
-    /// with lifted parameters. Also recursively processes nested algorithms.
+    /// Rewrites every VALUE-role reference whose resolved callable lifts (<see cref="TryResolveLiftable"/>)
+    /// into the explicit call that forwards its lifting signature, and processes nested algorithms.
+    /// The role of every child is its consumer's (<see cref="FormulaLiftingRoles"/>).
     /// </summary>
     /// <remarks>
     /// <paramref name="inStrictValueDemand"/> is true while this position's produced value is
-    /// required by a registry-proven value-demanding consumer — set by
-    /// <see cref="ProcessValueDemandingArgumentBundle"/> and carried down only through
-    /// positions that compute that same value (operands, index parts, sequence/list
-    /// elements, a nested value-demanding bundle). It is DROPPED wherever the walk leaves
-    /// that obligation: call/dot-call targets (algorithm position), neutral argument
-    /// bundles, capture rows, and nested algorithms. The flag never changes a rewrite —
-    /// only whether a refused lift is additionally REPORTED (see
-    /// <see cref="ReportBlockedStrictValueForwarding"/>), so it is not part of the rewrite
-    /// memo key. A separate strict-visit set makes that reporting side effect independent of
-    /// whether a neutral reach populated the rewrite memo first.
+    /// required by a registry-proven value-demanding consumer — a Math member's argument (Q-15) —
+    /// and is carried down only through positions that compute that same value (operands, index
+    /// parts, sequence/list elements, a nested Math argument). It is DROPPED wherever the walk
+    /// leaves that obligation: call/dot-call targets, other callees' argument slots, capture rows,
+    /// and nested algorithms. The flag never changes a rewrite — only whether a refused lift is
+    /// additionally REPORTED (see <see cref="ReportBlockedStrictValueForwarding"/>), so it is not
+    /// part of the rewrite memo key. A separate strict-visit set makes that reporting side effect
+    /// independent of whether a neutral reach populated the rewrite memo first.
     /// </remarks>
     private static Expr RewriteImplicitCalls(
         Expr expr,
         SignatureMap paramMap,
         ImplicitRewriteContext context,
-        bool inCallPosition,
+        LiftingRole role,
         ResolverWalkMemos memos,
         bool inStrictValueDemand = false)
     {
-        // DAG-safety: one rewrite per shared node reference per (region, call position); the
-        // memo returns the same rewritten node for every later reach, preserving the input's
-        // sharing (see ResolverWalkMemos). A Resolve leaf participates because value-position
-        // resolution may replace it with a fresh Call. Node plus call position is a complete
-        // key only while the region rewrites under ONE caller context — pinned here, not
-        // assumed.
+        // DAG-safety: one rewrite per shared node reference per (region, role); the memo returns the
+        // same rewritten node for every later reach, preserving the input's sharing (see
+        // ResolverWalkMemos). A Resolve leaf participates because a value-role reference may be
+        // replaced by a fresh Call. Node plus role is a complete key only while the region rewrites
+        // under ONE caller context — pinned here, not assumed.
         memos.PinRewriteContext(context);
 
         var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
         if (!hasTraversableChildren && expr is not Expr.Resolve)
-            return RewriteImplicitCallsCore(expr, paramMap, context, inCallPosition, memos, inStrictValueDemand);
+            return RewriteImplicitCallsCore(expr, paramMap, context, role, memos, inStrictValueDemand);
 
         var observeStrictValueDemand = inStrictValueDemand
+            && !memos.InLazySlot
             && memos.TryBeginStrictValueDiagnosticVisit(expr);
-        var rewriteMap = memos.RewriteMapFor(inCallPosition);
+        var rewriteMap = memos.RewriteMapFor(role);
         if (rewriteMap.TryGetValue(expr, out var rewritten))
         {
             // The cached rewrite is still authoritative. Re-enter the existing traversal
-            // only for its first strict diagnostic observation; descendants use the same
-            // independent visit set, so each shared written occurrence reports at most once.
-            if (observeStrictValueDemand)
-                _ = RewriteImplicitCallsCore(expr, paramMap, context, inCallPosition, memos, inStrictValueDemand: true);
+            // only for its first strict diagnostic observation, or for the first reach outside
+            // every lazy slot of a node first rewritten beneath one; descendants use the same
+            // independent visit sets, so each shared written occurrence reports at most once.
+            var firstEagerReach = !memos.InLazySlot && memos.LazilyRewritten?.Remove(expr) == true;
+            if (observeStrictValueDemand || firstEagerReach)
+            {
+                memos.Run.DepthBudget.LiveDepth++;
+                _ = RewriteImplicitCallsCore(expr, paramMap, context, role, memos, inStrictValueDemand: observeStrictValueDemand);
+                memos.Run.DepthBudget.LiveDepth--;
+            }
+
             return rewritten;
         }
 
         if (hasTraversableChildren)
             memos.Observations?.RecordResolverRewriteExpansion();
+        memos.Run.DepthBudget.LiveDepth++;
         rewritten = RewriteImplicitCallsCore(
-            expr, paramMap, context, inCallPosition, memos, observeStrictValueDemand);
+            expr, paramMap, context, role, memos, observeStrictValueDemand);
+        memos.Run.DepthBudget.LiveDepth--;
         rewriteMap[expr] = rewritten;
+        if (memos.InLazySlot && hasTraversableChildren)
+            (memos.LazilyRewritten ??= new(ReferenceEqualityComparer.Instance)).Add(expr);
         return rewritten;
     }
 
@@ -3081,7 +4132,7 @@ internal static class ImplicitArgumentResolver
         Expr expr,
         SignatureMap paramMap,
         ImplicitRewriteContext context,
-        bool inCallPosition,
+        LiftingRole role,
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
     {
@@ -3090,74 +4141,67 @@ internal static class ImplicitArgumentResolver
         // recursion frame holds no span temporaries — see ModuleLoader.ProcessExpr.
         return expr switch
         {
-            Expr.Resolve(var name) => RewriteBareReference(
-                expr, name, paramMap, context, inCallPosition, memos, inStrictValueDemand),
+            Expr.Resolve => RewriteBareReference(expr, paramMap, context, role, memos, inStrictValueDemand),
 
             Expr.Call call => RewriteCall(call, paramMap, context, memos),
 
             Expr.Binary binary => binary with
             {
-                Left = RewriteImplicitCalls(binary.Left, paramMap, context, false, memos, inStrictValueDemand),
-                Right = RewriteImplicitCalls(binary.Right, paramMap, context, false, memos, inStrictValueDemand),
+                Left = RewriteImplicitCalls(binary.Left, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Right = RewriteImplicitCalls(binary.Right, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
             },
 
             Expr.Comparison comparison => comparison with
             {
-                First = RewriteImplicitCalls(comparison.First, paramMap, context, false, memos, inStrictValueDemand),
+                First = RewriteImplicitCalls(comparison.First, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
                 Links = AstHelpers.RewriteComparisonLinks(
                     comparison.Links,
-                    operand => RewriteImplicitCalls(operand, paramMap, context, false, memos, inStrictValueDemand)),
+                    operand => RewriteImplicitCalls(operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand)),
             },
 
             Expr.Unary unary => unary with
             {
-                Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, false, memos, inStrictValueDemand),
+                Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
             },
 
             Expr.Index index => index with
             {
-                Target = RewriteImplicitCalls(index.Target, paramMap, context, false, memos, inStrictValueDemand),
-                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, false, memos, inStrictValueDemand),
+                Target = RewriteImplicitCalls(index.Target, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
             },
 
             Expr.SequenceSpread spread => spread with
             {
-                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, false, memos, inStrictValueDemand),
+                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
             },
 
             Expr.SequenceConstruct construct => construct with
             {
-                Left = RewriteImplicitCalls(construct.Left, paramMap, context, false, memos, inStrictValueDemand),
-                Right = RewriteImplicitCalls(construct.Right, paramMap, context, false, memos, inStrictValueDemand),
+                Left = RewriteImplicitCalls(construct.Left, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Right = RewriteImplicitCalls(construct.Right, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
             },
 
             Expr.ListLiteral list => list with
             {
-                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, false, memos, inStrictValueDemand)).ToList(),
+                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand)).ToList(),
             },
 
-            // A bare argumentless builtin dot shape in value position (`Math.Pow`) lifts
-            // like a bare reference to a property that requires supplied arguments.
-            Expr.DotCall { Args: null } bareDotCall
-                when !inCallPosition
-                    && TryGetBareBuiltinCallableSignature(bareDotCall, paramMap, out var bareBuiltinKey, out var builtinSignature)
-                => LiftBareBuiltinDotCall(
-                    bareDotCall, bareBuiltinKey, builtinSignature, paramMap, context, memos, inStrictValueDemand),
+            Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, role, memos, inStrictValueDemand),
 
-            Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, memos),
-
-            Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, inCallPosition, memos, inStrictValueDemand),
+            Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, role, memos, inStrictValueDemand),
 
             Expr.AlgorithmExpr block => block with
             {
                 Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos),
             },
 
-            // Capture rows recurse without lifting at this level, exactly as
-            // the pre-split transparent group algorithm's rows did.
+            // A capture element is a value (a capture has no algorithm identity to transport); the
+            // Math strict-demand obligation does not reach inside a capture (Q-15).
             Expr.Capture capture => capture with
             {
-                Body = new OutputBundle(capture.Body.Select(row => ProcessExprNested(row, paramMap, memos)).ToList()),
+                Body = new OutputBundle(capture.Body
+                    .Select(row => RewriteImplicitCalls(row, paramMap, context, LiftingRole.Value, memos))
+                    .ToList()),
             },
 
             // Intentional leaves: nothing to lift or rewrite. (A Param is an
@@ -3168,75 +4212,79 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The bare-reference arm of <see cref="RewriteImplicitCallsCore"/>: a value-position
-    /// reference to a property that REQUIRES supplied arguments — or to a registry-proven Math
-    /// alias — lifts to an explicit implicit-argument call unless the caller's closed explicit
-    /// parameter list blocks the forwarding (reported only under strict value demand). Every
-    /// other bare reference stays bare — in particular one to a callable that accepts zero
-    /// supplied arguments, which is a cached property-style value demand however many
-    /// (optional or collecting) parameters it declares (<see cref="RequiresSuppliedArguments"/>).
+    /// The bare-reference arm of <see cref="RewriteImplicitCallsCore"/>: a VALUE-role reference whose
+    /// resolved callable has a lifting signature that REQUIRES supplied arguments lifts to an
+    /// explicit implicit-argument call unless the caller's closed explicit parameter list blocks the
+    /// forwarding (reported only under strict value demand). An unnameable clause family is
+    /// reported (<see cref="DiagnosticCode.UnliftableClauseFamily"/>). Every other reference stays
+    /// bare — a callable role, a callable that accepts zero supplied arguments (a cached
+    /// property-style value demand, Q-03), or a reference with no lifting signature.
     /// </summary>
     private static Expr RewriteBareReference(
         Expr expr,
-        string name,
         SignatureMap paramMap,
         ImplicitRewriteContext context,
-        bool inCallPosition,
+        LiftingRole role,
         ResolverWalkMemos memos,
         bool inStrictValueDemand)
     {
-        if (!inCallPosition
-            && paramMap.TryGetValue(name, out var ps)
-            && RequiresSuppliedArguments(ps))
-        {
-            if (ClosedListBlocksLifting(context, ps.ParameterPatterns, memos))
-            {
-                if (inStrictValueDemand)
-                    ReportBlockedStrictValueForwarding(expr, name, ps.ParameterPatterns, context, memos);
-                return expr;
-            }
+        if (role != LiftingRole.Value || TryResolveLiftable(expr, paramMap, memos) is not { } liftable)
+            return expr;
 
-            // The arguments are the region's one shared bundle for this callee (FE-2); the call node
-            // and its callee name are this reference's own.
-            var implicitArgs = memos.ImplicitArguments(ps.ParameterPatterns, context);
-            return memos.SynthesizedImplicitCall(
-                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, implicitArgs) { Span = expr.Span });
-        }
+        if (TryGetLiftArguments(expr, liftable, context, memos, inStrictValueDemand) is not { } implicitArgs)
+            return expr;
 
-        // Bare Math ALIAS in value position: lift exactly like the bare
-        // canonical `Math.X` arm, from the same registry facts and under the
-        // same eligibility rule (every Math function requires its arguments).
-        // The constant (`pi`) carries no facts and stays a bare reference.
-        if (!inCallPosition
-            && expr.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var bareAliasFacts)
-            && RequiresSuppliedArguments(bareAliasFacts.Signature))
-        {
-            if (ClosedListBlocksLifting(context, bareAliasFacts.Signature.ParameterPatterns, memos))
-            {
-                if (inStrictValueDemand)
-                {
-                    ReportBlockedStrictValueForwarding(
-                        expr, bareAliasFacts.SpelledName, bareAliasFacts.Signature.ParameterPatterns, context, memos);
-                }
-
-                return expr;
-            }
-
-            var aliasArgs = memos.ImplicitArguments(bareAliasFacts.Signature.ParameterPatterns, context);
-            return memos.SynthesizedImplicitCall(
-                new Expr.Call(new Expr.Resolve(name) { Span = expr.Span }, aliasArgs) { Span = expr.Span });
-        }
-
-        return expr;
+        // The arguments are the region's one shared bundle for this callee (FE-2); the call node is
+        // this reference's own, and its callee keeps the reference's elaboration stamps.
+        return memos.SynthesizedImplicitCall(
+            new Expr.Call(((Expr.Resolve)expr) with { }, implicitArgs) { Span = expr.Span });
     }
 
     /// <summary>
-    /// The Call arm of <see cref="RewriteImplicitCallsCore"/>. Every callee is in algorithm
-    /// position. A resolved Math callable, including a qualified native reference used as
-    /// an ordinary callee, shares the written <c>Math.X(...)</c> dot shape's strict-value
-    /// argument contract, classified by the shared identity helper: its argument slots are
-    /// ordinary value positions and lift. Every other call keeps NEUTRAL argument processing
-    /// so bare higher-order references survive.
+    /// The forwarding arguments of one value-role reference that lifts, or null when it does not:
+    /// an unnameable family (reported in an inferring body), a callable that accepts zero supplied
+    /// arguments (Q-03), or a closed list that cannot supply its parameters (PAR-04; reported under
+    /// strict value demand).
+    /// </summary>
+    private static OutputBundle? TryGetLiftArguments(
+        Expr reference,
+        LiftableReference liftable,
+        ImplicitRewriteContext context,
+        ResolverWalkMemos memos,
+        bool inStrictValueDemand)
+    {
+        if (liftable.Signature.Unnameable is { } unnameable)
+        {
+            // Only a body that would lift the family reports it — an inferring one. A closed list
+            // forwards nothing but same-named existing bindings (PAR-04), and an unnameable family
+            // names nothing, so there the reference keeps its ordinary zero-argument demand and
+            // runtime checking, exactly as every blocked reference does.
+            if (context.ClosedParameterNames is null)
+                ReportUnliftableClauseFamily(reference, liftable.DisplayName, unnameable, memos);
+            return null;
+        }
+
+        var signature = liftable.Signature.Signature!;
+        if (!RequiresSuppliedArguments(signature))
+            return null;
+
+        if (ClosedListBlocksLifting(context, signature.ParameterPatterns, memos))
+        {
+            if (inStrictValueDemand)
+                ReportBlockedStrictValueForwarding(reference, liftable.DisplayName, signature.ParameterPatterns, context, memos);
+            return null;
+        }
+
+        return memos.ImplicitArguments(signature.ParameterPatterns, context);
+    }
+
+    /// <summary>
+    /// The Call arm of <see cref="RewriteImplicitCallsCore"/>: the callee is CALLABLE, and each
+    /// argument slot takes the role the callee's kind gives it (<see cref="FormulaLiftingRoles.ArgumentRoles"/>)
+    /// — a user callable's whole argument stays neutral so higher-order references survive
+    /// (<c>Twice(A)</c>), while a builtin value slot, a Math or host argument, a family argument, and
+    /// every expression NESTED in any argument are values (<c>Twice(A + 0)</c> lifts <c>A</c>).
+    /// A Math member's arguments additionally carry the strict value demand (Q-15).
     /// </summary>
     private static Expr RewriteCall(
         Expr.Call call,
@@ -3244,94 +4292,140 @@ internal static class ImplicitArgumentResolver
         ImplicitRewriteContext context,
         ResolverWalkMemos memos)
     {
-        var newFunc = RewriteImplicitCalls(call.Function, paramMap, context, inCallPosition: true, memos);
-        var newArgs = call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-            ? ProcessValueDemandingArgumentBundle(call.Args, paramMap, context, memos)
-            : ProcessArgumentBundle(call.Args, paramMap, memos);
-        return new Expr.Call(newFunc, newArgs) { Span = call.Span };
+        var newFunc = RewriteImplicitCalls(call.Function, paramMap, context, LiftingRole.Callable, memos);
+        var callee = ResolveCalleeKind(call.Function, paramMap, memos);
+        var roles = FormulaLiftingRoles.ArgumentRoles(callee, call.Args);
+        var lazy = FormulaLiftingRoles.LazyArguments(callee, call.Args);
+        var strictArguments = !memos.InLazySlot && call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey);
+        var newArgs = new List<Expr>(call.Args.Count);
+        for (var i = 0; i < call.Args.Count; i++)
+        {
+            // A LAZY slot (a branch of `if`) is rewritten exactly like any other — lifting is blind
+            // to laziness — but beneath it the closed-list strict-value diagnostic is not observed
+            // (Q-15). Inline, so the calibrated recursion adds no frame per argument level.
+            memos.LazyDepth += lazy[i] ? 1 : 0;
+            newArgs.Add(RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos, strictArguments && !lazy[i]));
+            memos.LazyDepth -= lazy[i] ? 1 : 0;
+        }
+
+        return new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = call.Span };
     }
 
     /// <summary>
-    /// The DotCall arm of <see cref="RewriteImplicitCallsCore"/>. The target is in algorithm
-    /// position (resolveAlg, not eval) and the written arguments are neutral — except where
-    /// the edge IS a Math member's call: the canonical <c>Math.X(...)</c> shape makes its
-    /// arguments strict value positions, and a lexical fallback that must be selected on a
-    /// Math member makes the edge the call <c>x(receiver, args)</c> (dotted-call
-    /// equivalence holds through elaboration), so the receiver and the arguments lift and
-    /// report exactly as that direct call's arguments do. The stored lexical fallback is a
-    /// Resolve/Param leaf and needs no implicit-call rewriting; <c>with</c> carries it
-    /// forward.
+    /// The DotCall arm of <see cref="RewriteImplicitCallsCore"/>. A STRUCTURAL dotted callable in a
+    /// value role (<c>Lib.Inc</c>, <c>Math.Pow</c>) lifts like a bare reference, from its member's
+    /// own signature; its receiver is navigated. Otherwise the edge's receiver and arguments take the
+    /// roles of its dispatch (<see cref="FormulaLiftingRoles.ReceiverRole"/>): the <c>string</c>
+    /// intrinsic converts its receiver's value; a selected fallback is the call <c>F(receiver, args)</c>
+    /// (dotted-call equivalence holds through elaboration, so <c>R.F(args)</c> and <c>F(R, args)</c>
+    /// infer alike); a structural member call's arguments are that member's slots; a runtime receiver
+    /// decides nothing statically. A Math member's receiver and arguments carry the strict value
+    /// demand (Q-15). The stored lexical fallback is a Resolve/Param leaf; <c>with</c> carries it.
     /// </summary>
     private static Expr RewriteDotCall(
         Expr.DotCall dotCall,
         SignatureMap paramMap,
         ImplicitRewriteContext context,
-        ResolverWalkMemos memos)
+        LiftingRole role,
+        ResolverWalkMemos memos,
+        bool inStrictValueDemand)
     {
-        var strictFallback = dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
+        var kind = EdgeKindOf(dotCall, paramMap, memos.Run);
+        if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
+        {
+            if (role == LiftingRole.Value
+                && TryResolveLiftable(dotCall, paramMap, memos) is { } liftable
+                && TryGetLiftArguments(dotCall, liftable, context, memos, inStrictValueDemand) is { } liftedArgs)
+            {
+                return memos.SynthesizedImplicitCall(dotCall with
+                {
+                    Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, LiftingRole.Callable, memos),
+                    Args = liftedArgs,
+                });
+            }
+
+            return dotCall with
+            {
+                Target = RewriteImplicitCalls(dotCall.Target, paramMap, context, LiftingRole.Callable, memos),
+            };
+        }
+
+        var callee = DotEdgeCallee(dotCall, kind, paramMap, memos);
+        var strictFallback = !memos.InLazySlot && dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
+        var strictArguments = strictFallback
+            || (!memos.InLazySlot && dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey));
+        OutputBundle? newArgs = null;
+        if (dotCall.Args is { } dotArgs)
+        {
+            var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
+            var lazy = FormulaLiftingRoles.DotLazyArguments(dotCall, kind, callee);
+            var rewrittenArgs = new List<Expr>(dotArgs.Count);
+            for (var i = 0; i < dotArgs.Count; i++)
+            {
+                memos.LazyDepth += lazy[i] ? 1 : 0;
+                rewrittenArgs.Add(RewriteImplicitCalls(dotArgs[i], paramMap, context, roles[i], memos, strictArguments && !lazy[i]));
+                memos.LazyDepth -= lazy[i] ? 1 : 0;
+            }
+
+            newArgs = new OutputBundle(rewrittenArgs);
+        }
+
         return dotCall with
         {
-            Target = strictFallback
-                ? RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: false, memos, inStrictValueDemand: true)
-                : RewriteImplicitCalls(dotCall.Target, paramMap, context, inCallPosition: true, memos),
-            Args = dotCall.Args is { } dotArgs
-                ? strictFallback || dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                    ? ProcessValueDemandingArgumentBundle(dotArgs, paramMap, context, memos)
-                    : ProcessArgumentBundle(dotArgs, paramMap, memos)
-                : null,
+            Target = RewriteImplicitCalls(
+                dotCall.Target, paramMap, context, FormulaLiftingRoles.ReceiverRole(kind, callee), memos, strictFallback),
+            Args = newArgs,
         };
     }
 
     /// <summary>
-    /// The bare-builtin arm of <see cref="RewriteImplicitCallsCore"/>: an argumentless
-    /// canonical Math dot shape in value position lifts to an explicit implicit-argument
-    /// call unless the caller's closed explicit parameter list blocks the forwarding.
+    /// Reports a value-role reference to a clause family formula lifting cannot name
+    /// (<see cref="DeriveFamilyLiftingSignature"/>), once per reference, at the reference (a
+    /// reference inside imported content at the import site). The family stays explicitly callable.
+    /// A conditional branch body's own region keeps the report re-issuable for further families
+    /// sharing the body (M4).
     /// </summary>
-    private static Expr LiftBareBuiltinDotCall(
-        Expr.DotCall bareDotCall,
-        string bareBuiltinKey,
-        CallableSignature builtinSignature,
-        SignatureMap paramMap,
-        ImplicitRewriteContext context,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand)
+    private static void ReportUnliftableClauseFamily(Expr reference, string displayName, UnnameableFamily unnameable, ResolverWalkMemos memos)
     {
-        if (ClosedListBlocksLifting(context, builtinSignature.ParameterPatterns, memos))
-        {
-            if (inStrictValueDemand)
-            {
-                ReportBlockedStrictValueForwarding(
-                    bareDotCall, bareBuiltinKey, builtinSignature.ParameterPatterns, context, memos);
-            }
+        if (memos.Diagnostics is not { } diagnostics)
+            return;
+        memos.UnliftableFamilyDiagnosticVisits ??= new(ReferenceEqualityComparer.Instance);
+        if (!memos.UnliftableFamilyDiagnosticVisits.Add(reference))
+            return;
 
-            return bareDotCall;
-        }
-
-        var liftedDotArgs = memos.ImplicitArguments(builtinSignature.ParameterPatterns, context);
-        return memos.SynthesizedImplicitCall(bareDotCall with
-        {
-            Target = RewriteImplicitCalls(bareDotCall.Target, paramMap, context, inCallPosition: true, memos),
-            Args = liftedDotArgs,
-        });
+        var span = reference.Span ?? memos.Run.ImportSite;
+        // The reason belongs to the callable identity; the name belongs to this occurrence.
+        // A shared family may be exposed by several bindings in the same resolution run.
+        var message = FormatUnliftableClauseFamily(displayName, unnameable);
+        diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.UnliftableClauseFamily });
+        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnliftableClauseFamily, _ => message, span));
     }
 
-    /// <summary>
-    /// Processes an argument bundle without lifting at this level: each slot
-    /// recurses into nested algorithms only, exactly like every other
-    /// transparent expression context (capture rows, list elements). Bare
-    /// higher-order references such as <c>Apply(Increment)</c> therefore stay
-    /// bare argument slots.
-    /// </summary>
-    private static OutputBundle ProcessArgumentBundle(
-        OutputBundle args,
-        SignatureMap paramMap,
-        ResolverWalkMemos memos)
-        => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap, memos)).ToList());
+    private static string FormatUnliftableClauseFamily(string displayName, UnnameableFamily unnameable)
+    {
+        var family = ExprNameRenderer.BoundName(displayName);
+        var position = (unnameable.Position + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var reason = unnameable.Reason switch
+        {
+            UnnameableFamilyReason.ConflictingNames
+                => $"its clauses name argument position {position} differently ({FormatQuotedNameList(unnameable.Names)})",
+            UnnameableFamilyReason.SharedWithAnotherPosition
+                => $"argument positions {(unnameable.OtherPosition!.Value + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)} and {position} "
+                    + $"would both be named {FormatQuotedNameList(unnameable.Names)}",
+            _ => $"no clause binds argument position {position} with a plain parameter",
+        };
+        return string.Join(
+            Environment.NewLine,
+            $"'{family}' is used as a value here, but clause family '{family}' has no formula-lifting signature: {reason}.",
+            "Formula lifting forwards arguments by parameter name, and literal, structural and binderless clause patterns name nothing. "
+                + $"Call '{family}' with explicit arguments, or bind that position with one plain parameter name in the clauses that bind it.");
+    }
+
 
     /// <summary>
-    /// Region-memoized nested-algorithm processing for transparent contexts and value
-    /// positions: two distinct <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared
-    /// algorithm resolve it once (the whole region shares one final signature map).
+    /// Region-memoized nested-algorithm processing: two distinct <see cref="Expr.AlgorithmExpr"/>
+    /// wrappers over ONE shared algorithm resolve it once (the whole region shares one final
+    /// signature map).
     /// </summary>
     private static Algorithm ProcessSharedNestedAlgorithm(
         Algorithm alg,
@@ -3352,58 +4446,11 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Processes an argument bundle whose consumer is VALUE-DEMANDING: each
-    /// slot is an ordinary value position, so bare references to callables
-    /// that require supplied arguments lift to implicit calls exactly as they
-    /// would in any other value position (binary operands, output rows), and a
-    /// callable that accepts zero supplied arguments stays a cached value read
-    /// (<see cref="RequiresSuppliedArguments"/>). This is the
-    /// deliberate counterpart of <see cref="ProcessArgumentBundle"/>:
-    /// ordinary call arguments stay NEUTRAL (no lifting) because an arbitrary
-    /// callee may consume an argument on the higher-order algorithm channel,
-    /// and lifting would destroy the bare reference. Value-context processing
-    /// is a property of the consumer, not of the argument.
-    ///
-    /// <para>The current value-demanding consumer is the Math member family in
-    /// BOTH of its spellings — the written <c>Math.X(...)</c> dot shape
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>)
-    /// and an unshadowed prelude-alias call
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.Call, Func{string, bool}?)"/>),
-    /// which resolve to the same <see cref="MathCallableFacts"/>: the builtin registry proves every
-    /// Math member consumes strictly numeric values, so no higher-order
-    /// channel exists to preserve. Other strict builtins (<c>sum</c>,
-    /// <c>count</c>, ...) do NOT currently receive value-context lifting —
-    /// their unresolved-reference arguments surface as runtime errors instead
-    /// (a documented consistency gap; widening lifting to them would be a new
-    /// observable semantic surface and is deliberately left as future
-    /// work).</para>
-    ///
-    /// <para><b>Value-demanding is WHERE lifting happens, never HOW.</b> The consumer's
-    /// registry-proven strict-value contract decides only that these slots are value
-    /// positions; the rewriting itself must then be the ordinary one, under the ENCLOSING
-    /// algorithm's <see cref="ImplicitRewriteContext"/> — the same caller parameter patterns,
-    /// the same source binding kinds, and the same closed-explicit-list gate as the rows
-    /// around the Math call. This method therefore forwards <paramref name="context"/>
-    /// unchanged and holds no configuration of its own. Erasing it (as an earlier revision
-    /// did, to let a region's value-demanding memo entries unify) made a semantically neutral
-    /// <c>Math.Abs(...)</c> wrapper change elaboration: forwarding spread was decided from the
-    /// CALLEE's kind, forwarded under the CALLEE's capture name, and a closed explicit
-    /// parameter list silently acquired an ancestor's parameter.</para>
+    /// The canonical <c>Math.X</c> SHAPE of a lone bare row — one of the three alias and
+    /// bare-forwarding targets FWD-02 admits (<see cref="TryGetLoneCalleeSignature"/>), decided by
+    /// shape exactly as before the unified lifting law: which callables a lone row can alias is
+    /// FWD-02's question, never formula lifting's.
     /// </summary>
-    private static OutputBundle ProcessValueDemandingArgumentBundle(
-        OutputBundle args,
-        SignatureMap paramMap,
-        ImplicitRewriteContext context,
-        ResolverWalkMemos memos)
-    {
-        var rewritten = new List<Expr>(args.Count);
-        foreach (var argExpr in args)
-            rewritten.Add(RewriteImplicitCalls(
-                argExpr, paramMap, context, inCallPosition: false, memos, inStrictValueDemand: true));
-
-        return new OutputBundle(rewritten);
-    }
-
     private static bool TryGetBareBuiltinCallableSignature(
         Expr expr,
         SignatureMap paramMap,
@@ -3433,17 +4480,29 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Processes an expression in a transparent context (capture rows, list
-    /// elements, argument slots): recurse into nested algorithms only (no
-    /// lifting at this level).
+    /// Processes an argument bundle of an OPEN TARGET (never a formula row): each slot recurses into
+    /// nested algorithms only. An open target is navigation, resolved statically with fresh maps —
+    /// nothing in it is a formula, so nothing in it lifts (see <see cref="ProcessOpenExprCore"/>).
+    /// </summary>
+    private static OutputBundle ProcessArgumentBundle(
+        OutputBundle args,
+        SignatureMap paramMap,
+        ResolverWalkMemos memos)
+        => new(args.Select(argExpr => ProcessExprNested(argExpr, paramMap, memos)).ToList());
+
+    /// <summary>
+    /// Processes an expression inside an OPEN TARGET: recurse into nested algorithms only. Open
+    /// targets are navigation, never formulas, so no reference in one lifts; every formula row goes
+    /// through <see cref="RewriteImplicitCalls"/>, whose roles come from
+    /// <see cref="FormulaLiftingRoles"/>.
     /// </summary>
     private static Expr ProcessExprNested(
         Expr expr,
         SignatureMap paramMap,
         ResolverWalkMemos memos)
     {
-        // DAG-safety: one rewrite per shared node reference per region's transparent
-        // context; the memo returns the same rewritten node for every later reach.
+        // DAG-safety: one rewrite per shared node reference per open-target region; the memo
+        // returns the same rewritten node for every later reach.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
             return ProcessExprNestedCore(expr, paramMap, memos);
 
@@ -3501,20 +4560,14 @@ internal static class ImplicitArgumentResolver
                 Right = ProcessExprNested(construct.Right, paramMap, memos),
             },
             Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessExprNested(item, paramMap, memos)).ToList() },
-            // `with` keeps the stored dot-edge facts (member span, lexical
-            // fallback) — a positional rebuild here silently dropped the
-            // elaborated fallback identity inside argument bundles, capture
-            // rows, and list elements.
+            // `with` keeps the stored dot-edge facts (member span, lexical fallback).
             Expr.DotCall dotCall => dotCall with
             {
                 Target = ProcessExprNested(dotCall.Target, paramMap, memos),
                 Args = dotCall.Args is { } da ? ProcessArgumentBundle(da, paramMap, memos) : null,
             },
             Expr.Grace(var inner, _) => ProcessExprNested(inner, paramMap, memos),
-            // Intentional leaves: bare references stay bare in transparent
-            // contexts (no lifting at this level, so higher-order references
-            // such as Apply(Increment) survive), and literals carry nothing to
-            // process.
+            // Intentional leaves: an open target's names are navigation, never lifted.
             Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };

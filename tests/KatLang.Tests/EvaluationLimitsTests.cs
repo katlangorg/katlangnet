@@ -361,13 +361,11 @@ public class EvaluationLimitsTests
     [Fact]
     public void DotStringParameterizedLexicalReceiver_IsRejectedBeforeReentry()
     {
-        // `A(n) = A.string` used to re-enter A's body through the `.string`
-        // receiver and terminate only at the depth limit. The receiver is a
-        // zero-argument value demand of a PARAMETERIZED algorithm, so the ONE
-        // zero-argument demand law rejects it at the demand boundary: the ordinary
-        // property arity error, no re-entry, and the only depth consumed is the
-        // invocation of A(1) itself.
-        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("A(n) = A.string\nA(1)").Root);
+        // A `.string` receiver that is a zero-argument value demand of a PARAMETERIZED
+        // algorithm nothing forwards to (A's closed list has no `n` for B) is rejected by
+        // the ONE zero-argument demand law at the demand boundary: the ordinary property
+        // arity error, no re-entry, and the only depth consumed is the invocation of A(1).
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("B(n) = n\nA(m) = B.string\nA(1)").Root);
         var (result, budget) = Evaluator.RunCountedObserved(
             expr,
             new EvaluationLimits { MaxDepth = 24 });
@@ -377,6 +375,28 @@ public class EvaluationLimitsTests
         Assert.Equal(1, arity.Expected);
         Assert.Equal(0, arity.Actual);
         Assert.Equal(1, budget.PeakDepth);
+    }
+
+    [Fact]
+    public void DotStringParameterizedSelfReceiver_IsTheChargedRecursiveCall()
+    {
+        // `.string` converts its receiver's VALUE, so under the unified formula-lifting law a
+        // parameterized receiver lifts like an operand: `A(n) = A.string` is
+        // `A(n) = A(n).string`, the same unbounded recursion as `A(n) = A + 1`. Every level is
+        // an ordinary charged invocation, so it stops at the depth limit with the structured
+        // error and work linear in the limit.
+        const int maxDepth = 24;
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("A(n) = A.string\nA(1)").Root);
+        var (result, budget) = Evaluator.RunCountedObserved(
+            expr,
+            new EvaluationLimits { MaxDepth = maxDepth });
+
+        Assert.True(result.IsError);
+        Assert.Equal(maxDepth, Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
+        Assert.Equal(maxDepth, budget.PeakDepth);
+        Assert.True(
+            budget.ConsumedSteps <= 2L * maxDepth,
+            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
     }
 
     [Theory]

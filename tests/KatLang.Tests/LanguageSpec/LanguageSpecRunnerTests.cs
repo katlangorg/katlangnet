@@ -298,6 +298,9 @@ public class LanguageSpecRunnerTests
             // `not` below the comparisons (September 2026): a `not` where a tighter
             // operand is required is a parser precedence diagnostic.
             "not-cannot-be-a-tighter-operand",
+            // The unified formula-lifting law (September 2026): a clause family its clauses
+            // do not name is a front-end rejection where a formula would lift it.
+            "unliftable-clause-family",
         ];
         string[] expectedModelDivergences =
         [

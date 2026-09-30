@@ -138,21 +138,23 @@ public class NativeArgumentValueDemandTests
     }
 
     /// <summary>
-    /// A neutral argument slot reaches the same binding without any front-end
-    /// value lifting, so the fix must cover it too.
+    /// A Math call NESTED in a neutral argument slot reaches the same binding. Its argument is
+    /// still a value position — under the unified formula-lifting law a nested expression takes
+    /// its own consumer's role, whatever slot encloses it — so the closed list's strict-value
+    /// diagnostic rejects this source like the unnested spelling; past that rejection the runtime
+    /// value demand is the same zero-argument arity failure.
     /// </summary>
     [Fact]
     public void ParameterizedArgument_ThroughNeutralArgumentSlot_StillFails()
     {
-        AssertEvalFailsWithArityMismatch(
+        var arity = AssertZeroArgumentValueDemand(
             """
             Id(v) = v
             A = q + 1
             F(x) = Id(Math.Abs(A))
             F(7)
-            """,
-            expected: 1,
-            actual: 0);
+            """);
+        Assert.Equal(1, arity.Expected);
     }
 
     /// <summary>
@@ -187,27 +189,36 @@ public class NativeArgumentValueDemandTests
 
     /// <summary>
     /// A clause family has no value with zero arguments, so the ordinary
-    /// conditional value-access error surfaces.
+    /// conditional value-access error surfaces. At the root the family lifts like every
+    /// callable (its signature <c>C(n)</c> is named by its clauses), so the demand is pinned
+    /// under a closed list whose strict-value rejection is bypassed as a host would.
     /// </summary>
     [Fact]
     public void ConditionalFamilyArgument_ReportsNoMatchingBranch()
     {
-        Assert.IsType<EvalError.NoMatchingBranch>(InnermostError(
+        Assert.IsType<EvalError.NoMatchingBranch>(InnermostErrorBypassingFrontEndRejection(
             """
             C(0) = 1
             C(n) = 2
-            Math.Abs(C)
+            F(x) = Math.Abs(C)
+            F(7)
             """));
     }
 
     /// <summary>
     /// A builtin argument reports the builtin's own arity failure rather than the
-    /// wrapper parameter name.
+    /// wrapper parameter name. A builtin lifts from its callable interface like every callable
+    /// (<c>Math.Abs(count)</c> at the root lifts <c>count(collection)</c>), so the demand is
+    /// pinned under a closed list whose strict-value rejection is bypassed as a host would.
     /// </summary>
     [Fact]
     public void BuiltinArgument_ReportsTheBuiltinsArityFailure()
     {
-        Assert.IsType<EvalError.ArityMismatch>(InnermostError("Math.Abs(count)"));
+        Assert.IsType<EvalError.ArityMismatch>(InnermostErrorBypassingFrontEndRejection(
+            """
+            F(x) = Math.Abs(count)
+            F(7)
+            """));
     }
 
     /// <summary>

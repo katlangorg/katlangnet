@@ -575,11 +575,13 @@ public class PatternBindingErrorPrecedenceTests
     // ── Host-built shapes the parser never produces ─────────────────────────
 
     [Fact]
-    public void SecondCollectingCapture_IsASuffixPattern_AfterTheArityCheck()
+    public void SecondCollectingCapture_IsIllegalBeforeEvaluation()
     {
-        // The FIRST collecting capture is the list's collector (Lean findCollecting); a second
-        // one is an ordinary suffix pattern that fails to bind — after the arity check and
-        // after the patterns before it, never instead of them.
+        // Two collecting captures at one pattern level are a rejected signature (X-02,
+        // ParameterPattern.FindSignatureViolation; Lean signatureViolation?): the parser rejects
+        // the written shape, formula lifting an inferred one, and the pre-evaluation validation
+        // this host-built one — before any argument binds, never a binder allocation around two
+        // collectors (formerly the second one bound as an ordinary suffix pattern).
         var callee = new Algorithm.User(
             Parent: null,
             ParameterPatterns:
@@ -592,12 +594,11 @@ public class PatternBindingErrorPrecedenceTests
             Properties: [],
             Output: [new Expr.ListLiteral([new Expr.Param("a")])]);
 
-        Assert.Equal("ArityMismatch(1, 0) in [(*a, *b)]", BindingReason(RunHostMap(callee, new Expr.EmptySequence(0)).Error));
-        Assert.Equal("BadArity in []", BindingReason(RunHostMap(callee, new Expr.Capture([new Expr.Num(1), new Expr.Num(2)])).Error));
-        // A scalar is the sequence pattern's kind mismatch, before any of its items bind.
-        Assert.Equal(
-            "TypeMismatch(sequence pattern `(*a, *b)` expects a sequence value, but received numeric value 7) in []",
-            BindingReason(RunHostMap(callee, new Expr.Num(7)).Error));
+        foreach (var item in new Expr[] { new Expr.EmptySequence(0), new Expr.Capture([new Expr.Num(1), new Expr.Num(2)]), new Expr.Num(7) })
+        {
+            var illegal = Assert.IsType<EvalError.IllegalInEval>(RunHostMap(callee, item).Error);
+            Assert.Equal("Only one collecting binding is allowed per pattern level.", illegal.Reason);
+        }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

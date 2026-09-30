@@ -4,7 +4,7 @@ import CoreTests.Common
 namespace KatLangTests
 open KatLang (OwnerLevel OwnedDeclaration selectOwnedDeclaration elaboratesToParameter conflictingOwnedNames
   validOwnedDeclarations ForwardingSource forwardingSource forwardParameter alg algPrivate privateProp privateLocalProp
-  PropExposure runResult Result Expr)
+  PropExposure runResult Result Expr Algorithm)
 
 --------------------------------------------------------------------------------
 -- Automatic parameter forwarding preserves existing bindings (Q-04, decided 2026-09-28)
@@ -224,5 +224,76 @@ def fwdExplicitShadowing : Expr :=
     [.call (.resolve "Outer") [.num 3]])
 
 #guard match runResult fwdExplicitShadowing with | .ok (Result.atom 23) => true | _ => false
+
+-- ── 3. The unified formula-lifting law (decided 2026-09-30) ─────────────────────
+-- A resolved callable reference lifts when its occurrence is used as a VALUE, with its lifting
+-- signature (`Algorithm.liftingSignature?`), whatever its category. These evaluate the elaborated
+-- trees the C# front end now produces beside the ones it produced before (the derived
+-- `formula-lifting-*` cases of LanguageSpecCases.lean compare the real C# elaborations).
+
+private def uflA : Algorithm := alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
+private def uflId : Algorithm := alg ["v"] [] [] [.param "v"]
+
+/-- `A = x + 1` / `Id(v) = v` / `F = Id(A + 0)`: the `+` demands `A`'s value, so the operand
+    lifts although it sits in a user call's argument (`F(x) = Id(A(x) + 0)`, `F(3)` is 4). The
+    former tree left it bare: `F` was a zero-parameter formula whose `A + 0` failed (ArityMismatch). -/
+def uflNestedValue : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("A", uflA), ("Id", uflId),
+     ("F", alg ["x"] [] [] [.call (.resolve "Id") [.binary .add (.call (.resolve "A") [.param "x"]) (.num 0)]])]
+    [.call (.resolve "F") [.num 3]])
+
+def uflNestedValueFormerly : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("A", uflA), ("Id", uflId), ("F", alg [] [] [] [.call (.resolve "Id") [.binary .add (.resolve "A") (.num 0)]])]
+    [.resolve "F"])
+
+#guard match runResult uflNestedValue with | .ok (Result.atom 4) => true | _ => false
+#guard match runResult uflNestedValueFormerly with | .error _ => true | _ => false
+
+/-- `Twice(f) = f(f(1))` / `F = Twice(A)`: a user callable's whole argument stays neutral, so `A`
+    is passed as a callable and `F` stays a zero-parameter formula (3). -/
+def uflHigherOrder : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("A", uflA),
+     ("Twice", alg ["f"] [] [] [.call (.param "f") [.call (.param "f") [.num 1]]]),
+     ("F", alg [] [] [] [.call (.resolve "Twice") [.resolve "A"]])]
+    [.resolve "F"])
+
+#guard match runResult uflHigherOrder with | .ok (Result.atom 3) => true | _ => false
+
+/-- `G(0) = 100` / `G(n) = n * 2` / `F = G + 1` lifts as `F(n) = G(n) + 1`: one whole-value slot,
+    named by the general clause, passed whole — so every dispatch is the direct call's
+    (`F(0)` is `G(0) + 1` = 101, `F(3)` is 7). -/
+private def uflFamily : Algorithm :=
+  Algorithm.elaborateClauseGroup
+    [{ pattern := .litInt 0, body := alg [] [] [] [.num 100] },
+     { pattern := .bind "n", body := alg [] [] [] [.binary .mul (.param "n") (.num 2)] }]
+
+def uflFamilyLifted (argument : Int) : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("G", uflFamily), ("F", alg ["n"] [] [] [.binary .add (.call (.resolve "G") [.param "n"]) (.num 1)])]
+    [.call (.resolve "F") [.num argument]])
+
+def uflFamilyDirect (argument : Int) : Expr :=
+  .algorithmExpr (algPrivate [] [] [("G", uflFamily)]
+    [.binary .add (.call (.resolve "G") [.num argument]) (.num 1)])
+
+#guard (Algorithm.liftingSignature? uflFamily).isSome
+#guard match runResult (uflFamilyLifted 0), runResult (uflFamilyDirect 0) with
+  | .ok (Result.atom 101), .ok (Result.atom 101) => true | _, _ => false
+#guard match runResult (uflFamilyLifted 3), runResult (uflFamilyDirect 3) with
+  | .ok (Result.atom 7), .ok (Result.atom 7) => true | _, _ => false
+
+/-- `A = x / 0` / `F = if(false, A, 0)` lifts as `F(x) = if(false, A(x), 0)`: the signature covers
+    the branch's dependency (laziness-blind, like a free name written there), while evaluation is
+    unchanged — the unselected branch never runs (`F(3)` is 0, no division by zero). -/
+def uflLazyBranch : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("A", alg ["x"] [] [] [.binary .div (.param "x") (.num 0)]),
+     ("F", alg ["x"] [] [] [.call (.resolve "if") [.boolLiteral false, .call (.resolve "A") [.param "x"], .num 0]])]
+    [.call (.resolve "F") [.num 3]])
+
+#guard match runResult uflLazyBranch with | .ok (Result.atom 0) => true | _ => false
 
 end KatLangTests

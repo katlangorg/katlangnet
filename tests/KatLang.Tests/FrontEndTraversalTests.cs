@@ -427,17 +427,20 @@ public class FrontEndTraversalTests
     }
 
     /// <summary>
-    /// Capture rows intentionally do NOT lift (grouping suppresses callable
-    /// identity), and a neutral call-argument slot still descends into a nested
-    /// brace algorithm whose own rows DO lift — the two documented transparent
-    /// context behaviors of <c>ProcessExprNested</c>.
+    /// A capture's elements are VALUE positions (the unified formula-lifting law: a capture
+    /// materializes its elements' values and no callable identity crosses it), so a capture
+    /// row lifts like any row — <c>(F, 1)</c> is <c>(F(x), 1)</c> and the root needs
+    /// <c>x</c> — and a neutral call-argument slot still descends into a nested brace
+    /// algorithm whose own rows lift.
     /// </summary>
     [Fact]
-    public void ImplicitArgumentResolver_CaptureRowsStayBareWhileNestedAlgorithmsLift()
+    public void ImplicitArgumentResolver_CaptureRowsAndNestedAlgorithmsLift()
     {
         var captureRoot = SourceProvenance.ParseValid("F(x) = x + 1\n(F, 1)").Root;
         var captureRow = Assert.IsType<Expr.Capture>(captureRoot.Output[0]);
-        Assert.IsType<Expr.Resolve>(captureRow.Body[0]);
+        var lifted = Assert.IsType<Expr.Call>(captureRow.Body[0]);
+        Assert.Equal("F", Assert.IsType<Expr.Resolve>(lifted.Function).Name);
+        Assert.Contains("x", captureRoot.Params);
 
         var nestedRoot = SourceProvenance.ParseValid("F(x) = x + 1\nG(a) = a\nG({-F})").Root;
         var finder = new LiftedCallFinder("F");

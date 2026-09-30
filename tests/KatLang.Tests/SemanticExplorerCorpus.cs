@@ -694,13 +694,16 @@ public static class SemanticExplorerCorpus
         // algorithm is the arity rejection — never `unknownName x` from inside its
         // body, pinned on both sides of the differential — the unselected slot is
         // never demanded, a zero-parameter algorithm is a value, and callback
-        // slots are untouched.
-        Special("ifSelectedParameterizedBranchIsArity", "Inc(x) = x + 1\nif(true, Inc, 0)"),
-        Special("ifSelectedParameterizedFalseBranchIsArity", "Inc(x) = x + 1\nif(false, 0, Inc)"),
-        Special("ifParameterizedConditionIsArity", "Inc(x) = x + 1\nif(Inc, 1, 0)"),
-        Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nif(false, Inc, 7)"),
+        // slots are untouched. Under the unified formula-lifting law (September 30
+        // 2026) these value positions LIFT in an inferring body, so the runtime
+        // demand is pinned under a closed list (`Probe(u) = ...`); the lifting itself
+        // is pinned by the `formulaLifting*` specials below.
+        Special("ifSelectedParameterizedBranchIsArity", "Inc(x) = x + 1\nProbe(u) = if(true, Inc, 0)\nProbe(0)"),
+        Special("ifSelectedParameterizedFalseBranchIsArity", "Inc(x) = x + 1\nProbe(u) = if(false, 0, Inc)\nProbe(0)"),
+        Special("ifParameterizedConditionIsArity", "Inc(x) = x + 1\nProbe(u) = if(Inc, 1, 0)\nProbe(0)"),
+        Special("ifUnselectedParameterizedBranchStaysLazy", "Inc(x) = x + 1\nProbe(u) = if(false, Inc, 7)\nProbe(0)"),
         Special("ifZeroParameterBranchIsValue", "A = 7\nif(true, A, 0)"),
-        Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nif(true, K, 0)"),
+        Special("ifParameterIgnoringBodyStillArity", "K(x) = 5\nProbe(u) = if(true, K, 0)\nProbe(0)"),
         // September 2026: zero-argument value demand follows ACTUAL call arity, so a
         // collecting parameter (which requires no supplied argument) is demandable while a
         // required fixed parameter beside it still is not — and a nested pattern still
@@ -709,20 +712,37 @@ public static class SemanticExplorerCorpus
         Special("ifCollectingCallableExplicitCallIsSameValue", "Collect(*xs) = xs\nif(true, Collect(), 0)"),
         Special("bareCollectingCallableIsAValue", "Only(*xs) = xs\nOnly"),
         Special("bareCollectingCallableCountAgreesWithDottedForm", "Only(*xs) = xs\ncount(Only), Only.count"),
-        Special("ifRequiredPrefixBesideCollectorIsArity", "Head(x, *rest) = x\nif(true, Head, 0)"),
-        Special("ifRequiredSuffixBesideCollectorIsArity", "Tail(*rest, z) = z\nif(true, Tail, 0)"),
-        Special("ifNestedCollectingPatternIsArity", "P((x, *rest)) = x\nif(true, P, 0)"),
+        Special("ifRequiredPrefixBesideCollectorIsArity", "Head(x, *rest) = x\nProbe(u) = if(true, Head, 0)\nProbe(0)"),
+        Special("ifRequiredSuffixBesideCollectorIsArity", "Tail(*rest, z) = z\nProbe(u) = if(true, Tail, 0)\nProbe(0)"),
+        Special("ifNestedCollectingPatternIsArity", "P((x, *rest)) = x\nProbe(u) = if(true, P, 0)\nProbe(0)"),
         Special("collectingCallableStaysACallbackAlgorithm", "Only(*xs) = xs\nmap((1, 2), Only)"),
         Special("ifAlgorithmChannelParameterSlotIsArity", "Inc(x) = x + 1\nApply(g) = if(true, g, 0)\nApply(Inc)"),
-        Special("repeatInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, 1, Inc)"),
-        Special("repeatCountParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nrepeat(Step, Inc, 0)"),
-        Special("whileInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nDown(s) = s - 1, s\nwhile(Down, Inc)"),
-        Special("atomsParameterizedSlotIsArity", "Inc(x) = x + 1\natoms(Inc)"),
-        Special("rangeParameterizedSlotIsArity", "Inc(x) = x + 1\nrange(1, Inc)"),
-        Special("dotStringParameterizedReceiverIsArity", "Inc(x) = x + 1\nInc.string"),
-        Special("dotStringNavigatedParameterizedMemberIsArity", "Lib = { Sub(x) = x }\nLib.Sub.string"),
-        Special("reduceParameterIgnoringInitialStillRejected", "K(x) = 5\nAdd(e, a) = e + a\nreduce([1, 2], Add, K)"),
+        Special("repeatInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, 1, Inc)\nProbe(0)"),
+        Special("repeatCountParameterizedSlotIsArity", "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, Inc, 0)\nProbe(0)"),
+        Special("whileInitialParameterizedSlotIsArity", "Inc(x) = x + 1\nDown(s) = s - 1, s\nProbe(u) = while(Down, Inc)\nProbe(0)"),
+        Special("atomsParameterizedSlotIsArity", "Inc(x) = x + 1\nProbe(u) = atoms(Inc)\nProbe(0)"),
+        Special("rangeParameterizedSlotIsArity", "Inc(x) = x + 1\nProbe(u) = range(1, Inc)\nProbe(0)"),
+        Special("dotStringParameterizedReceiverIsArity", "Inc(x) = x + 1\nProbe(u) = Inc.string\nProbe(0)"),
+        Special("dotStringNavigatedParameterizedMemberIsArity", "Lib = { Sub(x) = x }\nProbe(u) = Lib.Sub.string\nProbe(0)"),
+        Special("reduceParameterIgnoringInitialStillRejected", "K(x) = 5\nAdd(e, a) = e + a\nProbe(u) = reduce([1, 2], Add, K)\nProbe(0)"),
         Special("repeatParameterizedStepIsCallback", "Inc(x) = x + 1\nrepeat(Inc, 2, 0)"),
+        // THE UNIFIED FORMULA-LIFTING LAW (September 30 2026): a reference in a VALUE position
+        // lifts, whatever callable it resolves to and however it was reached, and the role is the
+        // immediate consumer's — recursive and blind to laziness — while callbacks and whole user
+        // arguments keep the callable. Pinned against Lean on the elaborated (lifted) trees.
+        Special("formulaLiftingIfBranchLiftsWhileStayingLazy", "Inc(x) = x + 1\nG = if(false, Inc, 7)\nG(4)"),
+        Special("formulaLiftingRootValuePositionNeedsTheParameter", "Inc(x) = x + 1\nif(true, Inc, 0)"),
+        Special("formulaLiftingBuiltinValueSlot", "Inc(x) = x + 1\nG = count(Inc)\nG(4)"),
+        Special("formulaLiftingBuiltinSignature", "G = count + 0\nG((1, 2, 3))"),
+        Special("formulaLiftingLoopSignature", "Step(s) = s + 1\nG = repeat + 0\nG(Step, 2, 0)"),
+        Special("formulaLiftingDottedMember", "Lib = {\n    public Inc(x) = x + 1\n}\nG = Lib.Inc + 0\nG(4)"),
+        Special("formulaLiftingOpenedMember", "Lib = {\n    public Inc(x) = x + 1\n}\nG = {\n    open Lib\n    Inc + 0\n}\nG(4)"),
+        Special("formulaLiftingClauseFamily", "E(0) = 100\nE(n) = n\nG = E + 1\nG(0), G(5)"),
+        Special("formulaLiftingCaptureElement", "Inc(x) = x + 1\nG = (Inc, 0)\nG(4)"),
+        Special("formulaLiftingStringReceiver", "Inc(x) = x + 1\nG = Inc.string\nG(3000)"),
+        Special("formulaLiftingNestedInUserArgument", "Inc(x) = x + 1\nId(v) = v\nG = Id(Inc + 0)\nG(4)"),
+        Special("formulaLiftingKeepsCallbacks", "Inc(x) = x + 1\nG = map([1, 2], Inc)\nG"),
+        Special("formulaLiftingKeepsUserArguments", "Inc(x) = x + 1\nApply(f) = f(10)\nG = Apply(Inc)\nG"),
         // Q-05 (September 29 2026): REPEATED NAMES ARE CONSTRAINTS, NOT MERGES. Every occurrence
         // of a repeated parameter name supplies its own value, so a callable-only or failed
         // argument is its own failure in either position — never a binding that pairs one

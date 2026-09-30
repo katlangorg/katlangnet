@@ -606,13 +606,31 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
     [Fact]
     public async Task ImportedPropertyTypo_KeepsArityDemandAtTheLocalReference()
     {
-        var result = await KatLangEngine.RunAsync("open 'https://katlang.org/g24.kat'\nUse + 1",
+        // An opened member lifts like every callable, so the zero-argument demand is pinned
+        // under a closed list (an inferring root lifts instead, below).
+        var result = await KatLangEngine.RunAsync("open 'https://katlang.org/g24.kat'\nP(u) = Use + 1\nP(0)",
             new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Use = Math.Ceiling(2.1)") });
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
+        Assert.Equal(8, Assert.NotNull(error.Span).Start.Column);
+        Assert.Contains("Did you mean 'Math.Ceil'?", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportedPropertyTypo_LiftsIntoAnInferringRootAtTheImportingDocument()
+    {
+        // The unified formula-lifting law: the opened member's signature `Use(Ceiling)` lifts
+        // into the inferring root, whose report keeps the receiver-aware suggestion and is
+        // positioned in the importing document, never at module coordinates.
+        var result = await KatLangEngine.RunAsync("open 'https://katlang.org/g24.kat'\nUse + 1",
+            new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public Use = Math.Ceiling(2.1)") });
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
+        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, error.Code);
+        Assert.Equal(2, Assert.NotNull(error.Span).Start.Line);
         Assert.Equal(1, Assert.NotNull(error.Span).Start.Column);
         Assert.Contains("Did you mean 'Math.Ceil'?", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("[1:19]", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

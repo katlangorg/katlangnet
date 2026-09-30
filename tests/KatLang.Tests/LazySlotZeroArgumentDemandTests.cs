@@ -18,10 +18,39 @@ namespace KatLang.Tests;
 /// read its parameter (<c>K(x) = 5</c>) silently ran. The rule closes that back
 /// door: the decision is the effective signature's, made at the demand boundary
 /// before any body is entered, and only for the slot the builtin selects.</para>
+///
+/// <para><b>Where a program meets this law (the unified formula-lifting law, September 30
+/// 2026).</b> A builtin value slot, an <c>if</c> branch and the <c>.string</c> receiver are
+/// VALUE roles, so in a formula a callable that requires arguments is LIFTED there — at the
+/// never-called root into the root's own signature (<c>UnresolvedImplicitParams</c>). A
+/// closed parameter list that cannot supply the callee's parameters leaves the reference bare
+/// (PAR-04), and that is how source reaches the runtime demand this class pins: each row
+/// under test stands in the closed probe <c>Probe(unused) = …</c> (<see cref="Probed"/>),
+/// which shifts the reference 16 columns right and adds the probe's call frame. The lifted
+/// meaning of the same rows is pinned by <c>UnifiedFormulaLiftingTests</c>.</para>
 /// </summary>
 public class LazySlotZeroArgumentDemandTests
 {
     private const string Inc = "Inc(x) = x + 1\n";
+
+    private const string ProbeHead = "Probe(unused) = ";
+
+    /// <summary>The columns <see cref="Probed"/> moves the row under test.</summary>
+    private const int ProbeShift = 16;
+
+    private const string ProbeFrame = "while evaluating call to Probe";
+
+    /// <summary>
+    /// The source with its LAST line — the row under test — moved into the closed probe
+    /// <c>Probe(unused) = row</c>, called from the root: a closed list that binds none of the
+    /// callee's parameters keeps a value-role reference bare, so the row reaches the runtime
+    /// zero-argument demand exactly as the root row did before the unified lifting law.
+    /// </summary>
+    private static string Probed(string source)
+    {
+        var lastLine = source.LastIndexOf('\n');
+        return source[..(lastLine + 1)] + ProbeHead + source[(lastLine + 1)..] + "\nProbe(0)";
+    }
 
     private static EvalError FailingError(string source)
     {
@@ -60,11 +89,15 @@ public class LazySlotZeroArgumentDemandTests
         int line,
         int column)
     {
-        var error = FailingError(source);
+        // The row under test runs in the closed probe (see the class summary): same line,
+        // the reference ProbeShift columns further right, one more call frame.
+        var error = FailingError(Probed(source));
+        column += ProbeShift;
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal(expectedParameters, arity.Expected);
         Assert.Equal(0, arity.Actual);
         Assert.Null(arity.Signature);
+        Assert.Equal(ProbeFrame, ContextChain(error)[0]);
         Assert.Contains($"while evaluating property {propertyName}", ContextChain(error));
 
         var rendered = KatLangError.FromEvalError(error);
@@ -93,14 +126,16 @@ public class LazySlotZeroArgumentDemandTests
         // are those of `Inc` written as an output row (only the enclosing call
         // context differs).
         var bare = FailingError(Inc + "Inc");
-        var slot = FailingError(Inc + "if(true, Inc, 0)");
+        var slot = FailingError(Probed(Inc + "if(true, Inc, 0)"));
 
         Assert.Equal(DescribeErrorTree(Innermost(bare)), DescribeErrorTree(Innermost(slot)));
         Assert.Equal(
             KatLangError.FromEvalError(bare).Message,
-            KatLangError.FromEvalError(slot).Message.Replace("while evaluating call to if: ", string.Empty));
+            KatLangError.FromEvalError(slot).Message
+                .Replace(ProbeFrame + ": ", string.Empty)
+                .Replace("while evaluating call to if: ", string.Empty));
         Assert.Equal(["while evaluating property Inc"], ContextChain(bare));
-        Assert.Equal(["while evaluating call to if", "while evaluating property Inc"], ContextChain(slot));
+        Assert.Equal([ProbeFrame, "while evaluating call to if", "while evaluating property Inc"], ContextChain(slot));
     }
 
     // ── 2. The unselected branch stays lazy ──────────────────────────────────
@@ -109,7 +144,7 @@ public class LazySlotZeroArgumentDemandTests
     [InlineData("if(false, Inc, 7)")]
     [InlineData("if(true, 7, Inc)")]
     public void UnselectedIfSlot_ParameterizedProperty_IsNeverDemanded(string row)
-        => AssertEvaluatesTo(new Result.Atom(7), Inc + row);
+        => AssertEvaluatesTo(new Result.Atom(7), Probed(Inc + row));
 
     [Fact]
     public void UnselectedIfSlot_CostsExactlyWhatALiteralSlotCosts()
@@ -118,9 +153,9 @@ public class LazySlotZeroArgumentDemandTests
         // evaluated — the run's operational counters
         // equal those of the same program with a literal in that slot.
         var (parameterized, parameterizedBudget) = Evaluator.RunCountedObserved(
-            Program(Inc + "if(false, Inc, 7)"), enableOptimizations: false);
+            Program(Probed(Inc + "if(false, Inc, 7)")), enableOptimizations: false);
         var (literal, literalBudget) = Evaluator.RunCountedObserved(
-            Program(Inc + "if(false, 5, 7)"), enableOptimizations: false);
+            Program(Probed(Inc + "if(false, 5, 7)")), enableOptimizations: false);
 
         Assert.False(parameterized.IsError);
         Assert.False(literal.IsError);
@@ -178,7 +213,7 @@ public class LazySlotZeroArgumentDemandTests
         Assert.Equal("Missing", provenance.Name);
         Assert.NotNull(provenance.Span);
 
-        var rendered = KatLangError.FromEvalError(FailingError("A = Missing + 1\nif(true, A, 0)"));
+        var rendered = KatLangError.FromEvalError(FailingError(Probed("A = Missing + 1\nif(true, A, 0)")));
         Assert.Contains("An implicit parameter 'Missing' was inferred at [1:5].", rendered.Message);
     }
 
@@ -206,7 +241,7 @@ public class LazySlotZeroArgumentDemandTests
     {
         // A builtin algorithm declares no parameters of its own, so the demand law
         // passes it through to its established value-position rejection.
-        var error = FailingError("if(true, count, 0)");
+        var error = FailingError(Probed("if(true, count, 0)"));
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal("count", arity.Signature?.Name);
     }
@@ -237,11 +272,11 @@ public class LazySlotZeroArgumentDemandTests
     [InlineData("Add(e, a) = e + a\nreduce([], Add, F)", 17)]
     public void CollectionValuePositions_NameTheDemandedConditionalFamily(string rows, int column)
     {
-        var error = FailingError("F(0) = 10\nF(x) = x + 1\n" + rows);
+        var error = FailingError(Probed("F(0) = 10\nF(x) = x + 1\n" + rows));
         Assert.Equal("F", Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error)).AlgorithmName);
         var rendered = KatLangError.FromEvalError(error);
         Assert.Equal(rows.Contains('\n') ? 4 : 3, Assert.NotNull(rendered.Span).Start.Line);
-        Assert.Equal(column, Assert.NotNull(rendered.Span).Start.Column);
+        Assert.Equal(column + ProbeShift, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     [Fact]
@@ -308,7 +343,7 @@ public class LazySlotZeroArgumentDemandTests
         var touch = HostOperation.Create("Touch", (_, _) => new Result.Atom(++touches));
         var syncOperations = HostOperations.Create(touch,
             HostOperation.Create("Gate", (_, _) => new Result.Atom(1)));
-        var source = "K(x) = Touch()\nStep(s) = s\nAdd(e, a) = e + a\nGate()\n" + row;
+        var source = Probed("K(x) = Touch()\nStep(s) = s\nAdd(e, a) = e + a\nGate()\n" + row);
         var parsed = Parser.Parse(source, new RunOptions { HostOperations = syncOperations });
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics));
         var ast = new Expr.AlgorithmExpr(parsed.Root);
@@ -354,7 +389,7 @@ public class LazySlotZeroArgumentDemandTests
         // reads its parameter used to run (and yield 8), and a body failing for
         // another reason used to leak that failure instead — neither body is
         // entered now.
-        var error = FailingError(definition + "\nAdd(e, a) = e + a\nreduce([1, 2], Add, Inc)");
+        var error = FailingError(Probed(definition + "\nAdd(e, a) = e + a\nreduce([1, 2], Add, Inc)"));
         Assert.IsType<EvalError.BadArity>(Innermost(error));
 
         var rendered = KatLangError.FromEvalError(error);
@@ -432,7 +467,7 @@ public class LazySlotZeroArgumentDemandTests
     {
         // A conditional cannot select a branch without arguments: the demand law's
         // conditional rule names the family (never the generic "conditional").
-        var error = FailingError("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)");
+        var error = FailingError(Probed("F(0) = 10\nF(x) = x + 1\nif(true, F, 0)"));
         var branch = Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error));
         Assert.Equal("F", branch.AlgorithmName);
     }
@@ -477,12 +512,12 @@ public class LazySlotZeroArgumentDemandTests
         Assert.DoesNotContain("Unknown name", KatLangError.FromEvalError(parameter).Message);
 
         // A navigated structural member: the bare rejection, at the receiver.
-        var navigated = FailingError("Lib = { Sub(x) = x }\nLib.Sub.string");
+        var navigated = FailingError(Probed("Lib = { Sub(x) = x }\nLib.Sub.string"));
         Assert.Equal(1, Assert.IsType<EvalError.ArityMismatch>(Innermost(navigated)).Expected);
         var rendered = KatLangError.FromEvalError(navigated);
         Assert.DoesNotContain("Unknown name", rendered.Message);
         Assert.Equal(2, Assert.NotNull(rendered.Span).Start.Line);
-        Assert.Equal(1, Assert.NotNull(rendered.Span).Start.Column);
+        Assert.Equal(1 + ProbeShift, Assert.NotNull(rendered.Span).Start.Column);
     }
 
     // ── 8. Execution parity: plain, counted, forced async, suspending async, planned loops
@@ -526,7 +561,8 @@ public class LazySlotZeroArgumentDemandTests
     [MemberData(nameof(ParityMatrix))]
     public async Task PlainCountedAndAsyncPaths_AgreeOnOutcomeAndCounters(string source)
     {
-        var ast = Program(source);
+        // Every row in the closed probe, so the value-role references reach the runtime demand.
+        var ast = Program(Probed(source));
 
         // Plain versus counted: the same value (or the same structured error tree).
         var plain = Evaluator.Run(ast);

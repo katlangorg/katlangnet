@@ -62,7 +62,7 @@ public class TutorialResultSweepTests
                     "**Result:** error — division by zero, in the initial accumulator.",
                     KatLangErrorCode.DivisionByZero),
                 new(
-                    "Inc(y) = y + 1\nSame(x, x) = true\nSame(x, y) = false\n\nSame(Inc, 1)",
+                    "Inc(y) = y + 1\nSame(x, x) = true\nSame(x, y) = false\n\nCheck(n) = Same(Inc, n)\nCheck(1)",
                     "**Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.",
                     KatLangErrorCode.ArityMismatch),
                 new(
