@@ -2645,6 +2645,36 @@ internal static class AlgorithmValidation
     internal const string ExplicitParametersRequireOutputMessage =
         "This algorithm declares explicit parameters but does not define an output. Remove the algorithm parameters if it is only a container, declare parameters on the relevant property instead, or define an algorithm output.";
 
+    /// <summary>
+    /// The wording of <see cref="DiagnosticCode.ExplicitParametersRequireOutput"/> for an algorithm
+    /// whose parameters were all INFERRED (<see cref="InferredParameterOutputValidator"/>): it names the
+    /// parameters — at most three, each bounded — and says where implicit parameters come from, never
+    /// that the algorithm declares them.
+    /// </summary>
+    internal static string InferredParametersRequireOutputMessage(IReadOnlyList<ParameterPattern> parameters)
+    {
+        const int MaxNamed = 3;
+        var named = Math.Min(parameters.Count, MaxNamed);
+        var names = new string[named];
+        for (var index = 0; index < named; index++)
+            names[index] = $"'{ExprNameRenderer.BoundName(parameters[index].DisplayName)}'";
+
+        var list = parameters.Count > MaxNamed
+            ? $"{string.Join(", ", names)}, and {parameters.Count - MaxNamed} more"
+            : named switch
+            {
+                1 => names[0],
+                2 => $"{names[0]} and {names[1]}",
+                _ => $"{string.Join(", ", names[..^1])}, and {names[^1]}",
+            };
+        var subject = parameters.Count == 1 ? "the implicit parameter" : "the implicit parameters";
+        return $"This algorithm takes {subject} {list} but does not define an output. "
+            + "Implicit parameters are inferred from what an algorithm's definition uses (a name that nothing in scope declares, "
+            + "or an argument that a callable it uses needs), and an algorithm with parameters must define an output. "
+            + "Define an algorithm output, or, if the algorithm is only a container, declare the names its definition uses "
+            + "and call the callables it uses with explicit arguments, so that it takes no parameters.";
+    }
+
     public static IReadOnlyList<ExplicitParameterOutputViolation> FindExplicitParameterOutputViolations(Algorithm algorithm)
     {
         // The parser's post-parse walk reports only the explicit-parameter invariant:
@@ -2725,6 +2755,14 @@ internal static class AlgorithmValidation
         public override void VisitAlgorithm(Algorithm algorithm)
         {
             if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            // A deferred module region's placeholder body is a PROVISIONAL elaboration: a name the
+            // region's module will supply reads as undeclared there, so judging it here would blame
+            // written code for a module that is merely not loaded yet — the very verdict provisional
+            // elaboration withholds. The body is validated when it materializes (the parser checked
+            // its written parameter lists; the front-end validators check the completed ones).
+            if (algorithm.DeferredRegion is not null)
                 return;
 
             if (!_visited.Add(algorithm))
@@ -2840,7 +2878,9 @@ internal static class AlgorithmValidation
             if (algorithm.ParameterPatterns.Count > 0 && algorithm.Output.Count == 0)
             {
                 // The diagnostic points at the first WRITTEN parameter; an inferred signature has no
-                // source-backed declaration to point at.
+                // source-backed declaration to point at. (A parsed program never reaches the gate with
+                // one: the front end reports an output-less algorithm with INFERRED parameters once its
+                // signature is complete, positioned at what inferred it — InferredParameterOutputValidator.)
                 var span = algorithm.HasExplicitParameterList ? algorithm.Parameters.FirstOrDefault()?.Span : null;
                 Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span)
                 {

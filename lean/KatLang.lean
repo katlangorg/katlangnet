@@ -7859,13 +7859,21 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
      At each step, the parameter map is updated with the processed property's
      final parameter-pattern signature before processing subsequent dependents.
 
-   Cycles (mutually recursive siblings) are not excluded from lifting: the
-   acyclic prefix is processed in topological order and the members of every
-   cycle are then processed in DECLARATION order, each seeing the signatures
-   completed so far (the C# `PropertyDependencyGraph.TopologicalOrder`). This
-   is the one documented way two reaches of a node can observe different
-   sibling signatures (the "sibling CYCLE" exception of the shared-DAG
-   guarantee in `docs/design/language-rules/evaluator-and-hosting.md`). -/
+   Cycles (mutually recursive siblings) are not excluded from lifting: each
+   cycle — a strongly connected component of G — is ordered as ONE unit,
+   processed once every sibling its members reference outside it has been,
+   its members in DECLARATION order, each seeing the signatures completed so
+   far (the C# `PropertyDependencyGraph.TopologicalOrder`). That fallback is
+   confined to the cycle's members: a property that references a cycle is
+   not part of it, so it is processed after all of the cycle's members and
+   sees their final signatures, whatever the declaration order. C# also
+   anticipates reads through soft preferences: when those close a cycle
+   around hard units, the combined component settles before outside
+   consumers, retaining the hard scheduler's order inside it (no fixed
+   point or call recomputation). This is the
+   one documented way two reaches of a node can observe different sibling
+   signatures (the "sibling CYCLE" exception of the shared-DAG guarantee in
+   `docs/design/language-rules/evaluator-and-hosting.md`). -/
 
 /-- **Implicit-lifting eligibility** (Q-03, decided 2026-09-28; surface syntax
     support — the specification of the surface pass's one lifting decision).

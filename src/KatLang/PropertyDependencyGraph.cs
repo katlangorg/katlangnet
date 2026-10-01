@@ -177,9 +177,11 @@ internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string>
 
 /// <summary>
 /// Sibling/processing-order channel result: per-property direct sibling dependency edges and
-/// the topological property-processing order derived from them. This is the ONLY channel the
-/// implicit-argument resolver consumes; the recursive summary channel lives on
-/// <see cref="PropertyDependencySummaryGraph"/> and is never computed here (M17).
+/// the topological property-processing order derived from them (<see cref="TopologicalOrder"/>:
+/// a sibling CYCLE is ordered as one unit, so its declaration-order fallback never reaches a
+/// property outside it). This is the ONLY channel the implicit-argument resolver consumes; the
+/// recursive summary channel lives on <see cref="PropertyDependencySummaryGraph"/> and is never
+/// computed here (M17).
 /// </summary>
 internal sealed class PropertyDependencyGraph
 {
@@ -211,6 +213,22 @@ internal sealed class PropertyDependencyGraph
     public bool TryGetPropertyIndex(string propertyName, out int propertyIndex)
         => propertyNameToIndex.TryGetValue(propertyName, out propertyIndex);
 
+    /// <summary>
+    /// The order the resolver processes the level's properties in: Kahn's order over the
+    /// CONDENSATION of the hard edges, followed by settlement of any cycles soft preferences close
+    /// around those units (<see cref="SettleSoftCycleConsumers"/>). A property outside every sibling cycle is ready once every
+    /// sibling it reads is processed; a sibling CYCLE — a strongly connected component of more than
+    /// one property — is ONE unit, ready once every sibling its members read OUTSIDE it is processed,
+    /// and is released only when no property outside a cycle is ready. Releasing a cycle processes
+    /// its members together in declaration order: its processing-order fallback, in which a member
+    /// processed first reads the others unprocessed. That fallback is confined to the cycle's
+    /// members (X-04): a property that depends on a cycle is not part of it, so it waits for all of
+    /// the cycle's members and reads their settled signatures, whatever the declaration order. Soft
+    /// preferences decide among ready units as among ready properties (see
+    /// <see cref="PropertyDependencyNode"/>); ties go to declaration order. If a soft preference closes
+    /// a cycle, only its members retain that fallback; consumers outside the combined component
+    /// follow all its members. Settlement preserves the hard scheduler's internal component order.
+    /// </summary>
     public IReadOnlyList<int> TopologicalOrder
         => topologicalOrder ??= BuildTopologicalOrder();
 
@@ -221,7 +239,10 @@ internal sealed class PropertyDependencyGraph
     /// keeps its processing-order fallback (a member processed first reads the others unprocessed),
     /// whichever reads close it: processing a member early would only move which member reads
     /// another one unprocessed, and around a long ring it would stack one processing inside the
-    /// next. Computed on first use, so a level without demands never pays for it.
+    /// next. A property that hard-depends on a cycle is not part of that fallback — its turn comes
+    /// after all of the cycle's members (<see cref="TopologicalOrder"/>) — but processing it early
+    /// would process the cycle early, so it waits for its turn too. Computed on first use, so a
+    /// level without demands never pays for it.
     /// </summary>
     public IReadOnlySet<int> CyclicIndices => cyclicIndices ??= BuildCyclicIndices();
 
@@ -229,64 +250,19 @@ internal sealed class PropertyDependencyGraph
 
     private HashSet<int> BuildCyclicIndices()
     {
-        // Tarjan's strongly connected components over hard and soft edges, iteratively (a long
-        // chain of siblings never grows the host stack).
+        // The members of every strongly connected component of more than one property over hard
+        // AND soft edges (the channel records no edge from a property to itself).
         var count = nodes.Length;
-        var order = new int[count];
-        var low = new int[count];
-        var onStack = new bool[count];
-        Array.Fill(order, -1);
-        var components = new Stack<int>();
-        var work = new Stack<(int Property, int Edge)>();
+        var component = StronglyConnectedComponents(includeSoft: true, out var componentCount);
+        var componentSize = new int[componentCount];
+        foreach (var unit in component)
+            componentSize[unit]++;
+
         var cyclic = new HashSet<int>();
-        var nextOrder = 0;
-
-        void Enter(int property)
+        for (var property = 0; property < count; property++)
         {
-            order[property] = low[property] = nextOrder++;
-            components.Push(property);
-            onStack[property] = true;
-            work.Push((property, 0));
-        }
-
-        for (var start = 0; start < count; start++)
-        {
-            if (order[start] >= 0)
-                continue;
-
-            Enter(start);
-            while (work.TryPop(out var frame))
-            {
-                var hard = nodes[frame.Property].SiblingDependencyIndices;
-                var soft = nodes[frame.Property].SoftSiblingDependencyIndices;
-                if (frame.Edge < hard.Count + soft.Count)
-                {
-                    work.Push((frame.Property, frame.Edge + 1));
-                    var dependency = frame.Edge < hard.Count ? hard[frame.Edge] : soft[frame.Edge - hard.Count];
-                    if (order[dependency] < 0)
-                        Enter(dependency);
-                    else if (onStack[dependency])
-                        low[frame.Property] = Math.Min(low[frame.Property], order[dependency]);
-                    continue;
-                }
-
-                if (work.TryPeek(out var parent))
-                    low[parent.Property] = Math.Min(low[parent.Property], low[frame.Property]);
-                if (low[frame.Property] != order[frame.Property])
-                    continue;
-
-                var members = 0;
-                int member;
-                do
-                {
-                    member = components.Pop();
-                    onStack[member] = false;
-                    members++;
-                    if (member != frame.Property || members > 1)
-                        cyclic.Add(member);
-                }
-                while (member != frame.Property);
-            }
+            if (componentSize[component[property]] > 1)
+                cyclic.Add(property);
         }
 
         // Everything that hard-depends on a cycle member.
@@ -314,99 +290,310 @@ internal sealed class PropertyDependencyGraph
 
     private IReadOnlyList<int> BuildTopologicalOrder()
     {
-        var inDegree = new int[nodes.Length];
-        var dependents = new List<int>[nodes.Length];
-        for (var i = 0; i < nodes.Length; i++)
-            dependents[i] = [];
+        var count = nodes.Length;
+        // Most levels are leaves: no property, or one (the channel records no edge to itself).
+        if (count <= 1)
+            return count == 0 ? [] : [0];
 
+        // The UNITS of the order: the strongly connected components of the hard edges. A component
+        // of one property is that property; a larger one is a sibling CYCLE, whose members — in
+        // declaration order, the cycle's processing-order fallback — are processed together.
+        var component = StronglyConnectedComponents(includeSoft: false, out var componentCount);
+        var members = new List<int>[componentCount];
+        for (var unit = 0; unit < componentCount; unit++)
+            members[unit] = [];
+        for (var property = 0; property < count; property++)
+            members[component[property]].Add(property);
+
+        // A unit is keyed by its first member (a property outside every cycle by itself).
+        int UnitOf(int property) => members[component[property]][0];
+        bool InCycle(int property) => members[component[property]].Count > 1;
+
+        // What a unit still waits for OUTSIDE itself, per property outside every cycle and per cycle
+        // (keyed by its first member): the unprocessed siblings it reads (hard edges), and the
+        // unprocessed siblings it may read (soft preferences). A read inside a cycle never blocks it.
+        var pending = new int[count];
+        var softPending = new int[count];
+        var dependents = new List<int>?[count];
+        var softDependents = new List<int>?[count];
         foreach (var node in nodes)
         {
+            var unit = UnitOf(node.PropertyIndex);
             foreach (var dependencyIndex in node.SiblingDependencyIndices)
             {
-                dependents[dependencyIndex].Add(node.PropertyIndex);
-                inDegree[node.PropertyIndex]++;
+                if (component[dependencyIndex] == component[node.PropertyIndex])
+                    continue;
+                (dependents[dependencyIndex] ??= []).Add(node.PropertyIndex);
+                pending[unit]++;
             }
-        }
 
-        // SOFT preferences (reads this channel cannot classify): among the properties the hard edges
-        // leave ready, one whose soft dependencies are all processed goes first, in readiness order;
-        // only when none is, the earliest ready one does (a soft edge never blocks the order, so it
-        // can never create a cycle). A level without soft edges orders exactly as plain Kahn does.
-        var softDependents = new List<int>?[nodes.Length];
-        var softPending = new int[nodes.Length];
-        foreach (var node in nodes)
-        {
+            // SOFT preferences (reads this channel cannot classify): among the units the hard edges
+            // leave ready, one whose soft dependencies are all processed goes first, in readiness
+            // order; only when none is, the earliest ready one does (a soft edge never blocks the
+            // order, so it can never create a cycle). A level without soft edges or cycles orders
+            // exactly as plain Kahn does.
             foreach (var softIndex in node.SoftSiblingDependencyIndices)
             {
+                if (component[softIndex] == component[node.PropertyIndex])
+                    continue;
                 (softDependents[softIndex] ??= []).Add(node.PropertyIndex);
-                softPending[node.PropertyIndex]++;
+                softPending[unit]++;
             }
         }
 
         var queue = new Queue<int>();
         var blocked = new SortedSet<(long Sequence, int Index)>();
-        var blockedSequence = new long[nodes.Length];
+        var blockedSequence = new long[count];
         var nextSequence = 0L;
-        void MakeReady(int index)
+        // Ready cycles by first member, i.e. by declaration: those whose soft preferences outside the
+        // cycle are all processed, and those still waiting for one.
+        var readyCycles = new SortedSet<int>();
+        var softBlockedCycles = new SortedSet<int>();
+
+        void MakeReady(int unit)
         {
-            if (softPending[index] == 0)
+            if (InCycle(unit))
             {
-                queue.Enqueue(index);
+                (softPending[unit] == 0 ? readyCycles : softBlockedCycles).Add(unit);
                 return;
             }
 
-            blockedSequence[index] = nextSequence++;
-            blocked.Add((blockedSequence[index], index));
-        }
-
-        for (var i = 0; i < nodes.Length; i++)
-        {
-            if (inDegree[i] == 0)
-                MakeReady(i);
-        }
-
-        var result = new List<int>(nodes.Length);
-        while (queue.Count > 0 || blocked.Count > 0)
-        {
-            int propertyIndex;
-            if (queue.Count > 0)
+            if (softPending[unit] == 0)
             {
-                propertyIndex = queue.Dequeue();
-            }
-            else
-            {
-                (_, propertyIndex) = blocked.Min;
-                blocked.Remove(blocked.Min);
+                queue.Enqueue(unit);
+                return;
             }
 
+            blockedSequence[unit] = nextSequence++;
+            blocked.Add((blockedSequence[unit], unit));
+        }
+
+        for (var property = 0; property < count; property++)
+        {
+            if (pending[property] == 0 && UnitOf(property) == property)
+                MakeReady(property);
+        }
+
+        var result = new List<int>(count);
+        void Process(int propertyIndex)
+        {
             result.Add(propertyIndex);
-            foreach (var dependentIndex in dependents[propertyIndex])
-            {
-                inDegree[dependentIndex]--;
-                if (inDegree[dependentIndex] == 0)
-                    MakeReady(dependentIndex);
-            }
-
-            if (softDependents[propertyIndex] is { } waiting)
+            if (dependents[propertyIndex] is { } waiting)
             {
                 foreach (var dependentIndex in waiting)
                 {
-                    if (--softPending[dependentIndex] == 0 && blocked.Remove((blockedSequence[dependentIndex], dependentIndex)))
-                        queue.Enqueue(dependentIndex);
+                    var unit = UnitOf(dependentIndex);
+                    if (--pending[unit] == 0)
+                        MakeReady(unit);
+                }
+            }
+
+            if (softDependents[propertyIndex] is { } preferring)
+            {
+                foreach (var dependentIndex in preferring)
+                {
+                    var unit = UnitOf(dependentIndex);
+                    if (--softPending[unit] != 0)
+                        continue;
+                    if (InCycle(unit))
+                    {
+                        if (softBlockedCycles.Remove(unit))
+                            readyCycles.Add(unit);
+                    }
+                    else if (blocked.Remove((blockedSequence[unit], unit)))
+                    {
+                        queue.Enqueue(unit);
+                    }
                 }
             }
         }
 
-        if (result.Count < nodes.Length)
+        while (true)
         {
-            for (var i = 0; i < nodes.Length; i++)
+            if (queue.TryDequeue(out var ready))
             {
-                if (inDegree[i] > 0)
-                    result.Add(i);
+                Process(ready);
+                continue;
+            }
+
+            // A cycle is released only when no property outside one is ready (a property that does
+            // not depend on a cycle keeps its place ahead of it): first a cycle whose soft preferences
+            // are satisfied, then a property waiting only on a soft preference, then any ready cycle.
+            int cycle;
+            if (readyCycles.Count > 0)
+            {
+                cycle = readyCycles.Min;
+                readyCycles.Remove(cycle);
+            }
+            else if (blocked.Count > 0)
+            {
+                var next = blocked.Min;
+                blocked.Remove(next);
+                Process(next.Index);
+                continue;
+            }
+            else if (softBlockedCycles.Count > 0)
+            {
+                cycle = softBlockedCycles.Min;
+                softBlockedCycles.Remove(cycle);
+            }
+            else
+            {
+                break;
+            }
+
+            foreach (var member in members[component[cycle]])
+                Process(member);
+        }
+
+        // The condensation is acyclic, so every unit becomes ready: a property left out means the
+        // bookkeeping above is wrong, never that the program is.
+        if (result.Count != count)
+        {
+            throw new InvalidOperationException(
+                $"Internal error: the sibling processing order placed {result.Count} of {count} properties.");
+        }
+
+        return SettleSoftCycleConsumers(result, componentCount);
+    }
+
+    /// <summary>
+    /// A soft preference may close a cycle around one or more hard units. The hard-unit scheduler
+    /// must break that preference inside the cycle, but its stall fallback must not reach an
+    /// acyclic consumer outside it. Order the combined-edge condensation using the hard scheduler's
+    /// order as the tie-breaker AND as each component's internal order. This preserves every
+    /// within-cycle choice (Q-76), including hard dependency order inside a mixed cycle, while every
+    /// outside consumer waits for the whole provider component to settle. No fixed-point rewriting.
+    /// </summary>
+    private IReadOnlyList<int> SettleSoftCycleConsumers(List<int> hardOrder, int hardComponentCount)
+    {
+        if (!nodes.Any(static node => node.SoftSiblingDependencyIndices.Count > 0))
+            return hardOrder;
+
+        var component = StronglyConnectedComponents(includeSoft: true, out var componentCount);
+        // Adding soft edges can only merge hard components. With no merge, the hard scheduler
+        // already honors every external preference: the component preference graph is acyclic.
+        if (componentCount == hardComponentCount)
+            return hardOrder;
+
+        var members = new List<int>[componentCount];
+        var priority = new int[componentCount];
+        Array.Fill(priority, int.MaxValue);
+        for (var unit = 0; unit < componentCount; unit++)
+            members[unit] = [];
+        for (var position = 0; position < hardOrder.Count; position++)
+        {
+            var property = hardOrder[position];
+            var unit = component[property];
+            priority[unit] = Math.Min(priority[unit], position);
+            members[unit].Add(property);
+        }
+
+        var pending = new int[componentCount];
+        var dependents = new List<int>?[componentCount];
+        void AddRead(int reader, int provider)
+        {
+            var from = component[reader];
+            var to = component[provider];
+            if (from == to)
+                return;
+            pending[from]++;
+            (dependents[to] ??= []).Add(from);
+        }
+        foreach (var node in nodes)
+        {
+            foreach (var dependency in node.SiblingDependencyIndices)
+                AddRead(node.PropertyIndex, dependency);
+            foreach (var dependency in node.SoftSiblingDependencyIndices)
+                AddRead(node.PropertyIndex, dependency);
+        }
+
+        var ready = new PriorityQueue<int, int>();
+        for (var unit = 0; unit < componentCount; unit++)
+            if (pending[unit] == 0)
+                ready.Enqueue(unit, priority[unit]);
+        var settled = new List<int>(nodes.Length);
+        while (ready.TryDequeue(out var unit, out _))
+        {
+            settled.AddRange(members[unit]);
+            if (dependents[unit] is not { } waiting)
+                continue;
+            foreach (var dependent in waiting)
+                if (--pending[dependent] == 0)
+                    ready.Enqueue(dependent, priority[dependent]);
+        }
+        if (settled.Count != nodes.Length)
+            throw new InvalidOperationException("Internal error: the combined sibling condensation was not acyclic.");
+        return settled;
+    }
+
+    /// <summary>
+    /// Tarjan's strongly connected components of the level's properties over the hard edges and,
+    /// with <paramref name="includeSoft"/>, the soft preferences too — ITERATIVELY, so a long chain
+    /// or ring of siblings never grows the host stack. Returns each property's component number;
+    /// only membership matters (the numbering is Tarjan's completion order).
+    /// </summary>
+    private int[] StronglyConnectedComponents(bool includeSoft, out int componentCount)
+    {
+        var count = nodes.Length;
+        var order = new int[count];
+        var low = new int[count];
+        var onStack = new bool[count];
+        var component = new int[count];
+        Array.Fill(order, -1);
+        var components = new Stack<int>();
+        var work = new Stack<(int Property, int Edge)>();
+        var nextOrder = 0;
+        var completed = 0;
+
+        void Enter(int property)
+        {
+            order[property] = low[property] = nextOrder++;
+            components.Push(property);
+            onStack[property] = true;
+            work.Push((property, 0));
+        }
+
+        for (var start = 0; start < count; start++)
+        {
+            if (order[start] >= 0)
+                continue;
+
+            Enter(start);
+            while (work.TryPop(out var frame))
+            {
+                var hard = nodes[frame.Property].SiblingDependencyIndices;
+                IReadOnlyList<int> soft = includeSoft ? nodes[frame.Property].SoftSiblingDependencyIndices : [];
+                if (frame.Edge < hard.Count + soft.Count)
+                {
+                    work.Push((frame.Property, frame.Edge + 1));
+                    var dependency = frame.Edge < hard.Count ? hard[frame.Edge] : soft[frame.Edge - hard.Count];
+                    if (order[dependency] < 0)
+                        Enter(dependency);
+                    else if (onStack[dependency])
+                        low[frame.Property] = Math.Min(low[frame.Property], order[dependency]);
+                    continue;
+                }
+
+                if (work.TryPeek(out var parent))
+                    low[parent.Property] = Math.Min(low[parent.Property], low[frame.Property]);
+                if (low[frame.Property] != order[frame.Property])
+                    continue;
+
+                int member;
+                do
+                {
+                    member = components.Pop();
+                    onStack[member] = false;
+                    component[member] = completed;
+                }
+                while (member != frame.Property);
+                completed++;
             }
         }
 
-        return result;
+        componentCount = completed;
+        return component;
     }
 }
 

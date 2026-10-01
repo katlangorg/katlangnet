@@ -221,8 +221,26 @@ public closed record EvalError
     public sealed record ArityMismatch(int Expected, int Actual) : EvalError
     {
         private readonly RuntimeStateSlot<IReadOnlyList<ImplicitParameterProvenance>?> _inferredImplicitParameters;
+        private readonly RuntimeStateSlot<CallableArityFacts?> _acceptedArity;
 
         internal CallableSignature? Signature { get; init; }
+
+        /// <summary>
+        /// The argument counts the callee ACCEPTS, for a builtin callee: its descriptor's arity
+        /// contract (<see cref="BuiltinDescriptor.ArityFacts"/>), which the arity message renders
+        /// beside <see cref="Signature"/>. It differs from what the signature's patterns spell only
+        /// for the variadic-state loops — <c>repeat(step, count, initialState)</c> accepts AT LEAST
+        /// three arguments, any further ones being more initial state — so a message read from the
+        /// patterns alone claimed an exact count. Null for every other callee, whose signature is
+        /// its contract. Like <see cref="Signature"/>, C#-side diagnostic metadata with no Lean
+        /// counterpart (Lean words the same contract with <c>builtinArityDesc</c>): the structured
+        /// kind and its Lean-modeled payload are unchanged, and the slot is equality-transparent.
+        /// </summary>
+        internal CallableArityFacts? AcceptedArity
+        {
+            get => _acceptedArity.Value;
+            init => _acceptedArity = new(value);
+        }
 
         /// <summary>
         /// Diagnostic-only provenance of the callee's implicit parameters that

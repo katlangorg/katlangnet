@@ -792,7 +792,7 @@ public sealed class KatLangError
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature))
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature), arity.AcceptedArity)
             : FormatGenericArityMismatch(arity.Expected, arity.Actual);
 
     /// <summary>
@@ -824,7 +824,7 @@ public sealed class KatLangError
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity, string calleeDesc, bool preferPropertyName)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature))
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature), arity.AcceptedArity)
             : FormatNamedArityMismatch(calleeDesc, arity.Expected, arity.Actual, preferPropertyName);
 
     /// <summary>

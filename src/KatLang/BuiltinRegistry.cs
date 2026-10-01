@@ -191,11 +191,18 @@ internal sealed class BuiltinDescriptor
         IReadOnlyList<CallableParameter> dotParameters,
         SequenceBuiltinMetadata? sequenceMetadata = null,
         IReadOnlyList<CallableParameter>? toolingPlainParameters = null,
-        IReadOnlyList<CallableParameter>? toolingDotParameters = null)
+        IReadOnlyList<CallableParameter>? toolingDotParameters = null,
+        int? minimumArity = null)
     {
+        if ((fixedArity is null) == (minimumArity is null))
+            throw new ArgumentException($"Builtin '{id}' must declare exactly one of a fixed arity and a minimum arity.");
+
         Id = id;
         Name = id.ToString();
         FixedArity = fixedArity;
+        ArityFacts = fixedArity is { } exact
+            ? new CallableArityFacts(exact, exact, HasTopLevelCollecting: false, TopLevelCollectingCount: 0)
+            : new CallableArityFacts(minimumArity!.Value, MaxTopLevelArgumentCount: null, HasTopLevelCollecting: true, TopLevelCollectingCount: 1);
         PlainParameters = plainParameters;
         DotParameters = dotParameters;
         PlainParameterNames = plainParameters.Select(static parameter => parameter.DisplayName).ToArray();
@@ -215,7 +222,18 @@ internal sealed class BuiltinDescriptor
 
     public string Name { get; }
 
+    /// <summary>The exact argument count of a fixed-arity builtin; null for the variadic-state loops.</summary>
     public int? FixedArity { get; }
+
+    /// <summary>
+    /// The argument counts a call of this builtin ACCEPTS: the ONE arity contract
+    /// <see cref="AcceptsArity"/>, <see cref="DescribeArity"/> and the builtin arity error read (Lean
+    /// <c>builtinAcceptsArity</c> / <c>builtinArityDesc</c>). Exactly <see cref="FixedArity"/> for a
+    /// fixed-arity builtin; for the variadic-state loops <c>while</c> and <c>repeat</c>, AT LEAST their
+    /// runtime parameters — the step (and the count) and one initial state — any further argument
+    /// being more initial state, a contract their runtime signature's patterns cannot spell.
+    /// </summary>
+    public CallableArityFacts ArityFacts { get; }
 
     public CallableSignature PlainSignature { get; }
 
@@ -240,19 +258,10 @@ internal sealed class BuiltinDescriptor
 
     public SequenceBuiltinMetadata? SequenceMetadata { get; }
 
-    public bool AcceptsArity(int count)
-    {
-        if (Id == BuiltinId.@while)
-            return count >= 2;
-
-        if (Id == BuiltinId.@repeat)
-            return count >= 3;
-
-        // Collection builtins are ordinary fixed-arity callables
-        // (`count(collection)` is exactly 1, `take(collection, count)` is
-        // exactly 2), the same rule as every other fixed builtin.
-        return FixedArity == count;
-    }
+    // Collection builtins are ordinary fixed-arity callables (`count(collection)` is exactly 1,
+    // `take(collection, count)` is exactly 2), the same rule as every other fixed builtin; only the
+    // variadic-state loops accept a minimum.
+    public bool AcceptsArity(int count) => ArityFacts.AcceptsArgumentCount(count);
 
     public string DescribeArity()
     {
@@ -265,12 +274,7 @@ internal sealed class BuiltinDescriptor
             return $"{totalArgCountDesc} arguments ({PlainSignature.DisplayText})";
         }
 
-        return Id switch
-        {
-            BuiltinId.@while => "at least 2",
-            BuiltinId.@repeat => "at least 3",
-            _ => FixedArity?.ToString() ?? "?",
-        };
+        return CallableSignatureDiagnostics.FormatExpectedArgumentCountWithoutNoun(ArityFacts);
     }
 
     public IReadOnlyList<string> GetParameterNames(BuiltinCallStyle callStyle)
@@ -782,6 +786,9 @@ internal static class BuiltinRegistry
         return new(id, parameterNames.Length, parameters, parameters.Skip(1).ToArray());
     }
 
+    // A variadic-state loop: its fixed parameters and ONE initial state are required, and every
+    // further argument is more initial state, so its arity is a MINIMUM (the runtime signature spells
+    // the required parameters; the tooling signature shows the state as the collecting `*init`).
     private static BuiltinDescriptor Loop(BuiltinId id, params string[] fixedParameterNames)
     {
         var runtimeParameters = fixedParameterNames
@@ -798,11 +805,12 @@ internal static class BuiltinRegistry
 
         return new(
             id,
-            runtimeParameters.Length,
+            fixedArity: null,
             runtimeParameters,
             runtimeParameters.Skip(1).ToArray(),
             toolingPlainParameters: toolingParameters,
-            toolingDotParameters: toolingParameters.Skip(1).ToArray());
+            toolingDotParameters: toolingParameters.Skip(1).ToArray(),
+            minimumArity: runtimeParameters.Length);
     }
 
     private static BuiltinDescriptor Sequence(BuiltinId id, SequenceBuiltinMetadata metadata)

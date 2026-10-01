@@ -113,7 +113,7 @@ public enum KatLangErrorCode
     /// <summary>A conditional algorithm has match-equivalent branch patterns (<see cref="EvalError.DuplicateBranchPattern"/>).</summary>
     DuplicateBranchPattern = 18,
 
-    /// <summary>An algorithm declares explicit parameters but defines no output (<see cref="EvalError.ExplicitParametersRequireOutput"/>).</summary>
+    /// <summary>An algorithm has parameters, written or inferred, but defines no output (<see cref="EvalError.ExplicitParametersRequireOutput"/>).</summary>
     ExplicitParametersRequireOutput = 19,
 
     /// <summary>A forced user-defined algorithm value does not define an output (<see cref="EvalError.MissingOutput"/>).</summary>

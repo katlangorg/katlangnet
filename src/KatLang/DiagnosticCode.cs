@@ -166,7 +166,11 @@ public enum DiagnosticCode
     /// </summary>
     ArityMismatch = 21,
 
-    /// <summary>An algorithm declares explicit parameters but defines no output.</summary>
+    /// <summary>
+    /// An algorithm has parameters but defines no output: a written parameter list (reported by the
+    /// parser), or parameters inferred from what its definition uses (reported once inference has
+    /// completed the signature).
+    /// </summary>
     ExplicitParametersRequireOutput = 22,
 
     /// <summary>

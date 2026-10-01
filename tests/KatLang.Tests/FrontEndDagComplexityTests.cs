@@ -1240,7 +1240,8 @@ public class FrontEndDagComplexityTests
     /// <summary>
     /// The topological property order stays deterministic after the channel split: ready
     /// properties leave in DECLARATION (index) order, a dependent follows its dependency,
-    /// and a dependency cycle falls back to appending the cyclic members in index order.
+    /// and a dependency cycle is one unit of the order, its members in index order (X-04 pins
+    /// what follows a cycle: <see cref="SiblingDependencyCycleTests"/>).
     /// </summary>
     [Fact]
     public void DependencyOrder_TopologicalOrder_IsDeterministicWithDeclarationOrderTies()
@@ -1639,17 +1640,21 @@ public class FrontEndDagComplexityTests
     /// saw the lifted signature reports the blocked forwarding — exactly what two separate
     /// bodies would do — while families reached under one observation share one rewrite.
     /// Within an ACYCLIC property graph every consumer is processed after the siblings it
-    /// reads (complete dependency edges), so distinct observations arise only in a sibling
-    /// CYCLE, where the order falls back to declaration order: here P and R reference each
-    /// other, every family depends on P, and the fallback processes Before and Early (P still
-    /// detected: no parameters), then P (lifting `x` from the bare `Math.Abs`), then Late.
+    /// reads (complete dependency edges), so distinct observations arise only among the MEMBERS
+    /// of a sibling cycle, which fall back to declaration order among themselves (X-04: a
+    /// property that merely depends on a cycle follows all of its members). Here P and R
+    /// reference each other, and P's closed helper reads Before and Early, which read P: the
+    /// cycle {Before, Early, P, R} processes Before and Early first (P still detected: no
+    /// parameters), then P (lifting `x` from the bare `Math.Abs`); Late only depends on the
+    /// cycle, so it follows it and sees P(x).
     /// </summary>
     [Fact]
     public void Resolver_SharedBranchBody_SplitsOnObservedSignatures_AndSharesWithinOne()
     {
         // `Math.Abs(P)` is a proven strict-value position: the blocked forwarding is diagnosed
-        // exactly when the visible signature of P carries the lifted `x`.
-        var parsed = Parser.ParseSyntax("P = Math.Abs + R\nR = P + 1\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
+        // exactly when the visible signature of P carries the lifted `x`. The helper's closed list
+        // keeps its family reads as runtime demands (never lifted), so they only order the level.
+        var parsed = Parser.ParseSyntax("P = { H(q) = Before + Early + q\n  Math.Abs + R }\nR = P + 1\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
         Assert.False(parsed.HasErrors);
         var syntax = parsed.SyntaxRoot;
         var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(syntax.Properties, p => p.Name == "F").Value).Branches[0].Body;

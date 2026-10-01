@@ -350,9 +350,12 @@ internal static class FrontEndPipeline
             parameterizedRoot, observations: null, passDiagnostics, hostOperations);
 
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
-        // The open PROVIDER rule needs completed signatures (an inferred parameter list is
-        // final only now) and nothing from exposure, so it runs here.
+        // The open PROVIDER rule and the output rule need completed signatures (an inferred
+        // parameter list is final only now) and nothing from exposure, so they run here: an
+        // algorithm with inferred parameters and no output is this front end's error, never the
+        // evaluator's (X-07; a written list was reported at parse time).
         OpenProviderValidator.Validate(implicitResolvedRoot, passDiagnostics, hostOperations);
+        InferredParameterOutputValidator.ValidateProgram(implicitResolvedRoot, passDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
         var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations);

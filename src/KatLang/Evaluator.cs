@@ -2069,9 +2069,13 @@ public static partial class Evaluator
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var expected = builtin == BuiltinId.@if ? descriptor.FixedArity ?? 0 : 0;
 
+        // The message renders the descriptor's arity CONTRACT beside the runtime signature: the
+        // variadic-state loops accept at least their runtime parameters, which the signature's
+        // patterns alone would render as an exact count (X-09).
         return new EvalError.ArityMismatch(expected, actualCount)
         {
             Signature = descriptor.PlainSignature,
+            AcceptedArity = descriptor.ArityFacts,
         };
     }
 

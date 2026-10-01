@@ -340,6 +340,7 @@ internal sealed class DeferredModuleRegion
                     {
                         new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
                         OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);
+                        InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite);
                     }
                     if (!diagnostics.HasReportedErrors)
                     {
