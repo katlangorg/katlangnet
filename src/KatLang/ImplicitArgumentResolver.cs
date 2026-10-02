@@ -239,27 +239,6 @@ internal static class ImplicitArgumentResolver
 
         private Dictionary<(ForwardableParameters, ImplicitSignatureTemplate), bool>? _tailMeetsForwardable;
 
-        /// <summary>
-        /// THE EXACT-ALIAS RULE: the call arguments that rebuild one alias signature — the callee's own
-        /// parameter-pattern list — from its own bindings (<see cref="BuildSourceArguments"/>), by list
-        /// reference. A pure function of the list, so every alias of one callee (whose signature is that
-        /// callee's interned list) shares ONE immutable bundle, like the FE-2/FE-3 lifted bundles.
-        /// </summary>
-        public OutputBundle SourceArguments(IReadOnlyList<ParameterPattern> source)
-        {
-            _sourceArguments ??= new(ReferenceEqualityComparer.Instance);
-            if (!_sourceArguments.TryGetValue(source, out var arguments))
-            {
-                arguments = OutputBundle.From(BuildSourceArguments(source));
-                Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
-                _sourceArguments.Add(source, arguments);
-            }
-
-            return arguments;
-        }
-
-        private Dictionary<IReadOnlyList<ParameterPattern>, OutputBundle>? _sourceArguments;
-
         public readonly NameSetInterner ReferenceNameSets = new();
         public readonly SignatureFootprints Footprints = new();
         public readonly BranchContextInterner BranchContexts = new();
@@ -311,6 +290,7 @@ internal static class ImplicitArgumentResolver
         private readonly Algorithm.User _prelude;
         private readonly HashSet<string> _callableNames;
         private readonly HashSet<Algorithm> _strictValue = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<Algorithm> _strictValueMath = new(ReferenceEqualityComparer.Instance);
 
         private PreludeContext(Algorithm.User prelude, HostOperations? hostOperations)
         {
@@ -320,7 +300,11 @@ internal static class ImplicitArgumentResolver
             if (ElaboratedScopeLookup.TryLookupProperty(prelude, BuiltinRegistry.MathModuleName)?.Property.Value is { } math)
             {
                 foreach (var member in math.Properties)
+                {
                     _strictValue.Add(member.Value);
+                    if (AstHelpers.IsStrictValueMathMember(member.Name))
+                        _strictValueMath.Add(member.Value);
+                }
             }
 
             foreach (var operation in hostOperations?.Operations ?? [])
@@ -343,6 +327,14 @@ internal static class ImplicitArgumentResolver
 
         /// <summary>Whether a resolved algorithm is a Math member or a host operation (every argument a value).</summary>
         public bool IsStrictValue(Algorithm algorithm) => _strictValue.Contains(algorithm);
+
+        /// <summary>
+        /// Whether a resolved algorithm is a Math FUNCTION member whose registry facts make every
+        /// argument a strict value position — the identity half of Q-15's consumer contract (a host
+        /// operation's arguments are values for lifting, never strict). The prelude alias shares its
+        /// canonical member's algorithm, so one set answers for every spelling.
+        /// </summary>
+        public bool HasStrictValueMathArguments(Algorithm algorithm) => _strictValueMath.Contains(algorithm);
     }
 
     /// <summary>
@@ -1010,7 +1002,7 @@ internal static class ImplicitArgumentResolver
     /// strict-value forwarding and unforwardable bare-forwarding parameters — as re-issuable
     /// templates.
     /// </summary>
-    private sealed record AlgorithmRegion(Algorithm.User Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates);
+    private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates);
 
     /// <summary>One branch-body report, minus the family name that words it.</summary>
     private readonly record struct BranchDiagnosticTemplate(
@@ -1691,7 +1683,7 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static LiftingCallee CalleeKindByOwnerWalk(string name, SignatureMap map, PreludeContext prelude)
         => map.TryGetValue(name, out var entry)
-            ? LiftingCallee.OfAlgorithm(entry.Value, prelude.IsStrictValue(entry.Value))
+            ? StaticCalleeKind(entry.Value, map, prelude)
             : prelude.TryGetMember(name, out var member)
                 ? LiftingCallee.OfAlgorithm(member.Value, prelude.IsStrictValue(member.Value))
                 : LiftingCallee.Dynamic;
@@ -1778,13 +1770,19 @@ internal static class ImplicitArgumentResolver
 
             Algorithm.User user => ProcessUserAlgorithmRegion(
                 user, parentParamMap, forwardable, isRoot, observations, diagnostics, branchContext, run),
+
+            // A callable alias is this pass's own OUTPUT (FWD-02): the input tree never holds one,
+            // so one reached here is already elaborated.
+            Algorithm.Alias => alg,
         };
 
     /// <summary>
     /// The user-algorithm half of <see cref="ProcessAlgorithm"/>: the root is rewritten once
-    /// (nothing shares it), every nested body once per <see cref="AlgorithmRegionKey"/>.
+    /// (nothing shares it), every nested body once per <see cref="AlgorithmRegionKey"/>. A nested
+    /// body may elaborate to a callable alias (<see cref="TryCompleteLoneCalleeRow"/>); the root
+    /// never does.
     /// </summary>
-    private static Algorithm.User ProcessUserAlgorithmRegion(
+    private static Algorithm ProcessUserAlgorithmRegion(
         Algorithm.User alg,
         SignatureMap parentParamMap,
         ForwardableParameters forwardable,
@@ -1841,7 +1839,7 @@ internal static class ImplicitArgumentResolver
         return rewritten;
     }
 
-    private static Algorithm.User ProcessUserAlgorithm(
+    private static Algorithm ProcessUserAlgorithm(
         Algorithm.User alg,
         SignatureMap parentParamMap,
         ForwardableParameters forwardable,
@@ -1973,16 +1971,18 @@ internal static class ImplicitArgumentResolver
         };
 
         // A LONE BARE ROW (FWD-02): a body whose ONE written row is a bare reference to a callable
-        // that declares parameters is an exact alias (an open body) or bare forwarding (a written
-        // parameter list or a clause branch: the callee receives the existing bindings of its
-        // parameters' names, never renamed, reshaped or added). Every other body keeps formula
-        // lifting below.
+        // that declares parameterized callable structure is a CALLABLE ALIAS (an open body: binding
+        // indirection, nothing synthesized) or bare forwarding (a written parameter list or a
+        // clause branch: the callee receives the existing bindings of its parameters' names, never
+        // renamed, reshaped or added). Every other body keeps formula lifting below.
         if (!isRoot && TryCompleteLoneCalleeRow(alg, branchContext, visibleParamMap, ownForwarding, walkMemos) is { } completed)
         {
-            return completed with
+            return completed switch
             {
-                Opens = newOpens,
-                Properties = newProperties,
+                Algorithm.Alias alias => alias with { Opens = newOpens, Properties = newProperties },
+                Algorithm.User user => user with { Opens = newOpens, Properties = newProperties },
+                Algorithm.Builtin or Algorithm.Conditional => throw new InvalidOperationException(
+                    "A lone row completes to a user body or a callable alias."),
             };
         }
 
@@ -2365,13 +2365,6 @@ internal static class ImplicitArgumentResolver
         => !signature.AcceptsZeroSuppliedArguments;
 
     /// <summary>
-    /// The eligibility of the alias and bare-forwarding rules (<see cref="TryCompleteLoneCalleeRow"/>):
-    /// the callee declares at least one parameter pattern. Lean: <c>aliasesLoneBareReference</c>.
-    /// </summary>
-    private static bool DeclaresParameters(CallableSignature signature)
-        => signature.ParameterPatterns.Count > 0;
-
-    /// <summary>
     /// One callee a formula lifts: its name (a Math function's canonical key), its signature, and the
     /// FIRST reference that lifts it, in traversal order — the position a report about the lifted
     /// signature names. Held as the node itself, never a span copy, so the collecting walk's frames
@@ -2648,9 +2641,9 @@ internal static class ImplicitArgumentResolver
     /// <c>F(x)</c> and <c>G(x)</c> does, and <c>P((x, x))</c> lifts the bare binder <c>x</c> (a
     /// sequence group left with one binder IS that binder), never a caller pattern that repeats
     /// <c>x</c>. The synthesized call supplies the one binding to every occurrence
-    /// (<see cref="BuildImplicitCallArguments"/>). A lone bare row never reaches this merge: it is an
-    /// exact alias or bare forwarding, which reuses existing bindings by name and adds none
-    /// (<see cref="TryCompleteLoneCalleeRow"/>).
+    /// (<see cref="BuildImplicitCallArguments"/>). A lone bare row never reaches this merge: it is a
+    /// callable alias, which gains no parameter at all, or bare forwarding, which reuses existing
+    /// bindings by name and adds none (<see cref="TryCompleteLoneCalleeRow"/>).
     /// </summary>
     private static void AppendMissingPatterns(
         IReadOnlyList<ParameterPattern> patterns,
@@ -3057,37 +3050,45 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// A LONE BARE ROW (FWD-02, decided September 29–30 2026). A NON-ROOT body — a named definition,
-    /// a clause branch, or an inline block — whose ONE written row is a bare reference to a callable
-    /// that DECLARES parameters (<see cref="DeclaresParameters"/>) is completed here, never by formula
-    /// lifting. The row names the callable itself, so the rule reads the callee's DECLARED signature,
-    /// not zero-argument acceptance. Declarations and opens beside the row do not change what the row
-    /// means.
+    /// A LONE BARE ROW (FWD-02; the alias half decided October 1 2026 as BINDING INDIRECTION). A
+    /// NON-ROOT body — a named definition, a clause branch, or an inline block — whose ONE written row
+    /// is a bare reference is completed here, never by formula lifting. The row is resolved by
+    /// IDENTITY with the one resolution formula lifting uses (<see cref="TryResolveCallable"/>: the
+    /// owner walk, the prelude, the opens, or a structural dot path — and through a callable alias to
+    /// its normalized target), so the lookup ROUTE never decides anything; and the rule reads whether
+    /// that identity DECLARES PARAMETERIZED CALLABLE STRUCTURE
+    /// (<see cref="DeclaresParameterizedStructure"/>), never its zero-argument acceptance. Declarations
+    /// and opens beside the row do not change what the row means.
     /// <list type="bullet">
-    ///   <item><b>Exact alias.</b> An OPEN body — no written parameter list, no parameter of its own
-    ///   (<c>A = F</c>) — takes the callee's parameter patterns VERBATIM as its signature (repeated
-    ///   names, binderless groups, collectors and structural kinds included; interned as one shared
-    ///   template, FE-3) and calls the callee with those patterns rebuilt
-    ///   (<see cref="BuildSourceArguments"/>), so <c>A(S) ≡ F(S)</c> for every argument supply. Its
-    ///   parameters are all forwarded ones (<see cref="Algorithm.User.ForwardingParameterStart"/> = 0):
-    ///   no written name denotes them, no enclosing binding is reused, and their names — the callee's
-    ///   private binder names — collide with no property
-    ///   (<see cref="Algorithm.User.InheritsCalleeSignature"/>).</item>
+    ///   <item><b>Callable alias.</b> An OPEN body — no written parameter list, no parameter of its own
+    ///   (<c>A = F</c>) — becomes an <see cref="Algorithm.Alias"/>: a binding of its own whose callable
+    ///   is <c>F</c>. Nothing is synthesized — no signature, no wrapper call: every callable question
+    ///   asked of <c>A</c> later (argument roles, formula lifting, bare forwarding, another alias) is
+    ///   answered by the recorded target (<see cref="Algorithm.Alias.ResolvedTarget"/>), and the
+    ///   evaluator calls the target itself. Every parameterized callable qualifies: a user algorithm
+    ///   with a parameter pattern, any builtin (<c>if</c>, callbacks and loops included), any clause
+    ///   family (nameable or not), a Math member, a host operation, and an opened, dotted or module
+    ///   member of these.</item>
     ///   <item><b>Bare forwarding.</b> A CLOSED body — a written parameter list (<c>A(p) = F</c>) or a
-    ///   clause branch (<c>A(head) = F</c>) — forwards the callee the EXISTING bindings of its
-    ///   parameters' names (<see cref="BareForwardingArgument"/>): by name, never by position; nothing
-    ///   is renamed and nothing is added to the closed list; and a callee parameter pattern is supplied
-    ///   only by a binding that declares the SAME pattern, so a same-named leaf never reshapes an
-    ///   argument. A callee parameter that cannot be supplied is the front-end error
-    ///   <see cref="DiagnosticCode.UnforwardableParameter"/>, and the row is left as written. When
-    ///   nothing is forwarded to a callee that works with no arguments, the row is its bare name —
-    ///   Q-03's cached value read, never an invented call. The explicit call <c>A(p) = F(p)</c> is an
-    ///   ordinary written call and never reaches this rule.</item>
+    ///   clause branch (<c>A(head) = F</c>) — forwards the target the EXISTING bindings of its
+    ///   forwarding contract's parameter names (its lifting signature, the target's through an
+    ///   alias; <see cref="BareForwardingArgument"/>): by name, never by position; nothing is renamed
+    ///   and nothing is added to the closed list; and a target parameter pattern is supplied only by a
+    ///   binding that declares the SAME pattern, so a same-named leaf never reshapes an argument. A
+    ///   parameter that cannot be supplied is the front-end error
+    ///   <see cref="DiagnosticCode.UnforwardableParameter"/>, and a target with no nameable contract
+    ///   at all (an unnameable clause family) is <see cref="DiagnosticCode.UnforwardableCallable"/>
+    ///   (Q-77, decided October 1 2026) — in both cases the row is left as written. When nothing is
+    ///   forwarded to a callee that works with no arguments, the row is its bare name — Q-03's cached
+    ///   value read, never an invented call. The explicit call <c>A(p) = F(p)</c> is an ordinary
+    ///   written call and never reaches this rule.</item>
     /// </list>
-    /// Returns null for every other body (formula lifting, <see cref="LiftSignature"/>) and for a
-    /// bare-forwarding row that forwards nothing.
+    /// Returns null for every other body (formula lifting, <see cref="LiftSignature"/>): a row with no
+    /// static identity (a parameter, an unresolved or ambiguous name, a run-time receiver's member)
+    /// or naming a callable that declares no parameters (a value read), and a bare-forwarding row
+    /// that forwards nothing.
     /// </summary>
-    private static Algorithm.User? TryCompleteLoneCalleeRow(
+    private static Algorithm? TryCompleteLoneCalleeRow(
         Algorithm.User alg,
         ConditionalBranchContext? branchContext,
         SignatureMap paramMap,
@@ -3097,11 +3098,12 @@ internal static class ImplicitArgumentResolver
         if (!HasLoneBareRowShape(alg))
             return null;
 
-        var run = memos.Run;
-
         var row = alg.Output[0];
-        if (!TryGetLoneCalleeSignature(row, paramMap, out var calleePatterns, out var calleeDisplayName))
+        if (TryResolveCallable(row, paramMap, memos, out var writtenName) is not { } target
+            || !DeclaresParameterizedStructure(target.Algorithm))
+        {
             return null;
+        }
 
         if (branchContext is null && !alg.HasExplicitParameterList)
         {
@@ -3110,21 +3112,22 @@ internal static class ImplicitArgumentResolver
             if (alg.ParameterPatterns.Count != 0)
                 return null;
 
-            var signature = calleePatterns is ImplicitSignatureTemplate template
-                ? template
-                : run.Templates.InternFlat(calleePatterns);
-            return alg with
-            {
-                ParameterPatterns = signature,
-                ForwardingParameterStart = 0,
-                InheritsCalleeSignature = true,
-                Output = [memos.SynthesizedImplicitCall(LoneRowCall(row, run.SourceArguments(signature)))],
-            };
+            // THE CALLABLE ALIAS: the same written declaration, its row kept as written.
+            return new Algorithm.Alias(alg, row) { ResolvedTarget = target };
+        }
+
+        // BARE FORWARDING through the target's forwarding contract, which names every parameter it
+        // forwards; a target with none names nothing to forward by.
+        if (target.Signature.Signature is not { } contract)
+        {
+            ReportUnforwardableCallable(row, writtenName, target, memos);
+            return alg;
         }
 
         var sources = branchContext is null
             ? BareForwardingSources.OfParameterList(alg.ParameterPatterns)
             : BareForwardingSources.OfBranchHead(branchContext.Pattern);
+        var calleePatterns = contract.ParameterPatterns;
         var forwarded = new List<Expr>(calleePatterns.Count);
         List<(ParameterPattern Parameter, bool DifferentPattern)>? unforwardable = null;
         foreach (var parameter in calleePatterns)
@@ -3138,7 +3141,7 @@ internal static class ImplicitArgumentResolver
 
         if (unforwardable is not null)
         {
-            ReportUnforwardableParameters(row, calleeDisplayName, unforwardable, branchContext?.BranchName, memos);
+            ReportUnforwardableParameters(row, writtenName, unforwardable, branchContext?.BranchName, memos);
             return alg;
         }
 
@@ -3148,11 +3151,11 @@ internal static class ImplicitArgumentResolver
             return null;
 
         var arguments = OutputBundle.From(forwarded);
-        run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
+        memos.Run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
         return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(row, arguments))] };
     }
 
-    /// <summary>The call a completed lone row makes: the written callee applied to <paramref name="arguments"/>.</summary>
+    /// <summary>The call a completed bare-forwarding row makes: the written callee applied to <paramref name="arguments"/>.</summary>
     private static Expr LoneRowCall(Expr row, OutputBundle arguments) => row switch
     {
         Expr.DotCall bareDotCall => bareDotCall with { Args = arguments },
@@ -3172,64 +3175,32 @@ internal static class ImplicitArgumentResolver
             && AstHelpers.WrittenRows(alg).Count == 1;
 
     /// <summary>
-    /// The callee a lone body row names, when that row is a bare reference to a callable that
-    /// declares parameters: a property with a parameter-pattern signature, a registry-proven Math
-    /// alias, or the bare canonical <c>Math.X</c> shape (the resolution arms of
-    /// <see cref="RewriteBareReference"/> and <see cref="TryGetBareBuiltinCallableSignature"/>, in
-    /// the same order; every Math function requires its arguments), with the name the program wrote.
-    /// A clause family has no parameter-pattern signature and is never an alias or forwarding target
-    /// (PV-14).
+    /// PARAMETERIZED CALLABLE STRUCTURE — the callable-alias eligibility of a resolved identity (FWD-02,
+    /// decided October 1 2026): its invocation consumes a supply through declared structure. Every
+    /// builtin does (its registry adapter over declared slots, a loop's "at least N" included); every
+    /// clause family does (dispatch over its clause heads, whether or not its positions are
+    /// nameable); a user algorithm does exactly when it declares at least one parameter pattern once
+    /// its signature is complete (written, inferred, or lifted) — a user algorithm with none simply
+    /// evaluates its body, which is a value read, never an alias. Neither nameability (an unnameable
+    /// family is aliasable) nor zero-argument acceptance (a collector-only <c>Only(*xs)</c> is
+    /// aliasable) decides. An alias is never asked: identity resolution looks through it to its
+    /// normalized target first. Lean: <c>Algorithm.declaresParameterizedStructure</c>.
     /// </summary>
-    private static bool TryGetLoneCalleeSignature(
-        Expr row,
-        SignatureMap paramMap,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IReadOnlyList<ParameterPattern>? calleePatterns,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? calleeDisplayName)
-    {
-        switch (row)
+    private static bool DeclaresParameterizedStructure(Algorithm target)
+        => target switch
         {
-            case Expr.Resolve(var name)
-                when paramMap.TryGetCurrent(name, out var entry) && DeclaresParameters(entry.Signature):
-                calleePatterns = entry.Signature.ParameterPatterns;
-                calleeDisplayName = name;
-                return true;
-
-            case Expr.Resolve
-                when row.TryGetRegistryProvenMathAliasFacts(paramMap.ContainsKey, out var aliasFacts)
-                    && DeclaresParameters(aliasFacts.Signature):
-                calleePatterns = aliasFacts.Signature.ParameterPatterns;
-                calleeDisplayName = aliasFacts.SpelledName;
-                return true;
-
-            case Expr.DotCall { Args: null }
-                when TryGetBareBuiltinCallableSignature(row, paramMap, out var builtinKey, out var builtinSignature):
-                calleePatterns = builtinSignature.ParameterPatterns;
-                calleeDisplayName = builtinKey;
-                return true;
-
-            default:
-                calleePatterns = null;
-                calleeDisplayName = null;
-                return false;
-        }
-    }
+            Algorithm.Builtin or Algorithm.Conditional => true,
+            Algorithm.User user => user.ParameterPatterns.Count != 0,
+            Algorithm.Alias => false,
+        };
 
     /// <summary>
-    /// The call arguments that REBUILD a parameter-pattern list from its own bindings — the exact
-    /// alias's call (FWD-02): a fixed capture is its binding (<c>x</c>), a collecting capture
-    /// re-spreads the items it collected (<c>xs*</c>) at any level, a sequence pattern rebuilds a
-    /// sequence and a list pattern a list, of the same shape (<see cref="BuildPatternArgument"/> with
-    /// every capture naming its own binding). Binding the rebuilt supply against the same patterns
-    /// therefore reproduces the same bindings, which is what makes an alias exact. Lean:
-    /// <c>ParameterPattern.sourceArguments</c>.
-    /// </summary>
-    private static IReadOnlyList<Expr> BuildSourceArguments(IReadOnlyList<ParameterPattern> source)
-        => source.Select(BuildSourceArgument).ToList();
-
-    /// <summary>
-    /// ONE pattern rebuilt from its own bindings (<see cref="BuildSourceArguments"/>) — also the
-    /// argument bare forwarding passes for a structural pattern the body declares with the same
-    /// contract. Lean: <c>ParameterPattern.sourceArgument</c>.
+    /// ONE pattern rebuilt from its own bindings — the argument bare forwarding passes for a
+    /// structural pattern the body declares with the same contract: a fixed capture is its binding
+    /// (<c>x</c>), a collecting capture re-spreads the items it collected (<c>xs*</c>) at any level,
+    /// a sequence pattern rebuilds a sequence and a list pattern a list, of the same shape
+    /// (<see cref="BuildPatternArgument"/> with every capture naming its own binding). Lean:
+    /// <c>ParameterPattern.sourceArgument</c>.
     /// </summary>
     private static Expr BuildSourceArgument(ParameterPattern pattern)
         => BuildPatternArgument(
@@ -3455,6 +3426,51 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
+    /// Reports a bare-forwarding row whose callable — directly or through an alias — has no forwarding
+    /// contract at all (Q-77, decided October 1 2026): an unnameable clause family names no parameter,
+    /// so nothing can be forwarded by name. Reported once at the bare reference (a row inside imported
+    /// content at the import site); a conditional branch body's region keeps the report re-issuable
+    /// for further families sharing the body (M4).
+    /// </summary>
+    private static void ReportUnforwardableCallable(Expr row, string writtenName, AliasTarget target, ResolverWalkMemos memos)
+    {
+        if (memos.Diagnostics is not { } diagnostics)
+            return;
+
+        var span = row.Span ?? memos.Run.ImportSite;
+        var message = FormatUnforwardableCallable(writtenName, target);
+        diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.UnforwardableCallable });
+        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnforwardableCallable, _ => message, span));
+    }
+
+    private static string FormatUnforwardableCallable(string writtenName, AliasTarget target)
+    {
+        var written = ExprNameRenderer.BoundName(writtenName);
+        var callable = DescribeCallable(writtenName, target);
+        var reason = target.Signature.Unnameable is { } unnameable
+            ? FormatUnnameableReason(unnameable)
+            : "it declares no parameter names";
+        return string.Join(
+            Environment.NewLine,
+            $"'{written}' is forwarded by name here, but {callable} has no parameter names to forward by: {reason}.",
+            "Bare forwarding supplies a callable's parameters from existing bindings of the same names, and literal, structural and binderless clause patterns name nothing. "
+                + $"Call '{written}' with explicit arguments.");
+    }
+
+    /// <summary>
+    /// How a diagnostic names the callable a written reference resolved to: the clause family itself
+    /// (<c>clause family 'U'</c>), or, through an alias, both (<c>'UA', an alias of clause family 'U',</c>).
+    /// </summary>
+    private static string DescribeCallable(string writtenName, AliasTarget target)
+    {
+        var written = ExprNameRenderer.BoundName(writtenName);
+        var kind = target.Algorithm is Algorithm.Conditional ? "clause family " : "";
+        if (string.Equals(writtenName, target.DisplayName, StringComparison.Ordinal))
+            return $"{kind}'{written}'";
+        return $"'{written}', an alias of {kind}'{ExprNameRenderer.BoundName(target.DisplayName)}',";
+    }
+
+    /// <summary>
     /// The synthesized forwarding arguments of a lifted call: one slot per callee parameter pattern,
     /// in the callee's declaration order. A PURE function of its inputs — the region memo
     /// <see cref="ResolverWalkMemos.ImplicitArguments"/> shares one result between every lifted
@@ -3613,15 +3629,43 @@ internal static class ImplicitArgumentResolver
     /// resolved declaration, whatever spelling reached it), the written name, and its lifting
     /// signature.
     /// </summary>
-    private readonly record struct LiftableReference(object Identity, string DisplayName, LiftingSignature Signature);
+    private readonly record struct LiftableReference(object Identity, string DisplayName, LiftingSignature Signature)
+    {
+        /// <summary>The resolved callable, for diagnostics that name what the written reference denotes.</summary>
+        public AliasTarget? Callable { get; init; }
+    }
 
     /// <summary>
-    /// THE IDENTITY-KEYED LIFTING SIGNATURE (the unified formula-lifting law, decided September 30
-    /// 2026): what the callable a reference resolves to — by the language's own resolution order, the
-    /// owner walk over the document's properties, then the prelude, then <c>open</c> — contributes to
-    /// a formula that uses it as a value, whatever its category or the route that reached it.
+    /// What the front end knows about the callable a CALLABLE ALIAS resolves to (FWD-02, binding
+    /// indirection): the NORMALIZED target — an alias of an alias is its final target — as the ONE
+    /// identity resolution found it (<see cref="TryResolveCallable"/>): its <see cref="Identity"/>
+    /// (the one formula lifting keys on, so an alias and its target are one callable), its
+    /// <see cref="Algorithm"/> as processed (its kind and invocation), its <see cref="Signature"/>
+    /// (the lifting signature and forwarding contract, or why an unnameable family has none), the
+    /// <see cref="DisplayName"/> the target was written as where the chain ends, whether it is a
+    /// Math member or a host operation (<see cref="IsStrictValue"/>: every argument a value role), and
+    /// whether it is a Math FUNCTION member (<see cref="HasStrictValueMathArguments"/>: every argument a
+    /// strict value position, Q-15). Both facts are decided against the prelude the target was resolved
+    /// in. Carried on the alias node (<see cref="Algorithm.Alias.ResolvedTarget"/>): static program
+    /// structure only — never an activation, a value, or a cache entry.
+    /// </summary>
+    internal sealed record AliasTarget(
+        object Identity,
+        string DisplayName,
+        Algorithm Algorithm,
+        LiftingSignature Signature,
+        bool IsStrictValue,
+        bool HasStrictValueMathArguments);
+
+    /// <summary>
+    /// THE ONE CALLABLE-IDENTITY RESOLUTION of a written reference (the unified formula-lifting law,
+    /// decided September 30 2026; the callable alias, October 1 2026): the callable a reference
+    /// resolves to by the language's own resolution order — the owner walk over the document's
+    /// properties, then the prelude, then <c>open</c>, or a structural dot path — whatever its category
+    /// or the route that reached it, as an identity (one per resolved declaration, whatever spelling
+    /// reached it), its processed algorithm (its kind and invocation) and its lifting signature:
     /// <list type="bullet">
-    ///   <item>a user algorithm (an exact alias included): its parameter patterns, as processed;</item>
+    ///   <item>a user algorithm: its parameter patterns, as processed;</item>
     ///   <item>a builtin: its callable interface (<see cref="BuiltinDescriptor.ToolingPlainSignature"/>:
     ///   the registry's parameter names, a loop's variadic initial state as <c>*init</c>);</item>
     ///   <item>a Math member (alias, <c>Math.X</c>, or opened) or a host operation: its declared
@@ -3629,41 +3673,69 @@ internal static class ImplicitArgumentResolver
     ///   <item>a member reached through <c>open</c> or a structural dot path: that member's own
     ///   signature, from its PROCESSED provider;</item>
     ///   <item>a clause family: one whole-value slot per top-level position, named by the clauses
-    ///   (<see cref="FamilyLiftingSignature"/>), or unnameable.</item>
+    ///   (<see cref="FamilyLiftingSignature"/>), or unnameable;</item>
+    ///   <item>a CALLABLE ALIAS: its normalized target, exactly as recorded when the alias was
+    ///   elaborated (<see cref="Algorithm.Alias.ResolvedTarget"/>) — one identity, one algorithm, one
+    ///   signature: the alias and its target are one callable, so every question formula lifting,
+    ///   argument roles, bare forwarding and another alias ask of an alias is answered by its
+    ///   target.</item>
     /// </list>
     /// Null for a reference that resolves to nothing static (a parameter, an unresolved name, an
-    /// ambiguous open, a runtime receiver's member): a callable known only at run time has no
-    /// lifting signature.
+    /// ambiguous open, a run-time receiver's member): a callable known only at run time has no
+    /// identity here. <paramref name="writtenName"/> is the reference as written (diagnostics name
+    /// it; through an alias the result's <see cref="AliasTarget.DisplayName"/> is the target's).
     /// </summary>
-    private static LiftableReference? TryResolveLiftable(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos)
+    private static AliasTarget? TryResolveCallable(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos, out string writtenName)
     {
         var run = memos.Run;
         switch (reference)
         {
             case Expr.Resolve(var name):
+                writtenName = name;
                 if (paramMap.TryGetCurrent(name, out var entry))
                 {
-                    return entry.Value is Algorithm.Conditional family
-                        ? new LiftableReference(family, name, FamilyLiftingSignature(name, family, run))
-                        : new LiftableReference(entry, name, LiftingSignature.Of(entry.Signature));
+                    return entry.Value switch
+                    {
+                        Algorithm.Alias alias => alias.ResolvedTarget,
+                        Algorithm.Conditional family => new AliasTarget(family, name, family, FamilyLiftingSignature(name, family, run), IsStrictValue: false, HasStrictValueMathArguments: false),
+                        _ => new AliasTarget(entry, name, entry.Value, LiftingSignature.Of(entry.Signature), run.Prelude.IsStrictValue(entry.Value), run.Prelude.HasStrictValueMathArguments(entry.Value)),
+                    };
                 }
 
                 if (run.Prelude.TryGetMember(name, out var preludeMember))
-                    return new LiftableReference(preludeMember.Value, name, LiftingSignatureOf(name, preludeMember.Value, run));
+                    return OfResolvedMember(name, preludeMember.Value, run);
 
                 return TryResolveOpened(name, paramMap, run, current: true, out var opened)
-                    ? new LiftableReference(opened.Value, name, LiftingSignatureOf(name, opened.Value, run))
+                    ? OfResolvedMember(name, opened.Value, run)
                     : null;
 
             case Expr.DotCall { Args: null } edge
                 when EdgeKindOf(edge, paramMap, run) == DotEdgeKind.StructuralMember
                     && StructuralMemberOf(edge, paramMap, memos, current: true) is { } member:
-                return new LiftableReference(member, DottedDisplayName(edge), LiftingSignatureOf(edge.Name, member, run));
+                writtenName = DottedDisplayName(edge);
+                return OfResolvedMember(writtenName, member, run);
 
             default:
+                writtenName = "";
                 return null;
         }
+
+        // A callable outside the document's map (a prelude member, an opened or dotted member): its
+        // algorithm is its identity; an alias among them is its recorded target.
+        static AliasTarget? OfResolvedMember(string name, Algorithm algorithm, ResolutionRun run)
+            => algorithm is Algorithm.Alias alias
+                ? alias.ResolvedTarget
+                : new AliasTarget(algorithm, name, algorithm, LiftingSignatureOf(name, algorithm, run), run.Prelude.IsStrictValue(algorithm), run.Prelude.HasStrictValueMathArguments(algorithm));
     }
+
+    /// <summary>
+    /// A value-role reference's lifting facts: the projection of <see cref="TryResolveCallable"/>
+    /// formula lifting reads (the written name names the reference in diagnostics).
+    /// </summary>
+    private static LiftableReference? TryResolveLiftable(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos)
+        => TryResolveCallable(reference, paramMap, memos, out var writtenName) is { } callable
+            ? new LiftableReference(callable.Identity, writtenName, callable.Signature) { Callable = callable }
+            : null;
 
     /// <summary>The lifting signature of an algorithm outside the document's map (cached per algorithm by reference).</summary>
     private static LiftingSignature LiftingSignatureOf(string name, Algorithm algorithm, ResolutionRun run)
@@ -3676,6 +3748,8 @@ internal static class ImplicitArgumentResolver
             Algorithm.User user => LiftingSignature.Of(CallableSignature.FromUserAlgorithm(name, user)),
             Algorithm.Builtin(var builtin) => LiftingSignature.Of(BuiltinRegistry.GetBuiltin(builtin).ToolingPlainSignature),
             Algorithm.Conditional family => DeriveFamilyLiftingSignature(name, family),
+            // An alias's is its target's (an alias with no recorded target declares nothing).
+            Algorithm.Alias alias => alias.ResolvedTarget?.Signature ?? LiftingSignature.Of(new CallableSignature(name, [])),
         };
         run.LiftingSignatures.Add(algorithm, signature);
         return signature;
@@ -3800,37 +3874,113 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The KIND of the callee a call or dot edge names — never a signature, so it reads entries as
-    /// recorded (elaboration never changes a kind) and demands nothing.
+    /// The KIND of the callee a call or dot edge names — never a signature. Entries are read as
+    /// recorded: elaboration changes a kind only by turning a lone bare row into a CALLABLE ALIAS,
+    /// whose kind is its target's (an alias's argument roles ARE its target's — no alias-specific
+    /// role exists; <see cref="LiftingCallee.OfAlgorithm"/> reads the recorded target). A callee that
+    /// is still such an unprocessed row is therefore processed first (on demand, exactly as a
+    /// value-role read of it would be), so its kind is decided by its target whatever the processing
+    /// order; a row whose processing is refused (a member of a sibling cycle) stays a user callee.
     /// </summary>
     private static LiftingCallee ResolveCalleeKind(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        while (callee is Expr.Grace(var inner, _))
+            callee = inner;
+        if (callee is Expr.AlgorithmExpr)
+            return LiftingCallee.User;
+        return SettledCalleeAlgorithm(callee, paramMap, memos) is { } algorithm
+            ? LiftingCallee.OfAlgorithm(algorithm, memos.Run.Prelude.IsStrictValue(algorithm))
+            : LiftingCallee.Dynamic;
+    }
+
+    /// <summary>
+    /// The algorithm a callee NAME or structural member path names, read the way the role classifier
+    /// reads it (<see cref="ResolveCalleeKind"/>): as recorded, except that a row that may still
+    /// become a callable alias (<see cref="MayBecomeAlias"/>) is processed first. Null for a callee
+    /// with no static algorithm (a parameter, an unresolved or ambiguous name, a run-time receiver's
+    /// member). Every reader of a callee's kind or identity reads THIS, so a second reading after the
+    /// classifier's own processes nothing further.
+    /// </summary>
+    private static Algorithm? SettledCalleeAlgorithm(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
     {
         var run = memos.Run;
         switch (callee)
         {
             case Expr.Grace(var inner, _):
-                return ResolveCalleeKind(inner, paramMap, memos);
+                return SettledCalleeAlgorithm(inner, paramMap, memos);
 
             case Expr.Resolve(var name):
                 if (paramMap.TryGetValue(name, out var entry))
-                    return LiftingCallee.OfAlgorithm(entry.Value, run.Prelude.IsStrictValue(entry.Value));
+                {
+                    if (MayBecomeAlias(entry.Value) && paramMap.TryGetCurrent(name, out var current))
+                        entry = current;
+                    return entry.Value;
+                }
                 if (run.Prelude.TryGetMember(name, out var preludeMember))
-                    return LiftingCallee.OfAlgorithm(preludeMember.Value, run.Prelude.IsStrictValue(preludeMember.Value));
-                return TryResolveOpened(name, paramMap, run, current: false, out var opened)
-                    ? LiftingCallee.OfAlgorithm(opened.Value, run.Prelude.IsStrictValue(opened.Value))
-                    : LiftingCallee.Dynamic;
+                    return preludeMember.Value;
+                if (!TryResolveOpened(name, paramMap, run, current: false, out var opened))
+                    return null;
+                if (MayBecomeAlias(opened.Value) && TryResolveOpened(name, paramMap, run, current: true, out var processedOpened))
+                    opened = processedOpened;
+                return opened.Value;
 
             case Expr.DotCall { Args: null } edge
                 when EdgeKindOf(edge, paramMap, run) == DotEdgeKind.StructuralMember
                     && StructuralMemberOf(edge, paramMap, memos, current: false) is { } member:
-                return LiftingCallee.OfAlgorithm(member, run.Prelude.IsStrictValue(member));
-
-            case Expr.AlgorithmExpr:
-                return LiftingCallee.User;
+                return MayBecomeAlias(member) && StructuralMemberOf(edge, paramMap, memos, current: true) is { } processedMember
+                    ? processedMember
+                    : member;
 
             default:
-                return LiftingCallee.Dynamic;
+                return null;
         }
+    }
+
+    /// <summary>
+    /// Whether an algorithm as recorded is a body this pass may still turn into a callable alias: an
+    /// unprocessed open body whose one written row is a bare reference (<see cref="HasLoneBareRowShape"/>).
+    /// </summary>
+    private static bool MayBecomeAlias(Algorithm algorithm)
+        => algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns.Count: 0 } user
+            && HasLoneBareRowShape(user);
+
+    /// <summary>
+    /// The sibling-order channel's view of a callee's kind, which can demand nothing (the order is
+    /// being computed): a processed alias reads its recorded target; a sibling that is still a lone
+    /// bare NAME row is looked through statically — its row name resolved by the same owner walk (the
+    /// level's map as recorded, then the prelude), iteratively and cycle-safely — because elaboration
+    /// will make it an alias of a builtin, a clause family or a Math or host callable exactly when
+    /// that is what its row names. Every other row — a user target, a zero-parameter target, an
+    /// opened or dotted target, a cycle — is a user callable for ordering; the rewrite decides the
+    /// final kind by demand (<see cref="ResolveCalleeKind"/>).
+    /// </summary>
+    private static LiftingCallee StaticCalleeKind(Algorithm value, SignatureMap map, PreludeContext prelude)
+    {
+        HashSet<Algorithm>? visited = null;
+        while (MayBecomeAlias(value) && value.Output[0] is Expr.Resolve(var targetName))
+        {
+            if (!(visited ??= new(ReferenceEqualityComparer.Instance)).Add(value))
+                return LiftingCallee.User;
+
+            if (map.TryGetValue(targetName, out var entry))
+            {
+                value = entry.Value;
+                continue;
+            }
+
+            if (prelude.TryGetMember(targetName, out var member))
+            {
+                // A prelude callable that declares no parameters (a Math constant, a zero-parameter
+                // host operation) is read, never aliased: the row stays a user body.
+                return member.Value is Algorithm.User { ParameterPatterns.Count: 0 }
+                    ? LiftingCallee.User
+                    : LiftingCallee.OfAlgorithm(member.Value, prelude.IsStrictValue(member.Value));
+            }
+
+            return LiftingCallee.User;
+        }
+
+        return LiftingCallee.OfAlgorithm(value, prelude.IsStrictValue(value));
     }
 
     /// <summary>
@@ -4260,7 +4410,14 @@ internal static class ImplicitArgumentResolver
             // names nothing, so there the reference keeps its ordinary zero-argument demand and
             // runtime checking, exactly as every blocked reference does.
             if (context.ClosedParameterNames is null)
-                ReportUnliftableClauseFamily(reference, liftable.DisplayName, unnameable, memos);
+                ReportUnliftableClauseFamily(
+                    reference,
+                    liftable.DisplayName,
+                    liftable.Callable is { } callable && !string.Equals(callable.DisplayName, liftable.DisplayName, StringComparison.Ordinal)
+                        ? callable.DisplayName
+                        : null,
+                    unnameable,
+                    memos);
             return null;
         }
 
@@ -4277,6 +4434,67 @@ internal static class ImplicitArgumentResolver
 
         return memos.ImplicitArguments(signature.ParameterPatterns, context);
     }
+
+    /// <summary>
+    /// Q-15's consumer contract BY IDENTITY: whether a callee the role classifier resolved to a
+    /// strict-value kind (<see cref="LiftingCalleeKind.StrictValue"/>: a Math member or a host
+    /// operation) is a Math FUNCTION member, whose arguments are strict value positions. The spelling
+    /// checks (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/> and its twins) decide a
+    /// member's own spellings; this decides every other route to one — a callable ALIAS
+    /// (<c>A = abs</c>, a chain, a dotted alias member), whose callable IS its target (FWD-02, binding
+    /// indirection) — so <c>A(Inc)</c> and <c>Inc.A</c> under a closed list carry exactly the
+    /// obligation <c>abs(Inc)</c> does. A host operation's arguments are values for lifting but carry
+    /// no strict-value obligation. It reads the callee exactly as the classifier that produced
+    /// <paramref name="kind"/> did (<see cref="SettledCalleeAlgorithm"/>), so it never processes a
+    /// sibling on demand, and an alias answers from the fact recorded with its target
+    /// (<see cref="AliasTarget.HasStrictValueMathArguments"/>), as its kind does.
+    /// </summary>
+    private static bool ResolvesToStrictValueMathMember(Expr callee, LiftingCallee kind, SignatureMap paramMap, ResolverWalkMemos memos)
+        => kind.Kind == LiftingCalleeKind.StrictValue
+            && SettledCalleeAlgorithm(callee, paramMap, memos) is { } algorithm
+            && (algorithm is Algorithm.Alias alias
+                ? alias.ResolvedTarget?.HasStrictValueMathArguments == true
+                : memos.Run.Prelude.HasStrictValueMathArguments(algorithm));
+
+    /// <summary>
+    /// Whether a call's written arguments carry Q-15's strict value demand: its callee is a Math
+    /// member by spelling (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.Call, Func{string, bool}?)"/>)
+    /// or by identity (<see cref="ResolvesToStrictValueMathMember"/>), and the call is not beneath a
+    /// lazy slot. Out of line, so the calibrated rewrite frame holds none of its temporaries.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool StrictValueCallArguments(Expr.Call call, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
+        => !memos.InLazySlot
+            && (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
+                || ResolvesToStrictValueMathMember(call.Function, callee, paramMap, memos));
+
+    /// <summary>
+    /// Whether a dot edge is the must-selected fallback call of a Math member, so its receiver (and its
+    /// arguments) carry Q-15's strict value demand — by spelling
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueFallback"/>) or, through an alias, by identity.
+    /// Out of line, like <see cref="StrictValueCallArguments"/>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool StrictValueDotFallback(Expr.DotCall dotCall, DotEdgeKind kind, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
+        => !memos.InLazySlot
+            && (dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey)
+                || (kind == DotEdgeKind.Fallback
+                    && ResolvesToStrictValueMathMember(dotCall.EffectiveLexicalFallback, callee, paramMap, memos)));
+
+    /// <summary>
+    /// Whether a structural dot edge's written arguments carry Q-15's strict value demand: the edge is
+    /// the canonical <c>Math.X(...)</c> by spelling
+    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>)
+    /// or names a Math member by identity — a dotted alias member, <c>Lib.A(Inc)</c> with
+    /// <c>A = abs</c>. Out of line, like <see cref="StrictValueCallArguments"/>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool StrictValueDotArguments(Expr.DotCall dotCall, DotEdgeKind kind, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
+        => !memos.InLazySlot
+            && (dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
+                || (kind == DotEdgeKind.StructuralMember
+                    && dotCall.Args is not null
+                    && ResolvesToStrictValueMathMember(dotCall with { Args = null }, callee, paramMap, memos)));
 
     /// <summary>
     /// The Call arm of <see cref="RewriteImplicitCallsCore"/>: the callee is CALLABLE, and each
@@ -4296,7 +4514,7 @@ internal static class ImplicitArgumentResolver
         var callee = ResolveCalleeKind(call.Function, paramMap, memos);
         var roles = FormulaLiftingRoles.ArgumentRoles(callee, call.Args);
         var lazy = FormulaLiftingRoles.LazyArguments(callee, call.Args);
-        var strictArguments = !memos.InLazySlot && call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey);
+        var strictArguments = StrictValueCallArguments(call, callee, paramMap, memos);
         var newArgs = new List<Expr>(call.Args.Count);
         for (var i = 0; i < call.Args.Count; i++)
         {
@@ -4351,9 +4569,8 @@ internal static class ImplicitArgumentResolver
         }
 
         var callee = DotEdgeCallee(dotCall, kind, paramMap, memos);
-        var strictFallback = !memos.InLazySlot && dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey);
-        var strictArguments = strictFallback
-            || (!memos.InLazySlot && dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey));
+        var strictFallback = StrictValueDotFallback(dotCall, kind, callee, paramMap, memos);
+        var strictArguments = strictFallback || StrictValueDotArguments(dotCall, kind, callee, paramMap, memos);
         OutputBundle? newArgs = null;
         if (dotCall.Args is { } dotArgs)
         {
@@ -4385,7 +4602,7 @@ internal static class ImplicitArgumentResolver
     /// A conditional branch body's own region keeps the report re-issuable for further families
     /// sharing the body (M4).
     /// </summary>
-    private static void ReportUnliftableClauseFamily(Expr reference, string displayName, UnnameableFamily unnameable, ResolverWalkMemos memos)
+    private static void ReportUnliftableClauseFamily(Expr reference, string displayName, string? aliasedFamily, UnnameableFamily unnameable, ResolverWalkMemos memos)
     {
         if (memos.Diagnostics is not { } diagnostics)
             return;
@@ -4396,16 +4613,29 @@ internal static class ImplicitArgumentResolver
         var span = reference.Span ?? memos.Run.ImportSite;
         // The reason belongs to the callable identity; the name belongs to this occurrence.
         // A shared family may be exposed by several bindings in the same resolution run.
-        var message = FormatUnliftableClauseFamily(displayName, unnameable);
+        var message = FormatUnliftableClauseFamily(displayName, aliasedFamily, unnameable);
         diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.UnliftableClauseFamily });
         memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnliftableClauseFamily, _ => message, span));
     }
 
-    private static string FormatUnliftableClauseFamily(string displayName, UnnameableFamily unnameable)
+    private static string FormatUnliftableClauseFamily(string displayName, string? aliasedFamily, UnnameableFamily unnameable)
     {
         var family = ExprNameRenderer.BoundName(displayName);
+        var callable = aliasedFamily is null
+            ? $"clause family '{family}'"
+            : $"'{family}', an alias of clause family '{ExprNameRenderer.BoundName(aliasedFamily)}',";
+        return string.Join(
+            Environment.NewLine,
+            $"'{family}' is used as a value here, but {callable} has no formula-lifting signature: {FormatUnnameableReason(unnameable)}.",
+            "Formula lifting forwards arguments by parameter name, and literal, structural and binderless clause patterns name nothing. "
+                + $"Call '{family}' with explicit arguments, or bind that position with one plain parameter name in the clauses that bind it.");
+    }
+
+    /// <summary>Why a clause family names no argument position unambiguously (<see cref="UnnameableFamily"/>), in KatLang terms.</summary>
+    private static string FormatUnnameableReason(UnnameableFamily unnameable)
+    {
         var position = (unnameable.Position + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var reason = unnameable.Reason switch
+        return unnameable.Reason switch
         {
             UnnameableFamilyReason.ConflictingNames
                 => $"its clauses name argument position {position} differently ({FormatQuotedNameList(unnameable.Names)})",
@@ -4414,11 +4644,6 @@ internal static class ImplicitArgumentResolver
                     + $"would both be named {FormatQuotedNameList(unnameable.Names)}",
             _ => $"no clause binds argument position {position} with a plain parameter",
         };
-        return string.Join(
-            Environment.NewLine,
-            $"'{family}' is used as a value here, but clause family '{family}' has no formula-lifting signature: {reason}.",
-            "Formula lifting forwards arguments by parameter name, and literal, structural and binderless clause patterns name nothing. "
-                + $"Call '{family}' with explicit arguments, or bind that position with one plain parameter name in the clauses that bind it.");
     }
 
 
@@ -4443,40 +4668,6 @@ internal static class ImplicitArgumentResolver
         }
 
         return processed;
-    }
-
-    /// <summary>
-    /// The canonical <c>Math.X</c> SHAPE of a lone bare row — one of the three alias and
-    /// bare-forwarding targets FWD-02 admits (<see cref="TryGetLoneCalleeSignature"/>), decided by
-    /// shape exactly as before the unified lifting law: which callables a lone row can alias is
-    /// FWD-02's question, never formula lifting's.
-    /// </summary>
-    private static bool TryGetBareBuiltinCallableSignature(
-        Expr expr,
-        SignatureMap paramMap,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? callableKey,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
-    {
-        // `Math~.Pow` reaches this same structural arm: its ordinary receiver
-        // Grace is consumed by parameter detection before implicit-call
-        // rewriting, so Grace cannot change registry facts. The bare reference
-        // is the argumentless canonical shape, classified by the shared helper.
-        if (expr is Expr.DotCall { Args: null } dotCall
-            && dotCall.TryGetRegistryProvenCanonicalMathFacts(paramMap.ContainsKey, out var facts)
-            && RequiresSuppliedArguments(facts.Signature))
-        {
-            // The canonical spelling and its prelude alias use the SAME
-            // descriptor-projected identity and signature. Do not reconstruct
-            // the key from text here: that would create a second convention
-            // capable of drifting from MathCallableFacts.CanonicalKey.
-            callableKey = facts.CanonicalKey;
-            signature = facts.Signature;
-            return true;
-        }
-
-        callableKey = null;
-        signature = null;
-        return false;
     }
 
     /// <summary>

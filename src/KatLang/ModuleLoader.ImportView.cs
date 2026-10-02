@@ -59,6 +59,7 @@ internal sealed partial class ModuleLoader
                 Algorithm.Builtin => algorithm,
                 Algorithm.User user => RewriteUser(user),
                 Algorithm.Conditional conditional => RewriteConditional(conditional),
+                Algorithm.Alias alias => RewriteAlias(alias),
             };
             _algorithms[algorithm] = rewritten;
             return rewritten;
@@ -85,6 +86,21 @@ internal sealed partial class ModuleLoader
                 Properties = properties,
                 Output = output,
             };
+        }
+
+        // A fetched module is spliced as raw syntax, so an alias reaches this rewriter only through
+        // a module tree that was already elaborated; its location-bearing payload is rewritten like
+        // a user body's (the target row is an ordinary expression).
+        private Algorithm RewriteAlias(Algorithm.Alias alias)
+        {
+            var opens = RewriteList(alias.Opens, Rewrite);
+            var properties = RewriteList(alias.Properties, RewriteProperty);
+            var target = Rewrite(alias.Target);
+            return ReferenceEquals(opens, alias.Opens)
+                && ReferenceEquals(properties, alias.Properties)
+                && ReferenceEquals(target, alias.Target)
+                ? alias
+                : alias with { Opens = opens, Properties = properties, Target = target };
         }
 
         private Algorithm RewriteConditional(Algorithm.Conditional conditional)

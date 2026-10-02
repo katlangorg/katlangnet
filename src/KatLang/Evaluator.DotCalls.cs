@@ -374,7 +374,7 @@ public static partial class Evaluator
     {
         isStructuralMember = false;
         if (target is not Expr.DotCall { Args: null } edge || edge.UsesOrdinaryDotStringIntrinsic())
-            return ResolveAlg(target, ctx);
+            return ResolveReceiverHead(target, ctx);
 
         var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
         if (receiverResult.IsError)
@@ -499,6 +499,8 @@ public static partial class Evaluator
         {
             if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
                 return arityRejection;
+            if (targetAlg is Algorithm.Alias)
+                return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
             var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
@@ -515,6 +517,8 @@ public static partial class Evaluator
                 return LocalOnlyPropertyError(OpenExprName(target), prop);
 
             var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
+            if (wired is Algorithm.Alias)
+                return EvalAliasMemberCounted(targetAlg, prop, wired, argsOpt, name, ctx, valEnv);
             if (argsOpt is null)
             {
                 // A structurally navigated member read with NO argument list is an

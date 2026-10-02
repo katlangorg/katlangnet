@@ -41,6 +41,15 @@ internal sealed class ParameterActivation
     internal object CountedEnvironmentIdentity { get; }
 
     /// <summary>
+    /// The normalized callable-alias targets of alias bindings declared under this activation
+    /// (<see cref="Evaluator.AliasTargetKey"/>): an alias declared inside a call's body is resolved
+    /// once per activation and forgotten with it. Runtime-only memoization, like the activation.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => _aliasTargets ??= [];
+
+    private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
+
+    /// <summary>
     /// Captures the bindings of <paramref name="names"/> from the three tiers of a binding
     /// context: the value environment <paramref name="values"/> and the algorithm and counted
     /// tiers of <paramref name="ctx"/>, keeping the first binding of each owned name in

@@ -590,6 +590,37 @@ An alias keeps everything about the formula it names — its structural paramete
 
 Because of this, renaming a formula's parameters affects each form differently. An alias takes the new names with it, and a formula that uses it takes them as its inputs. Forwarding by name must be updated to match, or it becomes an error. An explicit call is unaffected, because its arguments are written out: in `G = Add((x, y))` the parameters of `G` are `x` and `y`, the names written there, and renaming `Add`'s parameters to `left` and `right` changes nothing about `G`.
 
+#### Aliases of Any Function
+
+An alias works for every function that takes parameters, not only for your own formulas: built-in functions, Math functions, and functions defined with several clauses can be aliased too. The alias is the same function under another name, so it keeps everything that function does:
+
+<!-- spec:alias-of-a-builtin-is-the-builtin -->
+```
+C = count
+I = if
+M = map
+Bad(x) = x / 0
+
+C([1, 2, 3])
+I(true, 1, 1 / 0)
+M([], Bad)
+```
+
+**Results:**
+```
+3
+1
+[]
+```
+
+`C([1, 2, 3])` is exactly `count([1, 2, 3])`. `I` keeps the rule of `if` that only the chosen branch is computed, so the division by zero never runs, and `M` keeps the rule of `map` that the function is called once per element, so `M([], Bad)` never calls `Bad`. In the same way, with `Fact(0) = 1` and `Fact(n) = n * Fact(n - 1)`, `F = Fact` makes `F(4)` choose a clause exactly as `Fact(4)` does, and an alias of an alias is the same function again. The arguments of a call through an alias are treated exactly as in a call of the original: with `Inc(x) = x + 1`, `A = abs` and `K = A(Inc)`, `K(-5)` is `4`, just like `abs(Inc(-5))`.
+
+An alias is still its own definition. Used alone, without arguments, it gives the value its function gives with no arguments, and it remembers that value under its own name, separately from the original. Only a function that takes parameters can be aliased: with `Z = 2 + 3`, `A = Z` is an ordinary definition that reads `Z`'s value.
+
+An alias names a function, not a group of definitions. If `Lib(x)` declares a member `K` and `A = Lib`, writing `A.K` does not look inside `Lib`, and `open A` is an error. A function handed on through the alias is `Lib` itself, though, so a formula that receives `A` as a parameter can use `.K` on it exactly as on `Lib`.
+
+Forwarding by name needs parameter names. A function defined by clauses that bind no parameter name, such as `S(1) = 1` and `S(-1) = -1`, can be aliased, but `W(x) = S` is an error: there is no parameter name to hand `x` on by. Write the call instead: `W(x) = S(x)`.
+
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
 

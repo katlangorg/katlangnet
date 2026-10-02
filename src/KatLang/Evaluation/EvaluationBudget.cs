@@ -108,6 +108,21 @@ internal sealed class EvaluationBudget
     internal HostOperations? HostOperations { get; }
 
     /// <summary>
+    /// The run's normalized CALLABLE-ALIAS targets (FWD-02, binding indirection) for alias bindings
+    /// declared OUTSIDE every activation (<see cref="Evaluator.AliasTargetKey"/>: the binding and the
+    /// resolving identity of its declaring scope chain), so a binding read again — a recursive call's
+    /// lookup of a root-level alias, every iteration of a loop body, every callback — does not chase
+    /// its alias chain again. A binding declared under an activation keeps its entry on that
+    /// activation instead (<see cref="ParameterActivation.AliasTargets"/>), so the entry lives exactly
+    /// as long as the activation. A pure function of the key (an alias's target is resolved in its
+    /// own scope, never at the use site), holding resolved ALGORITHMS only — never a value, a
+    /// property-cache entry or a failure — and run-scoped like every other mutable state here.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => _aliasTargets ??= [];
+
+    private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
+
+    /// <summary>
     /// Observes the run's host cancellation token, throwing
     /// <see cref="OperationCanceledException"/> (carrying that token) when cancellation
     /// has been requested, and doing nothing otherwise. The default token follows the

@@ -519,6 +519,11 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName = "conditional")
     {
+        // A callback that is an alias is its target, resolved BEFORE the invocation charge (an
+        // alias is no invocation). A safety net out of line — lookups normalize aliases first.
+        if (callee is Algorithm.Alias)
+            return EvalAliasCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
+
         // Charged dynamic invocation boundary. This is the single callback dispatch
         // chokepoint: the plain wrapper, the sequence-callback wrappers, and the
         // conditional-callback path all route through here, so a callback invocation is

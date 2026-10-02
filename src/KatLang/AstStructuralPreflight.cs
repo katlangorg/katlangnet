@@ -137,6 +137,76 @@ internal enum AstConsumerProfile
 /// </summary>
 internal static class AstStructuralPreflight
 {
+    internal static IReadOnlySet<string> AliasTargetHeads(object root)
+    {
+        var heads = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var stack = new Stack<object>();
+        stack.Push(root);
+        while (stack.TryPop(out var node))
+        {
+            if (!visited.Add(node) || node is Algorithm { DeferredRegion: not null })
+                continue;
+            if (node is Algorithm.Alias alias)
+            {
+                var head = alias.Target;
+                while (head is Expr.DotCall { Args: null } edge)
+                    head = edge.Target;
+                if (head is Expr.Resolve resolve)
+                    heads.Add(resolve.Name);
+            }
+
+            for (var index = 0; TryGetChild(node, index, out var child); index++)
+                stack.Push(child);
+        }
+
+        return heads;
+    }
+
+    internal static bool ReachesAlias(object root, Dictionary<object, bool> memo)
+    {
+        if (memo.TryGetValue(root, out var known))
+            return known;
+
+        var stack = new Stack<(object Node, int NextChild)>();
+        stack.Push((root, 0));
+        while (stack.TryPop(out var frame))
+        {
+            if (memo.ContainsKey(frame.Node))
+                continue;
+            if (frame.Node is Algorithm { DeferredRegion: not null })
+            {
+                memo[frame.Node] = false;
+                continue;
+            }
+            if (frame.Node is Algorithm.Alias)
+            {
+                memo[frame.Node] = true;
+                continue;
+            }
+            if (!TryGetChild(frame.Node, frame.NextChild, out var child))
+            {
+                memo[frame.Node] = false;
+                continue;
+            }
+            if (!memo.TryGetValue(child, out var reaches))
+            {
+                stack.Push(frame);
+                stack.Push((child, 0));
+            }
+            else if (reaches)
+            {
+                memo[frame.Node] = true;
+            }
+            else
+            {
+                stack.Push((frame.Node, frame.NextChild + 1));
+            }
+        }
+
+        return memo[root];
+    }
+
     /// <summary>
     /// Structural gate for the raw-syntax consumers: the post-parse validation walk
     /// in <c>Parser.ParseSyntax</c> and the module loader's composed-root
@@ -573,7 +643,8 @@ internal static class AstStructuralPreflight
             // ONE case for every algorithm variant, reading the recursive collections through
             // the internal Lean-total accessors: each variant contributes exactly the
             // collections it OWNS (a builtin has none, a family its opens and branches, a user
-            // algorithm its opens, properties, output, and parameter patterns) and the other
+            // algorithm its opens, properties, output, and parameter patterns, a callable alias
+            // its opens, properties, and its target row as its one output) and the other
             // variants answer the empty list, so a host initializer can no longer place a deep
             // value on a variant whose consumers ignore it — that state is a compile error now
             // — and nothing is enumerated twice.

@@ -7,10 +7,11 @@ namespace KatLang.Tests;
 /// ALIASES, BARE FORWARDING AND WRITTEN CALLS (FWD-02, decided September 29–30 2026). Four
 /// mechanisms, never conflated:
 /// <list type="bullet">
-///   <item><c>A = F</c> — a body whose ONE written row is a bare callable that declares parameters —
-///   is an EXACT ALIAS: <c>A</c> takes <c>F</c>'s parameter patterns verbatim (arity, structural
-///   kinds, collectors, repeated names, binderless groups) and calls <c>F</c> with them rebuilt, so
-///   <c>A(S) ≡ F(S)</c> for every supply <c>S</c>.</item>
+///   <item><c>A = F</c> — a body whose ONE written row is a bare callable that declares parameterized
+///   callable structure — is a CALLABLE ALIAS (binding indirection, decided October 1 2026): a binding
+///   of its own (<see cref="Algorithm.Alias"/>) whose callable IS <c>F</c> — no wrapper, no inherited
+///   signature — so <c>A(S)</c> is <c>F(S)</c> through F's own invocation for every supply <c>S</c>
+///   (arity, structural kinds, collectors, repeated names, binderless groups are F's own).</item>
 ///   <item><c>A(p) = F</c> — the same lone row under a written parameter list or a clause-branch
 ///   pattern — is BARE FORWARDING, by NAME: <c>F</c> receives the EXISTING bindings of its own
 ///   parameters' names (<c>A</c>'s own top-level parameters, else an enclosing parameter binding,
@@ -46,6 +47,14 @@ public class AliasAndBareForwardingTests
 
     private static Algorithm.User Owner(Algorithm.User root, string name)
         => Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, property => property.Name == name).Value);
+
+    /// <summary>A property that is a callable alias (binding indirection).</summary>
+    private static Algorithm.Alias AliasOf(Algorithm.User root, string name)
+        => Assert.IsType<Algorithm.Alias>(Assert.Single(root.Properties, property => property.Name == name).Value);
+
+    /// <summary>The signature of an alias's callable: its target's, as a programmer would write it.</summary>
+    private static string AliasSignature(Algorithm.Alias alias)
+        => string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName));
 
     /// <summary>A signature's parameter patterns as a programmer would write them.</summary>
     private static string Signature(Algorithm.User algorithm)
@@ -123,7 +132,7 @@ public class AliasAndBareForwardingTests
 
     public static TheoryData<string, string, string> RequiredExamples => new()
     {
-        // A. An exact alias inherits F's signature.
+        // A. A callable alias is F itself.
         { "A", "F(p) = p * 2\nA = F\nA(5)", "ok 10" },
         // B. Bare same-name forwarding.
         { "B", "F(p) = p * 2\nA(p) = F\nA(5)", "ok 10" },
@@ -221,26 +230,24 @@ public class AliasAndBareForwardingTests
     }
 
     /// <summary>
-    /// The required examples' elaborated shapes: an alias inherits its callee's signature; bare
-    /// forwarding keeps the written signature and calls the callee with the SAME-NAMED bindings in
-    /// the callee's order; an explicit or written call is exactly what it writes.
+    /// The required examples' elaborated shapes: bare forwarding keeps the written signature and
+    /// calls the callee with the SAME-NAMED bindings in the callee's order; an explicit or written
+    /// call is exactly what it writes. (An alias synthesizes no call at all:
+    /// <see cref="TheRequiredAliases_AreBindingIndirection"/>.)
     /// (program, owner, callee, signature, call arguments)
     /// </summary>
     public static TheoryData<string, string, string, string, string> RequiredShapes => new()
     {
-        { "F(p) = p * 2\nA = F", "A", "F", "p", "p" },
         { "F(p) = p * 2\nA(p) = F", "A", "F", "p", "p" },
         { "F(q) = q * 2\nA(p) = F(p)", "A", "F", "p", "p" },
         { "F(p) = p * 2\nA(p, unused) = F", "A", "F", "p, unused", "p" },
         { "F(y, x) = y - x\nG(x, y) = F", "G", "F", "x, y", "y, x" },
         { "P(x, x) = x\nA(x) = P", "A", "P", "x", "x, x" },
-        { "P(x, x) = x\nA = P", "A", "P", "x, x", "x, x" },
         { "Single([x]) = x\nG([x]) = Single", "G", "Single", "[x]", "[x]" },
         { "Single([x]) = x\nG(x) = Single(x)", "G", "Single", "x", "x" },
         { "Single([a]) = a\nG = Single([x])", "G", "Single", "x", "[x]" },
         { "Add((a, b)) = a + b\nG = Add((x, y))", "G", "Add", "x, y", "(x, y)" },
         { "Add((x, y)) = x + y\nG((x, y)) = Add", "G", "Add", "(x, y)", "(x, y)" },
-        { "E((), []) = 1\nA = E", "A", "E", "(), []", "(), []" },
         { "E((), []) = 1\nA((), []) = E", "A", "E", "(), []", "(), []" },
         { "F(*xs) = xs\nA(*xs) = F", "A", "F", "*xs", "xs*" },
         { "F(*xs) = xs\nA(xs) = F", "A", "F", "xs", "xs" },
@@ -255,6 +262,26 @@ public class AliasAndBareForwardingTests
         var algorithm = Owner(SourceProvenance.ParseValid(program + "\n0").Root, owner);
         Assert.Equal(signature, Signature(algorithm));
         Assert.Equal(arguments, Arguments(LoneCall(algorithm, callee).Args));
+    }
+
+    /// <summary>
+    /// The required ALIASES elaborate to binding indirection: the alias keeps its written target and
+    /// owns no parameter, and its callable — recorded by the front end — is the callee with the
+    /// callee's own signature, repeated names and binderless groups included.
+    /// </summary>
+    [Theory]
+    [InlineData("P(x, x) = x\nA = P", "P", "x, x")]
+    [InlineData("E((), []) = 1\nA = E", "E", "(), []")]
+    [InlineData("F(p) = p * 2\nA = F", "F", "p")]
+    [InlineData("Single([x]) = x\nA = Single", "Single", "[x]")]
+    public void TheRequiredAliases_AreBindingIndirection(string program, string callee, string signature)
+    {
+        var root = SourceProvenance.ParseValid(program + "\n0").Root;
+        var alias = AliasOf(root, "A");
+        Assert.Equal(callee, Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Empty(alias.Properties);
+        Assert.Equal(signature, AliasSignature(alias));
+        Assert.Same(Owner(root, callee).Declaration, alias.ResolvedTarget!.Algorithm.Declaration);
     }
 
     /// <summary>
@@ -351,9 +378,10 @@ public class AliasAndBareForwardingTests
     }
 
     /// <summary>
-    /// The alias's signature IS the callee's, at every level of a chain: nothing is deduplicated,
-    /// dropped, flattened or re-kinded, and the call rebuilds the same patterns from the alias's own
-    /// (inherited) bindings. No written name denotes an inherited parameter.
+    /// Every level of a chain is binding indirection: each alias keeps its own written target (the
+    /// previous level) and owns no parameter, and every level's callable is the ONE callee — the
+    /// chain normalizes to it, with its signature unchanged (nothing deduplicated, dropped, flattened
+    /// or re-kinded).
     /// </summary>
     public static TheoryData<int> PureAliasCalleeIndexes()
     {
@@ -369,19 +397,19 @@ public class AliasAndBareForwardingTests
 
     [Theory]
     [MemberData(nameof(PureAliasCalleeIndexes))]
-    public void AnAlias_InheritsTheCalleeSignatureVerbatim_AtEveryLevel(int calleeIndex)
+    public void AnAlias_IsBindingIndirection_AtEveryLevel(int calleeIndex)
     {
         var declaration = AliasCallees[calleeIndex];
         var callee = CalleeName(declaration);
         var root = SourceProvenance.ParseValid(declaration + $"\nAl1 = {callee}\nAl2 = Al1\nAl3 = Al2\n0").Root;
-        var target = Signature(Owner(root, callee));
+        var target = Owner(root, callee);
         foreach (var (name, next) in new[] { ("Al1", callee), ("Al2", "Al1"), ("Al3", "Al2") })
         {
-            var alias = Owner(root, name);
-            Assert.Equal(target, Signature(alias));
-            Assert.Equal(0, alias.ForwardingParameterStart);
-            Assert.False(alias.HasExplicitParameterList);
-            Assert.Equal(Rebuilt(target), Arguments(LoneCall(alias, next).Args));
+            var alias = AliasOf(root, name);
+            Assert.Equal(next, Assert.IsType<Expr.Resolve>(alias.Target).Name);
+            Assert.Empty(alias.Properties);
+            Assert.Equal(Signature(target), AliasSignature(alias));
+            Assert.Same(target.Declaration, alias.ResolvedTarget!.Algorithm.Declaration);
         }
     }
 
@@ -559,17 +587,18 @@ public class AliasAndBareForwardingTests
     // ── 4. No renaming, no positions: names decide ───────────────────────────────────────
 
     /// <summary>
-    /// THE RENAMING LAWS, one per mechanism. Renaming the TARGET's parameters: an alias follows (it
-    /// inherits the signature); bare forwarding may stop compiling (names must match — intended); an
+    /// THE RENAMING LAWS, one per mechanism. Renaming the TARGET's parameters: an alias follows (its
+    /// callable IS the target); bare forwarding may stop compiling (names must match — intended); an
     /// explicit call is unaffected (arguments are written); formula lifting renames the lifted
     /// parameter (by-name dependency inference — intended).
     /// </summary>
     [Fact]
     public async Task RenamingTheTarget_HasADifferentEffectOnEachMechanism()
     {
-        // Alias: the inherited signature follows the target.
-        Assert.Equal("x", Signature(Owner(SourceProvenance.ParseValid("F(x) = x * 2\nA = F\n0").Root, "A")));
-        Assert.Equal("value", Signature(Owner(SourceProvenance.ParseValid("F(value) = value * 2\nA = F\n0").Root, "A")));
+        // Alias: the callable is the target, so its signature is the target's.
+        Assert.Equal("x", AliasSignature(AliasOf(SourceProvenance.ParseValid("F(x) = x * 2\nA = F\n0").Root, "A")));
+        Assert.Equal("value", AliasSignature(AliasOf(SourceProvenance.ParseValid("F(value) = value * 2\nA = F\n0").Root, "A")));
+        Assert.Equal("ok 10", await Outcome("F(value) = value * 2\nA = F\nA(5)"));
 
         // Bare forwarding: F(x) forwards from A(x); F(value) does not.
         Assert.Equal("ok 10", await Outcome("F(x) = x * 2\nA(x) = F\nA(5)"));
@@ -790,8 +819,8 @@ public class AliasAndBareForwardingTests
 
     /// <summary>
     /// Renaming a callee's binders changes nothing an alias's callers or a written call observe: the
-    /// alias's shape and behavior (its inherited names follow the callee's, as its whole signature
-    /// does), a written call's inferred signature, and every outcome on every route.
+    /// alias's shape and behavior (its callable is the callee, so its names are the callee's), a
+    /// written call's inferred signature, and every outcome on every route.
     /// </summary>
     [Theory]
     [MemberData(nameof(RenamedCallees))]
@@ -802,8 +831,8 @@ public class AliasAndBareForwardingTests
 
         var before = SourceProvenance.ParseValid(Callers(original) + "0").Root;
         var after = SourceProvenance.ParseValid(Callers(renamed) + "0").Root;
-        Assert.Equal(Shape(Signature(Owner(before, "A"))), Shape(Signature(Owner(after, "A"))));
-        Assert.Equal(Signature(Owner(after, callee)), Signature(Owner(after, "A")));
+        Assert.Equal(Shape(AliasSignature(AliasOf(before, "A"))), Shape(AliasSignature(AliasOf(after, "A"))));
+        Assert.Equal(Signature(Owner(after, callee)), AliasSignature(AliasOf(after, "A")));
         foreach (var owner in new[] { "Written", "Explicit" })
         {
             Assert.Equal(Signature(Owner(before, owner)), Signature(Owner(after, owner)));
@@ -876,12 +905,12 @@ public class AliasAndBareForwardingTests
         => Assert.Equal(expected, await Outcome("E((), []) = 1\nME(x, ()) = x\n" + program));
 
     [Fact]
-    public void BinderlessAlias_InheritsTheBinderlessSignature()
+    public void BinderlessAlias_IsTheBinderlessCallee()
     {
         var root = SourceProvenance.ParseValid("E((), []) = 1\nA = E\nB = A\n0").Root;
-        Assert.Equal("(), []", Signature(Owner(root, "A")));
-        Assert.Equal("(), []", Signature(Owner(root, "B")));
-        Assert.Equal("(), []", Arguments(LoneCall(Owner(root, "A"), "E").Args));
+        Assert.Equal("(), []", AliasSignature(AliasOf(root, "A")));
+        Assert.Equal("(), []", AliasSignature(AliasOf(root, "B")));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(AliasOf(root, "B").Target).Name);
     }
 
     /// <summary>
@@ -902,11 +931,12 @@ public class AliasAndBareForwardingTests
         => Assert.Equal(expected, await Outcome(program));
 
     /// <summary>
-    /// A callable that also works with no arguments: its ALIAS keeps its collecting signature and
-    /// forwards every supply (FWD-02 supersedes Q-03's alias clause), and its BARE name is still a
-    /// cached zero-argument read (Q-03), of the alias's own binding — one evaluation for the alias,
-    /// one for the callee — while <c>A()</c> is fresh. Under a closed list, bare forwarding that
-    /// supplies nothing reads the CALLEE's cached value; one that supplies a binding is a call.
+    /// A callable that also works with no arguments, but DECLARES a (collecting) parameter: its lone
+    /// row is a CALLABLE ALIAS whose callable is the callee (FWD-02 supersedes Q-03's alias clause),
+    /// and its BARE name is still a cached zero-argument read (Q-03) of the alias's own binding — one
+    /// evaluation for the alias, one for the callee — while <c>A()</c> is fresh. Under a closed list,
+    /// bare forwarding that supplies nothing reads the CALLEE's cached value; one that supplies a
+    /// binding is a call.
     /// </summary>
     [Theory]
     [InlineData("A = Cnt\nA(1, 2, 3), A(), A", "ok S[3, 0, 0]")]
@@ -934,16 +964,22 @@ public class AliasAndBareForwardingTests
         => Assert.Equal(expected, await Outcome("Cached = tick()\nRand = randomInt(1, 1000000)\n" + program, seed: 7));
 
     /// <summary>
-    /// A clause family has no parameter-pattern signature to preserve or forward, so it is neither an
-    /// alias nor a bare-forwarding target: the row stays the family's zero-argument demand (PV-14).
+    /// A clause family declares parameterized callable structure (dispatch over its clause heads), so
+    /// its lone row is a CALLABLE ALIAS (binding indirection, October 2026): the alias call is the
+    /// family's own dispatch, with the family's own failures (<c>NoMatchingBranch</c>, never an arity
+    /// error of the alias). A nameable family is also a bare-forwarding target through its derived
+    /// whole-slot contract (<c>W(n) = F</c> is <c>W(n) = F(n)</c>).
     /// </summary>
     [Fact]
-    public async Task AClauseFamily_IsNotAnAliasOrForwardingTarget()
+    public async Task AClauseFamily_IsAnAliasAndAForwardingTarget()
     {
         const string family = "F(0) = 1\nF(n) = n\n";
-        Assert.Equal("err ArityMismatch: Callable `A` expects 0 arguments, but was called with 1 argument.", await Outcome(family + "A = F\nA(3)"));
-        Assert.Empty(Owner(SourceProvenance.ParseValid(family + "A = F\n0").Root, "A").ParameterPatterns);
-        Assert.Equal("err NoMatchingBranch: while evaluating call to W: No matching branch for 'F'", await Outcome(family + "W(n) = F\nW(3)"));
+        Assert.Equal("ok 3", await Outcome(family + "A = F\nA(3)"));
+        Assert.Equal("ok 1", await Outcome(family + "A = F\nA(0)"));
+        Assert.Equal("err NoMatchingBranch: while evaluating call to A: No matching branch for 'A'", await Outcome(family + "A = F\nA(1, 2)"));
+        var alias = AliasOf(SourceProvenance.ParseValid(family + "A = F\n0").Root, "A");
+        Assert.IsType<Algorithm.Conditional>(alias.ResolvedTarget!.Algorithm);
+        Assert.Equal("ok 3", await Outcome(family + "W(n) = F\nW(3)"));
     }
 
     // ── 9. Effects, caching and random draws are exactly once ────────────────────────────
@@ -1043,9 +1079,10 @@ public class AliasAndBareForwardingTests
     }
 
     /// <summary>
-    /// The editor shows an alias's INHERITED signature, a bare-forwarding definition's WRITTEN one
-    /// (never renamed to the callee's), a written call's inferred one and a formula's lifted one —
-    /// and the inherited parameters create no declaration site.
+    /// The editor shows an alias's TARGET signature (the alias declares none of its own), a
+    /// bare-forwarding definition's WRITTEN one (never renamed to the callee's), a written call's
+    /// inferred one and a formula's lifted one — and the target's parameters create no declaration
+    /// site at the alias.
     /// </summary>
     [Theory]
     [InlineData("Add((a, b)) = a + b\nG = Add", "G", "G((a, b))")]
@@ -1060,14 +1097,14 @@ public class AliasAndBareForwardingTests
     [InlineData("C([*xs]) = xs\nA = C", "A", "A([*xs])")]
     [InlineData("C((*xs)) = xs\nA = C", "A", "A((*xs))")]
     [InlineData("Single([x]) = x\nA = Single\nB = A", "B", "B([x])")]
-    public void EditorSignatures_ShowInheritedWrittenInferredAndLiftedParameters(string source, string name, string signature)
+    public void EditorSignatures_ShowTargetWrittenInferredAndLiftedParameters(string source, string name, string signature)
     {
         var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(source + "\n0").Parsed);
         Assert.Equal(signature, Assert.Single(model.FindProperties(name)).DisplaySignature);
     }
 
     [Fact]
-    public void AnAliasRow_ResolvesToItsCallee_AndItsInheritedParametersHaveNoSite()
+    public void AnAliasRow_ResolvesToItsCallee_AndItsTargetParametersHaveNoSiteThere()
     {
         const string source = "Add((a, b)) = a + b\nG = Add\nG((1, 2))";
         var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(source).Parsed);

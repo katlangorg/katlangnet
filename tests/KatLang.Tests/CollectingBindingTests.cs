@@ -334,9 +334,8 @@ public class CollectingBindingTests
     [Fact]
     public void ImplicitForwarding_LiftedCollectingParameterForwardsAsSpread()
     {
-        // With no parameter of its own, `Use = Target` is an exact alias: it inherits Target's
-        // patterns verbatim, so its collecting parameter is a caller collecting parameter and the
-        // rebuilt call legitimately forwards it as spread.
+        // With no parameter of its own, `Use = Target` is a callable alias: a call through it IS
+        // the call of Target, so Target's own collecting parameter collects the supplied items.
         const string defs = "Target(tag, *items) = items\nUse = Target\n";
         AssertCollects(defs + "Use(0, 1, 2, 3)", List(Atom(1), Atom(2), Atom(3)));
         AssertCollects(defs + "Use(0, [1, 2])", List(List(Atom(1), Atom(2))));

@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2486
+- surface corpus cases: 2499
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2444
+- Lean-representable surface cases: 2457
 - internal-node cases: 14
-- total generated guards: 2458 case guards + 2 count guards
+- total generated guards: 2471 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -12226,38 +12226,103 @@ def case_special__forwardByNameCallableArgument : Expr :=
 
 -- special__aliasKeepsRepeatedSignature: P(x, x) = x \n A = P \n A(7, 7)
 def case_special__aliasKeepsRepeatedSignature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 7])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "P")), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 7])])
 #guard obs case_special__aliasKeepsRepeatedSignature == "ok raw=7 n=1"
 
 -- special__aliasKeepsRepeatedConstraint: P(x, x) = x \n A = P \n A(7, 8)
 def case_special__aliasKeepsRepeatedConstraint : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 8])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "P")), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 8])])
 #guard obs case_special__aliasKeepsRepeatedConstraint == "err arity"
 
 -- special__aliasKeepsListPattern: Single([x]) = x \n A = Single \n A([7]), A([[7]])
 def case_special__aliasKeepsListPattern : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])])])
 #guard obs case_special__aliasKeepsListPattern == "ok raw=S[7, L[7]] n=2"
 
 -- special__aliasKeepsListPatternRejection: Single([x]) = x \n A = Single \n A(7)
 def case_special__aliasKeepsListPatternRejection : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7])])
 #guard obs case_special__aliasKeepsListPatternRejection == "err type"
 
 -- special__aliasKeepsBinderlessSignature: E((), []) = 1 \n A = E \n A((), [])
 def case_special__aliasKeepsBinderlessSignature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [(.call (.resolve "E") [(.emptySequence 0), (.listLiteral [])])]), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "A") [(.emptySequence 0), (.listLiteral [])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "E")), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "A") [(.emptySequence 0), (.listLiteral [])])])
 #guard obs case_special__aliasKeepsBinderlessSignature == "ok raw=1 n=1"
 
 -- special__aliasOfCollectorKeepsSignature: C(*xs) = xs \n A = C \n A(1, 2)
 def case_special__aliasOfCollectorKeepsSignature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "C") [(.sequenceSpread (.param "xs"))])]), privateProp "C" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "A") [.num 1, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "C")), privateProp "C" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "A") [.num 1, .num 2])])
 #guard obs case_special__aliasOfCollectorKeepsSignature == "ok raw=L[1, 2] n=1"
 
 -- special__aliasChainKeepsSignature: Single([x]) = x \n A = Single \n B = A \n C = B \n C([[7]])
 def case_special__aliasChainKeepsSignature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "B" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "A") [(.listLiteral [.param "x"])])]), privateProp "C" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "B") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])])])
 #guard obs case_special__aliasChainKeepsSignature == "ok raw=L[7] n=1"
+
+-- special__aliasOfBuiltinCount: C = count \n C([1, 2, 3])
+def case_special__aliasOfBuiltinCount : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "count"))] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2, .num 3])])])
+#guard obs case_special__aliasOfBuiltinCount == "ok raw=3 n=1"
+
+-- special__aliasOfIfIsLazy: I = if \n I(true, 1, 1 / 0)
+def case_special__aliasOfIfIsLazy : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "I" (.alias none [] [] (.resolve "if"))] [(.call (.resolve "I") [.boolLiteral true, .num 1, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__aliasOfIfIsLazy == "ok raw=1 n=1"
+
+-- special__aliasOfMapDemandsNoCallback: Bad(x) = x / 0 \n M = map \n M([], Bad)
+def case_special__aliasOfMapDemandsNoCallback : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "M" (.alias none [] [] (.resolve "map")), privateProp "Bad" (alg ["x"] [] [] [(.binary .div (.param "x") (.num 0))])] [(.call (.resolve "M") [(.listLiteral []), .resolve "Bad"])])
+#guard obs case_special__aliasOfMapDemandsNoCallback == "ok raw=L[] n=1"
+
+-- special__aliasOfRepeatKeepsMinimumArity: Inc(x) = x + 1 \n R = repeat \n R(Inc)
+def case_special__aliasOfRepeatKeepsMinimumArity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (.alias none [] [] (.resolve "repeat")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "R") [.resolve "Inc"])])
+#guard obs case_special__aliasOfRepeatKeepsMinimumArity == "err arity"
+
+-- special__aliasChainOfBuiltin: A = count \n B = A \n C = B \n C([1, 2])
+def case_special__aliasChainOfBuiltin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "count")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B"))] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__aliasChainOfBuiltin == "ok raw=2 n=1"
+
+-- special__aliasOfFamilyDispatches: Fact(0) = 1 \n Fact(n) = n * Fact(n - 1) \n F = Fact \n F(4)
+def case_special__aliasOfFamilyDispatches : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.alias none [] [] (.resolve "Fact")), privateProp "Fact" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.call (.resolve "Fact") [(.binary .sub (.param "n") (.num 1))]))])⟩])] [(.call (.resolve "F") [.num 4])])
+#guard obs case_special__aliasOfFamilyDispatches == "ok raw=24 n=1"
+
+-- special__aliasOfFamilyNoMatchingBranch: Fact(0) = 1 \n Fact(n) = n * Fact(n - 1) \n F = Fact \n F(1, 2)
+def case_special__aliasOfFamilyNoMatchingBranch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.alias none [] [] (.resolve "Fact")), privateProp "Fact" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.call (.resolve "Fact") [(.binary .sub (.param "n") (.num 1))]))])⟩])] [(.call (.resolve "F") [.num 1, .num 2])])
+#guard obs case_special__aliasOfFamilyNoMatchingBranch == "err branch"
+
+-- special__aliasOfUnnameableFamily: S(1) = 1 \n S(-1) = -1 \n SA = S \n SA(-1)
+def case_special__aliasOfUnnameableFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "SA" (.alias none [] [] (.resolve "S")), privateProp "S" (.conditional none [] [⟨.litInt 1, (alg [] [] [] [.num 1])⟩, ⟨.litInt (-1), (alg [] [] [] [(.unary .minus (.num 1))])⟩])] [(.call (.resolve "SA") [(.unary .minus (.num 1))])])
+#guard obs case_special__aliasOfUnnameableFamily == "ok raw=-1 n=1"
+
+-- special__aliasRolesAreTargetRoles: Inc(x) = x + 1 \n I = if \n K = I(c, Inc, 0) \n K(true, 4)
+def case_special__aliasRolesAreTargetRoles : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "I" (.alias none [] [] (.resolve "if")), privateProp "K" (alg ["c", "x"] [] [] [(.call (.resolve "I") [.param "c", (.call (.resolve "Inc") [.param "x"]), .num 0])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "K") [.boolLiteral true, .num 4])])
+#guard obs case_special__aliasRolesAreTargetRoles == "ok raw=5 n=1"
+
+-- special__aliasCallableIdentityIsTarget: P(f, f) = f(7) \n Only(*xs) = 0 \n A = Only \n P(A, Only)
+def case_special__aliasCallableIdentityIsTarget : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Only")), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 7])]), privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 0])] [(.call (.resolve "P") [.resolve "A", .resolve "Only"])])
+#guard obs case_special__aliasCallableIdentityIsTarget == "ok raw=0 n=1"
+
+-- special__aliasPassedAsCallableNavigatesTarget: Lib(x) = { \n   K = 5 \n   x \n } \n A = Lib \n Navigate(f) = f.K \n Navigate(A)
+def case_special__aliasPassedAsCallableNavigatesTarget : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Lib")), privateProp "Lib" (alg ["x"] [] [privateProp "K" (alg [] [] [] [.num 5])] [.param "x"]), privateProp "Navigate" (alg ["f"] [] [] [(.dotCall (.param "f") "K" none)])] [(.call (.resolve "Navigate") [.resolve "A"])])
+#guard obs case_special__aliasPassedAsCallableNavigatesTarget == "ok raw=5 n=1"
+
+-- special__bareForwardingThroughAlias: C = count \n W(collection) = C \n W([1, 2])
+def case_special__bareForwardingThroughAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "W" (alg ["collection"] [] [] [(.call (.resolve "C") [.param "collection"])])] [(.call (.resolve "W") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__bareForwardingThroughAlias == "ok raw=2 n=1"
+
+-- special__formulaLiftingThroughAlias: C = count \n K = C + 1 \n K([1, 2])
+def case_special__formulaLiftingThroughAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "K" (alg ["collection"] [] [] [(.binary .add (.call (.resolve "C") [.param "collection"]) (.num 1))])] [(.call (.resolve "K") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__formulaLiftingThroughAlias == "ok raw=3 n=1"
 
 -- special__bareForwardingSameName: Double(x) = x * 2 \n Forward(x) = Double \n Forward(5)
 def case_special__bareForwardingSameName : Expr :=
@@ -12314,7 +12379,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2444 differential cases.
+-- 2457 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14755,6 +14820,19 @@ def surfaceCaseIds : List String := [
   "special__aliasKeepsBinderlessSignature",
   "special__aliasOfCollectorKeepsSignature",
   "special__aliasChainKeepsSignature",
+  "special__aliasOfBuiltinCount",
+  "special__aliasOfIfIsLazy",
+  "special__aliasOfMapDemandsNoCallback",
+  "special__aliasOfRepeatKeepsMinimumArity",
+  "special__aliasChainOfBuiltin",
+  "special__aliasOfFamilyDispatches",
+  "special__aliasOfFamilyNoMatchingBranch",
+  "special__aliasOfUnnameableFamily",
+  "special__aliasRolesAreTargetRoles",
+  "special__aliasCallableIdentityIsTarget",
+  "special__aliasPassedAsCallableNavigatesTarget",
+  "special__bareForwardingThroughAlias",
+  "special__formulaLiftingThroughAlias",
   "special__bareForwardingSameName",
   "special__bareForwardingIsNotPositional",
   "special__bareForwardingIgnoresUnusedParameter",
@@ -14767,7 +14845,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2444
+#guard surfaceCaseIds.length == 2457
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -14869,5 +14947,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2458 case guards (2444 surface + 14 internal-node).
+-- Total: 2471 case guards (2457 surface + 14 internal-node).
 end SemanticExplorerCases

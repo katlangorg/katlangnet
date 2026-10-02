@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 333
-- excluded parse-level cases (Lean has no surface parser): 49
+- specification surface cases: 340
+- excluded parse-level cases (Lean has no surface parser): 51
 - excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 266
-- probe observations (C#-only by design): 1073
+- Lean-guarded cases: 271
+- probe observations (C#-only by design): 1086
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -512,28 +512,53 @@ def case_formula_lifting_follows_the_consumers_role : Expr :=
 
 -- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9, 9)
 def case_repeated_name_wrapper_keeps_independent_arguments : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x", "x"] [] [] [(.call (.resolve "Common") [.param "x", .param "x"])]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9, .num 9])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (.alias none [] [] (.resolve "Common")), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9, .num 9])])
 #guard obs case_repeated_name_wrapper_keeps_independent_arguments == "ok raw=S[7, 8, 9] n=3"
 
 -- implicit-forwarding-preserves-structural-kind [variadic-calls]: Single([x]) = x \n A = Single \n Add((x, y)) = x + y \n B = Add \n C((*xs)) = xs.count \n Count = C \n G([x]) = Single \n  \n A([7]) \n A([[7]]) \n B((10, 20)) \n Count((1, 2, 3)) \n G([7])
 def case_implicit_forwarding_preserves_structural_kind : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "B" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Count" (algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.call (.resolve "C") [(.capture [(.sequenceSpread (.param "xs"))])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "C" (algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "G" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "B") [(.capture [.num 10, .num 20])]), (.call (.resolve "Count") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "G") [(.listLiteral [.num 7])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "B" (.alias none [] [] (.resolve "Add")), privateProp "Count" (.alias none [] [] (.resolve "C")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "C" (algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "G" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "B") [(.capture [.num 10, .num 20])]), (.call (.resolve "Count") [(.capture [.num 1, .num 2, .num 3])]), (.call (.resolve "G") [(.listLiteral [.num 7])])])
 #guard obs case_implicit_forwarding_preserves_structural_kind == "ok raw=S[7, L[7], 30, 3, 7] n=5"
 
 -- alias-forwarding-and-explicit-call [name-resolution]: Double(x) = x * 2 \n Other(y) = y * 2 \n  \n Alias = Double \n Forward(x) = Double \n Explicit(x) = Other(x) \n Formula = Double + 1 \n  \n Alias(5) \n Forward(5) \n Explicit(5) \n Formula(5)
 def case_alias_forwarding_and_explicit_call : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Alias" (alg ["x"] [] [] [(.call (.resolve "Double") [.param "x"])]), privateProp "Formula" (alg ["x"] [] [] [(.binary .add (.call (.resolve "Double") [.param "x"]) (.num 1))]), privateProp "Double" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Other" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 2))]), privateProp "Forward" (alg ["x"] [] [] [(.call (.resolve "Double") [.param "x"])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Other") [.param "x"])])] [(.call (.resolve "Alias") [.num 5]), (.call (.resolve "Forward") [.num 5]), (.call (.resolve "Explicit") [.num 5]), (.call (.resolve "Formula") [.num 5])])
+  .algorithmExpr (alg [] [] [privateProp "Alias" (.alias none [] [] (.resolve "Double")), privateProp "Formula" (alg ["x"] [] [] [(.binary .add (.call (.resolve "Double") [.param "x"]) (.num 1))]), privateProp "Double" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Other" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 2))]), privateProp "Forward" (alg ["x"] [] [] [(.call (.resolve "Double") [.param "x"])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Other") [.param "x"])])] [(.call (.resolve "Alias") [.num 5]), (.call (.resolve "Forward") [.num 5]), (.call (.resolve "Explicit") [.num 5]), (.call (.resolve "Formula") [.num 5])])
 #guard obs case_alias_forwarding_and_explicit_call == "ok raw=S[10, 10, 10, 11] n=4"
 
 -- alias-structural-forwarding-and-written-call [name-resolution]: Single([x]) = x \n  \n Alias = Single \n SameShape([x]) = Single \n Explicit(x) = Single(x) \n Construct = Single([x]) \n  \n Alias([7]) \n SameShape([7]) \n Explicit([7]) \n Construct(7)
 def case_alias_structural_forwarding_and_written_call : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Alias" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Construct" (alg ["x"] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "SameShape" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Single") [.param "x"])])] [(.call (.resolve "Alias") [(.listLiteral [.num 7])]), (.call (.resolve "SameShape") [(.listLiteral [.num 7])]), (.call (.resolve "Explicit") [(.listLiteral [.num 7])]), (.call (.resolve "Construct") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Alias" (.alias none [] [] (.resolve "Single")), privateProp "Construct" (alg ["x"] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "SameShape" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "Explicit" (alg ["x"] [] [] [(.call (.resolve "Single") [.param "x"])])] [(.call (.resolve "Alias") [(.listLiteral [.num 7])]), (.call (.resolve "SameShape") [(.listLiteral [.num 7])]), (.call (.resolve "Explicit") [(.listLiteral [.num 7])]), (.call (.resolve "Construct") [.num 7])])
 #guard obs case_alias_structural_forwarding_and_written_call == "ok raw=S[7, 7, 7, 7] n=4"
 
 -- alias-preserves-the-callee-signature [name-resolution]: Single([x]) = x \n P(x, x) = x \n E((), []) = 1 \n A = Single \n B = A \n C = B \n AP = P \n AE = E \n  \n C([7]) \n C([[7]]) \n AP(5, 5) \n AE((), [])
 def case_alias_preserves_the_callee_signature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "Single") [(.listLiteral [.param "x"])])]), privateProp "B" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "A") [(.listLiteral [.param "x"])])]), privateProp "C" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [(.call (.resolve "B") [(.listLiteral [.param "x"])])]), privateProp "AP" (alg ["x", "x"] [] [] [(.call (.resolve "P") [.param "x", .param "x"])]), privateProp "AE" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [(.call (.resolve "E") [(.emptySequence 0), (.listLiteral [])])]), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "C") [(.listLiteral [.num 7])]), (.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "AP") [.num 5, .num 5]), (.call (.resolve "AE") [(.emptySequence 0), (.listLiteral [])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B")), privateProp "AP" (.alias none [] [] (.resolve "P")), privateProp "AE" (.alias none [] [] (.resolve "E")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "C") [(.listLiteral [.num 7])]), (.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "AP") [.num 5, .num 5]), (.call (.resolve "AE") [(.emptySequence 0), (.listLiteral [])])])
 #guard obs case_alias_preserves_the_callee_signature == "ok raw=S[7, L[7], 5, 1] n=4"
+
+-- alias-of-a-builtin-is-the-builtin [name-resolution]: C = count \n I = if \n M = map \n Bad(x) = x / 0 \n  \n C([1, 2, 3]) \n I(true, 1, 1 / 0) \n M([], Bad)
+def case_alias_of_a_builtin_is_the_builtin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "I" (.alias none [] [] (.resolve "if")), privateProp "M" (.alias none [] [] (.resolve "map")), privateProp "Bad" (alg ["x"] [] [] [(.binary .div (.param "x") (.num 0))])] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2, .num 3])]), (.call (.resolve "I") [.boolLiteral true, .num 1, (.binary .div (.num 1) (.num 0))]), (.call (.resolve "M") [(.listLiteral []), .resolve "Bad"])])
+#guard obs case_alias_of_a_builtin_is_the_builtin == "ok raw=S[3, 1, L[]] n=3"
+
+-- alias-of-a-clause-family-dispatches-as-the-family [name-resolution]: Fact(0) = 1 \n Fact(n) = n * Fact(n - 1) \n F = Fact \n  \n F(4)
+def case_alias_of_a_clause_family_dispatches_as_the_family : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.alias none [] [] (.resolve "Fact")), privateProp "Fact" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.call (.resolve "Fact") [(.binary .sub (.param "n") (.num 1))]))])⟩])] [(.call (.resolve "F") [.num 4])])
+#guard obs case_alias_of_a_clause_family_dispatches_as_the_family == "ok raw=24 n=1"
+
+-- alias-arguments-take-the-targets-roles [variadic-calls]: Inc(x) = x + 1 \n I = if \n K = I(c, Inc, 0) \n  \n K(true, 4)
+def case_alias_arguments_take_the_targets_roles : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "I" (.alias none [] [] (.resolve "if")), privateProp "K" (alg ["c", "x"] [] [] [(.call (.resolve "I") [.param "c", (.call (.resolve "Inc") [.param "x"]), .num 0])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "K") [.boolLiteral true, .num 4])])
+#guard obs case_alias_arguments_take_the_targets_roles == "ok raw=5 n=1"
+
+-- alias-is-the-targets-callable [name-resolution]: P(f, f) = f(7) \n Only(*xs) = 0 \n A = Only \n  \n P(A, Only)
+def case_alias_is_the_targets_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Only")), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 7])]), privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 0])] [(.call (.resolve "P") [.resolve "A", .resolve "Only"])])
+#guard obs case_alias_is_the_targets_callable == "ok raw=0 n=1"
+
+-- alias-declares-only-its-own-members [name-resolution]: Lib(x) = { \n   K = 5 \n   x \n } \n A = Lib \n Navigate(f) = f.K \n  \n Lib.K \n Navigate(A)
+def case_alias_declares_only_its_own_members : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Lib")), privateProp "Lib" (alg ["x"] [] [privateProp "K" (alg [] [] [] [.num 5])] [.param "x"]), privateProp "Navigate" (alg ["f"] [] [] [(.dotCall (.param "f") "K" none)])] [(.dotCall (.resolve "Lib") "K" none), (.call (.resolve "Navigate") [.resolve "A"])])
+#guard obs case_alias_declares_only_its_own_members == "ok raw=S[5, 5] n=2"
 
 -- bare-forwarding-keeps-each-parameter-kind [name-resolution]: Add((a, b)) = a + b \n Coll(*vs) = vs \n Mid([first, *middle, last]) = [first, middle, last] \n Pair((a, b)) = Add \n Many(*vs) = Coll \n Same([first, *middle, last]) = Mid \n  \n Pair((2, 3)) \n Many(1, 2) \n Same([1, 2, 3, 4])
 def case_bare_forwarding_keeps_each_parameter_kind : Expr :=
@@ -1392,7 +1417,7 @@ def case_zero_argument_demand_follows_actual_call_arity : Expr :=
 
 -- zero-argument-callable-name-is-read-not-lifted [variadic-calls]: Cnt(*xs) = xs.count \n Pair(*xs) = 10, 20 \n Alias = Cnt \n Twice(*items) = Cnt + Cnt \n  \n Cnt + 1, [Cnt], Cnt == Cnt, Pair:1 \n Alias, Alias() \n Twice(1, 2, 3)
 def case_zero_argument_callable_name_is_read_not_lifted : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Alias" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "Cnt") [(.sequenceSpread (.param "xs"))])]), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "Alias" (.alias none [] [] (.resolve "Cnt")), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
 #guard obs case_zero_argument_callable_name_is_read_not_lifted == "ok raw=S[1, L[0], true, 20, 0, 0, 0] n=7"
 
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
@@ -1430,7 +1455,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 266 canonical Lean-guarded specification cases.
+-- 271 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1525,6 +1550,11 @@ def specCaseIds : List String := [
   "alias-forwarding-and-explicit-call",
   "alias-structural-forwarding-and-written-call",
   "alias-preserves-the-callee-signature",
+  "alias-of-a-builtin-is-the-builtin",
+  "alias-of-a-clause-family-dispatches-as-the-family",
+  "alias-arguments-take-the-targets-roles",
+  "alias-is-the-targets-callable",
+  "alias-declares-only-its-own-members",
   "bare-forwarding-keeps-each-parameter-kind",
   "written-call-infers-its-written-names",
   "repeated-callable-success-preserves-both-channels",
@@ -1705,6 +1735,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 266
+#guard specCaseIds.length == 271
 
 end LanguageSpecCases

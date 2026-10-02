@@ -23,6 +23,23 @@ public closed record KatLang.Algorithm : System.IEquatable<KatLang.Algorithm>
   operator public static bool op_Equality(KatLang.Algorithm? left, KatLang.Algorithm? right)
   operator public static bool op_Inequality(KatLang.Algorithm? left, KatLang.Algorithm? right)
 
+public sealed record KatLang.Algorithm.Alias : KatLang.Algorithm, System.IEquatable<KatLang.Algorithm.Alias>
+  ctor     public Alias(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, KatLang.Expr Target)
+  property protected override System.Type EqualityContract { get; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
+  property public KatLang.ScopeCtx? Parent { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
+  property public KatLang.Expr Target { get; init; }
+  method   public virtual KatLang.Algorithm.Alias <Clone>$()
+  method   public bool Equals(KatLang.Algorithm.Alias? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Algorithm? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Algorithm.Alias? left, KatLang.Algorithm.Alias? right)
+  operator public static bool op_Inequality(KatLang.Algorithm.Alias? left, KatLang.Algorithm.Alias? right)
+
 public sealed record KatLang.Algorithm.Builtin : KatLang.Algorithm, System.IEquatable<KatLang.Algorithm.Builtin>
   ctor     public Builtin(KatLang.BuiltinId Id)
   property protected override System.Type EqualityContract { get; }
@@ -95,6 +112,7 @@ public abstract class KatLang.AstWalker
   ctor     protected AstWalker()
   property protected virtual bool VisitsExplicitParameterDeclarations { get; }
   method   public virtual void VisitAlgorithm(KatLang.Algorithm algorithm)
+  method   protected virtual void VisitAliasAlgorithm(KatLang.Algorithm.Alias algorithm)
   method   protected virtual void VisitBindPattern(KatLang.Pattern.Bind pattern)
   method   protected virtual void VisitBuiltinAlgorithm(KatLang.Algorithm.Builtin algorithm)
   method   protected virtual void VisitCollectMarker(KatLang.SourceSpan span)
@@ -300,6 +318,7 @@ public enum KatLang.DiagnosticCode : int
   SingletonSequencePattern = 48
   UnforwardableParameter = 49
   UnliftableClauseFamily = 50
+  UnforwardableCallable = 51
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1411,6 +1430,7 @@ public enum KatLang.KatLangErrorCode : int
   SingletonSequencePattern = 70
   UnforwardableParameter = 71
   UnliftableClauseFamily = 72
+  UnforwardableCallable = 73
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

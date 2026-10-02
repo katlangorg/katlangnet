@@ -400,8 +400,13 @@ public class ImplicitSignatureTemplateTests
             + $"P = abs(G)\nQ = abs(G)\nR = P + Q\nR({Arguments(10)}) + C({Arguments(10)}) + D({Arguments(10)})";
         var root = SourceProvenance.ParseValid(source).Root;
         var template = Assert.IsType<ImplicitSignatureTemplate>(Assert.Single(root.Properties, p => p.Name == "A").Value.ParameterPatterns);
-        foreach (var name in new[] { "B", "C", "D", "P", "Q", "R" })
+        foreach (var name in new[] { "B", "C", "P", "Q", "R" })
             Assert.Same(template, Assert.Single(root.Properties, p => p.Name == name).Value.ParameterPatterns);
+        // D's one row names its member E: D is a callable alias of E (no signature of its own),
+        // and the nested owner E holds the shared template.
+        var d = Assert.IsType<Algorithm.Alias>(Assert.Single(root.Properties, p => p.Name == "D").Value);
+        Assert.Empty(d.ParameterPatterns);
+        Assert.Same(template, Assert.Single(d.Properties, p => p.Name == "E").Value.ParameterPatterns);
         Assert.Equal("180", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));
     }
 

@@ -1752,8 +1752,11 @@ public class SemanticModelTests
     }
 
     [Fact]
-    public void Build_ImplicitLiftedSequenceValueParameterPatternSignature_PreservesShape()
+    public void Build_CallableAliasOfSequenceValuePattern_ShowsTheTargetSignatureUnderItsOwnName()
     {
+        // `Use = CountSequenceValue` is a callable alias: its callable IS the target, so the editor
+        // shows the target's own (explicitly written) parameters under the alias's name, and names
+        // the target — the structural pattern is never flattened into a capture name.
         var model = BuildModel(
             """
             CountSequenceValue((*items)) = items.count
@@ -1763,8 +1766,10 @@ public class SemanticModelTests
         var property = SingleProperty(model, "Use");
         Assert.Equal("Use((*items))", property.DisplaySignature);
         Assert.Equal(["*items"], property.Parameters.Select(parameter => parameter.DisplayName).ToList());
-        Assert.Equal([PropertyParameterKind.Implicit], property.Parameters.Select(parameter => parameter.Kind).ToList());
+        Assert.Equal([PropertyParameterKind.Explicit], property.Parameters.Select(parameter => parameter.Kind).ToList());
         Assert.Equal(["(*items)"], property.GetParameters(PropertyCallStyle.Plain).Select(parameter => parameter.DisplayName).ToList());
+        Assert.Equal("CountSequenceValue", property.AliasTarget!.QualifiedName);
+        Assert.Equal("CountSequenceValue((*items))", property.AliasTarget.DisplaySignature);
     }
 
     [Fact]

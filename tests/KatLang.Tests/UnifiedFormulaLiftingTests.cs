@@ -23,8 +23,8 @@ namespace KatLang.Tests;
 ///   none, and lifting it is the front-end error <see cref="DiagnosticCode.UnliftableClauseFamily"/>.</item>
 /// </list>
 /// Everything else is unchanged: forwarding reuses existing parameter bindings by name (Q-04),
-/// closed lists and branch patterns receive nothing new (PAR-04), a lone bare row is an exact alias or
-/// bare forwarding (FWD-02, whose eligibility is untouched), a bare ROOT row is its callable's own
+/// closed lists and branch patterns receive nothing new (PAR-04), a lone bare row is a callable alias or
+/// bare forwarding (FWD-02), a bare ROOT row is its callable's own
 /// zero-argument demand whatever the category, and an inferred signature must be one a programmer could
 /// write (X-02, <see cref="InferredSignatureValidityTests"/>). Every outcome here is observed on six
 /// execution routes with the exact host-call log.
@@ -270,8 +270,17 @@ public class UnifiedFormulaLiftingTests
         // A closed list forwards only same-named bindings and the family names nothing, so the
         // reference stays its own zero-argument demand, exactly like any blocked reference.
         Assert.StartsWith("err NoMatchingBranch", await Outcome(Sign + "P(u) = S + 0\nP(0)"), StringComparison.Ordinal);
-        // A family is still never an alias target (FWD-02 eligibility is unchanged).
-        Assert.StartsWith("err ArityMismatch", await Outcome("E(0) = 1\nE(n) = n\nAliasE = E\nAliasE(3)"), StringComparison.Ordinal);
+        // A family is aliasable like every parameterized callable: the alias dispatches as the
+        // family itself — the unnameable one included, since aliasing needs callable identity, not
+        // parameter names ...
+        Assert.Equal("ok 3", await Outcome("E(0) = 1\nE(n) = n\nAliasE = E\nAliasE(3)"));
+        Assert.Equal("ok -1", await Outcome(Sign + "SA = S\nSA(-1)"));
+        Assert.StartsWith("err NoMatchingBranch", await Outcome(Sign + "SA = S\nSA(0)"), StringComparison.Ordinal);
+        // ... while lifting and bare forwarding, which hand inputs on BY NAME, stay unavailable: a
+        // formula over the alias is the family's UnliftableClauseFamily, and a closed lone row is
+        // the front end's UnforwardableCallable (never a silent zero-argument demand).
+        Assert.Equal(DiagnosticCode.UnliftableClauseFamily, Assert.Single(SourceProvenance.ExpectFrontEndError(Sign + "SA = S\nK = SA + 1\n0")).Code);
+        Assert.Equal(DiagnosticCode.UnforwardableCallable, Assert.Single(SourceProvenance.ExpectFrontEndError(Sign + "SA = S\nW(x) = SA\nW(1)")).Code);
     }
 
     // ── 4. Laziness does not change a role, and lifting does not change laziness ───────────
@@ -547,14 +556,16 @@ public class UnifiedFormulaLiftingTests
     }
 
     [Fact]
-    public async Task LoneBareRows_KeepTheirAliasAndForwardingEligibility()
+    public async Task LoneBareRows_AreCallableAliasesOfEveryParameterizedCallable()
     {
-        // FWD-02's targets are unchanged: a non-Math builtin, a host operation and a dotted member
-        // are no alias targets, so these stay zero-parameter properties.
-        Assert.StartsWith("err ArityMismatch", await Outcome("C = count\nC((1, 2))"), StringComparison.Ordinal);
-        Assert.StartsWith("err ArityMismatch", await Outcome("T = trace\nT(1)"), StringComparison.Ordinal);
-        Assert.StartsWith("err ArityMismatch", await Outcome("Lib = {\n    public Inc(x) = x + 1\n}\nB = Lib.Inc\nB(1)"), StringComparison.Ordinal);
-        // ... while a formula over the same callables lifts them.
+        // A lone bare row is not a formula: it makes the definition a callable alias of whatever
+        // parameterized callable the name resolves to — a builtin, a host operation and a dotted
+        // member exactly like a user formula (identity, never the lookup route, decides) — so a
+        // call through it is the target's own call.
+        Assert.Equal("ok 2", await Outcome("C = count\nC((1, 2))"));
+        Assert.Equal("ok 1 [trace(1)]", await Outcome("T = trace\nT(1)"));
+        Assert.Equal("ok 2", await Outcome("Lib = {\n    public Inc(x) = x + 1\n}\nB = Lib.Inc\nB(1)"));
+        // ... and a formula over the same callables lifts them, with the same results.
         Assert.Equal("ok 2", await Outcome("C = count + 0\nC((1, 2))"));
         Assert.Equal("ok 2", await Outcome("Lib = {\n    public Inc(x) = x + 1\n}\nB = Lib.Inc + 0\nB(1)"));
     }

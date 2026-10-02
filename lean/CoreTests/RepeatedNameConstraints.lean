@@ -94,18 +94,18 @@ def rnSameAlg : Algorithm := alg ["x"] [] [] [.call (resolve "P") [param "x", pa
 /-- `NW(p, q) = N(p, q)`: an explicit call of the nested repetition. -/
 def rnNWAlg : Algorithm := alg ["p", "q"] [] [] [.call (resolve "N") [param "p", param "q"]]
 
-/-- The EXACT ALIAS of a callee, as the front end elaborates `Alias = Callee` (FWD-02): the
-    callee's parameter patterns inherited VERBATIM, and the call rebuilt from them
-    (`KatLang.sourceCall`). Nothing is deduplicated: `Some = P` is `Some(x, x) = P(x, x)`. -/
-def rnAlias (callee : String) (signature : List ParameterPattern) : Algorithm :=
-  algWithParameterPatterns signature [] [] [KatLang.sourceCall callee signature]
+/-- The CALLABLE ALIAS of a callee, as the front end elaborates `Alias = Callee` (FWD-02,
+    binding indirection, `Algorithm.alias`): a binding of its own whose callable IS the callee —
+    no wrapper and no copied signature. `Some = P` therefore takes `P(x, x)`'s two independent
+    arguments, because a call through it is `P`'s own call. -/
+def rnAlias (callee : String) : Algorithm := .alias none [] [] (resolve callee)
 
-/-- `Some = P`, `SomeN = N`, `SomeC = C`: exact aliases of the repeated-name callees. -/
-def rnSomeAlg : Algorithm := rnAlias "P" [rnCap "x", rnCap "x"]
+/-- `Some = P`, `SomeN = N`, `SomeC = C`: callable aliases of the repeated-name callees. -/
+def rnSomeAlg : Algorithm := rnAlias "P"
 
-def rnSomeNAlg : Algorithm := rnAlias "N" [rnCap "x", .sequenceValue [rnCap "x", rnCap "y"]]
+def rnSomeNAlg : Algorithm := rnAlias "N"
 
-def rnSomeCAlg : Algorithm := rnAlias "C" [rnCap "x", rnColl "r", rnCap "x"]
+def rnSomeCAlg : Algorithm := rnAlias "C"
 
 /-- `Lifted = [P]:0`, as the front end elaborates it: a FORMULA forwards by binding name, so
     the ONE caller binding `x` is supplied to both occurrences, `Lifted(x) = [P(x, x)]:0` —
@@ -128,7 +128,7 @@ def rnLiftedCAlg : Algorithm :=
   algWithParameterPatterns [rnCap "x", rnColl "r"] [] []
     (rnLifted (.call (resolve "C") [param "x", .sequenceSpread (param "r"), param "x"]))
 
-/-- `G((x, x)) = x`, its exact alias `SomeG = G` (which keeps the one sequence parameter
+/-- `G((x, x)) = x`, its callable alias `SomeG = G` (which IS G, with its one sequence parameter
     `(x, x)`), and the formula `LiftedG = [G]:0`, elaborated `LiftedG(x) = [G((x, x))]:0`:
     deduplicating names leaves the caller's sequence group ONE non-collecting item, and a
     one-item sequence group does not exist (the singleton rule), so the lifted parameter is the
@@ -136,7 +136,7 @@ def rnLiftedCAlg : Algorithm :=
 def rnGAlg : Algorithm :=
   algWithParameterPatterns [.sequenceValue [rnCap "x", rnCap "x"]] [] [] [param "x"]
 
-def rnSomeGAlg : Algorithm := rnAlias "G" [.sequenceValue [rnCap "x", rnCap "x"]]
+def rnSomeGAlg : Algorithm := rnAlias "G"
 
 def rnLiftedGAlg : Algorithm :=
   alg ["x"] [] [] (rnLifted (.call (resolve "G") [.capture [param "x", param "x"]]))
@@ -321,32 +321,33 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
   | _ => false
 
 --------------------------------------------------------------------------------
--- Formula lifting is by binding name; an alias keeps the callee's contract
--- (decided 2026-09-29; the by-name rule reverses Q-72, the alias rule is FWD-02)
+-- Formula lifting is by binding name; an alias IS its callee
+-- (decided 2026-09-29; the by-name rule reverses Q-72; binding indirection 2026-10-01)
 --------------------------------------------------------------------------------
 -- A FORMULA that uses a callee supplies the caller's ONE binding of a name to
 -- EVERY occurrence of that name in the callee's parameter patterns, exactly as
 -- it shares one binding across callees (`H = F + G` is `H(x) = F(x) + G(x)`).
--- A body whose ONE row is the bare callee is not a formula: it is an EXACT ALIAS
--- (`Some = P` inherits `P(x, x)` verbatim and keeps its two independent
--- arguments) — the earlier alias-signature deduplication (`Some(x) = P(x, x)`)
--- is superseded. Lean models no signature construction; it evaluates the
--- ELABORATED trees (the aliases built with `KatLang.sourceCall`, the formulas
+-- A body whose ONE row is the bare callee is not a formula: it is a CALLABLE
+-- ALIAS (`Some = P` is P's callable itself, so a call through it takes P's two
+-- independent arguments) — the earlier alias-signature deduplication
+-- (`Some(x) = P(x, x)`) and the later exact-alias wrapper (`Some(x, x) =
+-- P(x, x)`) are both superseded. Lean models no signature construction; it
+-- evaluates the ELABORATED trees (the aliases as `Algorithm.alias`, the formulas
 -- `rnLiftedAlg`, `rnLiftedNAlg`, `rnLiftedCAlg`, `rnLiftedGAlg`), and the Lean
 -- programs of the corresponding spec cases are derived from the C# elaboration.
 -- Each forwarded occurrence is an ordinary argument slot reading the one
 -- binding, so the occurrences agree by construction on a value, and a
 -- callable-only or failed argument is its own failure: nothing is merged.
 
--- 15. The exact alias IS its callee: it takes P's two independent arguments, with
---     P's constraint and P's failures, and adds exactly one binding context — its
---     own — re-evaluating nothing.
+-- 15. The callable alias IS its callee: it takes P's two independent arguments, with
+--     P's constraint and P's failures, and adds NO binding context — an alias is no
+--     invocation — re-evaluating nothing.
 #guard rnSucceedsWith [rnCall "Some" [num 7, num 7]] (.atom 7)
 #guard rnFailsWith innermostIsBadArity [rnCall "Some" [num 7, num 8]]
 #guard rnFailsWith (innermostIsArityMismatch 2 1) [rnCall "Some" [num 7]]
 #guard rnFailsWith innermostIsDivByZero [rnCall "Some" [resolve "Bad", num 7]]
 #guard rnFailsWith rnIncFailure [rnCall "Some" [resolve "Inc", num 1]]
-#guard rnContexts [rnCall "Some" [num 7, num 7]] == rnContexts [rnCall "P" [num 7, num 7]] + 1
+#guard rnContexts [rnCall "Some" [num 7, num 7]] == rnContexts [rnCall "P" [num 7, num 7]]
 -- A failed argument lets neither the alias nor P bind: no context beyond Bad's own.
 #guard rnContexts [rnCall "Some" [resolve "Bad", num 7]] == rnContexts [rnCall "P" [resolve "Bad", num 7]]
 -- The formula is the written same-binding call, observation for observation: the
@@ -364,8 +365,8 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
 -- ... while the direct call still supplies independent arguments (Q-05).
 #guard rnFailsWith innermostIsBadArity [rnCall "P" [num 7, num 8]]
 
--- 16. A nested repetition and a collector: the aliases keep the callees' own shapes
---     and constraints; the formulas forward by name — one binding for `x`, the group
+-- 16. A nested repetition and a collector: the aliases are the callees, with their own
+--     shapes and constraints; the formulas forward by name — one binding for `x`, the group
 --     keeping its shape for `y`, the collector re-spread by its kind.
 #guard rnSucceedsWith [rnCall "SomeN" [num 7, .capture [num 7, num 8]]] (.atom 8)
 #guard rnFailsWith innermostIsBadArity [rnCall "SomeN" [num 6, .capture [num 7, num 8]]]
@@ -397,7 +398,7 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
 --     whatever its kind, exactly like the written `Same`-style explicit call, and G's
 --     pattern then checks the two occurrences it was given. (The former lifted `(x)`
 --     opened lists and took scalars; a one-item sequence pattern no longer exists.)
---     The exact alias `SomeG = G` keeps G's one SEQUENCE parameter instead. These
+--     The callable alias `SomeG = G` is G, with its one SEQUENCE parameter. These
 --     guards evaluate the trees; C# tests separately pin that elaboration produces them.
 #guard rnSucceedsWith [rnCall "LiftedG" [num 7]] (.atom 7)
 #guard rnSucceedsWith [rnCall "LiftedG" [.listLiteral [num 7]]] (.listValue [.atom 7])

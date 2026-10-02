@@ -412,6 +412,7 @@ public class KatLangErrorCodeTests
             ["SingletonSequencePattern"] = 48,
             ["UnforwardableParameter"] = 49,
             ["UnliftableClauseFamily"] = 50,
+            ["UnforwardableCallable"] = 51,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -496,6 +497,7 @@ public class KatLangErrorCodeTests
             ["SingletonSequencePattern"] = 70,
             ["UnforwardableParameter"] = 71,
             ["UnliftableClauseFamily"] = 72,
+            ["UnforwardableCallable"] = 73,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

@@ -699,7 +699,11 @@ public static partial class Evaluator
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 
-        var resolvedAlgorithm = ChildOf(alg, binding.Value);
+        // An alias binding is read as its target, keyed by its own binding.
+        var resolvedR = NormalizeTopLevelBinding(binding, ChildOf(alg, binding.Value), ctx);
+        if (resolvedR.IsError)
+            return resolvedR.Error;
+        var resolvedAlgorithm = resolvedR.Value;
         var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero
@@ -936,6 +940,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (alg is Algorithm.Alias)
+            return await EvalInlineAliasValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
+
         var wired = WireToCaller(ctx, alg);
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
@@ -1591,6 +1598,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (algorithm is Algorithm.Alias)
+            return await EvalAliasZeroArgumentDemandCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+
         if (algorithm is Algorithm.Conditional)
         {
             return await EvalConditionalCallCountedAsync(
@@ -1834,6 +1844,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
+        // MIRROR — call(alias) = call(target).
+        if (callee is Algorithm.Alias)
+            return await EvalAliasCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+
         if (callee is Algorithm.Builtin(var builtinId))
         {
             var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
@@ -2832,6 +2846,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName = "conditional")
     {
+        // MIRROR — a callback that is an alias is its target, before the invocation charge.
+        if (callee is Algorithm.Alias)
+            return await EvalAliasCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+
         // Charged dynamic invocation boundary — the single callback dispatch chokepoint.
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return limitError;
@@ -3225,6 +3243,9 @@ public static partial class Evaluator
         {
             if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
                 return arityRejection;
+            // MIRROR — the `.string` receiver is judged on the alias's target.
+            if (targetAlg is Algorithm.Alias)
+                return await EvalAliasDotStringCountedAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
             var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
             if (val.IsError) return val.Error;
             var outR = ResultToString(ctx, val.Value);
@@ -3239,6 +3260,9 @@ public static partial class Evaluator
                 return LocalOnlyPropertyError(OpenExprName(target), prop);
 
             var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
+            // MIRROR — a member that is an alias is read and called as its target.
+            if (wired is Algorithm.Alias)
+                return await EvalAliasMemberCountedAsync(targetAlg, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false);
             if (argsOpt is null)
             {
                 // See the synchronous twin: the ONE law decides, and the rejection names
@@ -3473,6 +3497,9 @@ public static partial class Evaluator
 
         if (expr is Expr.AlgorithmExpr(var alg))
         {
+            if (alg is Algorithm.Alias)
+                return await EvalAliasSpreadOperandItemsAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
+
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
             // See the synchronous twin: a spread operand is a zero-argument value demand.

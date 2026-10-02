@@ -28,15 +28,17 @@ internal enum LiftingRole
 
 /// <summary>
 /// What a consumer needs to know about the callable it calls to classify the argument slots: its
-/// KIND, which elaboration never changes (an exact alias gains parameters, never another kind), so
-/// any layer can classify from its own resolution power without processing order.
+/// settled KIND. An unprocessed lone row may become a callable alias, so the resolver settles it
+/// before classifying its slots. A callable alias has no kind of its own: it is classified as its
+/// normalized TARGET (<see cref="LiftingCallee.OfAlgorithm"/>), so a call through it takes the
+/// target's argument roles (X-45).
 /// </summary>
 internal enum LiftingCalleeKind
 {
     /// <summary>A callee known only at run time: a parameter, an unresolved name, a computed value.</summary>
     Dynamic,
 
-    /// <summary>A user algorithm (a property, an alias, a block): its binder decides at run time.</summary>
+    /// <summary>A user algorithm (a property, a block): its binder decides at run time.</summary>
     User,
 
     /// <summary>A clause family: every argument is value-demanded before any clause is tried (PAT-07).</summary>
@@ -62,13 +64,22 @@ internal readonly record struct LiftingCallee(LiftingCalleeKind Kind, BuiltinId 
 
     public static LiftingCallee OfBuiltin(BuiltinId builtin) => new(LiftingCalleeKind.Builtin, builtin);
 
-    /// <summary>The kind of an algorithm value a name or a member resolves to (a builtin keeps its identity).</summary>
+    /// <summary>
+    /// The kind of an algorithm value a name or a member resolves to (a builtin keeps its identity).
+    /// A callable ALIAS is its TARGET's kind (binding indirection: an alias's argument roles are its
+    /// target's, with no alias-specific role of its own) — the target the front end recorded when it
+    /// elaborated the alias; an alias with no recorded target (a host-built tree) is known only at
+    /// run time.
+    /// </summary>
     public static LiftingCallee OfAlgorithm(Algorithm algorithm, bool isStrictValue)
         => algorithm switch
         {
             Algorithm.Builtin(var builtin) => OfBuiltin(builtin),
             Algorithm.Conditional => Family,
             Algorithm.User => isStrictValue ? StrictValue : User,
+            Algorithm.Alias alias => alias.ResolvedTarget is { } target
+                ? OfAlgorithm(target.Algorithm, target.IsStrictValue)
+                : Dynamic,
         };
 }
 

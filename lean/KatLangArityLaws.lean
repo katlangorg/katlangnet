@@ -868,6 +868,9 @@ theorem zero_argument_value_demand_accepts_exactly_zero_supply_callables
   | conditional p op bs id =>
       unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
       cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.conditional p op bs id) <;> simp
+  | alias p op pr target id =>
+      unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
+      cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.alias p op pr target id) <;> simp
 
 /-- The demand law accepts a collecting-only callable at a named demand site. -/
 theorem zero_argument_demand_accepts_collecting_only
@@ -1047,21 +1050,26 @@ theorem forwarded_parameter_still_conflicts_with_a_same_named_property (name : I
   simp [conflictingOwnedNames, OwnerLevel.signature]
 
 /-
-## The alias and bare-forwarding rules (FWD-02, decided 2026-09-29–30)
+## Callable aliases and bare forwarding (FWD-02; binding indirection decided 2026-10-01)
 
 A body whose ONE written row is a bare reference to a callable that declares
-parameters (`aliasesLoneBareReference`) is not a formula. An OPEN body is an exact
-alias: `A = F` inherits `F`'s signature and calls `F` with it rebuilt
-(`ParameterPattern.sourceArguments`, `sourceCall`, KatLang.lean). A CLOSED body — a
-written parameter list or a clause branch — is bare forwarding: each of `F`'s
+parameterized callable structure (`Algorithm.declaresParameterizedStructure`) is not a
+formula. An OPEN body is a CALLABLE ALIAS (`Algorithm.alias`), BINDING INDIRECTION: the
+alias keeps its own binding — declaration, exposure, zero-argument cache key — while every
+callable use resolves to the NORMALIZED TARGET in the alias's own scope
+(`resolveAliasTarget`); no wrapper and no inherited signature exist. A CLOSED body — a
+written parameter list or a clause branch — is bare forwarding: each of the target's
 parameters is supplied from an EXISTING compatible binding of the same name
-(`bareForwardingArgument`, `bareForwardingRow`). The laws below pin the
-reconstruction (one argument per top-level pattern, each capture as its own binding,
-a collector re-spread, each structural pattern as its own kind), the bare-forwarding
-decision (by name, never renamed, never positional, never added to a closed list,
-never reshaped from same-named leaves), its distinction from formula lifting, and the
-eligibility's relation to Q-03's lifting rule. `CoreTests/AliasForwarding.lean`
-evaluates the elaborated trees.
+(`bareForwardingArgument`, `bareForwardingRow`), and a target with no forwarding contract
+at all is the front-end error (`bareForwardingRowOf`, narrowed Q-77). The laws below pin
+the reconstruction bare forwarding shares with formula lifting (one argument per top-level
+pattern, each capture as its own binding, a collector re-spread, each structural pattern
+as its own kind), the bare-forwarding decision (by name, never renamed, never positional,
+never added to a closed list, never reshaped from same-named leaves), its distinction from
+formula lifting, the alias eligibility (declared structure, never zero-argument
+acceptance), and the split between the alias's BINDING and its CALLABLE.
+`CoreTests/AliasForwarding.lean` evaluates the trees: every builtin, the user shapes,
+families and alias chains through an alias against the direct call.
 -/
 
 /-- A fixed capture forwards its binding as ONE argument, `x`. -/
@@ -1108,11 +1116,6 @@ theorem source_argument_sequence_pattern_rebuilds_a_sequence (items : List Param
     exact Or.inr ⟨ParameterPattern.sourceArgument first :: ParameterPattern.sourceArgument second
         :: ParameterPattern.sourceArguments rest,
       by simp [ParameterPattern.sourceArgument, ParameterPattern.sourceArguments, sequenceArgument]⟩
-
-/-- The alias's call is its inherited signature rebuilt: `A = F` calls `F` with exactly
-the patterns it took from `F`. -/
-theorem source_call_rebuilds_the_inherited_signature (callee : Ident) (source : List ParameterPattern) :
-    sourceCall callee source = .call (.resolve callee) (ParameterPattern.sourceArguments source) := rfl
 
 /-! ### Bare forwarding (FWD-02, decided 2026-09-30) -/
 
@@ -1263,28 +1266,131 @@ theorem formula_lifting_infers_what_bare_forwarding_rejects (p q : Ident) (disti
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom]
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom, Ne.symm distinct]
 
-/-- The alias and bare-forwarding rules read the DECLARED signature: a callee with no
-parameter pattern is read (its bare name is its value), every other callee is aliased or
-forwarded by name. -/
-theorem aliases_iff_declares_parameters (signature : List ParameterPattern) :
-    aliasesLoneBareReference signature = true ↔ signature ≠ [] := by
-  cases signature <;> simp [aliasesLoneBareReference]
+/-! ### Callable aliases: binding indirection (decided 2026-10-01) -/
 
-/-- `Only(*xs)` works with no arguments, so a bare reference to it is never LIFTED
-(Q-03) — but as a lone row it IS aliased: the alias rule reads the declared signature. -/
-theorem collecting_only_callee_is_aliased_not_lifted (xs : Ident) :
-    aliasesLoneBareReference [.capture { name := xs, kind := .collecting }] = true
+/-- ELIGIBILITY IS DECLARED STRUCTURE: a user callable is an alias target exactly when it
+declares a parameter pattern — never decided by zero-argument acceptance. -/
+theorem user_alias_target_iff_declares_parameters (p : Option ScopeCtx) (ps : List ParameterPattern)
+    (op : List Expr) (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
+    (Algorithm.mk p ps op pr out id).declaresParameterizedStructure = true ↔ ps ≠ [] := by
+  cases ps <;> simp [Algorithm.declaresParameterizedStructure]
+
+/-- A ZERO-PARAMETER TARGET IS READ, never aliased: `A = Z` stays an ordinary property whose
+body reads `Z`, cached like any property (`A`, `Z`, `A` reads each binding once). -/
+theorem alias_zero_parameter_target_is_read (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (out : List Expr) (id : Option PropertyIdentity) :
+    (Algorithm.mk p [] op pr out id).declaresParameterizedStructure = false := rfl
+
+/-- `Only(*xs)` works with no arguments, so a bare reference to it is never LIFTED (Q-03) —
+but as a lone row it IS aliased: the alias rule reads declared structure. -/
+theorem collecting_only_callee_is_aliased_not_lifted (xs : Ident) (p : Option ScopeCtx) (op : List Expr)
+    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
+    (Algorithm.mk p [.capture { name := xs, kind := .collecting }] op pr out id).declaresParameterizedStructure = true
       ∧ liftsBareValueReference [.capture { name := xs, kind := .collecting }] = false :=
   ⟨rfl, rfl⟩
 
-/-- Every signature that lifts is one that aliases: requiring a supplied argument means
+/-- Every user signature that lifts is one that aliases: requiring a supplied argument means
 declaring a parameter. -/
-theorem lifting_signature_is_an_alias_signature (signature : List ParameterPattern)
-    (lifts : liftsBareValueReference signature = true) :
-    aliasesLoneBareReference signature = true := by
-  cases signature with
+theorem lifting_signature_is_an_alias_signature (p : Option ScopeCtx) (ps : List ParameterPattern)
+    (op : List Expr) (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity)
+    (lifts : liftsBareValueReference ps = true) :
+    (Algorithm.mk p ps op pr out id).declaresParameterizedStructure = true := by
+  cases ps with
   | nil => exact absurd lifts (by decide)
   | cons pattern rest => rfl
+
+/-- EVERY BUILTIN is an alias target — `if`, the callback builtins and the loops included: its
+callable is used directly, so `I = if` keeps `if`'s laziness and `R = repeat` its minimum arity. -/
+theorem every_builtin_is_an_alias_target (b : Builtin) :
+    (Algorithm.builtin b).declaresParameterizedStructure = true := rfl
+
+/-- EVERY CLAUSE FAMILY is an alias target, and so is every alias (a chain normalizes). -/
+theorem every_family_and_alias_is_an_alias_target (p : Option ScopeCtx) (op : List Expr)
+    (bs : List CondBranch) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) :
+    (Algorithm.conditional p op bs id).declaresParameterizedStructure = true
+      ∧ (Algorithm.alias p op pr target id).declaresParameterizedStructure = true :=
+  ⟨rfl, rfl⟩
+
+private def aliasLawBranch (pattern : Pattern) : CondBranch := { pattern := pattern, body := alg [] [] [] [num 0] }
+
+/-- The unnameable family `S(1) = 1` / `S(-1) = -1`: its clauses name no position. -/
+private def aliasLawSign : Algorithm :=
+  .conditional none [] [aliasLawBranch (.litInt 1), aliasLawBranch (.litInt (-1))]
+
+/-- AN UNNAMEABLE FAMILY CAN BE ALIASED: aliasing needs callable identity, not parameter names,
+so `SA = S` is an alias although `S` has no lifting signature (and no forwarding contract). -/
+theorem unnameable_family_can_be_aliased :
+    aliasLawSign.declaresParameterizedStructure = true ∧ aliasLawSign.liftingSignature? = none :=
+  ⟨rfl, rfl⟩
+
+/-- A CALLABLE WITHOUT A FORWARDING CONTRACT CANNOT BARE-FORWARD (narrowed Q-77, decided
+2026-10-01): a closed lone row `W(x) = SA` whose normalized target is the unnameable family is the
+front-end error — never a silent zero-argument demand. -/
+theorem alias_without_forwarding_contract_cannot_bare_forward (callee x : Ident) :
+    bareForwardingRowOf callee [.capture { name := x }] [x] [] aliasLawSign = .error .noForwardingContract :=
+  rfl
+
+/-- ... while a target WITH a contract forwards by its own names, whatever the route that reached
+it: `C = count` / `W(collection) = C` is `W(collection) = C(collection)`, the call `count` itself
+would receive. -/
+theorem alias_of_builtin_forwards_by_the_builtin_names (callee : Ident) :
+    bareForwardingRowOf callee [.capture { name := "collection" }] ["collection"] []
+        (Algorithm.builtin .countBuiltin)
+      = .ok (.call (.resolve callee) [.param "collection"]) := by
+  rfl
+
+/-- An alias has NO lifting signature and NO callee kind of its OWN: every callable question —
+lifting, forwarding, the roles of a call's arguments — is asked of its normalized target. -/
+theorem alias_has_no_callable_surface_of_its_own (p : Option ScopeCtx) (op : List Expr)
+    (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) :
+    (Algorithm.alias p op pr target id).liftingSignature? = none
+      ∧ (Algorithm.alias p op pr target id).liftingCalleeKind? = none
+      ∧ (Algorithm.alias p op pr target id).parameterPatterns = [] :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- WRITTEN `open A` NEVER TURNS A CALLABLE ALIAS INTO A NAMESPACE: an alias is never an `open`
+provider, whatever its target. -/
+theorem alias_is_never_an_open_provider (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) :
+    (Algorithm.alias p op pr target id).requiresArguments = true := rfl
+
+/-- THE CACHE KEY IS THE ALIAS BINDING'S: the zero-argument property cache key reads the BINDING —
+never the callable it resolves to — so a bare read of an alias `A` is keyed by `A`'s own property,
+an entry separate from its target's, while its value is the target's zero-supply demand. -/
+theorem alias_cache_key_is_alias_binding (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+    (alias target : PropDef) (ctx : EvalCtx) (env : ValEnv) (distinct : alias.name ≠ target.name) :
+    (zeroArgPropertyCacheKey k owner alias ctx env).propertyName = alias.name
+      ∧ zeroArgPropertyCacheKey k owner alias ctx env ≠ zeroArgPropertyCacheKey k owner target ctx env :=
+  ⟨rfl, fun same => distinct (congrArg ZeroArgPropertyCacheKey.propertyName same)⟩
+
+/-- `F(x) = x`, `A = F`, `B = A`, `C = B` and the family `Fam(0) = 0` / `Fam(n) = n` with its alias
+`AF = Fam`: the static chains the next two laws normalize. -/
+private def aliasLawRoot : Algorithm :=
+  algPrivate [] []
+    [ ("F", alg ["x"] [] [] [param "x"])
+    , ("A", .alias none [] [] (.resolve "F")), ("B", .alias none [] [] (.resolve "A"))
+    , ("C", .alias none [] [] (.resolve "B"))
+    , ("Fam", .conditional none [] [aliasLawBranch (.litInt 0), aliasLawBranch (.bind "n")])
+    , ("AF", .alias none [] [] (.resolve "Fam")) ]
+    []
+
+/-- AN ALIAS CHAIN NORMALIZES: `C -> B -> A -> F` resolves to the one callable `F` — its single
+parameter `x` — without copying a signature into any link. -/
+theorem alias_chain_normalizes :
+    ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "B"))).map
+        fun target => target.parameterPatterns.length) = some 1
+      ∧ (staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "B"))).isSome := by
+  decide
+
+/-- ALIAS ROLES ARE TARGET ROLES: a call through `AF = Fam` takes the family's roles (every argument
+a value slot), a call through `A = F` the user callable's (neutral) — the kind is read off the
+normalized target, never off the alias. -/
+theorem alias_roles_are_target_roles :
+    ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "Fam"))).bind
+        Algorithm.liftingCalleeKind?).map (fun kind => liftingSlotRole kind 0 true) = some .value
+      ∧ ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "F"))).bind
+        Algorithm.liftingCalleeKind?).map (fun kind => liftingSlotRole kind 0 true) = some .callable := by
+  decide
 
 /-- A FIXED parameter binds its one argument unchanged: `Id((1, 2))` binds
 the sequence whole. -/

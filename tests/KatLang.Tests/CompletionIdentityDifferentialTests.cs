@@ -270,13 +270,28 @@ public class CompletionIdentityDifferentialTests
                     $"[{programId}] '{name}' has no unique property declaration here ({hits.Count} candidate(s)), but completion offers it as {symbol?.Classification} declared at {Describe(symbol?.Declaration)}.");
             }
 
-            // Oracle 2 — the editor's resolution of a reference written at the probe.
-            var variant = program.Template.Replace(ProbeMarker, ProbeExpression(program, name), StringComparison.Ordinal);
+            // Oracle 2 — the editor's resolution of a reference written at the probe. A bare lone row in
+            // a CLOSED body (a clause branch, an explicit list) is bare forwarding (FWD-02), which a
+            // callable whose parameters the body does not bind refuses at the front end; such a name is
+            // probed inside a list instead, where it stays an ordinary reference to the same declaration.
+            var spelling = ProbeExpression(program, name);
+            var variant = program.Template.Replace(ProbeMarker, spelling, StringComparison.Ordinal);
             var parsedVariant = Parser.Parse(variant);
+            var probeColumn = probe.Column;
+            var wrappedInList = false;
+            if (parsedVariant.Diagnostics.Any(static diagnostic =>
+                    diagnostic.Code is DiagnosticCode.UnforwardableParameter or DiagnosticCode.UnforwardableCallable))
+            {
+                variant = program.Template.Replace(ProbeMarker, "[" + spelling + "]", StringComparison.Ordinal);
+                parsedVariant = Parser.Parse(variant);
+                probeColumn++;
+                wrappedInList = true;
+            }
+
             Assert.False(
                 parsedVariant.HasErrors,
                 $"[{programId}] probing '{name}' produced front-end errors: {string.Join(" | ", parsedVariant.Diagnostics.Select(d => d.Message))}");
-            var resolution = SemanticModelBuilder.Build(parsedVariant).FindResolutionAt(new SourcePosition(probe.Line, probe.Column));
+            var resolution = SemanticModelBuilder.Build(parsedVariant).FindResolutionAt(new SourcePosition(probe.Line, probeColumn));
             Assert.True(resolution is not null, $"[{programId}] no editor resolution at the probe for '{name}'.");
             Assert.Equal(name, resolution!.Occurrence.Name);
 
@@ -297,7 +312,8 @@ public class CompletionIdentityDifferentialTests
             }
 
             // Oracle 3 — the runtime produces the sentinel on the line completion named.
-            if (symbol is { Classification: IdentifierClassification.PropertyReference, Declaration: { } declaration }
+            if (!wrappedInList
+                && symbol is { Classification: IdentifierClassification.PropertyReference, Declaration: { } declaration }
                 && TryFindSentinel(baseSource, declaration.Span.Start.Line, out var sentinel))
             {
                 Assert.Equal(

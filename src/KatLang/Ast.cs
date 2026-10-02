@@ -1019,9 +1019,9 @@ public closed record Expr
         /// argument resolution and its sibling-order channel — recognize the third spelling as
         /// a CALLEE by what it resolves to rather than by how it is written, so its arguments
         /// are the member's strict value positions
-        /// (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/>). It never makes the
-        /// bare name itself liftable: a callable reached through <c>open</c> is never
-        /// implicitly forwarded. <c>null</c> for every other name, a raw parser tree, and a
+        /// (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/>). Lifting the bare name
+        /// itself is decided by the unified formula-lifting law over the resolved callable's
+        /// signature, through <c>open</c> like every other route. <c>null</c> for every other name, a raw parser tree, and a
         /// host-built one. Decides nothing at runtime; carried in an equality-transparent
         /// slot, so <c>with</c> copies keep it and record equality, hashing, and printing
         /// ignore it.
@@ -1865,12 +1865,15 @@ public sealed record Property(
 /// Represents a KatLang algorithm — the fundamental building block.
 /// Discriminated union matching the Lean specification:
 /// <c>Algorithm.mk</c> (user-defined), <c>Algorithm.builtin</c> (built-in operation),
-/// and <c>Algorithm.conditional</c> (conditional algorithm with pattern branches).
+/// <c>Algorithm.conditional</c> (conditional algorithm with pattern branches), and
+/// <c>Algorithm.alias</c> (a callable alias: a binding whose callable is the one its
+/// written target resolves to).
 ///
 /// <para><b>Variant-owned payload.</b> The base type carries NO payload: every stored
 /// fact belongs to the variant that owns it, exactly as each Lean constructor carries its
 /// own fields — <see cref="User"/> owns its parent, parameter patterns, opens, properties,
-/// and output; <see cref="Conditional"/> owns its parent, opens, and branches; a
+/// and output; <see cref="Conditional"/> owns its parent, opens, and branches;
+/// <see cref="Alias"/> owns its parent, opens, properties, and target; a
 /// <see cref="Builtin"/> owns only its identity. Because no payload member exists on the
 /// base, no <c>with</c> expression or object initializer over a base-typed value can give
 /// an algorithm payload its variant does not have (a builtin with properties, a family with
@@ -1882,16 +1885,16 @@ public sealed record Property(
 /// <c>output</c>, <c>branches</c> functions), which read and never write.</para>
 ///
 /// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="User"/>,
-/// <see cref="Builtin"/>, and <see cref="Conditional"/> are its only variants, no other
-/// assembly can derive from it, and a switch EXPRESSION naming all three is
+/// <see cref="Builtin"/>, <see cref="Conditional"/>, and <see cref="Alias"/> are its only
+/// variants, no other assembly can derive from it, and a switch EXPRESSION naming all four is
 /// compiler-exhaustive with no catch-all arm — the Lean-mirroring dispatches
 /// (<c>withParent</c>, <c>isFunctionShaped</c>, signature and exposure classification,
 /// the <c>WithParams</c> family here, the internal total accessors) name the variants a
 /// case applies to instead of hiding them under <c>_</c>, so a new variant fails the build
 /// there until decided.</para>
 ///
-/// <para><b>Declaration identity.</b> Every <see cref="User"/> and <see cref="Conditional"/>
-/// CONSTRUCTED with <c>new</c> is one written declaration and carries its own
+/// <para><b>Declaration identity.</b> Every <see cref="User"/>, <see cref="Conditional"/>, and
+/// <see cref="Alias"/> CONSTRUCTED with <c>new</c> is one written declaration and carries its own
 /// <see cref="Declaration"/> token (Lean: <c>Algorithm.declarationId</c>, assigned once per
 /// declaration at run preparation). A <c>with</c> copy is a VIEW of that same declaration —
 /// the evaluator's parent wiring, the front end's elaboration passes, and a host's own
@@ -1988,13 +1991,13 @@ public closed record Algorithm
     /// <c>K(a, b) = a</c>, where <c>b</c> must remain part of the ordinary call
     /// interface even though it is unused in the body.
     /// Lean: <c>Algorithm.withParams</c> — a TOTAL functional update that is the identity on
-    /// <c>.builtin</c> and <c>.conditional</c>, which have no parameter list (this is the
+    /// <c>.builtin</c>, <c>.conditional</c>, and <c>.alias</c>, which have no parameter list (this is the
     /// modeled behavior, not a fallback).
     /// </summary>
     public Algorithm WithParams(IReadOnlyList<string> parameters) => this switch
     {
         User user => user with { ParameterPatterns = MergeParameterPatterns(user.ParameterPatterns, parameters) },
-        Builtin or Conditional => this,
+        Builtin or Conditional or Alias => this,
     };
 
     /// <summary>
@@ -2013,31 +2016,31 @@ public closed record Algorithm
             {
                 ParameterPatterns = MergeParameterPatterns(user.ParameterPatterns, parameters, inferredProvenance),
             },
-            Builtin or Conditional => this,
+            Builtin or Conditional or Alias => this,
         };
 
     /// <summary>
     /// Replace a user-defined algorithm's parameter list with one flat capture per
     /// declaration (Lean: <c>withParameterPatterns (ParameterPattern.fromParameters ps)</c>);
-    /// the identity on <see cref="Builtin"/> and <see cref="Conditional"/>.
+    /// the identity on <see cref="Builtin"/>, <see cref="Conditional"/>, and <see cref="Alias"/>.
     /// </summary>
     public Algorithm WithParameters(IReadOnlyList<ParameterDeclaration> parameters)
         => this switch
         {
             User user => user with { ParameterPatterns = ParameterPattern.FromDeclarations(parameters) },
-            Builtin or Conditional => this,
+            Builtin or Conditional or Alias => this,
         };
 
     /// <summary>
     /// Replace a user-defined algorithm's stored parameter patterns — its ONE parameter
     /// channel, from which <see cref="User.Parameters"/> and <see cref="User.Params"/> are
     /// derived. Lean: <c>Algorithm.withParameterPatterns</c>, the identity on
-    /// <c>.builtin</c> and <c>.conditional</c>.
+    /// <c>.builtin</c>, <c>.conditional</c>, and <c>.alias</c>.
     /// </summary>
     public Algorithm WithParameterPatterns(IReadOnlyList<ParameterPattern> parameterPatterns) => this switch
     {
         User user => user with { ParameterPatterns = parameterPatterns },
-        Builtin or Conditional => this,
+        Builtin or Conditional or Alias => this,
     };
 
     /// <summary>One flat normal capture per name. Lean: <c>Algorithm.normalParameters</c>.</summary>
@@ -2097,7 +2100,7 @@ public closed record Algorithm
             // Lean: `branch.body.withParameterPatterns patterns` — the written head becomes the
             // body's CLOSED explicit parameter list. The update is total: a body that is not a
             // user algorithm has no parameter list and is returned as it is (Lean's
-            // withParameterPatterns is the identity on .builtin and .conditional).
+            // withParameterPatterns is the identity on .builtin, .conditional, and .alias).
             return clauses[0].Body switch
             {
                 User body => body with
@@ -2105,7 +2108,7 @@ public closed record Algorithm
                     ParameterPatterns = explicitParameterPatterns,
                     HasExplicitParameterList = true,
                 },
-                Builtin or Conditional => clauses[0].Body,
+                Builtin or Conditional or Alias => clauses[0].Body,
             };
         }
 
@@ -2337,27 +2340,6 @@ public closed record Algorithm
             init => _forwardingParameterStart = new(value);
         }
 
-        private readonly RuntimeStateSlot<bool> _inheritsCalleeSignature;
-
-        /// <summary>
-        /// FWD-02 (decided September 29 2026): true exactly for an EXACT ALIAS <c>A = F</c> — a body
-        /// whose one written row is the bare callable <c>F</c> and which owns no parameter of its own —
-        /// completed by <see cref="ImplicitArgumentResolver"/>: its whole signature is <c>F</c>'s,
-        /// inherited verbatim and forwarded (<see cref="ForwardingParameterStart"/> is 0). The inherited
-        /// parameter NAMES are <c>F</c>'s private binder names, so they are ENCAPSULATED: no written
-        /// name denotes them (like every forwarded parameter), and — unlike a formula's lifted
-        /// parameter, whose name IS the binding name it forwards — they never collide with a property
-        /// the alias or a body nested in it declares (<c>ParameterPropertyCollisionValidator</c>), so
-        /// renaming <c>F</c>'s binders can never make the alias a declaration error. A front-end
-        /// fact with no Lean counterpart,
-        /// carried in an equality-transparent slot like <see cref="ForwardingParameterStart"/>.
-        /// </summary>
-        internal bool InheritsCalleeSignature
-        {
-            get => _inheritsCalleeSignature.Value;
-            init => _inheritsCalleeSignature = new(value);
-        }
-
         /// <summary>
         /// The <see cref="ParameterPatterns"/> NAME RESOLUTION established — every pattern before
         /// <see cref="ForwardingParameterStart"/>, or all of them when forwarding appended none.
@@ -2559,6 +2541,111 @@ public closed record Algorithm
             return false;
         }
     }
+
+    /// <summary>
+    /// A CALLABLE ALIAS (FWD-02, binding indirection; decided October 1 2026). Corresponds to
+    /// <c>Algorithm.alias</c> in the Lean specification and owns exactly its fields:
+    /// <see cref="Parent"/>, <see cref="Opens"/>, <see cref="Properties"/>, and the written
+    /// <see cref="Target"/> reference.
+    ///
+    /// <para>A non-root OPEN body — a named definition or an inline block with no written
+    /// parameter list and no parameter of its own — whose ONE written row is a bare reference
+    /// <c>F</c> is an alias when name resolution selects ONE callable identity that declares
+    /// parameterized callable structure: a builtin, a clause family (nameable or not), or a user
+    /// algorithm with at least one completed parameter pattern — or another alias, so a chain
+    /// normalizes to one target. The front end (<see cref="ImplicitArgumentResolver"/>) produces
+    /// this node; nothing is synthesized: an alias has no parameter list, no inherited signature
+    /// and no wrapper call.</para>
+    ///
+    /// <para><b>Two identities.</b> The BINDING is the alias's own: the property that holds this
+    /// algorithm keeps its declaration, exposure, zero-argument cache entry and editor symbol, and
+    /// the alias declares only what its own body declares (<see cref="Properties"/>, normally none)
+    /// — never its target's members, so written member access <c>A.K</c> takes the ordinary
+    /// fallback and <c>open A</c> is refused. The CALLABLE is the target's: every callable use
+    /// of the alias — a call, a callback or loop step, the callable channel of an argument, a
+    /// zero-argument value demand — is the use of the callable its <see cref="Target"/> resolves
+    /// to IN THE ALIAS'S OWN SCOPE (never re-resolved at a use site), through that callable's own
+    /// invocation (user binder, builtin adapter, clause dispatch, Math or host wrapper). The
+    /// evaluator normalizes an alias to its target where it resolves a binding; the alias is not
+    /// an invocation and charges no step or depth.</para>
+    ///
+    /// <para><see cref="Target"/> is a STATIC PATH: a name (<see cref="Expr.Resolve"/>) or an
+    /// argumentless structural dot path whose head is a name or a block. A host-built alias whose
+    /// target is anything else, or whose targets form a cycle, is rejected before evaluation
+    /// (<see cref="EvalError.IllegalInEval"/>).</para>
+    /// </summary>
+    public sealed record Alias : Algorithm
+    {
+        public Alias(
+            ScopeCtx? Parent,
+            IReadOnlyList<Expr> Opens,
+            IReadOnlyList<Property> Properties,
+            Expr Target)
+            : base(new DeclarationIdentity())
+        {
+            this.Parent = Parent;
+            this.Opens = Opens;
+            this.Properties = Properties;
+            this.Target = Target;
+        }
+
+        /// <summary>
+        /// The alias the front end elaborates one written declaration into: the SAME declaration
+        /// as the open body <paramref name="body"/> it replaces (one written declaration keeps one
+        /// <see cref="Algorithm.Declaration"/> token through elaboration), with that body's scope.
+        /// </summary>
+        internal Alias(User body, Expr target)
+            : base(body.Declaration)
+        {
+            Parent = body.Parent;
+            Opens = body.Opens;
+            Properties = body.Properties;
+            Target = target;
+            IsModuleElaborated = body.IsModuleElaborated;
+        }
+
+        /// <summary>Lean: the <c>parent</c> field of <c>Algorithm.alias</c>.</summary>
+        public ScopeCtx? Parent { get; init; }
+
+        /// <summary>Lean: the <c>opens</c> field of <c>Algorithm.alias</c>: the alias body's own <c>open</c> targets.</summary>
+        public IReadOnlyList<Expr> Opens { get; init; }
+
+        /// <summary>
+        /// Lean: the <c>properties</c> field of <c>Algorithm.alias</c>: what the alias body itself
+        /// declares (normally nothing; <c>A = { F(x) = x * 100 ⏎ F }</c> declares <c>F</c>). These are
+        /// the alias's only members — never its target's.
+        /// </summary>
+        public IReadOnlyList<Property> Properties { get; init; }
+
+        /// <summary>
+        /// Lean: the <c>target</c> field of <c>Algorithm.alias</c>: the written row naming the
+        /// callable, resolved in the alias's own scope.
+        /// </summary>
+        public Expr Target { get; init; }
+
+        /// <summary>
+        /// The <see cref="User.IsModuleElaborated"/> mark of the body this alias was elaborated
+        /// from: true for a module root spliced by load elaboration whose one row is an alias row.
+        /// </summary>
+        internal bool IsModuleElaborated { get; init; }
+
+        private readonly RuntimeStateSlot<ImplicitArgumentResolver.AliasTarget?> _resolvedTarget;
+
+        /// <summary>
+        /// The FRONT END's facts about the callable <see cref="Target"/> resolved to when the alias
+        /// was elaborated — its identity, kind, lifting signature and written name — which every
+        /// later front-end question asked of the alias (argument roles, formula lifting, bare
+        /// forwarding, another alias) and the editor read instead of the alias's own (empty)
+        /// signature. Null for a host-built alias (the evaluator resolves <see cref="Target"/>
+        /// itself and never reads this). A front-end fact with no Lean counterpart, carried in an
+        /// equality-transparent slot so every <c>with</c> copy keeps it.
+        /// </summary>
+        internal ImplicitArgumentResolver.AliasTarget? ResolvedTarget
+        {
+            get => _resolvedTarget.Value;
+            init => _resolvedTarget = new(value);
+        }
+    }
 }
 
 /// <summary>
@@ -2638,6 +2725,215 @@ internal closed record PreEvaluationAstViolation
     /// <c>Error.illegalInEval multipleCollectingBindingsPerLevelMessage</c>.
     /// </summary>
     internal sealed record MultipleCollectingCaptures() : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A callable alias whose written target is not a STATIC PATH — a name, or an argumentless
+    /// structural dot path whose head is a name or a block (the front end only forms an alias over
+    /// one, so only a host-built tree reaches this). Lean:
+    /// <c>Error.illegalInEval (aliasTargetNotStaticPathMessage …)</c>.
+    /// </summary>
+    internal sealed record AliasTargetNotStaticPath(Expr Target) : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A callable alias whose target resolves — by the ownership-first property lookup over its own
+    /// scope chain and structural member navigation — back to an alias already on its chain (the
+    /// front end never forms one, so only a host-built tree reaches this). Lean:
+    /// <c>Error.illegalInEval (aliasCycleMessage …)</c>.
+    /// </summary>
+    internal sealed record AliasCycle(Expr Target) : PreEvaluationAstViolation;
+}
+
+/// <summary>
+/// The STATIC view of callable-alias targets that pre-evaluation validation checks a host-built tree
+/// against (FWD-02): every alias target is a static path, and resolving targets statically — the
+/// ownership-first PROPERTY lookup over an alias's own declarations and its enclosing scopes, then
+/// structural navigation of declared members — never leads back to an alias already on the chain.
+/// The static resolution consults no <c>open</c> and no prelude (a target that leaves the static
+/// chain ends it); the evaluator's own chase (<c>Evaluator.ResolveAliasTarget</c>) rejects a cycle
+/// closed through an <c>open</c> with the same error. A settled chase is memoized per alias reference
+/// and resolving property context, never per node alone: a shared alias can select different
+/// targets in different scopes. Scopes declaring none of the reachable alias-target heads do not
+/// split the context; each scope's property names are indexed once.
+/// </summary>
+internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = null)
+{
+    private readonly HashSet<AliasSite> _settled = [];
+    private readonly Dictionary<IReadOnlyList<Property>, Dictionary<string, Property>> _indexes = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<int, Dictionary<IReadOnlyList<Property>, int>> _contexts = [];
+    private readonly Dictionary<IReadOnlyList<Property>, bool> _relevantScopes = new(ReferenceEqualityComparer.Instance);
+    private int _nextContext;
+
+    internal int ContextOf(IReadOnlyList<Algorithm> chain)
+    {
+        var context = 0;
+        foreach (var owner in chain)
+        {
+            if (owner.Properties.Count == 0 || !HasRelevantDeclarations(owner.Properties))
+                continue;
+            if (!_contexts.TryGetValue(context, out var children))
+                _contexts.Add(context, children = new(ReferenceEqualityComparer.Instance));
+            if (!children.TryGetValue(owner.Properties, out var child))
+                children.Add(owner.Properties, child = ++_nextContext);
+            context = child;
+        }
+
+        return context;
+    }
+
+    private bool HasRelevantDeclarations(IReadOnlyList<Property> properties)
+    {
+        if (targetHeads is null)
+            return true;
+        if (!_relevantScopes.TryGetValue(properties, out var relevant))
+        {
+            relevant = properties.Any(property => targetHeads.Contains(property.Name));
+            _relevantScopes.Add(properties, relevant);
+        }
+
+        return relevant;
+    }
+
+    private readonly struct AliasSite(Algorithm alias, int context) : IEquatable<AliasSite>
+    {
+        private readonly Algorithm _alias = alias;
+        private readonly int _context = context;
+
+        public bool Equals(AliasSite other)
+            => ReferenceEquals(_alias, other._alias) && _context == other._context;
+
+        public override bool Equals(object? obj) => obj is AliasSite other && Equals(other);
+
+        public override int GetHashCode()
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_alias), _context);
+    }
+
+    /// <summary>
+    /// A STATIC PATH: a name, or an argumentless structural dot edge (never the <c>.string</c>
+    /// intrinsic) whose receiver is itself a static path or a block. Lean: <c>Expr.isStaticAliasPath</c>.
+    /// </summary>
+    internal static bool IsStaticPath(Expr target)
+    {
+        var current = target;
+        while (true)
+        {
+            switch (current)
+            {
+                case Expr.Resolve:
+                    return true;
+                case Expr.DotCall { Args: null } edge when !edge.UsesOrdinaryDotStringIntrinsic():
+                    if (edge.Target is Expr.AlgorithmExpr)
+                        return true;
+                    current = edge.Target;
+                    continue;
+                default:
+                    return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The target at which the static chase from <paramref name="alias"/> — declared inside
+    /// <paramref name="enclosing"/> (outermost scope first) — reaches an alias already on its chain,
+    /// or null when the chase ends (at a callable that is not an alias, or by leaving the static chain).
+    /// </summary>
+    internal Expr? FindCycle(Algorithm.Alias alias, IReadOnlyList<Algorithm> enclosing)
+    {
+        var site = new AliasSite(alias, ContextOf(enclosing));
+        var onChain = new HashSet<AliasSite> { site };
+        var current = alias;
+        IReadOnlyList<Algorithm> chain = enclosing;
+        while (!_settled.Contains(site)
+            && TryResolve(current, chain, out var value, out var valueChain)
+            && value is Algorithm.Alias next)
+        {
+            site = new AliasSite(next, ContextOf(valueChain));
+            if (!onChain.Add(site))
+                return current.Target;
+            current = next;
+            chain = valueChain;
+        }
+
+        _settled.UnionWith(onChain);
+        return null;
+    }
+
+    private bool TryResolve(Algorithm.Alias alias, IReadOnlyList<Algorithm> chain, out Algorithm value, out IReadOnlyList<Algorithm> valueChain)
+    {
+        var steps = new Stack<string>();
+        var head = alias.Target;
+        while (head is Expr.DotCall { Args: null } edge)
+        {
+            steps.Push(edge.Name);
+            head = edge.Target;
+        }
+
+        var scope = new List<Algorithm>(chain) { alias };
+        switch (head)
+        {
+            case Expr.Resolve(var name):
+            {
+                var found = false;
+                value = alias;
+                for (var level = scope.Count - 1; level >= 0 && !found; level--)
+                {
+                    if (Lookup(scope[level], name) is { } property)
+                    {
+                        value = property.Value;
+                        scope.RemoveRange(level + 1, scope.Count - level - 1);
+                        found = true;
+                    }
+                }
+
+                if (!found)
+                {
+                    valueChain = scope;
+                    return false;
+                }
+
+                break;
+            }
+
+            case Expr.AlgorithmExpr(var block):
+                value = block;
+                break;
+
+            default:
+                valueChain = scope;
+                value = alias;
+                return false;
+        }
+
+        while (steps.TryPop(out var step))
+        {
+            if (Lookup(value, step) is not { } member)
+            {
+                valueChain = scope;
+                return false;
+            }
+
+            scope.Add(value);
+            value = member.Value;
+        }
+
+        valueChain = scope;
+        return true;
+    }
+
+    private Property? Lookup(Algorithm owner, string name)
+    {
+        var properties = owner.Properties;
+        if (properties.Count == 0)
+            return null;
+        if (!_indexes.TryGetValue(properties, out var index))
+        {
+            index = new Dictionary<string, Property>(StringComparer.Ordinal);
+            foreach (var property in properties)
+                index.TryAdd(property.Name, property);
+            _indexes.Add(properties, index);
+        }
+
+        return index.TryGetValue(name, out var found) ? found : null;
+    }
 }
 
 internal static class AlgorithmValidation
@@ -2738,14 +3034,23 @@ internal static class AlgorithmValidation
         // has no source-backed parameter (see WrittenAnchor).
         private SourceSpan? _enclosingPropertySpan;
 
-        // Reference-identity memo over visited algorithms and expressions. The public
-        // AST is host-constructible with SHARED (acyclic) subtrees, and the violation
-        // this walker detects is node-local — a shared subtree cannot contain a
-        // different violation on a second visit — so revisits are pure waste: without
-        // the memo a compact diamond-shaped DAG (each node referenced twice) makes
-        // this pre-evaluation pass take time exponential in its depth. Walker
-        // instances are per-call, so the memo is run-scoped and never shared.
+        // Node-local invariants remain reference-memoized. Alias cycles also depend on the
+        // enclosing property chain, so only subtrees reaching an alias need a contextual visit.
         private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<object, bool> _aliasReach = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<int, HashSet<object>> _scopedVisits = [];
+
+        private bool FirstVisit(object node)
+        {
+            var first = _visited.Add(node);
+            if (!checkConditionalBranchArities || !AstStructuralPreflight.ReachesAlias(node, _aliasReach))
+                return first;
+
+            var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node))).ContextOf(_chain);
+            if (!_scopedVisits.TryGetValue(context, out var visited))
+                _scopedVisits.Add(context, visited = new(ReferenceEqualityComparer.Instance));
+            return visited.Add(node);
+        }
 
         // This walker only inspects parameter COUNTS (via ParameterPatterns.Count below), never
         // individual declarations, so skip the per-declaration loop. That keeps validation of a wide
@@ -2765,10 +3070,42 @@ internal static class AlgorithmValidation
             if (algorithm.DeferredRegion is not null)
                 return;
 
-            if (!_visited.Add(algorithm))
+            if (!FirstVisit(algorithm))
                 return;
 
-            base.VisitAlgorithm(algorithm);
+            // The static scope chain (outermost first) the alias check below resolves targets in.
+            _chain.Add(algorithm);
+            try { base.VisitAlgorithm(algorithm); }
+            finally { _chain.RemoveAt(_chain.Count - 1); }
+        }
+
+        private readonly List<Algorithm> _chain = [];
+        private StaticAliasTargets? _aliasTargets;
+
+        /// <summary>
+        /// A callable alias (FWD-02): its written target must be a STATIC PATH, and the static chase
+        /// of its target must not lead back to an alias already on its chain
+        /// (<see cref="StaticAliasTargets"/>). The front end never builds either kind of tree; a host
+        /// may. Lean: the <c>.alias</c> arm of <c>validateExplicitParamOutputInvariant</c>.
+        /// </summary>
+        protected override void VisitAliasAlgorithm(Algorithm.Alias algorithm)
+        {
+            if (checkConditionalBranchArities)
+            {
+                PreEvaluationAstViolation? aliasViolation = !StaticAliasTargets.IsStaticPath(algorithm.Target)
+                    ? new PreEvaluationAstViolation.AliasTargetNotStaticPath(algorithm.Target)
+                    : (_aliasTargets ??= new()).FindCycle(algorithm, _chain.GetRange(0, _chain.Count - 1)) is { } cycleTarget
+                        ? new PreEvaluationAstViolation.AliasCycle(cycleTarget)
+                        : null;
+                if (aliasViolation is not null)
+                {
+                    Violations.Add(aliasViolation);
+                    if (stopAfterFirst)
+                        return;
+                }
+            }
+
+            base.VisitAliasAlgorithm(algorithm);
         }
 
         public override void VisitExpr(Expr expr)
@@ -2776,7 +3113,7 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
-            if (!_visited.Add(expr))
+            if (!FirstVisit(expr))
                 return;
 
             // Expression descent is nameless in Lean, so any algorithm reached
@@ -2804,7 +3141,7 @@ internal static class AlgorithmValidation
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
-            if (_visited.Add(arguments))
+            if (FirstVisit(arguments))
                 base.VisitCallArguments(arguments);
         }
 
@@ -2821,7 +3158,7 @@ internal static class AlgorithmValidation
                 var current = stack.Pop();
                 if (current is Expr.SequenceConstruct(var outputLeft, var outputRight))
                 {
-                    if (!ReferenceEquals(current, expr) && !_visited.Add(current))
+                    if (!ReferenceEquals(current, expr) && !FirstVisit(current))
                         continue;
 
                     stack.Push(outputRight);
@@ -2831,7 +3168,7 @@ internal static class AlgorithmValidation
 
                 if (current is Expr.SequenceSpread(var spreadOperand))
                 {
-                    if (!ReferenceEquals(current, expr) && !_visited.Add(current))
+                    if (!ReferenceEquals(current, expr) && !FirstVisit(current))
                         continue;
 
                     stack.Push(spreadOperand);

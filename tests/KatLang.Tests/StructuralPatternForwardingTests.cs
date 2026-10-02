@@ -6,12 +6,12 @@ namespace KatLang.Tests;
 /// FORWARDING REBUILDS EACH STRUCTURAL PATTERN AS ITS OWN KIND (FWD-02 with the structural-pattern
 /// model).
 ///
-/// <para>Every synthesized call — an exact alias <c>A = S</c>, bare forwarding <c>G(params) = S</c>, a
-/// formula that lifts <c>S</c> — forwards every binding as ITSELF (a fixed binding as one read, a
-/// collecting binding re-spread) and rebuilds each structural pattern it reconstructs as the SAME
-/// KIND: a sequence pattern <c>(…)</c> as a sequence, a list pattern <c>[…]</c> as a list — never
-/// the other kind. WHICH bindings fill a pattern depends on the form: an alias inherits the callee's
-/// patterns and rebuilds them from its own bindings; bare forwarding fills a callee pattern only from
+/// <para>Every synthesized call — bare forwarding <c>G(params) = S</c>, a formula that lifts <c>S</c>
+/// — forwards every binding as ITSELF (a fixed binding as one read, a collecting binding re-spread)
+/// and rebuilds each structural pattern it reconstructs as the SAME KIND: a sequence pattern
+/// <c>(…)</c> as a sequence, a list pattern <c>[…]</c> as a list — never the other kind. (A callable
+/// alias <c>A = S</c> synthesizes no call at all: it IS <c>S</c>'s callable, binding indirection.)
+/// WHICH bindings fill a pattern depends on the form: bare forwarding fills a callee pattern only from
 /// a binding with the same name AND the same pattern (<c>G([x]) = Single</c> forwards
 /// <c>Single([x])</c>, while <c>G(x) = Single</c> is rejected — a same-named leaf never reshapes an
 /// argument); a formula rebuilds the callee's patterns around the caller's bindings of the same
@@ -93,9 +93,6 @@ public class StructuralPatternForwardingTests
     public static TheoryData<string, string, string, string, string> ElaboratedCalls => new()
     {
         // program, owner, callee, owner's signature, synthesized arguments
-        // An alias inherits a repeated name inside a group verbatim, never deduplicated.
-        { "P((x, x)) = x\nSome = P", "Some", "P", "(x, x)", "(x, x)" },
-        { "P(x, [x, a]) = a\nSome = P", "Some", "P", "x, [x, a]", "x, [x, a]" },
         // A formula lifts by binding name: the callee's pattern rebuilt around the caller's bindings.
         { "E(()) = 0\nA = E + 0", "A", "E", "", "()" },
         { "E([]) = 0\nA = E + 0", "A", "E", "", "[]" },
@@ -110,15 +107,43 @@ public class StructuralPatternForwardingTests
         { "M([first, *middle, last]) = first\nG([first, *middle, last]) = M", "G", "M", "[first, *middle, last]", "[first, middle*, last]" },
         { "F(([x, y], z)) = x\nG(([x, y], z)) = F", "G", "F", "([x, y], z)", "([x, y], z)" },
         { "Id(v) = v\nG(v, [first, *middle, last]) = Id", "G", "Id", "v, [first, *middle, last]", "v" },
-        // A local alias is an alias: it ignores the enclosing binding of the callee's binder name,
-        // and the enclosing list forwards its own same-pattern [x] to it.
-        { "Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}", "K", "Single", "[x]", "[x]" },
+        // The enclosing list forwards its own same-pattern [x] to a local alias of Single, whose
+        // forwarding contract is Single's own.
         { "Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}", "F", "K", "[x]", "[x]" },
     };
 
     /// <summary>
-    /// The owner's signature is inherited (an alias), written (bare forwarding) or lifted by name (a
-    /// formula), and the synthesized call rebuilds every structural pattern it reconstructs — at
+    /// A callable alias synthesizes NO call and no signature (binding indirection): it IS its callee,
+    /// so a repeated name inside a group, a list pattern, and a local alias that ignores the enclosing
+    /// binding of the callee's binder name all keep the callee's own contract verbatim.
+    /// </summary>
+    [Theory]
+    [InlineData("P((x, x)) = x\nSome = P", "Some", "P", "(x, x)")]
+    [InlineData("P(x, [x, a]) = a\nSome = P", "Some", "P", "x, [x, a]")]
+    [InlineData("Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}", "K", "Single", "[x]")]
+    public void AnAlias_SynthesizesNoCall_ItIsItsCallee(string program, string owner, string callee, string signature)
+    {
+        var root = SourceProvenance.ParseValid(program + "\n0").Root;
+        var alias = Assert.Single(AliasProperties(root), property => property.Name == owner).Alias;
+        Assert.Empty(alias.ParameterPatterns);
+        Assert.Equal(callee, Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Equal(signature, string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+
+        static IEnumerable<(string Name, Algorithm.Alias Alias)> AliasProperties(Algorithm owner)
+        {
+            foreach (var property in owner.Properties)
+            {
+                if (property.Value is Algorithm.Alias alias)
+                    yield return (property.Name, alias);
+                foreach (var nested in AliasProperties(property.Value))
+                    yield return nested;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The owner's signature is written (bare forwarding) or lifted by name (a formula), and the
+    /// synthesized call rebuilds every structural pattern it reconstructs — at
     /// every depth — as its OWN kind: a sequence pattern as the tree the written sequence has (a
     /// capture, <c>()</c>, or a lone item itself), a list pattern as a list literal. No kind is
     /// ever converted.
@@ -137,8 +162,8 @@ public class StructuralPatternForwardingTests
     /// <summary>
     /// A structural group that binds no name gives FORMULA lifting — which forwards by binding name —
     /// nothing to forward: it rebuilds the group as the one empty structure of its own kind, so
-    /// <c>L = [E]</c> takes no parameter and holds <c>[E((), [])]</c> (an alias keeps the groups as
-    /// parameters instead, <see cref="AliasAndBareForwardingTests"/>).
+    /// <c>L = [E]</c> takes no parameter and holds <c>[E((), [])]</c> (an alias IS E, so it takes the
+    /// groups as E's own parameters instead, <see cref="AliasAndBareForwardingTests"/>).
     /// </summary>
     [Fact]
     public async Task ZeroCaptureGroups_AreRebuiltEmptyByAFormula()
@@ -157,7 +182,7 @@ public class StructuralPatternForwardingTests
         // The explicit call passes G's whole x, so a scalar reaches Single's list pattern.
         { "Single([x]) = x\nG(x) = Single(x)\nG(7)", "err TypeMismatch" },
         { "Single([x]) = x\nG([x]) = Single\nG([[7]]) == [7], Single([[7]]) == [7]", "ok S[true, true]" },
-        // A local alias keeps Single's [x]; F forwards its own [x] to it by name.
+        // A local alias is Single itself; F forwards its own [x] to it by name.
         { "Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}\nF([[7]])", "ok L[7]" },
         // A collecting stream forwards into the same-named collector of the same pattern.
         { "C((*xs)) = xs\nG((*xs)) = C\nG((1, 2)), G(())", "ok S[L[1, 2], L[]]" },

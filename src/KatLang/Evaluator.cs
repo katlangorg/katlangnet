@@ -455,12 +455,14 @@ public static partial class Evaluator
     /// <summary>
     /// Lean: Algorithm.withParent. No-op for Builtin variant. The wired copy is a VIEW of the
     /// same written declaration: the record copy carries <see cref="Algorithm.Declaration"/>.
+    /// An alias is wired like any declaration: its parent is the scope its target is resolved in.
     /// </summary>
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
         Algorithm.User user => user with { Parent = parent },
         Algorithm.Conditional family => family with { Parent = parent },
+        Algorithm.Alias alias => alias with { Parent = parent },
     };
 
     /// <summary>
@@ -684,13 +686,15 @@ public static partial class Evaluator
 
     /// <summary>
     /// Whether an algorithm needs a call to have members: an explicitly or implicitly
-    /// parameterized algorithm, or a clause family (whose branches always take arguments).
-    /// Such an algorithm is not an <c>open</c> provider — <c>open</c> imports a namespace and
-    /// never creates an activation, so there is no value its members could read their inputs
-    /// from (Lean: <c>Algorithm.requiresArguments</c>).
+    /// parameterized algorithm, a clause family (whose branches always take arguments), or a
+    /// callable alias (it denotes a callable whose target declares parameterized structure, never
+    /// a namespace: an alias declares no members of its target). Such an algorithm is not an
+    /// <c>open</c> provider — <c>open</c> imports a namespace and never creates an activation, so
+    /// there is no value its members could read their inputs from (Lean:
+    /// <c>Algorithm.requiresArguments</c>).
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
-        => algorithm is Algorithm.Conditional || algorithm.ParameterCount > 0;
+        => algorithm is Algorithm.Conditional or Algorithm.Alias || algorithm.ParameterCount > 0;
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
@@ -699,6 +703,9 @@ public static partial class Evaluator
     {
         if (provider is Algorithm.Conditional)
             return $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call.";
+
+        if (provider is Algorithm.Alias)
+            return $"'{targetDescription}' cannot be opened because it is a callable alias, not a namespace; open imports only an algorithm that needs no call.";
 
         // The front end reports this once per written target, so the provider's parameter list
         // is echoed bounded, reading only the names it shows (see ExprNameRenderer.BoundedJoin).
@@ -1214,6 +1221,11 @@ public static partial class Evaluator
             Algorithm.Conditional conditional =>
                 conditional.Branches.Any(static branch => branch.Pattern.TopLevelArity() == 0),
             Algorithm.User user => ParameterPattern.AcceptsZeroSuppliedSlots(user.ParameterPatterns),
+            // An alias is decided by its TARGET: every binding lookup normalizes an alias before a
+            // demand consults this law, and an alias that reaches a demand unnormalized (a written
+            // block, a host tree) is normalized by the demand funnel, whose target demand then
+            // applies the target's own rejection — so the alias itself never blocks the demand.
+            Algorithm.Alias => true,
         };
 
     /// <summary>
@@ -1686,14 +1698,34 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// Full lexical lookup with ownership-first model (<see cref="LookupLexicalRaw"/>), with the
+    /// selected binding made CALLABLE: a binding that is a callable alias keeps its own property as
+    /// the binding (its zero-argument cache key) while its resolved algorithm is the alias's
+    /// normalized target (<see cref="NormalizeAliasBinding"/>). Never inlined, so its result never
+    /// occupies a slot in the calibrated recursive frames that call it.
+    /// Lean: <c>lookupLexicalProperty</c> followed by alias normalization.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<ResolvedLexicalProperty> LookupLexical(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        var resolved = LookupLexicalRaw(alg, name, ctx);
+        return resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
+            ? NormalizeAliasBinding(resolved.Value, ctx)
+            : resolved;
+    }
+
+    /// <summary>
     /// Full lexical lookup with ownership-first model:
     /// 1. Local properties (owned by this algorithm — any visibility)
     /// 2. Parent chain structural properties (owned by ancestors — any visibility, no opens)
     /// 3. Opens as fallback across the entire chain (public only)
-    /// Structural ownership always takes precedence over opens.
+    /// Structural ownership always takes precedence over opens. The selected binding is returned
+    /// RAW — an alias as the alias — for the consumers that navigate a binding's own declarations
+    /// (a written receiver) and for alias resolution itself.
     /// Lean: lookupLexical → EvalM Algorithm.
     /// </summary>
-    private static EvalResult<ResolvedLexicalProperty> LookupLexical(
+    private static EvalResult<ResolvedLexicalProperty> LookupLexicalRaw(
         Algorithm alg, string name, EvalCtx ctx)
     {
         // 1. Local properties (any visibility)
@@ -2270,7 +2302,10 @@ public static partial class Evaluator
     {
         return expr switch
         {
-            Expr.AlgorithmExpr(var alg) => EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg)),
+            // An inline block that is a callable alias (`{ F }`) is its target in callable position.
+            Expr.AlgorithmExpr(var alg) => alg is Algorithm.Alias
+                ? ResolveInlineAliasTarget(alg, ctx)
+                : EvalResult<Algorithm>.Ok(WireToCaller(ctx, alg)),
 
             // Capture is not algorithm identity: the algorithm channel sees
             // only a zero-parameter value thunk over the bundle, exactly as
@@ -2701,6 +2736,10 @@ public static partial class Evaluator
                 new EvalError.IllegalInEval(Parser.MultipleCollectingBindingsPerLevelDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
+            PreEvaluationAstViolation.AliasTargetNotStaticPath v =>
+                new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(v.Target)) { Span = v.Target.Span },
+            PreEvaluationAstViolation.AliasCycle v =>
+                new EvalError.IllegalInEval(AliasCycleMessage) { Span = v.Target.Span },
         };
 
     /// <summary>
@@ -3127,7 +3166,11 @@ public static partial class Evaluator
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 
-        var resolvedAlgorithm = ChildOf(alg, binding.Value);
+        // An alias binding is read as its target, keyed by its own binding.
+        var resolvedR = NormalizeTopLevelBinding(binding, ChildOf(alg, binding.Value), ctx);
+        if (resolvedR.IsError)
+            return resolvedR.Error;
+        var resolvedAlgorithm = resolvedR.Value;
         var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero

@@ -109,7 +109,7 @@ public class MaintainedDocumentationConsistencyTests
         { @"\blist\s+patterns\s+are\s+deferred\b", "clause families without list patterns (before the structural kind law)" },
         { @"\bsequence(?:-value)?\s+patterns?\s+(?:also\s+)?opens?\s+(?:a\s+|the\s+)?(?:list|sequence\s+or\s+(?:a\s+)?list)\b", "a sequence pattern opening a list (before the structural kind law)" },
         // The alias and bare-forwarding rules (FWD-02, September 29–30 2026): a lone bare row is an
-        // EXACT ALIAS of the callable it names or BARE FORWARDING — each parameter supplied by name
+        // CALLABLE ALIAS of the callable it names or BARE FORWARDING — each parameter supplied by name
         // from an existing compatible binding, never completed by the callee's binder names into a
         // new signature. Formula lifting keeps forwarding by binding name.
         { @"`?\b(?:Some|Alias|A)\s*=\s*P`?\s+(?:is|elaborates\s+to|becomes)\s+`?(?:Some|Alias|A)\(x\)\s*=\s*P\(x,\s*x\)", "an alias of a repeated-name callee deduplicated by binding name (before the alias rule)" },
@@ -126,6 +126,15 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bclause\s+famil(?:y|ies)\s+(?:is\s+|are\s+)?(?:still\s+)?never\s+lifted\b", "clause families excluded from formula lifting (before the unified law)" },
         { @"\bcapture\s+rows?\s+(?:intentionally\s+)?(?:do|does)\s+not\s+lift\b", "capture elements excluded from formula lifting (before the unified law)" },
         { @"\blifting\s+a\s+bare\s+Math\s+function\s+(?:stays|is)\s+route-based\b", "route-based Math lifting (before the unified law)" },
+        // Callable aliases are binding indirection (October 1 2026): `A = F` is a second name for F's
+        // callable — no wrapper, no inherited signature, no rebuilt call — for EVERY callable that
+        // declares parameterized structure, whatever route reached it; a zero-parameter target is read.
+        { @"\bexact\s+alias(?:es)?\b", "the exact-alias wrapper (before callable aliases as binding indirection)" },
+        { @"\bInheritsCalleeSignature\b", "the alias's inherited-signature flag (before binding indirection)" },
+        { @"\baliasesLoneBareReference\b|\bsourceCall\b", "the Lean wrapper-alias specification (before binding indirection)" },
+        { @"\balias(?:es)?\s+inherits?\s+(?:the\s+|its\s+)?(?:callee'?s|target'?s)\s+(?:patterns|signature|parameters)\b", "an alias inheriting its callee's signature (before binding indirection)" },
+        { @"\bnot\s+alias\s+or\s+forwarding\s+targets\b", "route-based lone-row alias eligibility (before binding indirection)" },
+        { @"\bC\s*=\s*count`?\s+stays\s+(?:a\s+zero-parameter|an\s+ordinary)\s+property\b", "a builtin's lone row as a zero-parameter property (before binding indirection)" },
     };
 
     [Theory]

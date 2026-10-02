@@ -32,8 +32,8 @@ namespace KatLang.Tests;
 ///
 /// <para>The law governs FORMULA lifting — a callee used inside an expression — and BARE
 /// FORWARDING alike. A body whose ONE row is the bare callee is not a formula (FWD-02, decided
-/// September 29–30 2026): an OPEN body is an exact alias that inherits the callee's signature and
-/// reuses nothing, while a written list or clause branch forwards BY NAME — each callee parameter
+/// September 29–30 2026): an OPEN body is a callable alias — binding indirection, the callee's own
+/// callable — that reuses nothing, while a written list or clause branch forwards BY NAME — each callee parameter
 /// from the binding a written reference of that name denotes there, its own parameter or else the
 /// nearest enclosing parameter binding (this law) — and never adds, renames or reshapes one. The
 /// "alias" and "bare forwarding" rows pin the lone-row forms beside the formula rows
@@ -182,7 +182,7 @@ public class AutomaticForwardingBindingTests
         { "inferred-intermediate-owner", "A = y + 1\nOuter = {\n    Mid = {\n        G = A * 2\n        G\n    }\n    Mid + y\n}\nOuter(3)", "ok 11" },
         // Inner reads Outer's `y`; H's own written `y` is unrelated to it (formerly 51).
         { "deeper-owner-does-not-leak-its-parameter", "A = y + 1\nOuter(y) = {\n    Mid = {\n        Inner = A + 0\n        H(y) = Inner\n        H(50)\n    }\n    Mid\n}\nOuter(3)", "ok 4" },
-        // alias/bare forwarding: the bare `Inner = A` is an exact alias of A(y), and H(y) = Inner
+        // alias/bare forwarding: the bare `Inner = A` is a callable alias of A(y), and H(y) = Inner
         // forwards H's own y to it by name — the nearer binding, so Outer's y is not involved.
         { "deeper-alias-is-forwarded-by-its-caller","A = y + 1\nOuter(y) = {\n    Mid = {\n        Inner = A\n        H(y) = Inner\n        H(50)\n    }\n    Mid\n}\nOuter(3)", "ok 51" },
 
@@ -212,8 +212,8 @@ public class AutomaticForwardingBindingTests
         // The written `v` stays the root property `v = x + 1`, whose `x` the closed list cannot forward.
         { "strict-property-reference-stays-blocked", "v = x + 1\nNeed(v) = 0\nOuter = { Inner(q) = Math.Abs(v)\nInner(0) + Need }\nOuter(7)", "parse UndeclaredIdentifier" },
         { "same-owner-property-collides", "A = y + 1\nF = { y = 3\n  A + 0 }\nF", "parse ParameterPropertyCollision" },
-        // A lone row is an exact alias instead (FWD-02): its inherited `y` is A's private binder name,
-        // so it collides with no property, and the property is not what the alias forwards.
+        // A lone row is a callable alias instead (FWD-02): `y` stays A's private binder name — the alias
+        // declares no parameter — so it collides with no property, and the call is A's own.
         { "same-owner-property-beside-an-alias", "A = y + 1\nF = { y = 3\n  A }\nF(5)", "ok 6" },
 
         // I. An OPENED member is never forwarded, and a reference to it is never rebound (formerly 14).
@@ -372,11 +372,15 @@ public class AutomaticForwardingBindingTests
         Assert.Equal(ParameterKind.Collecting, Assert.IsType<CaptureParameterPattern>(Assert.Single(h.ParameterPatterns)).Kind);
         Assert.Equal(0, h.ForwardingParameterStart);
 
-        // A bare local alias is not a formula: it inherits Head's whole signature, F's x regardless.
-        var alias = Assert.IsType<Algorithm.User>(Property(
-            SourceProvenance.ParseValid("Head(x, *rest) = x + rest.count\nF(x) = {\n    H = Head\n    H(10, 20)\n}\nF(4)").Root, "F", "H"));
-        Assert.Equal(["x", "rest"], alias.Params);
-        Assert.Equal(0, alias.ForwardingParameterStart);
+        // A bare local alias is not a formula: it is a callable alias of Head (binding indirection),
+        // which reuses no enclosing binding and gains no signature of its own; F's x is irrelevant,
+        // and a call through it is Head's own call.
+        const string aliasSource = "Head(x, *rest) = x + rest.count\nF(x) = {\n    H = Head\n    H(10, 20)\n}\nF(4)";
+        var alias = Assert.IsType<Algorithm.Alias>(Property(SourceProvenance.ParseValid(aliasSource).Root, "F", "H"));
+        Assert.Empty(alias.Params);
+        Assert.Equal("Head", Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Equal(["x", "rest"], alias.ResolvedTarget!.Signature.Signature!.ParameterNames);
+        Assert.Equal("11", KatLangEngine.Run(aliasSource).ToDisplayString());
     }
 
     // ── 3. The editor model sees what a written name denotes ─────────────────────────

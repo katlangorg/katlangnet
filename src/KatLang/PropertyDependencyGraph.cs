@@ -1594,7 +1594,7 @@ internal static class PropertyDependencyGraphBuilder
     /// creates its own.
     /// </summary>
     public static PropertyDependencySummaryGraph BuildSummaries(
-        Algorithm.User algorithm,
+        Algorithm algorithm,
         SummaryMemo? memo = null,
         FrontEndTraversalObservations? observations = null)
     {
@@ -1680,15 +1680,22 @@ internal static class PropertyDependencyGraphBuilder
         FrontEndTraversalObservations? observations)
         => algorithm switch
         {
-            Algorithm.User user => CollectAlgorithmSummary(user, locallyOwnedNames, sharedMemo, observations),
+            // A callable alias is summarized exactly like a body with no parameters whose one row
+            // is its target reference: what the alias requires is what reading its target requires
+            // (its exposure follows that read), and its own declarations are its only members.
+            Algorithm.User or Algorithm.Alias => CollectScopeBodySummary(algorithm, locallyOwnedNames, sharedMemo, observations),
             Algorithm.Conditional conditional => new AlgorithmSummary(
                 CollectSummarySeed(conditional, locallyOwnedNames, sharedMemo, observations),
                 AlgorithmSummary.NoMembers),
             Algorithm.Builtin => new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers),
         };
 
-    private static AlgorithmSummary CollectAlgorithmSummary(
-        Algorithm.User algorithm,
+    /// <summary>
+    /// The summary of a SCOPE BODY — a user algorithm, or a callable alias (whose output is its one
+    /// target row and which declares no parameters) — read through the total accessors.
+    /// </summary>
+    private static AlgorithmSummary CollectScopeBodySummary(
+        Algorithm algorithm,
         IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations)
@@ -1700,7 +1707,7 @@ internal static class PropertyDependencyGraphBuilder
         // summary is therefore empty. Walking it costs O(N) per helper in its capture count
         // (the ownedHere union below and the fixed-point setup), so a wide deconstruction is
         // O(N^2) across its N sibling helpers without this leaf guard.
-        if (algorithm.AssignmentDeconstructionTarget is not null)
+        if (algorithm is Algorithm.User { AssignmentDeconstructionTarget: not null })
             return new AlgorithmSummary(new SummarySeed(), AlgorithmSummary.NoMembers);
 
         var ownerParameterNames = sharedMemo.ParameterNamesOf(algorithm, observations);
@@ -2497,7 +2504,7 @@ internal static class PropertyDependencyGraphBuilder
     /// and the seeds held by reference) and folds only when that cannot decide.</para>
     /// </summary>
     private static void SolveMemberSeeds(
-        Algorithm.User algorithm,
+        Algorithm algorithm,
         SummarySeed[] baseSeeds,
         Dictionary<string, SummarySeed> seeds,
         SummaryWalkMemos memos)
@@ -2843,25 +2850,27 @@ internal static class PropertyDependencyGraphBuilder
     {
         switch (value)
         {
-            case Algorithm.User user:
+            // A callable alias (an already elaborated body: its one row is its target reference)
+            // reads its target exactly as a body whose one row names it.
+            case Algorithm.User or Algorithm.Alias:
             {
-                var inner = shadow.Enter(user, context.Memo);
-                if (!context.Memo.Algorithms(inner.Key).Add(user))
+                var inner = shadow.Enter(value, context.Memo);
+                if (!context.Memo.Algorithms(inner.Key).Add(value))
                     return;
 
                 // A body's own `open` of a sibling (its head resolves through the body's direct
                 // chain): the resolver reads an opened member's PROCESSED signature through it, and
                 // this channel cannot tell which names reach that provider — a soft preference.
-                foreach (var open in user.Opens)
+                foreach (var open in value.Opens)
                 {
                     if (open.OpenTargetHead() is Expr.Resolve(var head) && !inner.Shadows(head))
                         AddSoftSiblingDependency(context, head);
                 }
 
-                foreach (var row in user.Output)
+                foreach (var row in value.Output)
                     CollectSiblingDependencyIndices(row, context, inner, LiftingRole.Value);
 
-                foreach (var property in user.Properties)
+                foreach (var property in value.Properties)
                     CollectAlgorithmSiblingDependencyIndices(property.Value, context, inner);
                 break;
             }

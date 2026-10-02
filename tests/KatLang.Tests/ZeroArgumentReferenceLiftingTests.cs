@@ -357,20 +357,19 @@ public class ZeroArgumentReferenceLiftingTests
 
     /// <summary>
     /// An alias row is not a value position (FWD-02, superseding Q-03's alias clause): the lone
-    /// bare row names the callable itself, so the alias inherits Only's collecting signature and
-    /// calls Only with it re-spread. The root that reads the alias BARE gains nothing: the alias
-    /// accepts zero arguments too, so its name there is its own cached zero-argument value.
+    /// bare row names the callable itself, and Only DECLARES a (collecting) parameter, so the row is
+    /// a CALLABLE ALIAS of Only — never a value read, although Only also accepts zero arguments. The
+    /// root that reads the alias BARE gains nothing: the alias's callable accepts zero arguments, so
+    /// its name there is the alias's own cached zero-argument value.
     /// </summary>
     [Fact]
-    public void TheFrontEnd_MakesAnAliasOfAZeroArgumentCallableAnExactAlias()
+    public void TheFrontEnd_MakesAZeroArgumentCallableWithParametersACallableAlias()
     {
         var root = SourceProvenance.ParseValid("Only(*xs) = xs.count\nAlias = Only\nAlias + 1").Root;
-        var alias = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, static p => p.Name == "Alias").Value);
+        var alias = Assert.IsType<Algorithm.Alias>(Assert.Single(root.Properties, static p => p.Name == "Alias").Value);
 
-        Assert.True(alias.InheritsCalleeSignature);
-        Assert.Equal(["*xs"], alias.ParameterPatterns.Select(static pattern => pattern.DisplayName));
-        var call = Assert.Single(CallsOf("Only", alias));
-        Assert.Equal("xs", Assert.IsType<Expr.Param>(Assert.IsType<Expr.SequenceSpread>(Assert.Single(call.Args)).Operand).Name);
+        Assert.Equal("Only", Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Equal(["*xs"], alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName));
         Assert.Empty(root.Parameters);
         Assert.Empty(CallsOf("Alias", root));
     }
@@ -427,7 +426,7 @@ public class ZeroArgumentReferenceLiftingTests
 
     /// <summary>
     /// A callable that requires a supplied argument still lifts and forwards: its parameters join
-    /// the referencing formula's signature (a lone row is an exact alias, which inherits them), and
+    /// the referencing formula's signature (a lone row is a callable alias, which is the callee), and
     /// each lifted reference is a CALL — fresh, like every call. The rule never disables lifting; it only stops treating "declares a parameter"
     /// as "requires an argument".
     /// </summary>
@@ -487,15 +486,15 @@ public class ZeroArgumentReferenceLiftingTests
     // ── 6. Aliases ───────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// An alias of a callable that accepts zero supplied arguments is an EXACT ALIAS (FWD-02,
-    /// decided September 29 2026, superseding Q-03's "an alias is a value demand" clause, which in
-    /// turn had superseded "aliases of collecting callables are collecting"): it keeps
-    /// <c>Cnt</c>'s collecting signature, so it takes arguments directly and as a callback exactly
-    /// like <c>Cnt</c> and like the written forwarding alias. Read BARE it is still a cached
-    /// zero-argument value (Q-03 applies to the alias as to any callable that works with no
-    /// arguments) — of its OWN binding: cache identity follows binding identity, so the alias is
-    /// evaluated once for its entry (its body is the explicit call <c>Only()</c>) and the callee's
-    /// bare reads keep theirs.
+    /// An alias of a callable that accepts zero supplied arguments is a CALLABLE ALIAS (FWD-02,
+    /// decided September 29 2026 and binding indirection since October 1 2026, superseding Q-03's
+    /// "an alias is a value demand" clause, which in turn had superseded "aliases of collecting
+    /// callables are collecting"): it IS <c>Cnt</c>'s callable, collecting signature included, so it
+    /// takes arguments directly and as a callback exactly like <c>Cnt</c> and like the written
+    /// forwarding alias. Read BARE it is still a cached zero-argument value (Q-03 applies to the
+    /// alias as to any callable that works with no arguments) — of its OWN binding: cache identity
+    /// follows binding identity, so the target's zero-argument demand is evaluated once for the
+    /// alias's entry and the callee's bare reads keep theirs.
     /// </summary>
     [Fact]
     public async Task AliasOfAZeroArgumentCallable_KeepsItsSignature_AndIsReadWhenBare()

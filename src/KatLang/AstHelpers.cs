@@ -290,13 +290,12 @@ internal static class AstHelpers
     // call's arguments strict value positions? — belongs to what the callee IS,
     // so it reads every spelling (TryGetRegistryProvenMathCalleeFacts), and a dot
     // edge whose lexical fallback must be selected is the call `x(receiver, args)`
-    // with the same contract (HasRegistryProvenStrictValueFallback). FORMULA
-    // lifting is identity-keyed and never reads these shapes: the resolver
-    // resolves every value-role reference itself (owner walk, prelude, opens,
-    // structural dot paths) under the unified formula-lifting law. What stays
-    // route-based is the LONE-ROW alias eligibility (FWD-02: a user callable, the
-    // alias, or the qualified `Math.X`, never a name reached through `open`), which
-    // reads the shapes only.
+    // with the same contract (HasRegistryProvenStrictValueFallback); a callable
+    // ALIAS of a member (`A = abs`) carries it too, decided by the resolver from
+    // the alias's normalized target rather than from a spelling. FORMULA lifting
+    // and FWD-02's lone-row eligibility are identity-keyed and never read these
+    // shapes: the resolver resolves every reference itself (owner walk, prelude,
+    // opens, structural dot paths).
 
     /// <summary>
     /// The canonical Math-member shape of a dot edge: a written <c>Math.X</c>
@@ -331,12 +330,11 @@ internal static class AstHelpers
     /// the caller's shadow knowledge for the written name — any visible user
     /// property shadows the alias; a parameter reference is an <see cref="Expr.Param"/>
     /// after detection and never matches. The constant alias (<c>pi</c>) carries no
-    /// callable facts and never matches. This is the LONE-ROW alias question (FWD-02),
-    /// which is route-based: the alias is a prelude property reached by the owner walk,
-    /// and a callable reached through <c>open</c> is never an alias target, so an opened
-    /// canonical name deliberately does not match here (the consumer contract of a call is
-    /// <see cref="TryGetRegistryProvenMathCalleeFacts"/>; formula lifting resolves every
-    /// spelling by identity and never reads this shape).
+    /// callable facts and never matches. The alias is a prelude property reached by the
+    /// owner walk, so an opened canonical name deliberately does not match here (the
+    /// consumer contract of a call is <see cref="TryGetRegistryProvenMathCalleeFacts"/>;
+    /// formula lifting and FWD-02's lone-row eligibility resolve every spelling by identity
+    /// and never read this shape).
     /// </summary>
     internal static bool TryGetRegistryProvenMathAliasFacts(
         this Expr callee,
@@ -429,6 +427,16 @@ internal static class AstHelpers
         => dotCall.ElaboratedFallbackSelection == LexicalFallbackSelection.Always
             && dotCall.EffectiveLexicalFallback.TryGetRegistryProvenMathCalleeFacts(isPreludeNameShadowed, out var facts)
             && facts.HasStrictValueArguments;
+
+    /// <summary>
+    /// The identity half of the consumer contract: whether the prelude <c>Math</c> module's member
+    /// DECLARED as <paramref name="memberName"/> is a Math FUNCTION member whose registry facts make
+    /// its arguments strict value positions. For a consumer that resolved a callee to the member
+    /// itself — through a callable alias of it (FWD-02) — rather than to one of its spellings
+    /// (<see cref="TryGetRegistryProvenMathCalleeFacts"/>). Constants carry no callable facts.
+    /// </summary>
+    internal static bool IsStrictValueMathMember(string memberName)
+        => BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts) && facts.HasStrictValueArguments;
 
     /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are

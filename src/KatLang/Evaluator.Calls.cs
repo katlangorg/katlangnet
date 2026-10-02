@@ -537,6 +537,11 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
+        // call(alias) = call(target): the ORIGINAL argument bundle reaches the target's own
+        // dispatch. A safety net out of line — every binding lookup normalizes an alias first.
+        if (callee is Algorithm.Alias)
+            return EvalAliasCallCounted(callee, args, ctx, valEnv, calleeName);
+
         if (callee is Algorithm.Builtin(var builtinId))
         {
             var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);

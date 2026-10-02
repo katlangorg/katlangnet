@@ -558,7 +558,9 @@ public class ScopeVisibilityRepresentationTests
     [Fact]
     public void OverriddenTemplateName_IsReappliedBelowTheOverride()
     {
-        const string source = "G = u + t\nO = {\n    N = {\n        D = G\n        D\n    }\n    N + G\n}\n1";
+        // Formulas (`G + 0`, `D + 0`) lift the template into D and N; a lone row naming a
+        // parameterized callable would instead be a callable alias, which owns no signature.
+        const string source = "G = u + t\nO = {\n    N = {\n        D = G + 0\n        D + 0\n    }\n    N + G\n}\n1";
         var root = SourceProvenance.ParseValid(source).Root;
         var o = Assert.Single(root.Properties, property => property.Name == "O");
         var oBody = Assert.IsType<Algorithm.User>(o.Value);

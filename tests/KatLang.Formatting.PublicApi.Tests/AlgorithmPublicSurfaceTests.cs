@@ -7,8 +7,9 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// against the compiled assembly, exactly as a NuGet consumer meets it (this project is
 /// deliberately not a friend assembly): the base type carries no payload member, so a
 /// consumer can neither give an algorithm payload its variant does not own — a builtin
-/// with properties, a clause family with an output, a user algorithm with branches — nor
-/// set payload through a base-typed value. Lean's inductive cannot represent those states;
+/// with properties, a clause family with an output, a user algorithm with branches, a
+/// callable alias with a parameter list or an output — nor set payload through a
+/// base-typed value. Lean's inductive cannot represent those states;
 /// here they are COMPILE errors, witnessed by the pinned SDK's own compiler, never runtime
 /// exceptions. The same compiler must accept every legitimate construction and update, so
 /// the negative verdicts cannot be vacuous.
@@ -42,12 +43,23 @@ public class AlgorithmPublicSurfaceTests
         ("FamilyExplicitList", "_ = Family with { HasExplicitParameterList = true };", "CS0117", "HasExplicitParameterList"),
         // User + conditional payload.
         ("UserBranches", "_ = User with { Branches = [] };", "CS0117", "Branches"),
+        // Alias + user or conditional payload: a callable alias has no parameter list, output, or branches.
+        ("AliasOutput", "_ = Alias with { Output = OutputBundle.Empty };", "CS0117", "Output"),
+        ("AliasPatterns", "_ = Alias with { ParameterPatterns = [] };", "CS0117", "ParameterPatterns"),
+        ("AliasBranches", "_ = Alias with { Branches = [] };", "CS0117", "Branches"),
+        ("AliasExplicitList", "_ = Alias with { HasExplicitParameterList = true };", "CS0117", "HasExplicitParameterList"),
+        ("AliasId", "_ = Alias with { Id = BuiltinId.sum };", "CS0117", "Id"),
+        // The alias target belongs to the alias alone.
+        ("UserTarget", "_ = User with { Target = new Expr.Resolve(\"F\") };", "CS0117", "Target"),
+        ("FamilyTarget", "_ = Family with { Target = new Expr.Resolve(\"F\") };", "CS0117", "Target"),
+        ("BuiltinTarget", "_ = Builtin with { Target = new Expr.Resolve(\"F\") };", "CS0117", "Target"),
         // Base-typed writes: no payload member exists on Algorithm.
         ("BaseOpens", "_ = Base with { Opens = [] };", "CS0117", "Opens"),
         ("BaseProperties", "_ = Base with { Properties = [] };", "CS0117", "Properties"),
         ("BaseOutput", "_ = Base with { Output = OutputBundle.Empty };", "CS0117", "Output"),
         ("BaseBranches", "_ = Base with { Branches = [] };", "CS0117", "Branches"),
         ("BaseParent", "_ = Base with { Parent = null };", "CS0117", "Parent"),
+        ("BaseTarget", "_ = Base with { Target = new Expr.Resolve(\"F\") };", "CS0117", "Target"),
         // Derived projections are read-only: the one channel is ParameterPatterns.
         ("UserParameters", "_ = User with { Parameters = [] };", "CS0200", "Parameters"),
         ("UserParams", "_ = User with { Params = [] };", "CS0200", "Params"),
@@ -63,6 +75,9 @@ public class AlgorithmPublicSurfaceTests
         ("FamilyDuplicateProperty", "_ = Family.FindDuplicatePropName();", "CS1061", "FindDuplicatePropName"),
         ("UserDuplicateBranches", "_ = User.HasDuplicateBranchPatterns();", "CS1061", "HasDuplicateBranchPatterns"),
         ("BuiltinExplicitList", "_ = Builtin.HasExplicitParameterList;", "CS1061", "HasExplicitParameterList"),
+        ("AliasReadParams", "_ = Alias.Params;", "CS1061", "Params"),
+        ("AliasReadOutput", "_ = Alias.Output;", "CS1061", "Output"),
+        ("BaseReadTarget", "_ = Base.Target;", "CS1061", "Target"),
     ];
 
     private const string ProbePreamble = """
@@ -74,6 +89,7 @@ public class AlgorithmPublicSurfaceTests
             public static readonly Algorithm.User User = new(null, [new CaptureParameterPattern("x")], [], [], [new Expr.Param("x")]);
             public static readonly Algorithm.Conditional Family = new(null, [], [new CondBranch(new Pattern.Bind("x"), User)]);
             public static readonly Algorithm.Builtin Builtin = new(BuiltinId.count);
+            public static readonly Algorithm.Alias Alias = new(null, [], [], new Expr.Resolve("count"));
             public static Algorithm Base => User;
         }
 
@@ -91,8 +107,8 @@ public class AlgorithmPublicSurfaceTests
         foreach (var (name, statement, _, _) in InvalidStates)
         {
             source.Append($"    public static void {name}()\n    {{\n");
-            source.Append("        var User = Fixtures.User; var Family = Fixtures.Family; var Builtin = Fixtures.Builtin; var Base = Fixtures.Base;\n");
-            source.Append("        _ = (User, Family, Builtin, Base);\n");
+            source.Append("        var User = Fixtures.User; var Family = Fixtures.Family; var Builtin = Fixtures.Builtin; var Alias = Fixtures.Alias; var Base = Fixtures.Base;\n");
+            source.Append("        _ = (User, Family, Builtin, Alias, Base);\n");
             source.Append("        ").Append(statement).Append('\n');
             source.Append("    }\n");
         }
@@ -151,6 +167,17 @@ public class AlgorithmPublicSurfaceTests
 
                 public static Algorithm.Builtin UpdateBuiltin(Algorithm.Builtin builtin) => builtin with { Id = BuiltinId.sum };
 
+                public static Algorithm.Alias UpdateAlias(Algorithm.Alias alias) => alias with
+                {
+                    Parent = new ScopeCtx(null, [], []),
+                    Opens = [new Expr.Resolve("Math")],
+                    Properties = [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))],
+                    Target = new Expr.Resolve("sum"),
+                };
+
+                public static int ReadAlias(Algorithm.Alias alias)
+                    => alias.Opens.Count + alias.Properties.Count + (alias.Target is Expr.Resolve ? 1 : 0) + (alias.Parent is null ? 0 : 1);
+
                 public static int ReadUser(Algorithm.User user)
                     => user.Parameters.Count + user.Params.Count + user.ParameterPatterns.Count + user.Opens.Count
                         + user.Properties.Count + user.Output.Count + (user.HasExplicitParameterList ? 1 : 0)
@@ -164,6 +191,7 @@ public class AlgorithmPublicSurfaceTests
                     Algorithm.User user => ReadUser(user),
                     Algorithm.Conditional family => ReadFamily(family),
                     Algorithm.Builtin builtin => (int)builtin.Id,
+                    Algorithm.Alias alias => ReadAlias(alias),
                 };
 
                 public static Algorithm Narrowed(Algorithm algorithm) => algorithm switch
@@ -171,6 +199,7 @@ public class AlgorithmPublicSurfaceTests
                     Algorithm.User user => user with { Output = [new Expr.Num(1)] },
                     Algorithm.Conditional family => family with { Branches = [] },
                     Algorithm.Builtin builtin => builtin,
+                    Algorithm.Alias alias => alias with { Target = new Expr.Resolve("sum") },
                 };
 
                 public static Algorithm Total(Algorithm algorithm)
@@ -255,6 +284,9 @@ public class AlgorithmPublicSurfaceTests
         // The total update is the identity on a body that has no parameter list.
         var builtinBody = new Algorithm.Builtin(BuiltinId.count);
         Assert.Same(builtinBody, Algorithm.ElaborateClauseDefinition(new Pattern.SequenceValue([new Pattern.Bind("x")]), builtinBody));
+        var aliasBody = new Algorithm.Alias(null, [], [], new Expr.Resolve("count"));
+        Assert.Same(aliasBody, Algorithm.ElaborateClauseDefinition(new Pattern.SequenceValue([new Pattern.Bind("x")]), aliasBody));
+        Assert.Same(aliasBody, aliasBody.WithParams(["a"]).WithParameters([new ParameterDeclaration("b")]).WithParameterPatterns([new CaptureParameterPattern("c")]));
     }
 
     [Fact]
@@ -277,10 +309,14 @@ public class AlgorithmPublicSurfaceTests
         Assert.NotEqual(new Algorithm.Conditional(null, opens, branches), new Algorithm.Conditional(null, opens, []));
         Assert.Equal(new Algorithm.Builtin(BuiltinId.count), new Algorithm.Builtin(BuiltinId.count));
         Assert.NotEqual(new Algorithm.Builtin(BuiltinId.count), new Algorithm.Builtin(BuiltinId.sum));
+        Expr target = new Expr.Resolve("count");
+        Assert.Equal(new Algorithm.Alias(null, opens, properties, target), new Algorithm.Alias(null, opens, properties, target));
+        Assert.NotEqual(new Algorithm.Alias(null, opens, properties, target), new Algorithm.Alias(null, opens, properties, new Expr.Resolve("sum")));
 
-        // The three variants never compare equal to one another, whatever they hold.
+        // The variants never compare equal to one another, whatever they hold.
         Assert.NotEqual<Algorithm>(new Algorithm.Conditional(null, [], []), new Algorithm.User(null, [], [], [], []));
         Assert.NotEqual<Algorithm>(new Algorithm.Builtin(BuiltinId.count), new Algorithm.User(null, [], [], [], []));
+        Assert.NotEqual<Algorithm>(new Algorithm.Alias(null, [], [], target), new Algorithm.User(null, [], [], [], [target]));
     }
 
     [Fact]
@@ -313,6 +349,14 @@ public class AlgorithmPublicSurfaceTests
         var builtin = new Algorithm.Builtin(BuiltinId.count);
         Assert.Equal(BuiltinId.sum, (builtin with { Id = BuiltinId.sum }).Id);
         Assert.Equal(BuiltinId.count, builtin.Id);
+
+        var alias = new Algorithm.Alias(parent, [new Expr.Resolve("Math")], [], new Expr.Resolve("count"));
+        var aliasCopy = alias with { Target = new Expr.Resolve("sum") };
+        Assert.Same(alias.Parent, aliasCopy.Parent);
+        Assert.Same(alias.Opens, aliasCopy.Opens);
+        Assert.Same(alias.Properties, aliasCopy.Properties);
+        Assert.Equal(new Expr.Resolve("count"), alias.Target);
+        Assert.Equal(new Expr.Resolve("sum"), aliasCopy.Target);
     }
 
     [Fact]

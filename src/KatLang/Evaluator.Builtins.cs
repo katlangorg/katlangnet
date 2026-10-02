@@ -242,7 +242,7 @@ public static partial class Evaluator
     /// every written value thunk, and every builtin (whose own arity rejection follows).
     /// </summary>
     private static bool RequiresZeroArgumentSupplyBinding(Algorithm algorithm)
-        => algorithm is Algorithm.Conditional || algorithm.ParameterPatterns.Count != 0;
+        => algorithm is Algorithm.Conditional or Algorithm.Alias || algorithm.ParameterPatterns.Count != 0;
 
     // The demand funnel's binding arm. Kept out of the funnel's own frame (its locals
     // would otherwise be paid for on the common no-pattern path, which recurses through
@@ -253,6 +253,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (algorithm is Algorithm.Alias)
+            return EvalAliasZeroArgumentDemandCounted(algorithm, ctx, valEnv);
+
         if (algorithm is Algorithm.Conditional)
         {
             return EvalConditionalCallCounted(
@@ -556,6 +559,9 @@ public static partial class Evaluator
 
         if (expr is Expr.AlgorithmExpr(var alg))
         {
+            if (alg is Algorithm.Alias)
+                return EvalAliasSpreadOperandItems(expr, alg, ctx, valEnv);
+
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
             // A spread operand is demanded for its VALUE with zero arguments, so the ONE

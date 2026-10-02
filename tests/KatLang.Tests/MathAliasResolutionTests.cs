@@ -43,21 +43,34 @@ public class MathAliasResolutionTests
         return Assert.Single(root.Properties, property => property.Name == propertyName).Value.Params;
     }
 
-    [Fact]
-    public void BareAliasReference_LiftsLikeCanonicalMathMember()
+    /// <summary>The parameters of a callable alias's target — the alias's own callable.</summary>
+    private static IReadOnlyList<string> AliasTargetParams(string source, string propertyName)
     {
-        // `K = cos` infers K(radians) exactly like `K = Math.Cos` — the lifted
-        // signature carries the member's declared parameter names.
-        Assert.Equal(["radians"], ElaboratedPropertyParams("K = cos\nK(0)", "K"));
-        Assert.Equal(["radians"], ElaboratedPropertyParams("K = Math.Cos\nK(0)", "K"));
+        var root = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(source).Root);
+        var alias = Assert.IsType<Algorithm.Alias>(Assert.Single(root.Properties, property => property.Name == propertyName).Value);
+        Assert.Empty(alias.Params);
+        return alias.ResolvedTarget!.Signature.Signature!.ParameterNames;
+    }
+
+    [Fact]
+    public void BareAliasReference_IsACallableAliasLikeCanonicalMathMember()
+    {
+        // `K = cos` makes K a callable alias of the cosine exactly like `K = Math.Cos`: K's callable
+        // IS the member, with the member's declared parameter names (no copied signature).
+        Assert.Equal(["radians"], AliasTargetParams("K = cos\nK(0)", "K"));
+        Assert.Equal(["radians"], AliasTargetParams("K = Math.Cos\nK(0)", "K"));
         AssertAliasAgreesWithCanonical("K = cos\nK(0)", "K = Math.Cos\nK(0)");
 
-        Assert.Equal(["x"], ElaboratedPropertyParams("K = exp\nK(1)", "K"));
-        Assert.Equal(["x"], ElaboratedPropertyParams("K = Math.Exp\nK(1)", "K"));
+        Assert.Equal(["x"], AliasTargetParams("K = exp\nK(1)", "K"));
+        Assert.Equal(["x"], AliasTargetParams("K = Math.Exp\nK(1)", "K"));
         AssertAliasAgreesWithCanonical("K = exp\nK(1)", "K = Math.Exp\nK(1)");
 
-        Assert.Equal(["y", "x"], ElaboratedPropertyParams("K = atan2\nK(1, 2)", "K"));
+        Assert.Equal(["y", "x"], AliasTargetParams("K = atan2\nK(1, 2)", "K"));
         AssertAliasAgreesWithCanonical("K = atan2\nK(1, 2)", "K = Math.Atan2\nK(1, 2)");
+
+        // A formula still lifts the member's parameters into its own signature.
+        Assert.Equal(["radians"], ElaboratedPropertyParams("K = cos + 0\nK(0)", "K"));
+        Assert.Equal(["radians"], ElaboratedPropertyParams("K = Math.Cos + 0\nK(0)", "K"));
 
         // A bare alias as a ROOT row is preserved exactly like bare `Math.Abs` (the root
         // clause holds for every callable category): both report the member's own

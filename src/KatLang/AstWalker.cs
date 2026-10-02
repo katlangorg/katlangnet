@@ -50,6 +50,14 @@ public abstract class AstWalker
             case Algorithm.Builtin builtin:
                 VisitBuiltinAlgorithm(builtin);
                 break;
+            case Algorithm.Alias alias:
+                VisitAliasAlgorithm(alias);
+                break;
+            // Runtime exhaustiveness guard (statement-form dispatch over the closed hierarchy,
+            // which the compiler does not check): a new variant must be classified above.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled Algorithm variant in {nameof(AstWalker)}.{nameof(VisitAlgorithm)}: {algorithm.GetType().Name}.");
         }
     }
 
@@ -111,6 +119,24 @@ public abstract class AstWalker
     /// </summary>
     protected virtual void VisitBuiltinAlgorithm(Algorithm.Builtin algorithm)
     {
+    }
+
+    /// <summary>
+    /// Visits a callable alias and recurses into its contents: its own <c>open</c> targets, the
+    /// properties its own body declares, and its written target reference (an ordinary
+    /// expression, walked like an output row).
+    /// </summary>
+    protected virtual void VisitAliasAlgorithm(Algorithm.Alias algorithm)
+    {
+        TraversalObservations?.RecordWalkerAlgorithmExpansion();
+
+        foreach (var open in algorithm.Opens)
+            VisitOpenExpression(open);
+
+        foreach (var property in algorithm.Properties)
+            VisitProperty(property);
+
+        VisitExpr(algorithm.Target);
     }
 
     /// <summary>

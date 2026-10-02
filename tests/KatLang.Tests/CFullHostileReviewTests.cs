@@ -157,7 +157,7 @@ public class CFullHostileReviewTests
     {
         var body = operation == "filter" ? "Observe(xs).count == 1" : "Observe(xs)";
         var call = operation == "reduce" ? "reduce(xs, f, [])" : $"{operation}(xs, f)";
-        // The forwarding alias is written out (the bare exact alias `Alias = F` is the same
+        // The forwarding alias is written out (the bare callable alias `Alias = F` is the same
         // callable, FWD-02).
         var source = $"F(*xs) = {body}\nAlias(*xs) = F(xs*)\nApply(f, xs) = {call}\nForward(g, xs) = Apply(g, xs)\nForward(Alias, [(1, 2), (), [], [1, 2]])";
         var syncSeen = new List<Result>();

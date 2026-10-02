@@ -1341,6 +1341,36 @@ mutual
         (branches : List CondBranch) ->
         (declarationId : Option PropertyIdentity := none) ->
         Algorithm
+    /-- A CALLABLE ALIAS (FWD-02, binding indirection; decided 2026-10-01): a BINDING of its own
+        whose CALLABLE is the one its written `target` resolves to in the alias's OWN scope.
+
+        A non-root open body — a named definition or an inline block with no written parameter
+        list — whose one written row is a bare reference `F` is an alias when name resolution
+        selects ONE callable identity that declares parameterized callable structure
+        (`Algorithm.declaresParameterizedStructure`: a builtin, a clause family, nameable or not,
+        or a user algorithm with at least one parameter pattern — or another alias, so a chain
+        normalizes to one target). The surface pass produces this constructor; nothing is
+        synthesized: an alias has no parameter list, no inherited signature and no wrapper call.
+
+        **Two identities.** The BINDING is the alias's own: the property holding it keeps its
+        declaration, exposure and zero-argument cache key (`zeroArgPropertyCacheKey` carries the
+        property NAME), and the alias declares only what its own body declares (`properties`,
+        normally none) — never its target's members, so written member access `A.K` takes the
+        ordinary fallback and `open A` is refused (`requiresArguments`). The CALLABLE is the
+        target's: every callable use — a call, a callback or loop step, the callable channel of an
+        argument, a zero-argument value demand — uses the callable `target` resolves to in the
+        alias's own scope (`resolveAliasTarget`), through that callable's own invocation. An alias
+        is no invocation: resolving it charges nothing.
+
+        `target` is a STATIC PATH (`Expr.isStaticAliasPath`): a name, or an argumentless dot path
+        whose head is a name or a block. C#: `Algorithm.Alias`. -/
+    | alias :
+        (parent     : Option ScopeCtx) ->
+        (opens      : List Expr) ->
+        (properties : List PropDef) ->
+        (target     : Expr) ->
+        (declarationId : Option PropertyIdentity := none) ->
+        Algorithm
     deriving Repr
 
   /-- A lexical scope level as the evaluator wires it. `params` are the parameter names
@@ -2024,10 +2054,13 @@ namespace Algorithm
     | .mk p _ _ _ _ _ => p
     | .builtin _ => none
     | .conditional p _ _ _ => p
+    | .alias p _ _ _ _ => p
+  /-- An alias declares no parameter list of its own: its callable's is its target's. -/
   def parameterPatterns : Algorithm -> List ParameterPattern
     | .mk _ parameterPatterns _ _ _ _ => parameterPatterns
     | .builtin _ => []
     | .conditional _ _ _ _ => []
+    | .alias _ _ _ _ _ => []
 
   def parameters : Algorithm -> List CallableParameter
     | a => (parameterPatterns a).flatMap ParameterPattern.captures
@@ -2042,17 +2075,23 @@ namespace Algorithm
     | .mk _ _ op _ _ _ => op
     | .builtin _ => []
     | .conditional _ op _ _ => op
+    | .alias _ op _ _ _ => op
+  /-- An alias's are what its own body declares — never its target's members. -/
   def props : Algorithm -> List PropDef
     | .mk _ _ _ pr _ _ => pr
     | .builtin _ => []
     | .conditional _ _ _ _ => []
+    | .alias _ _ pr _ _ => pr
   /-- The algorithm's output as an `OutputBundle` — ordered original written
       expression rows. The algorithm is the scope-owning DEFINITION of this
-      bundle; the bundle itself owns no scope. -/
+      bundle; the bundle itself owns no scope. An alias's is its ONE written row,
+      the target reference (what the static walks see it read); the evaluator never
+      evaluates an alias's output as rows — it normalizes the alias first. -/
   def output : Algorithm -> OutputBundle
     | .mk _ _ _ _ out _ => out
     | .builtin _ => []
     | .conditional _ _ _ _ => []
+    | .alias _ _ _ target _ => [target]
 
   /-- Access branches for conditional algorithms. Returns [] for other forms. -/
   def branches : Algorithm -> List CondBranch
@@ -2062,17 +2101,20 @@ namespace Algorithm
   def declarationId : Algorithm -> Option PropertyIdentity
     | .mk _ _ _ _ _ id => id
     | .conditional _ _ _ id => id
+    | .alias _ _ _ _ id => id
     | .builtin _ => none
 
   def withDeclarationId (id : Option PropertyIdentity) : Algorithm -> Algorithm
     | .mk p ps op pr out _ => .mk p ps op pr out id
     | .conditional p op bs _ => .conditional p op bs id
+    | .alias p op pr target _ => .alias p op pr target id
     | .builtin b => .builtin b
 
   def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
     | .mk _ parameterPatterns op pr out id => .mk p parameterPatterns op pr out id
     | .builtin b => .builtin b
     | .conditional _ op bs id => .conditional p op bs id
+    | .alias _ op pr target id => .alias p op pr target id
 
   def parameterForName? (x : Ident) : List CallableParameter -> Option CallableParameter
     | [] => none
@@ -2099,11 +2141,13 @@ namespace Algorithm
     | .mk p oldPatterns op pr out id => .mk p (mergeParameterPatterns oldPatterns ps) op pr out id
     | .builtin b => .builtin b
     | .conditional p op bs id => .conditional p op bs id
+    | .alias p op pr target id => .alias p op pr target id
 
   def withParameterPatterns (patterns : List ParameterPattern) : Algorithm -> Algorithm
     | .mk p _ op pr out id => .mk p patterns op pr out id
     | .builtin b => .builtin b
     | .conditional p op bs id => .conditional p op bs id
+    | .alias p op pr target id => .alias p op pr target id
 
   def hasStructuredParameterPattern (a : Algorithm) : Bool :=
     ParameterPattern.hasStructured (parameterPatterns a)
@@ -2220,6 +2264,7 @@ namespace Algorithm
     | .mk _ parameterPatterns _ _ out _ => !parameterPatterns.isEmpty && out.isEmpty
     | .builtin _ => false
     | .conditional _ _ _ _ => false
+    | .alias _ _ _ _ _ => false
 
   /-- Unfiltered property lookup (sees private properties). -/
   def lookupProp (a : Algorithm) (k : Ident) : Option Algorithm :=
@@ -2309,15 +2354,17 @@ namespace Algorithm
       property names.  Returns the first duplicate name found, or `none`
       if all names are unique.  This enforces the unique property name invariant. -/
   def findDuplicatePropName : Algorithm -> Option Ident
-    | .mk _ _ _ ps _ _ =>
-        let names := ps.map (·.name)
-        let rec go : List Ident -> List Ident -> Option Ident
-          | [],        _    => none
-          | n :: rest, seen =>
-              if seen.elem n then some n
-              else go rest (n :: seen)
-        go names []
+    | .mk _ _ _ ps _ _ => firstDuplicateName (ps.map (·.name))
+    | .alias _ _ ps _ _ => firstDuplicateName (ps.map (·.name))
     | _ => none
+  where
+    firstDuplicateName (names : List Ident) : Option Ident :=
+      let rec go : List Ident -> List Ident -> Option Ident
+        | [],        _    => none
+        | n :: rest, seen =>
+            if seen.elem n then some n
+            else go rest (n :: seen)
+      go names []
 
   /-- Check whether the branch list of an Algorithm.conditional contains
       match-equivalent patterns.  Returns `true` if a duplicate is found.
@@ -2359,6 +2406,7 @@ def Algorithm.hasSingletonSequencePattern : Algorithm -> Bool
   | .mk _ parameters _ _ _ _ => ParameterPattern.anyHasSingletonSequenceGroup parameters
   | .builtin _ => false
   | .conditional _ _ branches _ => branches.any (fun branch => branch.pattern.headHasSingletonSequenceGroup)
+  | .alias _ _ _ _ _ => false
 
 /-- The one message of a parameter-pattern level with more than one collecting
     capture — the parser's wording for a written head. C#:
@@ -2373,6 +2421,190 @@ def Algorithm.hasMultipleCollectingCaptures : Algorithm -> Bool
   | .mk _ parameters _ _ _ _ => ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel parameters
   | .builtin _ => false
   | .conditional _ _ _ _ => false
+  | .alias _ _ _ _ _ => false
+
+/-- Human-readable constructor kind for diagnostics. -/
+def Expr.kind : Expr -> String
+  | .param _      => "param"
+  | .num _        => "num"
+  | .stringLiteral _ => "stringLiteral"
+  | .boolLiteral _ => "boolLiteral"
+  | .unary _ _    => "unary"
+  | .binary _ _ _ => "binary"
+  | .comparison _ _ => "comparison"
+  | .index _ _    => "index"
+  | .sequenceConstruct _ _ => "sequenceConstruct"
+  | .emptySequence _ => "emptySequence"
+  | .sequenceSpread _    => "spread"
+  | .listLiteral _ => "listLiteral"
+  | .resolve _    => "resolve"
+  | .algorithmExpr _ => "algorithmExpr"
+  | .capture _    => "capture"
+  | .call _ _     => "call"
+  | .dotMember _ _ _ _ => "dotCall"
+
+/-- Render an empty-sequence core node by depth for diagnostics. Evaluation
+  normalizes repeated ordinary parentheses back to `()`. -/
+def emptySequenceText (depth : Nat) : String :=
+  String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
+
+/-- This MINIMAL renderer models only structural reference forms; every other
+  kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
+  C#'s merged `OpenExprName` prints more detail for them. That gap is
+  pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
+  `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
+  coverage, not of indexing. -/
+def openExprNameIndexSelectorNeedsParens : Expr -> Bool
+  | .dotMember _ _ _ _ => true
+  | .index _ _        => true
+  | .sequenceSpread _ => true
+  | _                 => false
+
+/-- Extract a descriptive name from an open expression for error messages.
+  See `openExprNameIndexSelectorNeedsParens` for this renderer's coverage gap. -/
+def openExprName (e : Expr) : String :=
+  match e with
+  | .resolve n => n
+  | .dotMember o n _ _ =>
+      openExprName o ++ "." ++ n
+  -- Indexing is source-faithful postfix `target:selector`, never the `(index)`
+  -- kind fallback. Only the forms this renderer prints BARE can continue the
+  -- postfix chain and rebind; every unmodelled kind is already self-delimiting
+  -- as `(kind)`, so parenthesizing it again would only double the parentheses.
+  | .index target selector =>
+      let selectorName := openExprName selector
+      openExprName target ++ ":" ++
+        (if openExprNameIndexSelectorNeedsParens selector then "(" ++ selectorName ++ ")"
+         else selectorName)
+  | .algorithmExpr _ => "(inline library)"
+  | .capture _ => "(inline library)"
+  -- SequenceConstruct is an internal value node; ';' is not surface syntax,
+  -- so render it as one sequence value, never with ';'.
+  | .sequenceConstruct a b => "(" ++ openExprName a ++ ", " ++ openExprName b ++ ")"
+  -- A spread expression renders in the canonical postfix-marker form.
+  | .sequenceSpread a => openExprName a ++ "*"
+  -- Empty sequence core nodes render by depth for diagnostics.
+  | .emptySequence depth => emptySequenceText depth
+  | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
+
+/-- A STATIC PATH (FWD-02): a name, or an argumentless dot edge — never the `.string`
+    intrinsic — whose receiver is itself a static path or a block. Every callable alias
+    target is one; the surface pass forms an alias over nothing else. Returns the path's
+    head (a name or a block) and its member steps, outermost receiver first.
+    C#: `StaticAliasTargets.IsStaticPath`. -/
+def Expr.staticAliasPath? : Expr -> Option (Expr × List Ident)
+  | .resolve name => some (.resolve name, [])
+  | .dotMember receiver member _ none =>
+      if member == "string" then none
+      else
+        match receiver with
+        | .algorithmExpr block => some (.algorithmExpr block, [member])
+        | other => (Expr.staticAliasPath? other).map (fun (head, steps) => (head, steps ++ [member]))
+  | _ => none
+
+def Expr.isStaticAliasPath (e : Expr) : Bool := (Expr.staticAliasPath? e).isSome
+
+/-- The message of a callable alias whose target is not a static path (only a host-built
+    tree has one). C#: `Evaluator.AliasTargetNotStaticPathMessage`. -/
+def aliasTargetNotStaticPathMessage (target : String) : String :=
+  s!"callable alias target {target} is not a name or a declared member path"
+
+/-- The message of a callable alias cycle (only a host-built tree has one).
+    C#: `Evaluator.AliasCycleMessage`. -/
+def aliasCycleMessage : String :=
+  "callable alias cycle: an alias target leads back to an alias already on its chain"
+
+/-- The property `name` STATIC lexical lookup selects in `scope` (outermost scope first):
+    the innermost scope that declares it, with the scope chain of the selected property's
+    value (the scopes up to and including its owner). -/
+def staticLexicalLookup? (scope : List Algorithm) (name : Ident) : Option (Algorithm × List Algorithm) :=
+  let rec go : List Algorithm -> Option (Algorithm × List Algorithm)
+    | [] => none
+    | owner :: outerReversed =>
+        match Algorithm.lookupPropDefAny? owner name with
+        | some prop => some (prop.alg, (owner :: outerReversed).reverse)
+        | none => go outerReversed
+  go scope.reverse
+
+/-- One STATIC step of a callable alias declared inside `chain` (outermost scope first): the
+    callable its target selects by the ownership-first PROPERTY lookup over the alias's own
+    declarations and its enclosing scopes, then structural navigation of declared members, with
+    that callable's own scope chain. No `open` and no prelude is consulted: a target leaving the
+    static chain has no static step. C#: `StaticAliasTargets.TryResolve`. -/
+def staticAliasStep? (chain : List Algorithm) (alias : Algorithm) (target : Expr)
+    : Option (Algorithm × List Algorithm) :=
+  match Expr.staticAliasPath? target with
+  | none => none
+  | some (head, steps) =>
+      let scope := chain ++ [alias]
+      let start : Option (Algorithm × List Algorithm) :=
+        match head with
+        | .resolve name => staticLexicalLookup? scope name
+        | .algorithmExpr block => some (block, scope)
+        | _ => none
+      steps.foldl
+        (fun acc step => acc.bind fun (value, valueChain) =>
+          (Algorithm.lookupPropDefAny? value step).map fun prop => (prop.alg, valueChain ++ [value]))
+        start
+
+/-- The STATIC alias chase from the alias `start` declared inside `chain`: whether it leads back
+    to an alias already on it (a cycle, only possible in a host-built tree). The chase runs at most
+    `fuel` hops — `Algorithm.aliasCount` of the tree, the number of distinct aliases the static
+    chase can land on — so a chase still landing on an alias after that many hops has revisited
+    one: it is a cycle. C#: `StaticAliasTargets.FindCycle`. -/
+def staticAliasCycle (fuel : Nat) (chain : List Algorithm) (start : Algorithm) : Bool :=
+  match fuel, start with
+  | 0, .alias _ _ _ _ _ => true
+  | fuel + 1, .alias _ _ _ target _ =>
+      match staticAliasStep? chain start target with
+      | some (next@(.alias _ _ _ _ _), nextChain) => staticAliasCycle fuel nextChain next
+      | _ => false
+  | _, _ => false
+
+/-- The STATIC normalization of the callable `a` declared inside `chain` (outermost scope first):
+    `a` itself when it is not an alias, else the callable its chain of static steps
+    (`staticAliasStep?`) ends at within `fuel` hops — none when a step leaves the static chain
+    (an `open`, the prelude) or the fuel runs out. The surface pass's identity resolution through
+    aliases (C#: the recorded `Algorithm.Alias.ResolvedTarget`), here over the static chain only;
+    the evaluator's is `resolveAliasTarget`. -/
+def staticAliasTarget? : Nat -> List Algorithm -> Algorithm -> Option Algorithm
+  | _, _, .mk p ps op pr out id => some (.mk p ps op pr out id)
+  | _, _, .builtin b => some (.builtin b)
+  | _, _, .conditional p op bs id => some (.conditional p op bs id)
+  | 0, _, .alias _ _ _ _ _ => none
+  | fuel + 1, chain, .alias p op pr target id =>
+      match staticAliasStep? chain (.alias p op pr target id) target with
+      | some (next, nextChain) => staticAliasTarget? fuel nextChain next
+      | none => none
+
+mutual
+  /-- The number of callable aliases in an algorithm tree — the fuel of the static alias chase
+      (`staticAliasCycle`): a chase landing on more aliases than the tree holds has revisited one. -/
+  partial def Algorithm.aliasCount : Algorithm -> Nat
+    | .mk _ _ op pr out _ =>
+        (op.map Expr.aliasCount).sum + (pr.map (fun prop => prop.alg.aliasCount)).sum + (out.map Expr.aliasCount).sum
+    | .builtin _ => 0
+    | .conditional _ op branches _ =>
+        (op.map Expr.aliasCount).sum + (branches.map (fun branch => branch.body.aliasCount)).sum
+    | .alias _ op pr target _ =>
+        1 + (op.map Expr.aliasCount).sum + (pr.map (fun prop => prop.alg.aliasCount)).sum + target.aliasCount
+
+  /-- The callable aliases inside an expression (in its blocks). -/
+  partial def Expr.aliasCount : Expr -> Nat
+    | .algorithmExpr alg => alg.aliasCount
+    | .unary _ operand => operand.aliasCount
+    | .binary _ left right => left.aliasCount + right.aliasCount
+    | .comparison first links => first.aliasCount + (links.map (fun link => link.operand.aliasCount)).sum
+    | .index target selector => target.aliasCount + selector.aliasCount
+    | .sequenceConstruct left right => left.aliasCount + right.aliasCount
+    | .sequenceSpread operand => operand.aliasCount
+    | .listLiteral items => (items.map Expr.aliasCount).sum
+    | .capture rows => (rows.map Expr.aliasCount).sum
+    | .call fn args => fn.aliasCount + (args.map Expr.aliasCount).sum
+    | .dotMember target _ fallback args? =>
+        target.aliasCount + fallback.aliasCount + ((args?.getD []).map Expr.aliasCount).sum
+    | _ => 0
+end
 
 mutual
   /-- Pre-evaluation structural validation over a whole algorithm tree:
@@ -2389,78 +2621,106 @@ mutual
       - conditional algorithms have uniform top-level branch pattern arity and
         uniform top-level branch output arity (`branchArityMismatch`,
         `branchOutputArityMismatch`)
+      - every callable alias has a STATIC-PATH target (`Expr.isStaticAliasPath`;
+        `illegalInEval` `aliasTargetNotStaticPathMessage`), and the static chase of
+        its target never leads back to an alias already on its chain
+        (`staticAliasCycle`; `illegalInEval` `aliasCycleMessage`) — only a host-built
+        tree can violate either, the surface pass never forms one
 
       `name` labels conditional arity diagnostics with the nearest enclosing
       property name; anonymous algorithms report the placeholder
-      `conditional`. -/
-  partial def validateExplicitParamOutputInvariant (a : Algorithm)
-      (name : Ident := "conditional") : EvalM Unit := do
+      `conditional`. `chain` is the static scope chain around `a` (outermost
+      first) and `aliases` the whole tree's alias count, which the alias check
+      reads. C#: `AlgorithmValidation.PreEvaluationValidationWalker`. -/
+  partial def validateAlgorithmTree (a : Algorithm) (name : Ident)
+      (chain : List Algorithm) (aliases : Nat) : EvalM Unit := do
     if a.hasSingletonSequencePattern then
       .error (Error.illegalInEval singletonSequencePatternMessage)
     if a.hasMultipleCollectingCaptures then
       .error (Error.illegalInEval multipleCollectingBindingsPerLevelMessage)
+    let inner := chain ++ [a]
     match a with
     | .mk _ parameters op pr out _ =>
         if !parameters.isEmpty && out.isEmpty then
           .error Error.explicitParamsRequireOutput
         for openExpr in op do
-          validateExplicitParamOutputInvariantExpr openExpr
+          validateExprTree openExpr inner aliases
         for prop in pr do
-          validateExplicitParamOutputInvariant prop.alg prop.name
+          validateAlgorithmTree prop.alg prop.name inner aliases
         for expr in out do
-          validateExplicitParamOutputInvariantExpr expr
+          validateExprTree expr inner aliases
     | .builtin _ => pure ()
     | .conditional _ op branches _ =>
         validateConditionalBranchArities name a
         for openExpr in op do
-          validateExplicitParamOutputInvariantExpr openExpr
+          validateExprTree openExpr inner aliases
         for branch in branches do
-          validateExplicitParamOutputInvariant branch.body name
+          validateAlgorithmTree branch.body name inner aliases
+    | .alias _ op pr target _ =>
+        if !target.isStaticAliasPath then
+          .error (Error.illegalInEval (aliasTargetNotStaticPathMessage (openExprName target)))
+        if staticAliasCycle aliases chain a then
+          .error (Error.illegalInEval aliasCycleMessage)
+        for openExpr in op do
+          validateExprTree openExpr inner aliases
+        for prop in pr do
+          validateAlgorithmTree prop.alg prop.name inner aliases
+        validateExprTree target inner aliases
 
   /-- Traverse expressions so nested block literals and call-argument
       algorithms also satisfy the same pre-evaluation invariants. -/
-  partial def validateExplicitParamOutputInvariantExpr : Expr -> EvalM Unit
+  partial def validateExprTree (e : Expr) (chain : List Algorithm) (aliases : Nat) : EvalM Unit :=
+    match e with
     | .param _ => pure ()
     | .num _ => pure ()
     | .stringLiteral _ => pure ()
     | .boolLiteral _ => pure ()
     | .resolve _ => pure ()
     | .unary _ operand =>
-        validateExplicitParamOutputInvariantExpr operand
+        validateExprTree operand chain aliases
     | .binary _ left right => do
-        validateExplicitParamOutputInvariantExpr left
-        validateExplicitParamOutputInvariantExpr right
+        validateExprTree left chain aliases
+        validateExprTree right chain aliases
     | .comparison first links => do
-        validateExplicitParamOutputInvariantExpr first
-        links.forM (fun link => validateExplicitParamOutputInvariantExpr link.operand)
+        validateExprTree first chain aliases
+        links.forM (fun link => validateExprTree link.operand chain aliases)
     | .index target selector => do
-        validateExplicitParamOutputInvariantExpr target
-        validateExplicitParamOutputInvariantExpr selector
+        validateExprTree target chain aliases
+        validateExprTree selector chain aliases
     | .sequenceConstruct left right => do
-      validateExplicitParamOutputInvariantExpr left
-      validateExplicitParamOutputInvariantExpr right
+      validateExprTree left chain aliases
+      validateExprTree right chain aliases
     | .emptySequence _ => pure ()
     | .sequenceSpread operand => do
-        validateExplicitParamOutputInvariantExpr operand
+        validateExprTree operand chain aliases
     | .listLiteral items =>
-        items.forM validateExplicitParamOutputInvariantExpr
+        items.forM (fun item => validateExprTree item chain aliases)
     | .algorithmExpr alg =>
-        validateExplicitParamOutputInvariant alg
+        validateAlgorithmTree alg "conditional" chain aliases
     | .capture rows =>
-        rows.forM validateExplicitParamOutputInvariantExpr
+        rows.forM (fun row => validateExprTree row chain aliases)
     | .call fn args => do
-        validateExplicitParamOutputInvariantExpr fn
-        args.forM validateExplicitParamOutputInvariantExpr
+        validateExprTree fn chain aliases
+        args.forM (fun arg => validateExprTree arg chain aliases)
     | .dotMember target _ fallback args? => do
-        validateExplicitParamOutputInvariantExpr target
+        validateExprTree target chain aliases
         -- The stored lexical fallback is a real child (Resolve/Param for
         -- front-end trees, but hand-built trees could hide algorithms in it),
         -- so the validation walk covers it like every other reference.
-        validateExplicitParamOutputInvariantExpr fallback
+        validateExprTree fallback chain aliases
         match args? with
-        | some args => args.forM validateExplicitParamOutputInvariantExpr
+        | some args => args.forM (fun arg => validateExprTree arg chain aliases)
         | none => pure ()
 end
+
+/-- The pre-evaluation validation of one algorithm tree (`validateAlgorithmTree` over the
+    whole tree, its alias count read once). -/
+def validateExplicitParamOutputInvariant (a : Algorithm) (name : Ident := "conditional") : EvalM Unit :=
+  validateAlgorithmTree a name [] a.aliasCount
+
+/-- The pre-evaluation validation of a program expression (`validateExprTree`). -/
+def validateExplicitParamOutputInvariantExpr (e : Expr) : EvalM Unit :=
+  validateExprTree e [] e.aliasCount
 
 namespace ScopeCtx
   def parent : ScopeCtx -> Option ScopeCtx
@@ -2495,12 +2755,15 @@ namespace Algorithm
     .mk (some sc) [] (ScopeCtx.opens sc) [] []
 
   /-- Whether an algorithm needs a call to have members: a parameterized algorithm
-      (explicit or inferred parameters) or a clause family (whose branches always take
-      arguments). Such an algorithm is not an `open` provider — `open` imports a namespace
-      and never creates an activation, so there is no value its members could read their
-      inputs from (C#: `Evaluator.RequiresArguments`). -/
+      (explicit or inferred parameters), a clause family (whose branches always take
+      arguments), or a callable alias (it denotes its target's CALLABLE, never a
+      namespace: an alias declares none of its target's members). Such an algorithm is
+      not an `open` provider — `open` imports a namespace and never creates an
+      activation, so there is no value its members could read their inputs from
+      (C#: `Evaluator.RequiresArguments`). -/
   def requiresArguments : Algorithm -> Bool
     | .conditional _ _ _ _ => true
+    | .alias _ _ _ _ _ => true
     | a => !(params a).isEmpty
 
   /-- Lift a single expression into an algorithm whose output is that expression. -/
@@ -2577,6 +2840,9 @@ mutual
     | .conditional parent opens branches _ =>
         .conditional (parent.map cacheScopeShape) (opens.map cacheExprShape)
           (branches.map fun b => { b with body := cacheAlgorithmShape b.body })
+    | .alias parent opens props target _ =>
+        .alias (parent.map cacheScopeShape) (opens.map cacheExprShape)
+          (props.map cachePropertyShape) (cacheExprShape target)
 
   partial def cacheScopeShape : ScopeCtx -> ScopeCtx
     | .mk parent _ opens props _ _ _ _ =>
@@ -3672,31 +3938,6 @@ def Expr.openForm? : Expr -> Option OpenForm
 def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
 
-/-- Human-readable constructor kind for diagnostics. -/
-def Expr.kind : Expr -> String
-  | .param _      => "param"
-  | .num _        => "num"
-  | .stringLiteral _ => "stringLiteral"
-  | .boolLiteral _ => "boolLiteral"
-  | .unary _ _    => "unary"
-  | .binary _ _ _ => "binary"
-  | .comparison _ _ => "comparison"
-  | .index _ _    => "index"
-  | .sequenceConstruct _ _ => "sequenceConstruct"
-  | .emptySequence _ => "emptySequence"
-  | .sequenceSpread _    => "spread"
-  | .listLiteral _ => "listLiteral"
-  | .resolve _    => "resolve"
-  | .algorithmExpr _ => "algorithmExpr"
-  | .capture _    => "capture"
-  | .call _ _     => "call"
-  | .dotMember _ _ _ _ => "dotCall"
-
-/-- Render an empty-sequence core node by depth for diagnostics. Evaluation
-  normalizes repeated ordinary parentheses back to `()`. -/
-def emptySequenceText (depth : Nat) : String :=
-  String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
-
 /-- Diagnostic expression names use KatLang source syntax; `.index` renders as
   `target:selector`, never `target[selector]` (`[...]` is exact list literal
   syntax). Indexing is postfix and binds tighter than unary and every binary
@@ -3809,45 +4050,6 @@ def unaryOperandTier : UnaryOp -> Nat
 
 def parenthesizeWhenLooser (slotTier : Nat) (operand : Expr) (name : String) : String :=
   if bindingTier operand < slotTier then "(" ++ name ++ ")" else name
-
-/-- This MINIMAL renderer models only structural reference forms; every other
-  kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
-  C#'s merged `OpenExprName` prints more detail for them. That gap is
-  pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
-  `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
-  coverage, not of indexing. -/
-def openExprNameIndexSelectorNeedsParens : Expr -> Bool
-  | .dotMember _ _ _ _ => true
-  | .index _ _        => true
-  | .sequenceSpread _ => true
-  | _                 => false
-
-/-- Extract a descriptive name from an open expression for error messages.
-  See `openExprNameIndexSelectorNeedsParens` for this renderer's coverage gap. -/
-def openExprName (e : Expr) : String :=
-  match e with
-  | .resolve n => n
-  | .dotMember o n _ _ =>
-      openExprName o ++ "." ++ n
-  -- Indexing is source-faithful postfix `target:selector`, never the `(index)`
-  -- kind fallback. Only the forms this renderer prints BARE can continue the
-  -- postfix chain and rebind; every unmodelled kind is already self-delimiting
-  -- as `(kind)`, so parenthesizing it again would only double the parentheses.
-  | .index target selector =>
-      let selectorName := openExprName selector
-      openExprName target ++ ":" ++
-        (if openExprNameIndexSelectorNeedsParens selector then "(" ++ selectorName ++ ")"
-         else selectorName)
-  | .algorithmExpr _ => "(inline library)"
-  | .capture _ => "(inline library)"
-  -- SequenceConstruct is an internal value node; ';' is not surface syntax,
-  -- so render it as one sequence value, never with ';'.
-  | .sequenceConstruct a b => "(" ++ openExprName a ++ ", " ++ openExprName b ++ ")"
-  -- A spread expression renders in the canonical postfix-marker form.
-  | .sequenceSpread a => openExprName a ++ "*"
-  -- Empty sequence core nodes render by depth for diagnostics.
-  | .emptySequence depth => emptySequenceText depth
-  | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
 /-- The diagnostic expression name (C#: `ExprNameMode.DiagnosticName`). Operators
   render bare, and every operand keeps parentheses exactly where the precedence
@@ -4942,6 +5144,9 @@ def openTargetRequiresArgumentsMessage (target : String) : Algorithm -> String
   | .conditional _ _ _ _ =>
       s!"'{target}' cannot be opened because it is a clause family that requires arguments; " ++
         "open imports only an algorithm that needs no call."
+  | .alias _ _ _ _ _ =>
+      s!"'{target}' cannot be opened because it is a callable alias, not a namespace; " ++
+        "open imports only an algorithm that needs no call."
   | a =>
       s!"'{target}' cannot be opened because it requires arguments " ++
         s!"({String.intercalate ", " (Algorithm.params a)}); " ++
@@ -5102,8 +5307,13 @@ def lookupOpenPropertiesInChain (a : Algorithm) (name : Ident)
     This ensures structural ownership always takes precedence over opens.
     It keeps the resolved owner and binding for the zero-argument property
     cache; `lookupLexical` is its algorithm projection, so the
-    ownership-first / dedup / ambiguity rules exist exactly once. -/
-def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
+    ownership-first / dedup / ambiguity rules exist exactly once. The selected
+    binding is returned RAW — an alias as the alias — for the consumers that
+    navigate a binding's OWN declarations (a written dot receiver,
+    `resolveDotReceiver`) and for alias resolution itself (`resolveAliasStep`);
+    every other consumer reads it through `lookupLexicalProperty`, which makes
+    it callable. C#: `Evaluator.LookupLexicalRaw`. -/
+def lookupLexicalPropertyRaw (a : Algorithm) (name : Ident) (ctx : EvalCtx)
     : EvalM ResolvedProperty := do
   match Algorithm.lookupPropDefAny? a name with
   | some prop =>
@@ -5125,6 +5335,80 @@ def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
           match (<- lookupOpenPropertiesInChain a name ctx) with
           | some r => pure r
           | none   => .error (Error.unknownName name)
+
+/-- One STEP of `resolveAliasTarget`: the callable the alias `step`'s written `target` names
+    in the alias's OWN scope — the alias pushed as the head, exactly where its body would be
+    evaluated: a name by the ownership-first lexical lookup, RAW, so a target that is itself an
+    alias continues the chase; a member path by structural navigation of DECLARED members, each
+    member wired to its receiver and checked for accessibility from the alias's site exactly
+    like `resolveDotReceiver` navigates (a member declared only in branches is the same
+    `localOnlyProperty` error). A target that is not a static path, or a path step whose
+    receiver declares no such member, has no callable: `illegalInEval` — only a host-built tree
+    has either, since the surface pass forms an alias over a statically known member only.
+    C#: `Evaluator.ResolveAliasStep`. -/
+def resolveAliasStep (step : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
+  let stepCtx := ctx.push step
+  let notStatic : Error := Error.illegalInEval (aliasTargetNotStaticPathMessage (openExprName target))
+  match Expr.staticAliasPath? target with
+  | none => .error notStatic
+  | some (head, steps) =>
+      let start : Algorithm × String <- match head with
+        | .resolve name => do
+            let resolved <- lookupLexicalPropertyRaw step name stepCtx
+            pure (resolved.alg, name)
+        | .algorithmExpr block => pure (wireToCaller stepCtx block, openExprName head)
+        | _ => .error notStatic
+      let navigated <- steps.foldlM
+        (fun (current : Algorithm × String) (member : Ident) =>
+          let (receiver, receiverName) := current
+          match Algorithm.lookupPropDefAny? receiver member with
+          | some p =>
+              if !(memberAccessible? stepCtx receiver p) then
+                .error (Error.localOnlyProperty receiverName member p.exposure)
+              else
+                pure (childOfInContext receiver p.alg stepCtx, receiverName ++ "." ++ member)
+          | none =>
+              if Algorithm.conditionalBranchesDefineProperty receiver member then
+                .error (Error.localOnlyProperty receiverName member .localConditional)
+              else
+                .error notStatic)
+        start
+      pure navigated.fst
+
+/-- THE ONE NORMALIZATION (FWD-02, binding indirection; decided 2026-10-01):
+    `ResolveCallable(A) = A is an alias ? ResolveCallable(target of A, resolved in A's own
+    scope) : A`. Every place a binding becomes a CALLABLE goes through it — lexical lookup
+    (`lookupLexicalProperty`), a structurally navigated member, an inline block — so calls,
+    callbacks and loop steps, the callable channel of an argument, and value demands all
+    receive the TARGET, while the BINDING — the property and its zero-argument cache key
+    (`zeroArgPropertyCacheKey` reads the binding, never the resolved algorithm) — stays the
+    alias's own. An alias is never an invocation: resolving it binds nothing, opens no
+    binding context and charges nothing. A chase that reaches an alias of the same shape in
+    the same scope again (`cacheAlgorithmShape`: the chase is deterministic in the shape) is a
+    CYCLE, which only a host-built tree can form past the pre-evaluation check
+    (`staticAliasCycle`): `illegalInEval aliasCycleMessage`, never a non-terminating chase.
+    C#: `Evaluator.ResolveAliasTarget`. -/
+partial def resolveAliasTarget (a : Algorithm) (ctx : EvalCtx) (visited : List String := []) : EvalM Algorithm :=
+  match a with
+  | .alias _ _ _ target _ => do
+      let key := reprStr (cacheAlgorithmShape a)
+      if visited.contains key then
+        .error (Error.illegalInEval aliasCycleMessage)
+      else
+        let next <- resolveAliasStep a target ctx
+        resolveAliasTarget next ctx (key :: visited)
+  | other => pure other
+
+/-- The canonical lexical lookup with the selected binding made CALLABLE: a binding that is a
+    callable alias keeps its own property as the binding (its zero-argument cache key, its
+    exposure and accessibility) while its resolved algorithm is the alias's normalized target
+    (`resolveAliasTarget`). C#: `Evaluator.LookupLexical` (over `NormalizeAliasBinding`). -/
+def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
+    : EvalM ResolvedProperty := do
+  let resolved <- lookupLexicalPropertyRaw a name ctx
+  match resolved.alg with
+  | .alias _ _ _ _ _ => pure { resolved with alg := (<- resolveAliasTarget resolved.alg ctx) }
+  | _ => pure resolved
 
 /-- Algorithm-position lexical lookup (call callees, dot-call targets).
     This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
@@ -5149,7 +5433,9 @@ def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
     .error (Error.notAnAlgorithm "sequence construct expression")
   | .sequenceSpread _ =>
     .error (Error.notAnAlgorithm "spread expression")
-  | .algorithmExpr a => pure (wireToCaller ctx a)
+  -- An inline block whose one row names a parameterized callable is a callable alias
+  -- (`{ F }`): its callable is its target's.
+  | .algorithmExpr a => resolveAliasTarget (wireToCaller ctx a) ctx
   -- Capture is not algorithm identity: the algorithm channel sees only a
   -- zero-parameter value thunk over the bundle, exactly as the pre-split
   -- transparent wrapper behaved. `Apply((Inc, Dec))` therefore never receives
@@ -5244,6 +5530,16 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
         -- A value receiver makes the edge an ordinary dot result too.
         | .error (.notAnAlgorithm _) => resolveAlg e ctx
         | .error err => .error err
+  -- A written receiver HEAD is navigated, so a name or a block is the binding's own
+  -- algorithm, RAW: an alias declares only its own members, never its target's — written
+  -- member access never follows an alias (FWD-02). C#: `Evaluator.ResolveReceiverHead`.
+  | .resolve n =>
+      match ctx.callStack with
+      | a :: _ => do
+          let resolved <- lookupLexicalPropertyRaw a n ctx
+          pure resolved.alg
+      | [] => .error (Error.unknownName n)
+  | .algorithmExpr a => pure (wireToCaller ctx a)
   | _ => resolveAlg e ctx
 
 
@@ -5904,6 +6200,11 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match a with
     | .conditional _ _ _ _ => evalConditionalCallCounted a [] ctx env
+    -- An alias demanded with zero arguments is its target's zero-supply demand (only an
+    -- unnormalized alias — a host-built tree — reaches here; every lookup normalizes first).
+    | .alias _ _ _ _ _ => do
+        let target <- resolveAliasTarget a ctx
+        evalZeroArgumentDemandOutputCounted target ctx env
     | _ =>
       if (Algorithm.parameterPatterns a).isEmpty then
         evalAlgOutputCounted a ctx env
@@ -6039,6 +6340,11 @@ mutual
         | some simple => evalUserCallbackCallCounted simple args ctx env
         | none =>
             evalConditionalCallbackCallCounted callee args ctx env calleeName
+    -- An alias callback is its target, normalized BEFORE any invocation, so the alias charges
+    -- nothing. C#: `EvalAliasCallbackCallCounted`.
+    | .alias _ _ _ _ _ => do
+        let target <- resolveAliasTarget callee ctx
+        evalResolvedCallbackCallCounted target args ctx env calleeName
     | _ => evalUserCallbackCallCounted callee args ctx env
 
   /-- Non-counted wrapper for callback calls (the value projection of
@@ -6123,6 +6429,7 @@ mutual
               | role =>
                   let callableShaped := match arg.invoked with
                     | .conditional _ _ _ _ => true
+                    | .alias _ _ _ _ _ => true
                     | named => !(Algorithm.parameterPatterns named).isEmpty
                   if callableShaped then do
                     let item <- if role == .value then demandSequenceBuiltinCallItemValue item ctx env else pure item
@@ -6681,6 +6988,8 @@ mutual
         -- captureless pattern still consumes a slot; a family must dispatch.
         let plainOutput := match wired with
           | .conditional _ _ _ _ => false
+          -- A callable alias is no output to unfold: it is demanded as its target.
+          | .alias _ _ _ _ _ => false
           | _ => (Algorithm.parameterPatterns wired).isEmpty
         if plainOutput then
           let items <- evalExplicitSequenceValueItems wired ctx env
@@ -6893,6 +7202,12 @@ mutual
       match flatBinderUserEquivalent? callee with
       | some simple => evalUserCallCounted simple args ctx env
       | none => evalConditionalCallCounted callee args ctx env calleeName
+    -- The dispatch safety net: a callee that reached dispatch as an unnormalized alias (a
+    -- host-built tree) calls its target with the same written arguments. Every binding lookup
+    -- normalizes first. C#: `EvalAliasCallCounted`.
+    | .alias _ _ _ _ _ => do
+      let target <- resolveAliasTarget callee ctx
+      evalResolvedCallCounted target args ctx env calleeName
     | _ => evalUserCallCounted callee args ctx env
 
   /-- Context-aware counted call evaluation for expression position — the
@@ -7047,6 +7362,9 @@ mutual
         -- zero-parameter member; `x.string()` (an empty list) stays the intrinsic.
         -- C#: `RejectDotStringIntrinsicArguments`.
         rejectDotStringIntrinsicArguments argsOpt ctx env
+        -- A receiver that is a callable alias is demanded as its TARGET, read through the
+        -- alias's own binding (C#: `EvalAliasDotStringCounted`).
+        let targetAlg <- resolveAliasTarget targetAlg ctx
         -- The receiver is demanded for its VALUE with zero arguments, so the ONE
         -- zero-argument demand law decides from the resolved receiver's
         -- signature before its body is entered: `Inc.string` with `Inc(x)` is
@@ -7079,8 +7397,10 @@ mutual
             -- member's accessibility from THIS site is decided afterwards.
             if !(memberAccessible? ctx targetAlg p) then
               .error (Error.localOnlyProperty (openExprName target) name p.exposure)
-            else
-            let wired := childOfInContext targetAlg p.alg ctx
+            else do
+            -- A member that is a callable alias is read or called as its TARGET, while its
+            -- BINDING `p` keys the zero-argument read (C#: `EvalAliasMemberCounted`).
+            let wired <- resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
             match argsOpt with
             | none =>
                 -- A structurally navigated member read with NO argument list is an
@@ -7140,8 +7460,9 @@ mutual
               .error Error.spreadMissingOutput
             else
               .error err
-    | .algorithmExpr a =>
-        let wired := wireToCaller ctx a
+    | .algorithmExpr a => do
+        -- An inline alias block is demanded as its target (C#: `EvalAliasSpreadOperandItems`).
+        let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
         -- A spread operand is demanded for its VALUE with zero arguments, so the
         -- ONE law decides and shapes its report here too: a block whose parameter
         -- list accepts an empty supply is demanded through the shared funnel.
@@ -7419,7 +7740,9 @@ mutual
     | .listLiteral elements =>
         evalListLiteralCounted elements ctx env
     | .algorithmExpr a => do
-        let wired := wireToCaller ctx a
+        -- An inline alias block (`{ F }`) is demanded as its TARGET, judged with the written
+        -- block's shape (C#: `EvalInlineAliasValue`).
+        let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
         match zeroArgumentDemandError? (some e) wired with
         | some err => .error err
         | none =>
@@ -7630,15 +7953,11 @@ def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : 
     completed signatures, so a lifted parameter captured same-named written
     references — PV-01.)
 
-    An EXACT ALIAS's inherited signature (FWD-02, decided 2026-09-29;
-    `aliasesLoneBareReference`) is in NEITHER list: the alias takes its callee's
-    parameter patterns verbatim, and their names are the callee's private binder
-    names — owned by no written name, like `forwarded`, but colliding with no
-    property either, so renaming the callee's binders can never make the alias a
-    declaration error. The
-    surface layer builds the alias's level without them (C#
-    `Algorithm.User.InheritsCalleeSignature`, read by
-    `ParameterPropertyCollisionValidator`).
+    A CALLABLE ALIAS (FWD-02, binding indirection, decided 2026-10-01;
+    `Algorithm.alias`) contributes no parameters at all: its callable is its
+    target's, and it declares no signature of its own, so its level lists only the
+    properties its own body declares — renaming the target's binders can never make
+    the alias a declaration error.
 
     A `ScopeCtx` cannot serve as this chain: it carries `props` but no
     parameters, since by the time an `Algorithm` exists every ancestor-parameter
@@ -7661,8 +7980,8 @@ def OwnerLevel.signature (level : OwnerLevel) : List Ident :=
 
 /-- Surface declaration validity, checked after parameter-signature completion and
     before evaluation. Each property whose name is bound by this or an enclosing owner's
-    completed signature — forwarded parameters included, an exact alias's inherited
-    signature excluded (it is in no list, see `OwnerLevel`) — is a declaration error,
+    completed signature — forwarded parameters included; a callable alias declares no
+    parameters (see `OwnerLevel`) — is a declaration error,
     regardless of visibility or reference order. Pattern binders belong to their branch
     body. Open targets are not declarations and never conflict, but their HEAD name obeys
     the same owner chain (`elaborateOpenHead`). The surface layer reports each written
@@ -7802,12 +8121,14 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    repeated-name constraint of `bindParameterPattern` (Q-05) concerns
    independently supplied arguments.
 
-   THE ALIAS AND BARE-FORWARDING RULES (FWD-02, decided 2026-09-29–30) come
-   first: a body whose ONE written row is a bare reference to
-   a callable that DECLARES parameters (`aliasesLoneBareReference`) is not a
-   formula. An open body is an EXACT ALIAS — `A = P` takes `P`'s patterns
-   verbatim, `A(x, x) = P(x, x)` (`sourceCall`), so it keeps `P`'s two
-   independent arguments. A written parameter list or a clause branch is BARE
+   THE ALIAS AND BARE-FORWARDING RULES (FWD-02, decided 2026-09-29–30; binding
+   indirection 2026-10-01) come first: a body whose ONE written row is a bare
+   reference to a callable that DECLARES parameterized structure
+   (`Algorithm.declaresParameterizedStructure`) is not a formula. An open body is
+   a CALLABLE ALIAS (`Algorithm.alias`) — `A = P` names `P`'s callable itself,
+   with no wrapper and no copied signature, so a call through it is `P`'s own
+   call with `P`'s two independent arguments. A written parameter list or a
+   clause branch is BARE
    FORWARDING (`bareForwardingRow`): each of the callee's parameters is supplied
    from an EXISTING compatible binding of the SAME NAME — `Q(x) = P` is
    `Q(x) = P(x, x)`, `G(x, y) = F` with `F(y, x)` is `F(y, x)` — never renamed,
@@ -7915,8 +8236,11 @@ implemented by the C# front end (Lean has no front end):
   parameter (PAR-03).
 - `Algorithm.liftingSignature?` — the one lifting signature of every kind.
 
-A lone bare row is not a formula (FWD-02 completes it, `aliasesLoneBareReference`), and the
-never-called root keeps a bare row as the callable's own rejection. -/
+A lone bare row is not a formula (FWD-02 completes it — a callable alias or bare forwarding,
+`Algorithm.declaresParameterizedStructure`), and the never-called root keeps a bare row as the
+callable's own rejection. A reference to a callable alias takes the roles and the lifting
+signature of the alias's NORMALIZED TARGET (the surface pass resolves the chain first), never of
+the alias itself: no alias-specific role exists. -/
 
 /-- The role a slot gives the reference that fills it (C#: `LiftingRole`). -/
 inductive LiftingRole where
@@ -7934,6 +8258,18 @@ inductive LiftingCalleeKind where
   | builtin (b : Builtin)
   | strictValue
   deriving Repr, BEq
+
+/-- The callee KIND of a resolved callable (C#: `FormulaLiftingRoles.OfAlgorithm`), which decides the
+    roles of a call's argument positions (`liftingSlotRole`). A callable ALIAS has no kind of its own:
+    a reference to it takes the kind — and so the roles — of its NORMALIZED TARGET (X-45: `A = abs` /
+    `K = A(Inc)` gives `Inc` the value role `abs` gives it). Math members and host operations are
+    `strictValue` callees, a kind the surface pass reads from their identity; Lean models them only
+    as that kind, so they are not derived from an algorithm here. -/
+def Algorithm.liftingCalleeKind? : Algorithm -> Option LiftingCalleeKind
+  | .mk _ _ _ _ _ _ => some .user
+  | .builtin b => some (.builtin b)
+  | .conditional _ _ _ _ => some .family
+  | .alias _ _ _ _ _ => none
 
 /-- A loop builtin invokes its step (position 0); its count and initial state are values. -/
 def Builtin.isLoop : Builtin -> Bool
@@ -8029,26 +8365,37 @@ def builtinLiftingSignature (b : Builtin) : List ParameterPattern :=
 
 /-- THE ONE LIFTING SIGNATURE of every algorithm kind (the unified formula-lifting law): a user
     algorithm's parameter patterns, a builtin's callable interface, a clause family's derived
-    whole-slot signature (or none). C#: `ImplicitArgumentResolver.TryResolveLiftable`. -/
+    whole-slot signature (or none). It is also the callable's FORWARDING CONTRACT — the names
+    bare forwarding supplies by (`bareForwardingRowOf`). A callable alias has none of its own:
+    every callable question is asked of its NORMALIZED TARGET (the surface pass resolves the
+    alias chain first, exactly as the evaluator does, `resolveAliasTarget`), so lifting and
+    forwarding through an alias are the target's, never a copied signature.
+    C#: `ImplicitArgumentResolver.TryResolveLiftable`. -/
 def Algorithm.liftingSignature? : Algorithm -> Option (List ParameterPattern)
   | .mk _ parameters _ _ _ _ => some parameters
   | .builtin b => some (builtinLiftingSignature b)
   | .conditional _ _ branches _ => familyLiftingSignature? branches
+  | .alias _ _ _ _ _ => none
 
-/-- **Lone-row eligibility** (FWD-02, decided 2026-09-29; surface syntax support —
-    the specification of the surface pass's decision for a body whose ONE written row
-    is a bare reference). Such a row names the callable ITSELF, so the decision reads
-    the callee's DECLARED signature, not zero-argument acceptance: a callee with at
-    least one parameter pattern is aliased (an open body, `sourceCall`) or forwarded
-    by name (a written parameter list or a clause branch, `bareForwardingRow`) — a
-    callable that also works with no arguments, `Only(*xs)`, included, which
-    supersedes Q-03's alias clause. Every OTHER bare reference keeps
-    `liftsBareValueReference`, and a signature that lifts is always one that aliases
-    (`lifting_signature_is_an_alias_signature`, `KatLangArityLaws.lean`). A clause
-    family's lifting signature is empty, so a family is never an alias or forwarding
-    target (PV-14). C#: `ImplicitArgumentResolver.DeclaresParameters`. -/
-def aliasesLoneBareReference (signature : List ParameterPattern) : Bool :=
-  !signature.isEmpty
+/-- **Lone-row eligibility** (FWD-02, binding indirection — decided 2026-10-01; surface syntax
+    support — the specification of the surface pass's decision for a body whose ONE written
+    row is a bare reference). Such a row names the callable ITSELF, so the decision reads the
+    DECLARED callable structure of the ONE identity name resolution selects (owner walk →
+    prelude → opens → structural dot path, looking through aliases to the normalized target),
+    never the lookup route and never zero-argument acceptance: a callable that DECLARES
+    PARAMETERIZED STRUCTURE — every builtin (`if`, the callback builtins and the loops
+    included), every clause family (nameable or not), a user algorithm with at least one
+    parameter pattern (`Only(*xs)` included, although `Only()` is legal), a Math member or a
+    host operation — makes an OPEN body a callable ALIAS (`Algorithm.alias`: binding
+    indirection, no wrapper, no inherited signature) and a CLOSED body bare forwarding
+    (`bareForwardingRowOf`). A zero-parameter callable is no alias target: `A = Z` stays an
+    ordinary property whose body reads `Z`, cached as usual. C#:
+    `ImplicitArgumentResolver.DeclaresParameterizedStructure`. -/
+def Algorithm.declaresParameterizedStructure : Algorithm -> Bool
+  | .mk _ parameters _ _ _ _ => !parameters.isEmpty
+  | .builtin _ => true
+  | .conditional _ _ _ _ => true
+  | .alias _ _ _ _ _ => true
 
 /-- The tree of a WRITTEN sequence group `(e1, …, en)` (SYN-06): `()` for no
     items, the one item itself for a lone non-spread item (a one-slot group IS
@@ -8078,13 +8425,10 @@ mutual
       * the unpacking receiver (never written in a signature) rebuilds the list of
         its items.
 
-      An EXACT ALIAS `A = F` takes `F`'s patterns verbatim as its signature and calls
-      `F(sourceArguments signature)` (`sourceCall`); binding a supply `S` against the
-      copied patterns and rebuilding reproduces exactly the values `F`'s own patterns
-      bind from `S`, so `A(S)` behaves as `F(S)`. BARE FORWARDING rebuilds a callee's
-      structural parameter this way only when the forwarding body declares the SAME
-      pattern (`bareForwardingArgument`). C#: `ImplicitArgumentResolver.BuildSourceArguments`
-      (through `BuildPatternArgument`); `CoreTests/AliasForwarding.lean`. -/
+      BARE FORWARDING rebuilds a callee's structural parameter this way only when the
+      forwarding body declares the SAME pattern (`bareForwardingArgument`). (A callable
+      alias rebuilds nothing: it IS its target's callable, `Algorithm.alias`.)
+      C#: `ImplicitArgumentResolver.BuildPatternArgument`; `CoreTests/AliasForwarding.lean`. -/
   def ParameterPattern.sourceArgument : ParameterPattern -> Expr
     | .capture parameter =>
         match parameter.kind with
@@ -8099,11 +8443,6 @@ mutual
     | [] => []
     | pattern :: rest => ParameterPattern.sourceArgument pattern :: ParameterPattern.sourceArguments rest
 end
-
-/-- The one call the ALIAS rule synthesizes: `callee` applied to its own signature,
-    inherited verbatim as the alias's, rebuilt. -/
-def sourceCall (callee : Ident) (source : List ParameterPattern) : Expr :=
-  .call (.resolve callee) (ParameterPattern.sourceArguments source)
 
 mutual
   /-- Whether two parameter patterns declare the same CONTRACT — the same kind and
@@ -8229,6 +8568,35 @@ def bareForwardingRow (callee : Ident) (own : List ParameterPattern) (ownNames :
   | some [] => some (.resolve callee)
   | some arguments => some (.call (.resolve callee) arguments)
 
+/-- Why a closed lone row cannot bare-forward its callee. -/
+inductive BareForwardingRejection where
+  /-- A callee parameter that no existing compatible binding of its name supplies
+      (C# `DiagnosticCode.UnforwardableParameter`). -/
+  | unforwardableParameter
+  /-- The callee — through every alias, its NORMALIZED target — has NO forwarding contract
+      at all: an unnameable clause family names no input to forward by (narrowed Q-77,
+      decided 2026-10-01; C# `DiagnosticCode.UnforwardableCallable`). -/
+  | noForwardingContract
+  deriving Repr, DecidableEq
+
+/-- **Bare forwarding of a callable** (FWD-02 with narrowed Q-77, decided 2026-10-01): the row a
+    CLOSED body whose one row is the bare `callee` elaborates to, given the callee's NORMALIZED
+    target. The forwarding contract is the target's lifting signature
+    (`Algorithm.liftingSignature?`, identity-keyed, so an alias, an opened or dotted member, a
+    builtin, a Math member, a host operation and a nameable family forward alike); a target
+    without one — an unnameable clause family — is the front-end error
+    `noForwardingContract`, never a silent zero-argument demand. A callable alias of such a
+    family is still a valid ALIAS (`unnameable_family_can_be_aliased`): aliasing needs callable
+    identity, forwarding needs names. C#: `ImplicitArgumentResolver.TryCompleteLoneCalleeRow`. -/
+def bareForwardingRowOf (callee : Ident) (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) (target : Algorithm) : Except BareForwardingRejection Expr :=
+  match target.liftingSignature? with
+  | none => .error .noForwardingContract
+  | some signature =>
+      match bareForwardingRow callee own ownNames captured signature with
+      | some row => .ok row
+      | none => .error .unforwardableParameter
+
 /-- A clause branch's OWN inputs for bare forwarding: a top-level sequence pattern IS
     the branch's parameter list and any other head is its one parameter; an item that
     holds a literal at any depth declares no literal-free pattern, so it offers
@@ -8291,9 +8659,9 @@ inductive ForwardingSource where
     binder's repeated-name constraint (Q-05) concerns independently supplied
     arguments and merges nothing. (Decided 2026-09-29, reversing the same day's
     Q-72 refusal of such callees; Lean models no signature construction.) This
-    decision is FORMULA lifting's: a body whose one row is the bare callee is an
-    exact alias (`aliasesLoneBareReference`, `sourceCall`), which reuses no
-    binding, or bare forwarding (`bareForwardingArgument`), which reuses the same
+    decision is FORMULA lifting's: a body whose one row is the bare callee is a
+    callable alias (`Algorithm.alias`), which reuses no binding and gains no
+    parameter, or bare forwarding (`bareForwardingArgument`), which reuses the same
     parameter bindings by name — the body's own, else the `.capturedParameter`
     this function selects — but never adds one: what a formula in an OPEN body
     infers (`.forwardedParameter`), a closed body's bare row rejects. -/
@@ -8575,6 +8943,10 @@ mutual
         return .conditional (<- parent.mapM identifyPropertyScope)
           (<- opens.mapM identifyPropertyExpr)
           (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) (some identity)
+    | .alias parent opens props target _ =>
+        return .alias (<- parent.mapM identifyPropertyScope)
+          (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
+          (<- identifyPropertyExpr target) (some identity)
 
   partial def identifyPropertyScope : ScopeCtx -> StateM Nat ScopeCtx
     | .mk parent params opens props output branches _ id =>
@@ -8789,6 +9161,10 @@ partial def postElabInvariantAlg : Algorithm -> Bool
   | .conditional _ opens branches _ =>
       opens.all postElabInvariant &&
       branches.all (fun b => postElabInvariantAlg b.body)
+  | .alias _ opens props target _ =>
+      opens.all postElabInvariant &&
+      props.all (fun p => postElabInvariantAlg p.alg) &&
+      postElabInvariant target
 end
 
 end KatLang

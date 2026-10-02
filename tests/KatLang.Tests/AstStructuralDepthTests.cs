@@ -1144,6 +1144,8 @@ public class AstStructuralDepthTests
             [nameof(Algorithm)] = [],
             ["User"] = ["Parent", "ParameterPatterns", "Opens", "Properties", "Output"],
             ["Conditional"] = ["Parent", "Opens", "Branches"],
+            // A callable alias's target row is enumerated through the accessor `Output` (its one row).
+            ["Alias"] = ["Parent", "Opens", "Properties", "Target"],
             ["Unary"] = ["Operand"],
             ["Binary"] = ["Left", "Right"],
             // Links carries the chain's later operands through ComparisonLink.Operand;
@@ -1423,7 +1425,7 @@ public class AstStructuralDepthTests
         // node hierarchies are ordinary abstract records, and this reflection sweep
         // turns "a new variant was added" into a failing test here, so their child
         // enumeration cannot silently fall behind.
-        string[] knownAlgorithm = ["User", "Builtin", "Conditional"];
+        string[] knownAlgorithm = ["User", "Builtin", "Conditional", "Alias"];
         string[] knownPattern = ["Bind", "ListValue", "LitBool", "LitInt", "LitString", "SequenceValue"];
         string[] knownParameterPattern = ["CaptureParameterPattern", "ListValueParameterPattern", "SequenceValueParameterPattern", "UnpackingParameterPattern"];
 

@@ -113,6 +113,23 @@ internal sealed class OpenProviderValidator : AstWalker
         }
     }
 
+    // A callable alias keeps its own body's opens and declarations (binding indirection): its opens
+    // are validated in its own scope exactly like a user body's.
+    protected override void VisitAliasAlgorithm(Algorithm.Alias algorithm)
+    {
+        var saved = _scope;
+        _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved);
+        try
+        {
+            ValidateOpens(algorithm.Opens);
+            base.VisitAliasAlgorithm(algorithm);
+        }
+        finally
+        {
+            _scope = saved;
+        }
+    }
+
     protected override void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)
     {
         var saved = _scope;

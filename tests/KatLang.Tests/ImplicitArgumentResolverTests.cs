@@ -272,16 +272,27 @@ public class ImplicitArgumentResolverTests
     [InlineData("Use(*values) = CountItems", "*values", null)]
     [InlineData("Use(*items) = CountItems", "*items", "items*")]
     [InlineData("Use(items) = CountItems", "items", "items")]
-    [InlineData("Use = CountItems", "*items", "items*")]
+    [InlineData("Use = CountItems", "", "alias")]
     public void Resolve_ZeroArgumentVariadicHelper_AsALoneRow_IsAliasedForwardedOrRead(string use, string signature, string? arguments)
     {
-        // A lone row reads the callee's DECLARED signature (FWD-02, superseding Q-03's alias
-        // clause): an open body inherits `(*items)`; a written list forwards BY NAME — the
-        // same-named collector re-spread, a same-named fixed parameter as one argument — and when
-        // no binding has the collector's name nothing is forwarded, so the row is the callee's bare
-        // name, its cached zero-argument value (Q-03).
+        // A lone row reads the callee's DECLARED structure (FWD-02, superseding Q-03's alias
+        // clause): an open body is a callable alias of CountItems — binding indirection, no
+        // signature of its own — because CountItems declares a parameter, although it also accepts
+        // zero supplied arguments; a written list forwards BY NAME — the same-named collector
+        // re-spread, a same-named fixed parameter as one argument — and when no binding has the
+        // collector's name nothing is forwarded, so the row is the callee's bare name, its cached
+        // zero-argument value (Q-03).
         var resolved = Resolve("CountItems(*items) = items.count\n" + use).Properties.Single(p => p.Name == "Use").Value;
         Assert.Equal(signature, string.Join(", ", resolved.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+        if (arguments == "alias")
+        {
+            var alias = Assert.IsType<Algorithm.Alias>(resolved);
+            Assert.Equal("CountItems", Assert.IsType<Expr.Resolve>(alias.Target).Name);
+            Assert.Equal("*items", string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+            Assert.Empty(CallsTo(resolved, "CountItems"));
+            return;
+        }
+
         if (arguments is null)
         {
             Assert.Empty(CallsTo(resolved, "CountItems"));
@@ -348,22 +359,22 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_BareMathCallableAlias_LiftsMemberSignature()
+    public void Resolve_BareMathCallableAlias_IsACallableAliasOfTheMember()
     {
+        // `Math.Round` is a parameterized callable, so the lone row makes RoundB a callable alias
+        // of it: binding indirection, never a wrapper with a copied signature or a synthesized call.
         var source = """
             RoundB = Math.Round
             """;
         var root = Resolve(source);
 
-        var roundB = root.Properties.Single(p => p.Name == "RoundB").Value;
-        Assert.Equal(["value", "digits"], roundB.Params);
+        var roundB = Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == "RoundB").Value);
+        Assert.Empty(roundB.Params);
 
-        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(roundB.Output));
-        Assert.NotNull(dotCall.Args);
+        var dotCall = Assert.IsType<Expr.DotCall>(roundB.Target);
+        Assert.Null(dotCall.Args);
         Assert.Equal("Round", dotCall.Name);
-        Assert.Equal(["value", "digits"], dotCall.Args
-            .Select(expr => Assert.IsType<Expr.Param>(expr).Name)
-            .ToArray());
+        Assert.Equal(["value", "digits"], roundB.ResolvedTarget!.Signature.Signature!.ParameterNames);
     }
 
     [Fact]
@@ -395,7 +406,7 @@ public class ImplicitArgumentResolverTests
 
         var roundB = root.Properties.Single(p => p.Name == "RoundB").Value;
 
-        // The alias is a wrapper algorithm with no members, so the edge cannot
+        // GetMath is an ordinary value property with no members, not a namespace alias, so the edge cannot
         // resolve `Round` through Math's native signature: it is an ordinary
         // dot edge whose lexical fallback is the only possible resolution, and
         // its callable becomes the property's own inferred parameter.

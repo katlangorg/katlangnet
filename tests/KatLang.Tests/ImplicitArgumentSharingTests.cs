@@ -165,11 +165,16 @@ public class ImplicitArgumentSharingTests
         Assert.NotEqual(names.Order(StringComparer.Ordinal), names);
     }
 
-    /// <summary>The empty and single cases add no sharing machinery and keep their results.</summary>
+    /// <summary>
+    /// The empty and single cases add no sharing machinery and keep their results. A lone row
+    /// `H = G` lifts nothing: it is a callable alias of G (binding indirection), so `H(4)` is
+    /// G's own call.
+    /// </summary>
     [Theory]
     [InlineData("G = 5\nH = G + G\nH", 0, "10")]
     [InlineData("G = a\nH = 1\nH", 0, "1")]
-    [InlineData("G = x * 2\nH = G\nH(4)", 1, "8")]
+    [InlineData("G = x * 2\nH = G\nH(4)", 0, "8")]
+    [InlineData("G = x * 2\nH = G - 0\nH(4)", 1, "8")]
     [InlineData("G = x * 2\nH = G + G\nH(4)", 2, "16")]
     public void EmptyAndSingleCases_AreOrdinary(string source, int lifted, string display)
     {

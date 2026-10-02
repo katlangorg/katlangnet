@@ -27,9 +27,13 @@ public class FuzzCampaignHostileReviewTests
                 Assert.Same(binary.Left, binary.Right);
                 cursor = binary.Left;
             }
-            var block = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(cursor).Algorithm);
+            var block = Assert.IsType<Expr.AlgorithmExpr>(cursor).Algorithm;
             Assert.Equal(["b", "a"], Assert.Single(block.Properties).Value.Params);
-            if (ReferenceEquals(stage, resolved)) Assert.IsType<Expr.Call>(Assert.Single(block.Output));
+            // Resolution makes the block's lone row `K` a callable alias of its member K.
+            if (ReferenceEquals(stage, resolved))
+                Assert.Equal("K", Assert.IsType<Expr.Resolve>(Assert.IsType<Algorithm.Alias>(block).Target).Name);
+            else
+                Assert.IsType<Algorithm.User>(block);
         }
         Assert.InRange(observations.DetectorRewriteExpansions, depth, 8L * depth + 64);
         Assert.InRange(observations.ResolverRewriteExpansions, depth, 8L * depth + 64);
@@ -234,6 +238,12 @@ public class FuzzCampaignHostileReviewTests
         {
             Opens = conditional.Opens.Select(Rewrite).ToArray(),
             Branches = conditional.Branches.Select(b => b with { Body = OrdinaryHelpers(b.Body) }).ToArray(),
+        },
+        Algorithm.Alias alias => alias with
+        {
+            Opens = alias.Opens.Select(Rewrite).ToArray(),
+            Properties = alias.Properties.Select(p => p with { Value = OrdinaryHelpers(p.Value) }).ToArray(),
+            Target = Rewrite(alias.Target),
         },
         Algorithm.Builtin => algorithm,
     };

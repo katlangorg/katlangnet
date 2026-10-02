@@ -430,6 +430,10 @@ public class TutorialSemanticContractTests
     private static string Signature(Algorithm algorithm)
         => string.Join(", ", Assert.IsType<Algorithm.User>(algorithm).ParameterPatterns.Select(static pattern => pattern.DisplayName));
 
+    /// <summary>A callable alias's parameters: its target's own, since the alias IS its target's callable.</summary>
+    private static string AliasTargetSignature(Algorithm algorithm)
+        => string.Join(", ", Assert.IsType<Algorithm.Alias>(algorithm).ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName));
+
     [Fact]
     public void AliasesForwardingAndExplicitCalls_EachFormHasTheSignatureTheTutorialStates()
     {
@@ -437,9 +441,13 @@ public class TutorialSemanticContractTests
         var root = SourceProvenance.ParseValid(formulas
             + "Alias = Double\nForward(x) = Double\nExplicit(x) = Other(x)\nFormula = Double + 1\n\n0").Root;
 
-        // "`Alias = Double` ... is `Double` under another name, with Double's parameters".
-        Assert.Equal("x", Signature(PropertyOf(root, "Alias").Value));
-        Assert.True(Assert.IsType<Algorithm.User>(PropertyOf(root, "Alias").Value).InheritsCalleeSignature);
+        // "`Alias = Double` ... is `Double` under another name, with Double's parameters": a callable
+        // alias — a binding of its own whose callable IS Double (binding indirection), never a wrapper.
+        var alias = Assert.IsType<Algorithm.Alias>(PropertyOf(root, "Alias").Value);
+        Assert.Equal("Double", Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Equal(
+            "x",
+            string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
 
         // "`Forward(x) = Double` ... `Double` receives the parameter of the same name", and
         // "`Explicit(x) = Other(x)` ... the arguments are passed exactly as written": both keep their
@@ -476,7 +484,7 @@ public class TutorialSemanticContractTests
             + "Alias = Single\nSameShape([x]) = Single\nExplicit(x) = Single(x)\nConstruct = Single([x])\n\n0").Root;
 
         // "`Alias = Single` has Single's parameter `[x]` ... `Alias(7)` is an error, just like `Single(7)`".
-        Assert.Equal("[x]", Signature(PropertyOf(root, "Alias").Value));
+        Assert.Equal("[x]", AliasTargetSignature(PropertyOf(root, "Alias").Value));
         RunFailure(SingleFormula + "Alias = Single\n\nAlias(7)", KatLangErrorCode.TypeMismatch);
         RunFailure(SingleFormula + "\nSingle(7)", KatLangErrorCode.TypeMismatch);
 
@@ -521,7 +529,7 @@ public class TutorialSemanticContractTests
         const string renamed = "Double(value) = value * 2\n";
 
         // "An alias takes the new names with it, and a formula that uses it takes them as its inputs."
-        Assert.Equal("value", Signature(PropertyOf(SourceProvenance.ParseValid(renamed + "Alias = Double\n\n0").Root, "Alias").Value));
+        Assert.Equal("value", AliasTargetSignature(PropertyOf(SourceProvenance.ParseValid(renamed + "Alias = Double\n\n0").Root, "Alias").Value));
         Assert.Equal(["value"], PropertyOf(SourceProvenance.ParseValid(renamed + "Formula = Double + 1\n\n0").Root, "Formula").Value.Params);
 
         // "Forwarding by name must be updated to match, or it becomes an error."

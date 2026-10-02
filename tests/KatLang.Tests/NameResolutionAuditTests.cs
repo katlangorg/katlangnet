@@ -568,12 +568,14 @@ public class NameResolutionAuditTests
     [InlineData("A(*xs) = 5\nP(f, f, f) = f(7)\nUse(g) = P(g, g, g)\nUse(A)", "5")]
     [InlineData("P(f, f) = f\nP(pi, pi)", "3.141592653589793238462643383279503")]
     [InlineData("P(f, f) = f\nA = {\n    open Math\n    P(Pi, Pi)\n}\nA", "3.141592653589793238462643383279503")]
+    // `Alias = A` is a callable alias (binding indirection): its callable IS A's, never a wrapper,
+    // so a repeated name accepts the two spellings together — while each keeps its own binding.
+    [InlineData("A(*xs) = 5\nAlias = A\nP(f, f, f) = f(7)\nP(A, Alias, A)", "5")]
+    [InlineData("A(*xs) = 5\nAlias = A\nNext = Alias\nP(f, f, f) = f(7)\nP(Next, A, Alias)", "5")]
     public void OneCallable_BindsARepeatedName(string source, string display)
         => Assert.Equal(display, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
 
     [Theory]
-    // `Alias = A` is a new declaration (a wrapper), never an identity alias
-    [InlineData("A(*xs) = 5\nAlias = A\nP(f, f, f) = f(7)\nP(A, Alias, A)")]
     // the prelude alias and the canonical member are distinct BINDINGS (wired under the
     // prelude and under Math) sharing one algorithm
     [InlineData("P(f, f) = f\nA = {\n    open Math\n    P(Pi, pi)\n}\nA")]

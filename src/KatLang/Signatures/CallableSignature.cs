@@ -169,12 +169,19 @@ internal sealed record CallableSignature
     /// </summary>
     public bool AcceptsZeroSuppliedArguments => ParameterPattern.AcceptsZeroSuppliedSlots(ParameterPatterns);
 
+    /// <summary>
+    /// The signature an algorithm DECLARES: a user algorithm's parameter patterns, a builtin's
+    /// registry signature, none for a clause family (its contract is its clause heads), and none
+    /// for a callable alias — an alias declares no parameter list of its own; every callable
+    /// question about it is answered by its target, which the front end and the evaluator read
+    /// through the alias instead.
+    /// </summary>
     public static CallableSignature FromAlgorithm(string name, Algorithm algorithm)
         => algorithm switch
         {
             Algorithm.User user => FromUserAlgorithm(name, user),
             Algorithm.Builtin(var builtin) => FromBuiltin(builtin),
-            Algorithm.Conditional => new CallableSignature(name, []),
+            Algorithm.Conditional or Algorithm.Alias => new CallableSignature(name, []),
         };
 
     public static CallableSignature FromBuiltin(BuiltinId builtin)

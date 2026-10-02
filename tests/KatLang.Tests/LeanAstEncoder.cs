@@ -67,6 +67,7 @@ internal sealed class LeanAstEncoding
         {
             Algorithm.User user => user with { Parent = _scope?.Parent },
             Algorithm.Conditional family => family with { Parent = _scope?.Parent },
+            Algorithm.Alias alias => alias with { Parent = _scope?.Parent },
             Algorithm.Builtin => owner,
         };
         var scopeIdentity = StructuralOwnerIdentity.FromOwner(rewiredOwner);
@@ -255,10 +256,19 @@ internal sealed class LeanAstEncoding
             return $"(.conditional none [{conditionalOpens}] [{branches}])";
         }
 
+        if (algorithm is Algorithm.Alias alias)
+        {
+            // Lean `Algorithm.alias parent opens properties target`: the binding's own scope and
+            // its written target, resolved by the Lean evaluator in the alias's own scope.
+            var aliasOpens = EncodeOpens(alias.Opens);
+            var aliasProperties = EncodeList(alias.Properties, property => EncodeProperty(property, alias));
+            return $"(.alias none [{aliasOpens}] [{aliasProperties}] ({EncodeExpr(alias.Target)}))";
+        }
+
         if (algorithm is not Algorithm.User user)
         {
             throw new NotSupportedException(
-                $"{nameof(LeanAstEncoder)} covers Algorithm.User and Algorithm.Conditional, " +
+                $"{nameof(LeanAstEncoder)} covers Algorithm.User, Algorithm.Conditional and Algorithm.Alias, " +
                 $"not {algorithm.GetType().Name}.");
         }
 

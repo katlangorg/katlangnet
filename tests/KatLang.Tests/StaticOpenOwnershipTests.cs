@@ -293,7 +293,7 @@ public class StaticOpenOwnershipTests
     }
 
     [Theory]
-    [InlineData("G = Lib.X\nF = {\n    open Lib\n    G\n}\nF(3)", DiagnosticCode.UnresolvedOpenTarget)]
+    [InlineData("G = Lib.X\nF = {\n    open Lib\n    G + 0\n}\nF(3)", DiagnosticCode.UnresolvedOpenTarget)]
     [InlineData("Lib = { public X = 7 }\nG(Lib) = 0\nF = {\n    open Lib\n    X + G\n}\nF(3)", null)]
     public void ForwardedParameter_NeverOwnsAnOpenHead(string source, DiagnosticCode? expected)
     {
@@ -314,6 +314,21 @@ public class StaticOpenOwnershipTests
             Assert.Empty(parsed.Diagnostics);
             Assert.Equal("7", KatLangEngine.Run(source).ToDisplayString());
         }
+    }
+
+    [Fact]
+    public void AliasBody_KeepsItsOwnOpen_WhoseHeadIsDecidedByNameResolution()
+    {
+        // A body whose one row names a parameterized callable is a callable alias: it gains no
+        // parameter at all (binding indirection), so its written open head can never be one — an
+        // unresolved head stays the unresolved open target it is.
+        const string source = "G = Lib.X\nF = {\n    open Lib\n    G\n}\nF(3)";
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var f = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(p => p.Name == "F").Value);
+        Assert.Empty(f.Params);
+        Assert.IsType<Expr.Resolve>(Assert.Single(f.Opens));
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnresolvedOpenTarget);
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Code == DiagnosticCode.OpenTargetIsParameter);
     }
 
     [Fact]

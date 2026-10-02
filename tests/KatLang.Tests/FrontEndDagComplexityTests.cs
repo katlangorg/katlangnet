@@ -1839,7 +1839,10 @@ public class FrontEndDagComplexityTests
             // Two blocks, two leaf values, and the depth + 1 diamond values once per observation.
             Assert.Equal(2 * (depth + 1) + 4, observations.ResolverAlgorithmRegionExpansions);
             var plain = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved.Properties[0].Value).Properties, p => p.Name == "Mod").Value);
-            var lifting = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved.Properties[1].Value).Properties, p => p.Name == "Mod").Value);
+            // The lifting block's lone row names its parameterized member Mod: a callable alias of
+            // it (the plain block's Mod declares nothing, so its row stays an ordinary read).
+            var liftingBlock = Assert.IsType<Algorithm.Alias>(resolved.Properties[1].Value);
+            var lifting = Assert.IsType<Algorithm.User>(Assert.Single(liftingBlock.Properties, p => p.Name == "Mod").Value);
             Assert.NotSame(plain, lifting);
             Assert.Empty(plain.Params);
             Assert.Equal(["y"], lifting.Params);

@@ -796,9 +796,9 @@ def structuralPatternsOpenOnlyTheirOwnKind : Bool :=
 def aliasesAndForwardingKeepTheCallbackLaw : Bool :=
   -- The forwarding alias is WRITTEN, `Alias(*xs) = Cnt(xs*)` (the collecting
   -- capture forwarded into the collecting callee through the explicit spread),
-  -- so the forwarding law is part of the path. The bare exact alias `Alias = Cnt`
-  -- elaborates to this same tree (FWD-02: it inherits Cnt's collecting signature,
-  -- `sourceCall`).
+  -- so the forwarding law is part of the path. The bare callable alias `Alias = Cnt`
+  -- is Cnt's callable itself (FWD-02, binding indirection), so it binds exactly as Cnt
+  -- does; `CoreTests/AliasForwarding.lean` evaluates it.
   let aliasAlg : Algorithm := algWithParameters [{ name := "xs", kind := .collecting }] [] []
     [.call (resolve "Cnt") [sequenceSpread (.param "xs")]]
   let applyAlg : Algorithm := alg ["f", "xs"] [] [] [.call (resolve "map") [.param "xs", .param "f"]]

@@ -47,9 +47,17 @@ public class Phase6PerformanceRegressionTests
 
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
-        Assert.Equal(["x"], parsed.Root.Properties.Single(property => property.Name == "Middle").Value.Params);
-        Assert.Equal(["x"], parsed.Root.Properties.Single(property => property.Name == "Top").Value.Params);
-        Assert.Empty(parsed.Root.Properties.Single(property => property.Name == "Shadow").Value.Params);
+        // Middle and Top are callable aliases whose chain normalizes to the root Leaf(x); the
+        // shadowing block's own zero-parameter Leaf is read as a value, never aliased.
+        foreach (var name in new[] { "Middle", "Top" })
+        {
+            var alias = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(property => property.Name == name).Value);
+            Assert.Empty(alias.Params);
+            Assert.Equal(["x"], alias.ResolvedTarget!.Signature.Signature!.ParameterNames);
+        }
+
+        var shadow = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(property => property.Name == "Shadow").Value);
+        Assert.Empty(shadow.Params);
 
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
         Assert.Equal([7m, 100m], success.Atoms);

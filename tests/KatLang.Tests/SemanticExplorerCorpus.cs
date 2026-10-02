@@ -774,13 +774,15 @@ public static class SemanticExplorerCorpus
         Special("forwardByNameAcrossCallees", "P(x, x) = x\nF(x) = x + 1\nH = P + F\nH(3)"),
         Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = [P]:0\nSome(Bad)"),
         Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = [P]:0\nSome(Inc)"),
-        // FWD-02 (September 29–30 2026): a body whose ONE row is a bare callable that declares
-        // parameters is an EXACT ALIAS (an open body: the callee's signature inherited verbatim and
-        // rebuilt into the call) or BARE FORWARDING (a written list or a clause branch: each callee
+        // FWD-02 (September 29–30 2026; binding indirection October 1 2026): a body whose ONE row
+        // is a bare callable that declares parameterized structure is a CALLABLE ALIAS (an open
+        // body: `Algorithm.alias`, whose every callable use is the target's own — no wrapper, no
+        // copied signature) or BARE FORWARDING (a written list or a clause branch: each callee
         // parameter supplied BY NAME from an existing compatible binding — never renamed, never
         // positional, never added), and a written call infers only the names it writes. Pinned
-        // against Lean on the elaborated trees; the rejected forms are front-end diagnostics, pinned
-        // by the spec corpus's `bare-forwarding-never-*` cases and by Lean's `bareForwardingRow`.
+        // against Lean on the elaborated trees (Lean resolves each `.alias` in its own scope); the
+        // rejected forms are front-end diagnostics, pinned by the spec corpus's
+        // `bare-forwarding-*` cases and by Lean's `bareForwardingRow` / `bareForwardingRowOf`.
         Special("aliasKeepsRepeatedSignature", "P(x, x) = x\nA = P\nA(7, 7)"),
         Special("aliasKeepsRepeatedConstraint", "P(x, x) = x\nA = P\nA(7, 8)"),
         Special("aliasKeepsListPattern", "Single([x]) = x\nA = Single\nA([7]), A([[7]])"),
@@ -788,6 +790,23 @@ public static class SemanticExplorerCorpus
         Special("aliasKeepsBinderlessSignature", "E((), []) = 1\nA = E\nA((), [])"),
         Special("aliasOfCollectorKeepsSignature", "C(*xs) = xs\nA = C\nA(1, 2)"),
         Special("aliasChainKeepsSignature", "Single([x]) = x\nA = Single\nB = A\nC = B\nC([[7]])"),
+        // Every builtin, every clause family (an unnameable one included) is an alias target, and a
+        // call through the alias is the target's own: the builtin adapter, `if`'s laziness, a callback
+        // slot's non-demand, a loop's minimum arity, family dispatch; roles, callable identity,
+        // bare forwarding and formula lifting all read the normalized target.
+        Special("aliasOfBuiltinCount", "C = count\nC([1, 2, 3])"),
+        Special("aliasOfIfIsLazy", "I = if\nI(true, 1, 1 / 0)"),
+        Special("aliasOfMapDemandsNoCallback", "Bad(x) = x / 0\nM = map\nM([], Bad)"),
+        Special("aliasOfRepeatKeepsMinimumArity", "Inc(x) = x + 1\nR = repeat\nR(Inc)"),
+        Special("aliasChainOfBuiltin", "A = count\nB = A\nC = B\nC([1, 2])"),
+        Special("aliasOfFamilyDispatches", "Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(4)"),
+        Special("aliasOfFamilyNoMatchingBranch", "Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)"),
+        Special("aliasOfUnnameableFamily", "S(1) = 1\nS(-1) = -1\nSA = S\nSA(-1)"),
+        Special("aliasRolesAreTargetRoles", "Inc(x) = x + 1\nI = if\nK = I(c, Inc, 0)\nK(true, 4)"),
+        Special("aliasCallableIdentityIsTarget", "P(f, f) = f(7)\nOnly(*xs) = 0\nA = Only\nP(A, Only)"),
+        Special("aliasPassedAsCallableNavigatesTarget", "Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nNavigate(f) = f.K\nNavigate(A)"),
+        Special("bareForwardingThroughAlias", "C = count\nW(collection) = C\nW([1, 2])"),
+        Special("formulaLiftingThroughAlias", "C = count\nK = C + 1\nK([1, 2])"),
         Special("bareForwardingSameName", "Double(x) = x * 2\nForward(x) = Double\nForward(5)"),
         Special("bareForwardingIsNotPositional", "Sub(y, x) = y - x\nG(x, y) = Sub\nG(10, 3)"),
         Special("bareForwardingIgnoresUnusedParameter", "Double(x) = x * 2\nForward(x, unused) = Double\nForward(5, 999)"),

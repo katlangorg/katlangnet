@@ -133,6 +133,11 @@ internal static class ParameterDetector
                 => RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper),
 
             Algorithm.User user => ProcessUserAlgorithm(user, parentScope, capturedParameters, diagnostics, observations, run),
+
+            // A callable alias is produced AFTER name resolution, by implicit-argument resolution
+            // (FWD-02): parameter detection runs on the parser's output, which never holds one.
+            Algorithm.Alias => throw new InvalidOperationException(
+                "Parameter detection received a callable alias: aliases are elaborated after name resolution, never before it."),
         };
 
     /// <summary>
@@ -1354,6 +1359,7 @@ internal static class ParameterDetector
         {
             Algorithm.User user => user with { Opens = newOpens },
             Algorithm.Conditional conditional => conditional with { Opens = newOpens },
+            Algorithm.Alias alias => alias with { Opens = newOpens },
             Algorithm.Builtin => branchBody,
         };
         var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
@@ -1376,6 +1382,7 @@ internal static class ParameterDetector
             {
                 Algorithm.User user => user with { Opens = newOpens },
                 Algorithm.Conditional conditional => conditional with { Opens = newOpens },
+                Algorithm.Alias alias => alias with { Opens = newOpens },
                 Algorithm.Builtin => bodyWithProcessedOpens,
             };
             bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);

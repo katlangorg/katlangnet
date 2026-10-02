@@ -82,6 +82,13 @@ internal static class EvaluatorTestSupport
             Output = user.Output.Select(MakeAllPublicExpr).ToList(),
             Opens = user.Opens.Select(MakeAllPublicExpr).ToList(),
         },
+        Algorithm.Alias alias => alias with
+        {
+            Properties = alias.Properties.Select(p =>
+                new Property(p.Name, MakeAllPublic(p.Value), IsPublic: true, Exposure: p.Exposure)).ToList(),
+            Target = MakeAllPublicExpr(alias.Target),
+            Opens = alias.Opens.Select(MakeAllPublicExpr).ToList(),
+        },
         Algorithm.Conditional or Algorithm.Builtin => alg,
     };
 

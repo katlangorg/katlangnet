@@ -329,22 +329,23 @@ public class DotCallFallbackInvariantTests
     {
         // The same block under a unary operator target and as a capture target's row: both
         // are rejected targets whose operands are ordinary values, so detection (Grace
-        // consumed: K infers (b, a)) and resolution (the bare row `K` becomes the lifted
-        // call forwarding the block's own inferred inputs) must elaborate them identically.
+        // consumed: K infers (b, a)) and resolution (the bare row `K` makes the block a callable
+        // alias of its own member K) must elaborate them identically.
         const string block = "{ K = ~b - a\nK }";
         var viaOperator = OpenTargetBlock($"open -{block}", target => Assert.IsType<Expr.Unary>(target).Operand);
         var viaCapture = OpenTargetBlock($"open ({block}, 1)", target => Assert.IsType<Expr.Capture>(target).Body[0]);
 
         var k = Assert.IsType<Algorithm.User>(Assert.Single(viaOperator.Properties).Value);
         Assert.Equal(["b", "a"], k.Params);
+        Assert.Equal("K", Assert.IsType<Expr.Resolve>(viaOperator.Target).Name);
         Assert.Equal(LeanAstEncoder.EncodeAlgorithm(viaCapture), LeanAstEncoder.EncodeAlgorithm(viaOperator));
 
-        static Algorithm.User OpenTargetBlock(string source, Func<Expr, Expr> operand)
+        static Algorithm.Alias OpenTargetBlock(string source, Func<Expr, Expr> operand)
         {
             var parse = SourceProvenance.ParseAllowingDiagnostics(source);
             Assert.Contains(parse.Diagnostics, diagnostic => diagnostic.Code == DiagnosticCode.BadOpenForm);
             var target = Assert.Single(parse.Root.Opens);
-            return Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(operand(target)).Algorithm);
+            return Assert.IsType<Algorithm.Alias>(Assert.IsType<Expr.AlgorithmExpr>(operand(target)).Algorithm);
         }
     }
 

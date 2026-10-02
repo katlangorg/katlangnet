@@ -258,9 +258,7 @@ internal sealed class ParameterPropertyCollisionValidator(
     protected override void VisitUserAlgorithm(Algorithm.User algorithm)
     {
         var saved = _parameters;
-        // An exact alias's inherited signature is its callee's, whose binder names are
-        // encapsulated (FWD-02): they collide with nothing the alias declares.
-        _parameters = algorithm.InheritsCalleeSignature ? _parameters : Extend(algorithm.ParameterPatterns);
+        _parameters = Extend(algorithm.ParameterPatterns);
         try
         {
             if (!_parameters.IsEmpty)
@@ -272,6 +270,15 @@ internal sealed class ParameterPropertyCollisionValidator(
             base.VisitUserAlgorithm(algorithm);
         }
         finally { _parameters = saved; }
+    }
+
+    // A callable alias declares no parameters (binding indirection), but its own body's properties
+    // still meet the parameters of the enclosing algorithms.
+    protected override void VisitAliasAlgorithm(Algorithm.Alias algorithm)
+    {
+        if (!_parameters.IsEmpty)
+            ReportOwner(algorithm);
+        base.VisitAliasAlgorithm(algorithm);
     }
 
     protected override void VisitConditionalBranch(CondBranch branch)

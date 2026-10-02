@@ -228,7 +228,8 @@ public class LocalMemberAccessTests
     [Theory]
     [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p)")]
     [InlineData("Lib(p, q) = {\n    public X = p + q\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p, q)")]
-    [InlineData("Lib(p) = p\nAlias = Lib\nA = { open Alias\n 1 }\nA", "'Alias' cannot be opened because it requires arguments (p)")]
+    // A callable alias names a callable, never a namespace (binding indirection).
+    [InlineData("Lib(p) = p\nAlias = Lib\nA = { open Alias\n 1 }\nA", "'Alias' cannot be opened because it is a callable alias, not a namespace")]
     [InlineData("Lib(p) = p\nA(p) = { open Lib\n p }\nA(1)", "'Lib' cannot be opened because it requires arguments (p)")]
     [InlineData("Lib = { public Sub(p) = p }\nA = { open Lib.Sub\n 1 }\nA", "'Lib.Sub' cannot be opened because it requires arguments (p)")]
     // Inferred: Lib's output row makes `p` Lib's own parameter.

@@ -14,7 +14,7 @@ public class ParameterPropertyCollisionTests
         { "F(0) = 0\nF(v) = {\n    v = 5\n    0\n}\n0", 3, 5, 2, 3 },
         { "F((0, v)) = {\n    v = 5\n    0\n}\n0", 2, 5, 1, 7 },
         // A parameter of Need is lifted into Outer's COMPLETED signature by formula lifting (a
-        // lone row `Need` would make Outer an exact alias, whose inherited names are encapsulated).
+        // lone row `Need` would make Outer a callable alias, which declares no parameter at all).
         { "Need(v) = v\nOuter = {\n    v = 5\n    Need + 0\n}\n0", 3, 5, 1, 6 },
         { "Need((v, w)) = v + w\nOuter = {\n    v = 5\n    Need + 0\n}\n0", 3, 5, 1, 7 },
         // (A collecting destination lifts only from a callee that requires an argument, Q-03.)
@@ -64,15 +64,16 @@ public class ParameterPropertyCollisionTests
     [InlineData("Need(*v) = v.count", "Outer", "0")]
     [InlineData("Need(v) = v * 2", "Outer(4)", "8")]
     [InlineData("Need(w) = w * 2", "Outer(4)", "8")]
-    public void AnExactAlias_InheritsEncapsulatedNames_SoNoCollisionArises(string need, string call, string expected)
+    public void ACallableAlias_HasNoParameters_SoNoCollisionArises(string need, string call, string expected)
     {
-        // FWD-02: the lone row makes Outer an exact alias of Need. Its inherited parameter names
-        // are Need's private binder names, so they collide with no property Outer declares — and
-        // renaming Need's binder (`v` to `w`) changes nothing.
+        // FWD-02 (binding indirection): the lone row makes Outer a callable alias of Need. An alias
+        // declares no parameter of its own — its callable is Need itself — so nothing can collide with
+        // the property `v` Outer's own body declares, and renaming Need's binder (`v` to `w`) changes
+        // nothing.
         var source = need + "\nOuter = {\n    v = 5\n    Need\n}\n" + call;
         var parsed = SourceProvenance.ParseValid(source);
-        var outer = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Outer").Value);
-        Assert.True(outer.InheritsCalleeSignature);
+        var outer = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(p => p.Name == "Outer").Value);
+        Assert.Equal("v", Assert.Single(outer.Properties).Name);
         Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 

@@ -301,6 +301,11 @@ public class LanguageSpecRunnerTests
             // The unified formula-lifting law (September 2026): a clause family its clauses
             // do not name is a front-end rejection where a formula would lift it.
             "unliftable-clause-family",
+            // Callable aliases as binding indirection (October 2026): a closed lone row whose
+            // callable names no parameter (narrowed Q-77) and `open` of a callable alias are
+            // front-end rejections.
+            "bare-forwarding-needs-parameter-names",
+            "open-of-a-callable-alias-is-refused",
         ];
         string[] expectedModelDivergences =
         [

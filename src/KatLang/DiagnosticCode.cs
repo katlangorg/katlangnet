@@ -395,4 +395,20 @@ public enum DiagnosticCode
     /// (<c>F(n) = G(n) + 1</c>). Reported at the reference.
     /// </summary>
     UnliftableClauseFamily = 50,
+
+    /// <summary>
+    /// BARE FORWARDING names a callable that has no parameter names to forward by (FWD-02). A
+    /// definition with an explicit parameter list or a clause-branch pattern whose ONE row is a bare
+    /// callable (<c>W(x) = U</c>, or through an alias, <c>W(x) = UA</c> with <c>UA = U</c>) supplies
+    /// that callable's parameters from existing bindings of the SAME NAMES, so it needs a callable
+    /// whose parameters all have names. A clause family whose clauses do not name every argument
+    /// position with one plain parameter (a position no clause binds that way, clauses that bind it
+    /// under different names, or two positions taking one name) has none, so the definition is an
+    /// error of the definition — never a silent zero-argument read of the callable. The callable
+    /// itself stays valid and callable with explicit arguments (<c>W(x) = U(x, 0)</c>), and an alias
+    /// of it (<c>UA = U</c>) is a valid alias. Reported once at the bare reference. Unlike
+    /// <see cref="UnforwardableParameter"/>, no single parameter is at fault: the callable exposes no
+    /// named parameters at all.
+    /// </summary>
+    UnforwardableCallable = 51,
 }

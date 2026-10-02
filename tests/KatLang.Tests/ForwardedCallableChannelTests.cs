@@ -58,7 +58,7 @@ public class ForwardedCallableChannelTests
         { "repeat step", "repeat(CountStep, 3, 9)", "Apply(g) = repeat(g, 3, 9)\nApply(CountStep)", "2" },
         { "while step", "while(SumWhile, 0)", "Apply(g) = while(g, 0)\nApply(SumWhile)", "2" },
         { "nested captured parameter", "[1, 2].map(Cnt)", "Outer(xs) = { Inner(g) = xs.map(g)\nInner(Cnt) }\nOuter([1, 2])", "[1, 1]" },
-        // A forwarding alias written out (the bare exact alias `G = Only` is the same callable,
+        // A forwarding alias written out (the bare callable alias `G = Only` is the same callable,
         // FWD-02).
         { "forwarding alias", "G(*xs) = Only(xs*)\nmap([1], G)", "G(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "[[1]]" },
         { "implicit parameters", "[1, 2].map(Cnt)", "Apply = xs.map(f)\nApply([1, 2], Cnt)", "[1, 1]" },

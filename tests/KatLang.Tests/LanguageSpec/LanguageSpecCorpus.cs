@@ -1681,15 +1681,15 @@ public static class LanguageSpecCorpus
                 // callable-only argument is still its own error (Q-05), never repaired or spliced.
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P + 0\nSome(Bad)", "err div0"),
                 new SpecProbe("Inc(y) = y + 1\nP(x, x) = x\nSome = P + 0\nSome(Inc)", "err arity"),
-                // A body that is ONLY the callee is not a formula: an exact alias keeps Common's two
-                // arguments and their constraint, and bare forwarding reuses the caller's one
+                // A body that is ONLY the callee is not a formula: a callable alias IS Common, with
+                // its two arguments and their constraint, and bare forwarding reuses the caller's one
                 // binding named x for both occurrences, P(x, x).
                 new SpecProbe("Common(x, x) = x\nSame = Common\nSame(7, 7)", "ok raw=7 n=1"),
                 new SpecProbe("Common(x, x) = x\nSame = Common\nSame(7)", "err arity"),
                 new SpecProbe("P(x, x) = x\nQ(x) = P\nQ(7)", "ok raw=7 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A formula that USES another formula hands its inputs on by binding name, regardless of how many times that name occurs in the callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Twice = Common * 2` is `Twice(x) = Common(x, x) * 2`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Twice(7)` is 14, and Twice takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error. A definition whose whole body is the callee is not a formula: `Same = Common` is an exact alias that keeps Common's two independent arguments, and bare forwarding `Q(x) = P` reuses Q's one binding named x by name, `P(x, x)`.",
+            Explanation = "A formula that USES another formula hands its inputs on by binding name, regardless of how many times that name occurs in the callee's parameter patterns. A caller owns one binding for a name, and every occurrence of that name in the callee receives it: `Twice = Common * 2` is `Twice(x) = Common(x, x) * 2`, exactly as `H = F + G` with `F(x)` and `G(x)` is `H(x) = F(x) + G(x)`. So `Twice(7)` is 14, and Twice takes one argument. Nothing is combined: both occurrences receive the same binding, so a failing or callable-only argument is still that argument's own error. A definition whose whole body is the callee is not a formula: `Same = Common` is a callable alias, so calling Same calls Common itself, with its two independent arguments, and bare forwarding `Q(x) = P` reuses Q's one binding named x by name, `P(x, x)`.",
         },
         new()
         {
@@ -1715,14 +1715,14 @@ public static class LanguageSpecCorpus
                 new SpecProbe("G(collection) = count + 0\nG((1, 2, 3))", "ok raw=3 n=1"),
                 new SpecProbe("G(items) = count + 0\nG((1, 2, 3))", "err arity"),
                 // Not formulas: a bare top-level row is the callable's own demand, and a whole body
-                // that is only a builtin's name is no alias (only user formulas and Math functions are).
+                // that is only a callable's name is a callable alias of it, a builtin's included.
                 new SpecProbe("count", "err arity"),
                 new SpecProbe("E(0) = 1\nE(n) = n\nE", "err branch"),
-                new SpecProbe("C = count\nC((1, 2))", "err arity"),
+                new SpecProbe("C = count\nC((1, 2))", "ok raw=2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Notes = "The unified formula-lifting law (decided September 30 2026; constitution Q-11, Q-12 and Q-13 for formulas). Formerly only document properties and the two Math spellings lifted: `count`, an opened or dotted member, a host operation and a clause family stayed bare references.",
-            Explanation = "A formula that uses a callable as a value hands the callable's inputs on, whatever kind of callable it is and however its name was reached: a builtin (`Total = count + 0` is `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), a member reached through a dot path or `open`, a Math function, a host operation, and a clause family, whose inputs are named by its clauses (`E(n) = n` names `E`'s one input `n`, so `Fam = E + 1` is `Fam(n) = E(n) + 1`). A bare top-level row is not a formula — writing `count` alone reports that `count` needs its argument — and a definition whose whole body is only a builtin's name (`C = count`) stays an ordinary property.",
+            Explanation = "A formula that uses a callable as a value hands the callable's inputs on, whatever kind of callable it is and however its name was reached: a builtin (`Total = count + 0` is `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), a member reached through a dot path or `open`, a Math function, a host operation, and a clause family, whose inputs are named by its clauses (`E(n) = n` names `E`'s one input `n`, so `Fam = E + 1` is `Fam(n) = E(n) + 1`). A bare top-level row is not a formula — writing `count` alone reports that `count` needs its argument — and neither is a definition whose whole body is only a callable's name: `C = count` makes `C` a callable alias of `count`, so `C((1, 2))` is `count((1, 2))`.",
         },
         new()
         {
@@ -1786,7 +1786,7 @@ public static class LanguageSpecCorpus
                 // failure, and a failed argument is its own error.
                 new SpecProbe("P(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(7, 8)", "err arity"),
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nAlias(a, b) = P(a, b)\nAlias(Bad, 7)", "err div0"),
-                // The exact alias keeps the two independent arguments too.
+                // A callable alias IS the callee, with its two independent arguments.
                 new SpecProbe("P(x, x) = x\nSome = P\nSome(7, 8)", "err arity"),
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad, 7)", "err div0"),
                 // One binding supplied to both occurrences, written or forwarded by a formula.
@@ -1797,7 +1797,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)", "ok raw=5 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is an exact alias with Common's own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common]:0` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
+            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is a callable alias: calling Some calls Common itself, with its own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common]:0` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
         },
         new()
         {
@@ -1818,18 +1818,18 @@ public static class LanguageSpecCorpus
                 // Nested groups keep their kind at every level.
                 new SpecProbe("F(([x, y], z)) = x + y + z\nA = F\nA(([10, 20], 30))", "ok raw=60 n=1"),
                 new SpecProbe("F([(x, y), z]) = x + y + z\nA = F\nA([(1, 2), 3])", "ok raw=6 n=1"),
-                // Alias chains keep the structure too, repeated names included.
+                // An alias chain is its callee too, repeated names included.
                 new SpecProbe("P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8), (7, 8)])", "ok raw=S[7, 8] n=1"),
                 new SpecProbe("P([x, x]) = x\nSome = P\nNext = Some\nNext([(7, 8)])", "err arity"),
-                // A local alias keeps Single's list pattern, and its owner forwards its own
-                // same-pattern [x] to it by name.
+                // A local alias is Single itself, so its owner forwards its own same-pattern [x]
+                // to it by name.
                 new SpecProbe("Single([x]) = x\nF([x]) = {\n  K = Single\n  K\n}\nF([[7]])", "ok raw=L[7] n=1"),
                 // Bare forwarding rebuilds the same-named, same-pattern parameter as its own kind.
                 new SpecProbe("M([first, *middle, last]) = [first, middle, last]\nW([first, *middle, last]) = M\nW([1, 2, 3])", "ok raw=L[1, L[2], 3] n=1"),
                 new SpecProbe("F(([x, y], z)) = x + y + z\nW(([x, y], z)) = F\nW(([1, 2], 3))", "ok raw=6 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Forwarding hands every existing binding on unchanged and rebuilds every structural pattern it reconstructs as the SAME kind that pattern matches. An exact alias inherits its callee's patterns and rebuilds them from its own bindings: `A = Single` accepts exactly the one-element lists Single accepts, `B = Add` exactly the pairs (so, like `Add`, it rejects a list), a sequence collector re-spreads its items into a sequence, and nested groups keep their kind at every level. Bare forwarding supplies a structural parameter only from a binding with the same name AND the same pattern, rebuilt as that kind: `G([x]) = Single` is `G([x]) = Single([x])`, so `G([7])` is 7 (while `G(x) = Single` is rejected, because G's whole `x` is not Single's `[x]`). Nothing converts between sequences and lists.",
+            Explanation = "Forwarding hands every existing binding on unchanged and rebuilds every structural pattern it reconstructs as the SAME kind that pattern matches. A callable alias forwards nothing at all — it IS its callee: `A = Single` accepts exactly the one-element lists Single accepts, `B = Add` exactly the pairs (so, like `Add`, it rejects a list), `Count = C` exactly C's sequences, and nested groups keep their kind at every level. Bare forwarding supplies a structural parameter only from a binding with the same name AND the same pattern, rebuilt as that kind: `G([x]) = Single` is `G([x]) = Single([x])`, so `G([7])` is 7 (while `G(x) = Single` is rejected, because G's whole `x` is not Single's `[x]`). Nothing converts between sequences and lists.",
         },
         new()
         {
@@ -1856,7 +1856,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(x) = x * 2\nG(x) = x + 10\nA = F + G\nA(5)", "ok raw=25 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Four ways to define a formula through another one are four different mechanisms. `Alias = Double` is an EXACT ALIAS: it takes Double's complete signature and calls Double with it. `Forward(x) = Double` is BARE FORWARDING: Forward's explicit parameter list is closed, and Double's parameter `x` is supplied from Forward's existing binding of the SAME NAME — never by position, never renamed, never added (a parameter Double does not need simply stays unused). `Explicit(x) = Other(x)` is an EXPLICIT CALL: the written arguments are passed as written, so the names need not match. `Formula = Double + 1` USES Double inside an expression, so Double's parameter is lifted into Formula by name: `Formula(x) = Double(x) + 1`. So `Forward(x) = Double` is not the same thing as `Forward(x) = Double(x)`: with `Sub(y, x) = y - x`, `G(x, y) = Sub` hands G's `y` to Sub's `y` and gives -7 for `G(10, 3)`, while `G(x, y) = Sub(x, y)` gives 7.",
+            Explanation = "Four ways to define a formula through another one are four different mechanisms. `Alias = Double` is a CALLABLE ALIAS: Alias names Double's callable itself — calling Alias calls Double, with Double's own parameters, and no wrapper or copied signature exists — while Alias stays its own definition. `Forward(x) = Double` is BARE FORWARDING: Forward's explicit parameter list is closed, and Double's parameter `x` is supplied from Forward's existing binding of the SAME NAME — never by position, never renamed, never added (a parameter Double does not need simply stays unused). `Explicit(x) = Other(x)` is an EXPLICIT CALL: the written arguments are passed as written, so the names need not match. `Formula = Double + 1` USES Double inside an expression, so Double's parameter is lifted into Formula by name: `Formula(x) = Double(x) + 1`. So `Forward(x) = Double` is not the same thing as `Forward(x) = Double(x)`: with `Sub(y, x) = y - x`, `G(x, y) = Sub` hands G's `y` to Sub's `y` and gives -7 for `G(10, 3)`, while `G(x, y) = Sub(x, y)` gives 7.",
         },
         new()
         {
@@ -1905,7 +1905,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Add((a, b)) = a + b\nPair(a, b) = Add((a, b))\nPair(2, 3)", "ok raw=5 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "The same four forms apply to structural parameters. `Alias = Single` inherits Single's `[x]` signature: it takes exactly the arguments Single takes. `SameShape([x]) = Single` is bare forwarding: its own parameter is the same pattern `[x]` under the same name, so Single receives it rebuilt as the list it matched. `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`. `Construct = Single([x])` infers `x` from the written `[x]` and builds the list before calling Single, so it takes the element itself. A bare `Bad(x) = Single` is rejected, because a same-named leaf inside a pattern is not the same parameter.",
+            Explanation = "The same four forms apply to structural parameters. `Alias = Single` is a callable alias of Single: it takes exactly the arguments Single takes, its `[x]` included. `SameShape([x]) = Single` is bare forwarding: its own parameter is the same pattern `[x]` under the same name, so Single receives it rebuilt as the list it matched. `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`. `Construct = Single([x])` infers `x` from the written `[x]` and builds the list before calling Single, so it takes the element itself. A bare `Bad(x) = Single` is rejected, because a same-named leaf inside a pattern is not the same parameter.",
         },
         new()
         {
@@ -1959,7 +1959,124 @@ public static class LanguageSpecCorpus
                 new SpecProbe("C([*xs]) = xs\nA = C\nA((1, 2))", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A definition whose whole body is a bare callable that declares parameters is an EXACT ALIAS: `A = Single` takes Single's parameter patterns verbatim and calls Single with them rebuilt, so `A(S)` behaves as `Single(S)` for every argument supply — the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` keeps `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` keeps `E((), [])`'s two structural parameters), collectors and structural kinds all survive, through every level of a chain (`C = B`, `B = A`).",
+            Explanation = "A definition whose whole body is a bare reference to a callable that declares parameters is a CALLABLE ALIAS: `A = Single` makes A another name for Single's callable — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias is still its own definition: its name, its declaration and its cached bare value belong to it.",
+        },
+        new()
+        {
+            Id = "alias-of-a-builtin-is-the-builtin",
+            Category = "name-resolution",
+            Source = "C = count\nI = if\nM = map\nBad(x) = x / 0\n\nC([1, 2, 3])\nI(true, 1, 1 / 0)\nM([], Bad)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n1\n[]",
+            ExpectedRaw = "S[3, 1, L[]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A loop keeps its own minimum arity, and a chain normalizes to the one builtin.
+                new SpecProbe("R = repeat\nInc(x) = x + 1\nR(Inc)", "err arity"),
+                new SpecProbe("A = count\nB = A\nC = B\nC([1, 2])", "ok raw=2 n=1"),
+                new SpecProbe("T = take\nT([1, 2, 3], 2)", "ok raw=L[1, 2] n=1"),
+                // An alias is the builtin wherever a callable is used: a callback ...
+                new SpecProbe("Cnt = count\nmap([[1], [1, 2]], Cnt)", "ok raw=L[1, 2] n=1"),
+                // ... bare forwarding by the builtin's own parameter names, and formula lifting.
+                new SpecProbe("C = count\nW(collection) = C\nW([1, 2])", "ok raw=2 n=1"),
+                new SpecProbe("C = count\nK = C + 1\nK([1, 2])", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Callable aliases as binding indirection (decided October 1 2026): formerly a bare row naming a non-Math builtin stayed an ordinary property, so `C([1, 2, 3])` was an arity error.",
+            Explanation = "A definition whose whole body is the name of a callable that takes parameters is a CALLABLE ALIAS: the new name is a second name for the very same callable. That holds for every builtin. `C = count` makes `C([1, 2, 3])` exactly `count([1, 2, 3])`; `I = if` keeps `if`'s laziness, so `I(true, 1, 1 / 0)` is 1 and the division never runs; `M = map` keeps `map`'s rule that the callback is only called per element, so `M([], Bad)` is `[]` without calling `Bad`. An alias of an alias is the same callable again.",
+        },
+        new()
+        {
+            Id = "alias-of-a-clause-family-dispatches-as-the-family",
+            Category = "name-resolution",
+            Source = "Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\n\nF(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "24",
+            ExpectedRaw = "24",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The family's own dispatch failure, named by the written callee.
+                new SpecProbe("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)", "err branch"),
+                // A family whose clauses name no position can be aliased too.
+                new SpecProbe("S(1) = 1\nS(-1) = -1\nSA = S\nSA(-1)", "ok raw=-1 n=1"),
+                new SpecProbe("S(1) = 1\nS(-1) = -1\nSA = S\nSA(0)", "err branch"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Callable aliases as binding indirection (decided October 1 2026): formerly a clause family was never an alias target (PV-14), so `F(4)` was an arity error.",
+            Explanation = "A clause family is aliased like any other callable: `F = Fact` makes `F(4)` exactly `Fact(4)`, choosing the clause the way `Fact` itself does, and `F(1, 2)` fails exactly as `Fact(1, 2)` does. Aliasing needs only the callable itself, not parameter names, so even a family whose clauses name no argument position — `S(1) = 1`, `S(-1) = -1` — can be aliased.",
+        },
+        new()
+        {
+            Id = "bare-forwarding-needs-parameter-names",
+            Category = "name-resolution",
+            Source = "S(1) = 1\nS(-1) = -1\nSA = S\nW(x) = SA\n\nW(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "has no parameter names to forward by",
+            ExpectedDiagnosticCode = DiagnosticCode.UnforwardableCallable,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Narrowed Q-77 (decided October 1 2026): a closed lone row whose callable has no forwarding contract is a front-end error, never a silent zero-argument demand. A front-end rejection, so no elaborated Lean program exists; Lean pins the verdict with `bareForwardingRowOf`.",
+            Explanation = "Bare forwarding hands a callable its parameters from existing parameters of the SAME NAMES, so it needs a callable whose parameters have names. `S(1) = 1` and `S(-1) = -1` name nothing — a literal clause pattern is not a parameter name — so `W(x) = SA` is rejected: `SA` is an alias of `S`, and there is no name `x` could be forwarded by. Call the family with explicit arguments instead: `W(x) = SA(x)`.",
+        },
+        new()
+        {
+            Id = "alias-arguments-take-the-targets-roles",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nI = if\nK = I(c, Inc, 0)\n\nK(true, 4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The same for a Math function and for a builtin's collection slot.
+                new SpecProbe("A = abs\nInc(x) = x + 1\nK = A(Inc)\nK(-5)", "ok raw=4 n=1"),
+                new SpecProbe("C = count\nPair(x) = x, x\nK = C(Pair)\nK(1)", "ok raw=2 n=1"),
+            ],
+            Notes = "Callable aliases as binding indirection (decided October 1 2026; fixes X-45): formerly an alias was classified as a user callee, whose argument stays neutral, so `Inc` reached `if` as a callable and `K(true, 4)` failed.",
+            Explanation = "A call through an alias treats its arguments exactly as a call of the target does. `if` needs the VALUE of each of its arguments, so in `K = I(c, Inc, 0)` the formula uses `Inc`'s value and takes its input: `K(c, x) = I(c, Inc(x), 0)`, and `K(true, 4)` is 5 — just as `K = if(c, Inc, 0)` would be.",
+        },
+        new()
+        {
+            Id = "alias-is-the-targets-callable",
+            Category = "name-resolution",
+            Source = "P(f, f) = f(7)\nOnly(*xs) = 0\nA = Only\n\nP(A, Only)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Notes = "Callable aliases as binding indirection (decided October 1 2026): formerly the alias was a wrapper callable of its own, so the repeated `f` saw two different callables and the call failed.",
+            Explanation = "An alias and its target are one callable. `P(f, f)` requires its two arguments to be the same callable, and `A = Only` makes `A` another name for `Only`'s callable, so `P(A, Only)` binds `f` once and gives `Only(7)`, which is 0. The two names are still separate definitions: each keeps its own cached value when it is read without arguments.",
+        },
+        new()
+        {
+            Id = "alias-declares-only-its-own-members",
+            Category = "name-resolution",
+            Source = "Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nNavigate(f) = f.K\n\nLib.K\nNavigate(A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n5",
+            ExpectedRaw = "S[5, 5]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Written member access on the alias does not reach Lib's member K: `A.K` falls back to
+                // a lexical `K`, which nothing declares, so the program has an unresolved input.
+                new SpecProbe("Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nA.K", "err unresolvedImplicitParams"),
+            ],
+            Notes = "Callable aliases as binding indirection (decided October 1 2026): an alias is not a namespace alias.",
+            Explanation = "An alias names a CALLABLE, not a namespace. `A = Lib` declares no members of its own, so writing `A.K` does not look inside `Lib` — the dot falls back to an ordinary function named `K`. But the callable you pass through the alias IS `Lib`: `Navigate(A)` gives `Navigate` the callable `Lib`, whose member `K` it reads exactly as `Navigate(Lib)` would.",
+        },
+        new()
+        {
+            Id = "open-of-a-callable-alias-is-refused",
+            Category = "errors",
+            Source = "Lib(x) = x\nA = Lib\nB = {\n  open A\n  1\n}\n\nB",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is a callable alias, not a namespace",
+            ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
+            Notes = "Callable aliases as binding indirection (decided October 1 2026): a front-end rejection, so no elaborated Lean program exists; Lean refuses the same open with `Algorithm.requiresArguments`.",
+            Explanation = "`open` imports the members of an algorithm that needs no call. An alias is a name for a callable, never a namespace, so `open A` is rejected whatever its target is.",
         },
         new()
         {
@@ -3162,8 +3279,8 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // Every invoking slot takes the callable: the plain map, filter (also fused
-                // with count), reduce, and repeat, and a written forwarding alias or a bare
-                // exact alias of the callable (`G = Only` keeps Only's signature, FWD-02).
+                // with count), reduce, and repeat, and a written forwarding wrapper or a
+                // callable alias of the callable (`G = Only` IS Only's callable).
                 new SpecProbe("Cnt(*xs) = xs.count\nApply(f, xs) = map(xs, f)\nApply(Cnt, [1, 2])", "ok raw=L[1, 1] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])", "ok raw=2 n=1"),
@@ -5072,7 +5189,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[[(1, 2), [3], ()], [[(1, 2), [3], ()]], [4, 6]]",
             ExpectedRaw = "L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]]",
             ExpectedEmittedCount = 1,
-            Explanation = "Automatic parameter forwarding in a formula reuses the enclosing binding's kind. Both closed G(q) formulas reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items. (A lone row `G(q) = Target` forwards by name the same way — it reuses tag and items and never renames q — while a bare `H = Head` is an exact alias of Head — FWD-02.)",
+            Explanation = "Automatic parameter forwarding in a formula reuses the enclosing binding's kind. Both closed G(q) formulas reuse tag and items without gaining parameters: a collecting items is re-spread into Target's collector, preserving every structured item, while a fixed items supplies one whole list. Partial reuses x and forwards only rest into H, so H accepts zero arguments: its bare reference reads the empty-rest value under the existing Q-03 rule, while H(10, 20) explicitly supplies two items. (A lone row `G(q) = Target` forwards by name the same way — it reuses tag and items and never renames q — while a bare `H = Head` is a callable alias of Head, its callable — FWD-02.)",
         },
         new()
         {
@@ -5384,10 +5501,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(0) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(5)\n}\nF(n) = n\nF(0)", "ok raw=5 n=1"),
                 new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper(x) = x\n  }\n  Helper(n)\n}\nF(5)", "ok raw=5 n=1"),
                 // The block is isolated from the opener like every open target: a bare name inside
-                // it is the helper's own implicit parameter, so a bare reference to the helper is
-                // the ordinary zero-argument arity failure — exactly as through the named open.
-                new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper\n}\nF(5)", "err arity"),
-                new SpecProbe("Helpers = {\n  public Helper = n\n}\nF(0) = 0\nF(n) = {\n  open Helpers\n  Helper\n}\nF(5)", "err arity"),
+                // it is the helper's own implicit parameter, never the branch binder ...
+                new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper(n + 1)\n}\nF(5)", "ok raw=6 n=1"),
+                // ... so a lone row naming the helper is bare forwarding, which supplies that
+                // parameter from the branch binder of the same name — exactly as through the named
+                // open.
+                new SpecProbe("F(0) = 0\nF(n) = {\n  open {\n    public Helper = n\n  }\n  Helper\n}\nF(5)", "ok raw=5 n=1"),
+                new SpecProbe("Helpers = {\n  public Helper = n\n}\nF(0) = 0\nF(n) = {\n  open Helpers\n  Helper\n}\nF(5)", "ok raw=5 n=1"),
                 // Outside the branch the name resolves to nothing: the enclosing algorithm treats
                 // it as its own implicit parameter.
                 new SpecProbe("Outer = {\n  F(0) = {\n    open { public Helper = 5 }\n    1\n  }\n  F(n) = n\n  F(0), Helper\n}\nOuter(7)", "ok raw=S[1, 7] n=1"),
@@ -5760,7 +5880,7 @@ public static class LanguageSpecCorpus
                 // a documented unmodeled gap in the Lean core, so the Lean-compared program
                 // above uses operator, comparison, list, and index positions).
                 new SpecProbe("Cnt(*xs) = xs.count\nabs(Cnt), Cnt.abs", "ok raw=S[0, 0] n=2"),
-                // The alias keeps Cnt's collecting signature (FWD-02): it takes arguments like Cnt.
+                // The alias is Cnt's callable (a callable alias): it takes arguments like Cnt.
                 new SpecProbe("Cnt(*xs) = xs.count\nAlias = Cnt\nAlias(1, 2)", "ok raw=2 n=1"),
                 // Forwarding to a callable that works with no arguments is written explicitly.
                 new SpecProbe("Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nAlias(1, 2)", "ok raw=2 n=1"),
@@ -5774,7 +5894,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair:0, last(Pair) == Pair:1", "ok raw=S[true, true] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is an exact alias instead (FWD-02): `Alias = Cnt` keeps Cnt's collecting signature, so `Alias` alone is its value `0` and `Alias(1, 2)` is 2. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
+            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is its own cached value, `0`. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
         },
         new()
         {

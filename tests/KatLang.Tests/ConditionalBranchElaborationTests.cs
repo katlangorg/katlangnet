@@ -246,12 +246,20 @@ public class ConditionalBranchElaborationTests
     public void Source_InlineBranchOpen_MatchesNamedOuterOpen(string member, string reference, int? expected)
     {
         // The inline block and an equivalent outer library make the SAME decisions inside the
-        // branch: the same elaborated branch output (a bare opened helper row is never an alias
-        // or forwarding target, in either form, so it stays bare) and the same outcome, a value
-        // or the same structured zero-argument arity failure. Only the provider's lifetime
-        // differs: the inline block exists for this branch alone.
+        // branch: the same elaborated branch output and the same outcome, a value or the same
+        // rejection. A bare opened helper row in the branch is BARE FORWARDING (FWD-02, keyed by
+        // the helper's identity, whichever route reaches it): a helper that takes the parameter
+        // `x`, which the head `0` does not bind, is the same front-end error in either form. Only
+        // the provider's lifetime differs: the inline block exists for this branch alone.
         var named = $"Helpers = {{\n    {member}\n}}\nF(0) = {{\n    open Helpers\n    {reference}\n}}\nF(n) = n\n\nF(0)";
         var inline = $"F(0) = {{\n    open {{\n        {member}\n    }}\n\n    {reference}\n}}\nF(n) = n\n\nF(0)";
+        if (expected is null)
+        {
+            Assert.Equal(DiagnosticCode.UnforwardableParameter, Assert.Single(SourceProvenance.ExpectFrontEndError(named)).Code);
+            Assert.Equal(DiagnosticCode.UnforwardableParameter, Assert.Single(SourceProvenance.ExpectFrontEndError(inline)).Code);
+            return;
+        }
+
         var namedRoot = SourceProvenance.ParseValid(named).Root;
         var inlineRoot = SourceProvenance.ParseValid(inline).Root;
         static Expr BranchOutput(Algorithm root)
@@ -677,9 +685,12 @@ public class ConditionalBranchElaborationTests
         var resolved = ImplicitArgumentResolver.Resolve(detected);
         family = Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties).Value);
         opened = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(family.Opens)).Algorithm;
-        var forward = opened.Properties.Single(property => property.Name == "Forward").Value;
-        Assert.Equal(["q"], forward.Params);
-        Assert.IsType<Expr.Call>(Assert.Single(forward.Output));
+        // `Forward`'s one row names Helper(q): a callable alias of Helper (binding indirection), whose
+        // callable — not a signature of its own — takes Helper's parameter.
+        var forward = Assert.IsType<Algorithm.Alias>(opened.Properties.Single(property => property.Name == "Forward").Value);
+        Assert.Empty(forward.Params);
+        Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(forward.Target).Name);
+        Assert.Equal(["q"], forward.ResolvedTarget!.Signature.Signature!.ParameterNames);
         var call = new Expr.Call(new Expr.Resolve("Branch"), new OutputBundle([new Expr.Num(0)]));
         var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(Assert.IsType<Algorithm.User>(resolved) with { Output = new OutputBundle([call]) }));
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
@@ -798,8 +809,10 @@ public class ConditionalBranchElaborationTests
     // read in a formula fails the ordinary zero-argument arity check. (A LONE row `G` would be
     // bare forwarding, which the head `0` cannot supply: a front-end rejection, FWD-02.)
     [InlineData("F(0) = {\n    Lib = { X = 1 }\n    G = {\n        open Lib\n        X\n    }\n    G + 0\n}\nF(n) = n\nF(0)", typeof(EvalError.ArityMismatch))]
-    // Opened callables are never implicitly forwarded, in a branch exactly as anywhere else.
-    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = k }\n    G = {\n        open Lib\n        X\n    }\n    G\n}\nF(5)", typeof(EvalError.ArityMismatch))]
+    // An opened callable is never implicitly forwarded by a FORMULA under a closed head: `G` (an
+    // alias of the opened X) read in a formula is X's zero-argument demand, which needs `k`. (A
+    // LONE row `G` would be bare forwarding, which the head `n` cannot supply: FWD-02.)
+    [InlineData("F(0) = 0\nF(n) = {\n    Lib = { public X = k }\n    G = {\n        open Lib\n        X\n    }\n    G + 0\n}\nF(5)", typeof(EvalError.ArityMismatch))]
     // A nested brace body keeps its own open implicit-parameter list: an unbound `n` in a
     // nested consumer becomes THAT body's implicit parameter (the branch acquires none), so
     // `G` read in a formula fails the zero-argument arity check exactly as an unforwarded

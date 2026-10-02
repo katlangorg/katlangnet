@@ -60,7 +60,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     [InlineData("Wrap(Pick, 10)")]
     public async Task RepeatedNames_CannotHealASeededFailure(string call)
     {
-        // `Alias = P` is an exact alias (FWD-02): `Alias(Pick, 10)` is `P(Pick, 10)`. The formula
+        // `Alias = P` is a callable alias (FWD-02): `Alias(Pick, 10)` is `P(Pick, 10)`. The formula
         // `Lifted = [P]:0` forwards by binding name: `Lifted(x) = [P(x, x)]:0`, like the written `Same`.
         const string source = "Pick = [10, 20]:(trace(randomInt(0, 3)))\nP(x, x) = x\n"
             + "Same(a) = P(a, a)\nAlias = P\nLifted = [P]:0\nWrap(a, b) = { Inner = P(a, b)\nInner }\n";
@@ -111,9 +111,9 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
 
     // Formula lifting is by binding name: each further nested repetition lifts ONE caller
     // binding per name (group shapes kept for the names that are new there — a sequence group
-    // left with one binding IS that binding, a list group keeps its brackets), an exact alias
-    // inherits the repeated signature verbatim, and the explicit wrapper with independent
-    // parameters stays an ordinary call.
+    // left with one binding IS that binding, a list group keeps its brackets), a callable alias
+    // IS the callee (its repeated signature is P's own, never copied), and the explicit wrapper
+    // with independent parameters stays an ordinary call.
     [Theory]
     [InlineData("P([[x]], x) = x", "[[x]]", new[] { "x" })]
     [InlineData("P(x, (a, x)) = a", "x, a", new[] { "x", "a" })]
@@ -126,11 +126,12 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         var formula = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Lifted").Value);
         Assert.Equal(lifted, string.Join(", ", formula.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
         Assert.Equal(names, formula.Params);
-        var alias = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Alias").Value);
+        var alias = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(p => p.Name == "Alias").Value);
         var callee = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "P").Value);
+        Assert.Empty(alias.ParameterPatterns);
         Assert.Equal(
             string.Join(", ", callee.ParameterPatterns.Select(static pattern => pattern.DisplayName)),
-            string.Join(", ", alias.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
+            string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
         SourceProvenance.ParseValid(declaration + "\nW(a, b) = P(a, b)\n0");
     }
 

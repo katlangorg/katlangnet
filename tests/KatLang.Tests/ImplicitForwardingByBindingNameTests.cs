@@ -22,10 +22,10 @@ namespace KatLang.Tests;
 /// <c>D(x) = [P(x, x)]:0</c>): the language does not distinguish them. There is no repeated-name
 /// exception anywhere in formula lifting.</para>
 ///
-/// <para>A body whose ONE row is the bare callee is NOT a formula: <c>A = P</c> is an exact alias
-/// (<c>A(x, x)</c>, P's own contract) and <c>Q(x) = P</c> is bare forwarding, which reuses Q's one
-/// binding named x by name — <c>P(x, x)</c> — and never adds or renames a parameter
-/// (<see cref="AliasAndBareForwardingTests"/>).</para>
+/// <para>A body whose ONE row is the bare callee is NOT a formula: <c>A = P</c> is a callable alias
+/// (binding indirection: A's callable IS P, with P's own contract — no signature of its own) and
+/// <c>Q(x) = P</c> is bare forwarding, which reuses Q's one binding named x by name — <c>P(x, x)</c>
+/// — and never adds or renames a parameter (<see cref="AliasAndBareForwardingTests"/>).</para>
 ///
 /// <para>Q-05 is unchanged: a repeated name stays a compatibility constraint over INDEPENDENTLY
 /// supplied arguments, so the direct <c>P(7, 8)</c> still fails. Forwarding supplies the SAME
@@ -38,8 +38,8 @@ namespace KatLang.Tests;
 /// arguments), six execution routes with host-call logs, the metamorphic law that implicit
 /// forwarding is observationally the explicit call that writes the same caller binding into every
 /// matching callee slot, the rename-apart law, and an invariant — checked over every program here
-/// and the whole executable specification — that no inferred signature repeats a name, an exact
-/// alias's inherited signature (its callee's own) excepted.</para>
+/// and the whole executable specification — that no inferred signature repeats a name (a callable
+/// alias has no signature of its own at all).</para>
 /// </summary>
 public class ImplicitForwardingByBindingNameTests
 {
@@ -49,6 +49,13 @@ public class ImplicitForwardingByBindingNameTests
 
     private static Algorithm.User Property(Algorithm.User root, string name)
         => Assert.IsType<Algorithm.User>(root.Properties.Single(property => property.Name == name).Value);
+
+    /// <summary>A callable alias's target signature as a programmer would write it: the alias IS its target.</summary>
+    private static string AliasTargetSignature(Algorithm.User root, string name)
+    {
+        var alias = Assert.IsType<Algorithm.Alias>(root.Properties.Single(property => property.Name == name).Value);
+        return string.Join(", ", alias.ResolvedTarget!.Signature.Signature!.ParameterPatterns.Select(static pattern => pattern.DisplayName));
+    }
 
     /// <summary>A signature's parameter patterns as a programmer would write them (<c>x, (a)</c>).</summary>
     private static string Signature(Algorithm.User algorithm)
@@ -111,7 +118,7 @@ public class ImplicitForwardingByBindingNameTests
             "err ArityMismatch: Callable `Some(x)` expects 1 argument, but was called with 2 arguments.",
             await Outcome(P + Formula + "Some(7, 7)"));
 
-        // The bare row is not a formula: an exact alias keeps P's two independent arguments.
+        // The bare row is not a formula: a callable alias IS P, with its two independent arguments.
         Assert.Equal("ok 7", await Outcome(P + "Some = P\nSome(7, 7)"));
     }
 
@@ -205,8 +212,8 @@ public class ImplicitForwardingByBindingNameTests
     /// THE NAME DEDUPLICATION LAW: whatever the number of occurrences of a name in the callee's
     /// patterns — at the top level, inside one group, across groups, beside a collector — formula
     /// lifting introduces ONE caller binding for it, in first-occurrence order; the synthesized call
-    /// feeds that binding to every occurrence; and the formula evaluates on every route. (The exact
-    /// alias of the same callee inherits its signature verbatim instead.)
+    /// feeds that binding to every occurrence; and the formula evaluates on every route. (A callable
+    /// alias of the same callee is the callee itself: P's own signature, never a lifted one.)
     /// </summary>
     [Theory]
     [MemberData(nameof(ShapeIndexes))]
@@ -222,7 +229,7 @@ public class ImplicitForwardingByBindingNameTests
         Assert.Equal(callee.Params.Distinct(StringComparer.Ordinal), lifted.Params);
         Assert.Equal(0, lifted.ForwardingParameterStart);
         Assert.Equal(shape.ForwardedArguments, Arguments(CallTo(lifted).Args));
-        Assert.Equal(shape.Parameters, Signature(Property(root, "Alias")));
+        Assert.Equal(shape.Parameters, AliasTargetSignature(root, "Alias"));
         AssertNoInferredSignatureRepeatsAName(root, shape.Parameters);
 
         Assert.Equal(shape.Expected, await Outcome(source));
@@ -402,9 +409,9 @@ public class ImplicitForwardingByBindingNameTests
         Assert.Empty(inner.Params);
         Assert.Equal("x, x", Arguments(CallTo(inner).Args));
 
-        // A bare local alias is not a formula: it keeps P's own signature, whatever Outer binds.
-        var alias = Property(Property(SourceProvenance.ParseValid(P + "Outer(x) = {\n  Inner = P\n  Inner(x, x)\n}\nOuter(7)").Root, "Outer"), "Inner");
-        Assert.Equal("x, x", Signature(alias));
+        // A bare local alias is not a formula: it is P itself, with P's own signature, whatever Outer binds.
+        var outerWithAlias = Property(SourceProvenance.ParseValid(P + "Outer(x) = {\n  Inner = P\n  Inner(x, x)\n}\nOuter(7)").Root, "Outer");
+        Assert.Equal("x, x", AliasTargetSignature(outerWithAlias, "Inner"));
     }
 
     // ── 5. Every lifting position: implicit forwarding is the explicit call ─────────
@@ -506,7 +513,11 @@ public class ImplicitForwardingByBindingNameTests
         var root = SourceProvenance.ParseValid(Declaration(shape) + template.Replace("@", "P", StringComparison.Ordinal)).Root;
 
         AssertNoInferredSignatureRepeatsAName(root, $"{shape.Parameters} / {template}");
-        var owner = Property(root, "D");
+        // A body whose one row is its own lifting member (`D = { Inner = [P]:0 ⏎ Inner }`) is a callable
+        // alias of that member: the lifting owner is the member, which the alias calls directly.
+        var owner = root.Properties.Single(property => property.Name == "D").Value is Algorithm.Alias aliasOfMember
+            ? Assert.IsType<Algorithm.User>(aliasOfMember.Properties.Single(property => property.Name == "Inner").Value)
+            : Property(root, "D");
         Assert.Equal(names, owner.Params);
         var calls = AllCallsTo(owner);
         Assert.NotEmpty(calls);
@@ -565,7 +576,7 @@ public class ImplicitForwardingByBindingNameTests
         { "explicit-two", P + "Both(a, b) = P(a, b)\nBoth(7, 8)", "err ArityMismatch: while evaluating call to Both: while evaluating call to P: Bad arity" },
         { "nested-group-forwarded", "N(x, (x, y)) = y\nSome = [N]:0\nSome(7, 8)", "ok 8" },
         { "collector-forwarded", "C(x, *r, x) = x, r\nSome = [C]:0\nSome(7, 9)", "ok S[7, L[9]]" },
-        // The exact alias is not a formula: it keeps P's two independent arguments (Q-05).
+        // The callable alias is not a formula: it IS P, with its two independent arguments (Q-05).
         { "alias-equal", P + "Some = P\nSome(7, 7)", "ok 7" },
         { "alias-unequal", P + "Some = P\nSome(7, 8)", "err ArityMismatch: while evaluating call to Some: Bad arity" },
     };
@@ -604,8 +615,9 @@ public class ImplicitForwardingByBindingNameTests
 
     /// <summary>
     /// Removing the refusal widens nothing: neutral positions still pass the callable itself,
-    /// callees and dot fallbacks still receive written arguments, a bare root row is still the
-    /// callable's own zero-argument demand, and a clause family is still never aliased (PV-14).
+    /// callees and dot fallbacks still receive written arguments, and a bare root row is still the
+    /// callable's own zero-argument demand. A clause family's lone row is a CALLABLE ALIAS (binding
+    /// indirection, October 2026): <c>Alias(1, 1)</c> is the family's own dispatch.
     /// </summary>
     [Theory]
     [InlineData(P + "Apply(f) = f(4, 4)\nApply(P)", "ok 4")]
@@ -616,7 +628,8 @@ public class ImplicitForwardingByBindingNameTests
     [InlineData(P + "P", "err ArityMismatch: Property 'P' expects 2 parameters, but was called with 0 arguments.")]
     [InlineData(P + "7.P", "err ArityMismatch: Callable `P(x, x)` expects 2 arguments, but was called with 1 argument.")]
     [InlineData(P + "map([1, 2], P)", "err ArityMismatch: while evaluating call to map: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Expected 2 parameters, but was called with 1 argument.")]
-    [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 1)", "err ArityMismatch: Callable `Alias` expects 0 arguments, but was called with 2 arguments.")]
+    [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 1)", "ok true")]
+    [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 2)", "ok false")]
     public async Task PositionsThatNeverForward_AreUnchanged(string source, string expected)
     {
         SourceProvenance.ParseValid(source);
@@ -860,8 +873,8 @@ public class ImplicitForwardingByBindingNameTests
     /// <summary>
     /// Across the whole executable specification, every algorithm whose signature is INFERRED (no
     /// written parameter list) binds each parameter name once — forwarding never turns a callee's
-    /// repeated occurrences into repeated caller parameters. An exact alias is exempt: its signature
-    /// is not inferred but INHERITED, verbatim, from its callee.
+    /// repeated occurrences into repeated caller parameters. A callable alias is exempt: it declares
+    /// no signature of its own — its callable IS its target's.
     /// </summary>
     [Fact]
     public void NoInferredSignatureRepeatsAName_AcrossTheLanguageSpecCorpus()
@@ -883,32 +896,13 @@ public class ImplicitForwardingByBindingNameTests
     {
         foreach (var algorithm in AllUserAlgorithms(root))
         {
-            if (algorithm.HasExplicitParameterList || IsExactAlias(algorithm))
+            if (algorithm.HasExplicitParameterList)
                 continue;
             var names = algorithm.Params;
             Assert.True(
                 names.Distinct(StringComparer.Ordinal).Count() == names.Count,
                 $"{context}: an inferred signature repeats a name: ({string.Join(", ", names)})");
         }
-    }
-
-    /// <summary>
-    /// An exact alias: every parameter inherited (forwarded, none written or inferred), and one row
-    /// that calls the callee with exactly those parameters rebuilt.
-    /// </summary>
-    private static bool IsExactAlias(Algorithm.User algorithm)
-    {
-        if (algorithm.ForwardingParameterStart != 0 || algorithm.Output.Count != 1)
-            return false;
-        var arguments = algorithm.Output[0] switch
-        {
-            Expr.Call call => call.Args,
-            Expr.DotCall { Args: { } args } => args,
-            _ => null,
-        };
-        var rebuilt = System.Text.RegularExpressions.Regex.Replace(
-            Signature(algorithm), @"\*([A-Za-z_][A-Za-z_0-9]*)", "$1*");
-        return arguments is not null && Arguments(arguments) == rebuilt;
     }
 
     private static IEnumerable<Algorithm.User> AllUserAlgorithms(Algorithm root)
@@ -933,6 +927,10 @@ public class ImplicitForwardingByBindingNameTests
                 case Algorithm.Conditional conditional:
                     foreach (var branch in conditional.Branches)
                         pending.Push(branch.Body);
+                    break;
+                case Algorithm.Alias alias:
+                    foreach (var property in alias.Properties)
+                        pending.Push(property.Value);
                     break;
             }
         }

@@ -269,11 +269,14 @@ public class EvaluatorErrorDiagnosticTests
     /// Final hostile pass (September 2026): a builtin value demand inside a CALL context
     /// (`F(v) = v + sum`) carries the Lean-aligned placeholder Expected = 0 beside its real
     /// signature; the call arm used to render the raw pair ("Expected 0 parameters, but was
-    /// called with 0 arguments"). The signature is rendered first wherever it is carried.
+    /// called with 0 arguments"). The signature is rendered first wherever it is carried. (A
+    /// lone `F(v) = sum` is bare forwarding, refused at the front end because `v` does not
+    /// supply `collection`; the operand block `{ sum }` is a callable alias of sum whose value
+    /// read is sum's own zero-argument demand.)
     /// </summary>
     [Theory]
     [InlineData("F(v) = v + sum\nF(1)")]
-    [InlineData("F(v) = sum\nF(1)")]
+    [InlineData("F(v) = v + { sum }\nF(1)")]
     [InlineData("F(v) = { v + count }\nF(1)")]
     public void Eval_BuiltinValueDemandInsideACall_RendersTheSignature(string source)
     {

@@ -400,19 +400,25 @@ public static class SemanticModelBuilder
             _observations?.RecordSemanticModelAlgorithmVisit();
             switch (algorithm)
             {
-                case Algorithm.User user:
-                    VisitUserAlgorithm(user, parentScope, extraParameters, regionSeedSpan);
+                // A callable alias is a scope body like a user algorithm's: its own opens and
+                // declarations, and its one written row — the target reference, an ordinary
+                // reference site (go-to-definition from the row reaches the target).
+                case Algorithm.User or Algorithm.Alias:
+                    VisitScopeBody(algorithm, parentScope, extraParameters, regionSeedSpan);
                     break;
                 case Algorithm.Conditional conditional:
                     VisitConditionalAlgorithm(conditional, parentScope, regionSeedSpan);
                     break;
                 case Algorithm.Builtin:
                     break;
+                default:
+                    throw new InvalidOperationException(
+                        $"Unhandled Algorithm variant in {nameof(SemanticModelBuilder)}.{nameof(VisitAlgorithm)}: {algorithm.GetType().Name}.");
             }
         }
 
-        private void VisitUserAlgorithm(
-            Algorithm.User algorithm,
+        private void VisitScopeBody(
+            Algorithm algorithm,
             ScopeFrame parentScope,
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
             SourceSpan? regionSeedSpan = null)
@@ -1607,16 +1613,92 @@ public static class SemanticModelBuilder
                     exposure,
                     documentLocalSpans ? declarationSpans : null,
                     documentLocalSpans),
+                Algorithm.Alias alias => CreateAliasPropertyInfo(name, alias, declaration, isPublic, exposure, templateMetadata),
                 // A symbol carrying no algorithm keeps the ordinary shape; a Builtin never
                 // reaches this switch (handled above) but the closed hierarchy is named in full.
                 null or Algorithm.Builtin => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
         }
 
+        /// <summary>
+        /// A CALLABLE ALIAS (FWD-02, binding indirection) shows its TARGET's callable surface under
+        /// its own name — the target's parameters (spanless: they are declared by the target, not
+        /// by the alias), its call styles and its dot-call support — and names the target through
+        /// <see cref="PropertyInfo.AliasTarget"/> (<c>C(collection)</c>, alias of
+        /// <c>count(collection)</c>). The binding itself stays the alias's: its declaration,
+        /// visibility and exposure. An alias with no recorded target (a host-built tree) shows no
+        /// parameters. The target's surface is built once per target and shared by every alias of
+        /// it (K aliases of one W-wide target hold O(K + W) metadata, like FE-3's templates); only
+        /// the alias-named display texts are per alias, composed on first read.
+        /// </summary>
+        private static PropertyInfo CreateAliasPropertyInfo(
+            string name,
+            Algorithm.Alias alias,
+            DeclarationOccurrence? declaration,
+            bool isPublic,
+            PropertyExposure exposure,
+            TemplatePropertyMetadataCache? templateMetadata)
+        {
+            if (alias.ResolvedTarget is not { } target)
+                return new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []);
+
+            var surface = templateMetadata?.AliasSurfaceFor(target, BuildAliasSurface) ?? BuildAliasSurface(target);
+            var signatures = new List<PropertySignatureInfo>(surface.Signatures.Count);
+            foreach (var (callStyle, parameters) in surface.Signatures)
+            {
+                signatures.Add(new PropertySignatureInfo(
+                    callStyle,
+                    () => callStyle == PropertyCallStyle.Dot
+                        ? FormatReceiverInjectedSignature(name, surface.ReceiverName, parameters)
+                        : CallableSignature.FormatDisplayText(name, parameters.Select(static parameter => parameter.DisplayName)),
+                    parameters));
+            }
+
+            return new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, surface.Parameters, [])
+            {
+                Signatures = signatures,
+                PreferredCallStyle = surface.PreferredCallStyle,
+                SupportsLexicalDotCall = surface.SupportsLexicalDotCall,
+                AliasTarget = surface.AliasTarget,
+            };
+        }
+
+        /// <summary>The callable surface of an alias target, shared by every alias of it.</summary>
+        internal sealed record AliasSurface(
+            SharedPropertyParameterList Parameters,
+            IReadOnlyList<(PropertyCallStyle CallStyle, SharedPropertyParameterList Parameters)> Signatures,
+            PropertyCallStyle PreferredCallStyle,
+            bool SupportsLexicalDotCall,
+            string ReceiverName,
+            PropertyAliasTargetInfo AliasTarget);
+
+        private static AliasSurface BuildAliasSurface(ImplicitArgumentResolver.AliasTarget target)
+        {
+            var kind = target.Algorithm is Algorithm.Builtin ? SymbolKind.Builtin : SymbolKind.Property;
+            var targetSurface = CreatePropertyInfo(
+                target.DisplayName, kind, target.Algorithm, declaration: null, isPublic: true, PropertyExposure.Exported, declarationSpans: null, moduleProvided: true);
+            var targetDisplay = target.Signature.Unnameable is not null
+                ? $"{target.DisplayName} (clause family without nameable positions)"
+                : targetSurface.DisplaySignature;
+            var plain = targetSurface.FindSignature(PropertyCallStyle.Plain)?.Parameters ?? targetSurface.Parameters;
+            return new AliasSurface(
+                Share(targetSurface.Parameters),
+                [.. targetSurface.Signatures.Select(static signature => (signature.CallStyle, Share(signature.Parameters)))],
+                targetSurface.PreferredCallStyle,
+                targetSurface.SupportsLexicalDotCall,
+                plain.Count > 0 ? plain[0].Name : string.Empty,
+                new PropertyAliasTargetInfo(target.DisplayName, targetDisplay));
+
+            static SharedPropertyParameterList Share(IReadOnlyList<PropertyParameterInfo> parameters)
+                => parameters as SharedPropertyParameterList ?? new SharedPropertyParameterList([.. parameters]);
+        }
+
         private static bool SupportsLexicalDotCall(Algorithm? algorithm)
             => algorithm switch
             {
                 Algorithm.User user => user.ParameterPatterns.Count > 0,
+                // An alias is called as its target, so it takes a dot receiver exactly when the target does.
+                Algorithm.Alias alias => alias.ResolvedTarget is { } aliasTarget && SupportsLexicalDotCall(aliasTarget.Algorithm),
                 Algorithm.Conditional conditional =>
                     ConditionalSignatureHead(conditional)?.TopLevelArity() > 0,
                 Algorithm.Builtin(var builtin) =>
@@ -1755,6 +1837,34 @@ public static class SemanticModelBuilder
         {
             private readonly Dictionary<(ImplicitSignatureTemplate Template, CallableParameterSource Source, bool DocumentLocalSpans), TemplatePropertyMetadata> _metadata
                 = new(new MetadataKeyComparer());
+
+            // One callable surface per alias TARGET (exact algorithm reference and display name), shared
+            // by every alias of it.
+            private readonly Dictionary<(Algorithm Target, string DisplayName), AliasSurface> _aliasSurfaces
+                = new(new AliasSurfaceKeyComparer());
+
+            public AliasSurface AliasSurfaceFor(
+                ImplicitArgumentResolver.AliasTarget target,
+                Func<ImplicitArgumentResolver.AliasTarget, AliasSurface> build)
+            {
+                var key = (target.Algorithm, target.DisplayName);
+                if (!_aliasSurfaces.TryGetValue(key, out var surface))
+                {
+                    surface = build(target);
+                    _aliasSurfaces.Add(key, surface);
+                }
+
+                return surface;
+            }
+
+            private sealed class AliasSurfaceKeyComparer : IEqualityComparer<(Algorithm Target, string DisplayName)>
+            {
+                public bool Equals((Algorithm Target, string DisplayName) x, (Algorithm Target, string DisplayName) y)
+                    => ReferenceEquals(x.Target, y.Target) && string.Equals(x.DisplayName, y.DisplayName, StringComparison.Ordinal);
+
+                public int GetHashCode((Algorithm Target, string DisplayName) key)
+                    => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Target), StringComparer.Ordinal.GetHashCode(key.DisplayName));
+            }
 
             /// <summary>
             /// The metadata of <paramref name="template"/>: shared for a flat template; for a composed

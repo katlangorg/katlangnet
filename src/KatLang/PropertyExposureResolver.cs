@@ -339,7 +339,10 @@ internal static class PropertyExposureResolver
         ExposureRun run)
         => algorithm switch
         {
-            Algorithm.User user => ProcessUserAlgorithm(user, parent, summaryMemo, observations, run),
+            // A callable alias is a scope body like a user algorithm's — its own opens and
+            // declarations, and its one row, the target reference it reads — so its exposure is
+            // computed from that read exactly as a body whose one row names its target.
+            Algorithm.User or Algorithm.Alias => ProcessScopeBody(algorithm, parent, summaryMemo, observations, run),
             // A family reached outside any region (a host root, or a deferred branch's own
             // demand-time elaboration) opens a region of its own.
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
@@ -348,8 +351,8 @@ internal static class PropertyExposureResolver
             Algorithm.Builtin => algorithm,
         };
 
-    private static Algorithm ProcessUserAlgorithm(
-        Algorithm.User algorithm,
+    private static Algorithm ProcessScopeBody(
+        Algorithm algorithm,
         SummaryScope parent,
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
         FrontEndTraversalObservations? observations,
@@ -420,11 +423,22 @@ internal static class PropertyExposureResolver
             new ExposureWalkMemos(summaryMemo, observations, finalLevel.Root, run));
         var rewrittenOutput = RewriteExprList(algorithm.Output, memos);
 
-        return algorithm with
+        return algorithm switch
         {
-            Opens = rewrittenOpens,
-            Properties = rewrittenProperties,
-            Output = OutputBundle.From(rewrittenOutput),
+            Algorithm.User user => user with
+            {
+                Opens = rewrittenOpens,
+                Properties = rewrittenProperties,
+                Output = OutputBundle.From(rewrittenOutput),
+            },
+            Algorithm.Alias alias => alias with
+            {
+                Opens = rewrittenOpens,
+                Properties = rewrittenProperties,
+                Target = rewrittenOutput[0],
+            },
+            Algorithm.Builtin or Algorithm.Conditional => throw new InvalidOperationException(
+                "Only a scope body (a user algorithm or a callable alias) has scope-body exposure."),
         };
     }
 

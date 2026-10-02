@@ -163,6 +163,19 @@ internal sealed class StructuralOwnerIdentity
     internal static StructuralOwnerIdentity FromPropertyOwner(Algorithm owner)
         => FromOwner(owner, includeDeclaration: true);
 
+    /// <summary>
+    /// The resolving identity of a SCOPE chain itself — each level's opens and properties, from
+    /// <paramref name="scope"/> outward — with no owner declaration: what a name looked up from a
+    /// body wired under <paramref name="scope"/> can select. A null scope is the empty chain.
+    /// </summary>
+    internal static StructuralOwnerIdentity FromScope(ScopeCtx? scope)
+    {
+        var scopeChain = new List<ScopeComponent>();
+        for (var level = scope; level is not null; level = level.Parent)
+            scopeChain.Add(new ScopeComponent(level.Opens, level.Properties));
+        return new StructuralOwnerIdentity([.. scopeChain]);
+    }
+
     public override bool Equals(object? obj)
     {
         if (obj is not StructuralOwnerIdentity other

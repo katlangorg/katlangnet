@@ -634,6 +634,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (alg is Algorithm.Alias)
+            return EvalInlineAliasValue(expr, alg, ctx, valEnv);
+
         var wired = WireToCaller(ctx, alg);
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)

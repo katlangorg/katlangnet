@@ -39,10 +39,11 @@ public class AlgorithmOwnershipTests
     [Fact]
     public void LiftedParameters_JoinAnInferredSignature_AndNeverAWrittenOne()
     {
-        // `Use = Need` forwards Need's parameter: Use acquires `v` by lifting and stays an
-        // inferred signature; the lifted capture is Need's own declaration record (it carries
-        // Need's span), which is why explicitness is a FACT of the owner, not of its captures.
-        var root = SourceProvenance.ParseValid("Need(v) = v\nUse = Need\nUse(7)").Root;
+        // The formula `Use = Need + 0` forwards Need's parameter: Use acquires `v` by lifting and
+        // stays an inferred signature; the lifted capture is Need's own declaration record (it
+        // carries Need's span), which is why explicitness is a FACT of the owner, not of its
+        // captures. (The lone row `Use = Need` is a callable alias instead: no parameter at all.)
+        var root = SourceProvenance.ParseValid("Need(v) = v\nUse = Need + 0\nUse(7)").Root;
         var need = UserProperty(root, "Need");
         var use = UserProperty(root, "Use");
 

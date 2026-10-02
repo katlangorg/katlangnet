@@ -807,9 +807,9 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void AliasesAndForwarding_KeepTheCallbackLaw()
     {
-        // The written forwarding alias `Alias(*xs) = Cnt(xs*)` and the bare exact alias
-        // `Bare = Cnt` (FWD-02: it inherits Cnt's collecting signature — see the end of this
-        // test) both keep the callback law.
+        // The written forwarding alias `Alias(*xs) = Cnt(xs*)` and the bare callable alias
+        // `Bare = Cnt` (FWD-02: it IS Cnt's callable — see the end of this test) both keep the
+        // callback law.
         const string defs =
             "Cnt(*xs) = xs.count\nAlias(*xs) = Cnt(xs*)\nApply(f, xs) = map(xs, f)\n" +
             "Forward(g, xs) = Apply(g, xs)\nForward2(h, xs) = Forward(h, xs)\n" +
@@ -836,7 +836,7 @@ public class ExplicitValueOpeningTests
         Assert.Equal("2", Display(defs + "Cnt([10, 7]*)"));
         Assert.Equal("2", Display(defs + "Alias([10, 7]*)"));
 
-        // The BARE alias is an exact alias of Cnt (FWD-02, superseding Q-03's alias clause):
+        // The BARE alias is a callable alias of Cnt (FWD-02, superseding Q-03's alias clause):
         // read bare it is its zero-argument value, and a callback slot passes each element as
         // ONE argument to it exactly as to Cnt.
         const string bare = "Cnt(*xs) = xs.count\nBare = Cnt\n";

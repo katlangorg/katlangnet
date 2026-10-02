@@ -466,12 +466,42 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void NestedForwardingCalls_ChargeExactlyOneInvocationPerCall()
     {
-        const string source = "Step = {\n    A = x + 1\n    B = A + 1\n    B\n}\nStep.repeat(3, 0)";
+        // The output is a formula, so the step lifts B into the forwarding call `B(x)`, whose
+        // body forwards again into `A(x)`: two calls, two invocation levels beneath the loop.
+        const string source = "Step = {\n    A = x + 1\n    B = A + 1\n    B + 0\n}\nStep.repeat(3, 0)";
 
         var (plan, peakDepth) = AssertSameSuccessAndPeakDepth(source, 6m);
-        Assert.Equal("TempCall(B)", OutputSummary(plan));
+        Assert.Equal("Add(TempCall(B), Const(0))", OutputSummary(plan));
         Assert.Equal(2, peakDepth);
         AssertSameDepthBoundary(source, peakDepth);
+    }
+
+    [Fact]
+    public void AliasStep_IsTheTargetItself_NotAnInvocation()
+    {
+        // A lone row naming a parameterized member makes the step a callable alias of it
+        // (binding indirection): the loop invokes the target directly, so the alias level
+        // charges nothing — exactly the steps and depth of passing the target itself, and one
+        // invocation level fewer than the formula `A + 0`, whose forwarding call `A(x)` is a
+        // real call — on the generic and the planned path alike.
+        const string alias = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A\n}\nStep.repeat(3, 0)";
+        const string direct = "A = if(x < 100, x + 1, 0)\nA.repeat(3, 0)";
+        const string formula = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A + 0\n}\nStep.repeat(3, 0)";
+
+        var (aliasPlan, aliasDepth) = AssertSameSuccessAndPeakDepth(alias, 3m);
+        var (_, directDepth) = AssertSameSuccessAndPeakDepth(direct, 3m);
+        var (formulaPlan, formulaDepth) = AssertSameSuccessAndPeakDepth(formula, 3m);
+        Assert.Equal(directDepth, aliasDepth);
+        Assert.Equal(formulaDepth - 1, aliasDepth);
+        Assert.Equal("Step.A.repeat", aliasPlan.Identity);
+        Assert.Equal("Step.repeat", formulaPlan.Identity);
+        Assert.Empty(aliasPlan.Temps);
+        foreach (var optimized in new[] { false, true })
+        {
+            Assert.Equal(
+                Observe(direct, optimized).Budget.ConsumedSteps,
+                Observe(alias, optimized).Budget.ConsumedSteps);
+        }
     }
 
     [Theory]
@@ -768,11 +798,11 @@ public class LoopPlannedChokepointParityTests
         // `A(x)` is one invocation and the `if` inside it one more level: depth 2 beneath
         // the loop. One below that, the rejected level is the `if`'s condition, stamped
         // with the `if` call's span by its own boundary and left alone by the call's.
-        const string source = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A\n}\nStep.repeat(3, 0)";
+        const string source = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A + 0\n}\nStep.repeat(3, 0)";
 
         var (plan, peakDepth) = AssertSameSuccessAndPeakDepth(source, 3m);
         Assert.Equal(2, peakDepth);
-        Assert.Equal("TempCall(A)", OutputSummary(plan));
+        Assert.Equal("Add(TempCall(A), Const(0))", OutputSummary(plan));
 
         var error = AssertSameDepthBoundary(source, peakDepth);
         Assert.Empty(ContextChain(error));
@@ -787,7 +817,7 @@ public class LoopPlannedChokepointParityTests
         var source = """
             Step = {
                 A = x / 0
-                A
+                A + 0
             }
             Step.repeat(3, 1)
             """;
@@ -798,6 +828,12 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(
             ["while evaluating dotCall .repeat of Step", "while evaluating call to A"],
             ContextChain(error));
+
+        // A lone row `A` makes the step a callable alias of A: the loop runs A itself, and no
+        // call to A was written or made, so no call frame names it.
+        var aliasError = AssertOptimizerTransparentFailure(source.Replace("    A + 0\n", "    A\n", StringComparison.Ordinal));
+        Assert.IsType<EvalError.DivByZero>(Innermost(aliasError));
+        Assert.Equal(["while evaluating dotCall .repeat of Step"], ContextChain(aliasError));
     }
 
     [Fact]

@@ -712,6 +712,7 @@ public class LeanAstEncoderTests
             [nameof(Algorithm.User)] = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]),
             [nameof(Algorithm.Conditional)] = new Algorithm.Conditional(null, [], []),
             [nameof(Algorithm.Builtin)] = new Algorithm.Builtin(BuiltinId.count),
+            [nameof(Algorithm.Alias)] = new Algorithm.Alias(null, [], [], new Expr.Resolve("count")),
         };
 
         Assert.Equal(variants.OrderBy(n => n, StringComparer.Ordinal), samples.Keys.OrderBy(n => n, StringComparer.Ordinal));

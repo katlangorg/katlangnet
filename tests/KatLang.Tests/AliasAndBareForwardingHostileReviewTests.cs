@@ -1,12 +1,13 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// The hostile review of aliases and bare forwarding (FWD-02, decided September 29–30 2026). Each
-/// row attacks one of the three laws — an exact alias has its target's callable contract; bare
+/// The hostile review of aliases and bare forwarding (FWD-02, decided September 29–30 2026; aliases
+/// are binding indirection since October 1 2026). Each row attacks one of the three laws — a callable
+/// alias IS its target's callable, with the target's contract; bare
 /// forwarding hands its callee the EXISTING bindings of the callee's own parameter names, never
 /// renamed, reshaped, positional or added; a written call infers only the names written in it —
 /// with a combination the main suite (<see cref="AliasAndBareForwardingTests"/>)
-/// does not generate: a property or an enclosing parameter sharing an inherited name, a callee whose
+/// does not generate: a property or an enclosing parameter sharing the target's parameter name, a callee whose
 /// signature came from Grace or a dot edge, an alias inside a structural member, redundant
 /// grouping, repeated or binderless clause heads, callbacks and dot calls, host effects and the
 /// zero-argument cache. Every row runs on every execution route
@@ -64,12 +65,12 @@ public class AliasAndBareForwardingHostileReviewTests
 
     public static TheoryData<string, string, string> Programs => new()
     {
-        // ── An exact alias has its target's callable contract ────────────────────────────
-        // The inherited `x` is F's private binder name: the alias's own property `x` is legal, and
-        // the synthesized call reads the PARAMETER, never the property of the same spelling.
+        // ── A callable alias IS its target's callable, with the target's contract ─────────────
+        // `x` is F's own private binder name: the alias declares no parameter, so its own property `x`
+        // is legal, and the call through it binds F's PARAMETER, never the property of that spelling.
         { "inherited-parameter-not-the-property", "F(x) = x + 1\nA = {\n    x = 100\n    F\n}\nA(5)", "ok 6" },
         { "alias-property-reads-its-own-name", "F(x) = x + 1\nA = {\n    x = 100\n    y = x * 2\n    F\n}\nA(5), A.y", "ok S[6, 200]" },
-        // The callee's final signature order — Grace-reordered, or dot-edge inferred — is inherited.
+        // The callee's final signature order — Grace-reordered, or dot-edge inferred — is the alias's callable's.
         { "alias-keeps-a-grace-order", "F = b - ~a\nA = F\nA(10, 3), F(10, 3)", "ok S[-7, -7]" },
         { "alias-keeps-a-dot-inferred-order", "K = a.t(b)\nA = K\nA(7, { x + y }, 1), K(7, { x + y }, 1)", "ok S[8, 8]" },
         // A repeated name beside a collector survives a three-level chain, and its constraint is
@@ -124,12 +125,16 @@ public class AliasAndBareForwardingHostileReviewTests
         { "deconstruction-beside-the-row-is-a-formula", "P(x, x) = x\nA = {\n    a, b = 1, 2\n    P\n}\nA(7)", "ok 7" },
         { "deconstruction-beside-the-row-takes-one-name", "P(x, x) = x\nA = {\n    a, b = 1, 2\n    P\n}\nA(7, 7)", "err ArityMismatch: Callable `A(x)` expects 1 argument, but was called with 2 arguments." },
         { "deconstruction-infers-its-own-names-first", "F(x) = x + 1\nA = {\n    a, b = p, q\n    F\n}\nA(1, 2, 3)", "ok 4" },
-        // Not alias targets (PV-14 / Q-13, PV-26 / Q-12; a clause family is pinned in the main
-        // suite): the row stays a zero-argument demand.
-        { "non-math-builtin-is-no-alias-target", "A = { if }\nA(true, 1, 2)", "err ArityMismatch: Callable `A` expects 0 arguments, but was called with 3 arguments." },
+        // ALIAS TARGETS BY IDENTITY (binding indirection, October 2026): every parameterized callable
+        // is aliasable whatever route resolves it — a builtin (`if` keeps its laziness), an opened
+        // member, a dotted member (a clause family is pinned in the main suite).
+        { "builtin-is-an-alias-target", "A = { if }\nA(true, 1, 2)", "ok 1" },
+        { "builtin-alias-keeps-its-laziness", "A = { if }\nA(true, 1, 1 / 0)", "ok 1" },
+        { "opened-member-is-an-alias-target", "open Lib\nLib = { public F(x) = x + 1 }\nA = F\nA(5)", "ok 6" },
+        { "dotted-member-is-an-alias-target", "Lib = { public F(x) = x + 1 }\nA = Lib.F\nA(5)", "ok 6" },
+        // A reference with no static identity is never an alias: a callable PARAMETER is known only at
+        // run time, so the row stays a zero-argument demand.
         { "callable-parameter-is-no-alias-target", "F(x) = x + 1\nG(F) = {\n    A = F\n    A(1)\n}\nG(F)", "err ArityMismatch: while evaluating call to G: Callable `A` expects 0 arguments, but was called with 1 argument." },
-        { "opened-member-is-no-alias-target", "open Lib\nLib = { public F(x) = x + 1 }\nA = F\nA(5)", "err ArityMismatch: Callable `A` expects 0 arguments, but was called with 1 argument." },
-        { "dotted-member-is-no-alias-target", "Lib = { public F(x) = x + 1 }\nA = Lib.F\nA(5)", "err ArityMismatch: Callable `A` expects 0 arguments, but was called with 1 argument." },
         { "shadowed-math-name-is-a-value", "sin = 5\nA = sin\nA", "ok 5" },
     };
 
@@ -165,10 +170,11 @@ public class AliasAndBareForwardingHostileReviewTests
     }
 
     /// <summary>
-    /// Mutually dependent lone rows elaborate identically in either declaration order: the alias
-    /// `A = B` inherits B's written list, and the bare forwarding `B(y) = A` calls `A(y)` — so
-    /// evaluation recurses without end in both orders (the recursion itself is the run's limit, whose
-    /// location no route promises, so the elaboration is what is compared).
+    /// Mutually dependent lone rows elaborate identically in either declaration order: `A = B` is a
+    /// CALLABLE ALIAS of B (binding indirection: no signature of its own, its written row kept), and
+    /// the bare forwarding `B(y) = A` reads A's forwarding contract — B's own, through the alias — so
+    /// it calls `A(y)`, and evaluation recurses without end in both orders (the recursion itself is the
+    /// run's limit, whose location no route promises, so the elaboration is what is compared).
     /// </summary>
     [Theory]
     [InlineData("A = B\nB(y) = A\n0")]
@@ -176,17 +182,13 @@ public class AliasAndBareForwardingHostileReviewTests
     public void MutualAliasAndBareForwarding_ElaborateAlikeInEitherOrder(string source)
     {
         var root = SourceProvenance.ParseValid(source).Root;
-        var alias = Assert.IsType<Algorithm.User>(root.Properties.Single(property => property.Name == "A").Value);
+        var alias = Assert.IsType<Algorithm.Alias>(root.Properties.Single(property => property.Name == "A").Value);
         var forwarding = Assert.IsType<Algorithm.User>(root.Properties.Single(property => property.Name == "B").Value);
 
-        Assert.Equal(["y"], alias.Parameters.Select(static parameter => parameter.Name));
-        Assert.True(alias.InheritsCalleeSignature);
-        var aliasCall = Assert.IsType<Expr.Call>(Assert.Single(alias.Output));
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(aliasCall.Function).Name);
-        Assert.Equal("y", Assert.IsType<Expr.Param>(Assert.Single(aliasCall.Args)).Name);
+        Assert.Equal("B", Assert.IsType<Expr.Resolve>(alias.Target).Name);
+        Assert.Empty(alias.Properties);
 
         Assert.Equal(["y"], forwarding.Parameters.Select(static parameter => parameter.Name));
-        Assert.False(forwarding.InheritsCalleeSignature);
         var forwardingCall = Assert.IsType<Expr.Call>(Assert.Single(forwarding.Output));
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(forwardingCall.Function).Name);
         Assert.Equal("y", Assert.IsType<Expr.Param>(Assert.Single(forwardingCall.Args)).Name);
