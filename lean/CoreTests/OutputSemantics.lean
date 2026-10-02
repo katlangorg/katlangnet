@@ -154,7 +154,7 @@ def missingOutputError6b : Bool :=
   match runResult (.algorithmExpr missingOutputError6bRoot) with
   | Except.error err =>
       hasContext "while evaluating call to A" err
-      && innermostIsMissingOutput err
+      && innermostIsArityMismatch 0 1 err
   | Except.ok _ => false
 
 #guard missingOutputError6b

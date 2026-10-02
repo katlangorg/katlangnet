@@ -1,3 +1,4 @@
+using KatLang.Evaluation;
 using System.Numerics;
 
 namespace KatLang.Optimizations.Loops;
@@ -7,6 +8,15 @@ internal static partial class LoopOptimizer
     internal static bool TryEvaluateWhile(
         Algorithm step,
         IReadOnlyList<Result> stateValues,
+        Evaluator.EvalCtx ctx,
+        ValEnv valEnv,
+        Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        out EvalResult<Evaluator.CountedResult> result)
+        => TryEvaluateWhile(step, stateValues.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray(), ctx, valEnv, genericContinuation, out result);
+
+    internal static bool TryEvaluateWhile(
+        Algorithm step,
+        IReadOnlyList<NeedCell> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
         Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
@@ -135,6 +145,16 @@ internal static partial class LoopOptimizer
         Algorithm step,
         long count,
         IReadOnlyList<Result> stateValues,
+        Evaluator.EvalCtx ctx,
+        ValEnv valEnv,
+        Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        out EvalResult<Evaluator.CountedResult> result)
+        => TryEvaluateRepeat(step, count, stateValues.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray(), ctx, valEnv, genericContinuation, out result);
+
+    internal static bool TryEvaluateRepeat(
+        Algorithm step,
+        long count,
+        IReadOnlyList<NeedCell> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
         Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,

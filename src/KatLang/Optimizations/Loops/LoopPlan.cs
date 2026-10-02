@@ -1,3 +1,4 @@
+using KatLang.Evaluation;
 using System.Collections;
 using System.Numerics;
 
@@ -107,6 +108,7 @@ internal sealed class LoopValueEnvironment : ValEnv, IValueEnvironmentCacheIdent
 internal sealed class LoopRunFrame
 {
     private readonly Result[] _stateSlots;
+    private IReadOnlyList<NeedCell>? _pendingState;
     private readonly Result[] _scratchSlots;
     private readonly Result[] _capturedSlots;
     private readonly Evaluator.CountedResult[] _countedParamSlots;
@@ -118,12 +120,13 @@ internal sealed class LoopRunFrame
     public LoopRunFrame(
         LoopPlanTemplate template,
         ValEnv parentValEnv,
-        IReadOnlyList<Result> initialStateValues)
+        IReadOnlyList<NeedCell> initialStateValues)
     {
         Template = template;
         var parentCtx = template.ParentCtx;
         IterationCtx = parentCtx.Push(template.Step);
-        _stateSlots = initialStateValues.ToArray();
+        _stateSlots = new Result[initialStateValues.Count];
+        _pendingState = initialStateValues;
         _scratchSlots = new Result[template.StateArity];
         _capturedSlots = parentValEnv.Select(item => item.Value).ToArray();
         _countedParamSlots = parentCtx.CountedParamEnv.Select(item => item.Value).ToArray();
@@ -131,7 +134,7 @@ internal sealed class LoopRunFrame
         _tempSlotHasValue = new bool[template.TempPlans.Count];
         _iterationOutputs = new PlannedLoopValue[
             template.NextStateOutputs.Count + (template.ContinuationOutput is null ? 0 : 1)];
-        _valueEnvironment = new LoopValueEnvironment(template.Step.Params, _stateSlots, parentValEnv);
+        _valueEnvironment = new LoopValueEnvironment([], [], parentValEnv);
         Diagnostics = parentCtx.LoopDiagnostics;
         Diagnostics?.RecordLoopPlanExecution(template.DiagnosticKey);
     }
@@ -152,12 +155,23 @@ internal sealed class LoopRunFrame
         if (Template.RequiresPerIterationCacheIdentity)
         {
             _valueEnvironment.BeginIteration();
-            IterationCtx = Evaluator.EnterAlgorithmBody(Template.Step, Template.ParentCtx, _valueEnvironment);
+            IterationCtx = Evaluator.EnterAlgorithmBody(Template.Step, Evaluator.LoopNeedBindingContext(Template.ParentCtx, Template.Step.Params, CurrentCells()), _valueEnvironment);
         }
     }
 
-    public Result GetStateSlot(int index)
-        => _stateSlots[index];
+    private IReadOnlyList<NeedCell> CurrentCells()
+        => _pendingState ?? _stateSlots.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
+
+    public EvalResult<Result> GetStateSlot(int index, bool parameterUse = true)
+    {
+        if (_pendingState is null) return EvalResult<Result>.Ok(_stateSlots[index]);
+        var demanded = parameterUse
+            ? Evaluator.DemandPlannedParameter(_pendingState[index], Template.Step.Params[index], null)
+            : _pendingState[index].Demand();
+        if (demanded.IsError) return demanded.Error;
+        _stateSlots[index] = demanded.Value.Value;
+        return EvalResult<Result>.Ok(demanded.Value.Value);
+    }
 
     public Result GetCapturedSlot(int index)
         => _capturedSlots[index];
@@ -197,7 +211,14 @@ internal sealed class LoopRunFrame
         => _iterationOutputs[index];
 
     public EvalResult<Evaluator.CountedResult> CurrentStateResult()
-        => Evaluator.MakeCheckedLoopStateResult(IterationCtx, _stateSlots);
+    {
+        for (var index = 0; index < _stateSlots.Length; index++)
+        {
+            var value = GetStateSlot(index, parameterUse: false);
+            if (value.IsError) return value.Error;
+        }
+        return Evaluator.MakeCheckedLoopStateResult(IterationCtx, _stateSlots);
+    }
 
     public EvalResult<Evaluator.CountedResult> ScratchStateResult()
         => Evaluator.MakeCheckedLoopStateResult(IterationCtx, _scratchSlots);
@@ -216,6 +237,7 @@ internal sealed class LoopRunFrame
                 return false;
 
             _stateSlots[0] = value;
+            _pendingState = null;
             return true;
         }
 
@@ -223,6 +245,7 @@ internal sealed class LoopRunFrame
         // recursively normalizing (which would collapse explicit empty-sequence nesting).
         for (var i = 0; i < _stateSlots.Length; i++)
             _stateSlots[i] = _scratchSlots[i];
+        _pendingState = null;
         return true;
     }
 }

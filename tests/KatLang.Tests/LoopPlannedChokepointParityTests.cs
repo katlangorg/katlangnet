@@ -89,7 +89,7 @@ public class LoopPlannedChokepointParityTests
     /// </summary>
     private static EvalError AssertSameDepthBoundary(string source, int peakDepth)
     {
-        Assert.True(peakDepth > 1, "the boundary must sit above the loop's own argument level to be decisive");
+        Assert.True(peakDepth > 1, "the boundary must have a lower legal depth to be decisive");
 
         var admitted = new EvaluationLimits { MaxDepth = peakDepth };
         Assert.Equal(Atom(Observe(source, optimized: false, admitted).Result), Atom(Observe(source, optimized: true, admitted).Result));
@@ -120,28 +120,28 @@ public class LoopPlannedChokepointParityTests
     // argument (`if(true, A, ...)`, `if(false, 1 / 0, C)`) is the ordinary property read —
     // how a property value is consumed does not affect caching — so it sits one dynamic
     // invocation below the argument level on both strategies (the last column).
-    [InlineData("if(true, 1, 2)", 1, 0, 1)]
-    [InlineData("if(false, 1, 2)", 2, 0, 1)]
-    [InlineData("if(C == 1, 1, 2)", 1, 0, 2)]
-    [InlineData("if(C + 0 == 1, 1, 2)", 1, 0, 2)]
-    [InlineData("if(C() == 1, 1, 2)", 1, 0, 2)]
-    [InlineData("if(D == 1, 1, 2)", 1, 0, 3)]
-    [InlineData("if(D() == 1, 1, 2)", 1, 0, 3)]
-    [InlineData("if(A == 1, 1, 2)", 1, 4, 4)]
-    [InlineData("if(A() == 1, 1, 2)", 1, 4, 4)]
-    [InlineData("if(true, A, A())", 1, 4, 4)]
-    [InlineData("if(false, A, A())", 1, 4, 4)]
-    [InlineData("if(false, A(), A)", 1, 4, 4)]
-    [InlineData("if(true, if(false, A(), A), B())", 1, 4, 5)]
-    [InlineData("if(W == W, 1, 0) + if(true, A, 0) + if(W == W, 1, 0)", 3, 4, 4)]
-    [InlineData("if(W == W, 1, 0) + if(true, A(), 0) + if(W == W, 1, 0)", 3, 4, 4)]
-    [InlineData("A + A() + A", 3, 4, 3)]
-    [InlineData("A() + A + A()", 3, 4, 3)]
-    [InlineData("A + if(true, B, 0)", 3, 4, 5)]
-    [InlineData("B() + B()", 4, 4, 4)]
-    [InlineData("B + B", 4, 4, 4)]
-    [InlineData("if(false, 1 / 0, C)", 1, 0, 2)]
-    [InlineData("if(true, C, B() / 0)", 1, 0, 2)]
+    [InlineData("if(true, 1, 2)", 1, 0, 0)]
+    [InlineData("if(false, 1, 2)", 2, 0, 0)]
+    [InlineData("if(C == 1, 1, 2)", 1, 0, 1)]
+    [InlineData("if(C + 0 == 1, 1, 2)", 1, 0, 1)]
+    [InlineData("if(C() == 1, 1, 2)", 1, 0, 1)]
+    [InlineData("if(D == 1, 1, 2)", 1, 0, 2)]
+    [InlineData("if(D() == 1, 1, 2)", 1, 0, 2)]
+    [InlineData("if(A == 1, 1, 2)", 1, 4, 2)]
+    [InlineData("if(A() == 1, 1, 2)", 1, 4, 2)]
+    [InlineData("if(true, A, A())", 1, 4, 2)]
+    [InlineData("if(false, A, A())", 1, 4, 2)]
+    [InlineData("if(false, A(), A)", 1, 4, 2)]
+    [InlineData("if(true, if(false, A(), A), B())", 1, 4, 2)]
+    [InlineData("if(W == W, 1, 0) + if(true, A, 0) + if(W == W, 1, 0)", 3, 4, 2)]
+    [InlineData("if(W == W, 1, 0) + if(true, A(), 0) + if(W == W, 1, 0)", 3, 4, 2)]
+    [InlineData("A + A() + A", 3, 4, 2)]
+    [InlineData("A() + A + A()", 3, 4, 2)]
+    [InlineData("A + if(true, B, 0)", 3, 4, 3)]
+    [InlineData("B() + B()", 4, 4, 3)]
+    [InlineData("B + B", 4, 4, 3)]
+    [InlineData("if(false, 1 / 0, C)", 1, 0, 1)]
+    [InlineData("if(true, C, B() / 0)", 1, 0, 1)]
     public async Task PlannedArgumentAndMemoMatrix_MatchesAllBoundariesAndAsyncTwin(
         string expression, int increment, int materializedChars, int peakDepth)
     {
@@ -220,7 +220,7 @@ public class LoopPlannedChokepointParityTests
     // ── K3-01: planned `if` arguments ────────────────────────────────────────
 
     [Fact]
-    public void PlannedNestedIf_ChargesOneArgumentLevelPerConditionAndBranch()
+    public void PlannedNestedIf_AddsNoHiddenInvocationLevel()
     {
         // The generic `if` evaluates each argument — the condition, then the selected
         // branch — as one algorithm under one depth-only level, so the inner `if` in the
@@ -230,30 +230,24 @@ public class LoopPlannedChokepointParityTests
         const string source = "Step = n + if(n < 3, if(n < 1, 1, 2), 3)\nStep.repeat(40, 0)";
 
         var (plan, peakDepth) = AssertSameSuccessAndPeakDepth(source, 117m);
-        Assert.Equal(2, peakDepth);
+        Assert.Equal(0, peakDepth);
         Assert.Equal(
             "Add(StateSlot(n), If(LessThan(StateSlot(n), Const(3)), If(LessThan(StateSlot(n), Const(1)), Const(1), Const(2)), Const(3)))",
             OutputSummary(plan));
     }
 
     [Fact]
-    public void PlannedNestedIf_DepthRejectionAtAnArgumentLevel_MatchesGenericStructuredError()
+    public async Task PlannedNestedIf_RemainsWithinDepthOneAcrossAllStrategies()
     {
         const string source = "Step = n + if(n < 3, if(n < 1, 1, 2), 3)\nStep.repeat(40, 0)";
-
-        var error = AssertSameDepthBoundary(source, peakDepth: 2);
-
-        // The rejected level is the INNER `if`'s condition: the generic funnel returns the
-        // limit error unspanned, the call boundaries exempt resource limits from their
-        // context frames, and the innermost boundary stamps its own call span.
-        Assert.Empty(ContextChain(error));
-        Assert.Equal(new SourceSpan(1, 22, 1, 37), Span(error));
+        await AssertThreeWayParity(source, new EvaluationLimits { MaxDepth = 1 }, whollyPlanned: true);
+        Assert.Equal(117m, Atom(Observe(source, optimized: false, new EvaluationLimits { MaxDepth = 1 }).Result));
     }
 
     [Theory]
-    [InlineData("literal condition", "Step = n + if(true, 1, 2)\nStep.repeat(5, 0)", 5, 1)]
-    [InlineData("parameter condition", "Step = n + if(n != 0, 1, 2)\nStep.repeat(5, 0)", 6, 1)]
-    [InlineData("string branches", "Step = n + if(if(true, 'a', 'bb') == 'a', 1, 0)\nStep.repeat(5, 0)", 5, 2)]
+    [InlineData("literal condition", "Step = n + if(true, 1, 2)\nStep.repeat(5, 0)", 5, 0)]
+    [InlineData("parameter condition", "Step = n + if(n != 0, 1, 2)\nStep.repeat(5, 0)", 6, 0)]
+    [InlineData("string branches", "Step = n + if(if(true, 'a', 'bb') == 'a', 1, 0)\nStep.repeat(5, 0)", 5, 0)]
     public void PlannedIf_EveryArgumentShape_ChargesOneLevelLikeGeneric(string shape, string source, decimal expected, int expectedPeakDepth)
     {
         // Literals, parameters, and strings are wrapped in value thunks by the generic
@@ -278,14 +272,14 @@ public class LoopPlannedChokepointParityTests
         const string source = "Step = {\n    T = 7\n    n + if(n < 5, T + 0, 2)\n}\nStep.repeat(10, 0)";
 
         var (plan, peakDepth) = AssertSameSuccessAndPeakDepth(source, 25m);
-        Assert.Equal(2, peakDepth);
+        Assert.Equal(1, peakDepth);
         Assert.Equal("Add(StateSlot(n), If(LessThan(StateSlot(n), Const(5)), Add(TempSlot(T), Const(0)), Const(2)))", OutputSummary(plan));
     }
 
     [Fact]
     public void BareTempRead_DepthRejection_IsStampedWithThePropertyDeclarationSpan()
     {
-        const string source = "Step = {\n    T = 7\n    n + if(n < 5, T + 0, 2)\n}\nStep.repeat(10, 0)";
+        const string source = "Step = {\n    T = 7\n    n + if(n < 5, T + 0, 2)\n}\nRun(q) = Step.repeat(10, 0)\nRun(0)";
 
         var error = AssertSameDepthBoundary(source, peakDepth: 2);
 
@@ -357,8 +351,8 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(80m, Atom(optimized.Result));
         Assert.Equal(4, generic.Budget.MaterializedStringChars);
         Assert.Equal(4, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(4, generic.Budget.PeakDepth);
-        Assert.Equal(4, optimized.Budget.PeakDepth);
+        Assert.Equal(1, generic.Budget.PeakDepth);
+        Assert.Equal(1, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Contains("If(Const(true), TempSlot(W), Const(0))", OutputSummary(plan), StringComparison.Ordinal);
         await AssertThreeWayParity(source, new EvaluationLimits { MaxDepth = 3 }, whollyPlanned: true);
@@ -424,8 +418,8 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(200m, Atom(optimized.Result));
         Assert.Equal(4000, generic.Budget.MaterializedStringChars);
         Assert.Equal(4000, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(2, generic.Budget.PeakDepth);
-        Assert.Equal(2, optimized.Budget.PeakDepth);
+        Assert.Equal(1, generic.Budget.PeakDepth);
+        Assert.Equal(1, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Equal("Add(StateSlot(n), If(Equal(TempCall(T), TempCall(T)), Const(1), Const(0)))", OutputSummary(plan));
         await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 3999 }, whollyPlanned: true);
@@ -452,8 +446,8 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(40m, Atom(optimized.Result));
         Assert.Equal(312, generic.Budget.MaterializedStringChars);
         Assert.Equal(312, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(2, generic.Budget.PeakDepth);
-        Assert.Equal(2, optimized.Budget.PeakDepth);
+        Assert.Equal(1, generic.Budget.PeakDepth);
+        Assert.Equal(1, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Equal("TempCall(Next)", OutputSummary(plan));
         var continuation = Assert.Single(plan.Expressions, e => e.Role == "continuation");
@@ -581,9 +575,9 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Theory]
-    [InlineData(125, false)]
-    [InlineData(126, true)]
-    public void DefaultDepthBoundary_RejectsBareTempAtK126(int recursion, bool rejected)
+    [InlineData(126, false)]
+    [InlineData(127, true)]
+    public void DefaultDepthBoundary_RejectsBareTempAtK127(int recursion, bool rejected)
     {
         var source = "Step = {\n    T = 7\n    n + if(n < 5, T + 0, 2)\n}\nf(0) = Step.repeat(3, 0)\nf(k) = f(k - 1)\nf(" + recursion + ")";
         var generic = Observe(source, optimized: false);
@@ -759,8 +753,8 @@ public class LoopPlannedChokepointParityTests
         Assert.Equal(1_048_575m, Atom(optimized.Result));
         Assert.Equal(10, generic.Budget.MaterializedStringChars);
         Assert.Equal(10, optimized.Budget.MaterializedStringChars);
-        Assert.Equal(3, generic.Budget.PeakDepth);
-        Assert.Equal(3, optimized.Budget.PeakDepth);
+        Assert.Equal(2, generic.Budget.PeakDepth);
+        Assert.Equal(2, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
         Assert.Contains("TempCall(A)", OutputSummary(plan), StringComparison.Ordinal);
         Assert.Contains("TempSlot(T)", OutputSummary(plan), StringComparison.Ordinal);
@@ -798,7 +792,7 @@ public class LoopPlannedChokepointParityTests
         // `A(x)` is one invocation and the `if` inside it one more level: depth 2 beneath
         // the loop. One below that, the rejected level is the `if`'s condition, stamped
         // with the `if` call's span by its own boundary and left alone by the call's.
-        const string source = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A + 0\n}\nStep.repeat(3, 0)";
+        const string source = "Step = {\n    A = if(x < 100, x + 1, 0)\n    A + 0\n}\nRun(q) = Step.repeat(3, 0)\nRun(0)";
 
         var (plan, peakDepth) = AssertSameSuccessAndPeakDepth(source, 3m);
         Assert.Equal(2, peakDepth);
@@ -806,7 +800,7 @@ public class LoopPlannedChokepointParityTests
 
         var error = AssertSameDepthBoundary(source, peakDepth);
         Assert.Empty(ContextChain(error));
-        Assert.Equal(new SourceSpan(2, 9, 2, 30), Span(error));
+        Assert.Equal(new SourceSpan(3, 5, 3, 6), Span(error));
     }
 
     [Fact]

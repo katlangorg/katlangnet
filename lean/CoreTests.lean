@@ -31,3 +31,4 @@ import CoreTests.RepeatedNameConstraints
 import CoreTests.BuiltinArgumentRoles
 import CoreTests.StructuralPatterns
 import CoreTests.AliasForwarding
+import CoreTests.ModelC

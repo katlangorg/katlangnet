@@ -487,11 +487,12 @@ public class EvaluatorLoopTests
 
     [Theory]
     [InlineData("RepeatLoopGenericCounted")]
-    [InlineData("RepeatLoopGenericCountedAsync")]
+    [InlineData("EvalNeedLoop")]
     public void RepeatLoopGenericCounter_IsLongAtBothMirrorSites(string methodName)
     {
         var method = typeof(Evaluator).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
-        Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "count").ParameterType);
+        if (methodName == "RepeatLoopGenericCounted")
+            Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "count").ParameterType);
         var stateMachine = method.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
         var numericLocals = stateMachine is null
             ? method.GetMethodBody()!.LocalVariables.Select(local => local.LocalType)
@@ -635,10 +636,16 @@ public class EvaluatorLoopTests
         Assert.False(outerOutput.Planned);
         Assert.Equal("unsupported if condition: unsupported call: IsSquareFree", outerOutput.FallbackReason);
 
-        var innerPlan = AssertSingleLoopPlan(stats, "IsSquareFree.Step.while");
-        var innerOutput = AssertLoopExpression(innerPlan, "output", 1);
-        Assert.True(innerOutput.Planned);
-        Assert.Contains("If(", innerOutput.PlanSummary, StringComparison.Ordinal);
+        // The first outer state is a suspended supply cell. Later committed states
+        // are ready data cells; both representations use the same VALUE demand path.
+        var innerPlans = stats.LoopPlans.Where(plan => plan.Identity == "IsSquareFree.Step.while").ToArray();
+        Assert.Equal(2, innerPlans.Length);
+        Assert.All(innerPlans, innerPlan =>
+        {
+            var innerOutput = AssertLoopExpression(innerPlan, "output", 1);
+            Assert.True(innerOutput.Planned);
+            Assert.Contains("If(", innerOutput.PlanSummary, StringComparison.Ordinal);
+        });
     }
 
     // â”€â”€ While builtin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1051,7 +1058,7 @@ public class EvaluatorLoopTests
             Assert.Fail($"Expected success but got error: {result.Error}");
 
         Assert.Equal([2m, 3m], result.Value.ToHostAtoms());
-        Assert.Equal(0, loopStats.CountedParameterReferencesPlanned);
+        Assert.Equal(2, loopStats.CountedParameterReferencesPlanned);
 
         var plan = AssertSingleLoopPlan(loopStats, "Inner.Step.while");
         var output = AssertLoopExpression(plan, "output", 0);
@@ -1062,7 +1069,7 @@ public class EvaluatorLoopTests
         Assert.DoesNotContain("CountedParamSlot(n)", output.PlanSummary, StringComparison.Ordinal);
 
         Assert.True(continuation.Planned);
-        Assert.Equal("LessThan(StateSlot(n), CapturedSlot(limit))", continuation.PlanSummary);
+        Assert.Equal("LessThan(StateSlot(n), CountedParamSlot(limit))", continuation.PlanSummary);
         Assert.DoesNotContain("CountedParamSlot(n)", continuation.PlanSummary, StringComparison.Ordinal);
     }
 

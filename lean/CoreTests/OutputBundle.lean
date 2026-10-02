@@ -62,7 +62,7 @@ def captureSuppressesCallableIdentity : Bool :=
   let root := algPrivate [] [] [("Apply", apply), ("Increment", increment)]
     [.call (resolve "Apply") [.capture [.resolve "Increment"]]]
   match runResult (.algorithmExpr root) with
-  | .error e => innermostIsArityMismatch 1 0 e
+  | .error e => innermostIsNotAnAlgorithm "param(f)" e
   | _ => false
 
 #guard captureSuppressesCallableIdentity
@@ -78,7 +78,7 @@ def captureSurfaceSuppressesCallableIdentity : Bool :=
   let bare := runResult (.algorithmExpr (algPrivate [] [] [("Apply", apply), ("Increment", increment)]
     [.call (resolve "Apply") [.resolve "Increment"]]))
   (match grouped with
-   | .error e => innermostIsArityMismatch 1 0 e
+   | .error e => innermostIsNotAnAlgorithm "param(f)" e
    | _ => false) &&
   (match bare with
    | .ok (Result.atom 10) => true
@@ -160,7 +160,7 @@ def nestedCaptureStillSuppressesCallableIdentity : Bool :=
   let root := algPrivate [] [] [("Apply", apply), ("Increment", increment)]
     [.call (resolve "Apply") [.capture [.capture [.resolve "Increment"]]]]
   match runResult (.algorithmExpr root) with
-  | .error e => innermostIsArityMismatch 1 0 e
+  | .error e => innermostIsNotAnAlgorithm "param(f)" e
   | _ => false
 
 #guard nestedCaptureStillSuppressesCallableIdentity

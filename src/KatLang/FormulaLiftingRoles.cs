@@ -157,31 +157,6 @@ internal static class FormulaLiftingRoles
     }
 
     /// <summary>
-    /// Whether the supplied slot at <paramref name="position"/> of a call to <paramref name="callee"/>
-    /// is LAZY: a branch of the builtin <c>if</c>, which a run evaluates only when it selects it (a
-    /// position after a spread slot may be a branch). The role table is blind to laziness — a branch
-    /// is a value slot and lifts like any other — so only the closed-list strict-value diagnostic
-    /// reads this: a demand a run may never make is no statically impossible demand (Q-15).
-    /// </summary>
-    public static bool IsLazySlot(LiftingCallee callee, int position, bool positionKnown)
-        => callee is { Kind: LiftingCalleeKind.Builtin, Builtin: BuiltinId.@if } && (!positionKnown || position is 1 or 2);
-
-    /// <summary>Which of a call's written argument slots are lazy (<see cref="IsLazySlot"/>), in order.</summary>
-    public static bool[] LazyArguments(LiftingCallee callee, OutputBundle args, int leadingSlots = 0, bool leadingPositionsKnown = true)
-    {
-        var lazy = new bool[args.Count];
-        var positionKnown = leadingPositionsKnown;
-        for (var index = 0; index < args.Count; index++)
-        {
-            lazy[index] = IsLazySlot(callee, leadingSlots + index, positionKnown);
-            if (args[index] is Expr.SequenceSpread)
-                positionKnown = false;
-        }
-
-        return lazy;
-    }
-
-    /// <summary>
     /// How <paramref name="edge"/> dispatches: the <c>string</c> intrinsic, a structural member of a
     /// statically known receiver, the selected lexical fallback, or undecided (a runtime receiver).
     /// <paramref name="selection"/> is the edge's fallback-selection verdict (the detector's stamp, or
@@ -224,19 +199,6 @@ internal static class FormulaLiftingRoles
             DotEdgeKind.Fallback => ArgumentRoles(
                 callee, args, leadingSlots: 1, leadingPositionsKnown: edge.Target is not Expr.SequenceSpread),
             _ => ArgumentRoles(LiftingCallee.Dynamic, args),
-        };
-    }
-
-    /// <summary>Which of a dot edge's written arguments are lazy slots of its callee (<see cref="IsLazySlot"/>).</summary>
-    public static bool[] DotLazyArguments(Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee)
-    {
-        var args = edge.Args ?? OutputBundle.Empty;
-        return kind switch
-        {
-            DotEdgeKind.StructuralMember => LazyArguments(callee, args),
-            DotEdgeKind.Fallback => LazyArguments(
-                callee, args, leadingSlots: 1, leadingPositionsKnown: edge.Target is not Expr.SequenceSpread),
-            _ => new bool[args.Count],
         };
     }
 

@@ -42,6 +42,7 @@ internal static class LeanObsTemplate
           | .spreadMissingOutput => "spreadMissingOutput"
           | .unknownName _ => "unknownName"
           | .divByZero => "div0"
+          | .demandCycle => "demandCycle"
           | .noMatchingBranch _ => "branch"
           | .unknownProperty _ _ => "unknownProperty"
           | .notPublicProperty _ _ => "notPublicProperty"

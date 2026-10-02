@@ -27,17 +27,13 @@ namespace KatLang;
 /// Member selection: an open provides only PUBLIC members, and structural dot access selects DECLARED members
 /// (private included). Selection never depends on exposure: the selected member's accessibility is checked afterwards.
 ///
-/// Builtins (If, While, Repeat, Atoms, Range, Filter, Map, Count, Contains, First, Last, Order, OrderDesc, Distinct, Take, Skip, Min, Max, Sum, Avg, Reduce) are injected via a prelude algorithm in the initial
-/// call stack, matching Lean's <c>preludeAlg</c>. Call dispatch switches on Algorithm kind:
-/// <c>Algorithm.Builtin</c> → lazy arg resolution + <c>applyBuiltin</c>;
-/// <c>Algorithm.User</c> → dual-view argument binding via <c>evalUserCall</c>.
-///
-/// Higher-order algorithm parameters use dual-view semantics:
-/// - AlgEnv: algorithm meaning (callable/structural), resolved via <c>tryResolveArgAlgs</c>
-/// - ValEnv: value meaning, resolved via independent per-expression eager evaluation
-/// - <c>Eval(Param(x))</c>: checks ValEnv first, then AlgEnv as fallback
-///   (0-param algorithm → auto-evaluate; multi-param → arity mismatch)
-/// - <c>ResolveAlg(Param(x))</c>: checks AlgEnv before returning NotAnAlgorithm
+/// Builtins are ordinary prelude bindings. Every call forms the same demandable supply:
+/// an ordinary expression becomes a suspended <c>NeedCell</c>, a parameter reference
+/// transports its existing cell, and an arbitrary explicit spread forces supply formation.
+/// Parameters expose independent channels: VALUE demands one sticky counted completion;
+/// CALLABLE projects a resolved algorithm identity without evaluating VALUE. Ready data
+/// has no invented callable. Bodies, patterns, builtin controls and callbacks determine
+/// first-demand order. Property-result caching remains a separate memoization domain.
 /// </summary>
 /// <remarks>
 /// All Run* entry points evaluate supplied ASTs as-is after structural and core
@@ -71,8 +67,8 @@ public static partial class Evaluator
     /// head pushed without an activation, whose site scope is then its plain declaring scope
     /// (<c>SiteScope</c>); every push resets it, because it describes the head alone.
     /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
-    /// A binding may additionally retain a resource-limit failure from its eager value
-    /// channel; that failure is observed only if the parameter is demanded as a value.
+    /// NeedEnv carries the invocation's shared parameter cells. Legacy Ready bindings in
+    /// AlgEnv and CountedParamEnv adapt already-supplied host data without re-evaluation.
     /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
     /// by this copied struct, so every derived context charges the same run's counters
     /// and no copy can reset them.
@@ -93,6 +89,8 @@ public static partial class Evaluator
         EvaluationObservations? Observations,
         EvaluationBudget Budget)
     {
+        internal NeedEnv NeedEnv { get; init; } = [];
+        internal EvalCtx WithNeedEnv(NeedEnv env) => this with { NeedEnv = env };
         /// <summary>
         /// A fresh empty context. This is a PROPERTY, not a shared static instance:
         /// every use must get its own budget — and with it its own UNSEEDED random
@@ -126,7 +124,7 @@ public static partial class Evaluator
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
                 Observations,
-                Budget);
+                Budget) { NeedEnv = NeedEnv };
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
@@ -145,7 +143,7 @@ public static partial class Evaluator
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
                 Observations,
-                Budget);
+                Budget) { NeedEnv = NeedEnv };
 
         /// <summary>Replace the counted callback-parameter environment.</summary>
         public EvalCtx WithCountedParamEnv(CountedParamEnv countedParamEnv)
@@ -161,7 +159,7 @@ public static partial class Evaluator
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
                 Observations,
-                Budget);
+                Budget) { NeedEnv = NeedEnv };
 
         /// <summary>Replace the zero-argument property cache for a scoped evaluation subtree.</summary>
         public EvalCtx WithZeroArgPropertyResultCache(IZeroArgPropertyResultCache zeroArgPropertyResultCache)
@@ -177,7 +175,7 @@ public static partial class Evaluator
                 EnableSequencePipelineOptimization,
                 SequenceDiagnostics,
                 Observations,
-                Budget);
+                Budget) { NeedEnv = NeedEnv };
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -357,7 +355,8 @@ public static partial class Evaluator
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
         => ctx
             .WithAlgEnv(ShadowAlgEnv(ctx.AlgEnv, parameterNames))
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames));
+            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames))
+            .WithNeedEnv(ctx.NeedEnv.Where(binding => !ContainsOrdinal(parameterNames, binding.Name)).ToArray());
 
     /// <summary>
     /// Removes the named bindings from an INHERITED value environment — the
@@ -1191,7 +1190,7 @@ public static partial class Evaluator
     ///   ZERO required slots; a nested pattern still consumes one, and binds ONE
     ///   supplied value of its own kind, never none;</item>
     ///   <item>a clause family accepts iff some branch's top-level pattern has arity
-    ///   zero — exactly the branch <see cref="MatchCallBranches"/> selects for an empty
+    ///   zero — exactly the branch <see cref="BindNeedFamilySupply"/> selects for an empty
     ///   argument list. A flat multi-binder core equivalent always has at least two
     ///   parameters, so it never accepts;</item>
     ///   <item>a BUILTIN never accepts (<c>sum()</c> is an arity error). Its rejection
@@ -2313,9 +2312,7 @@ public static partial class Evaluator
             // binding's parameter names (ShadowInheritedParameterEnvironments), so a
             // parameter bound only on the value channel finds NO entry and fails as
             // not-callable instead of reaching a same-named caller callable.
-            Expr.Param(var x) => LookupAlg(CapturedParameterActivation(x, ctx)?.Algorithms ?? ctx.AlgEnv, x) is { } algBound
-                ? EvalResult<Algorithm>.Ok(algBound)
-                : new EvalError.NotAnAlgorithm($"param({x})") { Span = expr.Span },
+            Expr.Param(var x) => ResolveNeedParameterAlgorithm(x, expr.Span, ctx),
 
             // Value forms are not algorithms. Lean: notAnAlgorithm <description> — each
             // description is structured payload and must match exactly.

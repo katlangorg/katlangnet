@@ -966,8 +966,7 @@ public class AliasAndBareForwardingTests
     /// <summary>
     /// A clause family declares parameterized callable structure (dispatch over its clause heads), so
     /// its lone row is a CALLABLE ALIAS (binding indirection, October 2026): the alias call is the
-    /// family's own dispatch, with the family's own failures (<c>NoMatchingBranch</c>, never an arity
-    /// error of the alias). A nameable family is also a bare-forwarding target through its derived
+    /// family's own dispatch, including its cardinality rejection. A nameable family is also a bare-forwarding target through its derived
     /// whole-slot contract (<c>W(n) = F</c> is <c>W(n) = F(n)</c>).
     /// </summary>
     [Fact]
@@ -976,7 +975,7 @@ public class AliasAndBareForwardingTests
         const string family = "F(0) = 1\nF(n) = n\n";
         Assert.Equal("ok 3", await Outcome(family + "A = F\nA(3)"));
         Assert.Equal("ok 1", await Outcome(family + "A = F\nA(0)"));
-        Assert.Equal("err NoMatchingBranch: while evaluating call to A: No matching branch for 'A'", await Outcome(family + "A = F\nA(1, 2)"));
+        Assert.Equal("err ArityMismatch: Property 'A' expects 1 parameter, but was called with 2 arguments.", await Outcome(family + "A = F\nA(1, 2)"));
         var alias = AliasOf(SourceProvenance.ParseValid(family + "A = F\n0").Root, "A");
         Assert.IsType<Algorithm.Conditional>(alias.ResolvedTarget!.Algorithm);
         Assert.Equal("ok 3", await Outcome(family + "W(n) = F\nW(3)"));

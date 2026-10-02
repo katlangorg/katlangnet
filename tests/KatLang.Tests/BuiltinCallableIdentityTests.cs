@@ -358,22 +358,14 @@ public class BuiltinCallableIdentityTests
         Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
     }
 
-    /// <summary>
-    /// The same distinction on the higher-order path: the CALLER's own argument
-    /// binding is the ordinary eager user-call value channel, so a failing argument
-    /// expression fails before <c>if</c> is ever reached. Not an <c>if</c> rule
-    /// either — the identical wrapper without <c>if</c> fails the same way.
-    /// </summary>
+    /// <summary>Wrappers transport the same cells; only selected or used values run.</summary>
     [Fact]
-    public void HigherOrderCallerArgumentBinding_IsEagerLikeAnyUserCall()
+    public void HigherOrderCallerArgumentBinding_TransportsUnusedCells()
     {
-        AssertDivisionByZero("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 1 / 0)");
-        AssertDivisionByZero("Pick3(a, b, c) = b\nPick3(1, 10, 1 / 0)");
-
-        // A named property also supplies an algorithm binding when its eager value
-        // evaluation fails. The builtin can leave that binding unused; this success
-        // does not mean the caller never attempted to evaluate Boom.
+        AssertEval("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, 1 / 0)", 10);
+        AssertEval("Pick3(a, b, c) = b\nPick3(1, 10, 1 / 0)", 10);
         AssertEval("Boom = 1 / 0\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, 10, Boom)", 10);
+        AssertDivisionByZero("Pick3(a, b, c) = c\nPick3(1, 10, 1 / 0)");
     }
 
     /// <summary>
@@ -423,19 +415,13 @@ public class BuiltinCallableIdentityTests
     public void OnlyTheSelectedBranch_RunsItsHostCallback(string source, int expected)
         => Assert.Equal([(Decimal128)expected], RunRecordingTicks(source, expected));
 
-    /// <summary>
-    /// The counted mirror of <see cref="HigherOrderCallerArgumentBinding_IsEagerLikeAnyUserCall"/>:
-    /// when a USER call sits between the branch expressions and <c>if</c>, that call
-    /// binds its own arguments eagerly, so both branches have already run before the
-    /// builtin ever chooses. Laziness is a property of the invocation that receives
-    /// the branch EXPRESSIONS, not of the name <c>if</c> appearing somewhere below.
-    /// </summary>
+    /// <summary>User wrappers preserve first-demand order and skip the unselected branch.</summary>
     [Theory]
     [InlineData("Apply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, Tick(10), Tick(20))", 10)]
     [InlineData("MyIf(a, b, c) = if(a, b, c)\nMyIf(true, Tick(10), Tick(20))", 10)]
     [InlineData("A = Tick(10)\nB = Tick(20)\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, A, B)", 10)]
-    public void AUserCallBetweenTheBranchesAndIf_EvaluatesBoth(string source, int expected)
-        => Assert.Equal([(Decimal128)10, (Decimal128)20], RunRecordingTicks(source, expected));
+    public void AUserCallBetweenTheBranchesAndIf_PreservesSelection(string source, int expected)
+        => Assert.Equal([(Decimal128)expected], RunRecordingTicks(source, expected));
 
     [Theory]
     [InlineData("if(true, (Tick(10), Tick(20))*)")]
@@ -444,16 +430,11 @@ public class BuiltinCallableIdentityTests
     public void SpreadConstructsBothBranchValues_ExactlyOnce(string source)
         => Assert.Equal([(Decimal128)10, (Decimal128)20], RunRecordingTicks(source, 10));
 
-    /// <summary>
-    /// And with the builtin identity shadowed away entirely, both branches run even
-    /// with no wrapper in between: the user callable binds them eagerly like any
-    /// other. Same source shape as the first theory above, opposite outcome — which
-    /// is exactly the point that laziness follows resolved identity.
-    /// </summary>
+    /// <summary>A shadowing user callable demands only the parameters its body reads.</summary>
     [Fact]
-    public void AShadowingUserIf_EvaluatesBothBranches()
+    public void AShadowingUserIf_DemandsOnlyItsSelectedParameter()
         => Assert.Equal(
-            [(Decimal128)10, (Decimal128)20],
+            [(Decimal128)10],
             RunRecordingTicks("if(a, b, c) = b\nif(true, Tick(10), Tick(20))", 10));
 
     // ── Cross-path parity ───────────────────────────────────────────────────
@@ -568,12 +549,12 @@ public class BuiltinCallableIdentityTests
     [InlineData("if(a, b, c) = a + b + c\nif(Tick(1), Tick(10), Tick(20))", "ok raw=31 n=1", 1, 10, 20)]
     [InlineData("if((Tick(1) == 1, Tick(10), Tick(20))*)", "ok raw=10 n=1", 1, 10, 20)]
     [InlineData("Branches = Tick(10), Tick(20)\nfalse.if(Branches*)", "ok raw=20 n=1", 10, 20)]
-    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1) == 1, Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10, 20)]
+    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1) == 1, Tick(10), Tick(20))", "ok raw=10 n=1", 1, 10)]
     [InlineData("if(Tick(1) == 1, 1 / 0, 20)", "err div0", 1)]
     [InlineData("(Tick(0) == 1).if(10, 1 / 0)", "err div0", 0)]
     [InlineData("if((Tick(1), 2)*)", "err arity", 1)]
     [InlineData("true.if((Tick(2), 3, 4)*)", "err arity", 2)]
-    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1), 2)", "err arity", 1)]
+    [InlineData("Apply(f, *args) = f(args*)\nApply(if, Tick(1), 2)", "err arity")]
     [InlineData("if(x) = x + 1\nif((Tick(1), 2, 3)*)", "err arity", 1)]
     [InlineData("Risky = Tick(10), 1 / 0\nif(true, Risky*)", "err div0", 10)]
     public async Task SuspendedInvocation_PreservesIdentityEffectsAndDiagnostics(
@@ -609,9 +590,17 @@ public class BuiltinCallableIdentityTests
             ast, new PassThroughAsyncZeroArgPropertyResultCache(), hostOperations: asyncOperations).AsTask();
         try
         {
-            await reached.Task.WaitAsync(TimeSpan.FromSeconds(45));
-            Assert.False(pending.IsCompleted);
-            Assert.Equal([(Decimal128)expectedTicks[0]], ticks);
+            if (expectedTicks.Length > 0)
+            {
+                await reached.Task.WaitAsync(TimeSpan.FromSeconds(45));
+                Assert.False(pending.IsCompleted);
+                Assert.Equal([(Decimal128)expectedTicks[0]], ticks);
+            }
+            else
+            {
+                await pending.WaitAsync(TimeSpan.FromSeconds(45));
+                Assert.Empty(ticks);
+            }
         }
         finally
         {

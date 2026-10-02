@@ -670,7 +670,7 @@ public static class CountedMatrixCorpus
         // The front end requires UNIFORM top-level pattern arity across a
         // family's clauses, so cardinality mismatches surface at the CALL:
         // spread expands first, then a call whose argument count differs from
-        // the family arity matches no clause (Lean matchCallBranches).
+        // the family arity rejects before clause attempts or ordinary value demands.
         Raw("clause/spread-selects-literal-pair", ClauseFamilyDispatch, Two, SpreadMarker,
             "D(0, 0) = 111\nD(x, y) = 222\nZ2 = 0, 0\nD(Z2*)",
             "111", 1,
@@ -681,11 +681,11 @@ public static class CountedMatrixCorpus
             "a spread non-matching pair falls to the two-argument binder clause"),
         Err("clause/seq-is-one-arg", ClauseFamilyDispatch, Two, NamedReference,
             "D(0, 0) = 111\nD(x, y) = 222\nZ2 = 0, 0\nD(Z2)",
-            "branch",
+            "arity",
             "unspread, the sequence is ONE argument, and a two-argument family has no clause for it"),
         Err("clause/captured-pair-is-one-arg", ClauseFamilyDispatch, Two, CaptureWrapped,
             "D(0, 0) = 111\nD(x, y) = 222\nD((0, 0))",
-            "branch",
+            "arity",
             "a captured pair is one argument for clause selection"),
         Raw("clause/empty-selects-catch-all", ClauseFamilyDispatch, Zero, NamedReference,
             P + "C(0) = 111\nC(x) = 222\nC(P0)",
@@ -697,15 +697,15 @@ public static class CountedMatrixCorpus
             "one sequence argument binds the catch-all whole"),
         Err("clause/spread-pair-overflows-catch-all", ClauseFamilyDispatch, Combo, SpreadMarker,
             P + "C(0) = 111\nC(x) = 222\nC(P2*)",
-            "branch",
+            "arity",
             "a one-argument catch-all never absorbs a spread pair"),
         Err("clause/spread-empty-no-branch", ClauseFamilyDispatch, Zero, SpreadMarker,
             P + "C(0) = 111\nC(x) = 222\nC(P0*)",
-            "branch",
+            "arity",
             "zero arguments after spreading match no clause"),
         Err("clause/many-no-branch", ClauseFamilyDispatch, Many, SpreadMarker,
             P + "D(0, 0) = 111\nD(x, y) = 222\nD(P3*)",
-            "branch",
+            "arity",
             "three spread arguments match no two-argument clause"),
         Shape("clause/result-boundary", ClauseFamilyDispatch, Two, WrittenRows,
             "W(0) = 10, 20\nW(0)",
@@ -1298,8 +1298,8 @@ public static class CountedMatrixCorpus
             "PARENTHESES GROUP SYNTAX: `(Inc)` IS `Inc`, so the grouped argument carries Inc's callable identity exactly like the bare name"),
         Err("ho/capture-suppresses-identity", HigherOrderChannel, One, CaptureWrapped,
             "Inc(x) = x + 1\nApply1(f) = f(5)\nProbe(u) = Apply1((Inc, Inc))\nProbe(0)",
-            "arity",
-            "a genuine capture (several slots) exposes only a zero-parameter value thunk, never the contained callable identity — its value evaluation demands Inc with zero arguments (a capture's elements are value positions an inferring body would lift, so the call sits under a closed list)"),
+            "notAnAlgorithm",
+            "a genuine capture has no callable identity; invoking its parameter rejects without demanding its contents"),
 
         // ── Nesting matrix (boundaries must not depend on AST depth) ─────────
         Shape("nest/producer-in-producer-spread", RootOutputRows, Many, Nested,

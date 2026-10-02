@@ -106,12 +106,14 @@ internal static class MetamorphicOptimizerTemplate
             $"{Loop}(x) = if(x == true, 0, true), x != 0\n{Loop}.while(true)", Planned),
         new("repeat-boolean-equality", $"{Loop}(b) = b == 1\n{Loop}.repeat(3, true)", Planned),
 
-        // ── Loops: the loop optimizer FALLING BACK on a non-scalar state slot ──
-        new("repeat-list-state", $"{Loop} = xs\n{Loop}.repeat(3, [1, 2])", FellBack),
-        new("repeat-sequence-state", $"{Loop} = xs\n{Loop}.repeat(3, (1, 2))", FellBack),
-        new("repeat-string-state", $"{Loop} = xs\n{Loop}.repeat(2, 'ab')", FellBack),
-        new("repeat-nested-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [[1, 2], [3]])", FellBack),
-        new("repeat-empty-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [])", FellBack),
+        // ── Loops: suspended initial cells remain demandable in a plan ──────────
+        new("repeat-list-state", $"{Loop} = xs\n{Loop}.repeat(3, [1, 2])", Planned),
+        new("repeat-sequence-state", $"{Loop} = xs\n{Loop}.repeat(3, (1, 2))", Planned),
+        new("repeat-string-state", $"{Loop} = xs\n{Loop}.repeat(2, 'ab')", Planned),
+        new("repeat-nested-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [[1, 2], [3]])", Planned),
+        new("repeat-empty-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [])", Planned),
+
+        new("repeat-clause-family-step", $"{Loop}(0) = 0\n{Loop}(n) = n + 1\n{Loop}.repeat(2, 1)", FellBack),
 
         // ── Sequence-pipeline fusion ───────────────────────────────────────────
         new("fuse-dotted-range-filter-count",

@@ -399,7 +399,7 @@ Inferred parameters keep short formulas short; explicit lists document the input
 
 ### Each Argument Is Evaluated At Most Once
 
-Each call argument is evaluated at most once for its value. If the corresponding parameter is read multiple times, those reads reuse the same argument outcome and do not re-evaluate the original argument expression:
+An ordinary call argument is evaluated only when its value is first needed, at most once for that supplied computation. If the corresponding parameter is read multiple times, those reads reuse the same argument outcome and do not re-evaluate the original argument expression:
 
 ```
 Double(x) = x + x
@@ -410,7 +410,43 @@ Double(randomInt(1, 7)) mod 2
 
 The die is rolled once, so `x + x` is always even. The same holds when evaluating an argument fails: every read of the parameter reports that same failure, and reading the parameter again never evaluates the argument again, so it cannot turn the failure into a value.
 
-An argument that a lazy builtin does not select may never be evaluated. Explicitly calling a callable parameter is a separate invocation; it does not replace the outcome reused by value reads.
+An unused plain parameter is never evaluated, whether the receiver is your own algorithm, a conditional selector, or a builtin:
+
+```
+Keep(x) = 42
+Keep(1 / 0)
+```
+
+**Result:** `42`
+
+Effects and random draws follow the order in which values are first needed. With `Reverse(x, y) = y + x`, the computation supplied for `y` runs before the one for `x`. Passing a parameter to another algorithm, or forwarding it by name, shares the same computation and adds no evaluation. A wrong argument count is rejected before ordinary arguments run. Explicit spread is different: its operand may have to run to discover how many arguments it supplies.
+
+A callable parameter also has an independent function identity. Using it as a function needs that identity, without first evaluating its no-argument value:
+
+```
+Inc(x) = x + 1
+Apply(f) = f(4)
+Apply(Inc)
+```
+
+**Result:** `5`
+
+An explicit invocation is fresh; it does not replace the outcome reused by VALUE reads. A scalar, tuple or selected value does not become a function automatically. An alias adds another name for the same callable, without forcing an argument or introducing an extra memoized computation. Bare property caching stays separate: a demanded `Z` reads its cached value, while a demanded `Z()` makes a fresh call once within that argument.
+
+Collecting parameters hold a slice of argument computations. An unused collector does no work:
+
+```
+Ignore(*xs) = 10
+Ignore(1 / 0, 2)
+```
+
+**Result:** `10`
+
+Reading the collector as a value creates its entire eager list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs:0` all receive that complete list: they cannot skip a failing later element. Forwarding `xs*` to another collector shares the slice without materializing it.
+
+Literal, structural and repeated-name patterns may need values before the body starts. Patterns are inspected from left to right. A structural pattern first evaluates its complete parent value. A repeated name requires each supplied occurrence to agree; an early conflict stops before a later argument runs. Conditional clauses share the same argument computations across attempts. A plain name in a clause binds without forcing, so ordinary selectors can leave their unselected arguments untouched just like `if`.
+
+An explicit parameter list still adds no implicit inputs. A reference to a defined callable that needs inputs can remain a runtime no-argument demand, including inside Math calls: if the value is unused it does not run, and if demanded it reports that callable's ordinary arity error. A directly written undeclared name remains a definition error.
 
 ### Formulas That Use Formulas
 
@@ -1328,6 +1364,8 @@ Twice(Square, 3)
 ```
 
 **Result:** `81`
+
+Passing works in one direction: an algorithm's result is always a calculated value, never an algorithm. With `Pick(f) = f`, the call `Apply(Pick(Square), 4)` is an error, because `Pick(Square)` is a computation rather than something to call. A call must also receive all of its arguments: for `Add(x, y) = x + y`, `Add(10)` is an argument-count error, not a partly applied `Add`.
 
 ### Brace Algorithms
 

@@ -104,7 +104,9 @@ public class SeededAsyncEvaluationTests
         Assert.False(parsed.HasErrors);
         var ast = new Expr.AlgorithmExpr(parsed.Root);
         var d = Draws(5);
-        Decimal128[] expected = [d[2], d[1], d[0], d[3], d[4]];
+        Decimal128[] expected = body.StartsWith("F((", StringComparison.Ordinal)
+            ? [d[2], d[1], d[0], d[3], d[4]] // The structural pattern inspects a,b before the body reads c.
+            : [d[0], d[1], d[2], d[3], d[4]]; // Plain parameters draw on their first body reads c,b,a.
 
         // Synchronous semantic baseline (a synchronous Pause, same seed).
         AssertSameAtoms(expected, Atoms(Evaluator.Run(ast, syncOperations, null, Seed, CancellationToken.None), static value => value));

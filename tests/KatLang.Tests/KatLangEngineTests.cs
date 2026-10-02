@@ -411,7 +411,7 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_CallToNoOutputAlgorithm_ReturnsEvalFailureWithMissingOutputMessage()
+    public void Run_CallToNoOutputAlgorithm_ChecksSuppliedArityBeforeMissingOutput()
     {
         var result = KatLangEngine.Run(
             """
@@ -423,9 +423,8 @@ public class KatLangEngineTests
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Equal(
-            "Cannot call 'Algo' because it has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To call one of its properties, use property access instead.",
-            error.Message);
+        Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
+        Assert.Equal("Callable `Algo` expects 0 arguments, but was called with 1 argument.", error.Message);
     }
 
     [Fact]

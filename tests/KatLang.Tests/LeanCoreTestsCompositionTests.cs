@@ -39,6 +39,7 @@ public class LeanCoreTestsCompositionTests
         "BuiltinArgumentRoles",
         "StructuralPatterns",
         "AliasForwarding",
+        "ModelC",
     ];
 
     [Fact]
@@ -67,6 +68,14 @@ public class LeanCoreTestsCompositionTests
             var expected = module switch
             {
                 "Common" => new[] { "KatLang" },
+                // These completed-input proof checks retain explicit historical algebra.
+                // The production model and current Model-C laws never import that fixture.
+                "ExplicitValueOpening" or "HigherOrderCalls" or "RepeatedNameConstraints" or "ValueDemand" =>
+                [
+                    "HistoricalReadyBinding",
+                    "KatLang",
+                    "CoreTests.Common",
+                ],
                 "CollectionBuiltins" =>
                 [
                     "KatLang",
@@ -86,6 +95,15 @@ public class LeanCoreTestsCompositionTests
                 expected,
                 ReadImports(Path.Combine(leanDirectory, "CoreTests", $"{module}.lean")));
         }
+    }
+
+    [Fact]
+    public void HistoricalReadyFixtureNeverEntersTheProductionModel()
+    {
+        var lean = FindLeanDirectory();
+        Assert.DoesNotContain("HistoricalReadyBinding", ReadImports(Path.Combine(lean, "KatLang.lean")));
+        Assert.Equal(["KatLang"], ReadImports(Path.Combine(lean, "HistoricalReadyBinding.lean")));
+        Assert.Equal(["KatLang", "CoreTests.Common"], ReadImports(Path.Combine(lean, "CoreTests", "ModelC.lean")));
     }
 
     private static string[] ReadImports(string path)

@@ -269,8 +269,9 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        var environments = WithUserCallBindingEnvironments(ctx, bindingsR.Value, valEnv, algorithm.Params);
-        return EvalAlgOutputCountedCore(algorithm, environments.Context, environments.ValueEnvironment);
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
+        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
+        return EvalAlgOutputCountedCore(algorithm, boundCtx, boundValues);
     }
 
     /// <summary>
@@ -280,13 +281,9 @@ public static partial class Evaluator
     /// synchronous funnel and its async twin (argument evaluation cannot suspend: there
     /// are no arguments).
     /// </summary>
-    private static EvalResult<UserCallBindings> BindZeroArgumentSupply(Algorithm algorithm, EvalCtx ctx)
-        => BindParameterPatternList(
-            algorithm.ParameterPatterns,
-            [],
-            ctx,
-            allowAlgorithmBindings: true,
-            static (required, actual) => new EvalError.ArityMismatch(required, actual));
+    private static EvalResult<NeedEnv?> BindZeroArgumentSupply(Algorithm algorithm, EvalCtx ctx)
+        => BindNeedPatterns(NeedParameterPatterns(algorithm.ParameterPatterns), [],
+            ctx, asynchronous: false, family: false).GetAwaiter().GetResult();
 
     private static EvalResult<ZeroArgPropertyResult> EvaluateZeroArgPropertyResult(
         Algorithm resolvedAlgorithm,
@@ -347,7 +344,7 @@ public static partial class Evaluator
                 owner,
                 binding,
                 accessKind,
-                ValueEnvironmentCacheIdentity(valEnv),
+                ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
                 ctx.AlgEnv,
                 ctx.CountedParamEnv,
                 // The budget is created fresh per run (CreateRootCtx) and threaded by
@@ -385,31 +382,6 @@ public static partial class Evaluator
             ctx,
             valEnv);
 
-    private static EvalResult<CountedResult> EvalConditionalCallbackCallCounted(
-        Algorithm callee,
-        IReadOnlyList<CountedResult> explicitArgs,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        string calleeName = "conditional")
-    {
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
-        var match = MatchCountedCallBranches(callee.Branches, explicitArgs);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName);
-
-        var (branch, bindings) = match.Value;
-        var binderNames = bindings.Select(static binding => binding.Name).ToArray();
-        var newCtx = WithCountedParameterEnvironments(
-            ctx.Push(callee),
-            bindings,
-            binderNames);
-        var newEnv = Concat(bindings.Select(static binding => (binding.Name, binding.Value.Value)).ToList(), valEnv);
-        var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), binderNames, newCtx, newEnv);
-        return EvalAlgOutputCounted(wiredBody, newCtx, newEnv);
-    }
-
     /// <summary>
     /// Evaluate a <c>reduce</c> step on one collected iteration item. The reducer is an
     /// ordinary two-argument callback (THE CALLBACK LAW): it receives the element and the
@@ -421,7 +393,7 @@ public static partial class Evaluator
     /// return exactly one value. Lean: <c>evalSequenceReduceStepCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
-        Algorithm callee,
+        Algorithm? callee,
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
@@ -637,14 +609,6 @@ public static partial class Evaluator
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
     /// <summary>
-    /// A value-position argument is evaluated eagerly at assembly when it declares no
-    /// callback parameters; a callable-shaped one is demanded through the ONE
-    /// zero-argument law instead (<see cref="DemandSequenceBuiltinCallItemValue"/>).
-    /// </summary>
-    private static bool IsValueShapedArgument(Algorithm argument)
-        => argument is not Algorithm.Conditional && argument.ParameterPatterns.Count == 0;
-
-    /// <summary>
     /// The call item of an argument that assembly does not evaluate: its value-side
     /// algorithm, its prepared value (if any), its written source, and the callable it
     /// NAMES. A CALLBACK position always receives this item (CALL-03 — supplying a
@@ -658,7 +622,8 @@ public static partial class Evaluator
             ValueError: null,
             resolvedArg.PreparedValue,
             resolvedArg.Source,
-            resolvedArg.Callable);
+            resolvedArg.Callable,
+            resolvedArg.Cell);
 
     /// <summary>
     /// Prepares a filter predicate exactly as the generic filter binds its CALLBACK slot:
@@ -670,7 +635,7 @@ public static partial class Evaluator
     /// invokes it. Evaluates nothing: an unused predicate runs no effect, draws nothing and
     /// cannot fail or recurse.
     /// </summary>
-    internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
+    internal static EvalResult<Algorithm?> PrepareFilterPredicateArgument(
         ResolvedArgumentAlgorithm predicate,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -679,47 +644,16 @@ public static partial class Evaluator
         var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, UnevaluatedCallItem(predicate), ctx, valEnv);
         if (preparedR.IsError) return preparedR.Error;
         return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
-            ? EvalResult<Algorithm>.Ok(callback.InvokedAlgorithm)
+            ? ResolvePreparedCallback(callback)
             : throw new InvalidOperationException("The filter predicate must be an algorithm argument.");
     }
 
     /// <summary>
-    /// Collection-builtin argument assembly (CALL-03): the written slots, left to right, each
-    /// handled by the ROLE its position has in the builtin's metadata
-    /// (<see cref="SequenceBuiltinMetadata.SlotRole"/>), before the arity check and before
-    /// binding.
-    /// <list type="bullet">
-    ///   <item>A SPREAD slot is supply assembly: its operand is demanded NOW and supplies
-    ///   exactly its spread items, which take the roles of the positions they land on. Its
-    ///   failure — of any kind — is the CALL's failure, returned here, before any later slot
-    ///   and before the arity check; it is never one phantom supplied item (SUP-01, SUP-02,
-    ///   CALL-04). So <c>take(Bad*)</c> is <c>Bad</c>'s failure, not an arity error, and
-    ///   <c>map([], Bad*)</c> fails although <c>map</c> would never invoke a callback: the
-    ///   spread law of every call.</item>
-    ///   <item>A CALLBACK slot carries its algorithm and is never value-evaluated here: the
-    ///   builtin INVOKES it per element (HO-04). An unused callback runs no body, so it has no
-    ///   effect, draws nothing, cannot fail and cannot recurse (<c>map([], A)</c> never reads
-    ///   <c>A</c>, exactly as <c>repeat(A, 0, 5)</c> never runs <c>A</c>).</item>
-    ///   <item>A VALUE slot is demanded ONCE, here, in written order. An ORDINARY failure is
-    ///   retained on the item as that slot's final outcome — reported when binding reads the
-    ///   slot, after the arity check — and nothing evaluates the slot again, so no read
-    ///   retries it (<c>reduce</c>'s <c>initial</c> included).</item>
-    ///   <item>A SURPLUS slot (beyond the signature) gets a value slot's eager attempt but is
-    ///   never demanded through the zero-argument law; the call reports its arity error after
-    ///   every written item was prepared.</item>
-    /// </list>
-    /// A callable-shaped argument (one that declares parameters, or a clause family) is never
-    /// evaluated standalone: its parameters are unbound at this collection point, so evaluating
-    /// its body would resolve those parameter names against the surrounding scope (when a
-    /// sibling argument shares a parameter name and was deferred as a self-referential thunk,
-    /// that stray lookup re-enters the same builtin call and never settles). In a VALUE
-    /// position it is demanded through the ONE zero-argument law
-    /// (<see cref="DemandSequenceBuiltinCallItemValue"/>). The shape is the NAMED callable's
-    /// (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), never its value wrapper's;
-    /// a named zero-parameter property is read through its value side — the ordinary property
-    /// read, served from the run cache. RESOURCE LIMITS ARE TERMINAL
-    /// (<see cref="IsDeferrableEvaluationFailure"/>, Q-02): a limit any evaluation here
-    /// reaches ends the call at once. Lean: <c>collectSequenceCallableCallItems</c>.
+    /// Form the ordinary cell supply before checking arity. Arbitrary explicit spreads
+    /// demand their operand here; an existing collector slice transports its addresses.
+    /// VALUE and surplus slots remain suspended. After cardinality succeeds, each builtin
+    /// demands its value controls in its established order and projects callbacks only
+    /// when an invocation is required. Lean: <c>collectSequenceCallableCallItems</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
         IReadOnlyList<ResolvedArgumentAlgorithm> args,
@@ -727,93 +661,8 @@ public static partial class Evaluator
         ValEnv valEnv,
         SequenceBuiltinMetadata metadata)
     {
-        var items = new List<VariadicCallItem>();
-        foreach (var resolvedArg in args)
-        {
-            var arg = resolvedArg.Algorithm;
-
-            if (!resolvedArg.SpreadsSequence)
-            {
-                var role = metadata.SlotRole(items.Count);
-                if (role == SequenceBuiltinSlotRole.Callback)
-                {
-                    items.Add(UnevaluatedCallItem(resolvedArg));
-                    continue;
-                }
-
-                if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
-                {
-                    var item = UnevaluatedCallItem(resolvedArg);
-                    if (role == SequenceBuiltinSlotRole.Value)
-                    {
-                        item = DemandSequenceBuiltinCallItemValue(item, ctx, valEnv);
-                        // A resource limit the demand reached ends the call here, before any
-                        // later slot is evaluated (IsDeferrableEvaluationFailure, Q-02).
-                        if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
-                            return demandFailure;
-                    }
-
-                    items.Add(item);
-                    continue;
-                }
-            }
-
-            // A prepared argument (a dotted receiver or builtin callback value) already
-            // holds its counted value and must not be recomputed: re-evaluating the reified
-            // value would repeat every allocation and charged unit the first evaluation paid.
-            var outputR = resolvedArg.PreparedValue is { } prepared
-                ? EvalResult<CountedResult>.Ok(prepared)
-                : arg is { } algorithm
-                    ? EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv)
-                    : EvalResult<CountedResult>.Err(new EvalError.BadArity());
-            if (outputR.IsOk)
-            {
-                if (resolvedArg.SpreadsSequence)
-                {
-                    foreach (var value in CountedTopLevelValues(outputR.Value))
-                    {
-                        items.Add(new VariadicCallItem(
-                            value,
-                            arg,
-                            ValueError: null,
-                            new CountedResult(value, 1)));
-                    }
-                }
-                else
-                {
-                    items.Add(new VariadicCallItem(
-                        outputR.Value.Value,
-                        arg,
-                        ValueError: null,
-                        outputR.Value,
-                        resolvedArg.Source,
-                        resolvedArg.Callable));
-                }
-
-                continue;
-            }
-
-            // A failed SPREAD supplies nothing: its failure is the call's failure, whatever
-            // its kind, before the arity check and before any later slot. RESOURCE LIMITS ARE
-            // TERMINAL (IsDeferrableEvaluationFailure, Q-02): a limit the eager attempt
-            // actually reached ends the call here too, and no arity verdict or earlier
-            // retained failure can replace or absorb it.
-            if (resolvedArg.SpreadsSequence || !IsDeferrableEvaluationFailure(outputR.Error))
-                return outputR.Error;
-
-            // An ORDINARY failure of a value or surplus slot is retained on the item as that
-            // slot's final outcome. A value-shaped NAMED argument with no output is that
-            // property's failure when binding demands the slot
-            // (BlameDemandedArgumentForMissingOutput), never the callee's.
-            items.Add(new VariadicCallItem(
-                Value: null,
-                arg,
-                BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
-                Source: resolvedArg.Source,
-                Callable: resolvedArg.Callable));
-        }
-
-        return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
+        var expanded = ExpandSequenceSpreadBuiltinArguments(args, ctx, valEnv);
+        return expanded.IsError ? expanded.Error : EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(expanded.Value.Select(UnevaluatedCallItem).ToArray());
     }
 
     /// <summary>
@@ -824,8 +673,7 @@ public static partial class Evaluator
     /// preserve the failure of a valid value's body. Callback positions never call this
     /// helper. A resource limit the item's own demand reached is authoritative: it is the
     /// demand's failure, never replaced by a classification of the callable channel
-    /// (RESOURCE LIMITS ARE TERMINAL — assembly already returns a limit its eager attempt
-    /// reaches, so here it can only come from this value position's own demand). A
+    /// (RESOURCE LIMITS ARE TERMINAL — a demand checks the shared budget before observing completion). A
     /// parameter's established failure takes precedence over classification of its
     /// independent callable channel. With <paramref name="reduceInitial"/> the item is
     /// <c>reduce</c>'s <c>initial</c> — an ordinary VALUE slot, demanded once like every
@@ -872,11 +720,26 @@ public static partial class Evaluator
     /// to report. An item that was already evaluated, or whose evaluation already failed,
     /// is never re-entered. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
     /// </summary>
+    private static VariadicCallItem FinishNeedCallItemDemand(VariadicCallItem item, NeedCell cell, EvalResult<CountedResult> result)
+    {
+        if (!result.IsError) return item with { Value = result.Value.Value, PreparedValue = result.Value };
+        if (item.Source is Expr.Param(var name))
+            return item with { ValueError = DemandParameter(cell, result, name, item.Source.Span).Error };
+        if (result.Error.IsResourceLimit) return item with { ValueError = result.Error };
+        var callable = cell.ProjectCallable();
+        return item with { ValueError = result.Error, Callable = callable.IsOk ? callable.Value : null };
+    }
+
     private static VariadicCallItem DemandSequenceBuiltinCallItemValue(
         VariadicCallItem item,
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (item.Cell is { } cell && item.Value is null && item.ValueError is null)
+        {
+            var result = cell.Demand();
+            return FinishNeedCallItemDemand(item, cell, result);
+        }
         if (item.Value is null && item.ValueError is null
             && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
             return item with { ValueError = slotFailure };
@@ -911,27 +774,11 @@ public static partial class Evaluator
         {
             case SequenceBuiltinSuffixArgKind.Algorithm:
                 {
-                    // A CALLBACK slot: call-item assembly never value-evaluated the item
-                    // (CALL-03 — supplying a callback evaluates nothing), so it carries its
-                    // algorithm channel only, and the builtin invokes it later. An item that
-                    // has no algorithm channel (already-prepared callback data) reaches the
-                    // slot as its counted value's algorithm.
-                    var algorithm = item.Algorithm
-                        ?? (item.PreparedValue is { } prepared
-                            ? CountedArgAlgorithm(prepared, ctx)
-                            : null);
-                    if (algorithm is not null)
-                    {
+                    if (item.Cell is { } cell)
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(algorithm)
-                            {
-                                Callable = item.Callable,
-                            });
-                    }
-
-                    return item.ValueError ?? new EvalError.WithContext(
-                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                        new EvalError.BadArity());
+                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(null) { Cell = cell });
+                    return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
+                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(item.Algorithm) { Callable = item.Callable });
                 }
 
             case SequenceBuiltinSuffixArgKind.Value:
@@ -1026,7 +873,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm stepAlg,
+        Algorithm? stepAlg,
         Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -1064,7 +911,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm predicateAlg,
+        Algorithm? predicateAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -1089,7 +936,7 @@ public static partial class Evaluator
     /// duplicating callback semantics.
     /// </summary>
     internal static EvalResult<bool> EvalFilterPredicateTruth(
-        Algorithm predicateAlg,
+        Algorithm? predicateAlg,
         CountedResult item,
         int index,
         EvalCtx ctx,
@@ -1124,7 +971,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm transformAlg,
+        Algorithm? transformAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -1366,7 +1213,11 @@ public static partial class Evaluator
     /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>).
     /// Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
     /// </summary>
-    private static EvalResult<Algorithm> ExpectPreparedAlgorithmSuffixArg(
+    private static EvalResult<Algorithm?> ResolvePreparedCallback(PreparedSequenceBuiltinSuffixArg.AlgorithmArg arg)
+        => arg.Cell is { } cell ? cell.ProjectCallable()
+            : EvalResult<Algorithm?>.Ok(arg.InvokedAlgorithm);
+
+    private static EvalResult<Algorithm?> ExpectPreparedAlgorithmSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
@@ -1378,8 +1229,8 @@ public static partial class Evaluator
             index,
             SequenceBuiltinSuffixArgKind.Algorithm,
             (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg algorithmArg
-                ? EvalResult<Algorithm>.Ok(algorithmArg.InvokedAlgorithm)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm>(
+                ? ResolvePreparedCallback(algorithmArg)
+                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm?>(
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
 
@@ -1876,6 +1727,7 @@ public static partial class Evaluator
             BuiltinId.@filter => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
                     {
+                        if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                         var predicateR = ExpectPreparedAlgorithmSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
@@ -1888,6 +1740,7 @@ public static partial class Evaluator
             BuiltinId.@map => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
                     {
+                        if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                         var transformR = ExpectPreparedAlgorithmSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
@@ -1946,19 +1799,20 @@ public static partial class Evaluator
             BuiltinId.@reduce => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
                     {
-                        var stepR = ExpectPreparedAlgorithmSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (stepR.IsError) return stepR.Error;
-
                         var initialR = ExpectPreparedValueSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
                             preparedSuffixArgs,
                             1);
                         if (initialR.IsError) return initialR.Error;
+                        if (bound.IterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+
+                        var stepR = ExpectPreparedAlgorithmSuffixArg(
+                            builtin,
+                            metadata.SuffixArgs,
+                            preparedSuffixArgs,
+                            0);
+                        if (stepR.IsError) return stepR.Error;
 
                         return EvalReduceCounted(
                             bound.IterationItems,
@@ -2061,6 +1915,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
+            return ProjectCountedValue(EvalParamCounted(needName, target.Span, ctx, valEnv));
+
         // A PARAMETER receiver's value outcome was established at binding: a parameter whose
         // argument slot FAILED its one value evaluation reports that failure first, before the
         // law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
@@ -2192,6 +2049,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (arg.Cell is { } cell)
+        {
+            var result = cell.Demand();
+            return arg.Source is Expr.Param(var name) ? DemandParameter(cell, result, name, arg.Source.Span) : result;
+        }
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
         if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
@@ -2247,12 +2109,9 @@ public static partial class Evaluator
     /// parameter is the callable itself, never its demanded value. Lean: <c>step.invoked</c>.
     /// Already evaluated data retains the legacy counted-value wrapper when necessary.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveInvokedArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
-        => arg.InvokedAlgorithm is { } algorithm
-            ? EvalResult<Algorithm>.Ok(algorithm)
-            : arg.PreparedValue is { } prepared
-                ? EvalResult<Algorithm>.Ok(CountedArgAlgorithm(prepared, ctx))
-                : new EvalError.BadArity();
+    private static EvalResult<Algorithm?> ResolveInvokedArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
+        => arg.Cell is { } cell ? cell.ProjectCallable()
+            : EvalResult<Algorithm?>.Ok(arg.InvokedAlgorithm);
 
     private static EvalResult<Result> EvalResolvedArgument(
         ResolvedArgumentAlgorithm arg,
@@ -2334,33 +2193,8 @@ public static partial class Evaluator
                 }
 
             case (BuiltinId.@while, _) when args.Count >= 2:
-                {
-                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(1).ToList(), ctx, valEnv);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return WhileLoopCounted(stepR.Value, initialStateR.Value, ctx, valEnv);
-                }
-
             case (BuiltinId.@repeat, _) when args.Count >= 3:
-                {
-                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var countR = EvalResolvedArgument(args[1], ctx, valEnv);
-                    if (countR.IsError) return countR.Error;
-                    var nR = ExpectWholeInt(countR.Value, "Repeat count");
-                    if (nR.IsError) return nR.Error;
-                    // Domain check BEFORE narrowing: the validated whole number may lie
-                    // outside long's range, so the (long) conversion is only safe after
-                    // rejecting negatives and saturating oversized counts (behaviorally
-                    // identical: both exceed any finite budget).
-                    if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                    var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
-
-                    var initialStateR = EvalInitialLoopStateSlots(args.Skip(2).ToList(), ctx, valEnv);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return RepeatLoopCounted(stepR.Value, n, initialStateR.Value, ctx, valEnv);
-                }
+                return EvalNeedLoop(builtin, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
 
             case (BuiltinId.@atoms, 1):
                 {

@@ -468,12 +468,12 @@ public class NameResolutionAuditTests
     [InlineData("open Math\nA = q + 1\nF(x) = Sin(A)\nF(0)", 3, 12)]
     [InlineData("A = q + 1\nF(x) = A.sin\nF(0)", 2, 8)]
     [InlineData("A = q + 1\nF(x) = 2.pow(A)\nF(0)", 2, 14)]
-    public void MathConsumerContract_UnderAClosedList_IsDiagnosedLikeTheAliasCall(string source, int line, int column)
+    public void MathConsumerContract_UnderAClosedList_IsRejectedAtDemand(string source, int line, int column)
     {
-        var diagnostic = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics);
-        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
-        Assert.Contains("'A' is required as a value here", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(line, column, line, column + 1), diagnostic.Span);
+        _ = SourceProvenance.ParseValid(source);
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
+        Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
+        Assert.Equal(new SourceSpan(line, column, line, column + 1), error.Span);
     }
 
     [Theory]
@@ -572,6 +572,9 @@ public class NameResolutionAuditTests
     // so a repeated name accepts the two spellings together — while each keeps its own binding.
     [InlineData("A(*xs) = 5\nAlias = A\nP(f, f, f) = f(7)\nP(A, Alias, A)", "5")]
     [InlineData("A(*xs) = 5\nAlias = A\nNext = Alias\nP(f, f, f) = f(7)\nP(Next, A, Alias)", "5")]
+    // A structural dot projects the declaration identity without evaluating its value.
+    [InlineData("P(f, f) = f\nP(Math.Pi, Math.Pi)", "3.141592653589793238462643383279503")]
+    [InlineData("Lib = {\n    public X = 5\n}\nP(f, f) = f\nA = {\n    open Lib\n    P(X, Lib.X)\n}\nA", "5")]
     public void OneCallable_BindsARepeatedName(string source, string display)
         => Assert.Equal(display, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
 
@@ -579,9 +582,6 @@ public class NameResolutionAuditTests
     // the prelude alias and the canonical member are distinct BINDINGS (wired under the
     // prelude and under Math) sharing one algorithm
     [InlineData("P(f, f) = f\nA = {\n    open Math\n    P(Pi, pi)\n}\nA")]
-    // every argumentless dot expression is a fresh dot-result wrapper on the algorithm channel
-    [InlineData("P(f, f) = f\nP(Math.Pi, Math.Pi)")]
-    [InlineData("Lib = {\n    public X = 5\n}\nP(f, f) = f\nA = {\n    open Lib\n    P(X, Lib.X)\n}\nA")]
     public void DistinctCallables_RejectARepeatedName(string source)
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));

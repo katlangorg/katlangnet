@@ -34,12 +34,6 @@ public static partial class Evaluator
         ValEnv valEnv)
         => ProjectCountedValue(EvalAlgOutputCountedCore(alg, ctx, valEnv));
 
-    private static EvalResult<Result> EvalAlgOutput(
-        Algorithm alg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-        => EvalAlgOutputCore(alg, ctx, valEnv);
-
     /// <summary>
     /// Evaluate a root program algorithm when a result is requested. The root is demanded
     /// for its value with NOTHING supplied, so it goes through the ONE zero-argument
@@ -54,31 +48,12 @@ public static partial class Evaluator
         ValEnv valEnv)
         => EvalZeroArgumentDemandOutput(alg, ctx, valEnv);
 
-    private static EvalResult<IReadOnlyList<Result>> EvalInitialLoopStateSlots(
-        IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // Initial loop state preserves explicit argument boundaries: repeat(Step, 3, a, b)
-        // starts with two slots, while repeat(Step, 3, Pair) starts with one slot even
-        // when Pair evaluates to multiple values. Step outputs define later state slots;
-        // capture a step result as a sequence value to keep one structured slot across iterations.
-        var stateSlots = new List<Result>(initArgs.Count);
-        foreach (var init in initArgs)
-        {
-            var slotR = EvalResolvedArgument(init, ctx, valEnv);
-            if (slotR.IsError) return slotR.Error;
-            stateSlots.Add(slotR.Value);
-        }
-
-        return EvalResult<IReadOnlyList<Result>>.Ok(stateSlots);
-    }
-
     private static EvalResult<IReadOnlyList<Result>> EvalAlgOutputSlots(
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool preserveSequenceSpreadExpressionBoundaries = false)
+        bool preserveSequenceSpreadExpressionBoundaries = false,
+        IReadOnlyList<string>? parameterNames = null)
     {
         if (alg is Algorithm.Builtin(var builtin))
         {
@@ -98,7 +73,7 @@ public static partial class Evaluator
             return new EvalError.MissingOutput();
 
         var slots = new List<Result>();
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
         foreach (var expr in alg.Output)
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);
@@ -155,195 +130,16 @@ public static partial class Evaluator
         // state slot but two flattened captures. The context's parameter names
         // are the matching top-level display labels ("(x, y)" is one entry).
         => new EvalError.WithContext(
-            new LoopStateBindingContext(
-                loopName,
-                parameterPatterns.Select(static pattern => pattern.DisplayName).ToList(),
-                actualStateValueCount),
+            parameterPatterns.Any(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
+                ? new VariadicLoopStateBindingContext(loopName,
+                    parameterPatterns.Where(static pattern => pattern is not CaptureParameterPattern { Kind: ParameterKind.Collecting }).Select(static pattern => pattern.DisplayName).ToList(),
+                    expectedStateValueCount, actualStateValueCount)
+                : new LoopStateBindingContext(loopName,
+                    parameterPatterns.Select(static pattern => pattern.DisplayName).ToList(), actualStateValueCount),
             new EvalError.ArityMismatch(expectedStateValueCount, actualStateValueCount)
             {
                 InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),
             });
-
-    private static EvalError VariadicLoopStateArityMismatch(
-        Algorithm step,
-        int expectedMinimumStateValueCount,
-        int actualStateValueCount,
-        string loopName)
-        => VariadicLoopStateArityMismatch(
-            step.Parameters,
-            expectedMinimumStateValueCount,
-            actualStateValueCount,
-            loopName);
-
-    private static EvalError VariadicLoopStateArityMismatch(
-        GenericLoopStepBindingContract bindingContract,
-        int expectedMinimumStateValueCount,
-        int actualStateValueCount,
-        string loopName)
-        => VariadicLoopStateArityMismatch(
-            bindingContract.Parameters,
-            expectedMinimumStateValueCount,
-            actualStateValueCount,
-            loopName);
-
-    private static EvalError VariadicLoopStateArityMismatch(
-        IReadOnlyList<ParameterDeclaration> parameters,
-        int expectedMinimumStateValueCount,
-        int actualStateValueCount,
-        string loopName)
-        => new EvalError.WithContext(
-            new VariadicLoopStateBindingContext(
-                loopName,
-                parameters
-                    .Where(static parameter => parameter.Kind != ParameterKind.Collecting)
-                    .Select(static parameter => parameter.DisplayName)
-                    .ToList(),
-                expectedMinimumStateValueCount,
-                actualStateValueCount),
-            new EvalError.ArityMismatch(expectedMinimumStateValueCount, actualStateValueCount)
-            {
-                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),
-            });
-
-    private static EvalResult<ValEnv> BindEvaluatedSlotValueBindings(
-        FlatCollectingBindingLayout layout,
-        IReadOnlyList<(string ParameterName, Result Item)> normalBindings,
-        CollectingCapture collectingCapture)
-    {
-        var valueBindings = new List<(string Name, Result Value)>(layout.Signature.Parameters.Count);
-        var normalBindingIndex = 0;
-
-        foreach (var parameter in layout.Signature.Parameters)
-        {
-            if (parameter.Kind == ParameterKind.Collecting)
-            {
-                valueBindings.Add((collectingCapture.Name, collectingCapture.Value));
-                continue;
-            }
-
-            if (normalBindingIndex >= normalBindings.Count)
-                return new EvalError.BadArity();
-
-            valueBindings.Add(normalBindings[normalBindingIndex++]);
-        }
-
-        if (normalBindingIndex != normalBindings.Count)
-            return new EvalError.BadArity();
-
-        return EvalResult<ValEnv>.Ok(valueBindings);
-    }
-
-    private static EvalResult<EvaluatedSlotBindings> BindEvaluatedSlotsToParameters(
-        GenericLoopStepBindingContract bindingContract,
-        IReadOnlyList<Result> evaluatedSlots,
-        EvalCtx ctx,
-        string callableName,
-        GenericLoopStepBindingSelection bindingSelection,
-        Func<int, int, EvalError> fixedArityMismatch,
-        Func<int, int, EvalError> variadicArityMismatch)
-    {
-        // Evaluated slots are already Result values. This helper only applies
-        // parameter layout; it does not evaluate argument expressions, unpack a
-        // final sequence-value argument, or apply dot-call receiver boundary rules.
-        EvalResult<EvaluatedSlotBindings> BindPatternedSlots()
-        {
-            var inputs = evaluatedSlots
-                .Select(static slot => new ParameterPatternInput(slot, Algorithm: null, ValueError: null))
-                .ToList();
-            var bindingsR = BindParameterPatternList(
-                bindingContract.ParameterPatterns,
-                inputs,
-                ctx,
-                allowAlgorithmBindings: false,
-                fixedArityMismatch);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(
-                bindingsR.Value.ValueBindings,
-                bindingsR.Value.CountedBindings));
-        }
-
-        EvalResult<EvaluatedSlotBindings> BindFlatFixedSlots()
-        {
-            if (bindingContract.ParameterNames.Count != evaluatedSlots.Count)
-                return fixedArityMismatch(bindingContract.ParameterNames.Count, evaluatedSlots.Count);
-
-            var boundR = BindParams(bindingContract.ParameterNames, evaluatedSlots);
-            if (boundR.IsError) return boundR.Error;
-
-            return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(boundR.Value, []));
-        }
-
-        EvalResult<EvaluatedSlotBindings> BindFlatCollectingSlots(FlatCollectingBindingLayout layout)
-        {
-            // Evaluated state slots are already Result values, so they are the binder's items
-            // directly: the shared flat collecting allocation (BindCallableArguments) assigns
-            // the fixed prefix and suffix and leaves the movable middle for the collector.
-            var boundItemsR = BindCallableArguments(layout.Signature, evaluatedSlots, variadicArityMismatch);
-            if (boundItemsR.IsError) return boundItemsR.Error;
-
-            var boundItems = boundItemsR.Value;
-            var collectingName = boundItems.CollectingParameterName ?? layout.CollectingName;
-            var collectingCaptureR = CreateCollectingCapture(ctx, collectingName, boundItems.CollectingItems);
-            if (collectingCaptureR.IsError) return collectingCaptureR.Error;
-            var collectingCapture = collectingCaptureR.Value;
-
-            var valueBindingsR = BindEvaluatedSlotValueBindings(
-                layout,
-                boundItems.NormalBindings,
-                collectingCapture);
-            if (valueBindingsR.IsError) return valueBindingsR.Error;
-
-            return EvalResult<EvaluatedSlotBindings>.Ok(new EvaluatedSlotBindings(
-                valueBindingsR.Value,
-                [(collectingCapture.Name, collectingCapture.CountedValue)]));
-        }
-
-        EvalResult<EvaluatedSlotBindings> BindLegacyShape()
-        {
-            if (UsesPatternBinding(bindingContract.ParameterPatterns))
-                return BindPatternedSlots();
-
-            return TryGetLegacyFlatCollectingBindingLayout(bindingContract.Parameters, callableName, out var legacyLayout)
-                ? BindFlatCollectingSlots(legacyLayout)
-                : BindFlatFixedSlots();
-        }
-
-        EvalResult<EvaluatedSlotBindings> BindSelectedFlatCollectingShape()
-        {
-            return bindingSelection.FlatCollectingLayout is { } layout
-                ? BindFlatCollectingSlots(layout)
-                : BindLegacyShape();
-        }
-
-        return bindingSelection.Shape switch
-        {
-            GenericLoopStepBindingShape.Patterned => BindPatternedSlots(),
-            GenericLoopStepBindingShape.FlatFixed => BindFlatFixedSlots(),
-            GenericLoopStepBindingShape.FlatCollecting => BindSelectedFlatCollectingShape(),
-            _ => BindLegacyShape(),
-        };
-    }
-
-    private static EvalResult<EvaluatedSlotBindings> BindLoopStepState(
-        GenericLoopStepBindingContract bindingContract,
-        IReadOnlyList<Result> stateSlots,
-        EvalCtx ctx,
-        string loopName,
-        GenericLoopStepBindingSelection bindingSelection)
-    {
-        // Loop state slots are produced by initial loop arguments or previous
-        // step output. They are already evaluated and must not use ordinary
-        // call-site behavior such as spread slot expansion.
-        return BindEvaluatedSlotsToParameters(
-            bindingContract,
-            stateSlots,
-            ctx,
-            "loop step",
-            bindingSelection,
-            (required, actual) => LoopStateArityMismatch(bindingContract, required, actual, loopName),
-            (required, actual) => VariadicLoopStateArityMismatch(bindingContract, required, actual, loopName));
-    }
 
     /// <summary>
     /// Applies a unary operator to one evaluated operand value. This is the SINGLE
@@ -564,16 +360,6 @@ public static partial class Evaluator
         _ => null,
     };
 
-    /// <summary>Evaluate an expression and coerce to a number.
-    /// Lean: expectInt over eval (the model has no dedicated wrapper).</summary>
-    private static EvalResult<Decimal128> EvalInt(
-        Expr expr, EvalCtx ctx, ValEnv valEnv)
-    {
-        var r = Eval(expr, ctx, valEnv);
-        if (r.IsError) return r.Error;
-        return ExpectInt(r.Value);
-    }
-
     private static EvalResult<IReadOnlyList<Result>> RunStepSlots(
         Algorithm step,
         EvalCtx ctx,
@@ -581,40 +367,7 @@ public static partial class Evaluator
         IReadOnlyList<Result> stateSlots,
         string loopName,
         PreparedGenericLoopStep prepared)
-    {
-        // One loop ITERATION is one charged work unit. Loops repeat work without growing
-        // the host stack, so they charge work only — never depth. This is the single
-        // per-iteration chokepoint shared by generic `while` and `repeat`; the optimized
-        // loop paths never run under a step budget (see CreateRootCtx), so the charged
-        // count is exactly the generic one.
-        if (ctx.Budget.TryChargeStep() is { } limitError)
-            return limitError;
-
-        var boundR = BindLoopStepState(
-            prepared.BindingContract,
-            stateSlots,
-            ctx,
-            loopName,
-            prepared.BindingSelection);
-        if (boundR.IsError) return boundR.Error;
-
-        // The concatenation must build a FRESH list per iteration: the counted
-        // environment's reference identity is the zero-arg property cache key component
-        // that separates one iteration's LOCAL-ONLY property entries (a step-local
-        // property reading the state) from the next's, so reusing one instance across
-        // iterations would let a state-dependent value leak between iterations. (An
-        // EXPORTED property's key carries no environment identity and hits across
-        // iterations by design.) The algorithm tier carries no per-iteration bindings,
-        // so its prepared shadowed instance is reused.
-        var stepCtx = ctx
-            .WithAlgEnv(prepared.ShadowedAlgEnv)
-            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
-        return EvalAlgOutputSlots(
-            step,
-            stepCtx,
-            Concat(boundR.Value.ValueBindings, valEnv),
-            preserveSequenceSpreadExpressionBoundaries: prepared.PreserveSequenceSpreadExpressionBoundaries);
-    }
+        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, prepared, asynchronous: false).GetAwaiter().GetResult();
 
     /// <summary>
     /// Split a loop step output into next state slots and the continuation flag. The
@@ -654,46 +407,6 @@ public static partial class Evaluator
     // `applyBuiltinResolved` because CoreTests guards address it directly;
     // the C# equivalent would have no caller at all.)
 
-    private static EvalResult<CountedResult> WhileLoopCounted(
-        Algorithm step,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        ctx.LoopDiagnostics?.RecordLoopExecution();
-
-        if (!ctx.EnableLoopOptimization)
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop optimization disabled");
-            return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
-        }
-
-        if (!IsOptimizedLoopShapeEligible(step, out var fallbackReason))
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(fallbackReason!);
-            return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
-        }
-
-        if (initialStateSlots.Any(static slot => slot is not (Result.Atom or Result.Bool)))
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("non-scalar loop state slot");
-            return WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
-        }
-
-        if (step.ParameterCount != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, step.ParameterCount, initialStateSlots.Count, "while");
-
-        return LoopOptimizer.TryEvaluateWhile(
-            step,
-            initialStateSlots,
-            ctx,
-            valEnv,
-            fallbackStateSlots => WhileLoopGenericCounted(step, fallbackStateSlots, ctx, valEnv),
-            out var optimizedResult)
-            ? optimizedResult
-            : WhileLoopGenericCounted(step, initialStateSlots, ctx, valEnv);
-    }
-
     private static EvalResult<CountedResult> WhileLoopGenericCounted(
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
@@ -715,51 +428,6 @@ public static partial class Evaluator
             if (!cont) return MakeCheckedLoopStateResult(ctx, stateSlots);
             stateSlots = nextStateSlots.ToList();
         }
-    }
-
-    private static EvalResult<CountedResult> RepeatLoopCounted(
-        Algorithm step,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        ctx.LoopDiagnostics?.RecordLoopExecution();
-
-        if (count == 0)
-            return MakeCheckedLoopStateResult(ctx, initialStateSlots);
-
-        if (!ctx.EnableLoopOptimization)
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop optimization disabled");
-            return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
-        }
-
-        if (!IsOptimizedLoopShapeEligible(step, out var fallbackReason))
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(fallbackReason!);
-            return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
-        }
-
-        if (initialStateSlots.Any(static slot => slot is not (Result.Atom or Result.Bool)))
-        {
-            ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("non-scalar loop state slot");
-            return RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
-        }
-
-        if (step.ParameterCount != initialStateSlots.Count)
-            return LoopStateArityMismatch(step, step.ParameterCount, initialStateSlots.Count, "repeat");
-
-        return LoopOptimizer.TryEvaluateRepeat(
-            step,
-            count,
-            initialStateSlots,
-            ctx,
-            valEnv,
-            (remainingCount, fallbackStateSlots) => RepeatLoopGenericCounted(step, remainingCount, fallbackStateSlots, ctx, valEnv),
-            out var optimizedResult)
-            ? optimizedResult
-            : RepeatLoopGenericCounted(step, count, initialStateSlots, ctx, valEnv);
     }
 
     private static EvalResult<CountedResult> RepeatLoopGenericCounted(

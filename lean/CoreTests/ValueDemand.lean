@@ -1,10 +1,13 @@
+import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
+
+open KatLang.HistoricalReadyBinding
 
 namespace KatLangTests
 open KatLang (alg algWithParameters algWithParameterPatterns algPrivate runFlat runResult Algorithm Error Result)
 open KatLang (resolve param num)
-open KatLang (runEvalM runResultM bindParameterPatternList EvalState)
+open KatLang (runEvalM runResultM EvalState)
 
 --------------------------------------------------------------------------------
 -- Zero-argument value demand at builtin VALUE slots (F9)
@@ -161,7 +164,7 @@ def reduceInitialSlotRejectsFromSignature (initial : String) : Bool :=
   match runResult (valueDemandRoot [.call (resolve "reduce")
       [.listLiteral [.num 1, .num 2], resolve "Add", resolve initial]]) with
   | Except.error err =>
-      hasContext "while preparing reduce initial accumulator" err && innermostIsBadArity err
+      hasContext ("while evaluating property " ++ initial) err && innermostIsArityMismatch 1 0 err
   | _ => false
 #guard reduceInitialSlotRejectsFromSignature "Inc"
 #guard reduceInitialSlotRejectsFromSignature "K"

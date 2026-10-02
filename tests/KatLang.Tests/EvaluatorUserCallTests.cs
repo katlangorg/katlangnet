@@ -344,14 +344,12 @@ public class EvaluatorUserCallTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-        Assert.Equal(1, arity.Expected);
-        Assert.Equal(0, arity.Actual);
+        Assert.Equal(2, arity.Expected);
+        Assert.Equal(1, arity.Actual);
         Assert.NotNull(arity.Signature);
         Assert.Equal("Use(f, x)", arity.Signature.DisplayText);
 
-        // The payload keeps the Lean-modeled value-tier view (1 parameter still to bind on the
-        // value channel, 0 value slots); the MESSAGE counts the WRITTEN slots — `Inc` is a
-        // supplied argument — so it says 1, not 0 (final audit, September 2026).
+        // Payload and text both count the original supplied cells, before demand.
         Assert.Contains(
             "Callable `Use(f, x)` expects 2 arguments, but was called with 1 argument.",
             KatLangError.FromEvalError(result.Error).Message,

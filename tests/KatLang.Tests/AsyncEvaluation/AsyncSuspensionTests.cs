@@ -230,7 +230,7 @@ public class AsyncSuspensionTests
     {
         // Error equivalence under genuine suspension, including an error raised INSIDE
         // a suspended-and-resumed callback. (A resource limit in an unused argument is
-        // pinned by SuspendingRun_ResourceLimitInAnUnusedArgument_IsTerminalLikeTheSynchronousRun.)
+        // pinned by SuspendingRun_UnusedArgumentCannotReachItsResourceLimit.)
         var cases = new[]
         {
             "A = 0\n1 / A",
@@ -255,13 +255,9 @@ public class AsyncSuspensionTests
     [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nUse(x) = 42\nUse(Deep(500))")]
     [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nUse(x) = 42\nUse({Deep(500)})")]
     [InlineData("Deep(0) = 0\nDeep(n) = Deep(n - 1)\nD = Deep(500)\nUse(x) = 42\nUse(D)")]
-    public async Task SuspendingRun_ResourceLimitInAnUnusedArgument_IsTerminalLikeTheSynchronousRun(string source)
+    public async Task SuspendingRun_UnusedArgumentCannotReachItsResourceLimit(string source)
     {
-        // A parameter's eager value evaluation failing on a resource limit ends the run —
-        // whether the slot has no algorithm channel (a call), or has one (a brace block, a
-        // named property) that an ORDINARY failure would be retained beside (RESOURCE LIMITS
-        // ARE TERMINAL, Q-02). The genuinely suspending async twin reaches the same verdict
-        // as the synchronous run; cancellation semantics stay separate from it.
+        // An unused cell performs no recursion or resource charge on either route.
         var limits = new EvaluationLimits { MaxDepth = 16 };
         var ast = AsyncEvaluationHarness.Ast(source);
 
@@ -269,7 +265,7 @@ public class AsyncSuspensionTests
         var async = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedAsync(ast, new SuspendingAsyncZeroArgPropertyResultCache(), limits));
 
-        Assert.Equal("err evaluationDepthExceeded", AsyncEvaluationHarness.NeutralOf(sync));
+        Assert.Equal("ok raw=42 n=1", AsyncEvaluationHarness.NeutralOf(sync));
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
     }
 }

@@ -720,15 +720,10 @@ public class DiagnosticBudgetTests
     }
 
     [Fact]
-    public void BlockedForwardingDiagnostic_EchoesABoundedNameList()
+    public void ClosedValueDemand_DoesNotProduceAStaticNameListDiagnostic()
     {
         var names = string.Join(", ", Enumerable.Range(0, 1000).Select(i => $"x{i}"));
-        var error = Assert.Single(Parse($"G = {names}\nH(q) = abs(G)\n1").Diagnostics);
-
-        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, error.Code);
-        Assert.Contains("'G' is required as a value here, but producing that value needs the implicit parameters 'x0', 'x1', ", error.Message);
-        Assert.Contains(ExprNameRenderer.TruncationMarker, error.Message);
-        Assert.True(error.Message.Length < 3000, $"{error.Message.Length} code units");
+        Assert.Empty(Parse($"G = {names}\nH(q) = abs(G)\n1").Diagnostics);
     }
 
     [Fact]

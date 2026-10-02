@@ -289,20 +289,18 @@ public class OutputBundleSplitTests
     }
 
     [Fact]
-    public void GenuineCaptureArgument_StaysSuppressedOnTheValueChannel()
+    public void GenuineCaptureArgument_HasNoCallableChannelAndIsNotForcedByProjection()
     {
         // A group whose parentheses DO something is a capture: evaluating
-        // `(Increment, Increment)` as the argument VALUE calls the one-parameter
-        // property with zero arguments, and no callable identity crosses the
+        // `(Increment, Increment)` has no callable projection; invocation rejects it without
+        // demanding its elements. No callable identity crosses the
         // capture boundary. A capture's elements are VALUE positions, so an inferring
         // body lifts them (the root then needs `x`); a closed list keeps the bare
         // references and pins the runtime demand.
         Assert.IsType<EvalError.UnresolvedImplicitParams>(
             Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nApply((Increment, Increment))")));
         var error = Innermost(EvalError("Apply = f(9)\nIncrement = x + 1\nProbe(u) = Apply((Increment, Increment))\nProbe(0)"));
-        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
-        Assert.Equal(1, arity.Expected);
-        Assert.Equal(0, arity.Actual);
+        Assert.IsType<EvalError.NotAnAlgorithm>(error);
 
         Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(EvalError("Zero = 0\nCall0 = f()\nCall0((Zero, Zero))")));
         Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(EvalError("Zero = 0\nCall0 = f()\nCall0((Zero*))")));

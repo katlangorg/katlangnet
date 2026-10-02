@@ -1842,9 +1842,7 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
     .call (resolve "G") [resolve "sum"]
   ])) with
   | Except.error err =>
-      innermostIsTypeMismatch
-        "A collecting parameter collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected."
-        err
+      innermostIsArityMismatch 0 0 err
   | _ => false
 
 #guard restFunctionShapedArgumentReportsTypeMismatch
@@ -1896,9 +1894,7 @@ def restRequiringCallableArgumentReportsTypeMismatch : Bool :=
     .call (resolve "G") [resolve "Inc"]
   ])) with
   | Except.error err =>
-      innermostIsTypeMismatch
-        "A collecting parameter collects values, but a supplied argument is a callable. Pass a value, or call the callable so its result is collected."
-        err
+      innermostIsArityMismatch 1 0 err
   | _ => false
 
 #guard restRequiringCallableArgumentReportsTypeMismatch

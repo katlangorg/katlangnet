@@ -265,15 +265,7 @@ public class EvaluatorErrorDiagnosticTests
             KatLangError.FromEvalError(new EvalError.NotAnAlgorithm("num(5)")).Message);
     }
 
-    /// <summary>
-    /// Final hostile pass (September 2026): a builtin value demand inside a CALL context
-    /// (`F(v) = v + sum`) carries the Lean-aligned placeholder Expected = 0 beside its real
-    /// signature; the call arm used to render the raw pair ("Expected 0 parameters, but was
-    /// called with 0 arguments"). The signature is rendered first wherever it is carried. (A
-    /// lone `F(v) = sum` is bare forwarding, refused at the front end because `v` does not
-    /// supply `collection`; the operand block `{ sum }` is a callable alias of sum whose value
-    /// read is sum's own zero-argument demand.)
-    /// </summary>
+    /// <summary>Arity payload and message count supplied cells before value demand.</summary>
     [Theory]
     [InlineData("F(v) = v + sum\nF(1)")]
     [InlineData("F(v) = v + { sum }\nF(1)")]
@@ -295,8 +287,8 @@ public class EvaluatorErrorDiagnosticTests
     /// 1 argument", never 0. The structured payload is unchanged.
     /// </summary>
     [Theory]
-    [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj)", 1, 0, "R(a, b)", 2, 1)]
-    [InlineData("Obj = {\n    K = 9\n}\nR(a, b, c) = c\nR(Obj, 1)", 2, 1, "R(a, b, c)", 3, 2)]
+    [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj)", 2, 1, "R(a, b)", 2, 1)]
+    [InlineData("Obj = {\n    K = 9\n}\nR(a, b, c) = c\nR(Obj, 1)", 3, 2, "R(a, b, c)", 3, 2)]
     [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj, 1, 2)", 2, 3, "R(a, b)", 2, 3)]
     [InlineData("R(a, b) = b\nR(1)", 2, 1, "R(a, b)", 2, 1)]
     public void Eval_ArityMismatch_MessageCountsWrittenSlots_EvenWhenASlotIsAlgorithmOnly(

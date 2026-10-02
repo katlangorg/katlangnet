@@ -87,149 +87,6 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Match a top-level conditional call head against the explicit arguments
-    /// supplied at the call site.
-    ///
-    /// Ordinary direct conditional calls preserve explicit argument slots at
-    /// the top level: a non-sequence-value head expects exactly one explicit argument,
-    /// while a sequence-value head expects one explicit argument per sequence element. Nested
-    /// sequence-value structure is still matched through <see cref="MatchPattern(Pattern, Result)"/>.
-    /// </summary>
-    private static ValEnv? MatchCallPattern(
-        Pattern pattern,
-        IReadOnlyList<Result> explicitArgs)
-    {
-        if (pattern is Pattern.SequenceValue(var items))
-        {
-            if (items.Count != explicitArgs.Count)
-                return null;
-
-            var bindings = new List<(string Name, Result Value)>();
-            for (var i = 0; i < items.Count; i++)
-            {
-                if (!MatchPattern(items[i], explicitArgs[i], bindings))
-                    return null;
-            }
-
-            return bindings;
-        }
-
-        return explicitArgs.Count == 1 ? MatchPattern(pattern, explicitArgs[0]) : null;
-    }
-
-    private static (CondBranch Branch, ValEnv Bindings)? MatchCallBranches(
-        IReadOnlyList<CondBranch> branches,
-        IReadOnlyList<Result> explicitArgs)
-    {
-        foreach (var branch in branches)
-        {
-            var bindings = MatchCallPattern(branch.Pattern, explicitArgs);
-            if (bindings is not null)
-                return (branch, bindings);
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Counted twin of the plain <c>MatchPattern</c> above,
-    /// dispatched the same compiler-exhaustive way over the closed Pattern hierarchy.
-    /// </summary>
-    private static bool MatchCountedPattern(
-        Pattern pattern,
-        CountedResult result,
-        List<(string Name, CountedResult Value)> bindings)
-        => pattern switch
-        {
-            Pattern.Bind(var name) => MatchCountedBindPattern(name, result, bindings),
-            // Structural numeric equality, mirroring the plain MatchPattern arm.
-            Pattern.LitInt(var n) => result.Value is Result.Atom(var v) && v.Equals(n),
-            Pattern.LitString(var s) => result.Value is Result.Str(var sv)
-                && string.Equals(sv, s, StringComparison.Ordinal),
-            Pattern.LitBool(var b) => result.Value is Result.Bool(var bv) && bv == b,
-            Pattern.SequenceValue(var items) => MatchCountedStructurePattern(items, result.Value.SequencePatternItems(), bindings),
-            Pattern.ListValue(var items) => MatchCountedStructurePattern(items, result.Value.ListPatternItems(), bindings),
-        };
-
-    private static bool MatchCountedBindPattern(
-        string name,
-        CountedResult result,
-        List<(string Name, CountedResult Value)> bindings)
-    {
-        var existing = LookupCountedParam(bindings, name);
-        if (existing is not null)
-            return Result.ValueComparer.Equals(existing.Value.Value, result.Value);
-
-        bindings.Add((name, result));
-        return true;
-    }
-
-    /// <summary>Counted twin of <see cref="MatchStructurePattern"/> (Lean: <c>matchCountedStructureInto</c>).</summary>
-    private static bool MatchCountedStructurePattern(
-        IReadOnlyList<Pattern> items,
-        IReadOnlyList<Result>? members,
-        List<(string Name, CountedResult Value)> bindings)
-    {
-        if (members is null || members.Count != items.Count)
-            return false;
-
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (!MatchCountedPattern(
-                items[i],
-                new CountedResult(members[i], members[i].ValueCount()),
-                bindings))
-                return false;
-        }
-
-        return true;
-    }
-
-    private static CountedParamEnv? MatchCountedPattern(
-        Pattern pattern,
-        CountedResult result)
-    {
-        var bindings = new List<(string Name, CountedResult Value)>();
-        return MatchCountedPattern(pattern, result, bindings) ? bindings : null;
-    }
-
-    private static CountedParamEnv? MatchCountedCallPattern(
-        Pattern pattern,
-        IReadOnlyList<CountedResult> explicitArgs)
-    {
-        if (pattern is Pattern.SequenceValue(var items))
-        {
-            if (items.Count != explicitArgs.Count)
-                return null;
-
-            var bindings = new List<(string Name, CountedResult Value)>();
-            for (var i = 0; i < items.Count; i++)
-            {
-                if (!MatchCountedPattern(items[i], explicitArgs[i], bindings))
-                    return null;
-            }
-
-            return bindings;
-        }
-
-        return explicitArgs.Count == 1 ? MatchCountedPattern(pattern, explicitArgs[0]) : null;
-    }
-
-    private static (CondBranch Branch, CountedParamEnv Bindings)? MatchCountedCallBranches(
-        IReadOnlyList<CondBranch> branches,
-        IReadOnlyList<CountedResult> explicitArgs)
-    {
-        foreach (var branch in branches)
-        {
-            var bindings = MatchCountedCallPattern(branch.Pattern, explicitArgs);
-            if (bindings is not null)
-                return (branch, bindings);
-        }
-
-        return null;
-    }
-
-    /// <summary>
     /// Compatibility fallback for manually constructed core conditionals.
     /// Surface clause elaboration should already classify whole same-name
     /// plain-binder clause groups as ordinary <see cref="Algorithm.User"/>
@@ -277,223 +134,6 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Reify a pre-evaluated counted argument as a zero-parameter algorithm
-    /// that preserves the same value and emitted top-level count. This rebuild
-    /// costs O(value size), so it is performed lazily — only when an
-    /// algorithm-only consumer actually requests a prepared argument's
-    /// algorithm channel — and each completed construction is recorded on the
-    /// run's passive <see cref="EvaluationObservations"/>.
-    /// </summary>
-    private static Algorithm CountedArgAlgorithm(CountedResult arg, EvalCtx ctx)
-    {
-        OutputBundle output = arg.EmittedCount switch
-        {
-            0 => [EmptyResultExpr()],
-            1 => [ResultToExpr(arg.Value, ctx.Observations)],
-            _ => ResultsToExprBundle(arg.Value.ToItems(), ctx.Observations),
-        };
-
-        var algorithm = new Algorithm.User(
-            Parent: null,
-            ParameterPatterns: [],
-            Opens: [],
-            Properties: [],
-            Output: output);
-
-        // Record the completed wrapper, not merely a request that entered this helper.
-        ctx.Observations?.RecordCountedArgumentReification();
-        return algorithm;
-    }
-
-    private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPattern(
-        ParameterPattern pattern,
-        CountedResult input,
-        EvalCtx ctx)
-    {
-        switch (pattern)
-        {
-            case CaptureParameterPattern { Kind: ParameterKind.Normal } capture:
-                return EvalResult<CountedParameterPatternBindings>.Ok(new CountedParameterPatternBindings(
-                    [(capture.Name, input)]));
-
-            case CaptureParameterPattern { Kind: ParameterKind.Collecting }:
-                return new EvalError.BadArity();
-
-            case SequenceValueParameterPattern or ListValueParameterPattern:
-                {
-                    // The callback value opens through the SAME kind-specific rule as the
-                    // ordinary binder (StructuralPatternItems): a sequence pattern opens a
-                    // SEQUENCE value only and a list pattern a LIST value only; the other
-                    // kind or a scalar is the pattern's kind mismatch in both, so
-                    // `map([7], P)` with `P((x, *rest))` fails exactly like `P(7)`
-                    // (September 2026; S3 made the two binders one rule).
-                    // Lean: bindCountedParameterPattern.
-                    //
-                    // The pattern's explicit structure opens exactly this one
-                    // boundary; a nested collecting binding collects the opened
-                    // items exactly.
-                    if (StructuralPatternItems(pattern, input.Value) is not { } elements)
-                        return StructuralPatternKindMismatch(pattern, input.Value);
-
-                    var nestedInputs = elements
-                        .Select(static item => new CountedResult(item, item.ValueCount()))
-                        .ToList();
-                    return BindCountedParameterPatternList(
-                        ParameterPattern.StructuralItems(pattern)!,
-                        nestedInputs,
-                        ctx,
-                        (required, actual) => StructuralPatternArityMismatch(pattern, required, actual));
-                }
-
-            case UnpackingParameterPattern unpacking:
-                {
-                    // The deconstruction unpacking receiver opens ONE level of either kind
-                    // and treats any other value as one item, exactly as the ordinary binder
-                    // does. Lean: the `.unpacking` arm of bindCountedParameterPattern.
-                    var nestedInputs = input.Value.SpreadItems()
-                        .Select(static item => new CountedResult(item, item.ValueCount()))
-                        .ToList();
-                    return BindCountedParameterPatternList(
-                        unpacking.Items,
-                        nestedInputs,
-                        ctx,
-                        static (required, actual) => new EvalError.ArityMismatch(required, actual));
-                }
-
-            default:
-                return new EvalError.BadArity();
-        }
-    }
-
-    /// <summary>
-    /// The counted twin of <see cref="BindParameterPatternList"/> — the callback binding path
-    /// (Lean <c>bindCountedParameterPatternList</c>) — with the same order: the arity check;
-    /// every range binds ALL of its patterns before its repeated names are decided; the prefix
-    /// binds and settles before the suffix, the collector is materialized after both, and the
-    /// names shared across the collector are decided last. Each repeated name is decided ONCE,
-    /// symmetrically, when its last contribution joins (counted contributions carry only the
-    /// counted channel, so an unequal repeat is <see cref="EvalError.BadArity"/>). The first
-    /// collecting capture is the list's collector; a second one (host-built only) is a suffix
-    /// pattern that <see cref="BindCountedParameterPattern"/> rejects.
-    /// </summary>
-    private static EvalResult<CountedParameterPatternBindings> BindCountedParameterPatternList(
-        IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedResult> inputs,
-        EvalCtx ctx,
-        Func<int, int, EvalError> arityMismatch)
-    {
-        var collectingIndex = FirstCollectingCaptureIndex(patterns);
-        var requiredCount = ParameterPattern.MinimumSuppliedSlots(patterns);
-        if (collectingIndex < 0)
-        {
-            if (inputs.Count != requiredCount)
-                return arityMismatch(requiredCount, inputs.Count);
-
-            var rangeR = BindCountedParameterPatternRange(patterns, inputs, 0, 0, patterns.Count, ctx, outside: null);
-            if (rangeR.IsError) return rangeR.Error;
-            return EvalResult<CountedParameterPatternBindings>.Ok(
-                new CountedParameterPatternBindings(rangeR.Value.Merged.CountedBindings));
-        }
-
-        if (inputs.Count < requiredCount)
-            return arityMismatch(requiredCount, inputs.Count);
-
-        var collectingCapture = (CaptureParameterPattern)patterns[collectingIndex];
-        var suffixStart = collectingIndex + 1;
-        var suffixCount = patterns.Count - suffixStart;
-        var suffixInputStart = inputs.Count - suffixCount;
-
-        var prefixR = BindCountedParameterPatternRange(
-            patterns, inputs, 0, 0, collectingIndex, ctx,
-            new LevelNames(patterns, suffixStart, suffixCount, collectingCapture.Name));
-        if (prefixR.IsError) return prefixR.Error;
-
-        var suffixR = BindCountedParameterPatternRange(
-            patterns, inputs, suffixStart, suffixInputStart, suffixCount, ctx,
-            new LevelNames(patterns, 0, collectingIndex, collectingCapture.Name));
-        if (suffixR.IsError) return suffixR.Error;
-
-        var capturedValues = new List<Result>(suffixInputStart - collectingIndex);
-        for (var inputIndex = collectingIndex; inputIndex < suffixInputStart; inputIndex++)
-            capturedValues.Add(inputs[inputIndex].Value);
-
-        // Collecting binding COLLECTS exactly the items allocated to it as one
-        // exact immutable list value, emitted count 1 (a list is one visible
-        // value): it never opens an item (THE EXACT COLLECTOR LAW).
-        var capturedResultR = CollectSegment(ctx, capturedValues, collectingCapture.Span);
-        if (capturedResultR.IsError) return capturedResultR.Error;
-        var collector = new UserCallBindings(
-            [],
-            [(collectingCapture.Name, new CountedResult(capturedResultR.Value, 1))],
-            []);
-
-        var bindings = new PatternBindingAccumulator();
-        bindings.Add(prefixR.Value.Merged);
-        bindings.Add(suffixR.Value.Merged);
-        bindings.Add(collector);
-        if ((bindings.SawRepeatedName || prefixR.Value.HadRepeatedName || suffixR.Value.HadRepeatedName)
-            && FindCrossRepeatedNameFailure(
-                prefixR.Value,
-                collectingCapture.Name,
-                collector,
-                suffixR.Value,
-                new LevelNames(patterns, suffixStart, suffixCount, extraName: null)) is { } failure)
-        {
-            return failure;
-        }
-
-        return EvalResult<CountedParameterPatternBindings>.Ok(
-            new CountedParameterPatternBindings(bindings.ToBindings().CountedBindings));
-    }
-
-    /// <summary>
-    /// Counted twin of <see cref="BindParameterPatternRange"/> (Lean <c>bindPairs</c>): every
-    /// pattern of the range binds, left to right, before the range decides the repeated names
-    /// whose every contribution it holds. Counted contributions are carried as counted-only
-    /// <see cref="UserCallBindings"/> so both binders share one verdict.
-    /// </summary>
-    private static EvalResult<PatternRangeBindings> BindCountedParameterPatternRange(
-        IReadOnlyList<ParameterPattern> patterns,
-        IReadOnlyList<CountedResult> inputs,
-        int patternStart,
-        int inputStart,
-        int count,
-        EvalCtx ctx,
-        LevelNames? outside)
-    {
-        if (count == 0)
-            return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(new UserCallBindings([], [], []), null));
-
-        if (count == 1)
-        {
-            var singleR = BindCountedParameterPattern(patterns[patternStart], inputs[inputStart], ctx);
-            if (singleR.IsError) return singleR.Error;
-            return EvalResult<PatternRangeBindings>.Ok(new PatternRangeBindings(AsCountedContribution(singleR.Value), null));
-        }
-
-        var bound = new UserCallBindings[count];
-        for (var offset = 0; offset < count; offset++)
-        {
-            var boundR = BindCountedParameterPattern(patterns[patternStart + offset], inputs[inputStart + offset], ctx);
-            if (boundR.IsError) return boundR.Error;
-            bound[offset] = AsCountedContribution(boundR.Value);
-        }
-
-        var bindings = new PatternBindingAccumulator();
-        foreach (var patternBindings in bound)
-            bindings.Add(patternBindings);
-
-        if (bindings.SawRepeatedName && FindRangeRepeatedNameFailure(bound, outside) is { } failure)
-            return failure;
-
-        return EvalResult<PatternRangeBindings>.Ok(
-            new PatternRangeBindings(bindings.ToBindings(), bound, bindings.SawRepeatedName));
-    }
-
-    private static UserCallBindings AsCountedContribution(CountedParameterPatternBindings bindings)
-        => new([], bindings.CountedBindings, []);
-
-    /// <summary>
     /// The counted view of one iterated collection item as the callback
     /// receives it. A callback item is a SELECTED value, so it crosses the same
     /// ordinary value boundary as <c>S:i</c> / <c>first</c> / <c>last</c>
@@ -513,7 +153,7 @@ public static partial class Evaluator
     /// that preserve their emitted top-level counts.
     /// </summary>
     private static EvalResult<CountedResult> EvalResolvedCallbackCallCounted(
-        Algorithm callee,
+        Algorithm? callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -533,7 +173,8 @@ public static partial class Evaluator
 
         try
         {
-            return EvalResolvedCallbackCallCountedCore(callee, args, ctx, valEnv, calleeName);
+            return callee is null ? new EvalError.ArityMismatch(0, args.Count)
+                : EvalResolvedCallbackCallCountedCore(callee, args, ctx, valEnv, calleeName);
         }
         finally
         {
@@ -547,7 +188,7 @@ public static partial class Evaluator
     /// with the same supply — <c>map(xs, F)</c> calls <c>F(E)</c> for each element
     /// <c>E</c>, <c>reduce</c> calls <c>R(E, Acc)</c> — so a user callee (and a clause
     /// family's flat-binder equivalent) binds through the ONE counted binder
-    /// <see cref="BindCountedParameterPatternList"/>: fixed parameters take their values
+    /// <see cref="BindNeedPatterns"/>: fixed parameters take their values
     /// unchanged, a collector collects the supplied values exactly, and only the callee's
     /// explicit sequence-value patterns open a value. There is no callback row
     /// convention: <c>map([(1, 2)], Add)</c> with <c>Add(x, y)</c> is the ordinary
@@ -562,46 +203,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
-        var userCallee = callee;
-        switch (callee)
-        {
-            case Algorithm.Builtin(var builtin):
-                return ApplyBuiltinCountedResolved(
-                    builtin,
-                    args.Select(static arg => new ResolvedArgumentAlgorithm(
-                        Algorithm: null,
-                        SpreadsSequence: false)
-                    {
-                        PreparedValue = arg,
-                    }).ToList(),
-                    ctx,
-                    valEnv);
-
-            case Algorithm.Conditional:
-                if (TryGetFlatBinderUserEquivalent(callee) is not { } simpleCallee)
-                    return EvalConditionalCallbackCallCounted(callee, args, ctx, valEnv, calleeName);
-
-                userCallee = simpleCallee;
-                break;
-        }
-
-        if (userCallee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        var bindingsR = BindCountedParameterPatternList(
-            userCallee.ParameterPatterns,
-            args,
-            ctx,
-            static (required, actual) => new EvalError.ArityMismatch(required, actual));
-        if (bindingsR.IsError)
-            return AttachImplicitParameterProvenance(bindingsR.Error, userCallee);
-
-        var bindings = bindingsR.Value;
-        var calleeCtx = WithCountedParameterEnvironments(
-            ctx,
-            bindings.CountedBindings,
-            bindings.CountedBindings.Select(static binding => binding.Name));
-        return EvalAlgOutputCounted(userCallee, calleeCtx, valEnv);
+        return EvalNeedCallbackBody(callee, args, ctx, valEnv, calleeName, asynchronous: false).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -609,7 +211,7 @@ public static partial class Evaluator
     /// their ordinary value-boundary counts inside the counted implementation.
     /// </summary>
     private static EvalResult<Result> EvalResolvedCallbackCall(
-        Algorithm callee,
+        Algorithm? callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -620,7 +222,7 @@ public static partial class Evaluator
     /// Evaluate a higher-order sequence callback on one iterated item.
     /// </summary>
     private static EvalResult<Result> EvalSequenceCallbackCall(
-        Algorithm callee,
+        Algorithm? callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -631,7 +233,7 @@ public static partial class Evaluator
     /// Counted variant of <see cref="EvalSequenceCallbackCall"/>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceCallbackCallCounted(
-        Algorithm callee,
+        Algorithm? callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,

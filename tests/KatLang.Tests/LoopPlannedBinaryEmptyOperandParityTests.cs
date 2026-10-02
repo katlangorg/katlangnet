@@ -266,12 +266,10 @@ public class LoopPlannedBinaryEmptyOperandParityTests
     // ── The generic gate and handover boundaries ────────────────────────────
 
     [Fact]
-    public void Repeat_EmptySequenceInitialState_IsRejectedInBothModesAtTheGenericGate()
+    public void Repeat_EmptySequenceInitialState_IsDemandedByThePlannedOperand()
     {
-        // An empty initial state never reaches a plan: the optimizer's entry gate
-        // routes the loop generic in both modes, and the generic step then rejects
-        // `()` as an ordinary non-scalar operand. This pins the gate boundary; the
-        // captured-operand matrix above is the genuinely planned coverage.
+        // Initial state is a cell: planning cannot inspect its value. The planned
+        // operand demands it and reports the same error as generic evaluation.
         var source = """
             S(x) = x - 1
             repeat(S, 2, ())
@@ -283,8 +281,8 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         Assert.Contains("the left operand was a sequence value with 0 sequence elements: ()", innermost.Message);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
-        Assert.Equal(0, loop.OptimizedLoopHits);
-        Assert.Contains("non-scalar loop state slot", loop.FallbackReasons.Keys);
+        Assert.Equal(1, loop.OptimizedLoopHits);
+        Assert.Equal(0, loop.PlannedExpressionFallbacks);
     }
 
     [Fact]

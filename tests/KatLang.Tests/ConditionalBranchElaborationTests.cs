@@ -91,7 +91,7 @@ public class ConditionalBranchElaborationTests
             Assert.IsType<Expr.Resolve>(reference);
         else
             Assert.Equal(argument, LeanAstEncoder.EncodeExpr(Assert.Single(Assert.IsType<Expr.Call>(reference).Args)));
-        Assert.Equal(strict && argument is null ? 2 : 0, diagnostics.Count);
+        Assert.Empty(diagnostics);
         Assert.All(diagnostics, diagnostic =>
         {
             Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
@@ -283,26 +283,20 @@ public class ConditionalBranchElaborationTests
     }
 
     [Fact]
-    public void Source_InlineBranchOpen_StrictValueDemand_IsDiagnosedLikeNamedOuterOpen()
+    public void Source_InlineBranchOpen_ValueDemand_IsRejectedLikeNamedOuterOpen()
     {
-        // THE UNIFIED FORMULA-LIFTING LAW: an opened member lifts like every callable, so under a
-        // strict-value demand a branch pattern — a closed input list — that cannot supply the
-        // helper's `x` is the closed-list diagnostic, and the inline block and the named library
-        // report the SAME one.
         const string Member = "public Helper = x";
         const string Reference = "Math.Abs(Helper)";
         var named = $"Helpers = {{\n    {Member}\n}}\nF(0) = {{\n    open Helpers\n    {Reference}\n}}\nF(n) = n\n\nF(0)";
         var inline = $"F(0) = {{\n    open {{\n        {Member}\n    }}\n\n    {Reference}\n}}\nF(n) = n\n\nF(0)";
-        static string Blocked(string source)
+        foreach (var source in new[] { named, inline })
         {
-            var diagnostic = Assert.Single(Parser.Parse(source).Diagnostics);
-            Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
-            Assert.Contains("'Helper' is required as a value here", diagnostic.Message, StringComparison.Ordinal);
-            Assert.Contains("'x'", diagnostic.Message, StringComparison.Ordinal);
-            return diagnostic.Message;
+            var root = SourceProvenance.ParseValid(source).Root;
+            var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
+            Assert.True(result.IsError);
+            var arity = Assert.IsType<EvalError.ArityMismatch>(EvaluatorTestSupport.Innermost(result.Error));
+            Assert.Equal((1, 0), (arity.Expected, arity.Actual));
         }
-
-        Assert.Equal(Blocked(named), Blocked(inline));
     }
 
     [Theory]
@@ -651,7 +645,7 @@ public class ConditionalBranchElaborationTests
         // spellings are rejected at the bare reference and the row stays as written.
         Assert.IsType<Expr.Resolve>(Reference(Assert.Single(ordinaryOutput)));
         Assert.IsType<Expr.Resolve>(Reference(Assert.Single(branch.Output)));
-        Assert.Equal(2, diagnostics.Count);
+        Assert.Equal(strict ? 0 : 2, diagnostics.Count);
         Assert.All(diagnostics, diagnostic => Assert.Equal(
             strict ? DiagnosticCode.UndeclaredIdentifier : DiagnosticCode.UnforwardableParameter,
             diagnostic.Code));

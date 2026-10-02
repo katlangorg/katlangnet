@@ -128,9 +128,14 @@ public class SequencePreparationParityTests
             {
                 var error = optimized.Result.Error;
                 while (error is EvalError.WithContext context) error = context.Inner;
-                var arity = Assert.IsType<EvalError.ArityMismatch>(error);
-                Assert.Equal(0, arity.Expected);
-                Assert.Equal(1, arity.Actual);
+                if (pipeline.Contains("(D, ())", StringComparison.Ordinal))
+                    Assert.Equal((0, 1), (Assert.IsType<EvalError.ArityMismatch>(error).Expected, Assert.IsType<EvalError.ArityMismatch>(error).Actual));
+                else
+                {
+                    var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+                    Assert.Equal(0, arity.Expected);
+                    Assert.Equal(1, arity.Actual);
+                }
             }
         }
     }
@@ -162,7 +167,7 @@ public class SequencePreparationParityTests
         {
             var error = generic.Result.Error;
             while (error is EvalError.WithContext context) error = context.Inner;
-            Assert.IsType<EvalError.ArityMismatch>(error);
+            Assert.Equal((0, 1), (Assert.IsType<EvalError.ArityMismatch>(error).Expected, Assert.IsType<EvalError.ArityMismatch>(error).Actual));
         }
 
         AssertParity(generic, optimized);

@@ -225,7 +225,7 @@ def brSucceedsReadingNothing (out : List KatLang.Expr) (expected : Result) : Boo
 #guard brFails innermostIsDivByZero
   [brCall "take" [brCall "Id" [num 7], .sequenceSpread (resolve "Bad"), brCall "Id" [num 8]]]
 #guard brContexts
-  [brCall "take" [brCall "Id" [num 7], .sequenceSpread (resolve "Bad"), brCall "Id" [num 8]]] == 2
+  [brCall "take" [brCall "Id" [num 7], .sequenceSpread (resolve "Bad"), brCall "Id" [num 8]]] == 1
 -- An earlier value slot's ORDINARY failure is retained, not raised (CALL-03), so the
 -- first failure RAISED is the later spread's own.
 #guard brFails innermostIsAnyTypeMismatch

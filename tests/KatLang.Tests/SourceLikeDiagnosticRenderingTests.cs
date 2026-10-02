@@ -170,10 +170,10 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("f = { X = 1 }\n(-2).f", KatLangErrorCode.MissingOutput, "`(-2).f`")]
-    [InlineData("f = { X = 1 }\n(not true).f", KatLangErrorCode.MissingOutput, "`(not true).f`")]
-    [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a + b).missing", KatLangErrorCode.MissingOutput, "`(a + b).missing`")]
-    [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a < b).missing", KatLangErrorCode.MissingOutput, "`(a < b).missing`")]
+    [InlineData("f = { X = 1 }\n(-2).f", KatLangErrorCode.ArityMismatch, "`(-2).f`")]
+    [InlineData("f = { X = 1 }\n(not true).f", KatLangErrorCode.ArityMismatch, "`(not true).f`")]
+    [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a + b).missing", KatLangErrorCode.ArityMismatch, "`(a + b).missing`")]
+    [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a < b).missing", KatLangErrorCode.ArityMismatch, "`(a < b).missing`")]
     [InlineData("a = 2\n(-a):true", KatLangErrorCode.TypeMismatch, "Expected a number")]
     [InlineData("a = true\n(not a):true", KatLangErrorCode.TypeMismatch, "Expected a number")]
     [InlineData("Obj = { F = 1 }\n(Obj.F)() + true", KatLangErrorCode.TypeMismatch, "(Obj.F)(...) + true")]
@@ -187,7 +187,14 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
         var root = SourceProvenance.ParseValid(source).Root;
         var publicError = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
         Assert.Equal(code, publicError.Code);
-        Assert.Contains(text, publicError.Message, StringComparison.Ordinal);
+        if (code == KatLangErrorCode.ArityMismatch)
+        {
+            var contexts = new List<DotCallContext>();
+            for (var error = publicError.Source; error is EvalError.WithContext frame; error = frame.Inner)
+                if (frame.ErrorContext is DotCallContext dot) contexts.Add(dot);
+            Assert.Contains(contexts, dot => $"`{dot.ReceiverDescription}.{dot.PropertyName}`" == text);
+        }
+        else Assert.Contains(text, publicError.Message, StringComparison.Ordinal);
         var expr = new Expr.AlgorithmExpr(root);
         var sync = Evaluator.Run(expr);
         Assert.True(sync.IsError);

@@ -230,7 +230,7 @@ internal sealed record PatternListBindingPlan
         }
 
         // The ONE per-level arity rule, the same one the binder applies at this level
-        // (ParameterPattern.MinimumSuppliedSlots, read by BindParameterPatternList itself):
+        // (ParameterPattern.MinimumSuppliedSlots, read by BindNeedPatterns itself):
         // every pattern here consumes ONE supplied slot whatever it contains — a
         // structural group (sequence or list) is one slot the binder opens afterwards — and a COLLECTING
         // capture here consumes NONE and lifts the upper bound. The decision is LEVEL-LOCAL:

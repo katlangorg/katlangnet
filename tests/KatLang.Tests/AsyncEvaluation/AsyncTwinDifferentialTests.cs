@@ -71,11 +71,12 @@ public class AsyncTwinDifferentialTests
     /// counted head likewise entered the plain head for <c>NativeCall</c> (two charges)
     /// where the twin's own <c>NativeCall</c> case charged once; the <c>Math.Abs</c> row
     /// pins that second asymmetry, whose per-iteration surplus used to cancel the leaf
-    /// surplus by coincidence (82010 on both paths before; 82000 on both now).
+    /// surplus by coincidence. Model C removes the former native-argument acquisition checkpoints;
+    /// both routes now consume 81990 steps for the Math.Abs row.
     /// </summary>
     [Theory]
     [InlineData("repeat({x + 1}, 40960, 0)", 41020L)]
-    [InlineData("repeat({Math.Abs(x) + 1}, 40960, 0)", 82000L)]
+    [InlineData("repeat({Math.Abs(x) + 1}, 40960, 0)", 81990L)]
     [InlineData("repeat({x + 'a'.count}, 40960, 0)", null)]
     [InlineData("G(y) = 1\nrepeat({x + G(x)}, 40960, 0)", null)]
     public async Task LargeLoop_AsyncTwinPath_ChargesExactlyTheSyncGenericSteps(string source, long? expectedSteps)

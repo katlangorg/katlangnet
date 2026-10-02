@@ -234,7 +234,6 @@ public class LanguageSpecRunnerTests
             "conditional-branch-local-library-does-not-leak-to-sibling-branches",
             "grace-line-final-marker-after-call-rejected",
             "negative-index-literal-rejected",
-            "closed-list-strict-value-forwarding",
             "open-capture-target-rejected",
             // Constitution PV-11 / PV-25 / PV-49 (September 2026): open-target heads and
             // steps, open placement after clause definitions, and Grace in a branch
@@ -326,6 +325,10 @@ public class LanguageSpecRunnerTests
             "integer-division-beyond-consecutive-integers",
             // The unmodeled Math-native surface.
             "native-argument-value-demand",
+            // Model C moves Q-15 to actual runtime demand; this previously parser-only
+            // case now reaches native Math, which Lean does not execute. The pure-core
+            // counterpart remains derived and guarded.
+            "closed-list-strict-value-forwarding",
             "native-flat-callback-binding",
             // Final audit (September 2026): Decimal128-only observations (quantum-visible
             // sort stability, the DisplayDecimals tie rule, near-1 logarithm accuracy).
@@ -363,9 +366,9 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 170;
+        const int MinimumEncoderDerivedCases = 284;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 18;
+        const int MaximumCSharpOnlyCases = 19;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

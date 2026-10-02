@@ -29,37 +29,19 @@ public class NativeArgumentValueDemandTests
         return Innermost(result.Error);
     }
 
-    /// <summary>
-    /// Innermost evaluator error for a source the FRONT END now rejects, evaluated from its
-    /// elaborated tree directly.
-    ///
-    /// <para>Sources whose registry-proven strict-value position references a callable a
-    /// CLOSED explicit parameter list cannot forward to are diagnosed before evaluation
-    /// (<see cref="ClosedListStrictValueDiagnosticTests"/>). That does not retire the
-    /// evaluator guarantee — it layers on top of it — and a host may evaluate an AST without
-    /// front-end checking at all (<c>Evaluator.Run*</c> takes host-built trees as-is). So
-    /// this asserts the rejection, then bypasses checking exactly as such a host would, to
-    /// keep the runtime behavior independently pinned: the value demand of the bound
-    /// argument, never an ambient caller value and never the wrapper's own parameter
-    /// name.</para>
-    /// </summary>
-    private static EvalError InnermostErrorBypassingFrontEndRejection(string source)
+    // Q-15 leaves a blocked lift as an ordinary runtime zero-supply demand.
+    private static EvalError RuntimeValueDemandError(string source)
     {
         var parsed = Parser.Parse(source);
-        Assert.True(
-            parsed.HasErrors,
-            "This source is expected to be rejected by the closed-list strict-value diagnostic; "
-            + "if it now parses cleanly, use InnermostError instead." + Environment.NewLine + source);
-
+        Assert.False(parsed.HasErrors, string.Join("; ", parsed.Diagnostics));
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
+        Assert.True(result.IsError);
         return Innermost(result.Error);
     }
 
     private static EvalError.ArityMismatch AssertZeroArgumentValueDemand(string source)
     {
-        var arity = Assert.IsType<EvalError.ArityMismatch>(InnermostErrorBypassingFrontEndRejection(source));
+        var arity = Assert.IsType<EvalError.ArityMismatch>(RuntimeValueDemandError(source));
         Assert.Equal(0, arity.Actual);
         return arity;
     }
@@ -118,13 +100,13 @@ public class NativeArgumentValueDemandTests
     [Fact]
     public void ParameterizedArgument_OutcomeIsIndependentOfCallerParameterName()
     {
-        var colliding = InnermostErrorBypassingFrontEndRejection(
+        var colliding = RuntimeValueDemandError(
             """
             A = q + 1
             F(x) = Math.Abs(A)
             F(7)
             """);
-        var distinct = InnermostErrorBypassingFrontEndRejection(
+        var distinct = RuntimeValueDemandError(
             """
             A = q + 1
             F(zz) = Math.Abs(A)
@@ -196,7 +178,7 @@ public class NativeArgumentValueDemandTests
     [Fact]
     public void ConditionalFamilyArgument_ReportsNoMatchingBranch()
     {
-        Assert.IsType<EvalError.NoMatchingBranch>(InnermostErrorBypassingFrontEndRejection(
+        Assert.IsType<EvalError.NoMatchingBranch>(RuntimeValueDemandError(
             """
             C(0) = 1
             C(n) = 2
@@ -214,7 +196,7 @@ public class NativeArgumentValueDemandTests
     [Fact]
     public void BuiltinArgument_ReportsTheBuiltinsArityFailure()
     {
-        Assert.IsType<EvalError.ArityMismatch>(InnermostErrorBypassingFrontEndRejection(
+        Assert.IsType<EvalError.ArityMismatch>(RuntimeValueDemandError(
             """
             F(x) = Math.Abs(count)
             F(7)

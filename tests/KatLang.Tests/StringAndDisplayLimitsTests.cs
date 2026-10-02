@@ -297,11 +297,15 @@ public class StringAndDisplayLimitsTests
     {
         var budget = EvaluationBudget.Create(new EvaluationLimits { MaxStringLength = 10, MaxMaterializedStringChars = 10 });
         Assert.Null(budget.TryReserveString(4));
-        Assert.IsType<EvalError.StringSizeLimitExceeded>(budget.TryReserveString(11));
-        Assert.IsType<EvalError.StringMaterializationLimitExceeded>(budget.TryReserveString(7));
+        var terminal = Assert.IsType<EvalError.StringSizeLimitExceeded>(budget.TryReserveString(11));
+        Assert.Same(terminal, budget.TryReserveString(7));
+        Assert.Same(terminal, budget.TryReserveString(6));
         Assert.Equal(4, budget.MaterializedStringChars);
-        Assert.Null(budget.TryReserveString(6));
-        Assert.Equal(10, budget.MaterializedStringChars);
+        Assert.Same(terminal, budget.TryChargeStep());
+        var independent = EvaluationBudget.Create(new EvaluationLimits { MaxStringLength = 10, MaxMaterializedStringChars = 10 });
+        Assert.Null(independent.TryReserveString(4));
+        Assert.Null(independent.TryReserveString(6));
+        Assert.Equal(10, independent.MaterializedStringChars);
     }
 
     // ── Rendering: output is identical below the limit ───────────────────────

@@ -502,14 +502,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
     [Fact]
     public void Repeat_ListInitialState_ReviewedShape_MatchesGenericExactly()
     {
-        // The architecture review's literal reproducer. TODAY this routes the
-        // loop to the GENERIC path in both modes — the optimized entry gate
-        // rejects non-atom initial state slots ("non-scalar loop state slot")
-        // before any plan is built — so this is a parity pin at the gate
-        // boundary; the genuinely planned reachability is covered by the
-        // state-kind-change regressions above. If the gate ever starts
-        // admitting non-scalar initial states, the routing assertion below
-        // fails and this case must graduate to a planned-path regression.
+        // Initial state remains undemanded during planning. This now reaches the
+        // planned operand, whose kind rejection and span must match the generic path.
         var source = """
             S(a) = -a
             repeat(S, 2, [1, 2])
@@ -527,8 +521,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
-        Assert.Equal(0, loop.OptimizedLoopHits);
-        Assert.Contains("non-scalar loop state slot", loop.FallbackReasons.Keys);
+        Assert.Equal(1, loop.OptimizedLoopHits);
+        Assert.Equal(0, loop.PlannedExpressionFallbacks);
     }
 
     [Theory]
@@ -536,8 +530,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
     [InlineData("not ")]
     public void Repeat_EmptySequenceInitialState_IsRejectedInBothModes(string op)
     {
-        // This initial state is generic-only. The captured-operand matrix below
-        // separately proves that the planned unary also rejects the empty value.
+        // Both strategies first demand this state at the unary operand.
         var source = $"""
             S(a) = {op}a
             repeat(S, 2, ())
@@ -550,8 +543,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.Equal(new SourceSpan(1, 8, 1, 9 + op.Length), innermost.Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
-        Assert.Equal(0, loop.OptimizedLoopHits);
-        Assert.Contains("non-scalar loop state slot", loop.FallbackReasons.Keys);
+        Assert.Equal(1, loop.OptimizedLoopHits);
+        Assert.Equal(0, loop.PlannedExpressionFallbacks);
     }
 
     public static IEnumerable<object[]> CapturedUnaryNonScalarOperands()

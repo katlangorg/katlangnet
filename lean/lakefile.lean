@@ -13,6 +13,10 @@ lean_lib «CoreTests» where
 lean_lib «AstDemo» where
   srcDir := "."
 
+-- Historical Ready-input proof helper, never imported by the evaluator.
+lean_lib «HistoricalReadyBinding» where
+  srcDir := "."
+
 lean_lib «KatLangArityLaws» where
   srcDir := "."
 

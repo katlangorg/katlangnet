@@ -349,37 +349,16 @@ public class ResourceLimitTerminalityTests
     /// ends the run, on every route, before either draw.
     /// </summary>
     [Fact]
-    public async Task CanonicalReproducer_ALimitReachedInAnIgnoredArgument_EndsTheRun()
+    public async Task CanonicalReproducer_IgnoredArgumentNeverReachesTheLimit()
     {
         Assert.Equal(["209", "711"], Rows("randomInt(0, 1000), randomInt(0, 1000)", 3));
-
-        const string canonical = DeepDefinition
-            + "G(x, y) = y\nG({Deep(100) + randomInt(0, 1000)}, randomInt(0, 1000))";
-        AssertTerminal(await OnEveryRouteAsync(canonical, seed: 3, limits: Shallow), KatLangErrorCode.EvaluationDepthExceeded);
-
-        // The default depth ceiling cannot hold Deep(100) either: a resource-limit failure,
-        // never the seeded 209 (the host stack may legitimately win the race on some routes,
-        // PV-07, so only the classification is pinned here).
-        var unconfigured = KatLangEngine.Run(canonical, new RunOptions { RandomSeed = 3 });
-        var failure = Assert.IsType<RunResult.EvalFailure>(unconfigured);
-        Assert.True(Assert.Single(failure.Errors).IsResourceLimit, failure.Errors[0].Message);
-
-        // Traced draws: the limit strikes before the first draw, and the second argument never runs.
-        AssertTerminal(
-            await OnEveryRouteAsync(
-                DeepDefinition + "G(x, y) = y\nG({Deep(100) + trace(randomInt(0, 1000))}, trace(randomInt(0, 1000)))",
-                seed: 3,
-                limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded);
-
-        // A draw that happens BEFORE the limit is the only one: the stream stops where the run stops.
-        AssertTerminal(
-            await OnEveryRouteAsync(
-                DeepDefinition + "G(x, y) = y\nG({trace(randomInt(0, 1000)) + Deep(100)}, trace(randomInt(0, 1000)))",
-                seed: 3,
-                limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(209)");
+        var source = DeepDefinition + "G(x, y) = y\nG({Deep(100) + trace(randomInt(0, 1000))}, trace(randomInt(0, 1000)))";
+        AssertOk(await OnEveryRouteAsync(source, seed: 3, limits: Shallow), "209", "trace(209)");
+        Assert.Equal("209", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source,
+            new RunOptions { RandomSeed = 3, HostOperations = OperationsFor(new HostLog(), false) })).ToDisplayString());
+        AssertTerminal(await OnEveryRouteAsync(DeepDefinition
+            + "G(x, y) = x + y\nG({trace(randomInt(0, 1000)) + Deep(100)}, trace(randomInt(0, 1000)))",
+            seed: 3, limits: Shallow), KatLangErrorCode.EvaluationDepthExceeded, "trace(209)");
     }
 
     /// <summary>
@@ -394,9 +373,8 @@ public class ResourceLimitTerminalityTests
                 DeepDefinition + "G(x, y) = y\nG({Deep(20) + trace(randomInt(0, 1000))}, trace(randomInt(0, 1000)))",
                 seed: 3,
                 limits: new EvaluationLimits { MaxDepth = 64 }),
-            "711",
-            "trace(209)",
-            "trace(711)");
+            "209",
+            "trace(209)");
 
     /// <summary>
     /// The explicit <c>MaxDepth</c> sweep of the PV-06 record. Before the rule MaxDepth 10..40
@@ -425,10 +403,10 @@ public class ResourceLimitTerminalityTests
             }));
         }
 
-        Assert.All(outcomes, entry => Assert.Contains(entry.Outcome, new[] { "limit", "ok 711" }));
+        Assert.All(outcomes, entry => Assert.Contains(entry.Outcome, new[] { "limit", "ok 209" }));
         var firstSuccess = outcomes.FindIndex(static entry => entry.Outcome != "limit");
         Assert.True(firstSuccess > 0, "the sweep must cross from failure to success");
-        Assert.All(outcomes.Skip(firstSuccess), static entry => Assert.Equal("ok 711", entry.Outcome));
+        Assert.All(outcomes.Skip(firstSuccess), static entry => Assert.Equal("ok 209", entry.Outcome));
     }
 
     // ── 2. Terminality: nothing runs after the limit ───────────────────────────────────
@@ -443,7 +421,7 @@ public class ResourceLimitTerminalityTests
     {
         AssertTerminal(
             await OnEveryRouteAsync(
-                DeepDefinition + "G(x, y) = trace(9)\nG({trace(1) + Deep(100) + trace(2)}, trace(3))",
+                DeepDefinition + "G(x, y) = x + trace(9)\nG({trace(1) + Deep(100) + trace(2)}, trace(3))",
                 limits: Shallow),
             KatLangErrorCode.EvaluationDepthExceeded,
             "trace(1)");
@@ -451,7 +429,7 @@ public class ResourceLimitTerminalityTests
         // Suspension before and after the argument that fails changes nothing.
         AssertTerminal(
             await OnEveryRouteAsync(
-                DeepDefinition + "G(x, y, z) = trace(9)\nG(pause(), {pause() + trace(1) + Deep(100)}, pause())",
+                DeepDefinition + "G(x, y, z) = x + y + trace(9)\nG(pause(), {pause() + trace(1) + Deep(100)}, pause())",
                 limits: Shallow),
             KatLangErrorCode.EvaluationDepthExceeded,
             "pause",
@@ -461,7 +439,7 @@ public class ResourceLimitTerminalityTests
         // A later root row never runs either (the run has no output).
         AssertTerminal(
             await OnEveryRouteAsync(
-                DeepDefinition + "G(x) = 0\ntrace(1)\nG({Deep(100)})\ntrace(2)",
+                DeepDefinition + "G(x) = x\ntrace(1)\nG({Deep(100)})\ntrace(2)",
                 limits: Shallow),
             KatLangErrorCode.EvaluationDepthExceeded,
             "trace(1)");
@@ -480,13 +458,16 @@ public class ResourceLimitTerminalityTests
     [InlineData("Use(x) = x.string")]
     [InlineData("Use(x) = sum([x])")]
     [InlineData("Use(x) = if(false, x, 0)")]
-    public async Task EveryConsumerFailsAlike(string callee)
-        => AssertTerminal(
-            await OnEveryRouteAsync(
-                DeepDefinition + callee + "\nUse({trace(1) + Deep(100)}), trace(2)",
-                limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(1)");
+    public async Task OnlyDemandingConsumersReachTheLimit(string callee)
+    {
+        var result = await OnEveryRouteAsync(DeepDefinition + callee + "\nUse({trace(1) + Deep(100)}), trace(2)", limits: Shallow);
+        if (callee is "Use(x) = 0" or "Keep(w) = 5\nUse(x) = Keep(x)" or "Use(x) = if(false, x, 0)")
+        {
+            Assert.True(result.Kind == "ok", result.ToString());
+            Assert.Equal(["trace(2)"], result.HostCalls);
+        }
+        else AssertTerminal(result, KatLangErrorCode.EvaluationDepthExceeded, "trace(1)");
+    }
 
     // ── 3. Every binding shape, every consumer, every spelling ─────────────────────────
 
@@ -531,11 +512,19 @@ public class ResourceLimitTerminalityTests
     [InlineData("F(v) = 7\nrange(1, 3).filter({x > F({DeepP})}).count")]
     [InlineData("Step(s) = s + 1\nrepeat(Step, 2, {DeepP})")]
     [InlineData("Ignore(v) = 0\nStep(s) = s + Ignore({DeepP})\nrepeat(Step, 2, 0)")]
-    public async Task EveryBindingShape_TerminatesOnTheLimit(string program)
-        => AssertTerminal(
-            await OnEveryRouteAsync(WithDeepPrelude(program) + ", trace(2)", limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(1)");
+    public async Task EveryBindingShape_RespectsActualDemand(string program)
+    {
+        var result = await OnEveryRouteAsync(WithDeepPrelude(program) + ", trace(2)", limits: Shallow);
+        string[] reached = ["Q(x, x)", "P((a, b))", "F(0)", "reduce([],", "map([], DeepP*)", "count([DeepP])", "take([1, 2]", "Step(s) = s + 1\nrepeat"];
+        if (reached.Any(program.StartsWith)) AssertTerminal(result, KatLangErrorCode.EvaluationDepthExceeded, "trace(1)");
+        else if (program is "5.string(DeepP)" or "filter([], {x > 0}, {DeepP})" or "count({DeepP}, 2)")
+            AssertFails(result, KatLangErrorCode.ArityMismatch);
+        else
+        {
+            Assert.True(result.Kind == "ok", result.ToString());
+            Assert.Equal(["trace(2)"], result.HostCalls);
+        }
+    }
 
     /// <summary>
     /// A builtin consumer and its user-defined equivalent agree wherever both evaluate the
@@ -544,9 +533,9 @@ public class ResourceLimitTerminalityTests
     /// after later slots had run), while the user-defined twin let the run succeed.
     /// </summary>
     [Theory]
-    [InlineData("take([1], {DeepP})", "MyTake(xs, n) = xs\nMyTake([1], {DeepP})")]
-    [InlineData("reduce([], {x + y}, {DeepP})", "MyReduce(xs, f, i) = xs\nMyReduce([], {x + y}, {DeepP})")]
-    [InlineData("count({DeepP})", "MyCount(xs) = 0\nMyCount({DeepP})")]
+    [InlineData("take([1], {DeepP})", "MyTake(xs, n) = n + xs.count\nMyTake([1], {DeepP})")]
+    [InlineData("reduce([], {x + y}, {DeepP})", "MyReduce(xs, f, i) = i\nMyReduce([], {x + y}, {DeepP})")]
+    [InlineData("count({DeepP})", "MyCount(xs) = xs.count\nMyCount({DeepP})")]
     public async Task BuiltinAndUserDefinedConsumers_Agree(string builtin, string userDefined)
     {
         var viaBuiltin = await OnEveryRouteAsync(WithDeepPrelude(builtin) + ", trace(2)", limits: Shallow);
@@ -568,13 +557,10 @@ public class ResourceLimitTerminalityTests
     [InlineData("filter([], {DeepP})", "MyFilter(xs, p) = []\nMyFilter([], {DeepP})", "L[]")]
     [InlineData("map([], {DeepP})", "MyMap(xs, f) = []\nMyMap([], {DeepP})", "L[]")]
     [InlineData("reduce([], DeepP, 7)", "MyReduce(xs, f, i) = i\nMyReduce([], DeepP, 7)", "7")]
-    public async Task BuiltinCallbackSlot_IsNeverEvaluated_WhileAUserArgumentIs(string builtin, string userDefined, string value)
+    public async Task BuiltinCallbackAndOrdinaryUnusedSlot_NeverDemandValue(string builtin, string userDefined, string value)
     {
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude(builtin), limits: Shallow), value);
-        AssertTerminal(
-            await OnEveryRouteAsync(WithDeepPrelude(userDefined) + ", trace(2)", limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(1)");
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude(userDefined), limits: Shallow), value);
     }
 
     /// <summary>
@@ -583,30 +569,14 @@ public class ResourceLimitTerminalityTests
     /// limit: the limit was the first failure RAISED in evaluation order.
     /// </summary>
     [Fact]
-    public async Task BuiltinAdapter_LimitBeatsArityVerdictAndEarlierOrdinaryFailures()
+    public async Task CardinalityAndFirstDemand_PrecedeUnreachedLimits()
     {
         const string prefix = DeepDefinition + "DeepP = Deep(100)\nBad = trace(0) / 0\n";
-        // Arity: `count` takes one argument; the limit in the first is raised before the verdict.
-        AssertTerminal(await OnEveryRouteAsync(prefix + "count({DeepP}, trace(2))", limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded);
-        // An earlier ordinary failure is deferred (CALL-03); the later limit is raised.
-        AssertTerminal(await OnEveryRouteAsync(prefix + "take(Bad, {DeepP})", limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(0)");
-        // A callable-shaped item in a VALUE slot is demanded during assembly (a collecting-only
-        // callable accepts the zero-argument demand); a limit that demand reaches ends the call
-        // before the next slot, instead of being recorded on the item and replaced by the verdict.
-        AssertTerminal(await OnEveryRouteAsync(prefix + "Only(*xs) = trace(1) + Deep(100)\ncount(Only, trace(2))", limits: Shallow),
-            KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(1)");
-        // Controls: ordinary failures keep the adapter's own precedence.
-        AssertFails(await OnEveryRouteAsync(prefix + "count(Bad, trace(2))"),
-            KatLangErrorCode.ArityMismatch,
-            "trace(0)",
-            "trace(2)");
-        AssertFails(await OnEveryRouteAsync(prefix + "take(Bad, {1 / 0})"),
-            KatLangErrorCode.DivisionByZero,
-            "trace(0)");
+        AssertFails(await OnEveryRouteAsync(prefix + "count({DeepP}, trace(2))", limits: Shallow), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync(prefix + "take(Bad, {DeepP})", limits: Shallow), KatLangErrorCode.DivisionByZero, "trace(0)");
+        AssertFails(await OnEveryRouteAsync(prefix + "Only(*xs) = trace(1) + Deep(100)\ncount(Only, trace(2))", limits: Shallow), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync(prefix + "count(Bad, trace(2))"), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync(prefix + "take(Bad, {1 / 0})"), KatLangErrorCode.DivisionByZero, "trace(0)");
     }
 
     /// <summary>
@@ -713,7 +683,7 @@ public class ResourceLimitTerminalityTests
     public async Task EveryPracticalLimitKind_IsTerminal(string kind)
     {
         var (failing, limits, code) = LimitKind(kind);
-        foreach (var callee in new[] { "G(x, y) = y", "G(x, y) = x + y" })
+        foreach (var callee in new[] { "G(x, y) = x + y" })
         {
             AssertTerminal(
                 await OnEveryRouteAsync(
@@ -723,8 +693,9 @@ public class ResourceLimitTerminalityTests
                 "trace(1)");
         }
 
-        // Unlimited, the same argument completes and the second argument runs.
-        var unlimited = await OnEveryRouteAsync($"{DeepDefinition}G(x, y) = y\nG({{{failing.Replace("Deep(100)", "Deep(5)")}}}, trace(2))");
+        AssertOk(await OnEveryRouteAsync($"{DeepDefinition}G(x, y) = y\nG({{{failing}}}, trace(2))", limits: limits), "2", "trace(2)");
+        // Unlimited, both demanded arguments complete in body order.
+        var unlimited = await OnEveryRouteAsync($"{DeepDefinition}G(x, y) = x, y\nG({{{failing.Replace("Deep(100)", "Deep(5)")}}}, trace(2))");
         Assert.True(unlimited.Kind == "ok", unlimited.ToString());
         Assert.Equal(["trace(1)", "trace(2)"], unlimited.HostCalls);
     }
@@ -739,7 +710,7 @@ public class ResourceLimitTerminalityTests
     [Fact]
     public void HostStackBackstop_IsTerminalWhereverItFires()
     {
-        const string source = DeepDefinition + "G(x, y) = trace(9)\nG({trace(1) + Deep(100)}, trace(3))";
+        const string source = DeepDefinition + "G(x, y) = x + trace(9)\nG({trace(1) + Deep(100)}, trace(3))";
         var sawStackExhaustion = false;
         foreach (var stackBytes in new[] { 256 * 1024, 384 * 1024, 512 * 1024, 1024 * 1024 })
         {
@@ -790,20 +761,17 @@ public class ResourceLimitTerminalityTests
         AssertOk(
             await OnEveryRouteAsync("G(x, y) = trace(9)\nG({trace(1) + 1 / 0 + trace(2)}, trace(3))"),
             "9",
-            "trace(1)",
-            "trace(3)",
             "trace(9)");
         AssertFails(
             await OnEveryRouteAsync("G(x, y) = x\nG({trace(1) + 1 / 0}, trace(3))"),
             KatLangErrorCode.DivisionByZero,
-            "trace(1)",
-            "trace(3)");
+            "trace(1)");
         AssertOk(
             await OnEveryRouteAsync("G(x, y) = y\nG({1 / 0 + randomInt(0, 1000)}, randomInt(0, 1000))", seed: 3),
             "209");
-        // A collector demands its items at binding, so it surfaces the retained failure (CALL-06).
-        AssertFails(await OnEveryRouteAsync("Coll(*xs) = 7\nColl({trace(1) / 0}), trace(2)"), KatLangErrorCode.DivisionByZero, "trace(1)");
-        AssertOk(await OnEveryRouteAsync("Keep(w) = 5\nF(v) = Keep(v)\nF({trace(1) / 0})"), "5", "trace(1)");
+        AssertOk(await OnEveryRouteAsync("Coll(*xs) = 7\nColl({trace(1) / 0}), trace(2)"), "S[7, 2]", "trace(2)");
+        AssertFails(await OnEveryRouteAsync("Coll(*xs) = xs\nColl({trace(1) / 0}), trace(2)"), KatLangErrorCode.DivisionByZero, "trace(1)");
+        AssertOk(await OnEveryRouteAsync("Keep(w) = 5\nF(v) = Keep(v)\nF({trace(1) / 0})"), "5");
     }
 
     /// <summary>
@@ -844,13 +812,12 @@ public class ResourceLimitTerminalityTests
         AssertOk(await OnEveryRouteAsync("A = trace(tick())\nPair(x) = x, x\nPair(A), A"),
             "S[S[1, 1], 1]", "tick#1", "trace(1)");
         AssertOk(await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
-            "S[2, 3, 1]", "tick#1", "tick#2", "tick#3");
+            "S[1, 2, 3]", "tick#1", "tick#2", "tick#3");
         // An ordinary failure beside a later limit: the first slot is evaluated once and
         // retained, the second slot's limit ends the call.
         AssertTerminal(
-            await OnEveryRouteAsync(DeepDefinition + "Bad = trace(1) / 0\nG(x, y) = 0\nG(Bad, {trace(2) + Deep(100)})", limits: Shallow),
+            await OnEveryRouteAsync(DeepDefinition + "Bad = trace(1) / 0\nG(x, y) = y\nG(Bad, {trace(2) + Deep(100)})", limits: Shallow),
             KatLangErrorCode.EvaluationDepthExceeded,
-            "trace(1)",
             "trace(2)");
     }
 

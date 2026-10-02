@@ -117,9 +117,7 @@ public class ForwardedCallableChannelTests
     [InlineData("R(x, acc) = acc + x\nreduce([1, 2], R, Seed)", "10")]
     public void ValueSlots_ReadTheBoundValue_TheBodyRunsOnceForTheBinding(string program, string expected)
     {
-        // `Seed` is zero-argument-demand eligible, so binding `Apply(Seed)` runs its body
-        // once for the parameter's value. A value slot reads that value: had it taken the
-        // algorithm channel, the builtin would demand `Seed` again and tick twice.
+        // The first value consumer demands Seed once; forwarding adds no demand.
         var ticks = new List<Decimal128>();
         var display = DisplayWith("Seed(*xs) = Tick(7)\n" + program, TickOperations(ticks));
 
@@ -134,13 +132,12 @@ public class ForwardedCallableChannelTests
         Assert.Equal("[1, 1]", DisplayWith("Cnt(*xs) = Tick(xs.count)\nmap([5, 6], Cnt)", TickOperations(directTicks)));
         Assert.Equal([(Decimal128)1, 1], directTicks);
 
-        // The binding demands the value once (Tick(0)); map then invokes the callable once per
-        // element and never demands the value again.
+        // Projection transports callable identity without a preliminary Tick(0) value demand.
         var forwardedTicks = new List<Decimal128>();
         Assert.Equal(
             "[1, 1]",
             DisplayWith("Cnt(*xs) = Tick(xs.count)\nApply(f, xs) = map(xs, f)\nApply(Cnt, [5, 6])", TickOperations(forwardedTicks)));
-        Assert.Equal([(Decimal128)0, 1, 1], forwardedTicks);
+        Assert.Equal([(Decimal128)1, 1], forwardedTicks);
     }
 
     // ── Parameters without an algorithm binding keep their behavior ─────────
@@ -212,7 +209,7 @@ public class ForwardedCallableChannelTests
         var syncTicks = new List<Decimal128>();
         var expected = DisplayWith(source, TickOperations(syncTicks));
         Assert.Equal("[1, 1]", expected);
-        Assert.Equal([(Decimal128)0, 1, 1], syncTicks);
+        Assert.Equal([(Decimal128)1, 1], syncTicks);
 
         var ticks = new List<Decimal128>();
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -220,9 +217,8 @@ public class ForwardedCallableChannelTests
         var operations = HostOperations.Create(HostOperation.CreateAsync("Tick", async (args, _) =>
         {
             ticks.Add(Assert.IsType<Result.Atom>(args[0]).Value);
-            // Suspend inside the first CALLBACK invocation (the binding's value demand is
-            // Tick(0)), so the rest of map runs after resumption.
-            if (ticks.Count == 2)
+            // Hold the first callback invocation; forwarding itself has performed no value read.
+            if (ticks.Count == 1)
             {
                 reached.SetResult();
                 await release.Task;
@@ -235,7 +231,7 @@ public class ForwardedCallableChannelTests
         {
             await reached.Task.WaitAsync(TimeSpan.FromSeconds(45));
             Assert.False(pending.IsCompleted);
-            Assert.Equal([(Decimal128)0, 1], ticks);
+            Assert.Equal([(Decimal128)1], ticks);
         }
         finally
         {
@@ -275,7 +271,7 @@ public class ForwardedCallableChannelTests
         var operations = HostOperations.Create(HostOperation.CreateAsync("Tick", async (args, _) =>
         {
             ticks.Add(Assert.IsType<Result.Atom>(args[0]).Value);
-            if (ticks.Count == 2)
+            if (ticks.Count == 1)
             {
                 reached.SetResult();
                 await release.Task;
@@ -289,7 +285,7 @@ public class ForwardedCallableChannelTests
         {
             await reached.Task.WaitAsync(TimeSpan.FromSeconds(45));
             Assert.False(pending.IsCompleted);
-            Assert.Equal([(Decimal128)0, 1], ticks);
+            Assert.Equal([(Decimal128)1], ticks);
             cancellation.Cancel();
         }
         finally
@@ -299,7 +295,7 @@ public class ForwardedCallableChannelTests
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => pending.WaitAsync(TimeSpan.FromSeconds(45)));
         Assert.Equal(cancellation.Token, error.CancellationToken);
-        Assert.Equal([(Decimal128)0, 1], ticks);
+        Assert.Equal([(Decimal128)1], ticks);
     }
 
     [Fact]

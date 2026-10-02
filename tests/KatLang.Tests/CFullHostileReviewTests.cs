@@ -52,7 +52,7 @@ public class CFullHostileReviewTests
 
     [Theory]
     [InlineData("F(a, b, c) = 0\nF(1, (2, 3))", 3, 2)]
-    [InlineData("Inc(x) = x + 1\nUse(f, x, y) = f(x) + y\nUse(Inc, (2, 3))", 2, 1)]
+    [InlineData("Inc(x) = x + 1\nUse(f, x, y) = f(x) + y\nUse(Inc, (2, 3))", 3, 2)]
     [InlineData("Step(a, b) = a, b\nrepeat(Step, 1, (1, 2))", 2, 1)]
     public async Task FlatBindingArity_ReportsCompleteBindingInputLengths(string source, int expected, int actual)
     {

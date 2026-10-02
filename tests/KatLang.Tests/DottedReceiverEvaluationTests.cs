@@ -544,38 +544,24 @@ public class DottedReceiverEvaluationTests
     }
 
     [Fact]
-    public void AlgorithmOnlyFallback_ReifiesLazily_ExactlyWhenRequested()
+    public void ReadyCallbackData_DoesNotAcquireCallableIdentityOrReification()
     {
-        // Loop step slot (ResolveArgumentAlgorithm): the spread supplies the step argument
-        // as a prepared VALUE, and resolving the step's algorithm channel builds exactly
-        // one wrapper. The zero-parameter wrapper then mismatches the one-slot loop state,
-        // which is the pre-existing outcome for a value in step position.
         var loopStep = Observe("S = 5\nwhile(S*, 1)");
-        Assert.Equal(1, loopStep.Reifications);
+        Assert.Equal(0, loopStep.Reifications);
         Assert.Equal("err:arity", loopStep.Outcome);
 
-        // Algorithm-kind suffix slot (PrepareSequenceBuiltinSuffixArg): `map` used as the
-        // reducer receives prepared (element, accumulator) arguments, routing the accumulator
-        // into its mapper slot. The first reduction step builds one wrapper, then fails
-        // applying the zero-parameter mapper to an element.
         var suffixSlot = Observe("(5, 6).reduce(map, ())");
-        Assert.Equal(1, suffixSlot.Reifications);
+        Assert.Equal(0, suffixSlot.Reifications);
         Assert.Equal("err:arity", suffixSlot.Outcome);
 
-        // Successful wrapper use: mapping an EMPTY collection never applies the mapper, so
-        // both reduction steps succeed — the wrapper is still built at binding time, once
-        // per reducer invocation.
         var success = Observe("((), ()).reduce(map, ())");
-        Assert.Equal(2, success.Reifications);
+        Assert.Equal(0, success.Reifications);
         Assert.Equal("ok:L[]", success.Outcome);
 
-        // NOT requested → NOT built: `repeat` as the reducer arity-errors before its step
-        // slot is resolved…
         var notRequested = Observe("R = (1, 2)\nR.reduce(repeat, 0)");
         Assert.Equal(0, notRequested.Reifications);
         Assert.Equal("err:arity", notRequested.Outcome);
 
-        // …and an empty reduction never invokes the reducer at all.
         var neverInvoked = Observe("().reduce(map, 7)");
         Assert.Equal(0, neverInvoked.Reifications);
         Assert.Equal("ok:7", neverInvoked.Outcome);

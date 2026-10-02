@@ -841,26 +841,17 @@ public class ResultToExprSharedValueGraphTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void LoopStepSlot_ReifiesTheSharedDagOncePerUniqueNode(bool optimize)
+    public void LoopStepSlot_ReadyValueHasNoCallableIdentityOrReification(bool optimize)
     {
-        // `A*` spreads the depth-40 list, so `while`'s step slot receives A's shared child (a
-        // depth-39 DAG, 39 distinct structure nodes) as a prepared value and must reify it.
-        // Before the memo this expanded 2^39 - 1 path occurrences inside one uncharged
-        // conversion; now it expands each unique node once. The zero-parameter wrapper then
-        // mismatches the two-slot loop state, which is the pre-existing outcome for a value in
-        // step position.
         var run = ObserveSource(DagProgram("while(A*, 1)"), optimize);
 
         Assert.True(run.IsError);
         Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
-        Assert.Equal(1, run.Reifications);
-        Assert.Equal(DeepDepth - 1, run.Expansions);
+        Assert.Equal(0, run.Reifications);
+        Assert.Equal(0, run.Expansions);
         if (optimize)
         {
-            // The configuration difference is non-vacuous: the outer Wrap.repeat is genuinely
-            // optimized. The zero-parameter reified while step reaches its ordinary state-binding
-            // arity check BEFORE loop-plan construction, so no optimizer can observe its output.
-            Assert.True(run.LoopStats.OptimizedLoopHits > 0);
+                        Assert.True(run.LoopStats.OptimizedLoopHits > 0);
             Assert.All(run.LoopStats.LoopPlans, plan => Assert.Equal("Wrap.repeat", plan.Identity));
         }
         else
@@ -872,84 +863,65 @@ public class ResultToExprSharedValueGraphTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AlgorithmSuffixSlot_ReifiesTheSharedDagOncePerUniqueNode_AndSucceeds(bool optimize)
+    public void AlgorithmSuffixSlot_TransportsReadyValuesWithoutReification(bool optimize)
     {
-        // `map` used as the reducer routes each step's pre-evaluated accumulator into its mapper
-        // slot, reifying it. Step 1 reifies the depth-40 DAG accumulator (40 distinct structure
-        // nodes); mapping the empty collection never applies the wrapper, so the step succeeds
-        // and returns []. Step 2 reifies that [] accumulator (one node). The run SUCCEEDS — the
-        // reified-wrapper channel is not error-only — after exactly 41 structure expansions where
-        // the path-expanding rebuild attempted ~2^41.
         var run = ObserveSource(DagProgram("((), ()).reduce(map, A)"), optimize);
 
         Assert.False(run.IsError);
         var list = Assert.IsType<Result.ListValue>(run.Value);
         Assert.Empty(list.Items);
         Assert.Equal(1, run.Emitted);
-        Assert.Equal(2, run.Reifications);
-        Assert.Equal(DeepDepth + 1, run.Expansions);
+        Assert.Equal(0, run.Reifications);
+        Assert.Equal(0, run.Expansions);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SequenceItemWrapper_ReusesOneMemoAcrossEveryRepeatedReference(bool optimize)
+    public void SequenceItemSlot_TransportsRepeatedReferencesWithoutReification(bool optimize)
     {
-        // F21 review finding: the initial F20 patch gave each emitted root its own top-level
-        // ResultToExpr call. B contains 32 references to the SAME depth-20 DAG, so that scope
-        // performed 32 * 20 = 640 unbudgeted expansions. One CountedArgAlgorithm construction is
-        // one conversion operation: its root set shares one completed-node memo and expands
-        // the deep graph exactly once. Since selection became a value boundary the callback
-        // item `(B*)` reaches the wrapper as ONE sequence root (never re-emitted as 32 rows),
-        // so the scope expands that sequence node plus the depth-20 chain once: depth + 1.
-        // The wrapper's old zero-parameter arity error is unchanged.
         var run = ObserveSource(
             MultiEmissionDagProgram("[(B*)].reduce(while, 1)"),
             optimize);
 
         Assert.True(run.IsError);
         Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
-        Assert.Equal(1, run.Reifications);
-        Assert.Equal(ShallowDepth + 1, run.Expansions);
+        Assert.Equal(0, run.Reifications);
+        Assert.Equal(0, run.Expansions);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SequenceItemWrapper_ReusesSharedDescendantAcrossDistinctElements(bool optimize)
+    public void SequenceItemSlot_TransportsSharedDescendantsWithoutReification(bool optimize)
     {
-        // The two list elements are reference-distinct, but both contain the exact same A
-        // reference. The callback item is the ONE sequence value S = ([A, 1], [A, 2]) (selection
-        // is a value boundary, so the wrapper holds one root), and the wrapper scope expands S,
-        // element L, A, then element R: depth + 3 total. Recreating a memo per element would
-        // expand A twice and observe 2 * (depth + 1) + 1.
         var run = ObserveSource(
             DagProgram("[([A, 1], [A, 2])].reduce(while, 1)", ShallowDepth),
             optimize);
 
         Assert.True(run.IsError);
         Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
-        Assert.Equal(1, run.Reifications);
-        Assert.Equal(ShallowDepth + 3, run.Expansions);
+        Assert.Equal(0, run.Reifications);
+        Assert.Equal(0, run.Expansions);
     }
 
     [Fact]
-    public void SourceReification_WorkGrowsLinearlyWithDagDepth()
+    public void SourceCallableTransport_DoesNotExpandEitherDag()
     {
         var shallow = ObserveSource(DagProgram("((), ()).reduce(map, A)", ShallowDepth), optimize: false);
         var deep = ObserveSource(DagProgram("((), ()).reduce(map, A)", DeepDepth), optimize: false);
 
         Assert.False(shallow.IsError);
         Assert.False(deep.IsError);
-        Assert.Equal(DeepDepth - ShallowDepth, deep.Expansions - shallow.Expansions);
+        Assert.Equal(0, shallow.Reifications);
+        Assert.Equal(0, shallow.Expansions);
+        Assert.Equal(0, deep.Reifications);
+        Assert.Equal(0, deep.Expansions);
     }
 
     [Fact]
-    public void CountedArgumentMemo_DoesNotCrossSeparateWrapperConstructions()
+    public void SeparateReadySupplies_DoNotConstructCallableWrappers()
     {
-        // Each successful reduce builds two wrappers (A, then []); repeating the whole expression
-        // in the same evaluator run must rebuild both. Even though A comes from the run-scoped
-        // property cache as the same Result reference, reification state belongs to one wrapper.
         var run = ObserveSource(
             DagProgram("""
                 ((), ()).reduce(map, A)
@@ -958,8 +930,8 @@ public class ResultToExprSharedValueGraphTests
             optimize: false);
 
         Assert.False(run.IsError);
-        Assert.Equal(4, run.Reifications);
-        Assert.Equal(2 * (ShallowDepth + 1), run.Expansions);
+        Assert.Equal(0, run.Reifications);
+        Assert.Equal(0, run.Expansions);
     }
 
     [Fact]

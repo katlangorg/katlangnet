@@ -377,13 +377,28 @@ public class ZeroArgPropertyCacheScopeTests
         => AssertHostCounterPaths("A = Data()\nB = A, A\n" + output, expected, calls);
 
     [Fact]
-    public Task FailedArgumentProbe_PreservesSuccessfulNestedPropertyResults()
+    public Task UnusedArgumentProbe_PerformsNoNestedPropertyAccess()
         => AssertHostCounterPaths("A = Data()\nBad = A, 1 / 0\nIgnore(f) = 0\nIgnore(Bad), A", "0,100", 1);
 
     [Fact]
-    public Task FailedReentrantParent_PreservesTheSuccessfulStoreOfTheSameProperty()
-        => AssertHostCounterPaths(
-            "A = if(Data() < 200, A + 1 / 0, 10)\nIgnore(f) = 0\nIgnore(A), A", "0,10", 2);
+    public async Task UnusedReentrantPropertyProbe_DoesNotCacheItsFailureOrHealTheLaterDemand()
+    {
+        const string source = "A = if(Data() < 200, A + 1 / 0, 10)\nIgnore(f) = 0\nIgnore(A), A";
+        for (var mode = 0; mode < 4; mode++)
+        {
+            var counter = new Counter();
+            var options = HostData(counter, asynchronous: mode == 3);
+            var expr = new Expr.AlgorithmExpr((await SourceProvenance.ParseValidAsync(source, options)).Root);
+            var cache = new CountingCache(suspendAsyncAccesses: mode == 2);
+            var result = mode < 2
+                ? Evaluator.RunCountedObserved(expr, enableOptimizations: mode == 1, zeroArgPropertyResultCache: cache, hostOperations: options.HostOperations).Result
+                : (await Evaluator.RunCountedObservedAsync(expr, zeroArgPropertyResultCache: cache, hostOperations: options.HostOperations)).Result;
+            Assert.True(result.IsError);
+            Assert.Equal(KatLangErrorCode.DivisionByZero, result.Error.Code);
+            Assert.Equal(2, counter.Count);
+            Assert.Equal(2, cache.EvaluationsOf("A"));
+        }
+    }
 
     [Theory]
     [InlineData(false, "105,105,250,250", 2)]

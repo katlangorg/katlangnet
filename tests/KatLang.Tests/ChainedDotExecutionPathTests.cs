@@ -129,12 +129,12 @@ public class ChainedDotExecutionPathTests
     }
 
     [Fact]
-    public void HigherOrderWrapperDoesNotAcquireStructuralMemberSignature()
+    public void HigherOrderParameterProjectsTheStructuralMemberSignature()
     {
         var result = EvalFull(Lib + "Call1(f) = f(9)\nCall1(Lib.Sub.F)");
         Assert.True(result.IsError);
         var error = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-        Assert.Equal(0, error.Expected);
+        Assert.Equal(2, error.Expected);
         Assert.Equal(1, error.Actual);
     }
 

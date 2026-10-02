@@ -129,10 +129,13 @@ public class EvaluationLimitsProcessTests
             {
                 case RunResult.Success:
                     // The optimized run completed (planned, or generic after the planner's
-                    // fallback): its value is the generic strategy's value.
+                    // fallback): a completed generic run has the same value. Native stack capacity
+                    // can differ between strategies; both must reject safely before overflow.
                     var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false).Result;
-                    Assert.False(generic.IsError, "generic strategy failed for recursion " + recursion + (generic.IsError ? ": " + generic.Error : ""));
-                    Assert.Equal(generic.Value.Value, Assert.IsType<RunResult.Success>(result).Value);
+                    if (generic.IsError)
+                        Assert.IsType<EvalError.EvaluationStackExhausted>(generic.Error);
+                    else
+                        Assert.Equal(generic.Value.Value, Assert.IsType<RunResult.Success>(result).Value);
                     break;
                 case RunResult.EvalFailure failure:
                     var error = Assert.Single(failure.Errors);

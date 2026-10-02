@@ -99,12 +99,17 @@ public class ComparisonChainHostileReviewTests
     [InlineData("f = { X = 1 }\n(1 + 2).f", "(1 + 2).f")]
     [InlineData("f = { X = 1 }\n2.f", "2.f")]
     [InlineData("Obj = { M = { X = 1 } }\nObj.M", "Obj.M")]
-    public void MissingOutputDotEdgeNames_PreservePostfixReceiverGrouping(string source, string expectedEdge)
+    public void RejectedDotEdgeNames_PreservePostfixReceiverGrouping(string source, string expectedEdge)
     {
         SourceProvenance.ParseValid(source);
         var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
-        Assert.Equal(KatLangErrorCode.MissingOutput, error.Code);
-        Assert.StartsWith($"The value `{expectedEdge}` has no defined output.", error.Message, StringComparison.Ordinal);
+        Assert.Equal(expectedEdge == "Obj.M" ? KatLangErrorCode.MissingOutput : KatLangErrorCode.ArityMismatch, error.Code);
+        var edges = new List<string>();
+        for (var sourceError = error.Source; sourceError is EvalError.WithContext frame; sourceError = frame.Inner)
+            if (frame.ErrorContext is DotCallContext dot) edges.Add(dot.ReceiverDescription + "." + dot.PropertyName);
+        Assert.Contains(expectedEdge, edges);
+        if (expectedEdge == "Obj.M")
+            Assert.StartsWith($"The value `{expectedEdge}` has no defined output.", error.Message, StringComparison.Ordinal);
     }
 
     private static Expr Raw(string source)

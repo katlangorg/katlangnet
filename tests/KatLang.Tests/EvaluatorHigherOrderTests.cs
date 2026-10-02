@@ -131,7 +131,7 @@ public class EvaluatorHigherOrderTests
             UsePair(Inc, (10, 20))
             """;
 
-        AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 1);
+        AssertEvalFailsWithArityMismatch(source, expected: 3, actual: 2);
     }
 
     [Fact]

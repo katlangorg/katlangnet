@@ -1,17 +1,22 @@
+import HistoricalReadyBinding
 import KatLang
 
 open KatLang
+open KatLang.HistoricalReadyBinding
 
 /-
 # KatLangArityLaws
 
-Selected arity laws proved directly over the authoritative `KatLang.lean` model.
+Arity laws over the authoritative value algebra, plus explicitly historical
+Ready-binding proofs imported from `HistoricalReadyBinding`.
 
 `CoreArityAlgebra.lean` defines the small paper-facing algebra, while
 `CoreArityAlgebraProofs.lean` proves its small laws and executable checks.
 This file is the bridge: it proves the load-bearing laws over real KatLang
 `Result` constructors, normalization, lone-structure item-supply opening, and
-real binding helpers.
+value operations. Historical binder theorems describe completed inputs only;
+they do not prove Model-C acquisition, demand order, or failure precedence.
+Those superseding production laws execute `bindNeedPatterns` in CoreTests.ModelC.
 -/
 
 /--
@@ -3155,10 +3160,21 @@ nothing else: the item's value and any value failure are never consulted, becaus
 callback slot is never value-evaluated (CALL-03). -/
 theorem callback_control_binds_only_the_algorithm_channel
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
-    (alg : Algorithm) (hk : descriptor.kind = .algorithm) (ha : item.algorithm? = some alg) :
+    (alg : Algorithm) (hk : descriptor.kind = .algorithm) (ha : item.algorithm? = some alg)
+    (hn : item.need? = none) :
     runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor item)
       = .ok (.algorithm alg item.callable?) := by
-  simp [prepareSequenceBuiltinSuffixArgItem, hk, ha, runEvalM]
+  simp [prepareSequenceBuiltinSuffixArgItem, hk, ha, hn, runEvalM]
+  rfl
+
+/-- A suspended callback control transports its address without changing the heap. -/
+theorem callback_control_transports_need_address
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
+    (address : Nat) (state : EvalState) (hk : descriptor.kind = .algorithm)
+    (hn : item.need? = some address) :
+    (prepareSequenceBuiltinSuffixArgItem b descriptor item).run state =
+      .ok (.needAlgorithm address, state) := by
+  simp [prepareSequenceBuiltinSuffixArgItem, hk, hn]
   rfl
 
 /-- A VALUE control binds the one value its demand established. -/

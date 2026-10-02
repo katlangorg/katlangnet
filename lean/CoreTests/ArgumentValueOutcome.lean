@@ -194,7 +194,7 @@ def readOfValuedBinding : Except Error Result :=
 -- 6. Laziness is preserved: a failed argument nobody demands is not an error, and it
 --    was evaluated exactly once (at assembly).
 #guard aoSucceedsWith [callOf "First" [num 1, resolve "Bad"]] (.atom 1)
-#guard aoContexts [callOf "First" [num 1, resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
+#guard aoContexts [callOf "First" [num 1, resolve "Bad"]] == 1
 
 -- 7. The algorithm channel remains available where the language uses it: invocation,
 --    an invoking builtin slot, and structural member access through a parameter whose
@@ -214,25 +214,25 @@ def readOfValuedBinding : Except Error Result :=
 --    runs A's body afresh — one explicit-call context and one `Id` context more than
 --    `One(A)`.
 #guard aoSucceedsWith [callOf "Call0" [resolve "A"]] (.atom 5)
-#guard aoContexts [callOf "Call0" [resolve "A"]] == aoContexts [callOf "One" [resolve "A"]] + 2
+#guard aoContexts [callOf "Call0" [resolve "A"]] == aoContexts [callOf "One" [resolve "A"]] + 1
 
 -- 9. Unrelated binding semantics are unchanged: a value-only argument binds its value;
 --    a collecting parameter surfaces a failed slot when it collects it (no call context
 --    opens), exactly as before.
 #guard aoSucceedsWith [callOf "Two" [num 3]] (.sequenceValue [.atom 3, .atom 3])
 #guard aoFailsWithDivByZero [callOf "Coll" [resolve "Bad"]]
-#guard aoContexts [callOf "Coll" [resolve "Bad"]] == aoContexts [resolve "Bad"]
+#guard aoContexts [callOf "Coll" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
 
 -- A callable's signature must never replace a PARAMETER's recorded failure at a
 -- builtin value boundary. The raw algorithm requires an argument and could run
 -- successfully when invoked; the established value outcome is still divByZero.
-def aoFailedCallableBoundary (consumer : KatLang.Expr) : Bool :=
+def aoFailedCallableBoundary (consumer : KatLang.Expr) (contexts : Nat := 1) : Bool :=
   let ctx : KatLang.EvalCtx :=
     { callStack := [KatLang.preludeAlg],
       algEnv := [("x", { algorithm := aoIncAlg, valueFailure? := some Error.divByZero })] }
   let (result, state) := (KatLang.eval consumer ctx []).runState EvalState.empty
   match result with
-  | .error err => innermostIsDivByZero err && state.nextBindingContext == 1
+  | .error err => innermostIsDivByZero err && state.nextBindingContext == contexts
   | .ok _ => false
 
 #guard aoFailedCallableBoundary (param "x")
@@ -243,7 +243,7 @@ def aoFailedCallableBoundary (consumer : KatLang.Expr) : Bool :=
 #guard aoFailedCallableBoundary (callOf "take" [.listLiteral [num 1], param "x"])
 #guard aoFailedCallableBoundary (callOf "if" [.boolLiteral true, param "x", num 0])
 #guard aoFailedCallableBoundary (callOf "range" [param "x", num 3])
-#guard aoFailedCallableBoundary (callOf "repeat" [.algorithmExpr aoIncAlg, num 1, param "x"])
+#guard aoFailedCallableBoundary (callOf "repeat" [.algorithmExpr aoIncAlg, num 1, param "x"]) 2
 #guard aoFailedCallableBoundary (callOf "repeat" [.algorithmExpr aoIncAlg, param "x", num 0])
 #guard aoFailedCallableBoundary (callOf "reduce"
   [.listLiteral [num 1], .algorithmExpr (alg ["e", "a"] [] [] [param "a"]), param "x"])

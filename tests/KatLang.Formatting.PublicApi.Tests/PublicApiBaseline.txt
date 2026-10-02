@@ -525,6 +525,19 @@ public sealed record KatLang.EvalError.CollectionSizeLimitExceeded : KatLang.Eva
   operator public static bool op_Equality(KatLang.EvalError.CollectionSizeLimitExceeded? left, KatLang.EvalError.CollectionSizeLimitExceeded? right)
   operator public static bool op_Inequality(KatLang.EvalError.CollectionSizeLimitExceeded? left, KatLang.EvalError.CollectionSizeLimitExceeded? right)
 
+public sealed record KatLang.EvalError.DemandCycle : KatLang.EvalError, System.IEquatable<KatLang.EvalError.DemandCycle>
+  ctor     public DemandCycle()
+  property protected override System.Type EqualityContract { get; }
+  method   public virtual KatLang.EvalError.DemandCycle <Clone>$()
+  method   public bool Equals(KatLang.EvalError.DemandCycle? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.EvalError? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.EvalError.DemandCycle? left, KatLang.EvalError.DemandCycle? right)
+  operator public static bool op_Inequality(KatLang.EvalError.DemandCycle? left, KatLang.EvalError.DemandCycle? right)
+
 public sealed record KatLang.EvalError.DisplayLengthLimitExceeded : KatLang.EvalError, System.IEquatable<KatLang.EvalError.DisplayLengthLimitExceeded>
   ctor     public DisplayLengthLimitExceeded(int Limit)
   property protected override System.Type EqualityContract { get; }
@@ -1431,6 +1444,7 @@ public enum KatLang.KatLangErrorCode : int
   UnforwardableParameter = 71
   UnliftableClauseFamily = 72
   UnforwardableCallable = 73
+  DemandCycle = 74
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

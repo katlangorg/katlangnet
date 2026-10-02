@@ -43,9 +43,6 @@ public static partial class Evaluator
     /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
     /// evaluates back to the same shape.
     /// </summary>
-    private static Expr EmptyResultExpr()
-        => new Expr.EmptySequence(0);
-
     /// <summary>
     /// Post-order rebuild with explicit frames and a REFERENCE-IDENTITY memo, the same
     /// discipline as <see cref="Result.Normalize"/>: reification is a pure function of the
@@ -67,10 +64,8 @@ public static partial class Evaluator
     /// so a shared subexpression still evaluates once per semantic occurrence: sharing
     /// changes host object topology only. Reified values nest as deep as any runtime
     /// value (unbounded — see the depth note on <see cref="Result"/>), so the walk stays
-    /// iterative. A direct call owns one operation-local memo; the multi-output
-    /// <see cref="CountedArgAlgorithm"/> path deliberately shares one memo across every
-    /// emitted root in the ONE wrapper it is building, because those roots can share a
-    /// deep subgraph. Nothing is cached on a <see cref="Result"/> or across wrappers.
+    /// iterative. A direct call owns one operation-local memo; multi-root conversion shares
+    /// that memo across its roots. Nothing is cached on a <see cref="Result"/>.
     /// The direct-call memo is allocated lazily on the first nested descent, so flat
     /// structures allocate none. Leaves reify fresh per converting edge (bounded by the
     /// unique edge count); only structure nodes are memoized. Termination relies on the
@@ -80,8 +75,7 @@ public static partial class Evaluator
     /// <see cref="EvaluationObservations.RecordResultToExprStructureExpansion"/> per
     /// structure node expanded (frame pushed), pinned by the shared-value-graph
     /// regressions to the distinct-structure-node count. Internal for those tests;
-    /// production reaches this only through <see cref="CountedArgAlgorithm"/>, which
-    /// passes the run's observer.</para>
+    /// the evaluator transports Ready values directly and never reifies them to acquire a callable.</para>
     /// </summary>
     internal static Expr ResultToExpr(Result result, EvaluationObservations? observations = null)
         => ResultToExpr(result, observations, sharedMemo: null);
@@ -147,23 +141,6 @@ public static partial class Evaluator
             var parent = frames.Peek();
             parent.Converted[parent.Next++] = completed;
         }
-    }
-
-    /// <summary>
-    /// Reify all top-level results of ONE counted-argument wrapper with one reference-identity
-    /// memo. The roots remain separate output occurrences, but any structure shared by their
-    /// value graph is converted once and reused. The returned bundle owns the fresh root array;
-    /// the memo is discarded before this method returns.
-    /// </summary>
-    private static OutputBundle ResultsToExprBundle(
-        IReadOnlyList<Result> results,
-        EvaluationObservations? observations)
-    {
-        var converted = new Expr[results.Count];
-        var memo = new Dictionary<Result, Expr>(ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < results.Count; i++)
-            converted[i] = ResultToExpr(results[i], observations, memo);
-        return OutputBundle.TakeOwnership(converted);
     }
 
     /// <summary>
@@ -331,12 +308,14 @@ public static partial class Evaluator
         /// (<see cref="ResolvedArgumentAlgorithm.Callable"/>); the callback slot invokes
         /// <see cref="InvokedAlgorithm"/>.
         /// </summary>
-        public sealed record AlgorithmArg(KatLang.Algorithm AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
+        public sealed record AlgorithmArg(KatLang.Algorithm? AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
         {
             public KatLang.Algorithm? Callable { get; init; }
 
             /// <summary>The callback an invoking slot applies (Lean: <c>ResolvedArgumentAlgorithm.invoked</c>).</summary>
-            public KatLang.Algorithm InvokedAlgorithm => Callable ?? AlgorithmValue;
+            internal KatLang.Evaluation.NeedCell? Cell { get; init; }
+
+            public KatLang.Algorithm? InvokedAlgorithm => Callable ?? AlgorithmValue;
         }
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;

@@ -573,12 +573,9 @@ public class FrontEndDagComplexityTests
 
         _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
 
-        Assert.Equal(references, diagnostics.Count);
-        Assert.All(diagnostics, d =>
-        {
-            Assert.Equal(DiagnosticCode.UndeclaredIdentifier, d.Code);
-            Assert.Contains("'G' is required as a value here, but producing that value needs the implicit parameters 'v0', 'v1', ", d.Message);
-        });
+        // Every closed reference remains a runtime zero-supply demand. Computing
+        // its lifting gate is shared; diagnostic observation no longer walks it.
+        Assert.Empty(diagnostics);
         Assert.Equal(1, observations.ResolverForwardingVerdicts);
     }
 
@@ -1677,9 +1674,7 @@ public class FrontEndDagComplexityTests
             => Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == family).Value).Branches[0].Body;
         Assert.Same(BodyOf("Before"), BodyOf("Early"));
         Assert.NotSame(BodyOf("Early"), BodyOf("Late"));
-        var diagnostic = Assert.Single(diagnostics);
-        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
-        Assert.Contains("conditional branch 'Late'", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Empty(diagnostics);
     }
 
     /// <summary>
@@ -1712,10 +1707,7 @@ public class FrontEndDagComplexityTests
         Assert.Same(
             Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == "Left").Value).Branches[0].Body,
             Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == "Right").Value).Branches[0].Body);
-        Assert.Equal(2, diagnostics.Count);
-        Assert.Single(diagnostics, d => d.Message.Contains("conditional branch 'Left'", StringComparison.Ordinal));
-        Assert.Single(diagnostics, d => d.Message.Contains("conditional branch 'Right'", StringComparison.Ordinal));
-        Assert.Single(diagnostics.Select(d => d.Span).Distinct());
+        Assert.Empty(diagnostics);
     }
 
     /// <summary>

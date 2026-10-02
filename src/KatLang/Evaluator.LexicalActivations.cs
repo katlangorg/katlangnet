@@ -17,12 +17,13 @@ namespace KatLang;
 /// </summary>
 internal sealed class ParameterActivation
 {
-    private ParameterActivation(ValEnv values, AlgEnv algorithms, CountedParamEnv counted,
+    private ParameterActivation(ValEnv values, AlgEnv algorithms, CountedParamEnv counted, NeedEnv needs,
         object valueEnvironmentIdentity, object algorithmEnvironmentIdentity, object countedEnvironmentIdentity)
     {
         Values = values;
         Algorithms = algorithms;
         Counted = counted;
+        Needs = needs;
         ValueEnvironmentIdentity = valueEnvironmentIdentity;
         AlgorithmEnvironmentIdentity = algorithmEnvironmentIdentity;
         CountedEnvironmentIdentity = countedEnvironmentIdentity;
@@ -33,6 +34,7 @@ internal sealed class ParameterActivation
     public AlgEnv Algorithms { get; }
 
     public CountedParamEnv Counted { get; }
+    internal NeedEnv Needs { get; }
 
     // The binding context at OWNER entry, not the eventual consumer's context.
     // Parameterless property reads retain it; explicit calls bind fresh environments.
@@ -60,7 +62,9 @@ internal sealed class ParameterActivation
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.AlgEnv, names, static binding => binding.Name),
             FilterOwned(ctx.CountedParamEnv, names, static binding => binding.Name),
-            Evaluator.ValueEnvironmentCacheIdentity(values), ctx.AlgEnv, ctx.CountedParamEnv);
+            FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
+            ctx.NeedEnv.Count == 0 ? Evaluator.ValueEnvironmentCacheIdentity(values) : ctx.NeedEnv,
+            ctx.AlgEnv, ctx.CountedParamEnv);
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
@@ -125,9 +129,9 @@ public static partial class Evaluator
     /// their cache identity. Other parameterless bodies need no activated head scope.
     /// Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>).
     /// </summary>
-    internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, ValEnv values)
+    internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, ValEnv values, IReadOnlyList<string>? parameterNames = null)
     {
-        var names = algorithm.Params;
+        var names = parameterNames ?? algorithm.Params;
         if (names.Count == 0 && !algorithm.Properties.Any(static property => property.Exposure != PropertyExposure.Exported))
             return ctx.Push(algorithm);
 
@@ -220,13 +224,13 @@ public static partial class Evaluator
             return ctx;
 
         values = activation.Values;
-        return ctx.WithAlgEnv(activation.Algorithms).WithCountedParamEnv(activation.Counted);
+        return ctx.WithAlgEnv(activation.Algorithms).WithCountedParamEnv(activation.Counted).WithNeedEnv(activation.Needs);
     }
 
     /// <summary>
     /// Whether a parameter's VALUE outcome is established: it has a value (counted or value
     /// tier), or its written argument slot FAILED its one value evaluation and that failure
-    /// is recorded on its algorithm binding (<see cref="SlotAlgorithmBinding"/>). Either way a
+    /// is recorded on its algorithm binding (<see cref="KatLang.Evaluation.NeedCell"/>). Either way a
     /// value demand of the parameter is the ordinary parameter read, never an evaluation of
     /// its algorithm channel. Lean: the <c>.param</c> arm of <c>resolveArgAlgExpr</c>.
     /// </summary>

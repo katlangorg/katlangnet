@@ -101,6 +101,7 @@ Properties that accept zero supplied arguments have two access modes:
 - ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so with `Only(*xs) = xs` both `Only` and `Only()` are the empty list `[]`, and the bare name works in every zero-argument value position (an output row, an `if` branch, `count(Only)` and `Only.count`, an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and `P((x, y))` each need at least one supplied value, so `Head()` and a bare `Head` are the same arity error. Where a callable is consumed as an ALGORITHM (a `map`/`filter` callback, a loop step, a higher-order argument) it is still the callable: `map((1, 2), Only)` is `[[1], [2]]`, also when passed on through a parameter (with `Apply(f, xs) = xs.map(f)`, `Apply(Only, [1, 2])` is `[[1], [2]]`), while a value position that reads the parameter, such as `count(f)`, reads `[]`. Bare `Only` is a property-style read that reuses its cached value; `Only()` is an explicit call that runs the body each time.
 - If a callable works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters; use `Fun()` to evaluate it again and get a fresh value. This holds in EVERY expression position — an operator or comparison operand, a list element, a selection (`Pair:0` and `first(Pair)` read the same value), a spread, a Math argument, a formula — so with `Roll(*bonus) = randomInt(1, 7) + bonus.sum`, `Roll == Roll` is `true`. A definition whose whole body is the name, `Alias = Count`, is a callable alias of such a callable: `Alias` alone is its value (remembered under the alias's own name), and `Alias(7, 8)` counts like `Count(7, 8)`. Only a callable that REQUIRES an argument (`Inc(x)`, `Head(first, *rest)`) is turned into an implicit call where its bare name appears.
 - `Fun()` bypasses the zero-argument cache for that property itself. It does not recursively force nested property references to bypass their caches. To request fresh nested values, write nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
+- Algorithm results are calculated values, never algorithms. Pass algorithms INTO algorithms (`Apply(f, x) = f(x)`), but never generate code that calls a result (with `Pick(f) = f`, `Apply(Pick(Square), 4)` is an error), and never rely on partial application: for `Add(x, y)`, `Add(10)` is an arity error.
 
 Use explicit heads only when they add semantic value:
 - a parameter must be intentionally ignored, e.g. `K(a, b) = a`;
@@ -1087,11 +1088,13 @@ Idiomatic structure:
 - Math style is consistent;
 - whitespace reveals structure.
 
-Repeated parameter names use one order-independent compatibility rule over independently supplied arguments: every occurrence must supply its own value, all values must agree, and multiple callable contributions must identify the same callable (including captured activations). A bare callable that needs arguments, or an argument whose evaluation fails, supplies no value: the call reports that argument's own error, and another occurrence never stands in for it or pairs its value with that callable. Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Bind every pattern of a range before checking repeats; around a collector, bind and check the prefix, then the suffix, then gather the middle, then compare names shared across the collector. Direct and forwarded invoking slots select the same callable. Forwarding retains ordinary eager parameter-binding effects; selecting the callable adds no value demand. Value slots, including reduce.initial, read the bound value.
+Repeated parameter names use one order-independent compatibility rule over independently supplied arguments: every occurrence must supply its own value, all values must agree, and multiple callable contributions must identify the same callable (including captured activations). A bare callable that needs arguments, or an argument whose evaluation fails, supplies no value: the call reports that argument's own error, and another occurrence never stands in for it or pairs its value with that callable. Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Traverse inspecting patterns left to right. Each repeated occurrence demands its own cell and immediately checks full counted values and callable identities against previous occurrences; conflict precedes later patterns. A collector binds a lazy slice and its whole VALUE demand materializes every item left to right. Direct and forwarded invoking slots select the same callable. Forwarding transfers cells or collector slices without forcing; selecting CALLABLE identity adds no VALUE demand. Value slots, including reduce.initial, read the bound value.
+
+Model-C execution: ordinary arguments are suspended computations in the caller environment. Plain parameter binding, aliases and forwarding do not evaluate VALUE. First VALUE demand evaluates once; later reads share success or failure. CALLABLE projection does not force VALUE, and each actual invocation is fresh. Wrong arity precedes ordinary demand; arbitrary explicit spread may evaluate during supply formation. Collectors are lazy slices, but any collection VALUE demand materializes the complete exact eager list. Conditional clauses share one supply and inspect patterns in written order. `if` uses the same cells as an ordinary selector. Closed-list blocked lifting, including Math, remains runtime zero-argument demand (Q-15); directly written undeclared names and incompatible bare forwarding remain static errors. Effects and random draws follow first-demand order. Never generate a lazy-list or scalar-to-callable fallback.
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (130 of the 340-case canonical language specification,
+Verified reference examples (130 of the 353-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1827,7 +1830,7 @@ Regenerate this block from the repo root with:
     5
     7
 
-[repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.
+[repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding transports the same demandable cells and performs no VALUE evaluation.
 
     A(*xs) = 5 + xs.count
     P(f, f) = [f, f.count, f(1), map([7], f)]
@@ -2105,7 +2108,7 @@ Regenerate this block from the repo root with:
     [[(1, 2)]]
     [[[1, 2]]]
 
-[forwarded-callable-keeps-its-algorithm-channel] Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding retains ordinary eager parameter-binding effects; callback selection adds no further value demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.
+[forwarded-callable-keeps-its-algorithm-channel] Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding transports the same demandable cells; callback selection performs no VALUE demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.
 
     Cnt(*xs) = xs.count
     SumWhile(*s) = s.sum + 1, s.sum + 1 < 3
@@ -2449,14 +2452,14 @@ Regenerate this block from the repo root with:
   Displays:
     8
 
-[closed-list-strict-value-forwarding] An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.
+[closed-list-strict-value-forwarding] An explicit parameter list is closed. `F(x)` gains no implicit `q`, but referencing the resolved callable `A` is legal. When `Math.Abs` actually demands its value, the ordinary zero-argument call to `A(q)` rejects with arity mismatch. An unused argument or unselected branch does not demand it. Declaring `q`, calling `A` explicitly, or leaving the list open enables forwarding. Undeclared names remain static errors.
 
     A = q + 1
     F(x) = Math.Abs(A)
 
     F(7)
 
-  Rejected by the parser: "producing that value needs the implicit parameter 'q' ..."
+  Fails with an evaluation error (arity).
 
 [clause-family-nested-in-branch-body-binds-its-own-binders] A clause family declared inside a conditional branch body is elaborated exactly like one declared in a brace block or at the root: `G(n) = n` binds its own pattern binder `n`, so `G(5)` is 5. The outer sibling `n = 99` is never consulted — a branch body is a scope-owning body under the same rules as every other body, not a weaker one.
 
@@ -2547,7 +2550,7 @@ Regenerate this block from the repo root with:
     10
     10
 
-[if-laziness-follows-the-resolved-identity] The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.
+[if-laziness-follows-the-resolved-identity] The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and the selected user callable determines which of the same suspended arguments it demands — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.
 
     Boom = 1 / 0
 

@@ -339,17 +339,16 @@ public class DotCallCollectingReceiverTests
     }
 
     [Fact]
-    public void FunctionShapedReceiver_ReportsTheCollectingTypeMismatch()
+    public void FunctionShapedReceiver_ReportsItsOwnZeroArgumentValueDemand()
     {
         var mismatch = SourceProvenance.ParseValid(
             """
             Collect(*items) = items
             F(x) = x
             F.Collect
-            """).ExpectEvaluationError<EvalError.TypeMismatch>();
+            """).ExpectEvaluationError<EvalError.ArityMismatch>();
 
-        Assert.Contains("Collecting parameter `*items` collects values", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
+        Assert.Equal((1, 0), (mismatch.Expected, mismatch.Actual));
     }
 
     // ── D. Builtins, callbacks, and unrelated binders stay as they are ──────

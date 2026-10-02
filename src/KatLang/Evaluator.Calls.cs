@@ -18,15 +18,6 @@ public static partial class Evaluator
     // ── Resolve argument expressions to algorithms (lazy) ───────────────────
 
     /// <summary>
-    /// Resolve each output expression of args to sub-algorithms.
-    /// Lean: resolveArgAlgExpr per argument (the list form is
-    /// resolveArgAlgsWithSequenceSpread, which also tags spread
-    /// arguments) — wraps only liftable errors (notAnAlgorithm,
-    /// illegalInEval) in trivial algorithms for lazy evaluation via evalAlgOutput.
-    /// All other errors (unknownName, unknownProperty, ambiguousOpen, etc.)
-    /// are propagated immediately to preserve precise diagnostics.
-    /// </summary>
-    /// <summary>
     /// True when an argument expression supplies ONLY a value in argument
     /// position. A capture is a value boundary: it suppresses the algorithm
     /// identity of anything inside it, so higher-order probing never sees the
@@ -39,107 +30,17 @@ public static partial class Evaluator
     /// </summary>
     private static bool ShouldWrapArgExprAsValue(Expr expr) => expr is Expr.Capture;
 
-    /// <summary>
-    /// Builtin argument adapters reify each written slot as one value-producing
-    /// adapter. A zero-declaration algorithm block slot keeps its one-slot
-    /// value boundary here (written-slot reification: <c>repeat(step, n, {1, 2})</c>
-    /// supplies ONE initial state slot), exactly as before the block's
-    /// algorithm identity became visible to user-call higher-order binding.
-    /// Blocks with parameters, properties, or opens still resolve as
-    /// algorithms for algorithm-consuming builtin arguments (callbacks).
-    /// </summary>
-    private static bool IsZeroDeclarationBlockValueSlot(Expr expr) => expr is
-        Expr.AlgorithmExpr(Algorithm.User { ParameterPatterns.Count: 0, Opens.Count: 0, Properties.Count: 0 });
-
-    private static Algorithm WrapArgExprAsValue(Expr expr, EvalCtx ctx)
-        => WireToCaller(
-            ctx,
-            new Algorithm.User(
-                Parent: null,
-                ParameterPatterns: [],
-                Opens: [],
-                Properties: [],
-                Output: [expr]));
-
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
         OutputBundle args,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var result = new List<ResolvedArgumentAlgorithm>(args.Count);
-        foreach (var argExpr in args)
-        {
-            // Every resolved argument records the written expression it came from: a
-            // builtin VALUE slot demands the algorithm through the zero-argument
-            // value-demand law, which reports at that expression's span and in its
-            // shape (property, parameter, dot receiver, written block).
-            var spreadsSequence = argExpr is Expr.SequenceSpread;
-            if (ShouldWrapArgExprAsValue(argExpr) || IsZeroDeclarationBlockValueSlot(argExpr))
-            {
-                result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence) { Source = argExpr });
-                continue;
-            }
-
-            // A NAME resolves to its value side: a wrapper that performs the ordinary value
-            // read of the written name, so a VALUE slot never re-runs a body.
-            //  * A parameter whose VALUE outcome is established: the wrapper reads it — the
-            //    bound value, or the failure its written argument slot's one value evaluation
-            //    raised (AT-MOST-ONCE ARGUMENT VALUE EVALUATION), so a failed argument can
-            //    neither run again nor heal in a builtin slot.
-            //  * A lexical property reference `A`: the wrapper is the ordinary property read
-            //    `A` — the zero-argument property access with its run cache — so every builtin
-            //    VALUE slot (`sum(A)`, `A.sum`, `if(c, A, B)`, a loop's initial state, `reduce`'s
-            //    initial accumulator) reads exactly the value the value-position `A` reads.
-            //    HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING: a builtin never
-            //    receives the property's algorithm as a value channel it could re-run.
-            // The named ALGORITHM rides along (ResolvedArgumentAlgorithm.Callable) for the
-            // slots that INVOKE their argument (callbacks and loop steps — an invocation is an
-            // explicit call, which never reads the cache, the `A` versus `A()` rule) and for
-            // the zero-argument value-demand law and signature classification, which judge
-            // the named callable (ResolvedArgumentAlgorithm.InvokedAlgorithm). A parameter
-            // bound only on the value channel has no algorithm binding (NotAnAlgorithm) and
-            // carries none; a genuine lookup failure propagates exactly as before.
-            // Lean: resolveArgAlgExpr.
-            if (argExpr is Expr.Resolve
-                || argExpr is Expr.Param(var name) && ParameterHasValueOutcome(name, ctx, valEnv))
-            {
-                var callableR = ResolveAlg(argExpr, ctx);
-                if (callableR.IsError && !IsLiftableError(callableR.Error))
-                    return callableR.Error;
-                result.Add(new ResolvedArgumentAlgorithm(WrapArgExprAsValue(argExpr, ctx), spreadsSequence)
-                {
-                    Source = argExpr,
-                    Callable = callableR.IsOk ? callableR.Value : null,
-                });
-                continue;
-            }
-
-            var r = ResolveAlg(argExpr, ctx);
-            if (r.IsOk)
-            {
-                result.Add(new ResolvedArgumentAlgorithm(r.Value, spreadsSequence) { Source = argExpr });
-            }
-            else if (IsLiftableError(r.Error))
-            {
-                // Wrap liftable non-resolvable expressions in a trivial algorithm.
-                // evalAlgOutput will evaluate the expression lazily when needed.
-                var wrapper = new Algorithm.User(
-                    Parent: null, ParameterPatterns: [], Opens: [],
-                    Properties: [], Output: [argExpr]);
-                result.Add(new ResolvedArgumentAlgorithm(WireToCaller(ctx, wrapper), spreadsSequence) { Source = argExpr });
-            }
-            else
-            {
-                // Propagate genuine lookup/semantic failures immediately.
-                return r.Error;
-            }
-        }
-        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(result);
+        return ResolveNeedSupply(args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
     }
 
     /// <summary>
     /// Errors that indicate an expression simply isn't an algorithm form and can
-    /// safely be deferred to lazy evaluation (wrapping in Algorithm.ofExpr).
+    /// have no independent callable identity. VALUE remains its suspended computation.
     /// </summary>
     private static bool IsLiftableError(EvalError error) => error switch
     {
@@ -149,44 +50,7 @@ public static partial class Evaluator
         _ => false,
     };
 
-    /// <summary>
-    /// Try to resolve each argument expression to an algorithm.
-    /// Returns Some(alg) for expressions that resolve, null for those that don't.
-    /// A capture slot never yields a candidate (a capture is a value boundary
-    /// and suppresses enclosed identity); an algorithm block always yields its
-    /// contained Algorithm, regardless of parameter/declaration/output count —
-    /// <c>Call0({42})</c> binds the brace algorithm exactly like
-    /// <c>Call0(Const)</c> binds a named zero-parameter property.
-    /// Lean: tryResolveArgAlgs.
-    /// </summary>
-    private static EvalResult<IReadOnlyList<Algorithm?>> TryResolveArgAlgs(
-        OutputBundle args, EvalCtx ctx)
-    {
-        var result = new List<Algorithm?>(args.Count);
-        foreach (var argExpr in args)
-        {
-            if (ShouldWrapArgExprAsValue(argExpr))
-            {
-                result.Add(null);
-                continue;
-            }
 
-            var r = ResolveAlg(argExpr, ctx);
-            if (r.IsOk)
-            {
-                result.Add(r.Value);
-            }
-            else if (IsLiftableError(r.Error))
-            {
-                result.Add(null);
-            }
-            else
-            {
-                return r.Error;
-            }
-        }
-        return EvalResult<IReadOnlyList<Algorithm?>>.Ok(result);
-    }
 
     // ── Call evaluation ─────────────────────────────────────────────────────
 
@@ -302,33 +166,7 @@ public static partial class Evaluator
 
     // ── Conditional algorithm call (Lean: evalConditionalCallCounted) ───────
 
-    /// <summary>
-    /// Assemble the evaluated argument values for a conditional (multi-clause)
-    /// call through the shared call argument pipeline
-    /// (<see cref="BuildCallArgumentInputs"/>): non-spread slots reify as one
-    /// value each and explicit spread expands by one value boundary, exactly
-    /// as for every other callable shape. Clause matching needs plain values,
-    /// so an algorithm-only argument surfaces its value-evaluation error.
-    /// </summary>
-    private static EvalResult<IReadOnlyList<Result>> EvalConditionalCallArguments(
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var inputsR = BuildCallArgumentInputs(args, ctx, valEnv);
-        if (inputsR.IsError) return inputsR.Error;
 
-        var argResults = new List<Result>(inputsR.Value.Count);
-        foreach (var input in inputsR.Value)
-        {
-            if (input.Value is null)
-                return SurfacedSlotValueError(input);
-
-            argResults.Add(input.Value);
-        }
-
-        return EvalResult<IReadOnlyList<Result>>.Ok(argResults);
-    }
 
     /// <summary>
     /// Counted conditional call evaluation — the CANONICAL conditional-call
@@ -385,65 +223,18 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        var argResultsR = EvalConditionalCallArguments(args, ctx, valEnv);
-        if (argResultsR.IsError) return argResultsR.Error;
-        var argResults = argResultsR.Value;
-
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
-        var match = MatchCallBranches(callee.Branches, argResults);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
-
-        var (branch, bindings) = match.Value;
-        // A clause-family binder is bound on the value channel only, so the
-        // inherited algorithm and counted tiers are shadowed by the binder names
-        // exactly like a user call's parameter list (the value tier is shadowed
-        // by the prepended bindings themselves). The same names are published on
-        // the family scope the body is wired under, for member accessibility.
-        var shadowedNames = bindings.Select(static binding => binding.Name).ToArray();
-        var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
-        var newEnv = Concat(bindings, valEnv);
-        var wiredBody = ChildOfConditionalCall(callee, SelectedBranchBody(branch), shadowedNames, newCtx, newEnv);
-        return ReCountValueBoundary(EvalAlgOutputCounted(wiredBody, newCtx, newEnv));
+        return EvalNeedFamilyBodyCounted(callee, args, ctx, valEnv, calleeName);
     }
 
     // ── User-defined call (Lean: evalUserCallCounted) ─────────────────────
 
     /// <summary>
-    /// Counted user-defined call evaluation — the CANONICAL user-call
-    /// implementation (the plain spelling reaches it through
-    /// <see cref="EvalResolvedCallCounted"/> and the value projection).
-    ///
-    /// Dual-view semantics: each original argument expression is independently
-    /// interpreted in two ways:
-    /// <list type="bullet">
-    ///   <item>Structural algorithm resolution → AlgEnv (callable meaning)</item>
-    ///   <item>Eager value evaluation → ValEnv (value meaning)</item>
-    /// </list>
-    /// If both succeed, the parameter gets both meanings (dual-view).
-    /// If only algorithm resolution succeeds, only AlgEnv is bound.
-    /// If only value evaluation succeeds, only ValEnv is bound.
-    /// If both fail, the eager-evaluation error is propagated. Every
-    /// <see cref="Expr.AlgorithmExpr"/> contributes its contained algorithm to
-    /// the AlgEnv side regardless of declaration/output count. A
-    /// <see cref="Expr.Capture"/> contributes only its fresh zero-parameter
-    /// value thunk, never the algorithm identity of an expression it contains.
-    ///
-    /// Flat fixed calls bind call-site structure: each comma argument is one
-    /// argument expression, while a bare spread expression explicitly
-    /// contributes its spread top-level items. Multi-output values from normal
-    /// expressions, including <c>.atoms</c>, remain one argument expression.
-    /// Earlier explicit argument positions remain distinct on the eager value
-    /// side even if some later arguments bind only through AlgEnv.
-    ///
-    /// A user/property call is a value boundary: the public result preserves
-    /// the structural value while re-counting the emitted arity with
-    /// <see cref="ReCountValueBoundary(CountedResult)"/> (<c>Result.ValueCount</c>). A
-    /// multi-output body therefore becomes one sequence value (count 1); only
-    /// caller-site <c>spread</c> re-spreads it.
-    /// Lean: <c>evalUserCallCounted</c>.
+    /// Canonical user-call entry. Form supply, check cardinality, bind cells through
+    /// the shared need-pattern binder, then evaluate the body. Plain unique binders
+    /// transport cells without demanding VALUE or projecting CALLABLE; structural and
+    /// repeated-name patterns demand only as required, in written pattern order.
+    /// The counted result crosses the ordinary value boundary exactly once.
+    /// Lean: <c>evalUserCallCounted</c> and <c>evalNeedUserSupply</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalUserCallCounted(
         Algorithm callee, OutputBundle args,
@@ -470,57 +261,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        if (callee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        // Assignment-deconstruction target: project this target's slot from the group's shared
-        // run-scoped bind. The projected value is re-counted at this value boundary exactly as the
-        // helper body's `Param(xi)` result would be (`ReCountValueBoundary`): count = ValueCount().
-        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
-            && TryProjectSharedDeconstructionTarget(deconstructionHelper, target, args, ctx, valEnv, calleeName) is { } sharedTarget)
-        {
-            return sharedTarget.IsError
-                ? sharedTarget.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(sharedTarget.Value, sharedTarget.Value.ValueCount()));
-        }
-
-        var signature = CallableSignature.FromAlgorithm(calleeName.StructuralName, callee);
-        var bindingPlan = CallableBindingPlan.FromSignature(signature);
-
-        if (bindingPlan.RequiresPatternedBinding)
-        {
-            var bindingsR = BindPatternedUserCall(callee, args, ctx, valEnv, calleeName);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var grouped = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
-            return ReCountValueBoundary(EvalAlgOutputCounted(callee, grouped.Context, grouped.ValueEnvironment));
-        }
-
-        if (IsDeconstructionUserCallShape(signature))
-        {
-            var bindingsR = BindDeconstructionUserCall(callee, args, ctx, valEnv, calleeName);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var deconstruction = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
-            return ReCountValueBoundary(EvalAlgOutputCounted(callee, deconstruction.Context, deconstruction.ValueEnvironment));
-        }
-
-        if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
-            flatFixedParams = callee.Params;
-
-        var flatBindingsR = BindFlatFixedUserCallArguments(
-            callee,
-            calleeName,
-            flatFixedParams,
-            args,
-            ctx,
-            valEnv);
-        if (flatBindingsR.IsError) return flatBindingsR.Error;
-
-        var flatBindings = flatBindingsR.Value;
-        return ReCountValueBoundary(EvalAlgOutputCounted(callee, flatBindings.Context, flatBindings.ValueEnvironment));
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
+            && TryProjectSharedDeconstructionTarget(helper, target, args, ctx, valEnv, calleeName) is { } projected)
+            return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
+        return EvalNeedUserBodyCounted(callee, args, ctx, valEnv, calleeName);
     }
 
     /// <summary>

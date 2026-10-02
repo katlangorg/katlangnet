@@ -1,0 +1,7 @@
+# Model-C production semantic change — October 2 2026
+
+This is an intentional breaking change to argument acquisition in the current development candidate. The release version remains the repository's authoritative 0.8.230; this implementation request does not independently bump or publish it.
+
+Ordinary parameters are first-demand computations. Unused arguments perform no runtime work. VALUE success, failure and cancellation are shared once per supplied computation; transport and aliases preserve the address. Effects and random draws follow first-demand order. Families inspect patterns in written order across one shared supply. Wrong ordinary cardinality rejects before argument evaluation, while explicit spread may evaluate during formation. Collectors are lazy slices whose VALUE materializes one whole eager list. CALLABLE identity is projected without forcing VALUE. Cyclic active demand is the new ordinary public DemandCycle error. Q-15 blocked lifting remains runtime zero-argument demand for every callable category; static directly-written undeclared-name and Q-77 structure checks remain.
+
+The binding document `docs/design/language-rules/call-by-need.md` reproduces the frozen NEED laws and maps their production implementations. Historical eager descriptions are superseded. Lean's serial heap model and C#'s single-flight runtime are paired; host scheduling/cancellation tests are C# operational evidence. Generated specifications are rebuilt from reviewed canonical source cases, never from inferred expectations.

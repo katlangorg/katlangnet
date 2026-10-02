@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 340
-- excluded parse-level cases (Lean has no surface parser): 51
-- excluded C#-only cases (each carries an explicit reason in the corpus): 18
-- Lean-guarded cases: 271
+- specification surface cases: 353
+- excluded parse-level cases (Lean has no surface parser): 50
+- excluded C#-only cases (each carries an explicit reason in the corpus): 19
+- Lean-guarded cases: 284
 - probe observations (C#-only by design): 1086
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -54,6 +54,7 @@ partial def errCategory : Error -> String
   | .spreadMissingOutput => "spreadMissingOutput"
   | .unknownName _ => "unknownName"
   | .divByZero => "div0"
+  | .demandCycle => "demandCycle"
   | .noMatchingBranch _ => "branch"
   | .unknownProperty _ _ => "unknownProperty"
   | .notPublicProperty _ _ => "notPublicProperty"
@@ -99,6 +100,71 @@ def obs (e : Expr) : String :=
       else s!"internalMismatch countedErr={errCategory e1} plainErr={errCategory e2}"
   | .ok ((r, _), _), .error e2 => s!"internalMismatch counted=ok:{neutral r} plain=err:{errCategory e2}"
   | .error e1, .ok r2 => s!"internalMismatch counted=err:{errCategory e1} plain=ok:{neutral r2}"
+
+-- need-closed-core-demand-is-runtime [errors]: A(q) = q + 1 \n F(x) = A + 0 \n F(7)
+def case_need_closed_core_demand_is_runtime : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.resolve "A") (.num 0))])] [(.call (.resolve "F") [.num 7])])
+#guard obs case_need_closed_core_demand_is_runtime == "err arity"
+
+-- need-unused-ordinary-argument [variadic-calls]: F(x) = 10 \n F(1 / 0)
+def case_need_unused_ordinary_argument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 10])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_unused_ordinary_argument == "ok raw=10 n=1"
+
+-- need-unused-collector-slice [variadic-calls]: F(*xs) = 10 \n F(1, 1 / 0)
+def case_need_unused_collector_slice : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10])] [(.call (.resolve "F") [.num 1, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_unused_collector_slice == "ok raw=10 n=1"
+
+-- need-forwarding-preserves-unused-cell [variadic-calls]: G(x) = 10 \n F(x) = G \n F(1 / 0)
+def case_need_forwarding_preserves_unused_cell : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [.num 10]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "G") [.param "x"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_forwarding_preserves_unused_cell == "ok raw=10 n=1"
+
+-- need-collector-forwarding-preserves-unused-slice [variadic-calls]: G(*xs) = 10 \n F(*xs) = G \n F(1, 1 / 0)
+def case_need_collector_forwarding_preserves_unused_slice : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "G") [(.sequenceSpread (.param "xs"))])])] [(.call (.resolve "F") [.num 1, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_collector_forwarding_preserves_unused_slice == "ok raw=10 n=1"
+
+-- need-ordinary-conditional-selects-one-cell [variadic-calls]: Choose(true, yes, no) = yes \n Choose(false, yes, no) = no \n Choose(true, 7, 1 / 0)
+def case_need_ordinary_conditional_selects_one_cell : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Choose" (.conditional none [] [⟨.sequenceValue [.litBool true, .bind "yes", .bind "no"], (alg [] [] [] [.param "yes"])⟩, ⟨.sequenceValue [.litBool false, .bind "yes", .bind "no"], (alg [] [] [] [.param "no"])⟩])] [(.call (.resolve "Choose") [.boolLiteral true, .num 7, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_ordinary_conditional_selects_one_cell == "ok raw=7 n=1"
+
+-- need-family-shares-failed-attempt-value [variadic-calls]: F(0, x) = 7 \n F(n, 0) = n \n F(3, 0)
+def case_need_family_shares_failed_attempt_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .bind "x"], (alg [] [] [] [.num 7])⟩, ⟨.sequenceValue [.bind "n", .litInt 0], (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 3, .num 0])])
+#guard obs case_need_family_shares_failed_attempt_value == "ok raw=3 n=1"
+
+-- need-first-loop-step-can-ignore-initial [variadic-calls]: Step(x) = 7 \n repeat(Step, 1, 1 / 0)
+def case_need_first_loop_step_can_ignore_initial : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_first_loop_step_can_ignore_initial == "ok raw=7 n=1"
+
+-- need-closed-demand-can-remain-unused [variadic-calls]: A(q) = q + 1 \n Keep(x) = 7 \n F(x) = Keep(count(A)) \n F(0)
+def case_need_closed_demand_can_remain_unused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "Keep" (alg ["x"] [] [] [.num 7]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "Keep") [(.call (.resolve "count") [.resolve "A"])])])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_need_closed_demand_can_remain_unused == "ok raw=7 n=1"
+
+-- need-wrong-arity-precedes-cell-demand [variadic-calls]: F(x) = x \n F(1 / 0, 2)
+def case_need_wrong_arity_precedes_cell_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.param "x"])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
+#guard obs case_need_wrong_arity_precedes_cell_demand == "err arity"
+
+-- need-explicit-spread-precedes-arity [variadic-calls]: F(x) = 7 \n F(9, (1 / 0)*)
+def case_need_explicit_spread_precedes_arity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "F") [.num 9, (.sequenceSpread (.binary .div (.num 1) (.num 0)))])])
+#guard obs case_need_explicit_spread_precedes_arity == "err div0"
+
+-- need-collector-demand-materializes-whole-slice [variadic-calls]: F(*xs) = xs.first \n F(1, 1 / 0)
+def case_need_collector_demand_materializes_whole_slice : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "first" none)])] [(.call (.resolve "F") [.num 1, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_need_collector_demand_materializes_whole_slice == "err div0"
+
+-- need-callable-projection-does-not-force-value [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(4) \n Apply(Inc)
+def case_need_callable_projection_does_not_force_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 4])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard obs case_need_callable_projection_does_not_force_value == "ok raw=5 n=1"
 
 -- first-program [arithmetic]: 2 + 3 * 4
 def case_first_program : Expr :=
@@ -478,7 +544,7 @@ def case_structural_patterns_open_only_their_own_kind : Expr :=
 -- binding-failure-outranks-repeated-name-conflict [variadic-calls]: Bad = 1 / 0 \n P(x, x, (a, b)) = a \n  \n P(1, 2, Bad)
 def case_binding_failure_outranks_repeated_name_conflict : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.call (.resolve "P") [.num 1, .num 2, .resolve "Bad"])])
-#guard obs case_binding_failure_outranks_repeated_name_conflict == "err div0"
+#guard obs case_binding_failure_outranks_repeated_name_conflict == "err arity"
 
 -- repeated-name-binding-is-order-independent [variadic-calls]: A = 5 \n B = 2 + 3 \n P(f, f, f) = f \n  \n P(A, 5, B)
 def case_repeated_name_binding_is_order_independent : Expr :=
@@ -588,7 +654,7 @@ def case_repeated_callable_identity_includes_captured_activation : Expr :=
 -- repeated-dot-results-have-distinct-wrapper-identities [variadic-calls]: Obj = { public V = 5 } \n P(f, f) = f \n P(Obj.V, Obj.V)
 def case_repeated_dot_results_have_distinct_wrapper_identities : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "P" (alg ["f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [(.dotCall (.resolve "Obj") "V" none), (.dotCall (.resolve "Obj") "V" none)])])
-#guard obs case_repeated_dot_results_have_distinct_wrapper_identities == "err type"
+#guard obs case_repeated_dot_results_have_distinct_wrapper_identities == "ok raw=5 n=1"
 
 -- repeated-forwarded-dot-wrapper-keeps-identity [variadic-calls]: Obj = { public V = 5 } \n P(f, f) = f() \n Pass(g) = P(g, g) \n Pass(Obj.V)
 def case_repeated_forwarded_dot_wrapper_keeps_identity : Expr :=
@@ -598,7 +664,7 @@ def case_repeated_forwarded_dot_wrapper_keeps_identity : Expr :=
 -- collecting-pattern-list-merges-after-the-collector [variadic-calls]: Bad = 1 / 0 \n P(x, *rest, x) = x \n  \n P(1, Bad, 2)
 def case_collecting_pattern_list_merges_after_the_collector : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "x"])] [(.call (.resolve "P") [.num 1, .resolve "Bad", .num 2])])
-#guard obs case_collecting_pattern_list_merges_after_the_collector == "err div0"
+#guard obs case_collecting_pattern_list_merges_after_the_collector == "err arity"
 
 -- redundant-call-parens-canonical [variadic-calls]: Inner = (1, 2, 3) \n CountSequenceValue((*values)) = values.count \n NestedCount([(*values)]) = values.count \n  \n CountSequenceValue(Inner) \n CountSequenceValue((Inner)) \n CountSequenceValue(((1, 2, 3))) \n NestedCount([(1, 2, 3)]) \n NestedCount(([(1, 2, 3)]))
 def case_redundant_call_parens_canonical : Expr :=
@@ -628,7 +694,7 @@ def case_conditional_sequence_pattern_matches_sequence_values_only : Expr :=
 -- conditional-clause-head-rejects-extra-arguments [conditionals]: F(0) = 1 \n F(n) = 2 \n F(1, 2)
 def case_conditional_clause_head_rejects_extra_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "F") [.num 1, .num 2])])
-#guard obs case_conditional_clause_head_rejects_extra_arguments == "err branch"
+#guard obs case_conditional_clause_head_rejects_extra_arguments == "err arity"
 
 -- call-spread-dispatches-before-clause-selection [variadic-calls]: F(0, 0) = 100 \n F(x, y) = x + y \n A = (0, 0) \n F(A*)
 def case_call_spread_dispatches_before_clause_selection : Expr :=
@@ -783,7 +849,7 @@ def case_inline_headed_open_paths_keep_distinct_providers : Expr :=
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Probe(u) = Apply((Increment, Increment)) \n Probe(0)
 def case_capture_suppresses_higher_order_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Increment" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "Apply") [(.capture [.resolve "Increment", .resolve "Increment"])])])] [(.call (.resolve "Probe") [.num 0])])
-#guard obs case_capture_suppresses_higher_order_identity == "err arity"
+#guard obs case_capture_suppresses_higher_order_identity == "err notAnAlgorithm"
 
 -- capture-suppresses-structural-members [access-boundaries]: V(x) = 99 \n Obj = { \n     public V = 7 \n     0 \n } \n  \n Obj.V \n (Obj).V \n (Obj*).V
 def case_capture_suppresses_structural_members : Expr :=
@@ -1455,7 +1521,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 271 canonical Lean-guarded specification cases.
+-- 284 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1463,6 +1529,19 @@ same loop that emits the guards above, while the expected total is computed
 independently from the corpus partition, so a generation bug fails `lake build`.
 -/
 def specCaseIds : List String := [
+  "need-closed-core-demand-is-runtime",
+  "need-unused-ordinary-argument",
+  "need-unused-collector-slice",
+  "need-forwarding-preserves-unused-cell",
+  "need-collector-forwarding-preserves-unused-slice",
+  "need-ordinary-conditional-selects-one-cell",
+  "need-family-shares-failed-attempt-value",
+  "need-first-loop-step-can-ignore-initial",
+  "need-closed-demand-can-remain-unused",
+  "need-wrong-arity-precedes-cell-demand",
+  "need-explicit-spread-precedes-arity",
+  "need-collector-demand-materializes-whole-slice",
+  "need-callable-projection-does-not-force-value",
   "first-program",
   "boolean-values-and-equality",
   "boolean-predicates-and-patterns",
@@ -1735,6 +1814,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 271
+#guard specCaseIds.length == 284
 
 end LanguageSpecCases

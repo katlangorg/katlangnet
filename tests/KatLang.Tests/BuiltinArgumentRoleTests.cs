@@ -428,9 +428,8 @@ public class BuiltinArgumentRoleTests
     {
         // The callback slot reads nothing; the root reads evaluate `A` once and share it.
         AssertOk(await OnEveryRouteAsync("A = tick()\nmap([], A), A, A"), "S[L[], 1, 1]", "tick#1");
-        // An explicit forwarding CALL still evaluates its written argument (CALL-02: a user
-        // call assembles every slot eagerly) — the builtin slot then adds no evaluation.
-        AssertOk(await OnEveryRouteAsync("A = tick()\nApply(f, xs) = map(xs, f)\nApply(A, [])"), "L[]", "tick#1");
+        // Explicit forwarding transfers the cell without a value demand.
+        AssertOk(await OnEveryRouteAsync("A = tick()\nApply(f, xs) = map(xs, f)\nApply(A, [])"), "L[]");
     }
 
     [Fact]
@@ -488,26 +487,22 @@ public class BuiltinArgumentRoleTests
     [Fact]
     public async Task FailedSpread_StopsAssembly_BeforeLaterSlotsAndBeforeArity()
     {
-        // Written order: trace(2) ran, the spread failed, trace(3) never ran, and no arity
-        // verdict replaced the failure (formerly all three ran and the verdict was arity).
+        // Formation evaluates the required spread; surrounding ordinary cells remain suspended.
         AssertFails(
             await OnEveryRouteAsync("Bad = trace(1) / 0\ntake(trace(2), Bad*, trace(3))"),
             KatLangErrorCode.DivisionByZero,
-            "trace(2)",
             "trace(1)");
         // A failed spread that would have made the count wrong reports its own failure.
         AssertFails(await OnEveryRouteAsync("Bad = 1 / 0\ncount(1, 2, Bad*)"), KatLangErrorCode.DivisionByZero);
     }
 
     [Fact]
-    public async Task FailedSpread_IsTheFirstRaisedFailure_AfterAnEarlierRetainedOne()
+    public async Task FailedSpread_FailsBeforeAnEarlierOrdinaryCellIsDemanded()
     {
-        // An earlier VALUE slot's ORDINARY failure is retained, not raised (CALL-03 defers it to
-        // binding); the later spread's failure is raised at assembly, so it is the call's.
+        // The earlier ordinary cell is not demanded; the spread failure ends formation.
         AssertFails(
             await OnEveryRouteAsync("Bad = trace(1) / 0\nBadT = 1 + 'a'\ntake(Bad, BadT*)"),
-            KatLangErrorCode.TypeMismatch,
-            "trace(1)");
+            KatLangErrorCode.TypeMismatch);
     }
 
     [Theory]
@@ -569,11 +564,10 @@ public class BuiltinArgumentRoleTests
         AssertFails(
             await OnEveryRouteAsync("Fail(x) = trace(x) + 'a'\nmap([[]]*, Fail(2)*, trace(3))"),
             KatLangErrorCode.TypeMismatch, "trace(2)");
-        // CALL-03 retains an ordinary value failure until binding. A later spread raises
-        // its own failure during assembly; this also holds for an unnamed first slot.
+        // A later spread is demanded during formation, before an unnamed ordinary cell.
         AssertFails(
             await OnEveryRouteAsync("BadT = trace(2) + 'a'\ntake(trace(1) / 0, BadT*)"),
-            KatLangErrorCode.TypeMismatch, "trace(1)", "trace(2)");
+            KatLangErrorCode.TypeMismatch, "trace(2)");
     }
 
     [Theory]
@@ -593,21 +587,17 @@ public class BuiltinArgumentRoleTests
     [Fact]
     public async Task Laziness_UndemandedComputationsStayUndemanded()
     {
-        // Only callback slots changed: an unselected `if` branch, a zero-iteration loop step,
-        // and a user call's ignored parameter keep their own rules.
+        // All these consumers leave unused cells unevaluated.
         AssertOk(await OnEveryRouteAsync("if(true, 7, tick())"), "7");
         AssertOk(await OnEveryRouteAsync("repeat({tick()}, 0, 5)"), "5");
         AssertOk(await OnEveryRouteAsync("Ignore(f) = 0\nIgnore({1 / 0})"), "0");
-        // A value slot is still demanded in written order, before binding reports arity
-        // (CALL-03): both value items ran, the surplus item too, then the verdict.
-        AssertFails(await OnEveryRouteAsync("count(trace(1), trace(2))"), KatLangErrorCode.ArityMismatch, "trace(1)", "trace(2)");
+        // Supplied cardinality is checked before any ordinary cell is demanded.
+        AssertFails(await OnEveryRouteAsync("count(trace(1), trace(2))"), KatLangErrorCode.ArityMismatch);
         AssertFails(await OnEveryRouteAsync("count(1 / 0, 2)"), KatLangErrorCode.ArityMismatch);
-        // A callback item between value items is skipped, not evaluated.
+        // Wrong cardinality also leaves every map slot suspended.
         AssertFails(
             await OnEveryRouteAsync("map(trace(1), trace(2), trace(3))"),
-            KatLangErrorCode.ArityMismatch,
-            "trace(1)",
-            "trace(3)");
+            KatLangErrorCode.ArityMismatch);
     }
 
     // ── 6. Metamorphic equivalences ─────────────────────────────────────────────────────

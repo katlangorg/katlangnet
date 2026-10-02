@@ -424,7 +424,7 @@ public static partial class Evaluator
     /// 2. ValEnv (ordinary value meaning)
     /// 3. AlgEnv: a parameter found only on the algorithm channel is one whose written
     ///    argument slot FAILED its one value evaluation, and that failure — recorded on
-    ///    the binding (<see cref="SlotAlgorithmBinding"/>) — is its value outcome.
+    ///    the binding (<see cref="NeedCell"/>) — is its value outcome.
     ///    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): the read reuses
     ///    the outcome and never evaluates the algorithm channel, so a failure cannot heal,
     ///    the argument's effects and random draws never repeat, and every read of the
@@ -449,6 +449,8 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         ctx = ParameterContext(name, ctx, ref valEnv);
+        if (LookupNeed(ctx.NeedEnv, name) is { } need)
+            return DemandParameter(need, need.Demand(), name, span);
         var counted = LookupCountedParam(ctx.CountedParamEnv, name);
         if (counted is not null)
             return EvalResult<CountedResult>.Ok(counted.Value);
@@ -465,7 +467,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// The value outcome of a parameter whose written argument slot FAILED its one value
-    /// evaluation: that recorded failure (<see cref="SlotAlgorithmBinding"/>), reported the
+    /// evaluation: that recorded failure (<see cref="NeedCell"/>), reported the
     /// way a value-position read reports a parameter's failure — an output-less argument is
     /// the PARAMETER's failure (<see cref="WithParameterContextOnMissingOutput"/>), and the
     /// read's location is attached only when the failure carries none. This is never an
@@ -483,9 +485,14 @@ public static partial class Evaluator
     /// none. Any other outcome keeps the plain span attachment.
     /// </summary>
     private static EvalResult<Result> WithParameterContextOnMissingOutput(string name, SourceSpan? span, EvalResult<Result> result)
-        => result.IsError && result.Error is EvalError.MissingOutput
-            ? WithSpan<Result>(span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error))
+    {
+        if (!result.IsError) return result;
+        var failure = result.Error is EvalError.WithContext { ErrorContext: ArgumentEvaluationContext, Inner: EvalError.MissingOutput missing }
+            ? missing : result.Error;
+        return failure is EvalError.MissingOutput
+            ? EvalResult<Result>.Err(new EvalError.WithContext(new ParameterEvaluationContext(name), failure) { Span = failure.Span ?? span })
             : WithSpan(span, result);
+    }
 
     /// <summary>
     /// Counted lexical property-reference evaluation — the CANONICAL Resolve

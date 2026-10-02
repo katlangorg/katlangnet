@@ -27,3 +27,7 @@ global using AlgEnv =
 // Lean: abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
 global using CountedParamEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Evaluator.CountedResult Value)>;
+
+// A parameter retains one complete demandable supply, including its independent channels.
+global using NeedEnv =
+    System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Evaluation.NeedCell Cell)>;

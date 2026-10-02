@@ -135,6 +135,12 @@ internal static class SequencePipelineOptimizer
     {
         result = default;
 
+        if (ctx.Budget.CheckContinuation() is { } terminal)
+        {
+            result = terminal;
+            return true;
+        }
+
         // Finish every PURE eligibility check before committing to fusion. In
         // particular, a lookup/shape fallback must not charge PeakDepth merely
         // because the tree looked like a candidate. That would make the
@@ -150,56 +156,15 @@ internal static class SequencePipelineOptimizer
         if (preparationStatus != FilterCountRecognitionStatus.Recognized)
             throw new InvalidOperationException($"Unexpected filter-count preparation status '{preparationStatus}'.");
 
-        // Dynamic depth is an ALWAYS-ACTIVE budget, so it cannot be made
-        // strategy-independent the way the opt-in step and cumulative budgets are —
-        // `Evaluator.CreateRootCtx` protects those by forcing the generic strategy
-        // once they are configured, which presupposes an unconfigured state where the
-        // budget has no verdict. Depth always has one, so it has to be EQUALIZED here
-        // instead, exactly as the always-active per-collection ceiling already is
-        // (`EvaluationBudget.CheckCollectionSize`).
-        //
-        // The generic spelling evaluates this pipeline's collection argument through
-        // one depth-only argument-evaluation level and runs the filter callbacks
-        // INSIDE it (the ordinary builtin argument funnel for both spellings).
-        // A fused pipeline that elided that level would
-        // let the same program survive a depth limit the generic strategy rejects,
-        // and which strategy runs depends on which UNRELATED budgets the caller
-        // configured — so an unrelated, non-binding `MaxStringLength` would decide a
-        // `MaxDepth` verdict.
-        //
-        // This is the COMMIT point: all remaining paths either evaluate the source and
-        // execute fusion or return a committed source-evaluation error. When the level
-        // is unavailable the generic path charges the same funnel and reports the same
-        // limit error, so fallback cannot mask or double-charge a limit.
-        if (ctx.Budget.TryEnterArgumentEvaluation() is not null)
-            return false;
-
-        try
-        {
-            var status = TryCreateFilterCountPlan(
-                preparation,
-                services,
-                ctx,
-                valEnv,
-                diagnostics,
-                out var plan,
-                out result);
-
-            if (status == FilterCountRecognitionStatus.Error)
-                return true;
-            if (status != FilterCountRecognitionStatus.Recognized)
-                throw new InvalidOperationException($"Unexpected committed filter-count status '{status}'.");
-
-            result = WithContext(
-                plan!.EvaluationSyntax,
-                ctx,
-                ExecuteFilterCount(plan, ctx, valEnv, diagnostics));
-            return true;
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
+        // Supply cells add no invocation level. All eligibility checks are complete;
+        // the source now executes once, and a failure after commitment is terminal.
+        var status = TryCreateFilterCountPlan(preparation, services, ctx, valEnv, diagnostics,
+            out var plan, out result);
+        if (status == FilterCountRecognitionStatus.Error) return true;
+        if (status != FilterCountRecognitionStatus.Recognized)
+            throw new InvalidOperationException($"Unexpected committed filter-count status '{status}'.");
+        result = WithContext(plan!.EvaluationSyntax, ctx, ExecuteFilterCount(plan, ctx, valEnv, diagnostics));
+        return true;
     }
 
     private static string FormName(FilterCountPipelineForm form)
@@ -698,25 +663,13 @@ internal static class SequencePipelineOptimizer
                 preparation.DirectRangeFallbackReason);
         }
 
-        // Use the actual generic callback-slot preparation: it owns callable identity and
-        // evaluates nothing (a callback slot is never value-evaluated merely because it was
-        // supplied). A failure after commitment is terminal; falling back here would
-        // evaluate the source a second time.
-        var predicateR = Evaluator.PrepareFilterPredicateArgument(preparation.Predicate, ctx, valEnv);
-        if (predicateR.IsError)
-        {
-            result = WithContext(
-                preparation.Syntax,
-                ctx,
-                EvalResult<Evaluator.CountedResult>.Err(predicateR.Error));
-            return FilterCountRecognitionStatus.Error;
-        }
-
+        // Retain the callback cell in the plan. Its identity is projected only if
+        // execution reaches the first element, exactly as ordinary filter does.
         var sourceKind = SourceKind(sourcePlan);
         plan = new FilterCountPipelinePlan(
             preparation.Syntax.Source,
             sourcePlan,
-            predicateR.Value,
+            preparation.Predicate,
             preparation.Syntax.Form,
             preparation.PredicateExpression,
             preparation.Syntax,
@@ -726,7 +679,7 @@ internal static class SequencePipelineOptimizer
                     preparation.Syntax.Form,
                     preparation.Syntax.Source,
                     preparation.PredicateExpression,
-                    predicateR.Value,
+                    preparation.Predicate.InvokedAlgorithm,
                     sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }
@@ -739,18 +692,32 @@ internal static class SequencePipelineOptimizer
     {
         diagnostics?.RecordFilterCountFusionHit();
 
+        var emptySource = plan.SourcePlan switch
+        {
+            FilterCountSourcePlan.Generic generic => generic.SourceItems.Count == 0,
+            FilterCountSourcePlan.DirectRange range => Evaluator.CountInclusiveRangeValues(range.Range) == 0,
+        };
+        Algorithm? predicate = null;
+        if (!emptySource)
+        {
+            var projected = Evaluator.PrepareFilterPredicateArgument(plan.Predicate, ctx, valEnv);
+            if (projected.IsError) return projected.Error;
+            predicate = projected.Value;
+        }
+
         return plan.SourcePlan switch
         {
             FilterCountSourcePlan.DirectRange directRange =>
-                ExecuteRangeFilterCount(plan, directRange.Range, ctx, valEnv, diagnostics),
+                ExecuteRangeFilterCount(plan, directRange.Range, predicate, ctx, valEnv, diagnostics),
             FilterCountSourcePlan.Generic generic =>
-                ExecuteGenericFilterCount(plan, generic, ctx, valEnv, diagnostics),
+                ExecuteGenericFilterCount(plan, generic, predicate, ctx, valEnv, diagnostics),
         };
     }
 
     private static EvalResult<Evaluator.CountedResult> ExecuteGenericFilterCount(
         FilterCountPipelinePlan plan,
         FilterCountSourcePlan.Generic sourcePlan,
+        Algorithm? predicate,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics)
@@ -767,7 +734,7 @@ internal static class SequencePipelineOptimizer
 
         for (var index = 0; index < sourcePlan.SourceItems.Count; index++)
         {
-            var predicateR = Evaluator.EvalFilterPredicateTruth(plan.Predicate, sourcePlan.SourceItems[index], index, ctx, valEnv);
+            var predicateR = Evaluator.EvalFilterPredicateTruth(predicate!, sourcePlan.SourceItems[index], index, ctx, valEnv);
             predicateCalls++;
 
             if (predicateR.IsError)
@@ -810,6 +777,7 @@ internal static class SequencePipelineOptimizer
     private static EvalResult<Evaluator.CountedResult> ExecuteRangeFilterCount(
         FilterCountPipelinePlan plan,
         Evaluator.InclusiveRange range,
+        Algorithm? predicate,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
         SequencePipelineDiagnostics? diagnostics)
@@ -832,7 +800,7 @@ internal static class SequencePipelineOptimizer
         {
             var item = new Evaluator.CountedResult(new Result.Atom(value), 1);
             var predicateIndex = predicateCalls <= int.MaxValue ? (int)predicateCalls : int.MaxValue;
-            var predicateR = Evaluator.EvalFilterPredicateTruth(plan.Predicate, item, predicateIndex, ctx, valEnv);
+            var predicateR = Evaluator.EvalFilterPredicateTruth(predicate!, item, predicateIndex, ctx, valEnv);
             predicateCalls++;
             sourceItemsSeen++;
 

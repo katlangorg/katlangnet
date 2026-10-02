@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using KatLang.Evaluation.Caching;
+using KatLang.Evaluation;
 
 namespace KatLang.Optimizations.Loops;
 
@@ -20,6 +21,8 @@ internal closed record LoopExprPlan(Expr Source)
     public sealed record StateSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
 
     public sealed record CapturedSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
+
+    public sealed record NeedParameter(Expr Source, NeedCell Cell, string Name, bool ReadyCounted = false) : LoopExprPlan(Source);
 
     public sealed record CountedParamSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
 
@@ -174,6 +177,19 @@ internal static partial class LoopOptimizer
                 {
                     if (stateNames[i] == name)
                         return new LoopExprPlanTryBuildResult(new LoopExprPlan.StateSlot(expr, i, name), null);
+                }
+
+                if (Evaluator.ParameterNeedCell(name, ctx) is { } need)
+                {
+                    var ready = need.TryGetReadyValue(out var readyValue);
+                    if (ready && !IsSafeCountedParamSlot(readyValue, out var fallbackReason))
+                    {
+                        var reason = $"unsupported counted parameter value shape: {name} ({fallbackReason})";
+                        ctx.LoopDiagnostics?.RecordCountedParameterReferenceFallback(reason);
+                        return new LoopExprPlanTryBuildResult(null, reason);
+                    }
+                    if (ready) ctx.LoopDiagnostics?.RecordCountedParameterReferencePlanned();
+                    return new LoopExprPlanTryBuildResult(new LoopExprPlan.NeedParameter(expr, need, name, ready), null);
                 }
 
                 if (Evaluator.CapturedParameterNeedsOwnerLookup(name, ctx, parentValEnv))
@@ -565,6 +581,12 @@ internal static partial class LoopOptimizer
     /// <see cref="LoopExprPlan"/> hierarchy: every kind is named, there is no catch-all
     /// arm, and a new kind fails the build here until it is given an evaluation.
     /// </summary>
+    private static EvalResult<PlannedLoopValue> EvalLoopStateSlot(int index, LoopRunFrame frame)
+    {
+        var value = frame.GetStateSlot(index);
+        return value.IsError ? value.Error : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(value.Value));
+    }
+
     private static EvalResult<PlannedLoopValue> EvalLoopExprPlan(
         LoopExprPlan plan,
         LoopRunFrame frame)
@@ -575,10 +597,12 @@ internal static partial class LoopOptimizer
             LoopExprPlan.StringConstant constant => EvalLoopStringConstant(constant, frame),
 
             LoopExprPlan.StateSlot stateSlot =>
-                EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetStateSlot(stateSlot.Index))),
+                EvalLoopStateSlot(stateSlot.Index, frame),
 
             LoopExprPlan.CapturedSlot capturedSlot =>
                 EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetCapturedSlot(capturedSlot.Index))),
+
+            LoopExprPlan.NeedParameter parameter => EvalLoopNeedParameter(parameter),
 
             LoopExprPlan.CountedParamSlot countedParamSlot => EvalLoopCountedParamSlot(countedParamSlot, frame),
 
@@ -611,6 +635,13 @@ internal static partial class LoopOptimizer
 
             LoopExprPlan.Fallback fallback => EvalLoopFallbackPlan(fallback, frame),
         };
+
+    private static EvalResult<PlannedLoopValue> EvalLoopNeedParameter(LoopExprPlan.NeedParameter parameter)
+    {
+        var demanded = Evaluator.DemandPlannedParameter(parameter.Cell, parameter.Name, parameter.Source.Span);
+        return demanded.IsError ? demanded.Error : EvalResult<PlannedLoopValue>.Ok(
+            PlannedLoopValue.FromResult(demanded.Value.Value, demanded.Value.EmittedCount));
+    }
 
     private static EvalResult<PlannedLoopValue> EvalLoopStringConstant(
         LoopExprPlan.StringConstant constant,
@@ -761,15 +792,7 @@ internal static partial class LoopOptimizer
     private static EvalResult<PlannedLoopValue> EvalLoopIfArgument(
         LoopExprPlan argument,
         LoopRunFrame frame)
-    {
-        if (Evaluator.TryEnterArgumentEvaluationLevel(frame.IterationCtx, out var level) is { } limitError)
-            return limitError;
-
-        using (level)
-        {
-            return EvalLoopExprPlan(argument, frame);
-        }
-    }
+        => EvalLoopExprPlan(argument, frame);
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedUnary(
         UnaryOp op,
@@ -959,6 +982,7 @@ internal static partial class LoopOptimizer
             LoopExprPlan.StringConstant constant => $"StringConst(length={constant.Value.Length})",
             LoopExprPlan.StateSlot stateSlot => $"StateSlot({stateSlot.Name})",
             LoopExprPlan.CapturedSlot capturedSlot => $"CapturedSlot({capturedSlot.Name})",
+            LoopExprPlan.NeedParameter parameter => parameter.ReadyCounted ? $"CountedParamSlot({parameter.Name})" : $"CapturedSlot({parameter.Name})",
             LoopExprPlan.CountedParamSlot countedParamSlot => $"CountedParamSlot({countedParamSlot.Name})",
             LoopExprPlan.TempSlot tempSlot => $"TempSlot({tempSlot.Name})",
             LoopExprPlan.TempCall tempCall => $"TempCall({tempCall.Name})",

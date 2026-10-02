@@ -356,7 +356,9 @@ public class EvaluatorConditionalTests
         Assert.NotNull(error);
         Assert.IsType<EvalError.WithContext>(error);
         var inner = ((EvalError.WithContext)error!).Inner;
-        Assert.IsType<EvalError.NoMatchingBranch>(inner);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(inner);
+        Assert.Equal(2, arity.Expected);
+        Assert.Equal(3, arity.Actual);
     }
 
     [Fact]

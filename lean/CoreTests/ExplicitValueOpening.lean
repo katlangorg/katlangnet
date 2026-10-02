@@ -1,3 +1,4 @@
+import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
 
@@ -952,7 +953,7 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
 
 -- Independent C-full review: the real flat binder must report the original
 -- argument supply, just as the counted callback binder and the C# binder do.
-#guard match KatLang.runEvalM (KatLang.bindParams ["x", "y"] [seq12]) with
+#guard match KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParams ["x", "y"] [seq12]) with
   | .error (.arityMismatch 2 1) => true
   | _ => false
 
@@ -980,9 +981,9 @@ def realCallbackBinderMatchesOrdinaryValueSupply : Bool := Id.run do
   let supplies := [[]] ++ values.map (fun v => [v]) ++
     values.flatMap (fun v => values.map (fun w => [v, w]))
   return patterns.all fun ps => supplies.all fun supply => [0, 1, 4].all fun history =>
-    let ordinary := KatLang.runEvalM (KatLang.bindParameterPatternList ps
+    let ordinary := KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParameterPatternList ps
       (supply.map fun v => { value? := some v }) false)
-    let callback := KatLang.runEvalM (KatLang.bindCountedParameterPatternList ps
+    let callback := KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindCountedParameterPatternList ps
       (supply.map fun v => KatLang.countedSequenceCallbackItem (v, history)))
     match ordinary, callback with
     | .ok a, .ok b => a.argEnv == b.countedParamEnv.map (fun (name, value) => (name, value.fst))

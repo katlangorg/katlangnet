@@ -48,6 +48,7 @@ partial def errCategory : Error -> String
   | .spreadMissingOutput => "spreadMissingOutput"
   | .unknownName _ => "unknownName"
   | .divByZero => "div0"
+  | .demandCycle => "demandCycle"
   | .noMatchingBranch _ => "branch"
   | .unknownProperty _ _ => "unknownProperty"
   | .notPublicProperty _ _ => "notPublicProperty"
@@ -12292,7 +12293,7 @@ def case_special__aliasOfFamilyDispatches : Expr :=
 -- special__aliasOfFamilyNoMatchingBranch: Fact(0) = 1 \n Fact(n) = n * Fact(n - 1) \n F = Fact \n F(1, 2)
 def case_special__aliasOfFamilyNoMatchingBranch : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.alias none [] [] (.resolve "Fact")), privateProp "Fact" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.call (.resolve "Fact") [(.binary .sub (.param "n") (.num 1))]))])⟩])] [(.call (.resolve "F") [.num 1, .num 2])])
-#guard obs case_special__aliasOfFamilyNoMatchingBranch == "err branch"
+#guard obs case_special__aliasOfFamilyNoMatchingBranch == "err arity"
 
 -- special__aliasOfUnnameableFamily: S(1) = 1 \n S(-1) = -1 \n SA = S \n SA(-1)
 def case_special__aliasOfUnnameableFamily : Expr :=

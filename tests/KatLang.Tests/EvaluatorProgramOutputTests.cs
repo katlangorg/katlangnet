@@ -265,17 +265,18 @@ public class EvaluatorProgramOutputTests
     }
 
     [Fact]
-    public void Eval_MissingOutput_CallWithArgument_UsesKatLangFacingMessage()
-        => AssertMissingOutputMessage(
-            """
-            Algo = {
-                Prop = 7
-            }
-            Algo(6)
-            """,
-            $"Cannot call 'Algo' because it has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To call one of its properties, use property access instead.",
-            expectedLine: 4,
-            expectedColumn: 1);
+    public void Eval_OutputlessCallWithAnArgument_ChecksArityBeforeOutput()
+    {
+        const string source = "Algo = {\n    Prop = 7\n}\nAlgo(6)";
+        var result = EvalFull(source);
+        Assert.True(result.IsError);
+        Assert.Equal(KatLangErrorCode.ArityMismatch, result.Error.Code);
+        var error = result.Error;
+        while (error is EvalError.WithContext frame) error = frame.Inner;
+        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+        Assert.Equal((0, 1), (arity.Expected, arity.Actual));
+        Assert.Equal(4, KatLangError.FromEvalError(result.Error).Span!.Value.Start.Line);
+    }
 
     [Fact]
     public void Eval_MissingOutput_BinaryUse_UsesKatLangFacingMessage()

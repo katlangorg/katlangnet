@@ -228,7 +228,7 @@ public class LoopStrategyPreparationTests
     }
 
     [Fact]
-    public void GenericRepeat_FreshCountedEnvironmentIdentitySurvivesPreparedBaseReuse()
+    public void GenericRepeat_FreshNeedEnvironmentIdentitySurvivesPreparedBaseReuse()
     {
         // The shadowed BASE environment is invariant, but the combined environment
         // remains a fresh list per bind. Besides being part of the zero-arg cache key,
@@ -245,7 +245,7 @@ public class LoopStrategyPreparationTests
         Assert.Equal([3m], result.Value.Value.ToAtoms());
         var requests = cache.Requests.Where(static request => request.Binding.Name == "Val").ToList();
         Assert.Equal(3, requests.Count);
-        Assert.Equal(3, requests.Select(static request => request.CountedParamEnvironmentIdentity).Distinct().Count());
+        Assert.Equal(3, requests.Select(static request => request.ValueEnvironmentIdentity).Distinct().Count());
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
     }
 

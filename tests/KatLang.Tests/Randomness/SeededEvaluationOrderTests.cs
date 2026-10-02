@@ -92,11 +92,11 @@ public class SeededEvaluationOrderTests
     // ── Written order ─────────────────────────────────────────────────────────
 
     [Fact]
-    public void CallArguments_DrawLeftToRight()
+    public void CallArguments_DrawOnFirstDemand()
     {
         var d = Draws(4);
 
-        Assert.Equal([d[2], d[1], d[0], d[3]], Run("F(a, b, c) = c, b, a\nF(R(), R(), R()), R()"));
+        Assert.Equal([d[0], d[1], d[2], d[3]], Run("F(a, b, c) = c, b, a\nF(R(), R(), R()), R()"));
     }
 
     [Fact]

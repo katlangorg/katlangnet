@@ -625,14 +625,15 @@ public class ZeroArgumentReferenceLiftingTests
 
     /// <summary>
     /// A callable that REQUIRES a supplied argument, and a builtin, have no value to collect:
-    /// they keep the targeted callable diagnostic.
+    /// demanding the collected list demands each element, so the callable's own zero-supply
+    /// rejection surfaces.
     /// </summary>
     [Fact]
-    public async Task Collectors_KeepTheCallableDiagnosticForCallablesThatRequireArguments()
+    public async Task Collectors_DemandTheCallablesOwnZeroArgumentRejection()
     {
-        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nInc(x) = x + 1\nColl(Inc)"), KatLangErrorCode.TypeMismatch);
-        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nHead(x, *rest) = x\nColl(1, Head)"), KatLangErrorCode.TypeMismatch);
-        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nColl(sum)"), KatLangErrorCode.TypeMismatch);
+        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nInc(x) = x + 1\nColl(Inc)"), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nHead(x, *rest) = x\nColl(1, Head)"), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync("Coll(*ys) = ys\nColl(sum)"), KatLangErrorCode.ArityMismatch);
     }
 
     [Fact]

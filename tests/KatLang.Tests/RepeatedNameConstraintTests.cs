@@ -257,12 +257,10 @@ public class RepeatedNameConstraintTests
         { "failed-block-then-value", "Q(x, x) = x\nQ({trace(1) / 0}, 7)", DivisionByZero(Call("Q")) + BadTraced },
         { "value-then-failed-block", "Q(x, x) = x\nQ(7, {trace(1) / 0})", DivisionByZero(Call("Q")) + BadTraced },
 
-        // 5. Two failed values: the FIRST-raised failure (arguments evaluate left to right, once
-        // each), never an unrelated repeated-name diagnostic. Formerly the "algorithm-only" type
-        // mismatch masked both.
-        { "two-failures", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Bad, Missing)", DivisionByZero(Call("Q")) + " [trace(1),trace(2)]" },
-        { "two-failures-reversed", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Missing, Bad)", $"err BadIndex: {Call("Q")}Bad index [trace(2),trace(1)]" },
-        { "same-failure-twice", Bad + "Q(x, x) = 0\nQ(Bad, Bad)", DivisionByZero(Call("Q")) + " [trace(1),trace(1)]" },
+        // 5. The first failed inspecting demand stops traversal; later cells stay suspended.
+        { "two-failures", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Bad, Missing)", DivisionByZero(Call("Q")) + " [trace(1)]" },
+        { "two-failures-reversed", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Missing, Bad)", $"err BadIndex: {Call("Q")}Bad index [trace(2)]" },
+        { "same-failure-twice", Bad + "Q(x, x) = 0\nQ(Bad, Bad)", DivisionByZero(Call("Q")) + " [trace(1)]" },
 
         // 6. Arguments that each carry BOTH channels: equal values and one callable identity bind
         // (and invoke that callable); equal values with two identities reject. One algorithm
@@ -286,9 +284,8 @@ public class RepeatedNameConstraintTests
         { "nested-inside-one-group", "M((x, x)) = x\nM((7, 7))", "ok 7" },
         { "nested-inside-one-group-unequal", "M((x, x)) = x\nM((7, 8))", Unequal(Call("M")) },
 
-        // 8. Clause families: every argument's value is required before a clause is tried, so a
-        // failed or callable-only argument is its own failure, never a fall-through. Family
-        // binders are values only (PAT-07): distinct callables with equal values match (PV-43).
+        // 8. Families use the common complete-binding constraint: identity conflicts fall through,
+        // while an actual failed demand aborts dispatch.
         { "family-equal", "E(x, x) = true\nE(x, y) = false\nE(7, 7)", "ok true" },
         { "family-unequal", "E(x, x) = true\nE(x, y) = false\nE(7, 8)", "ok false" },
         { "family-failed-first", Bad + "E(x, x) = true\nE(x, y) = false\nE(Bad, 7)", DivisionByZero(Call("E")) + BadTraced },
@@ -296,7 +293,7 @@ public class RepeatedNameConstraintTests
         // A family argument is a value position an inferring root would lift (`Inc(y)`), so the
         // callable-only argument is pinned under a closed list.
         { "family-callable", Inc + "E(x, x) = true\nE(x, y) = false\nCheck(n) = E(Inc, n)\nCheck(1)", IncValueDemand(Call("Check") + Call("E")) },
-        { "family-distinct-callables", "A = 5\nB = 5\nE(x, x) = true\nE(x, y) = false\nE(A, B)", "ok true" },
+        { "family-distinct-callables", "A = 5\nB = 5\nE(x, x) = true\nE(x, y) = false\nE(A, B)", "ok false" },
 
         // 9. Lists and sequences: the ONE structural, kind-sensitive value equality.
         { "list-equal", "P(x, x) = x\nP([1], [1])", "ok L[1]" },
@@ -316,10 +313,9 @@ public class RepeatedNameConstraintTests
         { "three-callable-first", "A = 5\n" + Inc + "T(x, x, x) = x\nT(Inc, A, 5)", IncValueDemand(Call("T")) },
         { "three-compatible", "A = 5\nT(x, x, x) = x\nT(5, A, A)", "ok 5" },
 
-        // 12. A valueless occurrence is a BINDING failure: it precedes the level's verdicts
-        // wherever the unequal name stands.
+        // 12. Inspection settles immediately in written order; an earlier conflict stops later demands.
         { "binding-failure-before-verdict", Bad + "Q2(x, x, y, y) = 0\nQ2(Bad, 7, 1, 2)", DivisionByZero(Call("Q2")) + BadTraced },
-        { "binding-failure-before-verdict-late", Bad + "Q2(x, x, y, y) = 0\nQ2(1, 2, Bad, 7)", DivisionByZero(Call("Q2")) + BadTraced },
+        { "binding-failure-before-verdict-late", Bad + "Q2(x, x, y, y) = 0\nQ2(1, 2, Bad, 7)", Unequal(Call("Q2")) },
     };
 
     [Theory]
@@ -405,9 +401,8 @@ public class RepeatedNameConstraintTests
         // The callee itself resolved through `open` or as a structural member.
         { "opened-callee", "open Lib\nLib = {\n    public P(x, x) = x, x(5)\n}\n" + Inc + "P(Inc, 1)", IncValueDemand(Call("P")) },
         { "member-callee", "Lib = {\n    public P(x, x) = x, x(5)\n}\n" + Inc + "Lib.P(Inc, 1)", IncValueDemand(Dot("Lib", "P")) },
-        // A failed argument no pattern requires stays latent (CALL-06): the first REQUIRED
-        // value decides, although `Bad` was evaluated (and failed) first.
-        { "latent-failure-is-not-required", Bad + Inc + "P(y, x, x) = x\nP(Bad, Inc, 1)", IncValueDemand(Call("P")) + BadTraced },
+        // A cell no pattern or body consumer requires remains unevaluated.
+        { "latent-failure-is-not-required", Bad + Inc + "P(y, x, x) = x\nP(Bad, Inc, 1)", IncValueDemand(Call("P")) },
         { "latent-failure-read-later", Bad + "P(y, x, x) = x, y\nP(Bad, 7, 7)", DivisionByZero(Call("P")) + BadTraced },
         // A callable that works with no arguments IS value-shaped: its own failed read propagates.
         { "value-shaped-callable-failure", "Only(*xs) = 1 / 0\nP(x, x) = x\nP(Only, 1)", DivisionByZero(Call("P")) },

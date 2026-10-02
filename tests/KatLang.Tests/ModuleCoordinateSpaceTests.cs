@@ -288,11 +288,6 @@ public class ModuleCoordinateSpaceTests
 
     [Theory]
     [MemberData(nameof(ImportedFrontEndFailures))]
-    // Refused strict-value forwarding is reported by implicit-argument resolution, which
-    // walks open-target regions without a diagnostics sink (an opened module's refusal is
-    // left to evaluation, exactly as before); a property-held module is an ordinary nested
-    // body, so the front end reports it — at the import site.
-    [InlineData("blocked forwarding", "\n\n\npublic Fine = 7\nHelper = base + 1\nK(a) = a + Math.Abs(Helper)", DiagnosticCode.UndeclaredIdentifier)]
     public async Task ImportedFrontEndFailure_PropertyHeldModule_IsReportedAtTheDeclaringProperty(string shape, string module, DiagnosticCode code)
     {
         Assert.NotNull(shape);
@@ -302,6 +297,16 @@ public class ModuleCoordinateSpaceTests
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(code, diagnostic.Code);
         Assert.Equal(new SourceSpan(3, 1, 3, 2), diagnostic.Span);
+    }
+
+    [Fact]
+    public async Task ImportedClosedValueDemand_IsValidatedAndRemainsUnused()
+    {
+        const string module = "\n\n\npublic Fine = 7\nHelper = base + 1\nK(a) = a + Math.Abs(Helper)";
+        var source = "M = load('" + Lib + "')\nM.Fine";
+        var options = Options((Lib, module));
+        Assert.False((await Parser.ParseAsync(source, options)).HasErrors);
+        Assert.Equal("7", Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, options)).ToDisplayString());
     }
 
     [Theory]

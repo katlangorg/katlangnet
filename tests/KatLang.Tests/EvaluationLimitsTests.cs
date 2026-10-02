@@ -276,29 +276,16 @@ public class EvaluationLimitsTests
     }
 
     [Fact]
-    public void UnusedSelfReferentialArgument_ReachesTheDepthLimit_WhichIsTerminal()
+    public void UnusedSelfReferentialArgument_ReachesNoLimit()
     {
-        // F never reads v, but a user-call argument is evaluated at assembly (CALL-02), and
-        // x's argument slot is x itself: every level evaluates the slot again, and the
-        // recursion reaches MaxDepth. That limit was once RETAINED beside v's algorithm
-        // channel and dropped because F ignores v, so the innermost F returned 0 and the run
-        // SUCCEEDED with a value manufactured by the limit. RESOURCE LIMITS ARE TERMINAL
-        // (Q-02 / PV-06): the depth failure now ends the run — and the work stays linear.
-        const int maxDepth = 24;
-        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
+        var expression = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
             "F(v) = 0\nx = F(x)\nx").Root);
-        var (result, budget) = Evaluator.RunCountedObserved(
-            expr,
-            new EvaluationLimits { MaxDepth = maxDepth });
-
-        Assert.True(result.IsError);
-        Assert.Equal(
-            maxDepth,
-            Assert.IsType<EvalError.EvaluationDepthExceeded>(result.Error).Limit);
-        Assert.Equal(maxDepth, budget.PeakDepth);
-        Assert.True(
-            budget.ConsumedSteps <= 2L * maxDepth,
-            $"expected work linear in MaxDepth, observed {budget.ConsumedSteps} steps at depth {maxDepth}");
+        var (result, budget) = Evaluator.RunCountedObserved(expression,
+            new EvaluationLimits { MaxDepth = 24 });
+        Assert.False(result.IsError);
+        Assert.Equal([0m], result.Value.Value.ToAtoms());
+        Assert.Equal(2, budget.PeakDepth);
+        Assert.Equal(2, budget.ConsumedSteps);
     }
 
     [Theory]
@@ -438,10 +425,10 @@ public class EvaluationLimitsTests
 
         var (demanded, budget) = Evaluator.RunCountedObserved(
             expr,
-            new EvaluationLimits { MaxDepth = 2 });
+            new EvaluationLimits { MaxDepth = 3 });
         Assert.True(demanded.IsError);
         Assert.IsType<EvalError.DivByZero>(Innermost(demanded.Error));
-        Assert.Equal(2, budget.PeakDepth);
+        Assert.Equal(3, budget.PeakDepth);
         Assert.Equal(3, budget.ConsumedSteps);
     }
 
@@ -459,7 +446,7 @@ public class EvaluationLimitsTests
 
         Assert.False(result.IsError);
         Assert.Equal(2, budget.PeakDepth);
-        Assert.Equal(5, budget.ConsumedSteps);
+        Assert.Equal(4, budget.ConsumedSteps);
     }
 
     [Theory]
@@ -481,7 +468,7 @@ public class EvaluationLimitsTests
     [InlineData("Big = range(1, 200000)\nUse(f, x) = x\nUse(Big, 3)", typeof(EvalError.CollectionSizeLimitExceeded))]
     [InlineData("Deep = Deep\nUse(f, x) = x\nUse(Deep, 3)", typeof(EvalError.EvaluationDepthExceeded))]
     [InlineData("Deep = Deep\nG(w) = 5\nF(v) = G(v)\nF(Deep)", typeof(EvalError.EvaluationDepthExceeded))]
-    public void UnusedResourceFailingArgument_IsTerminal(string source, Type expected)
+    public void UnusedResourceFailingArgument_NeverReachesTheLimit(string source, Type expected)
     {
         // RESOURCE LIMITS ARE TERMINAL (Q-02 / PV-06): these arguments ARE evaluated at
         // assembly (CALL-02) and reach the per-collection ceiling or the depth limit. The
@@ -491,9 +478,9 @@ public class EvaluationLimitsTests
         // the parameter.
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
-        Assert.True(result.IsError);
-        Assert.True(result.Error.IsResourceLimit);
-        Assert.IsType(expected, Innermost(result.Error));
+        Assert.False(result.IsError);
+        Assert.Equal([source.Contains("G(w)", StringComparison.Ordinal) ? 5m : 3m], result.Value);
+        Assert.True(typeof(EvalError).IsAssignableFrom(expected));
     }
 
     private static EvalError Innermost(EvalError error)
@@ -514,7 +501,7 @@ public class EvaluationLimitsTests
     }
 
     [Fact]
-    public void UnusedSelfReferentialResolveArgument_IsTerminalAtTheLimit()
+    public void UnusedSelfReferentialResolveArgument_DoesNotRecurse()
     {
         // The same shape whose argument recurses into itself: each level's slot evaluates A
         // again until MaxDepth refuses it. (The former comment called this argument "never
@@ -525,8 +512,8 @@ public class EvaluationLimitsTests
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid("F(v) = 0\nA = F(A)\nA").Root),
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
-        Assert.True(result.IsError);
-        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(result.Error));
+        Assert.False(result.IsError);
+        Assert.Equal([0m], result.Value);
     }
 
     // ── Budget unit invariants ───────────────────────────────────────────────
@@ -542,7 +529,7 @@ public class EvaluationLimitsTests
         Assert.Null(budget.TryEnterInvocation());
         Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterInvocation());
         budget.ExitInvocation();
-        Assert.Null(budget.TryEnterInvocation());
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterInvocation());
         Assert.Equal(2, budget.PeakDepth);
     }
 
@@ -554,7 +541,7 @@ public class EvaluationLimitsTests
         Assert.Null(budget.TryEnterInvocation());
         Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterArgumentEvaluation());
         budget.ExitInvocation();
-        Assert.Null(budget.TryEnterArgumentEvaluation());
+        Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterArgumentEvaluation());
         Assert.Equal(2, budget.PeakDepth);
 
         // Exactly one step was charged across all of the above — by the one

@@ -380,8 +380,8 @@ public class BudgetCrossTalkMatrixTests
         Assert.Equal(genericBudget.PeakDepth, optimizedBudget.PeakDepth);
 
         var requiredDepth = optimizedBudget.PeakDepth;
-        Assert.True(requiredDepth > 1);
-        foreach (var offset in new[] { -1, 0, 1 })
+        Assert.True(requiredDepth >= 1);
+        foreach (var offset in requiredDepth == 1 ? new[] { 0, 1 } : new[] { -1, 0, 1 })
         {
             var limits = new EvaluationLimits { MaxDepth = requiredDepth + offset };
             var (optimizedAtBoundary, optimizedLimitBudget) = Evaluator.RunCountedObserved(
@@ -1340,7 +1340,7 @@ public class BudgetCrossTalkMatrixTests
     }
 
     [Fact]
-    public void FailedOptimizerCommitDepthEnter_IsNonMutatingAndDoesNotEvaluateSource()
+    public void ReachedTerminalLimit_PreventsOptimizerSourceEvaluation()
     {
         var range = new Expr.Call(
             new Expr.Resolve("range"),
@@ -1371,7 +1371,8 @@ public class BudgetCrossTalkMatrixTests
 
         var budget = EvaluationBudget.Create(new EvaluationLimits { MaxDepth = 1 });
         var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
-        Assert.Null(budget.TryEnterArgumentEvaluation());
+        Assert.Null(budget.TryEnterInvocation());
+        var terminal = Assert.IsType<EvalError.EvaluationDepthExceeded>(budget.TryEnterInvocation());
 
         var handled = SequencePipelineOptimizer.TryExecute(
             invocation,
@@ -1379,18 +1380,19 @@ public class BudgetCrossTalkMatrixTests
             ctx,
             [],
             diagnostics: null,
-            out _);
+            out var result);
 
-        Assert.False(handled);
+        Assert.True(handled);
+        Assert.Same(terminal, result.Error);
         Assert.False(sourceEvaluated);
         budget.ExitInvocation();
-        Assert.Null(budget.TryEnterArgumentEvaluation());
+        Assert.Same(terminal, budget.TryEnterInvocation());
         Assert.Equal(1, budget.PeakDepth);
-        budget.ExitInvocation();
+        Assert.Equal(0, budget.CurrentDepth);
     }
 
     [Fact]
-    public void CommittedSourceFailure_ReleasesOptimizerDepthExactlyOnce()
+    public void CommittedSourceFailure_HasNoTransportDepthAndPreservesInvocationCapacity()
     {
         var range = new Expr.Call(
             new Expr.Resolve("range"),
@@ -1424,7 +1426,7 @@ public class BudgetCrossTalkMatrixTests
         Assert.True(handled);
         Assert.True(result.IsError);
         Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
-        Assert.Equal(1, budget.PeakDepth);
+        Assert.Equal(0, budget.PeakDepth);
 
         // Both levels remain available. A leaked outer enter would allow only one;
         // a double exit would corrupt this exact capacity check in the other direction.
@@ -1461,7 +1463,7 @@ public class BudgetCrossTalkMatrixTests
         var (_, unlimitedBudget) = Evaluator.RunCountedObserved(ast);
         Assert.Equal(0, unlimitedBudget.MaterializedStringChars);
 
-        var boundary = unlimitedBudget.PeakDepth;
+        var boundary = Math.Max(1, unlimitedBudget.PeakDepth);
 
         foreach (var stringLimit in new EvaluationLimits?[]
                  {
@@ -1476,7 +1478,6 @@ public class BudgetCrossTalkMatrixTests
             var atBoundary = stringLimit is null
                 ? new EvaluationLimits { MaxDepth = boundary }
                 : stringLimit with { MaxDepth = boundary };
-            var belowBoundary = atBoundary with { MaxDepth = boundary - 1 };
 
             var diagnostics = new SequencePipelineDiagnostics();
             var (passing, passingBudget) = Evaluator.RunCountedObserved(ast, atBoundary, sequenceDiagnostics: diagnostics);
@@ -1490,6 +1491,9 @@ public class BudgetCrossTalkMatrixTests
             Assert.Equal(referenceBudget.ConsumedSteps, passingBudget.ConsumedSteps);
             Assert.Equal(referenceBudget.PeakDepth, passingBudget.PeakDepth);
 
+            // A zero-depth execution has no lower legal configured boundary.
+            if (boundary == 1) continue;
+            var belowBoundary = atBoundary with { MaxDepth = boundary - 1 };
             var (failing, failingBudget) = Evaluator.RunCountedObserved(ast, belowBoundary);
             Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(failing.Error));
             var (genericFailure, genericFailureBudget) = Evaluator.RunCountedObserved(ast, belowBoundary, enableOptimizations: false);
@@ -1612,11 +1616,11 @@ public class BudgetCrossTalkMatrixTests
         var collectionFirst = Evaluator.Run(staged, new EvaluationLimits { MaxSteps = 10_000, MaxCollectionItems = 1 });
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(Innermost(collectionFirst.Error));
 
-        // Depth is charged at the dot-call's collection-argument funnel, before `range`
-        // reserves anything, so it precedes the collection ceiling.
+        // Transport contributes no invocation depth. A direct range therefore reaches
+        // its collection reservation before any depth ceiling can bind.
         var direct = FromSource("Probe = 1\nrange(1, 200).count");
-        var depthFirst = Evaluator.Run(direct, new EvaluationLimits { MaxDepth = 1, MaxCollectionItems = 1 });
-        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(depthFirst.Error));
+        var collectionBeforeDepth = Evaluator.Run(direct, new EvaluationLimits { MaxDepth = 1, MaxCollectionItems = 1 });
+        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(Innermost(collectionBeforeDepth.Error));
 
         // Builtin calls charge no step, so a tight step budget does NOT preempt the
         // collection ceiling for the direct spelling. Documented here because it is the

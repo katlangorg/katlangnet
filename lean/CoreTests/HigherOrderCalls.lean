@@ -1,3 +1,4 @@
+import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
 
@@ -342,7 +343,7 @@ def test16SequenceValueArgDoesNotUnpack : Bool :=
     [("Inc", incAlg15), ("UsePair", usePairAlg16), ("Pair", pairArg16)] [
     .call (resolve "UsePair") [resolve "Inc", resolve "Pair"]
   ])) with
-  | Except.error err => innermostIsArityMismatch 2 1 err
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard test16SequenceValueArgDoesNotUnpack
@@ -1212,15 +1213,9 @@ def repeatedAcrossNestedClauseMatchesOnlyEqualItems : Bool :=
 
 #guard repeatedAcrossNestedClauseMatchesOnlyEqualItems
 
--- PATTERN-LIST BINDING ERROR PRECEDENCE (September 2026, D1; the C# binders were aligned
--- to this model — C# PatternBindingErrorPrecedenceTests). `bindPairs` binds EVERY pattern
--- of a list before it merges repeated names, and it merges right to left (the innermost
--- merge first; within one merge an unequal value, `badArity`, before a callable-identity
--- conflict, `typeMismatch`). With a collecting capture the prefix binds and merges, then the
--- suffix binds and merges, then the collector's values are collected, and the
--- prefix/collector/suffix merges come last. So a later binding failure — a nested arity
--- mismatch, an argument's retained value error, a repeated name's valueless contribution
--- (Q-05) — outranks an earlier repeated-name conflict, in ordinary calls and callbacks alike.
+-- Model-C inspecting patterns visit the written head left to right. Each repeated
+-- contribution is demanded and checked immediately; the first failure or conflict
+-- stops later patterns. Collector allocation alone does not demand its elements.
 def precedenceCap (name : String) : KatLang.ParameterPattern := .capture { name := name }
 
 def precedenceColl (name : String) : KatLang.ParameterPattern := .capture { name := name, kind := .collecting }
@@ -1236,21 +1231,21 @@ def precedenceRun (patterns : List KatLang.ParameterPattern) (output call : KatL
     ("B", alg [] [] [] [.binary .add (.num 5) (.num 0)])
   ] [call]))
 
-def patternBindingFailureOutranksRepeatedNameConflict : Bool :=
+def repeatedNameConflictStopsLaterPatterns : Bool :=
   let pair := KatLang.ParameterPattern.sequenceValue [precedenceCap "a", precedenceCap "b"]
   let callP (args : List KatLang.Expr) : KatLang.Expr := .call (resolve "P") args
   -- P((x, x, (a, b))) with P((1, 2, (7, 8, 9))): the nested (a, b) failure, not the
   -- unequal x; and a scalar there is (a, b)'s kind mismatch, which outranks it too.
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x", pair]] (.param "a")
       (callP [.capture [.num 1, .num 2, .capture [.num 7, .num 8, .num 9]]]) with
-   | .error err => innermostIsArityMismatch 2 3 err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x", pair]] (.param "a")
       (callP [.capture [.num 1, .num 2, .num 7]]) with
-   | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   -- P(x, x, (a, b)) with P(1, 2, Bad): the argument's retained division by zero.
   (match precedenceRun [precedenceCap "x", precedenceCap "x", pair] (.param "a")
       (callP [.num 1, .num 2, .resolve "Bad"]) with
-   | .error err => innermostIsDivByZero err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   -- P((x, x), (a, b)) with P((1, 2), 7): a conflict INSIDE a nested group is part of
   -- binding that group, so it precedes the later sibling's failure.
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x"], pair] (.param "a")
@@ -1259,15 +1254,15 @@ def patternBindingFailureOutranksRepeatedNameConflict : Bool :=
   -- Callbacks bind in the same order: map([(1, 2, (7, 8, 9))], P) is (a, b)'s 2 vs 3.
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceCap "x", pair]] (.listLiteral [.param "a"])
       (.call (resolve "map") [.listLiteral [.capture [.num 1, .num 2, .capture [.num 7, .num 8, .num 9]]], .resolve "P"]) with
-   | .error err => innermostIsArityMismatch 2 3 err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   -- Equal repeated values still bind: P(x, x, (a, b)) with P(1, 1, (2, 3)) is 3.
   (match precedenceRun [precedenceCap "x", precedenceCap "x", pair] (.param "b")
       (callP [.num 1, .num 1, .capture [.num 2, .num 3]]) with
    | .ok (.atom 3) => true | _ => false)
 
-#guard patternBindingFailureOutranksRepeatedNameConflict
+#guard repeatedNameConflictStopsLaterPatterns
 
-def collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging : Bool :=
+def collectingPatternsInspectInWrittenOrder : Bool :=
   let pair := KatLang.ParameterPattern.sequenceValue [precedenceCap "a", precedenceCap "b"]
   let callP (args : List KatLang.Expr) : KatLang.Expr := .call (resolve "P") args
   -- P(x, x, *r, (a, b)) with P(1, 2, 7): the prefix merges BEFORE the suffix binds.
@@ -1278,42 +1273,42 @@ def collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging : Bool :=
   -- (the scalar 7 is (a, b)'s kind mismatch).
   (match precedenceRun [precedenceCap "x", precedenceColl "r", precedenceCap "x", pair] (.param "a")
       (callP [.num 1, .num 2, .num 7]) with
-   | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   -- P(x, *r, x) with P(1, Bad, 2): the collector's values are collected before that merge.
   (match precedenceRun [precedenceCap "x", precedenceColl "r", precedenceCap "x"] (.param "x")
       (callP [.num 1, .resolve "Bad", .num 2]) with
-   | .error err => innermostIsDivByZero err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   -- The counted callback binder: map([(1, 9, 2, (7, 8, 9))], P) with P((x, *m, x, (a, b))).
   (match precedenceRun [.sequenceValue [precedenceCap "x", precedenceColl "m", precedenceCap "x", pair]]
       (.listLiteral [.param "a"])
       (.call (resolve "map") [.listLiteral [.capture [.num 1, .num 9, .num 2, .capture [.num 7, .num 8, .num 9]]], .resolve "P"]) with
-   | .error err => innermostIsArityMismatch 2 3 err | _ => false)
+   | .error err => innermostIsBadArity err | _ => false)
 
-#guard collectingPatternListBindsPrefixSuffixThenCollectorBeforeMerging
+#guard collectingPatternsInspectInWrittenOrder
 
-def repeatedNameMergesRunRightToLeft : Bool :=
+def repeatedNameConstraintsRunLeftToRight : Bool :=
   let callP (args : List KatLang.Expr) : KatLang.Expr := .call (resolve "P") args
   let xxff := [precedenceCap "x", precedenceCap "x", precedenceCap "f", precedenceCap "f"]
   let ffxx := [precedenceCap "f", precedenceCap "f", precedenceCap "x", precedenceCap "x"]
   -- P(x, x, f, f) with P(1, 2, A, B): the (f, f) merge runs first — two distinct
   -- callables with equal values are the callable-identity type mismatch...
   (match precedenceRun xxff (.num 0) (callP [.num 1, .num 2, .resolve "A", .resolve "B"]) with
-   | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err
+   | .error err => innermostIsBadArity err
    | _ => false) &&
   -- ...and P(f, f, x, x) with P(A, B, 1, 2) reports the unequal x first.
   (match precedenceRun ffxx (.num 0) (callP [.resolve "A", .resolve "B", .num 1, .num 2]) with
-   | .error err => innermostIsBadArity err | _ => false) &&
+   | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err | _ => false) &&
   -- A repeated name's VALUELESS contribution is not a verdict but a binding failure
   -- (Q-05): `Inc` passed bare fails with its own arity rejection when its pattern binds,
   -- before any merge, wherever the unequal x stands.
   (match precedenceRun xxff (.num 0) (callP [.num 1, .num 2, .resolve "Inc", .resolve "Inc"]) with
-   | .error err => innermostIsArityMismatch 1 0 err | _ => false) &&
+   | .error err => innermostIsBadArity err | _ => false) &&
   (match precedenceRun ffxx (.num 0) (callP [.resolve "Inc", .resolve "Inc", .num 1, .num 2]) with
    | .error err => innermostIsArityMismatch 1 0 err | _ => false)
 
-#guard repeatedNameMergesRunRightToLeft
+#guard repeatedNameConstraintsRunLeftToRight
 
--- REPEATED-NAME BINDING IS ORDER-INDEPENDENT (September 2026). A repeated name is
+-- Model-C repeated-name compatibility is pairwise; first failure follows written order. A repeated name is
 -- decided ONCE, when its last contribution at the level joins, by requiring every PAIR
 -- of its contributions to be compatible (equal values; one callable identity). And
 -- REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (Q-05): every contribution must supply its
@@ -1345,7 +1340,7 @@ def isCallableOnlyContribution (result : Except Error Result) : Bool :=
   | .error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
-def repeatedNameVerdictIsOrderIndependent : Bool :=
+def repeatedNameCompatibilityAndFirstFailure : Bool :=
   let three (args : List KatLang.Expr) := repeatedRun repeatedThreeCaptures (.param "f") args
   -- (Inc, 5, A): Inc supplies no value, in every permutation.
   (repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args => isCallableOnlyContribution (three args)) &&
@@ -1358,7 +1353,11 @@ def repeatedNameVerdictIsOrderIndependent : Bool :=
   -- (A, B, Inc): unequal values AND a valueless Inc — Inc's binding failure precedes the
   -- verdict in every permutation.
   (repeatedPermutations (.resolve "A") (.resolve "B") (.resolve "Inc")).all (fun args =>
-    isCallableOnlyContribution (three args)) &&
+    match args with
+    | [first, second, _] =>
+      if (match first with | .resolve "Inc" => true | _ => false) || (match second with | .resolve "Inc" => true | _ => false) then isCallableOnlyContribution (three args)
+      else match three args with | .error err => innermostIsBadArity err | _ => false
+    | _ => false) &&
   -- Four occurrences: (A, 5, 5, Inc) fails wherever Inc stands.
   ([[.resolve "Inc", .resolve "A", .num 5, .num 5], [.resolve "A", .num 5, .num 5, .resolve "Inc"],
     [.num 5, .resolve "Inc", .num 5, .resolve "A"], [.resolve "A", .resolve "Inc", .num 5, .num 5]].all (fun args =>
@@ -1371,14 +1370,14 @@ def repeatedNameVerdictIsOrderIndependent : Bool :=
         [precedenceCap "f", precedenceColl "r", precedenceCap "f", precedenceCap "f"] (.param "f") [a, .num 9, b, c])
     | _ => false))
 
-#guard repeatedNameVerdictIsOrderIndependent
+#guard repeatedNameCompatibilityAndFirstFailure
 
 -- The one-verdict rule also fixes WHEN a 3+ occurrence name is decided: only once all of
 -- its contributions are bound, so which occurrence holds the odd value no longer decides
 -- whether a later binding failure is reported first. P(x, x, *m, x, (a, b)) with x
 -- repeated across the collector reports the (a, b) failure for both (1, 2, 9, 1, 7) and
 -- (1, 1, 9, 2, 7); the counted callback binder does the same.
-def repeatedNameIsDecidedWhenComplete : Bool :=
+def repeatedNameConflictStopsAtFirstIncompatibleContribution : Bool :=
   let pair := KatLang.ParameterPattern.sequenceValue [precedenceCap "a", precedenceCap "b"]
   let fixed := [precedenceCap "x", precedenceCap "x", precedenceColl "m", precedenceCap "x", pair]
   let direct (xs : List KatLang.Expr) := repeatedRun fixed (.param "a") xs
@@ -1387,10 +1386,10 @@ def repeatedNameIsDecidedWhenComplete : Bool :=
       ("P", algWithParameterPatterns [.sequenceValue fixed] [] [] [.listLiteral [.param "a"]])
     ] [.call (resolve "map") [.listLiteral [.capture xs], .resolve "P"]]))
   [[.num 1, .num 2, .num 9, .num 1, .num 7], [.num 1, .num 1, .num 9, .num 2, .num 7]].all (fun xs =>
-    (match direct xs with | .error err => innermostIsAnyTypeMismatch err | _ => false) &&
-    (match viaMap xs with | .error err => innermostIsAnyTypeMismatch err | _ => false))
+    (match direct xs with | .error err => innermostIsBadArity err | _ => false) &&
+    (match viaMap xs with | .error err => innermostIsBadArity err | _ => false))
 
-#guard repeatedNameIsDecidedWhenComplete
+#guard repeatedNameConflictStopsAtFirstIncompatibleContribution
 
 -- The two-occurrence cases: (A, A) and (A, 5) bind; Inc beside A or beside a plain value
 -- is Inc's own failure in both orders — (5, Inc) formerly bound the value 5 with Inc's
@@ -1461,13 +1460,13 @@ def repeatedGenuineAliasesKeepCompleteBinding : Bool :=
 -- The counted channel is the WHOLE pair. Equal values with different counts
 -- may not silently retain whichever count occurs first, even at the helper boundary.
 def repeatedCountedBindingChecksTheCompletePair : Bool :=
-  let one : KatLang.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 1))] }
-  let two : KatLang.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 2))] }
+  let one : KatLang.HistoricalReadyBinding.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 1))] }
+  let two : KatLang.HistoricalReadyBinding.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 2))] }
   [ [one, two], [two, one], [one, two, one], [two, one, one],
     [one, one, one, two, one], [two, one, one, one, one] ].all
-      (fun cs => match KatLang.repeatedNameFailure ["f"] cs with | some .badArity => true | _ => false) &&
-  (match KatLang.repeatedNameFailure ["f"] [one, one, one] with | none => true | _ => false) &&
-  KatLang.lookupAssoc "f" (KatLang.mergeFirstOccurrences [one, one, one]).countedParamEnv == some (.atom 5, 1)
+      (fun cs => match KatLang.HistoricalReadyBinding.repeatedNameFailure ["f"] cs with | some .badArity => true | _ => false) &&
+  (match KatLang.HistoricalReadyBinding.repeatedNameFailure ["f"] [one, one, one] with | none => true | _ => false) &&
+  KatLang.lookupAssoc "f" (KatLang.HistoricalReadyBinding.mergeFirstOccurrences [one, one, one]).countedParamEnv == some (.atom 5, 1)
 
 #guard repeatedCountedBindingChecksTheCompletePair
 

@@ -39,6 +39,27 @@ internal sealed class EvaluationBudget
     private long _materializedItems;
     private long _materializedStringChars;
 
+    private EvalError? _terminalFailure;
+
+    internal EvalError? CheckContinuation()
+    {
+        ObserveCancellation();
+        return _terminalFailure;
+    }
+
+    internal EvalError RetainTerminal(EvalError error)
+    {
+        if (!error.IsResourceLimit) throw new ArgumentException("Only a resource limit ends the run.", nameof(error));
+        while (true)
+        {
+            var previous = Volatile.Read(ref _terminalFailure);
+            if (previous is not null && (previous.Code != error.Code || previous.Span is not null || error.Span is null))
+                return previous;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _terminalFailure, error, previous), previous))
+                return error;
+        }
+    }
+
     internal EvaluationBudget(
         EvaluationLimits limits,
         HostOperations? hostOperations = null,
@@ -139,7 +160,7 @@ internal sealed class EvaluationBudget
     ///
     /// <para>Cancellation is HOST DEMAND, not a language outcome. It deliberately throws
     /// instead of returning an <see cref="EvalError"/>: an ordinary failure of a
-    /// parameter's eager value evaluation is RETAINED on the binding and the run
+    /// parameter's first-demand failure is memoized on its cell and the run
     /// continues (only a resource-limit failure is terminal —
     /// <c>Evaluator.IsDeferrableEvaluationFailure</c>), so a cancellation modeled as an
     /// error could be deferred like an ordinary failure, or classified into the run's
@@ -209,7 +230,7 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryEnterInvocation()
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         // Every ceiling is CHECKED before either counter moves, so a rejected enter is
         // non-mutating in the cumulative step counter exactly as it is in depth — the
@@ -225,10 +246,10 @@ internal sealed class EvaluationBudget
         // The step ceiling is still tested FIRST, so when both are exhausted the reported
         // limit is unchanged.
         if (_steps >= _maxSteps)
-            return new EvalError.EvaluationStepLimitExceeded(_maxSteps);
+            return RetainTerminal(new EvalError.EvaluationStepLimitExceeded(_maxSteps));
 
         if (_depth >= _maxDepth)
-            return new EvalError.EvaluationDepthExceeded(_maxDepth);
+            return RetainTerminal(new EvalError.EvaluationDepthExceeded(_maxDepth));
 
         // Deterministic depth alone cannot be calibrated to be simultaneously useful for
         // real programs and safe for the most stack-expensive evaluation shape on the
@@ -240,7 +261,7 @@ internal sealed class EvaluationBudget
         // backstop stops FAILS; where it fires is machine- and route-dependent, but it
         // can never turn one successful value into another.
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            return new EvalError.EvaluationStackExhausted();
+            return RetainTerminal(new EvalError.EvaluationStackExhausted());
 
         _steps++;
         _depth++;
@@ -271,13 +292,13 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryEnterArgumentEvaluation()
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         if (_depth >= _maxDepth)
-            return new EvalError.EvaluationDepthExceeded(_maxDepth);
+            return RetainTerminal(new EvalError.EvaluationDepthExceeded(_maxDepth));
 
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            return new EvalError.EvaluationStackExhausted();
+            return RetainTerminal(new EvalError.EvaluationStackExhausted());
 
         _depth++;
         if (_depth > PeakDepth) PeakDepth = _depth;
@@ -333,10 +354,10 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? CheckCollectionSize(long requestedCount)
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         return requestedCount > _maxCollectionItems
-            ? new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount)
+            ? RetainTerminal(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount))
             : null;
     }
 
@@ -354,16 +375,16 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryReserveCollection(long requestedCount)
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         if (requestedCount < 0)
             throw new ArgumentOutOfRangeException(nameof(requestedCount), requestedCount, "Item count cannot be negative.");
 
         if (requestedCount > _maxCollectionItems)
-            return new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount);
+            return RetainTerminal(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount));
 
         if (requestedCount > _maxMaterializedItems - _materializedItems)
-            return new EvalError.MaterializationLimitExceeded(_maxMaterializedItems);
+            return RetainTerminal(new EvalError.MaterializationLimitExceeded(_maxMaterializedItems));
 
         _materializedItems = checked(_materializedItems + requestedCount);
         return null;
@@ -386,16 +407,16 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryReserveString(long requestedLength)
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         if (requestedLength < 0)
             throw new ArgumentOutOfRangeException(nameof(requestedLength), requestedLength, "Length cannot be negative.");
 
         if (requestedLength > _maxStringLength)
-            return new EvalError.StringSizeLimitExceeded(_maxStringLength, requestedLength);
+            return RetainTerminal(new EvalError.StringSizeLimitExceeded(_maxStringLength, requestedLength));
 
         if (requestedLength > _maxMaterializedStringChars - _materializedStringChars)
-            return new EvalError.StringMaterializationLimitExceeded(_maxMaterializedStringChars);
+            return RetainTerminal(new EvalError.StringMaterializationLimitExceeded(_maxMaterializedStringChars));
 
         _materializedStringChars = checked(_materializedStringChars + requestedLength);
         return null;
@@ -421,7 +442,7 @@ internal sealed class EvaluationBudget
         // Observed on EVERY checkpoint, not only at batch boundaries: this is the
         // densest chokepoint, so it is what bounds cancellation latency for pure
         // expression work to well under one 4096-checkpoint batch.
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         if (_expressionEvaluationCheckpointsInBatch < 4095)
         {
@@ -450,10 +471,10 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal EvalError? TryChargeStep()
     {
-        ObserveCancellation();
+        if (CheckContinuation() is { } terminal) return terminal;
 
         if (_steps >= _maxSteps)
-            return new EvalError.EvaluationStepLimitExceeded(_maxSteps);
+            return RetainTerminal(new EvalError.EvaluationStepLimitExceeded(_maxSteps));
 
         _steps++;
         return null;

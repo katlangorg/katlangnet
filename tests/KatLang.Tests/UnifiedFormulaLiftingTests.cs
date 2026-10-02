@@ -457,9 +457,9 @@ public class UnifiedFormulaLiftingTests
         {
             var parsed = OnOneMebibyteStack(() => Parser.Parse(source));
             Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics));
-            Assert.Equal(
-                expected.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                Assert.IsType<RunResult.Success>(OnOneMebibyteStack(() => KatLangEngine.Run(source))).ToDisplayString());
+            var run = OnOneMebibyteStack(() => KatLangEngine.Run(source));
+            Assert.True(run is RunResult.Success, run.ToDisplayString());
+            Assert.Equal(expected.ToString(System.Globalization.CultureInfo.InvariantCulture), run.ToDisplayString());
         }
     }
 

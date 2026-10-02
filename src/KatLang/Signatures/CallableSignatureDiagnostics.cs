@@ -19,7 +19,7 @@ internal static class CallableSignatureDiagnostics
     /// The arity the BINDER accepts for this signature's top-level parameter list,
     /// read from that list ALONE. The minimum is the binder's own rule
     /// (<see cref="ParameterPattern.MinimumSuppliedSlots"/>, which
-    /// <c>BindParameterPatternList</c> itself enforces): every pattern at this level
+    /// <c>BindNeedPatterns</c> itself enforces): every pattern at this level
     /// consumes ONE supplied slot whatever it contains — a sequence-value group is one
     /// slot the binder opens afterwards — and a COLLECTING capture at this level consumes
     /// NONE, because it collects whatever the fixed prefix and suffix leave over (an empty

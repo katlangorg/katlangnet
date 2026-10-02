@@ -598,7 +598,7 @@ public closed record ParameterPattern
 
     /// <summary>
     /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts —
-    /// the ONE rule <see cref="Evaluator"/>'s <c>BindParameterPatternList</c> enforces,
+    /// the ONE rule <see cref="Evaluator"/>'s <c>BindNeedPatterns</c> enforces,
     /// factored out here so no other layer re-derives it:
     /// <list type="bullet">
     ///   <item>every pattern consumes exactly ONE supplied slot, whatever it contains — a

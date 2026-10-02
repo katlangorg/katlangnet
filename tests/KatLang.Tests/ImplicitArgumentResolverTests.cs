@@ -6,28 +6,6 @@ public class ImplicitArgumentResolverTests
     private static Algorithm Resolve(string source)
         => SourceProvenance.ParseValid(source).Root;
 
-    /// <summary>
-    /// Elaborated root for a source the closed-list strict-value refinement REJECTS at the
-    /// front end (a registry-proven value-demanding position whose referenced callable needs
-    /// implicit parameters the closed explicit list cannot supply).
-    ///
-    /// <para>The rewrite is still the subject of these tests: what makes the new diagnostic
-    /// honest rather than a cover story is that the resolver, on refusing to lift, leaves the
-    /// reference bare and invents no parameter. So this states the rejection explicitly —
-    /// never <c>ParseValid</c>, which would silently evaluate a recovery tree — and hands back
-    /// the tree the resolver actually produced. The diagnostic's own content is owned by
-    /// <see cref="ClosedListStrictValueDiagnosticTests"/>.</para>
-    /// </summary>
-    private static Algorithm ResolveRejected(string source)
-    {
-        var parsed = Parser.Parse(source);
-        Assert.True(
-            parsed.HasErrors,
-            "Expected the closed-list strict-value diagnostic, but the front end accepted:"
-            + Environment.NewLine + source);
-        return parsed.Root;
-    }
-
     private static EvalResult<IReadOnlyList<Decimal128>> Eval(string source)
         => Evaluator.RunFlat(new Expr.AlgorithmExpr(Resolve(source)));
 
@@ -1137,7 +1115,7 @@ public class ImplicitArgumentResolverTests
         // parameter list is CLOSED; a strict-value Math wrapper is not an escape hatch from it.
         // The helper REQUIRES its `first` argument, so its value can only come from a
         // forwarding the closed list refuses — the front end rejects the position.
-        var root = ResolveRejected("""
+        var root = Resolve("""
             CountItems(first, *items) = items.count
             Use(value) = Math.Abs(CountItems)
             """);
@@ -1268,7 +1246,7 @@ public class ImplicitArgumentResolverTests
     [InlineData("Use(v) = Math.Abs(Math.Round)")]
     public void Resolve_MathArgument_ClosedExplicitParameterList_DoesNotLiftBareMathMemberReference(string source)
     {
-        var root = ResolveRejected(source);
+        var root = Resolve(source);
         var use = root.Properties.Single(p => p.Name == "Use").Value;
 
         Assert.Equal(["v"], use.Params);
@@ -1423,7 +1401,7 @@ public class ImplicitArgumentResolverTests
         // declaration order.
         static void AssertBothGates(string source)
         {
-            var root = ResolveRejected(source);
+            var root = Resolve(source);
 
             var lifted = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(root, "OpenList")));
             Assert.Equal("Helper", Assert.IsType<Expr.Resolve>(lifted.Function).Name);

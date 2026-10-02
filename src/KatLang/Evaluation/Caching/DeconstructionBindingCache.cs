@@ -35,24 +35,24 @@ internal readonly record struct DeconstructionBindingExecution(
 
 /// <summary>
 /// Run-scoped memoization of assignment-deconstruction binds. The first demanded target of a
-/// group performs the full N-capture bind once and stores the ordered per-target bound values;
+/// group performs the full N-capture bind once and stores the ordered per-target demand cells;
 /// every later target of the same group in the same binding context projects its own slot in
-/// O(1). The stored list is the shared bind's bound values in target order (capture order); the
+/// O(1). The stored list is the shared bind's demand cells in target order (capture order); the
 /// counted and non-counted helper results are both a value boundary over the same value, so the
 /// per-target value is all that must be retained.
 /// </summary>
 internal interface IDeconstructionBindingCache
 {
     /// <summary>
-    /// Returns the ordered per-target bound values for this deconstruction group and binding
+    /// Returns the ordered per-target demand cells for this deconstruction group and binding
     /// context, computing them via <paramref name="bind"/> only on a miss. Errors are NEVER
     /// stored (consistent with <see cref="IZeroArgPropertyResultCache"/>): a deterministic
     /// binding failure recurs identically, and a transient resource-limit failure must be free
     /// to recur under the live budget rather than being pinned for the rest of the run.
     /// </summary>
-    EvalResult<IReadOnlyList<Result>> GetOrBind(
+    EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<Result>>> bind);
+        Func<EvalResult<IReadOnlyList<NeedCell>>> bind);
 
     /// <summary>
     /// Async twin of <see cref="GetOrBind"/>, used only by the evaluator's async twin
@@ -62,9 +62,9 @@ internal interface IDeconstructionBindingCache
     /// semantics are unchanged. This interface is internal and never host-supplied, so
     /// the member carries no public-surface cost.
     /// </summary>
-    ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+    ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind);
+        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind);
 }
 
 internal readonly record struct DeconstructionBindingCacheKey(
@@ -116,25 +116,25 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
     {
     }
 
-    public EvalResult<IReadOnlyList<Result>> GetOrBind(
+    public EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<Result>>> bind)
+        Func<EvalResult<IReadOnlyList<NeedCell>>> bind)
         => bind();
 
-    public ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+    public ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind)
+        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind)
         => bind();
 }
 
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
-    private readonly Dictionary<DeconstructionBindingCacheKey, IReadOnlyList<Result>> _results =
+    private readonly Dictionary<DeconstructionBindingCacheKey, IReadOnlyList<NeedCell>> _results =
         new(DeconstructionBindingCacheKeyComparer.Instance);
 
-    public EvalResult<IReadOnlyList<Result>> GetOrBind(
+    public EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<Result>>> bind)
+        Func<EvalResult<IReadOnlyList<NeedCell>>> bind)
     {
         var key = new DeconstructionBindingCacheKey(
             execution.GroupIdentity,
@@ -144,7 +144,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
             execution.CountedParamEnvironmentIdentity);
 
         if (_results.TryGetValue(key, out var cached))
-            return EvalResult<IReadOnlyList<Result>>.Ok(cached);
+            return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
 
         var result = bind();
         if (result.IsError)
@@ -160,9 +160,9 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
     /// sync/async evaluator families, and within the async family each bind is awaited
     /// before evaluation continues, so the dictionary is never touched concurrently.
     /// </summary>
-    public async ValueTask<EvalResult<IReadOnlyList<Result>>> GetOrBindAsync(
+    public async ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<Result>>>> bind)
+        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind)
     {
         var key = new DeconstructionBindingCacheKey(
             execution.GroupIdentity,
@@ -172,7 +172,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
             execution.CountedParamEnvironmentIdentity);
 
         if (_results.TryGetValue(key, out var cached))
-            return EvalResult<IReadOnlyList<Result>>.Ok(cached);
+            return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
 
         var result = await bind().ConfigureAwait(false);
         if (result.IsError)

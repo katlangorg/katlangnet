@@ -34,12 +34,10 @@ public class AbsentSourceLocationTests
 
     /// <summary>
     /// A module-provided loop step whose local temporary is plannable. The import view is
-    /// locationless, so the planned temporary carries no declaration span; the <c>if</c>
-    /// control pushes the temporary's read one budget level deeper than the loop's own
-    /// entry, which is what makes the temporary's refusal the FIRST one and therefore the
-    /// one that stamps the error.
+    /// locationless, so the planned temporaries carry no declaration spans. Reading u
+    /// inside t enters a second actual property invocation; the refusal belongs to u.
     /// </summary>
-    private const string PlannableStepModule = "public Step(a) = {\n  t = a + 1\n  if(t > 0, t, 0)\n}";
+    private const string PlannableStepModule = "public Step(a) = {\n  u = a + 1\n  t = u + 1\n  if(t > 0, t, 0)\n}";
 
     private const string PlannedLoopDocument = "open '" + Lib + "'\nrepeat(Step, 3, 1)";
 
@@ -190,9 +188,9 @@ public class AbsentSourceLocationTests
         var plan = Assert.Single(snapshot.LoopPlans);
         Assert.True(plan.Optimized);
         Assert.True(plan.ExecutionCount >= 1);
-        var temp = Assert.Single(plan.Temps);
-        Assert.Equal("t", temp.Name);
-        Assert.True(temp.Planned, $"the loop temporary was not planned: {temp.FallbackReason}");
+        Assert.Equal(2, plan.Temps.Count);
+        Assert.Equal(new[] { "t", "u" }, plan.Temps.Select(temp => temp.Name).Order());
+        Assert.All(plan.Temps, temp => Assert.True(temp.Planned, $"the loop temporary was not planned: {temp.FallbackReason}"));
 
         var error = ErrorOf(result);
         Assert.Equal(KatLangErrorCode.EvaluationDepthExceeded, error.Code);
@@ -368,7 +366,7 @@ public class AbsentSourceLocationTests
         // Prelude and Math bindings declare no source name either.
         "A = Math.Pi\nA",
         "A = Math.Pi\nB = A\nB",
-        "A = sum((1, 2, 3))\nA",
+        "F(xs) = sum(xs)\nA = F((1, 2, 3))\nA",
         // Ordinary written properties and recursion: the control group.
         "A = B\nB = 1\nA",
         "A = A\nA",

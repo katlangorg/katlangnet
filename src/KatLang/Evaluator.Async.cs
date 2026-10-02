@@ -735,12 +735,17 @@ public static partial class Evaluator
     /// assembly (AT-MOST-ONCE ARGUMENT VALUE EVALUATION), so the read has no child
     /// evaluation to route through the async seam and never suspends.
     /// </summary>
-    private static ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
+    private static async ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
         string name,
         SourceSpan? span,
         EvalCtx ctx,
         ValEnv valEnv)
-        => new(EvalParamCounted(name, span, ctx, valEnv));
+    {
+        ctx = ParameterContext(name, ctx, ref valEnv);
+        return LookupNeed(ctx.NeedEnv, name) is { } need
+            ? DemandParameter(need, await need.DemandAsync().ConfigureAwait(false), name, span)
+            : EvalParamCounted(name, span, ctx, valEnv);
+    }
 
     /// <summary>MIRROR OF <see cref="LookupNativeArgument"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> LookupNativeArgumentAsync(
@@ -1407,7 +1412,7 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// MIRROR OF <see cref="EvalAlgOutputCore"/> / <see cref="EvalAlgOutput"/> — keep in
+    /// MIRROR OF <see cref="EvalAlgOutputCore"/> / <see cref="EvalAlgOutputCore"/> — keep in
     /// lock-step. The synchronous wrapper projects <see cref="EvalAlgOutputCountedCore"/>;
     /// this async twin projects the identical counted field from the shared prepared core
     /// directly, avoiding a redundant async wrapper without owning any semantics.
@@ -1428,7 +1433,8 @@ public static partial class Evaluator
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool preserveSequenceSpreadExpressionBoundaries = false)
+        bool preserveSequenceSpreadExpressionBoundaries = false,
+        IReadOnlyList<string>? parameterNames = null)
     {
         if (alg is Algorithm.Builtin(var builtin))
         {
@@ -1448,7 +1454,7 @@ public static partial class Evaluator
             return new EvalError.MissingOutput();
 
         var slots = new List<Result>();
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
         foreach (var expr in alg.Output)
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
@@ -1616,8 +1622,9 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        var environments = WithUserCallBindingEnvironments(ctx, bindingsR.Value, valEnv, algorithm.Params);
-        return await EvalAlgOutputCountedCoreAsync(algorithm, environments.Context, environments.ValueEnvironment)
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
+        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
+        return await EvalAlgOutputCountedCoreAsync(algorithm, boundCtx, boundValues)
             .ConfigureAwait(false);
     }
 
@@ -1699,7 +1706,7 @@ public static partial class Evaluator
                 owner,
                 binding,
                 accessKind,
-                ValueEnvironmentCacheIdentity(valEnv),
+                ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
                 ctx.AlgEnv,
                 ctx.CountedParamEnv,
                 // The budget is the run identity, exactly as on the synchronous seam.
@@ -1850,7 +1857,7 @@ public static partial class Evaluator
 
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
+            var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(false);
         }
@@ -1899,55 +1906,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        if (callee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } deconstructionHelper
-            && await TryProjectSharedDeconstructionTargetAsync(
-                deconstructionHelper, target, args, ctx, valEnv, calleeName).ConfigureAwait(false) is { } sharedTarget)
-        {
-            return sharedTarget.IsError
-                ? sharedTarget.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(sharedTarget.Value, sharedTarget.Value.ValueCount()));
-        }
-
-        var signature = CallableSignature.FromAlgorithm(calleeName.StructuralName, callee);
-        var bindingPlan = CallableBindingPlan.FromSignature(signature);
-
-        if (bindingPlan.RequiresPatternedBinding)
-        {
-            var bindingsR = await BindPatternedUserCallAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var grouped = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
-            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, grouped.Context, grouped.ValueEnvironment).ConfigureAwait(false));
-        }
-
-        if (IsDeconstructionUserCallShape(signature))
-        {
-            var bindingsR = await BindDeconstructionUserCallAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
-            if (bindingsR.IsError) return bindingsR.Error;
-
-            var bindings = bindingsR.Value;
-            var deconstruction = WithUserCallBindingEnvironments(ctx, bindings, valEnv, callee.Params);
-            return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, deconstruction.Context, deconstruction.ValueEnvironment).ConfigureAwait(false));
-        }
-
-        if (!TryGetPlanDerivedFlatFixedParameterNames(bindingPlan, out var flatFixedParams))
-            flatFixedParams = callee.Params;
-
-        var flatBindingsR = await BindFlatFixedUserCallArgumentsAsync(
-            callee,
-            calleeName,
-            flatFixedParams,
-            args,
-            ctx,
-            valEnv).ConfigureAwait(false);
-        if (flatBindingsR.IsError) return flatBindingsR.Error;
-
-        var flatBindings = flatBindingsR.Value;
-        return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(callee, flatBindings.Context, flatBindings.ValueEnvironment).ConfigureAwait(false));
+        if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
+            && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv, calleeName).ConfigureAwait(false) is { } projected)
+            return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
+        return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="TryProjectSharedDeconstructionTarget"/> — keep in lock-step.</summary>
@@ -1959,49 +1921,13 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        var execution = new DeconstructionBindingExecution(
-            target.Group,
-            DeconstructionOwnerIdentity(ctx),
-            ValueEnvironmentCacheIdentity(valEnv),
-            ctx.AlgEnv,
-            ctx.CountedParamEnv);
-
-        var sharedR = await ctx.DeconstructionBindingCache.GetOrBindAsync(
-            execution,
-            async () =>
-            {
-                var bindingsR = await BindPatternedUserCallAsync(helper, args, ctx, valEnv, calleeName).ConfigureAwait(false);
-                if (bindingsR.IsError)
-                    return bindingsR.Error;
-
-                // Materialize the shared bind as the bound values in TARGET order —
-                // identical projection to the synchronous twin.
-                var bindings = bindingsR.Value;
-                var valueByName = new Dictionary<string, Result>(bindings.ValueBindings.Count, StringComparer.Ordinal);
-                foreach (var (name, value) in bindings.ValueBindings)
-                    valueByName[name] = value;
-                foreach (var (name, counted) in bindings.CountedBindings)
-                    valueByName[name] = counted.Value;
-
-                var parameters = helper.Parameters;
-                var projected = new Result[parameters.Count];
-                for (var i = 0; i < parameters.Count; i++)
-                {
-                    if (!valueByName.TryGetValue(parameters[i].Name, out var value))
-                        return new EvalError.UnknownName(parameters[i].Name);
-                    projected[i] = value;
-                }
-                return EvalResult<IReadOnlyList<Result>>.Ok(projected);
-            }).ConfigureAwait(false);
-
-        if (sharedR.IsError)
-            return sharedR.Error;
-
-        var values = sharedR.Value;
-        if ((uint)target.Index >= (uint)values.Count)
-            return null;
-
-        return EvalResult<Result>.Ok(values[target.Index]);
+        var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
+            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv, ctx.AlgEnv, ctx.CountedParamEnv);
+        var sharedR = await ctx.DeconstructionBindingCache.GetOrBindAsync(execution,
+            () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false);
+        if (sharedR.IsError) return sharedR.Error;
+        if ((uint)target.Index >= (uint)sharedR.Value.Count) return null;
+        return ProjectCountedValue(await sharedR.Value[target.Index].DemandAsync().ConfigureAwait(false));
     }
 
     /// <summary>MIRROR OF <see cref="EvalConditionalCallCounted"/> — keep in lock-step.</summary>
@@ -2033,47 +1959,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        var argResultsR = await EvalConditionalCallArgumentsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        if (argResultsR.IsError) return argResultsR.Error;
-        var argResults = argResultsR.Value;
-
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
-        var match = MatchCallBranches(callee.Branches, argResults);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName.Render(ctx));
-
-        var (branch, bindings) = match.Value;
-        var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
-        if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var shadowedNames = bindings.Select(static binding => binding.Name).ToArray();
-        var newCtx = ShadowInheritedParameterEnvironments(ctx.Push(callee), shadowedNames);
-        var newEnv = Concat(bindings, valEnv);
-        var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, shadowedNames, newCtx, newEnv);
-        return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false));
+        return await EvalNeedFamilyBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalConditionalCallArguments"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalConditionalCallArgumentsAsync(
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        if (inputsR.IsError) return inputsR.Error;
 
-        var argResults = new List<Result>(inputsR.Value.Count);
-        foreach (var input in inputsR.Value)
-        {
-            if (input.Value is null)
-                return SurfacedSlotValueError(input);
-
-            argResults.Add(input.Value);
-        }
-
-        return EvalResult<IReadOnlyList<Result>>.Ok(argResults);
-    }
 
     // ── Argument-assembly and binding twins ─────────────────────────────────
 
@@ -2086,216 +1975,20 @@ public static partial class Evaluator
         if (argsOpt is null)
             return null;
 
-        var inputsR = await BuildCallArgumentInputsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false);
+        var inputsR = await FormNeedSupply(argsOpt, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
         if (inputsR.IsError)
             return inputsR.Error;
 
         return inputsR.Value.Count == 0 ? null : new EvalError.ArityMismatch(0, inputsR.Value.Count);
     }
 
-    /// <summary>MIRROR OF <see cref="BuildCallArgumentInputs"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<ParameterPatternInput>>> BuildCallArgumentInputsAsync(
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var maybeAlgsR = TryResolveArgAlgs(args, ctx);
-        if (maybeAlgsR.IsError) return maybeAlgsR.Error;
 
-        var maybeAlgs = maybeAlgsR.Value;
-        var inputs = new List<ParameterPatternInput>();
 
-        for (var index = 0; index < args.Count; index++)
-        {
-            var argExpr = args[index];
-            var maybeAlg = index < maybeAlgs.Count ? maybeAlgs[index] : null;
 
-            if (argExpr is Expr.SequenceSpread)
-            {
-                var suppliedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
-                if (suppliedR.IsError)
-                    return suppliedR.Error;
 
-                // Explicit spread supplies the operand's items, one level.
-                foreach (var value in CountedTopLevelValues(suppliedR.Value))
-                    inputs.Add(new ParameterPatternInput(value, Algorithm: null, ValueError: null));
 
-                continue;
-            }
 
-            // Every non-spread slot is evaluated at its VALUE boundary through the
-            // ONE EvalCountedAsync (see the sync twin's rationale).
-            var evaluatedR = await EvalCountedAsync(argExpr, ctx, valEnv).ConfigureAwait(false);
-            if (evaluatedR.IsOk)
-            {
-                // A non-spread slot is exactly ONE item: its value, never opened.
-                inputs.Add(new ParameterPatternInput(
-                    evaluatedR.Value.Value,
-                    maybeAlg,
-                    ValueError: null)
-                {
-                    Source = argExpr,
-                });
-                continue;
-            }
 
-            // An ORDINARY failure is retained beside the algorithm channel; a RESOURCE LIMIT is
-            // never deferred and fails the call now — see the synchronous twin.
-            if (maybeAlg is not null && IsDeferrableEvaluationFailure(evaluatedR.Error))
-            {
-                inputs.Add(new ParameterPatternInput(
-                    Value: null,
-                    maybeAlg,
-                    evaluatedR.Error)
-                {
-                    Source = argExpr,
-                });
-                continue;
-            }
-
-            return BlameWrittenArgumentSlot(argExpr, evaluatedR.Error);
-        }
-
-        return EvalResult<IReadOnlyList<ParameterPatternInput>>.Ok(inputs);
-    }
-
-    /// <summary>MIRROR OF <see cref="BindPatternedUserCall"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<UserCallBindings>> BindPatternedUserCallAsync(
-        Algorithm callee,
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName calleeName)
-    {
-        if (callee is Algorithm.User { AssignmentDeconstructionTarget: not null })
-            ctx.Observations?.RecordDeconstructionFullBind();
-
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        if (inputsR.IsError) return inputsR.Error;
-
-        var bindingsR = BindParameterPatternList(
-            callee.ParameterPatterns,
-            inputsR.Value,
-            ctx,
-            allowAlgorithmBindings: true,
-            (required, actual) => new EvalError.ArityMismatch(required, actual)
-            {
-                Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
-                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
-            });
-
-        // Assignment-deconstruction shape failures are rephrased against the WRITTEN
-        // pattern — identical rule and conditions to the synchronous twin.
-        if (bindingsR.IsError
-            && callee is Algorithm.User { AssignmentDeconstructionTarget: not null }
-            && TryGetDeconstructionShapeMismatch(bindingsR.Error) is { } deconstructionMismatch
-            && inputsR.Value.All(static input => input.Value is not null))
-        {
-            return new EvalError.WithContext(
-                new DeconstructionBindingContext(
-                    callee.Parameters.Select(static parameter => parameter.DisplayName).ToList(),
-                    callee.Parameters.Any(static parameter => parameter.Kind == ParameterKind.Collecting)),
-                deconstructionMismatch);
-        }
-
-        return bindingsR;
-    }
-
-    /// <summary>MIRROR OF <see cref="BindDeconstructionUserCall"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<UserCallBindings>> BindDeconstructionUserCallAsync(
-        Algorithm callee,
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName calleeName)
-    {
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        if (inputsR.IsError) return inputsR.Error;
-
-        return BindParameterPatternList(
-            callee.ParameterPatterns,
-            inputsR.Value,
-            ctx,
-            allowAlgorithmBindings: true,
-            (required, actual) =>
-            {
-                var renderedName = calleeName.Render(ctx);
-                return VariadicBindingArityMismatch(
-                    renderedName,
-                    required,
-                    actual,
-                    CallableSignature.FromAlgorithm(renderedName, callee));
-            });
-    }
-
-    /// <summary>MIRROR OF <see cref="BindFlatFixedUserCallArguments"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<UserCallEnvironments>> BindFlatFixedUserCallArgumentsAsync(
-        Algorithm callee,
-        CallDiagnosticName calleeName,
-        IReadOnlyList<string> parameterNames,
-        OutputBundle args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var paramCount = parameterNames.Count;
-
-        var inputsR = await BuildCallArgumentInputsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        if (inputsR.IsError) return inputsR.Error;
-
-        var slots = inputsR.Value
-            .Select(static input => new FlatFixedCallSlot(input.Value, input.Algorithm, input.ValueError))
-            .ToList();
-
-        if (slots.Count > paramCount)
-            return new EvalError.ArityMismatch(paramCount, slots.Count)
-            {
-                Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
-                InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
-            };
-
-        var algBindings = new List<(string Name, Algorithm Value, EvalError? ValueError)>();
-        var valueParams = new List<string>();
-        var valueResults = new List<Result>();
-
-        for (var i = 0; i < paramCount; i++)
-        {
-            if (i >= slots.Count)
-            {
-                valueParams.Add(parameterNames[i]);
-                continue;
-            }
-
-            var slot = slots[i];
-            // A slot whose one value evaluation failed binds its algorithm channel WITH
-            // that failure, the parameter's value outcome for this activation.
-            if (slot.Algorithm is not null)
-                algBindings.Add(SlotAlgorithmBinding(parameterNames[i], slot.Algorithm, slot.Value, slot.ValueError));
-
-            if (slot.Value is not null)
-            {
-                valueParams.Add(parameterNames[i]);
-                valueResults.Add(slot.Value);
-            }
-        }
-
-        var argEnvR = BindParams(valueParams, valueResults);
-        if (argEnvR.IsError)
-        {
-            if (argEnvR.Error is EvalError.ArityMismatch arityMismatch)
-                return arityMismatch with
-                {
-                    Signature = CallableSignature.FromAlgorithm(calleeName.Render(ctx), callee),
-                    InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
-                };
-
-            return argEnvR.Error;
-        }
-
-        var inherited = ShadowInheritedParameterEnvironments(ctx, parameterNames);
-        var boundCtx = inherited.WithAlgEnv(Concat(algBindings, inherited.AlgEnv));
-        var boundEnv = Concat(argEnvR.Value, ShadowValEnv(valEnv, parameterNames));
-        return EvalResult<UserCallEnvironments>.Ok(new UserCallEnvironments(boundCtx, boundEnv));
-    }
 
     // ── Builtin twins ───────────────────────────────────────────────────────
 
@@ -2333,30 +2026,8 @@ public static partial class Evaluator
                 }
 
             case (BuiltinId.@while, _) when args.Count >= 2:
-                {
-                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var initialStateR = await EvalInitialLoopStateSlotsAsync(args.Skip(1).ToList(), ctx, valEnv).ConfigureAwait(false);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return await WhileLoopCountedAsync(stepR.Value, initialStateR.Value, ctx, valEnv).ConfigureAwait(false);
-                }
-
             case (BuiltinId.@repeat, _) when args.Count >= 3:
-                {
-                    var stepR = ResolveInvokedArgumentAlgorithm(args[0], ctx);
-                    if (stepR.IsError) return stepR.Error;
-                    var countR = await EvalResolvedArgumentValueAsync(args[1], ctx, valEnv).ConfigureAwait(false);
-                    if (countR.IsError) return countR.Error;
-                    var nR = ExpectWholeInt(countR.Value, "Repeat count");
-                    if (nR.IsError) return nR.Error;
-                    // Domain check BEFORE narrowing, mirroring the synchronous twin.
-                    if (nR.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-                    var n = nR.Value >= long.MaxValue ? long.MaxValue : (long)nR.Value;
-
-                    var initialStateR = await EvalInitialLoopStateSlotsAsync(args.Skip(2).ToList(), ctx, valEnv).ConfigureAwait(false);
-                    if (initialStateR.IsError) return initialStateR.Error;
-                    return await RepeatLoopCountedAsync(stepR.Value, n, initialStateR.Value, ctx, valEnv).ConfigureAwait(false);
-                }
+                return await EvalNeedLoop(builtin, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
 
             case (BuiltinId.@atoms, 1):
                 {
@@ -2410,29 +2081,17 @@ public static partial class Evaluator
         return EvalResult<InclusiveRange>.Ok(new InclusiveRange(startIntR.Value, stopIntR.Value));
     }
 
-    /// <summary>MIRROR OF <see cref="EvalInitialLoopStateSlots"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalInitialLoopStateSlotsAsync(
-        IReadOnlyList<ResolvedArgumentAlgorithm> initArgs,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var stateSlots = new List<Result>(initArgs.Count);
-        foreach (var init in initArgs)
-        {
-            var slotR = await EvalResolvedArgumentValueAsync(init, ctx, valEnv).ConfigureAwait(false);
-            if (slotR.IsError) return slotR.Error;
-            stateSlots.Add(slotR.Value);
-        }
-
-        return EvalResult<IReadOnlyList<Result>>.Ok(stateSlots);
-    }
-
     /// <summary>MIRROR OF <see cref="EvalResolvedArgumentCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalResolvedArgumentCountedAsync(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (arg.Cell is { } cell)
+        {
+            var result = await cell.DemandAsync().ConfigureAwait(false);
+            return arg.Source is Expr.Param(var name) ? DemandParameter(cell, result, name, arg.Source.Span) : result;
+        }
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
         if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
@@ -2520,89 +2179,8 @@ public static partial class Evaluator
         ValEnv valEnv,
         SequenceBuiltinMetadata metadata)
     {
-        var items = new List<VariadicCallItem>();
-        foreach (var resolvedArg in args)
-        {
-            var arg = resolvedArg.Algorithm;
-
-            // Each non-spread slot is handled by its ROLE — see the synchronous twin: a
-            // CALLBACK slot is never value-evaluated, and a callable-shaped VALUE item is
-            // demanded through the ONE law (the shared IsValueShapedArgument classification
-            // of the NAMED callable).
-            if (!resolvedArg.SpreadsSequence)
-            {
-                var role = metadata.SlotRole(items.Count);
-                if (role == SequenceBuiltinSlotRole.Callback)
-                {
-                    items.Add(UnevaluatedCallItem(resolvedArg));
-                    continue;
-                }
-
-                if (arg is not null && !IsValueShapedArgument(resolvedArg.InvokedAlgorithm ?? arg))
-                {
-                    var item = UnevaluatedCallItem(resolvedArg);
-                    if (role == SequenceBuiltinSlotRole.Value)
-                    {
-                        item = await DemandSequenceBuiltinCallItemValueAsync(item, ctx, valEnv).ConfigureAwait(false);
-                        // A resource limit the demand reached ends the call — see the synchronous twin.
-                        if (item.ValueError is { } demandFailure && !IsDeferrableEvaluationFailure(demandFailure))
-                            return demandFailure;
-                    }
-
-                    items.Add(item);
-                    continue;
-                }
-            }
-
-            var outputR = resolvedArg.PreparedValue is { } prepared
-                ? EvalResult<CountedResult>.Ok(prepared)
-                : arg is { } algorithm
-                    ? await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false)
-                    : EvalResult<CountedResult>.Err(new EvalError.BadArity());
-            if (outputR.IsOk)
-            {
-                if (resolvedArg.SpreadsSequence)
-                {
-                    foreach (var value in CountedTopLevelValues(outputR.Value))
-                    {
-                        items.Add(new VariadicCallItem(
-                            value,
-                            arg,
-                            ValueError: null,
-                            new CountedResult(value, 1)));
-                    }
-                }
-                else
-                {
-                    items.Add(new VariadicCallItem(
-                        outputR.Value.Value,
-                        arg,
-                        ValueError: null,
-                        outputR.Value,
-                        resolvedArg.Source,
-                        resolvedArg.Callable));
-                }
-
-                continue;
-            }
-
-            // MIRROR OF BuildCallableCallItems: a failed SPREAD is the call's failure, and a
-            // resource limit the eager attempt reached ends the call here (RESOURCE LIMITS
-            // ARE TERMINAL); an ordinary value- or surplus-slot failure is retained, and a
-            // named value-shaped argument's missing output is blamed on the property, never
-            // on the callee.
-            if (resolvedArg.SpreadsSequence || !IsDeferrableEvaluationFailure(outputR.Error))
-                return outputR.Error;
-
-            items.Add(new VariadicCallItem(
-                Value: null,
-                arg,
-                BlameDemandedArgumentForMissingOutput(resolvedArg.Source, outputR).Error,
-                Source: resolvedArg.Source,
-                Callable: resolvedArg.Callable));
-        }
-
-        return EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(items);
+        var expanded = await ExpandSequenceSpreadBuiltinArgumentsAsync(args, ctx, valEnv).ConfigureAwait(false);
+        return expanded.IsError ? expanded.Error : EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(expanded.Value.Select(UnevaluatedCallItem).ToArray());
     }
 
     /// <summary>MIRROR OF <see cref="DemandSequenceBuiltinCallItemValue"/> — keep in lock-step.</summary>
@@ -2611,6 +2189,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (item.Cell is { } cell && item.Value is null && item.ValueError is null)
+        {
+            var result = await cell.DemandAsync().ConfigureAwait(false);
+            return FinishNeedCallItemDemand(item, cell, result);
+        }
         if (item.Value is null && item.ValueError is null
             && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
             return item with { ValueError = slotFailure };
@@ -2726,6 +2309,7 @@ public static partial class Evaluator
         {
             case BuiltinId.@filter:
                 {
+                    if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var predicateR = ExpectPreparedAlgorithmSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
@@ -2738,6 +2322,7 @@ public static partial class Evaluator
 
             case BuiltinId.@map:
                 {
+                    if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var transformR = ExpectPreparedAlgorithmSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
@@ -2809,19 +2394,20 @@ public static partial class Evaluator
 
             case BuiltinId.@reduce:
                 {
-                    var stepR = ExpectPreparedAlgorithmSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        bound.SuffixArgs,
-                        0);
-                    if (stepR.IsError) return stepR.Error;
-
                     var initialR = ExpectPreparedValueSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
                         bound.SuffixArgs,
                         1);
                     if (initialR.IsError) return initialR.Error;
+                    if (bound.IterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+
+                    var stepR = ExpectPreparedAlgorithmSuffixArg(
+                        builtin,
+                        metadata.SuffixArgs,
+                        bound.SuffixArgs,
+                        0);
+                    if (stepR.IsError) return stepR.Error;
 
                     return await EvalReduceCountedAsync(
                         bound.IterationItems,
@@ -2840,7 +2426,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalResolvedCallbackCallCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalResolvedCallbackCallCountedAsync(
-        Algorithm callee,
+        Algorithm? callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -2856,7 +2442,8 @@ public static partial class Evaluator
 
         try
         {
-            return await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return callee is null ? new EvalError.ArityMismatch(0, args.Count)
+                : await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
         }
         finally
         {
@@ -2872,89 +2459,21 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
-        var userCallee = callee;
-        switch (callee)
-        {
-            case Algorithm.Builtin(var builtin):
-                return await ApplyBuiltinCountedResolvedAsync(
-                    builtin,
-                    args.Select(static arg => new ResolvedArgumentAlgorithm(
-                        Algorithm: null,
-                        SpreadsSequence: false)
-                    {
-                        PreparedValue = arg,
-                    }).ToList(),
-                    ctx,
-                    valEnv).ConfigureAwait(false);
-
-            case Algorithm.Conditional:
-                if (TryGetFlatBinderUserEquivalent(callee) is not { } simpleCallee)
-                    return await EvalConditionalCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
-
-                userCallee = simpleCallee;
-                break;
-        }
-
-        // THE CALLBACK LAW — the ONE ordinary counted binder; see the synchronous twin.
-        if (userCallee.Output.Count == 0)
-            return new EvalError.MissingOutput();
-
-        var bindingsR = BindCountedParameterPatternList(
-            userCallee.ParameterPatterns,
-            args,
-            ctx,
-            static (required, actual) => new EvalError.ArityMismatch(required, actual));
-        if (bindingsR.IsError)
-            return AttachImplicitParameterProvenance(bindingsR.Error, userCallee);
-
-        var bindings = bindingsR.Value;
-        var calleeCtx = WithCountedParameterEnvironments(
-            ctx,
-            bindings.CountedBindings,
-            bindings.CountedBindings.Select(static binding => binding.Name));
-        return await EvalAlgOutputCountedCoreAsync(userCallee, calleeCtx, valEnv).ConfigureAwait(false);
+        return await EvalNeedCallbackBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalSequenceCallbackCallCounted"/> — keep in lock-step.</summary>
     private static ValueTask<EvalResult<CountedResult>> EvalSequenceCallbackCallCountedAsync(
-        Algorithm callee,
+        Algorithm? callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,
         string calleeName = "conditional")
         => EvalResolvedCallbackCallCountedAsync(callee, [CountedSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
-    /// <summary>MIRROR OF <see cref="EvalConditionalCallbackCallCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalConditionalCallbackCallCountedAsync(
-        Algorithm callee,
-        IReadOnlyList<CountedResult> explicitArgs,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        string calleeName = "conditional")
-    {
-        if (callee.HasDuplicateBranchPatterns())
-            return new EvalError.DuplicateBranchPattern();
-
-        var match = MatchCountedCallBranches(callee.Branches, explicitArgs);
-        if (match is null)
-            return new EvalError.NoMatchingBranch(calleeName);
-
-        var (branch, bindings) = match.Value;
-        var selectedBodyR = await SelectedBranchBodyAsync(branch, ctx).ConfigureAwait(false);
-        if (selectedBodyR.IsError) return selectedBodyR.Error;
-        var binderNames = bindings.Select(static binding => binding.Name).ToArray();
-        var newCtx = WithCountedParameterEnvironments(
-            ctx.Push(callee),
-            bindings,
-            binderNames);
-        var newEnv = Concat(bindings.Select(static binding => (binding.Name, binding.Value.Value)).ToList(), valEnv);
-        var wiredBody = ChildOfConditionalCall(callee, selectedBodyR.Value, binderNames, newCtx, newEnv);
-        return await EvalAlgOutputCountedCoreAsync(wiredBody, newCtx, newEnv).ConfigureAwait(false);
-    }
-
     /// <summary>MIRROR OF <see cref="EvalSequenceReduceStepCounted"/> — keep in lock-step.</summary>
     private static ValueTask<EvalResult<CountedResult>> EvalSequenceReduceStepCountedAsync(
-        Algorithm callee,
+        Algorithm? callee,
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
@@ -2972,7 +2491,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalReduceCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalReduceCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm stepAlg,
+        Algorithm? stepAlg,
         Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -2999,7 +2518,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalFilterCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalFilterCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm predicateAlg,
+        Algorithm? predicateAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -3023,7 +2542,7 @@ public static partial class Evaluator
     /// synchronous plain callback wrapper is the counted twin's value projection).
     /// </summary>
     private static async ValueTask<EvalResult<bool>> EvalFilterPredicateTruthAsync(
-        Algorithm predicateAlg,
+        Algorithm? predicateAlg,
         CountedResult item,
         int index,
         EvalCtx ctx,
@@ -3052,7 +2571,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalMapCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalMapCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm transformAlg,
+        Algorithm? transformAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -3074,129 +2593,6 @@ public static partial class Evaluator
     }
 
     // ── Loop twins ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// MIRROR OF <see cref="WhileLoopCounted"/> — keep in lock-step. The async root
-    /// context pins loop optimization off, so this twin mirrors exactly the branch the
-    /// synchronous code takes under that same context (generic strategy, with the same
-    /// diagnostics records); the guard makes any pinning violation loud.
-    /// </summary>
-    private static async ValueTask<EvalResult<CountedResult>> WhileLoopCountedAsync(
-        Algorithm step,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        ThrowIfAsyncStrategyPinningViolated(ctx);
-
-        ctx.LoopDiagnostics?.RecordLoopExecution();
-        ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop optimization disabled");
-        return await WhileLoopGenericCountedAsync(step, initialStateSlots, ctx, valEnv).ConfigureAwait(false);
-    }
-
-    /// <summary>MIRROR OF <see cref="WhileLoopGenericCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> WhileLoopGenericCountedAsync(
-        Algorithm step,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // Loop-invariant step preparation, once per loop invocation — the SAME shared
-        // non-evaluating helper as the synchronous twin (nothing here awaits).
-        var prepared = PrepareGenericLoopStep(step, ctx);
-        var stateSlots = initialStateSlots.ToList();
-        while (true)
-        {
-            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "while", prepared).ConfigureAwait(false);
-            if (outputSlotsR.IsError) return outputSlotsR.Error;
-            var splitR = SplitContSlots(outputSlotsR.Value);
-            if (splitR.IsError) return splitR.Error;
-            var (nextStateSlots, cont) = splitR.Value;
-            if (!cont) return MakeCheckedLoopStateResult(ctx, stateSlots);
-            stateSlots = nextStateSlots.ToList();
-        }
-    }
-
-    /// <summary>MIRROR OF <see cref="RepeatLoopCounted"/> — keep in lock-step (see <see cref="WhileLoopCountedAsync"/> on the strategy pinning).</summary>
-    private static async ValueTask<EvalResult<CountedResult>> RepeatLoopCountedAsync(
-        Algorithm step,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        ThrowIfAsyncStrategyPinningViolated(ctx);
-
-        ctx.LoopDiagnostics?.RecordLoopExecution();
-
-        if (count == 0)
-            return MakeCheckedLoopStateResult(ctx, initialStateSlots);
-
-        ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop optimization disabled");
-        return await RepeatLoopGenericCountedAsync(step, count, initialStateSlots, ctx, valEnv).ConfigureAwait(false);
-    }
-
-    /// <summary>MIRROR OF <see cref="RepeatLoopGenericCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> RepeatLoopGenericCountedAsync(
-        Algorithm step,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var stateSlots = initialStateSlots.ToList();
-        // Zero-iteration guard mirrors the synchronous twin: no step preparation for a
-        // loop that never binds its step.
-        if (count <= 0)
-            return MakeCheckedLoopStateResult(ctx, stateSlots);
-
-        var prepared = PrepareGenericLoopStep(step, ctx);
-        // LONG counter, exactly like the synchronous twin: an `int` would wrap past
-        // int.MaxValue and never end (see RepeatLoopGenericCounted).
-        for (var k = 0L; k < count; k++)
-        {
-            var outputSlotsR = await RunStepSlotsAsync(step, ctx, valEnv, stateSlots, "repeat", prepared).ConfigureAwait(false);
-            if (outputSlotsR.IsError) return outputSlotsR.Error;
-            stateSlots = outputSlotsR.Value.ToList();
-        }
-        return MakeCheckedLoopStateResult(ctx, stateSlots);
-    }
-
-    /// <summary>MIRROR OF <see cref="RunStepSlots"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> RunStepSlotsAsync(
-        Algorithm step,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        IReadOnlyList<Result> stateSlots,
-        string loopName,
-        PreparedGenericLoopStep prepared)
-    {
-        // One loop ITERATION is one charged work unit — identical chokepoint to the
-        // synchronous twin.
-        if (ctx.Budget.TryChargeStep() is { } limitError)
-            return limitError;
-
-        var boundR = BindLoopStepState(
-            prepared.BindingContract,
-            stateSlots,
-            ctx,
-            loopName,
-            prepared.BindingSelection);
-        if (boundR.IsError) return boundR.Error;
-
-        // Fresh concatenation per iteration for the same cache-identity reason as the
-        // synchronous twin.
-        var stepCtx = ctx
-            .WithAlgEnv(prepared.ShadowedAlgEnv)
-            .WithCountedParamEnv(Concat(boundR.Value.CountedBindings, prepared.ShadowedCountedParamEnv));
-        return await EvalAlgOutputSlotsAsync(
-            step,
-            stepCtx,
-            Concat(boundR.Value.ValueBindings, valEnv),
-            preserveSequenceSpreadExpressionBoundaries: prepared.PreserveSequenceSpreadExpressionBoundaries).ConfigureAwait(false);
-    }
-
-    // ── Dot-call twins ──────────────────────────────────────────────────────
 
     /// <summary>
     /// MIRROR OF <see cref="EvalDotCallCounted"/> — keep in lock-step. The sequence
@@ -3353,6 +2749,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
+            return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(false));
+
         // A PARAMETER receiver whose argument slot FAILED its one value evaluation reports
         // that recorded failure first — see the synchronous twin.
         if (target is Expr.Param(var paramName)

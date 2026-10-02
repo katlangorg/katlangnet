@@ -122,6 +122,7 @@ public closed record EvalError
                 IllegalInOpen => KatLangErrorCode.IllegalInOpen,
                 BadOpenForm => KatLangErrorCode.BadOpenForm,
                 IllegalInEval => KatLangErrorCode.IllegalInEval,
+                DemandCycle => KatLangErrorCode.DemandCycle,
                 AmbiguousOpen => KatLangErrorCode.AmbiguousOpen,
                 ArityMismatch => KatLangErrorCode.ArityMismatch,
                 VariadicArityMismatch => KatLangErrorCode.ArityMismatch,
@@ -213,6 +214,9 @@ public closed record EvalError
 
     /// <summary>Expression form not evaluable to a value (e.g. name literal, spread in algorithm position).</summary>
     public sealed record IllegalInEval(string Reason) : EvalError;
+
+    /// <summary>A supplied computation depends on its own in-progress VALUE demand.</summary>
+    public sealed record DemandCycle() : EvalError;
 
     /// <summary>Multiple opens provide the same name publicly.</summary>
     public sealed record AmbiguousOpen(string Name, IReadOnlyList<string> Providers) : EvalError;

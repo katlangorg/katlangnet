@@ -458,9 +458,7 @@ def zeroArgRootAndNestedAccess : Bool :=
 
 #guard zeroArgRootAndNestedAccess
 
--- The value probe fails, but the algorithm channel lets Ignore accept Bad.
--- A completed successfully inside that probe: failure of its parent must not
--- roll back A's first successful run entry (C# keeps it as well).
+-- Ignore never demands Bad. Neither Bad nor its child A enters the property cache.
 def zeroArgSuccessfulChildSurvivesFailedProbe : Bool :=
   let root := algPrivate [] [] [
     ("A", alg [] [] [] [.num 7]),
@@ -469,9 +467,7 @@ def zeroArgSuccessfulChildSurvivesFailedProbe : Bool :=
   ] [.call (.resolve "Ignore") [.resolve "Bad"]]
   match KatLang.runResultWithState (.algorithmExpr root) with
   | .ok (Result.atom 0, state) =>
-      match state.zeroArgPropertyCache with
-      | [(key, (Result.atom 7, 1))] => key.propertyName == "A"
-      | _ => false
+      state.zeroArgPropertyCache.isEmpty
   | _ => false
 
 #guard zeroArgSuccessfulChildSurvivesFailedProbe

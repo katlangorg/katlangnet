@@ -297,8 +297,8 @@ def afBuiltinSupplies : List (List KatLang.Expr) :=
 --    the target refers to the target, and an alias chain dispatches alike.
 #guard afSucceedsWith [afCall "AFact" [num 4]] (.atom 24)
 #guard afSucceedsWith [afCall "BFact" [num 3]] (.atom 6)
-#guard afFailsWith (innermostIsNoMatchingBranch "AFact") [afCall "AFact" [num 1, num 2]]
-#guard afFailsWith (innermostIsNoMatchingBranch "Fact") [afCall "Fact" [num 1, num 2]]
+#guard afFailsWith (innermostIsArityMismatch 1 2) [afCall "AFact" [num 1, num 2]]
+#guard afFailsWith (innermostIsArityMismatch 1 2) [afCall "Fact" [num 1, num 2]]
 
 -- 4. AN UNNAMEABLE FAMILY CAN BE ALIASED (`unnameable_family_can_be_aliased`): the alias dispatches
 --    as the family ...

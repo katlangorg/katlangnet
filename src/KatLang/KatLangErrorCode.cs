@@ -302,4 +302,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnforwardableCallable"/>.</summary>
     UnforwardableCallable = 73,
+
+    /// <summary>A supplied computation depends on its own in-progress VALUE demand.</summary>
+    DemandCycle = 74,
 }

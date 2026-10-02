@@ -25,7 +25,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(
             "Bad = trace(1) / 0\nMissing = [trace(2)]:5\nP(*r, x, x) = x\n" + call);
         Assert.StartsWith(expected, result.Outcome);
-        Assert.Equal(call == "P(Bad, Missing, 7)" ? ["trace(1)", "trace(2)"] : ["trace(2)", "trace(1)"], result.HostCalls);
+        Assert.Equal(call == "P(Bad, Missing, 7)" ? ["trace(2)"] : ["trace(1)"], result.HostCalls);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(
             "Bad = trace(1) / 0\nP(x, x, *r, f, f) = 0\nP(1, 2, Bad, 7)");
         Assert.StartsWith("err ArityMismatch:", result.Outcome);
-        Assert.Equal(["trace(1)"], result.HostCalls);
+        Assert.Empty(result.HostCalls);
     }
 
     [Theory]
@@ -152,26 +152,17 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         items.Add(new CaptureParameterPattern("x"));
         var patterns = new CountingPatterns(items);
 
-        var inputType = typeof(Evaluator).GetNestedType("ParameterPatternInput", BindingFlags.NonPublic)!;
-        var inputs = Array.CreateInstance(inputType, width + 2);
-        var callable = new Algorithm.User(null, Algorithm.NormalParameters(["y"]), [], [], [new Expr.Param("y")]);
-        for (var i = 0; i < width + 2; i++)
-        {
-            inputs.SetValue(Activator.CreateInstance(inputType,
-                [i < width ? null : new Result.Atom(7), callable,
-                    i < width ? new EvalError.DivByZero() : null]), i);
-        }
-
-        var bind = typeof(Evaluator).GetMethod("BindParameterPatternList", BindingFlags.Static | BindingFlags.NonPublic)!;
-        object?[] arguments = [patterns, inputs, Evaluator.EvalCtx.Empty, true,
-            (Func<int, int, EvalError>)((required, actual) => new EvalError.ArityMismatch(required, actual))];
-        _ = bind.Invoke(null, arguments);
+        var callee = new Algorithm.User(null, patterns, [], [], [new Expr.Num(7)]);
+        var supplied = Enumerable.Range(0, width + 2)
+            .Select(i => i < width ? (Expr)new Expr.Binary(BinaryOp.Div, new Expr.Num(1), new Expr.Num(0)) : new Expr.Num(7)).ToArray();
+        var program = new Expr.Call(new Expr.AlgorithmExpr(callee), OutputBundle.From(supplied));
+        Assert.True(Evaluator.RunCounted(program).IsOk);
         patterns.Reset();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        var outcome = bind.Invoke(null, arguments)!;
+        var outcome = Evaluator.RunCounted(program);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
         output.WriteLine($"{items.Count} patterns, collector={collector}: {patterns.Reads} visits, {allocated} allocated bytes.");
-        Assert.True((bool)outcome.GetType().GetProperty("IsOk")!.GetValue(outcome)!);
+        Assert.True(outcome.IsOk);
         Assert.True(patterns.Reads <= 20 * items.Count,
             $"{items.Count} patterns took {patterns.Reads} visits; repeated-name requirements must be indexed once per level.");
         Assert.InRange(allocated, 0, 4096L * items.Count + 65536);

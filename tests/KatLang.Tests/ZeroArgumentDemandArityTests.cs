@@ -896,7 +896,8 @@ public class ZeroArgumentDemandArityTests
         var call = Eval("Fam(0) = 1\nFam(x) = 2\nFam()");
 
         Assert.Equal("Fam", Assert.IsType<EvalError.NoMatchingBranch>(Innermost(demand.Error)).AlgorithmName);
-        Assert.Equal("Fam", Assert.IsType<EvalError.NoMatchingBranch>(Innermost(call.Error)).AlgorithmName);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(call.Error));
+        Assert.Equal((1, 0), (arity.Expected, arity.Actual));
     }
 
     /// <summary>

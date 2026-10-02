@@ -75,6 +75,7 @@ public class KatLangErrorCodeTests
                 new EvalError.EvaluationStackExhausted(), KatLangErrorCode.EvaluationStackExhausted, true),
             [typeof(EvalError.AstDepthLimitExceeded)] = (
                 new EvalError.AstDepthLimitExceeded(10), KatLangErrorCode.AstDepthLimitExceeded, true),
+            [typeof(EvalError.DemandCycle)] = (new EvalError.DemandCycle(), KatLangErrorCode.DemandCycle, false),
             [typeof(EvalError.AstCycleDetected)] = (new EvalError.AstCycleDetected(), KatLangErrorCode.AstCycleDetected, false),
             // B2c: a selected branch's demand-time module failure carries the very
             // diagnostics the eager load would have produced, so its family is the
@@ -498,6 +499,7 @@ public class KatLangErrorCodeTests
             ["UnforwardableParameter"] = 71,
             ["UnliftableClauseFamily"] = 72,
             ["UnforwardableCallable"] = 73,
+            ["DemandCycle"] = 74,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

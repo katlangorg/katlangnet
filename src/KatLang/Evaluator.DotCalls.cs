@@ -200,51 +200,15 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        // Depth parity with the generic strategy: the fused pipeline consumes this
-        // `range(...)` call as the FILTER's collection argument, which the generic
-        // spelling evaluates inside one depth-only argument-evaluation level
-        // (the builtin argument funnel for both the dotted form, whose receiver is the
-        // ordinary collection argument, and the plain one). The generic-source adapter
-        // (EvaluateDotReceiverIterationItemsForSequenceOptimizer) already charges its
-        // equivalent level; charging it here too keeps every fused source shape on the
-        // same dynamic depth as the generic path, so a `MaxDepth` verdict cannot depend
-        // on which strategy an unrelated configured budget selected. The outer
-        // collection-argument level is charged once by
-        // SequencePipelineOptimizer.TryExecuteRecognized. A REJECTED level is returned
-        // UNSPANNED, exactly as the generic argument funnel returns it: the generic
-        // strategy attributes that rejection to the FILTER expression whose collection
-        // argument could not be entered (its dispatch-site WithSpan), never to the
-        // range call, which was never entered — and the optimizer's WithContext stamps
-        // the same elided filter span. Stamping the range call's span here made the
-        // two strategies disagree on the span of the same MaxDepth verdict.
-        if (ctx.Budget.TryEnterArgumentEvaluation() is { } depthError)
-            return depthError;
-
-        try
-        {
-            var rangeR = WithSpan(
-                callSpan,
-                WithCallCtx(
-                    CallDiagnosticName.FromExpression(function),
-                    ctx,
-                    EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
-            if (rangeR.IsError)
-                return rangeR;
-
-            // Optimizer/generic boundary parity: a fused pipeline evaluates the range's
-            // bounds and then iterates them WITHOUT materializing the list, so it must still
-            // reject exactly the sizes the generic `range` builtin rejects. The check
-            // consumes no cumulative budget precisely because nothing is materialized here —
-            // and if the pipeline is not fused after all, the generic path reserves for real,
-            // so the same range is never charged twice.
-            return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
-                ? AtSpanIfMissing(limitError, callSpan)
-                : rangeR;
-        }
-        finally
-        {
-            ctx.Budget.ExitInvocation();
-        }
+        // Range arguments use the same supply cells as an ordinary range call. No
+        // hidden argument wrapper introduces a language invocation level.
+        var rangeR = WithSpan(callSpan, WithCallCtx(CallDiagnosticName.FromExpression(function),
+            ctx, EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
+        if (rangeR.IsError) return rangeR;
+        // Check the ordinary collection ceiling without reserving for a list that
+        // fusion never constructs. Generic execution reserves its real list once.
+        return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
+            ? AtSpanIfMissing(limitError, callSpan) : rangeR;
     }
 
     private static EvalResult<InclusiveRange> EvalBuiltinRangeCallArguments(
@@ -405,7 +369,7 @@ public static partial class Evaluator
     /// <summary>
     /// The <c>.string</c> intrinsic is a ZERO-parameter member. A written argument list is
     /// assembled exactly like every call's (each written slot evaluated once, left to
-    /// right, spreads opened — <see cref="BuildCallArgumentInputs"/>) and then rejected by
+    /// right, spreads opened — <see cref="FormNeedSupply"/>) and then rejected by
     /// arity, the same outcome as <c>Obj.V(1)</c> for a declared zero-parameter member, so a
     /// written bundle is never silently dropped; an EMPTY written list (<c>x.string()</c>)
     /// stays the intrinsic, as <c>A()</c> stays a call of <c>A</c>. Returns <c>null</c> when
@@ -419,7 +383,7 @@ public static partial class Evaluator
         if (argsOpt is null)
             return null;
 
-        var inputsR = BuildCallArgumentInputs(argsOpt, ctx, valEnv);
+        var inputsR = FormNeedSupply(argsOpt, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
         if (inputsR.IsError)
             return inputsR.Error;
 

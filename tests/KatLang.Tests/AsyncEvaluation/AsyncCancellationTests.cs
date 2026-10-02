@@ -200,7 +200,7 @@ public class AsyncCancellationTests
         // cancellation were modeled as an EvalError, it would be retained on the binding
         // and the run would continue to a successful result; the contract requires the
         // OperationCanceledException to escape instead.
-        const string source = "Late = A + 1\nUse(x) = 42\nA = 1\nUse(Late)";
+        const string source = "Late = A + 1\nUse(x) = x + 42\nA = 1\nUse(Late)";
         using var cts = new CancellationTokenSource();
         var cache = new CancellingAsyncZeroArgPropertyResultCache(cancelAtAccess: 1, cts);
 

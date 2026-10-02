@@ -452,11 +452,15 @@ public class CollectionMaterializationLimitsTests
         // failure can never make a later legal program behave differently.
         var budget = EvaluationBudget.Create(new EvaluationLimits { MaxCollectionItems = 10, MaxMaterializedItems = 10 });
         Assert.Null(budget.TryReserveCollection(4));
-        Assert.IsType<EvalError.CollectionSizeLimitExceeded>(budget.TryReserveCollection(11));
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(budget.TryReserveCollection(7));
+        var terminal = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(budget.TryReserveCollection(11));
+        Assert.Same(terminal, budget.TryReserveCollection(7));
+        Assert.Same(terminal, budget.TryReserveCollection(6));
         Assert.Equal(4, budget.MaterializedItems);
-        Assert.Null(budget.TryReserveCollection(6));
-        Assert.Equal(10, budget.MaterializedItems);
+        Assert.Same(terminal, budget.TryChargeStep());
+        var independent = EvaluationBudget.Create(new EvaluationLimits { MaxCollectionItems = 10, MaxMaterializedItems = 10 });
+        Assert.Null(independent.TryReserveCollection(4));
+        Assert.Null(independent.TryReserveCollection(6));
+        Assert.Equal(10, independent.MaterializedItems);
     }
 
     // ── Optimizer parity ─────────────────────────────────────────────────────

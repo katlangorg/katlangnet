@@ -129,6 +129,12 @@ internal static partial class LoopOptimizer
             }
         }
 
+        if (Evaluator.ParameterNeedCell(name, ctx) is not null)
+        {
+            fallbackReason = null;
+            return true;
+        }
+
         if (TryFindCountedParam(ctx, name, out _, out var countedParam))
         {
             if (IsSafeCountedParamSlot(countedParam, out var countedParamFallbackReason))

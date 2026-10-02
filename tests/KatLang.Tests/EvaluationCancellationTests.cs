@@ -480,24 +480,22 @@ public class EvaluationCancellationTests
     /// <see cref="EvalError"/>, and a cancelled run does not continue.
     /// </summary>
     [Fact]
-    public void CancellationDuringEagerArgumentEvaluation_EscapesInsteadOfBeingRetained()
+    public void CancellationDuringFirstArgumentDemand_EscapesAndEndsTheRun()
     {
-        const string Program = "G(f) = 1\nA = A\nH = 9\nG(A) + H()";
+        const string Program = "G(f) = f\nA = A\nH = 9\nG(A) + H()";
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
-        // Controls: an ORDINARY failure of the same slot is retained and the run completes
-        // with 10; the depth-limit refusal of A's eager value is the run's terminal
-        // structured verdict. Cancellation must behave like neither.
-        Assert.False(Evaluator.Run(Ast("G(f) = 1\nA = 1 / 0\nH = 9\nG(A) + H()"), limits).IsError);
+        Assert.Equal(KatLangErrorCode.DivisionByZero,
+            Evaluator.Run(Ast("G(f) = f\nA = 1 / 0\nH = 9\nG(A) + H()"), limits).Error.Code);
         var limited = Evaluator.Run(Ast(Program), limits);
         Assert.True(limited.IsError);
         Assert.True(limited.Error.IsResourceLimit);
 
-        // Same program, same limits, but the token is cancelled while A's eager value
+        // Same program, same limits, but the token is cancelled while A's first value
         // evaluation recurses (A = A reaches itself through the property cache).
         using var cts = new CancellationTokenSource();
         var budget = RunCancelling(Program, cancelAtAccess: 2, cts, limits);
-        AssertConservedAfterCancellation(budget, "cancellation during eager argument evaluation");
+        AssertConservedAfterCancellation(budget, "cancellation during first argument demand");
     }
 
     [Fact]

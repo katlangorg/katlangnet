@@ -313,8 +313,8 @@ public class DotCallHigherOrderParameterTests
             Probe(u) = K(7, (Inc, Inc))
             Probe(0)
             """);
-        Assert.IsType<EvalError.ArityMismatch>(dotError);
-        Assert.IsType<EvalError.ArityMismatch>(plainError);
+        Assert.IsType<EvalError.NotAnAlgorithm>(dotError);
+        Assert.IsType<EvalError.NotAnAlgorithm>(plainError);
     }
 
     // ── C. Precedence: structural lookup, local parameters, shadowing ───────

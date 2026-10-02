@@ -602,7 +602,7 @@ def dotCallParityCases : List DotCallParityCase :=
     -- L: `1.Choose` injects one argument against two-argument clause
     -- patterns: noMatchingBranch "Choose" on both paths.
     { label := "L/conditional-receiver-underbinds", target := .num 1, name := "Choose",
-      expected := .failedOtherwise },
+      expected := .arityRejected },
     -- M: `1.G` SUCCEEDS: the one-slot head `G(x)` binds the injected receiver
     -- whole (a head is matched against the argument list), so x = 1.
     { label := "M/one-slot-head-conditional-matches", target := .num 1, name := "G",
@@ -690,7 +690,7 @@ def callProjectionParityCases : List CallProjectionParityCase :=
     { label := "conditional-fallback-clause", callee := resolve "Choose",
       args := [.num 2, .num 3], expectedAtoms := some [5] },
     { label := "conditional-no-branch", callee := resolve "Choose",
-      args := [.num 1], expected := .failedOtherwise },
+      args := [.num 1], expected := .arityRejected },
     { label := "builtin-sum-callee", callee := resolve "sum",
       args := [.capture [.num 1, .num 2, .num 3]], expectedAtoms := some [6] },
     { label := "builtin-arity-rejected", callee := resolve "count",

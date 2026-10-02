@@ -149,13 +149,13 @@ public class EvaluatorStringTests
         => AssertEvalString(source, expected);
 
     [Fact]
-    public void Eval_StringIntrinsic_WrittenArgumentsAreEvaluatedBeforeTheArityRejection()
+    public void Eval_StringIntrinsic_ChecksArityBeforeDemandingOrdinaryArguments()
     {
-        // Assembly precedes the rejection, so a failing slot reports ITS error, exactly as
-        // for any call whose argument fails before arity is checked.
+        // Ordinary cells stay suspended through a wrong-count rejection; required spreads still run.
         var result = EvalFull("A = 42\nA.string(1 / 0)");
         Assert.True(result.IsError);
-        Assert.IsType<EvalError.DivByZero>(Innermost(result.Error));
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+        Assert.IsType<EvalError.DivByZero>(Innermost(EvalFull("A = 42\nA.string((1 / 0)*)").Error));
     }
 
     // ── String literals: first-class value tests ────────────────────────────

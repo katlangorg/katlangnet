@@ -60,10 +60,11 @@ public class NameResolutionHostileReviewTests
     public void QualifiedMathCallableInClosedOrdinaryCall_ReportsTheDemandedArgument()
     {
         const string source = "A = q + 1\nF(x) = (Math.Abs)(A)\nF(1)";
-        var diagnostic = Assert.Single(Parser.Parse(source).Diagnostics);
-        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
-        Assert.Contains("'A' is required as a value here", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(new SourceSpan(2, 19, 2, 20), diagnostic.Span);
+        var parsed = SourceProvenance.ParseValid(source);
+        var error = parsed.ExpectEvaluationError<EvalError.ArityMismatch>();
+        Assert.Equal((1, 0), (error.Expected, error.Actual));
+        Assert.Equal(new SourceSpan(2, 19, 2, 20),
+            Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors).Span);
     }
 
     [Theory]

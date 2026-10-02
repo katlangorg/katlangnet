@@ -358,9 +358,7 @@ public class DotCallValueBoundaryTests
     [InlineData(3)]
     public async Task ArgumentEffects_AndFailures_AgreeAfterRealSuspension(int failingSlot)
     {
-        // Ordinary call assembly may retain a value error for the algorithm channel.
-        // Compare its actual trace, including the fatal spread path that stops assembly,
-        // rather than assuming that every value error must stop every callable shape.
+        // Compare both spellings at the common supply and pattern boundaries.
         // The patterned callee opens its third argument with a LIST pattern (a structural
         // pattern opens only its own kind, so that argument is written as a one-element list).
         foreach (var spread in new[] { false, true })
@@ -386,11 +384,12 @@ public class DotCallValueBoundaryTests
             }
 
             Assert.Equal(baseline.Trace.Distinct(), baseline.Trace);
-            Assert.Equal(baseline.Trace.Order(), baseline.Trace);
-            if (failingSlot == 0)
-                Assert.Equal(new[] { 1, 2, 3 }, baseline.Trace);
-            if (spread && failingSlot == 1)
-                Assert.Equal(new[] { 1 }, baseline.Trace);
+            var demandOrder = patternedThird
+                ? (spread ? new[] { 1, 3, 2 } : new[] { 3, 1, 2 })
+                : new[] { 1, 2, 3 };
+            var expectedTrace = failingSlot == 0 ? demandOrder
+                : demandOrder.Take(Array.IndexOf(demandOrder, failingSlot) + 1).ToArray();
+            Assert.Equal(expectedTrace, baseline.Trace);
         }
 
         async Task<(string Outcome, int[] Trace)> ObserveEffects(string source, bool suspend)

@@ -369,15 +369,16 @@ public class ImplicitForwardingByBindingNameTests
     [Theory]
     [InlineData("Q(y) = sin(@)\nQ(0)")]
     [InlineData("F(0) = 0\nF(y) = sin(@) + y\nF(1)")]
-    public void StrictValueUnderAClosedList_NamesTheMissingParameterOnce(string template)
+    public void StrictValueUnderAClosedList_ReportsTheReachedZeroSupplyDemand(string template)
     {
-        var repeated = Parser.Parse(P + template.Replace("@", "P", StringComparison.Ordinal));
-        var distinct = Parser.Parse("P(x) = x\n" + template.Replace("@", "P", StringComparison.Ordinal));
-
-        var diagnostic = Assert.Single(repeated.Diagnostics);
-        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
-        Assert.Contains("needs the implicit parameter 'x',", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal(Assert.Single(distinct.Diagnostics).Message, diagnostic.Message);
+        var repeated = P + template.Replace("@", "P", StringComparison.Ordinal);
+        var distinct = "P(x) = x\n" + template.Replace("@", "P", StringComparison.Ordinal);
+        SourceProvenance.ParseValid(repeated);
+        SourceProvenance.ParseValid(distinct);
+        var repeatedError = SourceProvenance.ParseValid(repeated).ExpectEvaluationError<EvalError.ArityMismatch>();
+        var distinctError = SourceProvenance.ParseValid(distinct).ExpectEvaluationError<EvalError.ArityMismatch>();
+        Assert.Equal((2, 0), (repeatedError.Expected, repeatedError.Actual));
+        Assert.Equal((1, 0), (distinctError.Expected, distinctError.Actual));
     }
 
     /// <summary>
@@ -627,7 +628,7 @@ public class ImplicitForwardingByBindingNameTests
     [InlineData(P + "Twice(f, v) = f(v, v)\nTwice(P, 5)", "ok 5")]
     [InlineData(P + "P", "err ArityMismatch: Property 'P' expects 2 parameters, but was called with 0 arguments.")]
     [InlineData(P + "7.P", "err ArityMismatch: Callable `P(x, x)` expects 2 arguments, but was called with 1 argument.")]
-    [InlineData(P + "map([1, 2], P)", "err ArityMismatch: while evaluating call to map: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Expected 2 parameters, but was called with 1 argument.")]
+    [InlineData(P + "map([1, 2], P)", "err ArityMismatch: while evaluating call to map: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Callable `map transform(x, x)` expects 2 arguments, but was called with 1 argument.")]
     [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 1)", "ok true")]
     [InlineData("Same(x, x) = true\nSame(x, y) = false\nAlias = Same\nAlias(1, 2)", "ok false")]
     public async Task PositionsThatNeverForward_AreUnchanged(string source, string expected)

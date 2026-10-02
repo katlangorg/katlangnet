@@ -100,7 +100,7 @@ internal readonly record struct FilterCountPipelineSyntax(
 internal sealed record FilterCountPipelinePlan(
     Expr Source,
     FilterCountSourcePlan SourcePlan,
-    Algorithm Predicate,
+    Evaluator.ResolvedArgumentAlgorithm Predicate,
     FilterCountPipelineForm FormForDiagnostics,
     Expr? PredicateExpression,
     FilterCountPipelineSyntax EvaluationSyntax,

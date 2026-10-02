@@ -293,6 +293,7 @@ public sealed class KatLangError
             EvalError.IllegalInOpen e => $"Illegal in open: {e.Reason}",
             EvalError.BadOpenForm e => $"Bad open form: {e.Reason}",
             EvalError.IllegalInEval e => $"Illegal in eval: {e.Reason}",
+            EvalError.DemandCycle => "Demand cycle: the argument depends on its own value while it is being evaluated.",
             EvalError.AmbiguousOpen e => $"Ambiguous open '{e.Name}': provided by {string.Join(", ", e.Providers)}",
             EvalError.ArityMismatch e => FormatArityMismatch(e),
             EvalError.VariadicArityMismatch e => FormatVariadicArityMismatch(e),
@@ -793,39 +794,12 @@ public sealed class KatLangError
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature), arity.AcceptedArity)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual, arity.AcceptedArity)
             : FormatGenericArityMismatch(arity.Expected, arity.Actual);
-
-    /// <summary>
-    /// The number of WRITTEN arguments a signature-worded arity message reports. The
-    /// Lean-modeled payload of a flat fixed user call that received too few slots is the
-    /// VALUE-tier view (`Expected` = the parameters still to bind on the value channel,
-    /// `Actual` = the value slots), which leaves out every slot bound only on the algorithm
-    /// channel — an output-less algorithm argument — so rendering `Actual` beside the
-    /// signature's full parameter count undercounted the call (`R(a, b) = b` with
-    /// `R(Obj)` said "called with 0 arguments"). The payload's difference is the number
-    /// of parameters no slot reached, so the written count is the signature's parameter
-    /// count minus it. Applied only where that view can arise: a user callable's fixed
-    /// flat parameter list with `Expected` below its parameter count; every other payload
-    /// (families, collecting parameters, builtins, too many slots) already counts written
-    /// slots and is rendered as is.
-    /// </summary>
-    private static int WrittenArgumentCount(EvalError.ArityMismatch arity, CallableSignature signature)
-    {
-        var facts = signature.ArityFacts;
-        var fixedFlatUserList = signature.Parameters.Count > 0
-            && signature.Parameters.All(static parameter => parameter.Source != CallableParameterSource.Builtin)
-            && facts.MaxTopLevelArgumentCount == facts.MinTopLevelArgumentCount
-            && facts.MinTopLevelArgumentCount == signature.FlattenedParameterCount;
-        if (!fixedFlatUserList || arity.Expected >= signature.FlattenedParameterCount || arity.Actual > arity.Expected)
-            return arity.Actual;
-
-        return signature.FlattenedParameterCount - (arity.Expected - arity.Actual);
-    }
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity, string calleeDesc, bool preferPropertyName)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, WrittenArgumentCount(arity, signature), arity.AcceptedArity)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual, arity.AcceptedArity)
             : FormatNamedArityMismatch(calleeDesc, arity.Expected, arity.Actual, preferPropertyName);
 
     /// <summary>

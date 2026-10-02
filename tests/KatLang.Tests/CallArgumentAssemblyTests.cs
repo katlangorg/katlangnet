@@ -123,7 +123,7 @@ public class CallArgumentAssemblyTests
         // clause DOES match here) — so pin the 1-vs-family case: the unspread
         // argument is ONE closed value, which no two-argument clause matches.
         var error = AssertFails(TwoClauseConditional + "A = (1, 2)\nF(A)");
-        Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error));
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
     }
 
     // ── Total spread: atoms, strings, empties ───────────────────────────────
@@ -172,10 +172,10 @@ public class CallArgumentAssemblyTests
     }
 
     [Fact]
-    public void SequenceSpread_ConditionalCallee_UnmatchedExpandedArityIsNoMatchingBranch()
+    public void SequenceSpread_ConditionalCallee_RejectsWrongExpandedArity()
     {
         var error = AssertFails(TwoClauseConditional + "A = (1, 2, 3)\nF(A*)");
-        Assert.IsType<EvalError.NoMatchingBranch>(Innermost(error));
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
     }
 
     [Fact]
@@ -219,29 +219,28 @@ public class CallArgumentAssemblyTests
     public void NonSpreadArguments_RemainOneClosedValue_ForConditionalCallees()
     {
         var sequenceError = AssertFails(TwoClauseConditional + "A = (1, 2)\nF(A)");
-        Assert.IsType<EvalError.NoMatchingBranch>(Innermost(sequenceError));
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(sequenceError));
 
         var listError = AssertFails(TwoClauseConditional + "B = [1, 2]\nF(B)");
-        Assert.IsType<EvalError.NoMatchingBranch>(Innermost(listError));
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(listError));
     }
 
     // ── Callable-valued argument in a collecting binding (targeted diagnostic) ─────
 
     [Fact]
-    public void FunctionValuedArgument_InCollectingParameter_ReportsTargetedDiagnostic()
+    public void FunctionValuedArgument_InCollectingParameter_ReportsItsOwnValueDemandFailure()
     {
         var error = AssertFails("F(*fs) = fs\nF(sum)");
-        var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
-        Assert.Contains("Collecting parameter `*fs` collects values", mismatch.Message, StringComparison.Ordinal);
-        Assert.Contains("a supplied argument is a callable", mismatch.Message, StringComparison.Ordinal);
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
+        Assert.Contains("sum(collection)", KatLangError.FromEvalError(error).Message);
 
-        // A parameterized user-defined algorithm is callable-shaped too.
         var userError = AssertFails("H(x) = x\nF(*fs) = fs\nF(H)");
-        Assert.IsType<EvalError.TypeMismatch>(Innermost(userError));
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(userError));
+        Assert.Equal(1, arity.Expected);
+        Assert.Equal(0, arity.Actual);
 
-        // Fixed parameters keep the dual algorithm channel: the same argument
-        // is legal where a fixed parameter receives it.
         AssertEvaluates("Apply(f, *xs) = f(xs)\nApply(sum, 1, 2)", Atom(3));
+        AssertEvaluates("Ignore(*fs) = 7\nIgnore(sum)", Atom(7));
     }
 
     [Fact]

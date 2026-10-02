@@ -381,19 +381,11 @@ public class MathAliasResolutionTests
     }
 
     [Fact]
-    public void FlatCallbackPosition_QualifiedNativeGate_DoesNotReinterpretUserDefinedMath()
+    public void FlatCallbackPosition_ProjectsTheUserDefinedMathMemberIdentity()
     {
-        // The qualified native exception requires an actual runtime NativeCall
-        // wrapper. A source-defined Math property keeps the same general dotted
-        // zero-parameter algorithm identity as any other user module.
         var result = EvalFlat("Math = { public Abs(x) = x * 10 }\nmap([1, -2], Math.Abs)");
-
-        var error = result.Error;
-        while (error is EvalError.WithContext(_, var inner))
-            error = inner;
-        var arity = Assert.IsType<EvalError.ArityMismatch>(error);
-        Assert.Equal(0, arity.Expected);
-        Assert.Equal(1, arity.Actual);
+        Assert.False(result.IsError);
+        Assert.Equal([(Decimal128)10, -20], result.Value);
     }
 
     [Fact]

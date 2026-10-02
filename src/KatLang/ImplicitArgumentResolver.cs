@@ -290,7 +290,6 @@ internal static class ImplicitArgumentResolver
         private readonly Algorithm.User _prelude;
         private readonly HashSet<string> _callableNames;
         private readonly HashSet<Algorithm> _strictValue = new(ReferenceEqualityComparer.Instance);
-        private readonly HashSet<Algorithm> _strictValueMath = new(ReferenceEqualityComparer.Instance);
 
         private PreludeContext(Algorithm.User prelude, HostOperations? hostOperations)
         {
@@ -302,8 +301,6 @@ internal static class ImplicitArgumentResolver
                 foreach (var member in math.Properties)
                 {
                     _strictValue.Add(member.Value);
-                    if (AstHelpers.IsStrictValueMathMember(member.Name))
-                        _strictValueMath.Add(member.Value);
                 }
             }
 
@@ -328,13 +325,7 @@ internal static class ImplicitArgumentResolver
         /// <summary>Whether a resolved algorithm is a Math member or a host operation (every argument a value).</summary>
         public bool IsStrictValue(Algorithm algorithm) => _strictValue.Contains(algorithm);
 
-        /// <summary>
-        /// Whether a resolved algorithm is a Math FUNCTION member whose registry facts make every
-        /// argument a strict value position — the identity half of Q-15's consumer contract (a host
-        /// operation's arguments are values for lifting, never strict). The prelude alias shares its
-        /// canonical member's algorithm, so one set answers for every spelling.
-        /// </summary>
-        public bool HasStrictValueMathArguments(Algorithm algorithm) => _strictValueMath.Contains(algorithm);
+
     }
 
     /// <summary>
@@ -1359,37 +1350,10 @@ internal static class ImplicitArgumentResolver
         public Dictionary<Algorithm, Algorithm>? Algorithms;
 
         /// <summary>
-        /// Nodes whose strict-value diagnostic walk has completed in this region. Kept
-        /// separate from rewrite maps so a neutral-first memo hit can replay diagnostic
-        /// observation once without changing or duplicating the rewritten node.
-        /// </summary>
-        public HashSet<Expr>? StrictValueDiagnosticVisits;
-
-        /// <summary>
         /// Family reports already issued in this region. Strict/eager diagnostic replay may
         /// revisit a value rewrite, but must not report its unnameable family a second time.
         /// </summary>
         public HashSet<Expr>? UnliftableFamilyDiagnosticVisits;
-
-        /// <summary>
-        /// How many LAZY value slots — the branches of the builtin <c>if</c>
-        /// (<see cref="FormulaLiftingRoles.IsLazySlot"/>) — enclose the current rewrite position
-        /// within this region. Lifting is blind to laziness, so the depth never changes a rewrite;
-        /// it only suppresses the closed-list strict-value diagnostic, because a demand a run may
-        /// never make is no statically impossible demand (Q-15).
-        /// </summary>
-        public int LazyDepth;
-
-        /// <summary>
-        /// Nodes first rewritten beneath a lazy slot and not yet reached outside one. The first
-        /// later reach outside every lazy slot (a shared host subtree) replays diagnostic
-        /// observation once — the eager twin of <see cref="StrictValueDiagnosticVisits"/> — so
-        /// whether the strict-value diagnostic is reported never depends on which reach of a
-        /// shared node came first.
-        /// </summary>
-        public HashSet<Expr>? LazilyRewritten;
-
-        public bool InLazySlot => LazyDepth > 0;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -1605,14 +1569,7 @@ internal static class ImplicitArgumentResolver
                 ? CalleeRewrites ??= new(ReferenceEqualityComparer.Instance)
                 : ValueRewrites ??= new(ReferenceEqualityComparer.Instance);
 
-        public bool TryBeginStrictValueDiagnosticVisit(Expr expr)
-        {
-            if (Diagnostics is null)
-                return false;
 
-            StrictValueDiagnosticVisits ??= new(ReferenceEqualityComparer.Instance);
-            return StrictValueDiagnosticVisits.Add(expr);
-        }
     }
 
     /// <summary>
@@ -2781,7 +2738,7 @@ internal static class ImplicitArgumentResolver
     /// <summary>
     /// The callee capture names a CLOSED explicit parameter list cannot supply — the ONE
     /// implementation of the closed-list forwarding verdict: <see cref="ClosedListBlocksLifting"/>
-    /// blocks exactly when it is non-empty, and <see cref="ReportBlockedStrictValueForwarding"/>
+    /// blocks exactly when it is non-empty, and the runtime value-demand rejection
     /// names exactly these (both read it through the region's
     /// <see cref="ResolverWalkMemos.MissingForwardingNames"/>). Forwarding availability and the
     /// names blamed for its absence therefore cannot drift apart: the caller's own forwarded
@@ -2843,103 +2800,9 @@ internal static class ImplicitArgumentResolver
         => context.ClosedParameterNames is { } closedParameterNames
             && memos.MissingForwardingNames(calleePatterns, context, closedParameterNames).Count > 0;
 
-    /// <summary>
-    /// Reports a STATICALLY IMPOSSIBLE strict value demand: a registry-proven
-    /// value-demanding consumer requires this reference's produced value, the reference
-    /// resolves to a callable that REQUIRES supplied arguments, and
-    /// <see cref="ClosedListBlocksLifting"/> just refused the forwarding that would supply
-    /// them. Nothing later in the pipeline can rescue such a position — evaluation would
-    /// demand the value with zero arguments and fail — so the front end says so, naming
-    /// what the programmer can act on. A callable that accepts zero supplied arguments
-    /// (a collecting-only <c>Cnt(*ys)</c>) never reaches this report: it is never lifted, so
-    /// nothing is blocked and its demand is legal (Q-03; formerly PV-27).
-    ///
-    /// <para>Called ONLY from the arms that already decided to leave the reference bare,
-    /// and only while <c>inStrictValueDemand</c> holds. Both halves matter: outside a
-    /// proven strict-value position the same blocked reference is a legal higher-order
-    /// reference (<c>F(x) = A</c>, <c>Apply(A)</c>), and outside a blocked lift there is
-    /// nothing wrong at all.</para>
-    ///
-    /// <para>Conservative by construction — it reports only what it can name: the missing
-    /// captures of the closed list (<see cref="ImplicitRewriteContext.ClosedParameterNames"/>,
-    /// always present here because only a closed list ever blocks a lift). A blocked
-    /// reference whose missing captures cannot be named yields no diagnostic and the
-    /// program keeps its ordinary runtime checking.</para>
-    /// </summary>
-    /// <remarks>
-    /// <paramref name="referenceDisplayName"/> is the written callable the program can act on
-    /// (<c>A</c>, the alias <c>abs</c>, the canonical <c>Math.Abs</c>) — never the consuming
-    /// native's own declared argument name, which belongs to the consumer and not to this
-    /// failure.
-    /// </remarks>
-    private static void ReportBlockedStrictValueForwarding(
-        Expr reference,
-        string referenceDisplayName,
-        IReadOnlyList<ParameterPattern> calleePatterns,
-        ImplicitRewriteContext context,
-        ResolverWalkMemos memos)
-    {
-        if (memos.Diagnostics is not { } diagnostics || context.ClosedParameterNames is not { } closedParameterNames)
-            return;
 
-        var missing = memos.MissingForwardingNames(calleePatterns, context, closedParameterNames);
-        if (missing.Count == 0)
-            return;
 
-        // A reference the document wrote is reported at its span; one inside imported
-        // content at the import site.
-        var span = reference.Span ?? memos.Run.ImportSite;
-        diagnostics.Add(new Diagnostic(
-            FormatBlockedStrictValueForwarding(referenceDisplayName, missing, context.ConditionalBranchName),
-            DiagnosticSeverity.Error,
-            span)
-        {
-            Code = DiagnosticCode.UndeclaredIdentifier,
-        });
-        // A conditional branch body's own region keeps the report re-issuable for further
-        // families sharing the body (M4; see ConditionalBranchContext.DiagnosticTemplates).
-        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(
-            DiagnosticCode.UndeclaredIdentifier,
-            family => FormatBlockedStrictValueForwarding(referenceDisplayName, missing, family),
-            span));
-    }
 
-    /// <summary>
-    /// Wording for <see cref="ReportBlockedStrictValueForwarding"/>, deliberately parallel
-    /// to parameter detection's directly-written counterparts ("Identifier 'z' is used in an
-    /// explicitly parameterized algorithm, but it is not declared in the parameter list" /
-    /// "Identifier 'z' is used in conditional branch 'F', but it is not declared in the branch
-    /// pattern"): the same closed-specification rule, reached one level of indirection away
-    /// because the missing name is required by the REFERENCED callable rather than written here.
-    /// </summary>
-    private static string FormatBlockedStrictValueForwarding(
-        string referenceDisplayName,
-        IReadOnlyList<string> missingParameterNames,
-        string? conditionalBranchName)
-    {
-        // Reported once per blocked reference, so everything the referenced callable or the
-        // family contributes is echoed bounded (ExprNameRenderer's name bound and marker).
-        referenceDisplayName = ExprNameRenderer.BoundName(referenceDisplayName);
-        conditionalBranchName = conditionalBranchName is null ? null : ExprNameRenderer.BoundName(conditionalBranchName);
-        var names = FormatQuotedNameList(missingParameterNames);
-        var noun = missingParameterNames.Count == 1 ? "parameter" : "parameters";
-        if (conditionalBranchName is not null)
-        {
-            return string.Join(
-                Environment.NewLine,
-                $"'{referenceDisplayName}' is required as a value here, but producing that value needs the implicit {noun} {names}, "
-                    + $"which the pattern of conditional branch '{conditionalBranchName}' does not bind.",
-                $"Conditional branch patterns are closed, so {names} cannot be inferred here. Declare {names} in the branch pattern, "
-                    + $"or call '{referenceDisplayName}' with explicit arguments.");
-        }
-
-        return string.Join(
-            Environment.NewLine,
-            $"'{referenceDisplayName}' is required as a value here, but producing that value needs the implicit {noun} {names}, "
-                + "which the enclosing explicit parameter list does not declare.",
-            $"Explicit parameter lists are closed, so {names} cannot be inferred here. Declare {names} in the parameter list, "
-                + $"call '{referenceDisplayName}' with explicit arguments, or remove the explicit parameter list.");
-    }
 
     // `'a'`, `'a' and 'b'`, `'a', 'b', and 'c'` — rendered within the rendered-name bound, reading
     // only the names it shows; text that fits is exactly the unbounded spelling.
@@ -3379,7 +3242,7 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// Wording for <see cref="ReportUnforwardableParameters"/>, parallel to the closed-list wording of
-    /// <see cref="FormatBlockedStrictValueForwarding"/>: what bare forwarding could not supply, why
+    /// runtime value-demand rejection: what bare forwarding could not supply, why
     /// (the list is closed; nothing is renamed or reshaped), and the two repairs.
     /// </summary>
     private static string FormatUnforwardableParameter(
@@ -3643,10 +3506,8 @@ internal static class ImplicitArgumentResolver
     /// <see cref="Algorithm"/> as processed (its kind and invocation), its <see cref="Signature"/>
     /// (the lifting signature and forwarding contract, or why an unnameable family has none), the
     /// <see cref="DisplayName"/> the target was written as where the chain ends, whether it is a
-    /// Math member or a host operation (<see cref="IsStrictValue"/>: every argument a value role), and
-    /// whether it is a Math FUNCTION member (<see cref="HasStrictValueMathArguments"/>: every argument a
-    /// strict value position, Q-15). Both facts are decided against the prelude the target was resolved
-    /// in. Carried on the alias node (<see cref="Algorithm.Alias.ResolvedTarget"/>): static program
+    /// Math member or a host operation (<see cref="IsStrictValue"/>: every argument a value role).
+    /// That role is decided against the prelude the target was resolved in. Carried on the alias node (<see cref="Algorithm.Alias.ResolvedTarget"/>): static program
     /// structure only — never an activation, a value, or a cache entry.
     /// </summary>
     internal sealed record AliasTarget(
@@ -3654,8 +3515,7 @@ internal static class ImplicitArgumentResolver
         string DisplayName,
         Algorithm Algorithm,
         LiftingSignature Signature,
-        bool IsStrictValue,
-        bool HasStrictValueMathArguments);
+        bool IsStrictValue);
 
     /// <summary>
     /// THE ONE CALLABLE-IDENTITY RESOLUTION of a written reference (the unified formula-lifting law,
@@ -3697,8 +3557,8 @@ internal static class ImplicitArgumentResolver
                     return entry.Value switch
                     {
                         Algorithm.Alias alias => alias.ResolvedTarget,
-                        Algorithm.Conditional family => new AliasTarget(family, name, family, FamilyLiftingSignature(name, family, run), IsStrictValue: false, HasStrictValueMathArguments: false),
-                        _ => new AliasTarget(entry, name, entry.Value, LiftingSignature.Of(entry.Signature), run.Prelude.IsStrictValue(entry.Value), run.Prelude.HasStrictValueMathArguments(entry.Value)),
+                        Algorithm.Conditional family => new AliasTarget(family, name, family, FamilyLiftingSignature(name, family, run), IsStrictValue: false),
+                        _ => new AliasTarget(entry, name, entry.Value, LiftingSignature.Of(entry.Signature), run.Prelude.IsStrictValue(entry.Value)),
                     };
                 }
 
@@ -3725,7 +3585,7 @@ internal static class ImplicitArgumentResolver
         static AliasTarget? OfResolvedMember(string name, Algorithm algorithm, ResolutionRun run)
             => algorithm is Algorithm.Alias alias
                 ? alias.ResolvedTarget
-                : new AliasTarget(algorithm, name, algorithm, LiftingSignatureOf(name, algorithm, run), run.Prelude.IsStrictValue(algorithm), run.Prelude.HasStrictValueMathArguments(algorithm));
+                : new AliasTarget(algorithm, name, algorithm, LiftingSignatureOf(name, algorithm, run), run.Prelude.IsStrictValue(algorithm));
     }
 
     /// <summary>
@@ -4215,66 +4075,23 @@ internal static class ImplicitArgumentResolver
     /// into the explicit call that forwards its lifting signature, and processes nested algorithms.
     /// The role of every child is its consumer's (<see cref="FormulaLiftingRoles"/>).
     /// </summary>
-    /// <remarks>
-    /// <paramref name="inStrictValueDemand"/> is true while this position's produced value is
-    /// required by a registry-proven value-demanding consumer — a Math member's argument (Q-15) —
-    /// and is carried down only through positions that compute that same value (operands, index
-    /// parts, sequence/list elements, a nested Math argument). It is DROPPED wherever the walk
-    /// leaves that obligation: call/dot-call targets, other callees' argument slots, capture rows,
-    /// and nested algorithms. The flag never changes a rewrite — only whether a refused lift is
-    /// additionally REPORTED (see <see cref="ReportBlockedStrictValueForwarding"/>), so it is not
-    /// part of the rewrite memo key. A separate strict-visit set makes that reporting side effect
-    /// independent of whether a neutral reach populated the rewrite memo first.
-    /// </remarks>
     private static Expr RewriteImplicitCalls(
         Expr expr,
         SignatureMap paramMap,
         ImplicitRewriteContext context,
         LiftingRole role,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand = false)
+        ResolverWalkMemos memos)
     {
-        // DAG-safety: one rewrite per shared node reference per (region, role); the memo returns the
-        // same rewritten node for every later reach, preserving the input's sharing (see
-        // ResolverWalkMemos). A Resolve leaf participates because a value-role reference may be
-        // replaced by a fresh Call. Node plus role is a complete key only while the region rewrites
-        // under ONE caller context — pinned here, not assumed.
         memos.PinRewriteContext(context);
-
-        var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
-        if (!hasTraversableChildren && expr is not Expr.Resolve)
-            return RewriteImplicitCallsCore(expr, paramMap, context, role, memos, inStrictValueDemand);
-
-        var observeStrictValueDemand = inStrictValueDemand
-            && !memos.InLazySlot
-            && memos.TryBeginStrictValueDiagnosticVisit(expr);
+        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr) && expr is not Expr.Resolve)
+            return RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
         var rewriteMap = memos.RewriteMapFor(role);
-        if (rewriteMap.TryGetValue(expr, out var rewritten))
-        {
-            // The cached rewrite is still authoritative. Re-enter the existing traversal
-            // only for its first strict diagnostic observation, or for the first reach outside
-            // every lazy slot of a node first rewritten beneath one; descendants use the same
-            // independent visit sets, so each shared written occurrence reports at most once.
-            var firstEagerReach = !memos.InLazySlot && memos.LazilyRewritten?.Remove(expr) == true;
-            if (observeStrictValueDemand || firstEagerReach)
-            {
-                memos.Run.DepthBudget.LiveDepth++;
-                _ = RewriteImplicitCallsCore(expr, paramMap, context, role, memos, inStrictValueDemand: observeStrictValueDemand);
-                memos.Run.DepthBudget.LiveDepth--;
-            }
-
-            return rewritten;
-        }
-
-        if (hasTraversableChildren)
-            memos.Observations?.RecordResolverRewriteExpansion();
+        if (rewriteMap.TryGetValue(expr, out var rewritten)) return rewritten;
+        if (AstTraversalDagSafety.HasTraversableExprChildren(expr)) memos.Observations?.RecordResolverRewriteExpansion();
         memos.Run.DepthBudget.LiveDepth++;
-        rewritten = RewriteImplicitCallsCore(
-            expr, paramMap, context, role, memos, observeStrictValueDemand);
+        rewritten = RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
         memos.Run.DepthBudget.LiveDepth--;
         rewriteMap[expr] = rewritten;
-        if (memos.InLazySlot && hasTraversableChildren)
-            (memos.LazilyRewritten ??= new(ReferenceEqualityComparer.Instance)).Add(expr);
         return rewritten;
     }
 
@@ -4283,62 +4100,61 @@ internal static class ImplicitArgumentResolver
         SignatureMap paramMap,
         ImplicitRewriteContext context,
         LiftingRole role,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand)
+        ResolverWalkMemos memos)
     {
         // Every child rewrite is a `with` copy of the node: the record copy carries the span
         // (and every other stored fact) inside the copy constructor, so this calibrated
         // recursion frame holds no span temporaries — see ModuleLoader.ProcessExpr.
         return expr switch
         {
-            Expr.Resolve => RewriteBareReference(expr, paramMap, context, role, memos, inStrictValueDemand),
+            Expr.Resolve => RewriteBareReference(expr, paramMap, context, role, memos),
 
             Expr.Call call => RewriteCall(call, paramMap, context, memos),
 
             Expr.Binary binary => binary with
             {
-                Left = RewriteImplicitCalls(binary.Left, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
-                Right = RewriteImplicitCalls(binary.Right, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Left = RewriteImplicitCalls(binary.Left, paramMap, context, LiftingRole.Value, memos),
+                Right = RewriteImplicitCalls(binary.Right, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.Comparison comparison => comparison with
             {
-                First = RewriteImplicitCalls(comparison.First, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                First = RewriteImplicitCalls(comparison.First, paramMap, context, LiftingRole.Value, memos),
                 Links = AstHelpers.RewriteComparisonLinks(
                     comparison.Links,
-                    operand => RewriteImplicitCalls(operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand)),
+                    operand => RewriteImplicitCalls(operand, paramMap, context, LiftingRole.Value, memos)),
             },
 
             Expr.Unary unary => unary with
             {
-                Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.Index index => index with
             {
-                Target = RewriteImplicitCalls(index.Target, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
-                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Target = RewriteImplicitCalls(index.Target, paramMap, context, LiftingRole.Value, memos),
+                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.SequenceSpread spread => spread with
             {
-                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.SequenceConstruct construct => construct with
             {
-                Left = RewriteImplicitCalls(construct.Left, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
-                Right = RewriteImplicitCalls(construct.Right, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand),
+                Left = RewriteImplicitCalls(construct.Left, paramMap, context, LiftingRole.Value, memos),
+                Right = RewriteImplicitCalls(construct.Right, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.ListLiteral list => list with
             {
-                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos, inStrictValueDemand)).ToList(),
+                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos)).ToList(),
             },
 
-            Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, role, memos, inStrictValueDemand),
+            Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, role, memos),
 
-            Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, role, memos, inStrictValueDemand),
+            Expr.Grace(var inner, _) => RewriteImplicitCalls(inner, paramMap, context, role, memos),
 
             Expr.AlgorithmExpr block => block with
             {
@@ -4375,13 +4191,12 @@ internal static class ImplicitArgumentResolver
         SignatureMap paramMap,
         ImplicitRewriteContext context,
         LiftingRole role,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand)
+        ResolverWalkMemos memos)
     {
         if (role != LiftingRole.Value || TryResolveLiftable(expr, paramMap, memos) is not { } liftable)
             return expr;
 
-        if (TryGetLiftArguments(expr, liftable, context, memos, inStrictValueDemand) is not { } implicitArgs)
+        if (TryGetLiftArguments(expr, liftable, context, memos) is not { } implicitArgs)
             return expr;
 
         // The arguments are the region's one shared bundle for this callee (FE-2); the call node is
@@ -4400,8 +4215,7 @@ internal static class ImplicitArgumentResolver
         Expr reference,
         LiftableReference liftable,
         ImplicitRewriteContext context,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand)
+        ResolverWalkMemos memos)
     {
         if (liftable.Signature.Unnameable is { } unnameable)
         {
@@ -4427,74 +4241,19 @@ internal static class ImplicitArgumentResolver
 
         if (ClosedListBlocksLifting(context, signature.ParameterPatterns, memos))
         {
-            if (inStrictValueDemand)
-                ReportBlockedStrictValueForwarding(reference, liftable.DisplayName, signature.ParameterPatterns, context, memos);
             return null;
         }
 
         return memos.ImplicitArguments(signature.ParameterPatterns, context);
     }
 
-    /// <summary>
-    /// Q-15's consumer contract BY IDENTITY: whether a callee the role classifier resolved to a
-    /// strict-value kind (<see cref="LiftingCalleeKind.StrictValue"/>: a Math member or a host
-    /// operation) is a Math FUNCTION member, whose arguments are strict value positions. The spelling
-    /// checks (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/> and its twins) decide a
-    /// member's own spellings; this decides every other route to one — a callable ALIAS
-    /// (<c>A = abs</c>, a chain, a dotted alias member), whose callable IS its target (FWD-02, binding
-    /// indirection) — so <c>A(Inc)</c> and <c>Inc.A</c> under a closed list carry exactly the
-    /// obligation <c>abs(Inc)</c> does. A host operation's arguments are values for lifting but carry
-    /// no strict-value obligation. It reads the callee exactly as the classifier that produced
-    /// <paramref name="kind"/> did (<see cref="SettledCalleeAlgorithm"/>), so it never processes a
-    /// sibling on demand, and an alias answers from the fact recorded with its target
-    /// (<see cref="AliasTarget.HasStrictValueMathArguments"/>), as its kind does.
-    /// </summary>
-    private static bool ResolvesToStrictValueMathMember(Expr callee, LiftingCallee kind, SignatureMap paramMap, ResolverWalkMemos memos)
-        => kind.Kind == LiftingCalleeKind.StrictValue
-            && SettledCalleeAlgorithm(callee, paramMap, memos) is { } algorithm
-            && (algorithm is Algorithm.Alias alias
-                ? alias.ResolvedTarget?.HasStrictValueMathArguments == true
-                : memos.Run.Prelude.HasStrictValueMathArguments(algorithm));
 
-    /// <summary>
-    /// Whether a call's written arguments carry Q-15's strict value demand: its callee is a Math
-    /// member by spelling (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.Call, Func{string, bool}?)"/>)
-    /// or by identity (<see cref="ResolvesToStrictValueMathMember"/>), and the call is not beneath a
-    /// lazy slot. Out of line, so the calibrated rewrite frame holds none of its temporaries.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static bool StrictValueCallArguments(Expr.Call call, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
-        => !memos.InLazySlot
-            && (call.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                || ResolvesToStrictValueMathMember(call.Function, callee, paramMap, memos));
 
-    /// <summary>
-    /// Whether a dot edge is the must-selected fallback call of a Math member, so its receiver (and its
-    /// arguments) carry Q-15's strict value demand — by spelling
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueFallback"/>) or, through an alias, by identity.
-    /// Out of line, like <see cref="StrictValueCallArguments"/>.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static bool StrictValueDotFallback(Expr.DotCall dotCall, DotEdgeKind kind, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
-        => !memos.InLazySlot
-            && (dotCall.HasRegistryProvenStrictValueFallback(paramMap.ContainsKey)
-                || (kind == DotEdgeKind.Fallback
-                    && ResolvesToStrictValueMathMember(dotCall.EffectiveLexicalFallback, callee, paramMap, memos)));
 
-    /// <summary>
-    /// Whether a structural dot edge's written arguments carry Q-15's strict value demand: the edge is
-    /// the canonical <c>Math.X(...)</c> by spelling
-    /// (<see cref="AstHelpers.HasRegistryProvenStrictValueArguments(Expr.DotCall, Func{string, bool}?)"/>)
-    /// or names a Math member by identity — a dotted alias member, <c>Lib.A(Inc)</c> with
-    /// <c>A = abs</c>. Out of line, like <see cref="StrictValueCallArguments"/>.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static bool StrictValueDotArguments(Expr.DotCall dotCall, DotEdgeKind kind, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
-        => !memos.InLazySlot
-            && (dotCall.HasRegistryProvenStrictValueArguments(paramMap.ContainsKey)
-                || (kind == DotEdgeKind.StructuralMember
-                    && dotCall.Args is not null
-                    && ResolvesToStrictValueMathMember(dotCall with { Args = null }, callee, paramMap, memos)));
+
+
+
+
 
     /// <summary>
     /// The Call arm of <see cref="RewriteImplicitCallsCore"/>: the callee is CALLABLE, and each
@@ -4513,17 +4272,13 @@ internal static class ImplicitArgumentResolver
         var newFunc = RewriteImplicitCalls(call.Function, paramMap, context, LiftingRole.Callable, memos);
         var callee = ResolveCalleeKind(call.Function, paramMap, memos);
         var roles = FormulaLiftingRoles.ArgumentRoles(callee, call.Args);
-        var lazy = FormulaLiftingRoles.LazyArguments(callee, call.Args);
-        var strictArguments = StrictValueCallArguments(call, callee, paramMap, memos);
         var newArgs = new List<Expr>(call.Args.Count);
         for (var i = 0; i < call.Args.Count; i++)
         {
             // A LAZY slot (a branch of `if`) is rewritten exactly like any other — lifting is blind
             // to laziness — but beneath it the closed-list strict-value diagnostic is not observed
             // (Q-15). Inline, so the calibrated recursion adds no frame per argument level.
-            memos.LazyDepth += lazy[i] ? 1 : 0;
-            newArgs.Add(RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos, strictArguments && !lazy[i]));
-            memos.LazyDepth -= lazy[i] ? 1 : 0;
+            newArgs.Add(RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos));
         }
 
         return new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = call.Span };
@@ -4545,15 +4300,14 @@ internal static class ImplicitArgumentResolver
         SignatureMap paramMap,
         ImplicitRewriteContext context,
         LiftingRole role,
-        ResolverWalkMemos memos,
-        bool inStrictValueDemand)
+        ResolverWalkMemos memos)
     {
         var kind = EdgeKindOf(dotCall, paramMap, memos.Run);
         if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
         {
             if (role == LiftingRole.Value
                 && TryResolveLiftable(dotCall, paramMap, memos) is { } liftable
-                && TryGetLiftArguments(dotCall, liftable, context, memos, inStrictValueDemand) is { } liftedArgs)
+                && TryGetLiftArguments(dotCall, liftable, context, memos) is { } liftedArgs)
             {
                 return memos.SynthesizedImplicitCall(dotCall with
                 {
@@ -4569,19 +4323,14 @@ internal static class ImplicitArgumentResolver
         }
 
         var callee = DotEdgeCallee(dotCall, kind, paramMap, memos);
-        var strictFallback = StrictValueDotFallback(dotCall, kind, callee, paramMap, memos);
-        var strictArguments = strictFallback || StrictValueDotArguments(dotCall, kind, callee, paramMap, memos);
         OutputBundle? newArgs = null;
         if (dotCall.Args is { } dotArgs)
         {
             var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
-            var lazy = FormulaLiftingRoles.DotLazyArguments(dotCall, kind, callee);
             var rewrittenArgs = new List<Expr>(dotArgs.Count);
             for (var i = 0; i < dotArgs.Count; i++)
             {
-                memos.LazyDepth += lazy[i] ? 1 : 0;
-                rewrittenArgs.Add(RewriteImplicitCalls(dotArgs[i], paramMap, context, roles[i], memos, strictArguments && !lazy[i]));
-                memos.LazyDepth -= lazy[i] ? 1 : 0;
+                rewrittenArgs.Add(RewriteImplicitCalls(dotArgs[i], paramMap, context, roles[i], memos));
             }
 
             newArgs = new OutputBundle(rewrittenArgs);
@@ -4590,7 +4339,7 @@ internal static class ImplicitArgumentResolver
         return dotCall with
         {
             Target = RewriteImplicitCalls(
-                dotCall.Target, paramMap, context, FormulaLiftingRoles.ReceiverRole(kind, callee), memos, strictFallback),
+                dotCall.Target, paramMap, context, FormulaLiftingRoles.ReceiverRole(kind, callee), memos),
             Args = newArgs,
         };
     }

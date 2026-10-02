@@ -31,18 +31,7 @@ internal sealed class EvaluationObservations
     internal void RecordDeconstructionFullBind()
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
 
-    /// <summary>
-    /// Number of counted-argument reifications performed during this run: each increment is one
-    /// construction of the legacy zero-parameter expression-tree wrapper around an already-evaluated
-    /// argument's counted value (<c>Evaluator.CountedArgAlgorithm</c> → <c>ResultToExpr</c>, an
-    /// O(value size) rebuild). The wrapper is built lazily, only when an algorithm-only consumer
-    /// requests a prepared argument's algorithm channel; value-channel consumption reads
-    /// <c>PreparedValue</c> directly and never reifies. An ordinary sequence-builtin dot call
-    /// (<c>A.count</c>, <c>A.take(2)</c>, <c>A.map(F)</c>) therefore observes zero, while a run that
-    /// routes a pre-evaluated value into an algorithm-only builtin position (for example a builtin
-    /// used as a callback, whose prepared arguments reach <c>while</c>'s step slot) observes exactly
-    /// one reification per requested channel.
-    /// </summary>
+    /// <summary>Legacy reification guard: production Ready/callback transport must keep this zero.</summary>
     public long CountedArgumentReificationCount { get; private set; }
 
     internal void RecordCountedArgumentReification()
@@ -56,9 +45,8 @@ internal sealed class EvaluationObservations
     /// conversion stays bounded by the number of distinct reachable structure nodes — never the
     /// number of expanded tree paths (a shared doubling DAG of depth 40 expands ~40 nodes, not
     /// 2^40 path occurrences). One direct <c>ResultToExpr</c> call is one conversion scope. A
-    /// multi-emission <c>CountedArgAlgorithm</c> wrapper is likewise ONE conversion scope across
-    /// all of its emitted roots, so a deep node shared by several roots expands once for the
-    /// whole wrapper. Nothing is shared between separate wrapper constructions or direct calls.
+    /// multi-root conversion shares one memo across all its roots. Production cell transport
+    /// performs no conversion. Nothing is shared between separate conversions.
     /// </summary>
     public long ResultToExprStructureExpansionCount { get; private set; }
 

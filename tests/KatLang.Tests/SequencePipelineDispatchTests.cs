@@ -469,7 +469,7 @@ public class SequencePipelineDispatchTests
                 "dot:filter@0",
                 "resolve-args@0",
                 "resolve:range@0",
-                "evaluate-range@1",
+                "evaluate-range@0",
             ],
             callbacks);
         Assert.Equal(0, budget.CurrentDepth);

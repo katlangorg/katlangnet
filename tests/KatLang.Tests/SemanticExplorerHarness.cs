@@ -212,6 +212,7 @@ public static class SemanticExplorerHarness
             EvalError.NotPublicProperty => "notPublicProperty",
             EvalError.LocalOnlyProperty => "localOnlyProperty",
             EvalError.NotAnAlgorithm => "notAnAlgorithm",
+            EvalError.DemandCycle => "demandCycle",
             EvalError.IllegalInOpen => "illegalInOpen",
             EvalError.BadOpenForm => "badOpenForm",
             EvalError.IllegalInEval => "illegalInEval",

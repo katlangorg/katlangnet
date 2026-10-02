@@ -131,9 +131,8 @@ public class EvaluatorIdentityStateReviewTests
         var references = RunAndObserve();
         Assert.Contains(references, r => r.Kind == "scope");
         Assert.Contains(references, r => r.Kind == "activation");
-        Assert.Contains(references, r => r.Kind == "values");
-        Assert.Contains(references, r => r.Kind == "algorithms");
-        Assert.Contains(references, r => r.Kind == "counted");
+        Assert.Contains(references, r => r.Kind == "needs");
+        Assert.Contains(references, r => r.Kind == "cell");
         for (var attempt = 0; attempt < 5 && references.Any(r => r.Reference.IsAlive); attempt++)
         {
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
@@ -168,6 +167,11 @@ public class EvaluatorIdentityStateReviewTests
                 if (scope.Activation is not { } activation) continue;
                 References.Add(("scope", new WeakReference(scope)));
                 References.Add(("activation", new WeakReference(activation)));
+                if (activation.Needs.Count > 0)
+                {
+                    References.Add(("needs", new WeakReference(activation.Needs)));
+                    foreach (var binding in activation.Needs) References.Add(("cell", new WeakReference(binding.Cell)));
+                }
                 if (activation.Values.Count > 0) References.Add(("values", new WeakReference(activation.Values)));
                 if (activation.Algorithms.Count > 0) References.Add(("algorithms", new WeakReference(activation.Algorithms)));
                 if (activation.Counted.Count > 0) References.Add(("counted", new WeakReference(activation.Counted)));

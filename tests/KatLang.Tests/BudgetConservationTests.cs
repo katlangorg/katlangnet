@@ -103,7 +103,14 @@ public class BudgetConservationTests
         Assert.True(
             budget.PeakDepth <= budget.MaxDepth,
             $"{what}: PeakDepth {budget.PeakDepth} exceeded MaxDepth {budget.MaxDepth}");
-        Assert.Equal(budget.MaxDepth, RemainingDepthCapacity(budget));
+        if (budget.CheckContinuation() is { } terminal)
+        {
+            var steps = budget.ConsumedSteps;
+            Assert.Same(terminal, budget.TryEnterArgumentEvaluation());
+            Assert.Equal(steps, budget.ConsumedSteps);
+            Assert.Equal(0, budget.CurrentDepth);
+        }
+        else Assert.Equal(budget.MaxDepth, RemainingDepthCapacity(budget));
     }
 
     // ── Fault injection ──────────────────────────────────────────────────────
@@ -309,7 +316,7 @@ public class BudgetConservationTests
     [Fact]
     public void RefusedDepthEnter_DoesNotConsumeAStep_AndEndsTheRun()
     {
-        var ast = Ast("G(f) = 1\nA = A\nH = 9\nG(A) + H()");
+        var ast = Ast("G(f) = f\nA = A\nH = 9\nG(A) + H()");
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
         var (result, budget) = Evaluator.RunCountedObserved(ast, limits);
@@ -334,7 +341,7 @@ public class BudgetConservationTests
     [Fact]
     public void FirstRefusedDepthEnter_EndsTheRun_BeforeTheNextArgument()
     {
-        var ast = Ast("G(f, g) = 1\nA = A\nB = B\nH = 9\nG(A, B) + H()");
+        var ast = Ast("G(f, g) = f\nA = A\nB = B\nH = 9\nG(A, B) + H()");
         var limits = new EvaluationLimits { MaxDepth = 3 };
 
         var (result, budget) = Evaluator.RunCountedObserved(ast, limits);
@@ -429,22 +436,21 @@ public class BudgetConservationTests
         Assert.Equal(2, admitted.Accesses);
         AssertConserved(okBudget, "admitted builtin argument funnel");
 
-        // Argument level admitted, A's access refused: nothing is accessed.
+        // count is active; A enters and B is refused before its cache access.
         var rejected = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
         var (failResult, failBudget) = Evaluator.RunCountedObserved(
             ast, new EvaluationLimits { MaxDepth = 1 }, zeroArgPropertyResultCache: rejected);
         Assert.True(failResult.IsError);
         Assert.IsType<EvalError.EvaluationDepthExceeded>(failResult.Error);
-        Assert.Equal(0, rejected.Accesses);
+        Assert.Equal(1, rejected.Accesses);
         AssertConserved(failBudget, "rejected builtin argument funnel");
 
-        // A's access admitted, B's refused: only A is accessed, and B's body never runs.
+        // The alias A = B adds no invocation, so depth two admits B.
         var nested = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
         var (nestedResult, nestedBudget) = Evaluator.RunCountedObserved(
             ast, new EvaluationLimits { MaxDepth = 2 }, zeroArgPropertyResultCache: nested);
-        Assert.True(nestedResult.IsError);
-        Assert.IsType<EvalError.EvaluationDepthExceeded>(Innermost(nestedResult.Error));
-        Assert.Equal(1, nested.Accesses);
+        Assert.False(nestedResult.IsError);
+        Assert.Equal(2, nested.Accesses);
         AssertConserved(nestedBudget, "rejected nested property access");
     }
 
@@ -590,7 +596,7 @@ public class BudgetConservationTests
             () => new InvalidOperationException("fault-injection"),
             limits: new EvaluationLimits { MaxDepth = 12 });
 
-        Assert.Equal(3, budget.PeakDepth);
+        Assert.Equal(2, budget.PeakDepth);
         AssertConserved(budget, "exception across mixed invocation and argument levels");
     }
 
@@ -664,7 +670,7 @@ public class BudgetConservationTests
             () => new OperationCanceledException(cts.Token),
             limits: new EvaluationLimits { MaxDepth = 12 });
 
-        Assert.Equal(3, budget.PeakDepth);
+        Assert.Equal(2, budget.PeakDepth);
         AssertConserved(budget, "cancellation across mixed invocation and argument levels");
     }
 
@@ -824,7 +830,7 @@ public class BudgetConservationTests
                 out _));
 
         Assert.NotNull(thrown);
-        Assert.Equal(1, budget.PeakDepth);
+        Assert.Equal(0, budget.PeakDepth);
         AssertConserved(budget, "exception escaping the committed fused region");
     }
 
@@ -855,7 +861,7 @@ public class BudgetConservationTests
         Assert.Throws<InvalidOperationException>(() => SequencePipelineOptimizer.TryExecute(
             invocation, services, ctx, [], diagnostics: null, out _));
 
-        Assert.Equal(1, budget.PeakDepth);
+        Assert.Equal(0, budget.PeakDepth);
         AssertConserved(budget, "exception escaping the committed generic fused region");
     }
 
@@ -991,7 +997,14 @@ public class BudgetConservationTests
         budget.ExitInvocation();
         Assert.Throws<InvalidOperationException>(budget.ExitInvocation);
         Assert.Equal(0, budget.CurrentDepth);
-        Assert.Equal(budget.MaxDepth, RemainingDepthCapacity(budget));
+        if (budget.CheckContinuation() is { } terminal)
+        {
+            var steps = budget.ConsumedSteps;
+            Assert.Same(terminal, budget.TryEnterArgumentEvaluation());
+            Assert.Equal(steps, budget.ConsumedSteps);
+            Assert.Equal(0, budget.CurrentDepth);
+        }
+        else Assert.Equal(budget.MaxDepth, RemainingDepthCapacity(budget));
     }
 
     // ── G. Exact-boundary conservation ───────────────────────────────────────

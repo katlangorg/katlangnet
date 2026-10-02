@@ -101,7 +101,7 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("Inc(x) = x + 1\nR = repeat\nR(Inc)",
         "err ArityMismatch: Callable `repeat(step, count, initialState)` expects at least 3 arguments, but was called with 1 argument.")]
     [InlineData("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)",
-        "err NoMatchingBranch: while evaluating call to F: No matching branch for 'F'")]
+        "err ArityMismatch: Property 'F' expects 1 parameter, but was called with 2 arguments.")]
     [InlineData("Inc(x) = x + 1\nA = abs\nK = A(Inc)\nK(-5)", "ok 4")]
     [InlineData("C = count\nW(collection) = C\nW([1, 2])", "ok 2")]
     [InlineData("C = count\nK = C + 1\nK([1, 2])", "ok 3")]
@@ -121,7 +121,7 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("F(x) = {\n    M = 2\n    x\n}\nA = {\n    M = 1\n    F\n}\nB = A\nM(v) = 9\nNavigate(f) = f.M\nA.M, F.M, B.M, Navigate(A)", "ok S[1, 2, 9, 2]")]
     [InlineData("K = C + 1\nC = B\nB = A\nA = F\nF = Inc + 1\nInc(x) = x + 1\nK(3)", "ok 6")]
     [InlineData("C = count\nC(trace(1) / 0, trace(2))",
-        "err ArityMismatch: Callable `count(collection)` expects 1 argument, but was called with 2 arguments. [trace(1),trace(2)]")]
+        "err ArityMismatch: Callable `count(collection)` expects 1 argument, but was called with 2 arguments.")]
     public async Task HostileCompositionWitnesses(string source, string expected)
         => Assert.Equal(expected, await Outcome(source, seed: 7));
 
@@ -273,19 +273,21 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("open Math\nA = Abs\nB = A\nC = B\nK(z) = C(Inc)", "open Math\nK(z) = Abs(Inc)")]
     [InlineData("Lib = {\n    public Inner = {\n        public A = Math.Abs\n        public B = A\n        public C = B\n    }\n}\nK(z) = Lib.Inner.C(Inc)", "K(z) = Math.Abs(Inc)")]
     [InlineData("K(z) = C(Inc)\nC = B\nB = A\nA = abs", "K(z) = abs(Inc)")]
-    public void ClosedListStrictValueDiagnostic_FollowsTheAliasTarget(string throughAlias, string direct)
+    public void ClosedListValueDemand_FollowsTheAliasTargetAtRuntime(string throughAlias, string direct)
     {
-        static IReadOnlyList<Diagnostic> Diagnostics(string program)
+        static EvalError Demand(string program)
         {
             var open = program.StartsWith("open ", StringComparison.Ordinal) ? program[..(program.IndexOf('\n') + 1)] : "";
-            return SourceProvenance.ExpectFrontEndError(open + "Inc(y) = y + 1\n" + program[open.Length..] + "\nK(1)");
+            var source = open + "Inc(y) = y + 1\n" + program[open.Length..] + "\nK(1)";
+            var root = SourceProvenance.ParseValid(source).Root;
+            var result = Evaluator.Run(new Expr.AlgorithmExpr(root));
+            Assert.True(result.IsError);
+            return EvaluatorTestSupport.Innermost(result.Error);
         }
-
-        var expected = Diagnostics(direct);
-        Assert.Contains(expected, static d => d.Code == DiagnosticCode.UndeclaredIdentifier);
-        Assert.Equal(
-            expected.Select(static d => (d.Code, d.Message)),
-            Diagnostics(throughAlias).Select(static d => (d.Code, d.Message)));
+        var expected = Assert.IsType<EvalError.ArityMismatch>(Demand(direct));
+        var actual = Assert.IsType<EvalError.ArityMismatch>(Demand(throughAlias));
+        Assert.Equal((1, 0), (expected.Expected, expected.Actual));
+        Assert.Equal((expected.Expected, expected.Actual), (actual.Expected, actual.Actual));
     }
 
     /// <summary>

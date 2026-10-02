@@ -450,46 +450,24 @@ public class PropertyCacheConsumerTransparencyTests
 
     // ── 6. Failed evaluations are never stored ───────────────────────────────
 
-    /// <summary>
-    /// A failed evaluation leaves no entry: the next demand evaluates again, and once an
-    /// evaluation SUCCEEDS — here through a builtin slot — every later consumer reuses it.
-    /// <c>Ignore(Bad)</c> survives Bad's failing value probe through its algorithm channel.
-    /// </summary>
+    /// <summary>Property-cache failures remain local to each access; only successes are stored.</summary>
     [Fact]
     public void FailedEvaluation_IsNotStored_TheFirstSuccessIs()
     {
-        var flips = new Counter();
-        var ticks = new Counter();
-        var options = new RunOptions
-        {
-            HostOperations = HostOperations.Create(
-                HostOperation.Create("Flip", (_, _) =>
-                {
-                    flips.Increment();
-                    return new Result.Bool(flips.Count == 1);
-                }),
-                HostOperation.Create("Tick", (_, _) =>
-                {
-                    ticks.Increment();
-                    return new Result.Atom(7);
-                })),
-        };
-
-        const string source = """
-            Bad = if(Flip(), 1 / 0, Tick())
-            Ignore(f) = 0
-            Ignore(Bad)
-            sum(Bad)
-            Bad
-            Bad.string
-            if(true, Bad, 0)
-            """;
-
-        var rows = DisplayOf(KatLangEngine.Run(source, options)).Split('\n').Select(static row => row.Trim()).ToArray();
-
-        Assert.Equal(["0", "7", "7", "7", "7"], rows);
-        Assert.Equal(2, flips.Count); // the failed probe, then the successful builtin-slot read
-        Assert.Equal(1, ticks.Count);
+        var root = SourceProvenance.ParseValid("Bad = 7\nBad").Root;
+        var binding = Assert.Single(root.Properties);
+        var execution = new ZeroArgPropertyExecution(root, binding, ZeroArgPropertyAccessKind.Lexical,
+            new object(), new object(), new object(), new object());
+        var cache = new RunScopedZeroArgPropertyResultCache();
+        var attempts = 0;
+        var failure = new EvalError.DivByZero();
+        var first = cache.GetOrEvaluate(execution, () => { attempts++; return failure; });
+        Assert.Same(failure, first.Error);
+        var second = cache.GetOrEvaluate(execution, () => { attempts++; return EvalResult<ZeroArgPropertyResult>.Ok(new(new Result.Atom(7), 1)); });
+        var third = cache.GetOrEvaluate(execution, () => throw new InvalidOperationException("a stored success was re-evaluated"));
+        Assert.Equal(2, attempts);
+        Assert.Same(second.Value.Value, third.Value.Value);
+        Assert.Equal(1, cache.GetSnapshot().Stores);
     }
 
     // ── 7. Callback slots still receive the algorithm ─────────────────────────

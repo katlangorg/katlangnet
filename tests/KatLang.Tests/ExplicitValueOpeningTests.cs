@@ -948,7 +948,7 @@ public class ExplicitValueOpeningTests
     [InlineData(true, true, false)]
     [InlineData(false, false, true)]
     [InlineData(true, true, true)]
-    public async Task SuspendedSlots_AreEvaluatedOnceInOrder_BeforeBinding(bool dotted, bool spread, bool fail)
+    public async Task SuspendedCollector_DemandsOnlyItsCapturedCells(bool dotted, bool spread, bool fail)
     {
         var middle = spread ? "Middle()*" : "first(Middle())";
         var tail = fail ? "Right() / 0" : "Right()";
@@ -965,16 +965,12 @@ public class ExplicitValueOpeningTests
         var syncRoot = (await SourceProvenance.ParseValidAsync(source, syncOptions)).Root;
         var (sync, syncBudget) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(syncRoot),
             enableOptimizations: false, hostOperations: syncOperations);
-        if (fail)
-            Assert.Equal(KatLangErrorCode.DivisionByZero, sync.Error.Code);
-        else
-        {
-            // `first(Middle())` is the one value `(1, 2)`; `Middle()*` supplies the one
-            // established item `(1, 2)`: both are ONE collected item.
-            var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source, syncOptions));
-            Assert.Equal("[(1, 2)]", success.ToDisplayString());
-            Assert.Equal(1, sync.Value.EmittedCount);
-        }
+        // The fixed head and tail are unused. Even a failing tail stays suspended.
+        // Both Middle spellings supply one collected sequence value.
+        Assert.True(sync.IsOk, sync.IsError ? sync.Error.ToString() : "");
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source, syncOptions));
+        Assert.Equal("[(1, 2)]", success.ToDisplayString());
+        Assert.Equal(1, sync.Value.EmittedCount);
 
         var entered = names.Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
         var release = names.Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
@@ -991,17 +987,16 @@ public class ExplicitValueOpeningTests
         var pending = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(root), hostOperations: operations).AsTask();
         try
         {
-            for (var index = 0; index < names.Length; index++)
-            {
-                await entered[index].Task.WaitAsync(TimeSpan.FromSeconds(10));
-                Assert.False(pending.IsCompleted);
-                Assert.Equal(Enumerable.Range(0, names.Length).Select(i => i <= index ? 1 : 0), calls);
-                release[index].SetResult();
-            }
+            await entered[1].Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(new[] { 0, 1, 0 }, calls);
+            Assert.False(entered[0].Task.IsCompleted);
+            Assert.False(entered[2].Task.IsCompleted);
+            release[1].SetResult();
             var (actual, budget) = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(actual));
             Assert.Equal(syncBudget.ConsumedSteps, budget.ConsumedSteps);
-            Assert.Equal(new[] { 1, 1, 1 }, calls);
+            Assert.Equal(new[] { 0, 1, 0 }, calls);
         }
         finally
         {

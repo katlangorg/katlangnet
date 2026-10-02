@@ -102,6 +102,141 @@ public static class LanguageSpecCorpus
         // ==================== arithmetic ====================
         new()
         {
+            Id = "need-closed-core-demand-is-runtime",
+            Category = "errors",
+            Source = "A(q) = q + 1\nF(x) = A + 0\nF(7)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Explanation = "A closed body gains no q. Its resolved callable reference is legal, but an actual value demand rejects the ordinary zero-argument call to A(q).",
+        },
+        new()
+        {
+            Id = "need-unused-ordinary-argument",
+            Category = "variadic-calls",
+            Source = "F(x) = 10\nF(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "An ordinary non-spread argument is a suspended cell. The unused plain binder x never demands its value.",
+        },
+        new()
+        {
+            Id = "need-unused-collector-slice",
+            Category = "variadic-calls",
+            Source = "F(*xs) = 10\nF(1, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "A collector stores a lazy slice. An unused slice does not demand its members.",
+        },
+        new()
+        {
+            Id = "need-forwarding-preserves-unused-cell",
+            Category = "variadic-calls",
+            Source = "G(x) = 10\nF(x) = G\nF(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "Bare forwarding transports the same parameter cell without forcing it.",
+        },
+        new()
+        {
+            Id = "need-collector-forwarding-preserves-unused-slice",
+            Category = "variadic-calls",
+            Source = "G(*xs) = 10\nF(*xs) = G\nF(1, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "Re-spreading an existing collector transfers its member cells without materializing the slice.",
+        },
+        new()
+        {
+            Id = "need-ordinary-conditional-selects-one-cell",
+            Category = "variadic-calls",
+            Source = "Choose(true, yes, no) = yes\nChoose(false, yes, no) = no\nChoose(true, 7, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Explanation = "An ordinary clause family forces its literal condition and then only the selected branch's value cell.",
+        },
+        new()
+        {
+            Id = "need-family-shares-failed-attempt-value",
+            Category = "variadic-calls",
+            Source = "F(0, x) = 7\nF(n, 0) = n\nF(3, 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            Explanation = "Clause attempts reuse supplied cells. The first literal mismatch does not force its later binder.",
+        },
+        new()
+        {
+            Id = "need-first-loop-step-can-ignore-initial",
+            Category = "variadic-calls",
+            Source = "Step(x) = 7\nrepeat(Step, 1, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Explanation = "The first loop step receives the suspended initial cell. A step that ignores it can produce the final state.",
+        },
+        new()
+        {
+            Id = "need-closed-demand-can-remain-unused",
+            Category = "variadic-calls",
+            Source = "A(q) = q + 1\nKeep(x) = 7\nF(x) = Keep(count(A))\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Explanation = "A closed body gains no q, but an unused argument containing a zero-argument demand does not fail.",
+        },
+        new()
+        {
+            Id = "need-wrong-arity-precedes-cell-demand",
+            Category = "variadic-calls",
+            Source = "F(x) = x\nF(1 / 0, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Explanation = "After explicit spread formation, wrong cardinality rejects before ordinary argument cells are demanded.",
+        },
+        new()
+        {
+            Id = "need-explicit-spread-precedes-arity",
+            Category = "variadic-calls",
+            Source = "F(x) = 7\nF(9, (1 / 0)*)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "An arbitrary explicit spread must demand its operand to form supply, even when the resulting call would have wrong arity.",
+        },
+        new()
+        {
+            Id = "need-collector-demand-materializes-whole-slice",
+            Category = "variadic-calls",
+            Source = "F(*xs) = xs.first\nF(1, 1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "Demanding any value from a collector first materializes the full collected list left to right.",
+        },
+        new()
+        {
+            Id = "need-callable-projection-does-not-force-value",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f) = f(4)\nApply(Inc)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Explanation = "A callable consumer projects Inc's identity without making a zero-argument value demand.",
+        },
+        new()
+        {
             Id = "first-program",
             Category = "arithmetic",
             Source = "2 + 3 * 4",
@@ -1571,18 +1706,16 @@ public static class LanguageSpecCorpus
             Category = "variadic-calls",
             Source = "Bad = 1 / 0\nP(x, x, (a, b)) = a\n\nP(1, 2, Bad)",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "div0",
+            ExpectedErrorCategory = "arity",
             Probes =
             [
-                // Every pattern binds first; the unequal x is only a merge failure (here the
-                // scalar 7 is the pair pattern's kind mismatch, and a three-element sequence its
-                // arity mismatch).
-                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err type"),
+                // The second x immediately conflicts; later structural patterns are not demanded.
+                new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, 7)", "err arity"),
                 new SpecProbe("P(x, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "err arity"),
-                // Between different names the innermost merge decides: the (f, f) merge runs first
-                // (A and B are two callables with the equal value 5).
-                new SpecProbe("A = 5\nB = 2 + 3\nP(x, x, f, f) = 0\nP(1, 2, A, B)", "err type"),
-                new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, x, x) = 0\nP(A, B, 1, 2)", "err arity"),
+                // The first conflict in written pattern order decides. A and B have equal values
+                // but distinct callable identities.
+                new SpecProbe("A = 5\nB = 2 + 3\nP(x, x, f, f) = 0\nP(1, 2, A, B)", "err arity"),
+                new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, x, x) = 0\nP(A, B, 1, 2)", "err type"),
                 // A repeated name's argument without a value fails its own binding first.
                 new SpecProbe("Bad = 1 / 0\nP(x, x, y, y) = 0\nP(Bad, 7, 1, 2)", "err div0"),
                 // A conflict inside a nested group is part of binding that group.
@@ -1590,7 +1723,7 @@ public static class LanguageSpecCorpus
                 // Equal repeated values still bind.
                 new SpecProbe("P(x, x, (a, b)) = b\nP(1, 1, (2, 3))", "ok raw=3 n=1"),
             ],
-            Explanation = "A parameter-pattern list binds EVERY pattern before it checks its repeated names, so a later pattern's failure — here the argument `Bad`, whose value the `(a, b)` pattern must open — is reported instead of the unequal `x`. An argument that must supply a value for a repeated name but has none fails its own binding the same way. Between different repeated names, the merge that runs first — the innermost, whose name completes furthest right — decides, and within one merge an unequal value (an arity error) is found before two different callables (a type error). A conflict inside a nested group belongs to binding that group, and equal repeated values still bind. Callbacks and loop state bind in the same order.",
+            Explanation = "Repeated names demand each occurrence in written pattern order and check compatibility immediately. The second unequal `x` is an arity conflict, so the later structural argument `Bad` is never demanded. A demanded failure still aborts binding, and equal values with distinct callable identities conflict at the occurrence that reveals the difference. Nested patterns follow the same order. Callbacks and loop state use this binder too.",
         },
         new()
         {
@@ -1615,7 +1748,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Bad = 1 / 0\nP(f, f, f) = f\nP(5, 5, Bad)", "err div0"),
                 new SpecProbe("Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)", "err arity"),
             ],
-            Explanation = "A repeated parameter name is checked once, after all of its occurrences have bound, by comparing every occurrence with every other: values must be equal, and when arguments also reach the name as callables, they must all be the same callable. `A` and `B` both have the value 5 but are different callables, so `(A, 5, B)` fails in every order, while `(A, A, 5)` binds in every order. Every occurrence must also supply its own value, so an argument without one — a failing one, or a bare callable — is its own error wherever it stands. Argument order never changes whether the call binds.",
+            Explanation = "Each repeated occurrence is demanded and compared immediately with the established complete binding. Compatible values and callable identities succeed regardless of order; conflicts or demand failures stop at their first occurrence. Equal values from distinct named callables conflict, while a ready scalar has no callable channel. A failing value is never replaced by another occurrence's value or callable.",
         },
         new()
         {
@@ -1998,7 +2131,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // The family's own dispatch failure, named by the written callee.
-                new SpecProbe("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)", "err branch"),
+                new SpecProbe("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)", "err arity"),
                 // A family whose clauses name no position can be aliased too.
                 new SpecProbe("S(1) = 1\nS(-1) = -1\nSA = S\nSA(-1)", "ok raw=-1 n=1"),
                 new SpecProbe("S(1) = 1\nS(-1) = -1\nSA = S\nSA(0)", "err branch"),
@@ -2151,7 +2284,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[L[5, 1, 6, L[6]], L[5, 1, 6, L[6]]]",
             ExpectedEmittedCount = 1,
             IncludeInGeneratorPrompt = true,
-            Explanation = "The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding retains ordinary eager argument-binding effects.",
+            Explanation = "The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding transports the same demandable cells and performs no VALUE evaluation.",
         },
         new()
         {
@@ -2167,9 +2300,11 @@ public static class LanguageSpecCorpus
             Id = "repeated-dot-results-have-distinct-wrapper-identities",
             Category = "variadic-calls",
             Source = "Obj = { public V = 5 }\nP(f, f) = f\nP(Obj.V, Obj.V)",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "type",
-            Explanation = "Each independently resolved dot result supplies a fresh wrapper algorithm, so two equal results do not establish one callable identity. Forwarding one such wrapper twice preserves its identity instead.",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Explanation = "A declared structural member supplies that member's stable callable identity without a value demand. Both `Obj.V` occurrences name the same member, so their equal values and identical callable channels satisfy the repeated-name constraint. Computed values do not acquire wrapper callable identities.",
         },
         new()
         {
@@ -2188,16 +2323,16 @@ public static class LanguageSpecCorpus
             Category = "variadic-calls",
             Source = "Bad = 1 / 0\nP(x, *rest, x) = x\n\nP(1, Bad, 2)",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "div0",
+            ExpectedErrorCategory = "arity",
             Probes =
             [
                 // The prefix binds and checks its repeated names before the suffix binds.
                 new SpecProbe("Bad = 1 / 0\nP(x, x, *rest, (a, b)) = a\nP(1, 2, Bad)", "err arity"),
-                // The suffix binds before the prefix/suffix check.
-                new SpecProbe("Bad = 1 / 0\nP(x, *rest, x, (a, b)) = a\nP(1, 9, 2, Bad)", "err div0"),
+                // The suffix x conflicts immediately, before the next structural pattern.
+                new SpecProbe("Bad = 1 / 0\nP(x, *rest, x, (a, b)) = a\nP(1, 9, 2, Bad)", "err arity"),
                 new SpecProbe("P(x, *rest, x) = rest\nP(1, 9, 1)", "ok raw=L[9] n=1"),
             ],
-            Explanation = "With a collecting parameter the fixed prefix binds and checks its repeated names first, then the suffix does the same, then the collector gathers its values; only then are the prefix, the collector, and the suffix checked against each other. So `P(1, Bad, 2)` reports the collected argument's division by zero rather than the unequal `x`, while a conflict inside the prefix is still found before the suffix binds.",
+            Explanation = "A collector binds a lazy slice of supplied cells. Pattern traversal continues in written order, and the suffix `x` conflicts with the prefix immediately, before the collector or a later structural argument is demanded. A demanded collector materializes its entire slice from left to right; an unused collector performs no value evaluations.",
         },
         new()
         {
@@ -2231,7 +2366,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A)", "err branch"),
+                new SpecProbe("F(0, 0) = 100\nF(x, y) = x + y\nA = (1, 2)\nF(A)", "err arity"),
             ],
             Explanation = "Explicit call-site spread has identical meaning for every callable shape: `F(A*)` supplies A's spread items as ordinary argument slots BEFORE clause selection, so the two-binder clause binds x = 1, y = 2. The unspread `F(A)` supplies ONE closed argument, which no two-argument clause can match.",
             IncludeInGeneratorPrompt = true,
@@ -2328,15 +2463,15 @@ public static class LanguageSpecCorpus
             Category = "conditionals",
             Source = "F(0) = 1\nF(n) = 2\nF(1, 2)",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "branch",
+            ExpectedErrorCategory = "arity",
             Probes =
             [
                 // A literal head must not match on the first argument alone.
-                new SpecProbe("F(0) = 1\nF(n) = 2\nF(0, 9)", "err branch"),
-                new SpecProbe("F(0) = 1\nF(n) = 2\nF()", "err branch"),
+                new SpecProbe("F(0) = 1\nF(n) = 2\nF(0, 9)", "err arity"),
+                new SpecProbe("F(0) = 1\nF(n) = 2\nF()", "err arity"),
                 new SpecProbe("F(0) = 1\nF(n) = 2\nF(1)", "ok raw=2 n=1"),
             ],
-            Explanation = "A non-sequence clause head consumes exactly ONE explicit argument slot. Surplus arguments are never dropped: no clause of a one-argument family matches a two-argument call, so the family reports no matching branch rather than silently binding the first argument and discarding the rest.",
+            Explanation = "A one-argument family requires exactly one supplied slot. A call with two arguments or no arguments reports ordinary arity mismatch before evaluating ordinary argument cells or attempting a clause. Surplus arguments are never discarded; a correct-count call that fails every pattern reports no matching branch.",
         },
         new()
         {
@@ -2920,17 +3055,17 @@ public static class LanguageSpecCorpus
             Category = "access-boundaries",
             Source = "Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment, Increment))\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "arity",
+            ExpectedErrorCategory = "notAnAlgorithm",
             Probes =
             [
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(Increment)", "ok raw=10 n=1"),
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply((Increment))", "ok raw=10 n=1"),
                 new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nApply(((Increment)))", "ok raw=10 n=1"),
-                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment*))\nProbe(0)", "err arity"),
+                new SpecProbe("Apply = f(9)\nIncrement(x) = x + 1\nProbe(u) = Apply((Increment*))\nProbe(0)", "err notAnAlgorithm"),
                 // A capture's elements are value positions: a formula that infers its parameters lifts them.
                 new SpecProbe("Id(v) = v\nIncrement(x) = x + 1\nG = Id((Increment, Increment))\nG(4)", "ok raw=S[5, 5] n=1"),
             ],
-            Explanation = "A capture — a group of several slots such as `(Increment, Increment)`, or a lone spread `(Increment*)` — supplies only a zero-parameter value thunk on the algorithm channel, so it suppresses the enclosed callable identity, and evaluating its rows demands `Increment` with zero arguments wherever nothing forwards to it (here a closed parameter list); in a formula that infers its parameters a capture's elements are value positions and lift instead (`G = Id((Increment, Increment))` is `G(x) = Id((Increment(x), Increment(x)))`). Redundant parentheses are not a capture: parentheses group syntax, so `Apply((Increment))` and `Apply(((Increment)))` forward Increment's callable identity exactly like `Apply(Increment)`.",
+            Explanation = "A capture such as `(Increment, Increment)` or `(Increment*)` supplies a suspended value cell with no callable identity. Calling the parameter fails as not an algorithm without evaluating the capture's contents. A value consumer instead demands the capture; its elements are formula value positions and may lift in an inferring body. Redundant parentheses disappear, so `(Increment)` and `((Increment))` retain Increment's callable identity.",
         },
         new()
         {
@@ -3300,7 +3435,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Z(*xs) = 10 / xs.count\nApply(f, xs) = xs.map(f)\nApply(Z, [1, 2])", "ok raw=L[10, 10] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding retains ordinary eager parameter-binding effects; callback selection adds no further value demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.",
+            Explanation = "Passing a callable to a parameter binds it as a callable, and also as a value when it can be read with no arguments (`Cnt` reads as `0`). A builtin slot that calls its argument — the map mapper, the filter predicate, the reduce reducer, a while or repeat step — calls the callable, so forwarding `Cnt` through `Apply` selects the same callable as `[1, 2].map(Cnt)`, including from a nested block that captures the parameter. Forwarding transports the same demandable cells; callback selection performs no VALUE demand. A slot that reads a value — the collection, reduce's initial accumulator — reads the bound value.",
         },
         new()
         {
@@ -5411,13 +5546,9 @@ public static class LanguageSpecCorpus
             Id = "closed-list-strict-value-forwarding",
             Category = "errors",
             Source = "A = q + 1\nF(x) = Math.Abs(A)\n\nF(7)",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
-            ExpectedParseDiagnosticFragment = "producing that value needs the implicit parameter 'q'",
-            // Probes observe values, so the REJECTED spellings of this rule (the alias
-            // `abs(A)`, either argument position of `Math.Pow`) are pinned by
-            // ClosedListStrictValueDiagnosticTests instead; what belongs here are the
-            // controls proving the rule does not over-reject.
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            // A closed list does not gain q. Missing supply is rejected only when demanded.
             Probes =
             [
                 // Declaring the required parameter, or leaving the list open so it is
@@ -5425,12 +5556,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = q + 1\nF(q) = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
                 new SpecProbe("A = q + 1\nF = Math.Abs(A)\nF(7)", "ok raw=8 n=1"),
                 // A bare reference is not a value demand, and an ordinary call's arguments
-                // stay higher-order: neither is diagnosed.
+                // stay higher-order: neither forces A before invocation.
                 new SpecProbe("A = q + 1\nApply(f) = f(10)\nF(x) = Apply(A)\nF(7)", "ok raw=11 n=1"),
                 new SpecProbe("F(x) = [0 - 1, 0 - 2].map(abs).sum\nF(9)", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An explicit parameter list is closed, and that applies to what a value position needs indirectly as well as directly. `Math.Abs` needs `A`'s value, producing it needs `A`'s inferred `q`, and `F(x)` declares no `q` — so the program is rejected before it runs, naming `A` and `q` rather than the math function. Declare `q` in the list, call `A` with explicit arguments, or leave the list off so `q` is inferred. Passing `A` where a callable is wanted is unaffected: only a proven value demand is checked this way.",
+            LeanExclusionReason = "Math.Abs executes the unmodeled native Math surface; the pure-core demand counterpart is need-closed-core-demand-is-runtime.",
+            Explanation = "An explicit parameter list is closed. `F(x)` gains no implicit `q`, but referencing the resolved callable `A` is legal. When `Math.Abs` actually demands its value, the ordinary zero-argument call to `A(q)` rejects with arity mismatch. An unused argument or unselected branch does not demand it. Declaring `q`, calling `A` explicitly, or leaving the list open enables forwarding. Undeclared names remain static errors.",
         },
         new()
         {
@@ -5715,7 +5847,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Risky = (10, 1 / 0)\nMyIf(a, b, c) = if(a, b, c)\nMyIf(true, Risky*)", "err div0"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and an ordinary eager user call takes over — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.",
+            Explanation = "The one intrinsic thing about `if` is its invocation: evaluate the condition, then only the selected branch. That belongs to the resolved builtin — shadow the name and the selected user callable determines which of the same suspended arguments it demands — and it is not a promise about arguments the CALLER already evaluated, so building a value before spreading it follows the ordinary expression-to-value-to-supply rule.",
         },
         new()
         {

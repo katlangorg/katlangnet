@@ -210,7 +210,7 @@ public class AutomaticForwardingBindingTests
         { "called-property-reference-is-not-rebound", "v(x) = 99\nNeed(v) = 0\nOuter = { Inner = v(1)\nInner + Need }\nOuter({x + 1})", "ok 99" },
         { "dot-receiver-reference-is-not-rebound", "v = { Member = 99 }\nMember(x) = x + 1\nNeed(v) = 0\nOuter = { Inner = v.Member\nInner + Need }\nOuter(7)", "ok 99" },
         // The written `v` stays the root property `v = x + 1`, whose `x` the closed list cannot forward.
-        { "strict-property-reference-stays-blocked", "v = x + 1\nNeed(v) = 0\nOuter = { Inner(q) = Math.Abs(v)\nInner(0) + Need }\nOuter(7)", "parse UndeclaredIdentifier" },
+        { "strict-property-reference-stays-blocked", "v = x + 1\nNeed(v) = 0\nOuter = { Inner(q) = Math.Abs(v)\nInner(0) + Need }\nOuter(7)", "err ArityMismatch" },
         { "same-owner-property-collides", "A = y + 1\nF = { y = 3\n  A + 0 }\nF", "parse ParameterPropertyCollision" },
         // A lone row is a callable alias instead (FWD-02): `y` stays A's private binder name — the alias
         // declares no parameter — so it collides with no property, and the call is A's own.
