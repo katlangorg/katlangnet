@@ -123,6 +123,15 @@ internal sealed class EvaluationBudget
     private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
 
     /// <summary>
+    /// First-declaration property selection for this run, shared across wired views by
+    /// property-list reference. Kept here so neither AST records nor the hot by-value
+    /// EvalCtx acquire cache state. Independent runs observe host-list edits afresh.
+    /// </summary>
+    internal PropertyBindingIndexCache PropertyBindings => _propertyBindings ??= new();
+
+    private PropertyBindingIndexCache? _propertyBindings;
+
+    /// <summary>
     /// Observes the run's host cancellation token, throwing
     /// <see cref="OperationCanceledException"/> (carrying that token) when cancellation
     /// has been requested, and doing nothing otherwise. The default token follows the

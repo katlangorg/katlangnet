@@ -533,19 +533,11 @@ public static partial class Evaluator
             Properties: [], Output: []);
 
     /// <summary>Lean: Algorithm.lookupProp (any visibility).</summary>
-    private static Algorithm? LookupProp(Algorithm alg, string name)
-    {
-        foreach (var prop in alg.Properties)
-            if (prop.Name == name) return prop.Value;
-        return null;
-    }
+    private static Algorithm? LookupProp(Algorithm alg, string name, EvaluationBudget budget)
+        => LookupPropBinding(alg, name, budget)?.Value;
 
-    private static Property? LookupPropBinding(Algorithm alg, string name)
-    {
-        foreach (var prop in alg.Properties)
-            if (prop.Name == name) return prop;
-        return null;
-    }
+    private static Property? LookupPropBinding(Algorithm alg, string name, EvaluationBudget budget)
+        => budget.PropertyBindings.Lookup(alg.Properties, name);
 
     private static bool IsExported(Property property)
         => property.Exposure == PropertyExposure.Exported;
@@ -1421,15 +1413,12 @@ public static partial class Evaluator
     /// evaluation frame must not add another O(chain) recursive burst on top of the
     /// already-deep host stack.
     /// </summary>
-    private static Algorithm? LookupInParentsDirect(ScopeCtx sc, string name)
+    private static Algorithm? LookupInParentsDirect(ScopeCtx sc, string name, EvaluationBudget budget)
     {
         for (ScopeCtx? current = sc; current is not null; current = current.Parent)
         {
-            foreach (var prop in current.Properties)
-            {
-                if (prop.Name == name)
-                    return WithParent(prop.Value, current);
-            }
+            if (budget.PropertyBindings.Lookup(current.Properties, name) is { } prop)
+                return WithParent(prop.Value, current);
         }
 
         return null;
@@ -1439,13 +1428,13 @@ public static partial class Evaluator
     /// Direct lexical lookup: local properties + parent chain only (no opens).
     /// Lean: lookupLexicalDirect (Option).
     /// </summary>
-    private static Algorithm? LookupLexicalDirect(Algorithm alg, string name)
+    private static Algorithm? LookupLexicalDirect(Algorithm alg, string name, EvaluationBudget budget)
     {
-        var local = LookupProp(alg, name);
+        var local = LookupProp(alg, name, budget);
         if (local is not null)
             return ChildOf(alg, local);
 
-        return alg.Parent is { } sc ? LookupInParentsDirect(sc, name) : null;
+        return alg.Parent is { } sc ? LookupInParentsDirect(sc, name, budget) : null;
     }
 
     // ── Open resolution ─────────────────────────────────────────────────────
@@ -1593,19 +1582,16 @@ public static partial class Evaluator
 
     // Iterative over the parent chain for the same reason as LookupInParentsDirect:
     // no O(chain) recursion on top of the deepest evaluation stack.
-    private static ResolvedLexicalProperty? LookupInParentsDirectBinding(ScopeCtx sc, string name)
+    private static ResolvedLexicalProperty? LookupInParentsDirectBinding(ScopeCtx sc, string name, EvaluationBudget budget)
     {
         for (ScopeCtx? current = sc; current is not null; current = current.Parent)
         {
-            foreach (var prop in current.Properties)
+            if (budget.PropertyBindings.Lookup(current.Properties, name) is { } prop)
             {
-                if (prop.Name == name)
-                {
-                    return new ResolvedLexicalProperty(
-                        current.Owner,
-                        prop,
-                        WithParent(prop.Value, current));
-                }
+                return new ResolvedLexicalProperty(
+                    current.Owner,
+                    prop,
+                    WithParent(prop.Value, current));
             }
         }
 
@@ -1729,7 +1715,7 @@ public static partial class Evaluator
         Algorithm alg, string name, EvalCtx ctx)
     {
         // 1. Local properties (any visibility)
-        var local = LookupPropBinding(alg, name);
+        var local = LookupPropBinding(alg, name, ctx.Budget);
         if (local is not null)
             return EvalResult<ResolvedLexicalProperty>.Ok(
                 new ResolvedLexicalProperty(
@@ -1740,7 +1726,7 @@ public static partial class Evaluator
         // 2. Parent chain structural only (any visibility, no opens)
         if (alg.Parent is { } sc)
         {
-            var structural = LookupInParentsDirectBinding(sc, name);
+            var structural = LookupInParentsDirectBinding(sc, name, ctx.Budget);
             if (structural is not null)
                 return EvalResult<ResolvedLexicalProperty>.Ok(structural.Value);
         }
@@ -2197,7 +2183,7 @@ public static partial class Evaluator
                     // open imports only public members (enforced later by LookupOpens).
                     if (ctx.CallStack.Count > 0)
                     {
-                        var found = LookupLexicalDirect(ctx.CallStack[0], name);
+                        var found = LookupLexicalDirect(ctx.CallStack[0], name, ctx.Budget);
                         if (found is not null)
                         {
                             if (found is Algorithm.Builtin)
@@ -2230,7 +2216,7 @@ public static partial class Evaluator
         if (targetResult.IsError) return targetResult.Error;
 
         // First check if property exists at all so ownership still wins over opens.
-        var prop = LookupPropBinding(targetResult.Value, propName);
+        var prop = LookupPropBinding(targetResult.Value, propName, ctx.Budget);
         if (prop is not null)
         {
             if (prop.Value is Algorithm.Builtin)
@@ -2281,7 +2267,7 @@ public static partial class Evaluator
             return null;
 
         var memberName = dotCall.Name;
-        var binding = LookupPropBinding(targetR.Value, memberName);
+        var binding = LookupPropBinding(targetR.Value, memberName, ctx.Budget);
         if (binding is null || !IsExported(binding))
             return null;
 
@@ -3162,7 +3148,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var binding = LookupPropBinding(alg, name);
+        var binding = LookupPropBinding(alg, name, ctx.Budget);
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 

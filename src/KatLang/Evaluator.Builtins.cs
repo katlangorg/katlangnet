@@ -2149,7 +2149,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var containerR = ResolveDotReceiver(edge.Target, ctx, out _);
-        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name) is { } member)
+        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name, ctx.Budget) is { } member)
         {
             if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
                 return limitError;

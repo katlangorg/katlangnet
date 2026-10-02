@@ -635,9 +635,9 @@ public class CallableAliasBindingIndirectionTests
 
     /// <summary>
     /// (length, target declarations, target, the call through the last link, its value) — a user callable,
-    /// a builtin, `if`, a nameable and an unnameable family. Each chain is its own program: the evaluator's
-    /// name lookup scans a level's properties, so one program holding several 10,000-link chains would
-    /// measure that (pre-existing, alias-independent) scan rather than the chase.
+    /// a builtin, `if`, a nameable and an unnameable family. Each chain is its own program to isolate
+    /// target-category coverage. Large property lists use the run-local name index; its complexity
+    /// and exact first-binding identity are pinned separately by PropertyBindingIndexTests.
     /// </summary>
     public static TheoryData<int, string, string, string, decimal> ChainCases()
     {

@@ -309,7 +309,7 @@ public static partial class Evaluator
         var targetResult = ResolveDotReceiver(dotCall.Target, ctx, out _);
         if (targetResult.IsOk)
         {
-            if (LookupPropBinding(targetResult.Value, name) is not null)
+            if (LookupPropBinding(targetResult.Value, name, ctx.Budget) is not null)
                 return $"{name} is shadowed by a structural property";
 
             if (targetResult.Value.DefinesConditionalBranchProperty(name))
@@ -385,7 +385,7 @@ public static partial class Evaluator
         }
 
         var receiver = receiverResult.Value;
-        var member = LookupPropBinding(receiver, edge.Name);
+        var member = LookupPropBinding(receiver, edge.Name, ctx.Budget);
         if (member is not null)
         {
             if (!IsAccessibleFrom(member, receiver, ctx))
@@ -508,7 +508,7 @@ public static partial class Evaluator
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
 
-        var prop = LookupPropBinding(targetAlg, name);
+        var prop = LookupPropBinding(targetAlg, name, ctx.Budget);
         if (prop is not null)
         {
             // Selection is by declaration (structural access ignores `public`); the

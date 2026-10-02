@@ -695,7 +695,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var binding = LookupPropBinding(alg, name);
+        var binding = LookupPropBinding(alg, name, ctx.Budget);
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 
@@ -3253,7 +3253,7 @@ public static partial class Evaluator
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
 
-        var prop = LookupPropBinding(targetAlg, name);
+        var prop = LookupPropBinding(targetAlg, name, ctx.Budget);
         if (prop is not null)
         {
             if (!IsAccessibleFrom(prop, targetAlg, ctx))
@@ -3417,7 +3417,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var containerR = ResolveDotReceiver(edge.Target, ctx, out _);
-        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name) is { } member)
+        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name, ctx.Budget) is { } member)
         {
             if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
                 return limitError;
