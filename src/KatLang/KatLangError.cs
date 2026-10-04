@@ -894,17 +894,34 @@ public sealed class KatLangError
         // count so the displayed count and displayed list never disagree.
         var expected = mismatch.Expected;
         var names = context.StepParameterNames;
-        var parameterDetail = names.Count == 0
-            ? "because the step has no parameters"
-            : names.Count == expected
-                ? $"for {FormatCount(names.Count, "parameter")} {FormatQuotedList(names)}"
-                : $"for parameters {FormatQuotedList(names)}";
+        var actualStateValues = FormatCount(context.ActualStateValueCount, "state value");
 
-        return $"`{context.LoopName}` step expects {FormatCount(expected, "state value")} {parameterDetail}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. Loop state values are bound positionally to the step's implicit parameters. If this is a nested step, remember that names already bound by an enclosing algorithm are captured, not added as step parameters; use a distinct state-slot name such as `candidate` when threading an outer value through the loop state.";
+        // NO parameter label (X-23): the binder found no parameter of the step to bind a
+        // state value to. The payload cannot say why — a zero-parameter algorithm, a callable
+        // whose parameters the loop's state binding does not bind (a clause family, a
+        // builtin, an alias of either), and a value that is not a callable at all produce
+        // this same structured error — so the message states only that binding fact. It never
+        // claims the step "has no parameters" (false for a family or a builtin) and never
+        // describes a value as a zero-parameter step, and it says nothing about which
+        // callables may be loop steps.
+        if (names.Count == 0)
+        {
+            var pronoun = context.ActualStateValueCount == 1 ? "it" : "them";
+            return $"`{context.LoopName}` cannot bind the current loop state to its step: the current loop state has {actualStateValues}, but the loop found no step parameter to bind {pronoun} to. Loop state values are bound positionally to the step's parameters. {NestedLoopStepHint}";
+        }
+
+        var parameterDetail = names.Count == expected
+            ? $"for {FormatCount(names.Count, "parameter")} {FormatQuotedList(names)}"
+            : $"for parameters {FormatQuotedList(names)}";
+
+        return $"`{context.LoopName}` step expects {FormatCount(expected, "state value")} {parameterDetail}, but the current loop state has {actualStateValues}. Loop state values are bound positionally to the step's parameters. {NestedLoopStepHint}";
     }
 
+    private const string NestedLoopStepHint =
+        "If this is a nested step with inferred parameters, remember that names already bound by an enclosing algorithm are captured, not added as step parameters; use a distinct state-slot name such as `candidate` when threading an outer value through the loop state.";
+
     private static string FormatVariadicLoopStateArityMismatch(VariadicLoopStateBindingContext context)
-        => $"`{context.LoopName}` variadic step expects at least {FormatCount(context.ExpectedMinimumStateValueCount, "state value")} for fixed parameter(s) {FormatQuotedList(context.StepParameterNames)}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. A collecting loop parameter collects the remaining state values as an exact list with `*name`; ordinary implicit parameters still bind one state value each.";
+        => $"`{context.LoopName}` variadic step expects at least {FormatCount(context.ExpectedMinimumStateValueCount, "state value")} for fixed parameter(s) {FormatQuotedList(context.StepParameterNames)}, but the current loop state has {FormatCount(context.ActualStateValueCount, "state value")}. A collecting loop parameter collects the remaining state values as an exact list with `*name`; ordinary parameters still bind one state value each.";
 
     private static string FormatReduceInitialAccumulator(IReadOnlyList<string> requiredParameterNames)
     {

@@ -135,6 +135,11 @@ public class MaintainedDocumentationConsistencyTests
         { @"\balias(?:es)?\s+inherits?\s+(?:the\s+|its\s+)?(?:callee'?s|target'?s)\s+(?:patterns|signature|parameters)\b", "an alias inheriting its callee's signature (before binding indirection)" },
         { @"\bnot\s+alias\s+or\s+forwarding\s+targets\b", "route-based lone-row alias eligibility (before binding indirection)" },
         { @"\bC\s*=\s*count`?\s+stays\s+(?:a\s+zero-parameter|an\s+ordinary)\s+property\b", "a builtin's lone row as a zero-parameter property (before binding indirection)" },
+        // X-23 (October 2026): a loop-state mismatch whose step contributes no parameter label is
+        // reported by that binding fact alone. Its one payload cannot tell a zero-parameter
+        // algorithm from a clause family, a builtin, an alias of either or a value, so no text
+        // explains it as a step that has no parameters.
+        { @"\bbecause\s+the\s+step\s+has\s+no\s+parameters\b", "the false loop-step explanation (before X-23)" },
     };
 
     [Theory]

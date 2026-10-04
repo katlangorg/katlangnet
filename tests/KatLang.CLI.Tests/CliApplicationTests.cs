@@ -288,6 +288,41 @@ public sealed class CliApplicationTests
         Assert.Contains("Division by zero", result.TrimmedError);
     }
 
+    [Theory]
+    // X-23: a loop step the loop finds no parameter of — a clause family, a builtin, a value that
+    // is not a callable — is reported by that binding fact, never as a step that "has no parameters".
+    [InlineData("F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "[3:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    [InlineData("repeat(count, 1, [1, 2])", "[1:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    [InlineData("while(5, 1)", "[1:1] while evaluating call to while: `while` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    public async Task Eval_LoopStepWithNoBindableParameter_ReportsTheBindingFact(string source, string expected)
+    {
+        var result = await Cli.InvokeAsync("eval", source);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.StartsWith(expected, result.TrimmedError);
+        Assert.DoesNotContain("has no parameters", result.TrimmedError);
+    }
+
+    private const string InvalidOpenTargetSource = "open {\n  N(y) = y\n  public P(x) = N\n  public X = 1\n}\nX\n";
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("check")]
+    public async Task InvalidOpenTargetMember_FailsTheCommandBeforeAnythingRuns(string command)
+    {
+        // X-48: an open target is validated like a property body; `X` is never printed.
+        using var file = new TempSourceFile(InvalidOpenTargetSource);
+
+        var result = await Cli.InvokeAsync(command, file.Path);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.StartsWith(
+            "[3:17] 'N' is forwarded by name here, but its parameter 'y' is not a parameter of the enclosing explicit parameter list.",
+            result.TrimmedError);
+    }
+
     [Fact]
     public async Task Run_ProgramWithoutOutput_SucceedsSilently()
     {
@@ -671,6 +706,26 @@ public sealed class CliApplicationTests
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal(ModuleUrl, Assert.Single(downloader.RequestedUrls));
         Assert.Contains("failed to fetch", result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task AllowLoading_InvalidOpenedModule_IsRejectedAtTheImportSite()
+    {
+        // X-48: a directly opened module is validated like a property-held one; the module is
+        // acquired once, rejected at its import site, and its program never prints `Val`.
+        const string url = "https://katlang.org/demo/cli-x48-invalid.kat";
+        var downloader = new RecordingDownloader(new Dictionary<string, string>
+        {
+            [url] = "N(y) = y\npublic P(x) = N\npublic Val = 41",
+        });
+
+        var result = await Cli.InvokeWithDownloaderAsync(
+            downloader.DownloadAsync, "eval", $"open '{url}'\nVal\n", "--allow-loading");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(url, Assert.Single(downloader.RequestedUrls));
+        Assert.StartsWith("[1:6] 'N' is forwarded by name here", result.TrimmedError);
     }
 
     [Fact]

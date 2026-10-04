@@ -2697,6 +2697,35 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void InvalidOpenTargetMember_ReportsTheResolverDiagnostic_OnAnUnchangedModel()
+    {
+        // X-48: an open target is validated like any body, so the parse result an editor reads
+        // carries the resolver's bare-forwarding verdict at the bare `N`. The verdict adds a
+        // diagnostic only: the elaborated tree, and so the model built from it, is the one the
+        // resolver always produced for this text — `P` keeps its written signature `P(x)` and its
+        // row still resolves to the target's own `N`.
+        const string source = """
+            open {
+              N(y) = y
+              public P(x) = N
+              public X = 1
+            }
+            X
+            """;
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var error = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.UnforwardableParameter, error.Code);
+        AssertSpan(Assert.NotNull(error.Span), 3, 17, 3, 18);
+
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        AssertPropertySignature(SingleProperty(model, "P"), "P(x)", "x");
+        var n = Assert.Single(model.FindDeclarations("N"));
+        var bareN = ResolutionAt(model, 3, 17);
+        Assert.Equal(IdentifierClassification.PropertyReference, bareN.Classification);
+        Assert.Same(n, bareN.ResolvedDeclaration);
+    }
+
+    [Fact]
     public void ModuleProvenance_LocalContentAfterImportedOpenKeepsItsSites()
     {
         // Suppression must not leak past the imported subtree: document declarations,

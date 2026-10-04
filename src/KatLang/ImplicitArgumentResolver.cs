@@ -1807,7 +1807,7 @@ internal static class ImplicitArgumentResolver
         ResolutionRun run,
         List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
-        var newOpens = ProcessOpenExprs(alg.Opens, observations, run);
+        var newOpens = ProcessOpenExprs(alg.Opens, observations, diagnostics, run);
 
         // Q-04: the enclosing PARAMETER bindings this body's own forwarding reuses — those its
         // owners established, minus any name this body declares as a property (the nearer
@@ -2073,6 +2073,7 @@ internal static class ImplicitArgumentResolver
     private static IReadOnlyList<Expr> ProcessOpenExprs(
         IReadOnlyList<Expr> opens,
         FrontEndTraversalObservations? observations,
+        DiagnosticBag? diagnostics,
         ResolutionRun run)
     {
         if (opens.Count == 0)
@@ -2080,8 +2081,13 @@ internal static class ImplicitArgumentResolver
 
         // One memo bundle per open-target region: every walk below runs with a fresh EMPTY
         // signature map, so the region's rewrite context is constant regardless of which
-        // fresh map instance a call site allocates.
-        var memos = new ResolverWalkMemos(run, observations, diagnostics: null);
+        // fresh map instance a call site allocates. The region reports into the CALLER's
+        // diagnostic sink like every other region of the pass (X-48): prelude rooting decides
+        // what an open target can SEE, never which rules apply to it (MOD-06), so its bare
+        // forwarding, formula lifting and inferred-signature verdicts are reported exactly as
+        // they are for a property body — and a recovered signature, which exists only beside
+        // its reported error, can never reach evaluation.
+        var memos = new ResolverWalkMemos(run, observations, diagnostics);
         var processed = new List<Expr>(opens.Count);
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, memos));
@@ -2097,7 +2103,7 @@ internal static class ImplicitArgumentResolver
         DiagnosticBag? diagnostics,
         ResolutionRun run)
     {
-        var newOpens = ProcessOpenExprs(conditional.Opens, observations, run);
+        var newOpens = ProcessOpenExprs(conditional.Opens, observations, diagnostics, run);
         var branches = new List<CondBranch>(conditional.Branches.Count);
         foreach (var branch in conditional.Branches)
         {
