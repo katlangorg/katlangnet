@@ -73,6 +73,17 @@ public static partial class Evaluator
             ? error
             : EvalResult<Result>.Ok(CombineOutputSlots(items));
 
+    /// <summary>
+    /// The completed <c>while</c>/<c>repeat</c> result (LOOP-07, Q-26 decided October 2026):
+    /// ONE value — the canonical capture of the final state's slots (<c>()</c> for zero
+    /// slots, the slot itself for one, a sequence for several) — crossing the ordinary
+    /// RESULT value boundary like every other builtin and call result, so its emitted count
+    /// is <see cref="Result.ValueCount"/> of that value (<see cref="ReCountValueBoundary(CountedResult)"/>),
+    /// never the slot count. The slot count is the loop's own protocol and is not observable
+    /// outside the loop; only an explicit spread <c>L*</c> opens the result into items. This
+    /// is the ONE construction site of a loop result: the generic loops (sync and async),
+    /// the planned frame and every handover reach it. Lean: <c>loopResultCounted</c>.
+    /// </summary>
     internal static EvalResult<CountedResult> MakeCheckedLoopStateResult(
         EvalCtx ctx,
         IReadOnlyList<Result> stateSlots,
@@ -81,7 +92,7 @@ public static partial class Evaluator
         var valueR = MakeCheckedSequenceCapture(ctx, stateSlots, span);
         return valueR.IsError
             ? valueR.Error
-            : EvalResult<CountedResult>.Ok(new CountedResult(valueR.Value, stateSlots.Count));
+            : EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(valueR.Value, stateSlots.Count)));
     }
 
     private static EvalResult<CountedResult> MakeCollectionListResult(
@@ -133,9 +144,10 @@ public static partial class Evaluator
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already normalized redundant unary empty structure.
-    // Selection and callback items cross this same value boundary. Never apply it to
-    // body/root output accumulation (EvalAlgOutputCountedCore) or to multi-slot
-    // while/repeat loop state, both of which must keep their multi-item counts.
+    // Selection, callback items and the completed while/repeat result
+    // (MakeCheckedLoopStateResult, Q-26) cross this same value boundary. Never apply it
+    // to body/root output accumulation (EvalAlgOutputCountedCore) or to a loop step's
+    // own row supply (EvalAlgOutputSlots), both of which must keep their multi-item counts.
     // (Collecting bindings need no re-count: CollectSegment stores one exact list with
     // emitted count 1.) Lexical zero-arg property access (EvalCounted
     // Expr.Resolve) and the `if` builtin already perform this same re-count
@@ -2182,8 +2194,8 @@ public static partial class Evaluator
                     // `X = 1, 2, 3` therefore yields the grouped sequence value
                     // `(1, 2, 3)` with emitted count 1, not three separate outputs.
                     // Explicit spread (`if(true, X, X)*`) is the way to open it.
-                    // Unlike `while`/`repeat`, which intentionally preserve multi-slot
-                    // loop state, `if` re-counts the chosen branch value here.
+                    // `if` re-counts the chosen branch value here, exactly as a completed
+                    // `while`/`repeat` re-counts its final state (MakeCheckedLoopStateResult).
                     var branchR = truth.Value
                         ? EvalResolvedArgumentCounted(args[1], ctx, valEnv)
                         : EvalResolvedArgumentCounted(args[2], ctx, valEnv);

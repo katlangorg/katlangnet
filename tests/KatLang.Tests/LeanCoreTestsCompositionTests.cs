@@ -40,6 +40,7 @@ public class LeanCoreTestsCompositionTests
         "StructuralPatterns",
         "AliasForwarding",
         "ModelC",
+        "LoopCardinality",
     ];
 
     [Fact]

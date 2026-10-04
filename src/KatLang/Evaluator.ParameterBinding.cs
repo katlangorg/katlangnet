@@ -93,40 +93,10 @@ public static partial class Evaluator
         public Expr? Source { get; init; }
     }
 
-    private enum GenericLoopStepBindingShape
-    {
-        Legacy,
-        Patterned,
-        FlatFixed,
-        FlatCollecting,
-    }
-
-    private readonly record struct GenericLoopStepBindingSelection(
-        GenericLoopStepBindingShape Shape,
-        FlatCollectingBindingLayout? FlatCollectingLayout);
-
     private readonly record struct GenericLoopStepBindingContract(
         IReadOnlyList<ParameterDeclaration> Parameters,
         IReadOnlyList<ParameterPattern> ParameterPatterns,
         IReadOnlyList<string> ParameterNames);
-
-    private readonly record struct FlatCollectingBindingLayout(
-        CallableSignature Signature,
-        string CollectingName);
-
-    private static bool HasStructuredParameterPattern(Algorithm algorithm)
-        => algorithm.ParameterPatterns.Any(static parameter => ParameterPattern.StructuralItems(parameter) is not null);
-
-    // User-call routing uses CallableBindingPlan.RequiresPatternedBinding.
-    // This helper remains for runtime paths that inspect Algorithm patterns
-    // directly, including callbacks, evaluated loop slots, and loop fallbacks.
-    private static bool UsesPatternBinding(Algorithm algorithm)
-        => HasStructuredParameterPattern(algorithm)
-            || ParameterPattern.HasRepeatedCaptureNames(algorithm.ParameterPatterns);
-
-    private static bool UsesPatternBinding(IReadOnlyList<ParameterPattern> parameterPatterns)
-        => parameterPatterns.Any(static parameter => ParameterPattern.StructuralItems(parameter) is not null)
-            || ParameterPattern.HasRepeatedCaptureNames(parameterPatterns);
 
     private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm step)
     {
@@ -165,71 +135,35 @@ public static partial class Evaluator
         return true;
     }
 
-    private static GenericLoopStepBindingSelection SelectGenericLoopStepBinding(Algorithm step)
-    {
-        var plan = TryCreateUserLoopStepBindingPlan(step);
-        if (plan is null)
-            return new GenericLoopStepBindingSelection(
-                GenericLoopStepBindingShape.Legacy,
-                FlatCollectingLayout: null);
-
-        if (plan.RequiresPatternedBinding)
-            return new GenericLoopStepBindingSelection(
-                GenericLoopStepBindingShape.Patterned,
-                FlatCollectingLayout: null);
-
-        if (TryGetFlatCollectingBindingLayout(plan, out var collectingLayout))
-            return new GenericLoopStepBindingSelection(
-                GenericLoopStepBindingShape.FlatCollecting,
-                collectingLayout);
-
-        if (plan.TryGetFlatFixedLayout(out _))
-            return new GenericLoopStepBindingSelection(
-                GenericLoopStepBindingShape.FlatFixed,
-                FlatCollectingLayout: null);
-
-        return new GenericLoopStepBindingSelection(
-            GenericLoopStepBindingShape.Legacy,
-            FlatCollectingLayout: null);
-    }
-
-    private static bool ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(
-        Algorithm step,
-        GenericLoopStepBindingSelection bindingSelection)
-        => bindingSelection.Shape switch
-        {
-            GenericLoopStepBindingShape.Patterned => true,
-            GenericLoopStepBindingShape.Legacy => UsesPatternBinding(step),
-            _ => false,
-        };
-
     /// <summary>
     /// The loop-invariant part of generic loop-step execution, prepared ONCE per loop
     /// invocation and reused by every iteration (M16). Everything here depends only on
     /// the step algorithm and the loop's own context — never on iteration state — so
-    /// per-iteration recomputation was pure waste: the binding selection rebuilt the
-    /// step's callable signature, binding plan, and display text every iteration, and
-    /// the shadowed counted environment refiltered the same invariant inputs.
+    /// per-iteration recomputation was pure waste: the snapshot of the step's parameter
+    /// patterns, their need-pattern view, and the shadowed environments would refilter
+    /// the same invariant inputs every iteration.
     /// Iteration-varying work (state binding, the fresh counted-environment
     /// concatenation whose list identity is a zero-arg-cache key component, and step
     /// output evaluation) stays in <see cref="RunStepSlots"/>.
+    /// Nothing prepared here is consulted when the step's rows form the next state: the
+    /// parameter patterns BIND the incoming state only, and the next state is the step's
+    /// row supply (<see cref="EvalAlgOutputSlots"/>) whatever the pattern category
+    /// (LOOP-03; Q-24 retired the former pattern-triggered packing of a spread row).
     /// </summary>
     private readonly record struct PreparedGenericLoopStep(
         GenericLoopStepBindingContract BindingContract,
         IReadOnlyList<NeedPattern> NeedPatterns,
-        GenericLoopStepBindingSelection BindingSelection,
         AlgEnv ShadowedAlgEnv,
-        CountedParamEnv ShadowedCountedParamEnv,
-        bool PreserveSequenceSpreadExpressionBoundaries);
+        CountedParamEnv ShadowedCountedParamEnv);
 
     /// <summary>
-    /// Freezes the temporary algorithm-shaped view used to derive callable metadata.
-    /// Public
+    /// Freezes the temporary algorithm-shaped view used to derive the step's binding
+    /// contract. Public
     /// host-built AST records may retain caller-owned <see cref="IReadOnlyList{T}"/>
     /// instances, so reading the original user algorithm again after a callback could
-    /// mix a prepared plan for the old shape with parameter lists mutated to a new
+    /// mix a prepared binding for the old shape with parameter lists mutated to a new
     /// shape. The returned copy is used only while preparation derives the narrow
-    /// <see cref="GenericLoopStepBindingContract"/> and binding plan; it is not stored
+    /// <see cref="GenericLoopStepBindingContract"/> and its need patterns; it is not stored
     /// in the prepared object. Executable body, scope, properties, and opens remain on
     /// <paramref name="step"/> and are evaluated normally every iteration.
     /// </summary>
@@ -336,7 +270,6 @@ public static partial class Evaluator
     {
         ctx.Observations?.RecordGenericLoopStepBindingPreparation();
         var bindingContract = SnapshotGenericLoopStepBindingContract(step);
-        var bindingSelection = SelectGenericLoopStepBinding(bindingContract);
         var parameterNames = bindingContract.Params.ToArray();
         // Both inherited tiers are shadowed once per loop invocation through the
         // shared callee-context helper; RunStepSlots prepends the per-iteration
@@ -348,26 +281,8 @@ public static partial class Evaluator
                 bindingContract.ParameterPatterns,
                 parameterNames),
             NeedParameterPatterns(bindingContract.ParameterPatterns),
-            bindingSelection,
             inherited.AlgEnv,
-            inherited.CountedParamEnv,
-            ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries(bindingContract, bindingSelection));
-    }
-
-    private static bool TryGetFlatCollectingBindingLayout(
-        CallableBindingPlan plan,
-        out FlatCollectingBindingLayout layout)
-    {
-        if (!plan.TryGetFlatCollectingLayout(out var prefix, out var collecting, out var suffix))
-        {
-            layout = default;
-            return false;
-        }
-
-        layout = new FlatCollectingBindingLayout(
-            plan.Signature,
-            collecting.Name);
-        return true;
+            inherited.CountedParamEnv);
     }
 
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueItems(

@@ -720,21 +720,23 @@ def preparedAlgorithmOutputKeepsSelectedSlotWhole : Bool :=
 
 #guard preparedAlgorithmOutputKeepsSelectedSlotWhole
 
-/-- A non-spread multi-slot loop result still occupies one written slot even
-    though its emitted count is two. Selection no longer exercises this distinction. -/
-def preparedAlgorithmOutputKeepsMultiSlotLoopWhole : Bool :=
+/-- A non-spread multi-slot loop result occupies one written slot AND emits one
+    value: a completed `while`/`repeat` is an ordinary value boundary (Q-26,
+    October 2026; `loopResultCounted`), so its two-slot final state is the one
+    value `(1, 2)` with count 1 — formerly count 2 for one slot. -/
+def preparedAlgorithmOutputCountsAMultiSlotLoopOnce : Bool :=
   let loop := KatLang.Expr.call (resolve "repeat")
     [.algorithmExpr (alg ["a", "b"] [] [] [.param "a", .param "b"]), .num 1, .num 1, .num 2]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   let output := KatLang.wireToCaller ctx (alg [] [] [] [loop])
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
   | .ok ({
-      counted := (.sequenceValue [.atom 1, .atom 2], 2),
+      counted := (.sequenceValue [.atom 1, .atom 2], 1),
       outputSlots := [.sequenceValue [.atom 1, .atom 2]]
     }, _) => true
   | _ => false
 
-#guard preparedAlgorithmOutputKeepsMultiSlotLoopWhole
+#guard preparedAlgorithmOutputCountsAMultiSlotLoopOnce
 
 /-- Discriminator: a multi-emitting single output row — the explicit spread of the
     selected pair, `(((1, 2), (3, 4)):0)*` — supplies two slots with count 2, so

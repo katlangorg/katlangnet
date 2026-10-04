@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2499
+- surface corpus cases: 2511
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2457
+- Lean-representable surface cases: 2469
 - internal-node cases: 14
-- total generated guards: 2471 case guards + 2 count guards
+- total generated guards: 2483 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -11798,7 +11798,7 @@ def case_special__whileZeroIterations : Expr :=
 -- special__whileTwoSlotState: S(a, b) = a + 1, b * 2, a < 3 \n while(S, 1, 1)
 def case_special__whileTwoSlotState : Expr :=
   .algorithmExpr (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.num 1)), (.binary .mul (.param "b") (.num 2)), (.comparison (.param "a") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "while") [.resolve "S", .num 1, .num 1])])
-#guard obs case_special__whileTwoSlotState == "ok raw=S[3, 4] n=2"
+#guard obs case_special__whileTwoSlotState == "ok raw=S[3, 4] n=1"
 
 -- special__whileEmptyInitialState: S(a) = a, 0 \n while(S, ())
 def case_special__whileEmptyInitialState : Expr :=
@@ -11814,6 +11814,66 @@ def case_special__whileNonNumericContinuation : Expr :=
 def case_special__whileDot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [(.binary .sub (.param "a") (.num 1)), (.comparison (.param "a") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.resolve "S") "while" (some [.num 3]))])
 #guard obs case_special__whileDot == "ok raw=1 n=1"
+
+-- special__loopResultIsOneRow: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)
+def case_special__loopResultIsOneRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))])
+#guard obs case_special__loopResultIsOneRow == "ok raw=S[55, 89] n=1"
+
+-- special__loopResultBesideAnotherRow: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1), 7
+def case_special__loopResultBesideAnotherRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), .num 7])
+#guard obs case_special__loopResultBesideAnotherRow == "ok raw=S[S[55, 89], 7] n=2"
+
+-- special__loopResultSpreadOpensIt: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)*
+def case_special__loopResultSpreadOpensIt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])))])
+#guard obs case_special__loopResultSpreadOpensIt == "ok raw=S[55, 89] n=2"
+
+-- special__loopZeroSlotResult: Drop(*xs) = { ()* } \n repeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9
+def case_special__loopZeroSlotResult : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Drop" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.sequenceSpread (.emptySequence 0))])] [(.call (.resolve "repeat") [.resolve "Drop", .num 1, .num 5]), (.sequenceSpread (.call (.resolve "repeat") [.resolve "Drop", .num 1, .num 5])), .num 9])
+#guard obs case_special__loopZeroSlotResult == "ok raw=S[S[], 9] n=2"
+
+-- special__repeatedNameStepSpreadRowIsTwoSlots: Dup(x, x) = { (x + 1, x + 1)* } \n Dup.repeat(2, 1, 1)
+def case_special__repeatedNameStepSpreadRowIsTwoSlots : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1]))])
+#guard obs case_special__repeatedNameStepSpreadRowIsTwoSlots == "ok raw=S[3, 3] n=1"
+
+-- special__repeatedNameStepDivergingRowsRebindFails: Dup(x, x) = { x + 1, x + 2 } \n Dup.repeat(2, 1, 1)
+def case_special__repeatedNameStepDivergingRowsRebindFails : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 2))])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1]))])
+#guard obs case_special__repeatedNameStepDivergingRowsRebindFails == "err arity"
+
+-- special__structuralStepSpreadRowSuppliesItems: Step2((a, b)) = { (b, a + b)* } \n repeat(Step2, 1, (0, 1)), Step2((0, 1))
+def case_special__structuralStepSpreadRowSuppliesItems : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.call (.resolve "repeat") [.resolve "Step2", .num 1, (.capture [.num 0, .num 1])]), (.call (.resolve "Step2") [(.capture [.num 0, .num 1])])])
+#guard obs case_special__structuralStepSpreadRowSuppliesItems == "ok raw=S[S[1, 1], S[1, 1]] n=2"
+
+-- special__structuralStepSpreadRowCannotRebind: Step2((a, b)) = { (b, a + b)* } \n Step2.repeat(2, (0, 1))
+def case_special__structuralStepSpreadRowCannotRebind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.dotCall (.resolve "Step2") "repeat" (some [.num 2, (.capture [.num 0, .num 1])]))])
+#guard obs case_special__structuralStepSpreadRowCannotRebind == "err arity"
+
+-- special__historyStepSpreadRowEqualsDirectCall: P((*h), n) = { h*, n + 1 } \n repeat(P, 1, (1, 2), 0) == P((1, 2), 0)
+def case_special__historyStepSpreadRowEqualsDirectCall : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h", kind := .collecting }], .capture { name := "n" }] [] [] [(.sequenceSpread (.param "h")), (.binary .add (.param "n") (.num 1))])] [(.comparison (.call (.resolve "repeat") [.resolve "P", .num 1, (.capture [.num 1, .num 2]), .num 0]) [{ op := .eq, operand := (.call (.resolve "P") [(.capture [.num 1, .num 2]), .num 0]) }])])
+#guard obs case_special__historyStepSpreadRowEqualsDirectCall == "ok raw=true n=1"
+
+-- special__nestedLoopStepRowIsOneSlot: Fibonacci(a, b) = b, a + b \n Two(a, b) = repeat(Fibonacci, 2, a, b) \n Two.repeat(3, 0, 1)
+def case_special__nestedLoopStepRowIsOneSlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"])])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+#guard obs case_special__nestedLoopStepRowIsOneSlot == "err arity"
+
+-- special__nestedLoopStepRowSpread: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci, 2, a, b)* } \n Two.repeat(3, 0, 1)
+def case_special__nestedLoopStepRowSpread : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"]))])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+#guard obs case_special__nestedLoopStepRowSpread == "ok raw=S[8, 13] n=1"
+
+-- special__callbackBodyLoopIsOneValue: Fib(x, y) = y, x + y \n [0, 1].map({ repeat(Fib, 2, x, 1) })
+def case_special__callbackBodyLoopIsOneValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["x", "y"] [] [] [.param "y", (.binary .add (.param "x") (.param "y"))])] [(.dotCall (.listLiteral [.num 0, .num 1]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.call (.resolve "repeat") [.resolve "Fib", .num 2, .param "x", .num 1])]))]))])
+#guard obs case_special__callbackBodyLoopIsOneValue == "ok raw=L[S[1, 2], S[2, 3]] n=1"
 
 -- special__containsSequenceItem: contains(((1, 2), 3), (1, 2))
 def case_special__containsSequenceItem : Expr :=
@@ -12380,7 +12440,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2457 differential cases.
+-- 2469 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14732,6 +14792,18 @@ def surfaceCaseIds : List String := [
   "special__whileEmptyInitialState",
   "special__whileNonNumericContinuation",
   "special__whileDot",
+  "special__loopResultIsOneRow",
+  "special__loopResultBesideAnotherRow",
+  "special__loopResultSpreadOpensIt",
+  "special__loopZeroSlotResult",
+  "special__repeatedNameStepSpreadRowIsTwoSlots",
+  "special__repeatedNameStepDivergingRowsRebindFails",
+  "special__structuralStepSpreadRowSuppliesItems",
+  "special__structuralStepSpreadRowCannotRebind",
+  "special__historyStepSpreadRowEqualsDirectCall",
+  "special__nestedLoopStepRowIsOneSlot",
+  "special__nestedLoopStepRowSpread",
+  "special__callbackBodyLoopIsOneValue",
   "special__containsSequenceItem",
   "special__containsListItem",
   "special__containsEmptyItem",
@@ -14846,7 +14918,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2457
+#guard surfaceCaseIds.length == 2469
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -14948,5 +15020,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2471 case guards (2457 surface + 14 internal-node).
+-- Total: 2483 case guards (2469 surface + 14 internal-node).
 end SemanticExplorerCases

@@ -152,6 +152,20 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bmeasured\s+margin\b|\b\d+(?:\.\d+)?x\s+\((?:Debug|Release)\)", "a portable calibrated stack-safety margin (before X-34)" },
         { @"calibrat\w*[^.;]{0,60}\b(?:depth\s+ceiling|depth\s+limit|depth\s+envelope|MaxSupportedDepth|MaxDepth)\b", "a depth limit calibrated against the host stack (before X-34)" },
         { @"\b(?:MaxSupportedDepth|depth\s+ceiling|depth\s+limit|depth\s+envelope)\b[^.;]{0,60}\bcalibrat", "a depth limit calibrated against the host stack (before X-34)" },
+        // Q-24 (October 4 2026): a loop step's parameter patterns bind the incoming state only; its
+        // row supply is the next state and NO pattern category repacks a spread row. The packing
+        // and the machinery that existed only to compute its flag are deleted, never to return.
+        { @"\bpack(?:s|ed|ing)?\s+(?:a\s+|its\s+|the\s+)?top-level\s+(?:output\s+)?spread\b", "pattern-triggered loop-output packing (before Q-24)" },
+        { @"\bpacked[\s-]+(?:next-state\s+)?slot\b", "pattern-triggered loop-output packing (before Q-24)" },
+        { @"\b(?:requiresPatternBinding|hasRepeatedParameterNames|[Pp]reserveSequenceSpreadExpressionBoundaries|ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries|SelectGenericLoopStepBinding|GenericLoopStepBindingShape|GenericLoopStepBindingSelection|FlatCollectingBindingLayout|TryGetFlatCollectingBindingLayout)\b", "the retired loop-output packing machinery (before Q-24)" },
+        // Q-26 (October 4 2026): a completed `while`/`repeat` is an ordinary value boundary — ONE
+        // value with count valueCount at every receiver — so no text lists loop results among the
+        // non-boundaries, lets a loop row emit its slots, or keeps SUP-01's nested-loop exception.
+        { @"\bNOT\s+value\s+boundaries\b[^.]{0,200}\bwhile`?/`?repeat\b", "loop results listed as not a value boundary (before Q-26)" },
+        { @"\bmulti-slot\s+loop\s+(?:result|state)\s+(?:may\s+)?emits?\s+(?:several|its|k)\b", "a loop result emitting its slots as rows (before Q-26)" },
+        { @"\bwhich\s+(?:intentionally\s+)?preserve\s+multi-slot\s+loop\s+state\b", "a loop result keeping its slot count (before Q-26)" },
+        { @"\bsole\s+exception:\s+a\s+nested\s+loop\s+row\b", "SUP-01's nested-loop step-row exception (before Q-26)" },
+        { @"\bcontributes\s+its\s+k\s+(?:state\s+)?slots\b", "a nested loop row contributing its slots (before Q-26)" },
     };
 
     [Theory]

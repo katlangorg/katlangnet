@@ -808,13 +808,76 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Nothing = {}\nNothing()", "err missingOutput"),
                 // Higher-order consumers add their own contract: a map callback must return exactly one element.
                 new SpecProbe("D(x) = x, x\n[1].map(D)", "err arity"),
-                // Loop state is NOT a value boundary: the finished loop hands its slots to the root as rows ...
-                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)", "ok raw=S[1, 1] n=2"),
-                // ... and only an ordinary property/argument boundary captures them as one value.
+                // A completed loop is a value boundary too (Q-26): the finished multi-slot loop is ONE value at the root ...
+                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)", "ok raw=S[1, 1] n=1"),
+                // ... exactly as through an ordinary property boundary ...
                 new SpecProbe("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR", "ok raw=S[1, 1] n=1"),
+                // ... and only the explicit spread opens it into items.
+                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*", "ok raw=S[1, 1] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.",
+        },
+        new()
+        {
+            Id = "loop-result-is-one-value",
+            Category = "item-supply-vs-value",
+            Source = "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1)\nFibonacci.repeat(10, 0, 1)*,\nFibonacci.repeat(10, 0, 1), 7",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(55, 89)\n55\n89\n(55, 89)\n7",
+            ExpectedRaw = "S[S[55, 89], 55, 89, S[55, 89], 7]",
+            ExpectedEmittedCount = 5,
+            Probes =
+            [
+                // The same one value through a property ...
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nX = Fibonacci.repeat(10, 0, 1)\nX", "ok raw=S[55, 89] n=1"),
+                // ... and through `while`: the final two-slot state is one value too.
+                new SpecProbe("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd, 3, 0)", "ok raw=S[1, 5] n=1"),
+                // A zero-slot final state is the one visible value `()`; its spread supplies nothing.
+                new SpecProbe("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 1), repeat(Drop, 1, 1)*", "ok raw=S[] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.",
+        },
+        new()
+        {
+            Id = "loop-step-patterns-only-bind",
+            Category = "item-supply-vs-value",
+            Source = "Dup(x, x) = { (x + 1, x + 1)* }\nSame(x, x) = { x + 1, x + 1 }\nStep((a, b)) = (b, a + b)\nDup.repeat(2, 1, 1), Same.repeat(2, 1, 1), Step.repeat(3, (0, 1))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(3, 3)\n(3, 3)\n(2, 3)",
+            ExpectedRaw = "S[S[3, 3], S[3, 3], S[2, 3]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A structural step's spread row supplies TWO slots, which its one-pattern head cannot re-bind.
+                new SpecProbe("Step2((a, b)) = { (b, a + b)* }\nStep2.repeat(3, (0, 1))", "err arity"),
+                // Diverging rows of a repeated-name step fail the NEXT binding, like the direct call `Dup(2, 3)`.
+                new SpecProbe("Dup(x, x) = { x + 1, x + 2 }\nDup.repeat(2, 1, 1)", "err arity"),
+                // An exact list keeps a growing history as ONE slot.
+                new SpecProbe("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0):0", "ok raw=L[0, 1, 2] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A loop step's parameter patterns only bind the incoming state; its rows — with `*` opening a value, as everywhere — are the next state. `Dup`'s spread row supplies the same two slots as `Same`'s two rows, and `Step` keeps its pair as ONE slot by writing one value.",
+        },
+        new()
+        {
+            Id = "loop-nested-step-row-is-one-slot",
+            Category = "item-supply-vs-value",
+            Source = "Fibonacci(a, b) = b, a + b\nTwo(a, b) = { repeat(Fibonacci, 2, a, b)* }\nTwo.repeat(3, 0, 1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(8, 13)",
+            ExpectedRaw = "S[8, 13]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Unspread, the inner loop is ONE next-state slot, which `Two(a, b)` cannot re-bind ...
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nTwo(a, b) = repeat(Fibonacci, 2, a, b)\nTwo.repeat(3, 0, 1)", "err arity"),
+                // ... exactly as a helper returning the same loop.
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nInner(a, b) = repeat(Fibonacci, 2, a, b)\nTwo(a, b) = { Inner(a, b)* }\nTwo.repeat(3, 0, 1)", "ok raw=S[8, 13] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A nested loop written as a step row is ONE next-state slot, like any call result; spread it with `*` to supply its final items as the next state.",
         },
         new()
         {

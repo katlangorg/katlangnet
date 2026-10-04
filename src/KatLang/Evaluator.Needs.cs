@@ -347,8 +347,8 @@ public static partial class Evaluator
         if (bindings.IsError) return bindings.Error;
         var names = prepared.BindingContract.ParameterNames;
         var next = WithNeedBindings(ctx, bindings.Value!, names);
-        return asynchronous ? await EvalAlgOutputSlotsAsync(step, next, ShadowValEnv(values, names), prepared.PreserveSequenceSpreadExpressionBoundaries, names).ConfigureAwait(false)
-            : EvalAlgOutputSlots(step, next, ShadowValEnv(values, names), prepared.PreserveSequenceSpreadExpressionBoundaries, names);
+        return asynchronous ? await EvalAlgOutputSlotsAsync(step, next, ShadowValEnv(values, names), names).ConfigureAwait(false)
+            : EvalAlgOutputSlots(step, next, ShadowValEnv(values, names), names);
     }
 
     private static EvalCtx WithNeedBindings(EvalCtx ctx, NeedEnv bindings, IReadOnlyList<string> names)
@@ -595,8 +595,8 @@ public static partial class Evaluator
             var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
             var stepValues = ShadowValEnv(values, names);
             var output = asynchronous
-                ? await EvalAlgOutputSlotsAsync(step, stepCtx, stepValues, prepared.PreserveSequenceSpreadExpressionBoundaries, names).ConfigureAwait(false)
-                : EvalAlgOutputSlots(step, stepCtx, stepValues, prepared.PreserveSequenceSpreadExpressionBoundaries, names);
+                ? await EvalAlgOutputSlotsAsync(step, stepCtx, stepValues, names).ConfigureAwait(false)
+                : EvalAlgOutputSlots(step, stepCtx, stepValues, names);
             if (output.IsError) return output.Error;
             IReadOnlyList<Result> next = output.Value;
             if (!repeat)

@@ -1434,7 +1434,6 @@ public static partial class Evaluator
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool preserveSequenceSpreadExpressionBoundaries = false,
         IReadOnlyList<string>? parameterNames = null)
     {
         if (alg is Algorithm.Builtin(var builtin))
@@ -1460,13 +1459,6 @@ public static partial class Evaluator
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
             if (countedR.IsError) return countedR.Error;
-
-            if (preserveSequenceSpreadExpressionBoundaries && expr is Expr.SequenceSpread)
-            {
-                if (countedR.Value.EmittedCount != 0)
-                    slots.Add(countedR.Value.Value);
-                continue;
-            }
 
             if (expr is Expr.SequenceSpread || countedR.Value.EmittedCount != 0)
                 slots.AddRange(CountedTopLevelValues(countedR.Value));

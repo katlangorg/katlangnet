@@ -184,11 +184,17 @@ public class EvaluatorValueBoundaryTests
     public void Eval_RootOutput_Spread_StaysMultiOutput()
         => AssertEvalCounted("X = 1, 2, 3\nX*", 3, ResultFromAtoms(1, 2, 3));
 
-    // Regression: while/repeat intentionally preserve multi-slot loop state and are
-    // NOT collapsed by the boundary rule.
+    // Q-26 (decided October 2026): a completed while/repeat is an ordinary value
+    // boundary like every builtin result. Its multi-slot final state is the loop's own
+    // protocol; the result it hands its consumer is ONE value with count valueCount.
     [Fact]
-    public void Eval_Repeat_MultiSlotLoopState_StaysMultiSlot()
-        => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)", 2, ResultFromAtoms(3, 3));
+    public void Eval_Repeat_MultiSlotLoopResult_IsOneValueBoundary()
+        => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)", 1, ResultFromAtoms(3, 3));
+
+    // Only an explicit spread opens the loop result into items.
+    [Fact]
+    public void Eval_Repeat_MultiSlotLoopResult_SpreadOpensTheValue()
+        => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)*", 2, ResultFromAtoms(3, 3));
 
     // Regression: redundant empty-sequence nesting is normalized before the
     // public boundary is observed.

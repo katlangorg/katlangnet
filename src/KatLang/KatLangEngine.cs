@@ -146,7 +146,7 @@ public closed record RunResult
         /// display derives them. <see cref="Value"/> alone cannot represent the
         /// root-output boundary: a program emitting two rows (<c>A()</c>
         /// newline <c>B()</c>) and a program emitting one sequence value
-        /// (<c>(A() B())</c>) can produce the SAME structural <see cref="Value"/>
+        /// (<c>(A(), B())</c>) can produce the SAME structural <see cref="Value"/>
         /// — this view keeps them distinguishable. Zero rows means the program
         /// evaluated successfully with empty output (for example a spread
         /// contributing zero items); one row is the whole <see cref="Value"/>
@@ -160,14 +160,15 @@ public closed record RunResult
         /// single-element wrapper, and the zero-row case returns an empty
         /// singleton.</para>
         ///
-        /// <para>The evaluator's exact emitted-slot count is used here as a
-        /// zero/one/many discriminator, not as this view's indexable count. A
-        /// multi-slot loop result may emit several slots inside one combined
-        /// top-level display row, so <c>OutputRows.Count</c> need not equal that
-        /// internal arity count. (Selection — <c>A:i</c>, <c>first</c>,
-        /// <c>last</c> — is a value boundary and emits its selected value as
-        /// one row.) <see cref="OutputRows"/> is authoritative for
-        /// presentation.</para>
+        /// <para>The evaluator's exact emitted-slot count is used here only as a
+        /// zero/one/many discriminator. Each written top-level row contributes
+        /// one row to this view — whatever produced its value: a literal, a
+        /// property, a call, a selection (<c>A:i</c>, <c>first</c>,
+        /// <c>last</c>), or a completed <c>while</c>/<c>repeat</c>, all of
+        /// which are value boundaries, so <c>Fibonacci.repeat(10, 0, 1)</c>
+        /// is the one row <c>(55, 89)</c> — while a spread row <c>E*</c>
+        /// contributes the items it supplies, possibly none.
+        /// <see cref="OutputRows"/> is authoritative for presentation.</para>
         /// </summary>
         public IReadOnlyList<Result> OutputRows => EmittedCount switch
         {

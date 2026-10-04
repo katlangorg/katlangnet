@@ -200,6 +200,16 @@ public class StrategyNeutralBudgetParityTests
         ("crosstalk-string-temp-if", "Step = {\n    T = 'aaaa'\n    n + if(T == T(), 1, 0)\n}\nStep.repeat(40, 0)", Exercises.PlannedLoop),
         ("crosstalk-multi-state", "Step = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nStep.repeat(5, 1, 1) : 0", Exercises.PlannedLoop),
         ("while-nested-if-temp-call", "Step = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), T() > 5 and n < 40\n}\nStep.while(0)", Exercises.PlannedLoop),
+        // Q-26 (2026-10-04): a nested loop written as a step row is ONE value, so the planned frame
+        // keeps such a step planned where it formerly handed the iteration over to the generic loop;
+        // the spread row still supplies several items and hands over. Both must charge exactly the
+        // generic accounting, effects and draws included.
+        ("nested-loop-row-one-slot", "Fib(x, y) = y, x + y\nStepN(p, n) = repeat(Fib, 1, n, n), n + 1\nrepeat(StepN, 20, 0, 0)", Exercises.PlannedLoop),
+        ("nested-loop-row-spread-handover", "Fib(x, y) = y, x + y\nStepM(a, b) = { repeat(Fib, 1, a, b)* }\nrepeat(StepM, 12, 0, 1)", Exercises.PlannedLoop),
+        ("nested-while-row-one-slot", "Body(a) = a + 1, a < 3\nStepW(p, n) = while(Body, n), n + 1\nrepeat(StepW, 15, 0, 0)", Exercises.PlannedLoop),
+        ("nested-zero-slot-loop-row", "Drop(*xs) = { ()* }\nStepZ(p, n) = repeat(Drop, 1, n), n + 1\nrepeat(StepZ, 10, 0, 0)", Exercises.PlannedLoop),
+        ("nested-loop-row-host-effects", "Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib, 1, trace(n), n), n + 1\nrepeat(StepT, 8, 0, 0)", Exercises.PlannedLoop),
+        ("nested-loop-row-seeded-random", "Fib(x, y) = y, x + y\nStepR(p, n) = repeat(Fib, 1, randomInt(0, 9), n), n + 1\nrepeat(StepR, 10, 0, 0)", Exercises.PlannedLoop),
     ];
 
     public static TheoryData<string> CorpusIds()

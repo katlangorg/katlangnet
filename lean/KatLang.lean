@@ -234,10 +234,6 @@ namespace ParameterPattern
   def minimumSuppliedSlots (patterns : List ParameterPattern) : Nat :=
     if hasCollectingCaptureAtCurrentLevel patterns then patterns.length - 1 else patterns.length
 
-  def hasRepeatedCaptureNames (patterns : List ParameterPattern) : Bool :=
-    let names := (patterns.flatMap captures).map (fun parameter => parameter.name)
-    names.length != names.eraseDups.length
-
   mutual
     /-- Whether a pattern binds `name` at any depth — the STATIC fact the
         pattern-list binders read to tell whether every contribution of a
@@ -2181,12 +2177,6 @@ namespace Algorithm
   def hasStructuredParameterPattern (a : Algorithm) : Bool :=
     ParameterPattern.hasStructured (parameterPatterns a)
 
-  def hasRepeatedParameterNames (a : Algorithm) : Bool :=
-    ParameterPattern.hasRepeatedCaptureNames (parameterPatterns a)
-
-  def requiresPatternBinding (a : Algorithm) : Bool :=
-    hasStructuredParameterPattern a || hasRepeatedParameterNames a
-
   def topLevelParameterKind? (a : Algorithm) (name : Ident) : Option ParameterKind :=
     ParameterPattern.topLevelCaptureKind? name (parameterPatterns a)
 
@@ -3468,9 +3458,11 @@ def collectSegment (items : List Result) : Result :=
 
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already normalized redundant unary empty structure. It is
-    applied only to public result boundaries, never to internal
-    body/root output accumulation (`evalAlgOutputCountedCore`), which must keep
-    its multi-item counts. (Collecting parameter storage needs no re-count:
+    applied only to public result boundaries — the completed `while`/`repeat`
+    result included (`loopResultCounted`, Q-26) — never to internal
+    body/root output accumulation (`evalAlgOutputCountedCore`) or a loop step's
+    own row supply (`evalAlgOutputSlots`), which must keep their multi-item
+    counts. (Collecting parameter storage needs no re-count:
     collecting binding collects one exact list value, so its stored count is already
     1.) Lexical zero-arg property access (`evalCounted .resolve`) and the `if`
     builtin already perform this same re-count inline; this helper generalizes
@@ -4250,6 +4242,20 @@ def isLiftableArgResolutionError : Error → Bool
 
 def loopStateResult (stateSlots : List Result) : Result :=
   Result.normalize (.sequenceValue stateSlots)
+
+/-- The completed `while`/`repeat` result (LOOP-07, Q-26 decided October 2026):
+    ONE value — the canonical capture of the final state's slots (`()` for zero
+    slots, the slot itself for one, a sequence for several) — crossing the
+    ordinary RESULT value boundary like every other builtin and call result:
+    its emitted count is `Result.valueCount` of that value
+    (`reCountValueBoundary`), never the slot count. The slot count is the
+    loop's own protocol and is not observable outside the loop: a one-slot
+    state holding `(20, 30)` and a two-slot state `20, 30` complete to the same
+    counted result, and only an explicit spread `L*` opens it into items.
+    Laws: `loop_result_is_a_value_boundary`, `loop_result_count_le_one`.
+    C#: `Evaluator.MakeCheckedLoopStateResult`. -/
+def loopResultCounted (finalSlots : List Result) : CountedResult :=
+  reCountValueBoundary (loopStateResult finalSlots, finalSlots.length)
 
 /-- Split a loop step output into next state slots and the continuation flag.
     The step's LAST output is the flag and must be a Boolean value (`true`
@@ -5563,12 +5569,20 @@ mutual
     | some address => pure address
     | none => do readyNeed (<- evalArgumentValueCounted arg ctx env)
 
+  /-- One loop iteration's step invocation (LOOP-03, Q-24 decided October 2026):
+      the step's parameter patterns BIND the incoming state cells
+      (`bindNeedPatterns`, the one inspecting binder), and the step's emitted
+      row supply (`evalAlgOutputSlots`) IS the next state. The two concerns are
+      separate: no pattern category — plain, repeated, structural, collecting —
+      is consulted when the rows form the next state, so equal rows produce an
+      equal next state whatever the step's head (`Dup(x, x) = { x + 1, x + 1 }`
+      and `Dup(x, x) = { (x + 1, x + 1)* }` both supply two slots). -/
   partial def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (cells : List Nat) : EvalM (List Result) := do
     let some bindings <- bindNeedPatterns ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
       | throw Error.badArity
     let next <- needBindingContext ctx bindings
-    evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step)) (Algorithm.requiresPatternBinding step)
+    evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step))
 
 
   --------------------------------------------------------------------------
@@ -5585,8 +5599,8 @@ mutual
       combined with `combineOutputSlots`, which preserves singleton slot
       structure and deliberately does NOT apply the general `Result.normalize`,
       which would recursively erase useful one-item sequence structure.
-      (Loop-step state, which must keep a collecting `*history` structured, goes
-      through `evalAlgOutputSlots` with its explicit preserve flag, not here.)
+      (Loop-step state reads the same rows as a SUPPLY through
+      `evalAlgOutputSlots`, not as this one combined value.)
 
       A user-defined algorithm value may exist structurally without output, but
       forcing it in value position raises `missingOutput`. A root program is
@@ -5613,8 +5627,18 @@ mutual
   partial def evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
     evalZeroArgumentDemandOutput a ctx env
 
+  /-- The ROW SUPPLY of an algorithm's output (LOOP-03, VAL-07 applied to a loop
+      step): every output row is evaluated once, left to right; a NON-spread row
+      supplies exactly one item — its value, `()` included (a row's emitted
+      count is at most one since every result, loop results included, is a value
+      boundary: Q-26, October 2026) — and a spread row `e*` supplies its spread
+      items, possibly none. The supply depends on the rows alone: there is no
+      pattern-derived flag (the former LOOP-04 packing of a pattern-bound step's
+      spread row was retired by Q-24), so `(a, b)` is one item and `(a, b)*` two
+      in every step. The internal `sequenceConstruct` join (never
+      parser-produced) may still emit several values and is expanded by
+      `countedTopLevelValues`. C#: `Evaluator.EvalAlgOutputSlots`. -/
   partial def evalAlgOutputSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-      (preserveSequenceSpreadExpressionBoundaries : Bool := false)
       : EvalM (List Result) := do
     match a with
     | .builtin b => do
@@ -5636,16 +5660,10 @@ mutual
           | e :: rest, acc => do
               let out <- evalCounted e pushedCtx env
               let values :=
-                if preserveSequenceSpreadExpressionBoundaries then
-                  match e with
-                  | .sequenceSpread _ => if out.snd = 0 then [] else [out.fst]
-                  | _ =>
-                      if out.snd = 0 then [out.fst] else countedTopLevelValues out
-                else
-                  match e with
-                  | .sequenceSpread _ => countedTopLevelValues out
-                  | _ =>
-                      if out.snd = 0 then [out.fst] else countedTopLevelValues out
+                match e with
+                | .sequenceSpread _ => countedTopLevelValues out
+                | _ =>
+                    if out.snd = 0 then [out.fst] else countedTopLevelValues out
               collect rest (values.reverse ++ acc)
         collect (Algorithm.output a) []
 
@@ -6310,8 +6328,9 @@ mutual
             -- access. A multi-output branch property such as `X = 1, 2, 3`
             -- therefore yields the grouped sequence value `(1, 2, 3)` with emitted
             -- count 1, not three separate outputs; explicit spread opens it.
-            -- Unlike `while`/`repeat`, which preserve multi-slot loop state, `if`
-            -- re-counts the chosen branch value via `Result.valueCount`.
+            -- `if` re-counts the chosen branch value via `Result.valueCount`,
+            -- exactly as a completed `while`/`repeat` re-counts its final state
+            -- (`loopResultCounted`).
             -- The condition must be a Boolean value: `if(1, a, b)` is a
             -- value-kind error, not a truth test.
             match Result.asBool? cr with
@@ -6336,7 +6355,7 @@ mutual
               else pure cells
             let finalCells <- loop initialCells
             let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeed address)
-            pure (loopStateResult finalSlots, finalSlots.length)
+            pure (loopResultCounted finalSlots)
 
         | .repeatBuiltin, step :: countAlg :: initAlgs => do
             if initAlgs.isEmpty then
@@ -6356,7 +6375,7 @@ mutual
                 repeatLoop (remaining - 1) next
               let finalCells <- repeatLoop n initialCells
               let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeed address)
-              pure (loopStateResult finalSlots, finalSlots.length)
+              pure (loopResultCounted finalSlots)
 
         | .atomsBuiltin, [a] => do
             let r <- evalArgumentValue a ctx env
@@ -8084,10 +8103,19 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    the receiver as the step argument and keeps the remaining explicit args in
    the same boundary-preserving form after structural property lookup.
 
-   Step outputs still define the state slots for the next iteration by emitted
-   top-level output boundaries.  To keep one structured slot across iterations,
-   return a sequence-value step result; multi-output steps intentionally
-   become many next-state slots.
+   Step outputs define the state slots for the next iteration as a ROW SUPPLY
+   (LOOP-03): each non-spread output row is one next-state slot and each spread
+   row `e*` supplies its items.  The step's parameter patterns only bind the
+   incoming state; they never repack its rows (Q-24, October 2026).  To keep
+   one structured slot across iterations, write it as one value — a capture
+   `(history*, next)` or a list `[history*, next]`; multi-output steps
+   intentionally become many next-state slots.  A nested loop written as a
+   step row is ONE slot like any other result (Q-26): `repeat(Inner, 2, a, b)*`
+   supplies its final state's items.
+
+   The completed loop is ONE value with emitted count `Result.valueCount`
+   (`loopResultCounted`), so `Fibonacci.repeat(10, 0, 1)` is one row `(55, 89)`
+   and `Fibonacci.repeat(10, 0, 1)*` two rows.
 
    Expr.capture semantics
    ----------------------

@@ -2797,6 +2797,47 @@ theorem reCountValueBoundary_count_le_one (p : CountedResult) :
   valueCount_le_one p.fst
 
 /-
+## Loop results are value boundaries (Q-26, decided October 2026)
+
+A completed `while`/`repeat` returns `loopResultCounted finalSlots`: the
+canonical capture of its final state's slots, re-counted at the ordinary
+RESULT value boundary exactly like every builtin and call result. The laws
+below are instances of the re-count laws above: the loop's slot count is its
+own iteration protocol (the step's row supply, LOOP-03) and never leaks into
+the count its consumer observes. (Q-24's companion fact — the step's row
+supply takes no pattern-derived argument — is definitional: `evalAlgOutputSlots`
+has no such parameter; CoreTests `LoopCardinality` pins it per head category.)
+-/
+
+/-- The loop result IS the re-counted capture of its final slots. -/
+theorem loop_result_is_a_value_boundary (slots : List Result) :
+    loopResultCounted slots = reCountValueBoundary (loopStateResult slots, slots.length) := rfl
+
+/-- The re-count never rebuilds the loop result: its value is the canonical
+capture of the final slots. -/
+theorem loop_result_value (slots : List Result) :
+    (loopResultCounted slots).fst = loopStateResult slots := rfl
+
+/-- The loop result's emitted count is its value's `valueCount`, never the
+number of final slots. -/
+theorem loop_result_count_is_value_count (slots : List Result) :
+    (loopResultCounted slots).snd = (loopStateResult slots).valueCount := rfl
+
+/-- A completed loop emits at most one value, so a non-spread loop contributes
+at most one item to any row supply (root, body, capture or loop step). -/
+theorem loop_result_count_le_one (slots : List Result) :
+    (loopResultCounted slots).snd ≤ 1 :=
+  reCountValueBoundary_count_le_one _
+
+/-- The slot count is not observable outside the loop: two final states whose
+captures are equal complete to the same counted result (a one-slot state
+holding `(20, 30)` and the two-slot state `20, 30` alike). -/
+theorem loop_result_depends_only_on_the_final_value (left right : List Result)
+    (h : loopStateResult left = loopStateResult right) :
+    loopResultCounted left = loopResultCounted right := by
+  simp only [loopResultCounted, reCountValueBoundary, h]
+
+/-
 ## `atoms` builtin laws (issue #136)
 
 `Result.languageAtoms` is the atoms builtin's collector: numeric atoms

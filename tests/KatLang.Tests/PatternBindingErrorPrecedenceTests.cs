@@ -131,7 +131,8 @@ public class PatternBindingErrorPrecedenceTests
         Assert.True(arity.IsError);
         Assert.Equal("BadArity in []", BindingReason(arity.Error));
 
-        AssertDisplay("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 1, (2, 3))", "1\n1\n(2, 3)");
+        // The matching state binds; its three-slot final state is ONE loop result value (Q-26).
+        AssertDisplay("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 1, (2, 3))", "(1, 1, (2, 3))");
     }
 
     [Fact]

@@ -808,7 +808,7 @@ public static class ArityDifferentialMatrix
             {
                 b.Add("loop-flat-respread", ReceiverKind.LoopStep, BindingForm.Spread, shape, chainMult,
                     $"V = {shape.Literal}\nGrow(*slots) = slots*, 0\nGrow.repeat(1, {arg})",
-                    ReceiverLaw.LOOP_STATE_SLOTS_ARE_NOT_A_VALUE_BOUNDARY,
+                    ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
                     Err(Arity),
                     SupplyTrace(shape, m)
                         .Append("the zero-item spread leaves repeat with no initial state slot")
@@ -819,19 +819,50 @@ public static class ArityDifferentialMatrix
             {
                 var state = initial.Append(OracleVal.Atom(0)).ToArray();
                 var loopResult = Capture(state);
+                var (rootValue, emitted) = RootNonSpreadRow(loopResult, ValueCount(loopResult));
                 b.Add("loop-flat-respread", ReceiverKind.LoopStep, BindingForm.Spread, shape, chainMult,
                     $"V = {shape.Literal}\nGrow(*slots) = slots*, 0\nGrow.repeat(1, {arg})",
-                    ReceiverLaw.LOOP_STATE_SLOTS_ARE_NOT_A_VALUE_BOUNDARY,
-                    Ok(loopResult, state.Length),
+                    ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
+                    Ok(rootValue, emitted),
                     SupplyTrace(shape, m)
                         .Append($"initial state slots = {SupplyNeutral(initial)}")
                         .Append($"flat step output `slots*, 0` re-spreads the collected list into separate state slots: {SupplyNeutral(state)}")
-                        .Append($"loop result keeps the multi-slot count: raw {loopResult.Neutral}, n={state.Length}"),
-                    notes: "Chain multiplicity counts the step-output spread plus any init spread; loop state is not a value boundary.");
+                        .Append($"the completed loop is ONE value (LOOP_RESULT_IS_A_VALUE_BOUNDARY): capture(state) = {loopResult.Neutral}; the lone root row emits n={emitted}"),
+                    notes: "Chain multiplicity counts the step-output spread plus any init spread; the step's row supply is the next state, and the loop result is one value.");
             }
         }
 
-        // T22 (chain multiplicity One / Repeated): patterned step packs its top-level output spread.
+        // T21b (chain multiplicity = the init spread): a completed loop written as a row beside another
+        // row is ONE item of the root supply, whatever its final slot count (Q-26).
+        {
+            var initial = ArgSupply(shape, m);
+            if (initial.Count == 0)
+            {
+                b.Add("loop-result-row", ReceiverKind.LoopStep, BindingForm.Capture, shape, m,
+                    $"V = {shape.Literal}\nKeep(*s) = {{ s* }}\nKeep.repeat(1, {arg}), 0",
+                    SupplyLaw(m, ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY),
+                    Err(Arity),
+                    SupplyTrace(shape, m)
+                        .Append("the zero-item spread leaves repeat with no initial state slot")
+                        .Append("repeat(step, count, init1, ...) requires at least one init argument — an ordinary arity floor after spreading"));
+            }
+            else
+            {
+                var loopResult = Capture(initial);
+                b.Add("loop-result-row", ReceiverKind.LoopStep, BindingForm.Capture, shape, m,
+                    $"V = {shape.Literal}\nKeep(*s) = {{ s* }}\nKeep.repeat(1, {arg}), 0",
+                    ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY,
+                    Ok(OracleVal.Seq(loopResult, OracleVal.Atom(0)), 2),
+                    SupplyTrace(shape, m)
+                        .Append($"initial state slots = {SupplyNeutral(initial)}; the step `s*` re-supplies them unchanged")
+                        .Append($"the completed loop is ONE value capture(state) = {loopResult.Neutral} (valueCount, never the {initial.Count}-slot count)")
+                        .Append($"root rows [loop, 0] -> two rows {OracleVal.Seq(loopResult, OracleVal.Atom(0)).Neutral}, n=2"),
+                    notes: "A loop result beside another row is one root row; its slot count is not observable outside the loop.");
+            }
+        }
+
+        // T22 (chain multiplicity One / Repeated): a patterned step's top-level output spread
+        // supplies its items exactly like a flat step's — patterns only bind the incoming state.
         if (m != SpreadMultiplicity.Repeated)
         {
             var chainMult = m == SpreadMultiplicity.Zero ? SpreadMultiplicity.One : SpreadMultiplicity.Repeated;
@@ -846,57 +877,32 @@ public static class ArityDifferentialMatrix
                 expected = Err(Arity);
                 trace.Add($"patterned step has 2 parameters but the state has {initSupply.Length} slot(s) -> loop arity mismatch");
             }
+            // `(*h)` is a SEQUENCE pattern: it opens a sequence state slot only; a list or
+            // scalar slot is its kind mismatch (never a one-item supply).
+            else if (SequencePatternItems(initSupply[0]) is not { } openedHistory)
+            {
+                expected = Err(Type);
+                trace.Add($"sequence pattern (*h) over the non-sequence state slot {initSupply[0].Neutral} -> kind mismatch");
+            }
             else
             {
-                var state = initSupply;
-                string? failedCategory = null;
-                for (var iteration = 1; iteration <= 2 && failedCategory is null; iteration++)
-                {
-                    if (state.Length != 2)
-                    {
-                        failedCategory = Arity;
-                        trace.Add($"iteration {iteration}: {state.Length} state slot(s) vs 2 parameters -> loop arity mismatch");
-                        break;
-                    }
-
-                    // `(*h)` is a SEQUENCE pattern: it opens a sequence state slot only; a
-                    // list or scalar slot is its kind mismatch (never a one-item supply).
-                    if (SequencePatternItems(state[0]) is not { } openedHistory)
-                    {
-                        failedCategory = Type;
-                        trace.Add($"iteration {iteration}: sequence pattern (*h) over the non-sequence state slot {state[0].Neutral} -> kind mismatch");
-                        break;
-                    }
-
-                    var counter = ((OracleVal.AtomVal)state[1]).Value;
-                    var nextSlots = new List<OracleVal>();
-                    if (openedHistory.Count > 0)
-                        nextSlots.Add(Capture(openedHistory)); // packed: ONE next-state slot
-                    nextSlots.Add(OracleVal.Atom(counter + 1));
-                    trace.Add(openedHistory.Count > 0
-                        ? $"iteration {iteration}: (*h) opens {SupplyNeutral(openedHistory)}; packed h* slot = {Capture(openedHistory).Neutral}; p+1 = {counter + 1}"
-                        : $"iteration {iteration}: (*h) collects zero items; the zero-item packed spread contributes NO slot; p+1 = {counter + 1}");
-                    state = nextSlots.ToArray();
-                }
-
-                if (failedCategory is not null)
-                {
-                    expected = Err(failedCategory);
-                }
-                else
-                {
-                    var loopResult = Capture(state);
-                    expected = Ok(loopResult, state.Length);
-                    trace.Add($"loop result: raw {loopResult.Neutral}, n={state.Length}");
-                }
+                var counter = ((OracleVal.AtomVal)initSupply[1]).Value;
+                // The row supply of `h*, p + 1`: the spread row supplies h's items (none for an
+                // empty history), the second row one slot — no repacking by the step's pattern.
+                var state = openedHistory.Append(OracleVal.Atom(counter + 1)).ToArray();
+                var loopResult = Capture(state);
+                var (rootValue, emitted) = RootNonSpreadRow(loopResult, ValueCount(loopResult));
+                trace.Add($"(*h) opens {SupplyNeutral(openedHistory)}; the spread row h* supplies those items and p+1 = {counter + 1} one slot: next state {SupplyNeutral(state)}");
+                trace.Add($"the completed loop is ONE value capture(state) = {loopResult.Neutral}; the lone root row emits n={emitted}");
+                expected = Ok(rootValue, emitted);
             }
 
-            b.Add("loop-patterned-packed", ReceiverKind.LoopStep, BindingForm.Capture, shape, chainMult,
-                $"V = {shape.Literal}\nPackStep((*h), p) = h*, p + 1\nPackStep.repeat(2, {arg}, 10)",
-                ReceiverLaw.LOOP_PATTERNED_STEP_PACKS_TOPLEVEL_SPREAD,
+            b.Add("loop-patterned-spread", ReceiverKind.LoopStep, BindingForm.Capture, shape, chainMult,
+                $"V = {shape.Literal}\nSpreadStep((*h), p) = h*, p + 1\nSpreadStep.repeat(1, {arg}, 10)",
+                ReceiverLaw.LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE,
                 expected,
                 trace,
-                notes: "Patterned step output keeps a top-level spread as ONE packed next-state slot; zero-item spread contributes none.");
+                notes: "A patterned step's top-level spread row supplies its items like a flat step's (Q-24); one iteration equals the direct call.");
         }
     }
 
@@ -943,11 +949,12 @@ public static class ArityDifferentialMatrix
         b.Add("loop-while-state", ReceiverKind.LoopStep, BindingForm.Capture, atom, SpreadMultiplicity.Zero,
             "Sum = a + 1, total + a, a < 3\nSum.while(1, 0)",
             ReceiverLaw.WHILE_LAST_SLOT_IS_CONTINUE_FLAG,
-            Ok(OracleVal.Seq(OracleVal.Atom(3), OracleVal.Atom(3)), 2),
+            Ok(OracleVal.Seq(OracleVal.Atom(3), OracleVal.Atom(3)), 1),
             new[]
             {
                 "all outputs except the last form the working state; the last output is the continue flag",
-                "(1,0) -> (2, 1, 1); (2,1) -> (3, 3, 1); (3,3) -> (4, 6, 0) discarded -> result (3, 3), n=2",
+                "(1,0) -> (2, 1, 1); (2,1) -> (3, 3, 1); (3,3) -> (4, 6, 0) discarded -> final two-slot state (3, 3)",
+                "the completed loop is ONE value (3, 3): n=1 (LOOP_RESULT_IS_A_VALUE_BOUNDARY)",
             });
     }
 
@@ -979,11 +986,6 @@ public static class ArityDifferentialMatrix
             "The callback result contract is strict single-value (map transform / reduce step must return exactly "
             + "one value), so no spread-form observation exists at this receiver; spread in a callback body is "
             + "ordinary body-row behavior covered by the Property and DirectCall receivers."),
-        new(c => c.Receiver == ReceiverKind.LoopStep && c.Form == BindingForm.Capture && c.Multiplicity == SpreadMultiplicity.Zero,
-            "The zero-marker loop-step capture observations are the while-flag family, whose flag arithmetic "
-            + "requires numeric state (pinned on the atom shape); the packed-slot capture observation requires "
-            + "the step-output spread marker (One/Repeated cells), and zero-marker state assembly is covered by "
-            + "the Collect-form init-slot cells."),
     ];
 
     private static IReadOnlyList<ExcludedCombination> AccountForUncoveredCells(HashSet<Cell> covered)
@@ -1457,8 +1459,8 @@ public static class ArityDifferentialMatrix
         {
             Id = "add-loop-patterned-wrong-slots",
             Family = "arity-after-spread",
-            Source = "PackStep((*h), p) = h*, p + 1\nPackStep.repeat(1, 7, 8, 9)",
-            PrimaryLaw = ReceiverLaw.LOOP_PATTERNED_STEP_PACKS_TOPLEVEL_SPREAD,
+            Source = "SpreadStep((*h), p) = h*, p + 1\nSpreadStep.repeat(1, 7, 8, 9)",
+            PrimaryLaw = ReceiverLaw.LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE,
             ExpectedErrorCategory = Arity,
         });
 

@@ -633,7 +633,8 @@ public class IntegerDivisionContractTests
         var (planned, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.False(generic.IsError);
         Assert.False(planned.IsError);
-        var expected = useWhile ? $"ok raw=S[{expectedDisplay}, 1] n=2" : $"ok raw={expectedDisplay} n=1";
+        // The two-slot `while` state is one loop RESULT value (Q-26), so both loops emit n=1.
+        var expected = useWhile ? $"ok raw=S[{expectedDisplay}, 1] n=1" : $"ok raw={expectedDisplay} n=1";
         Assert.Equal(expected, Neutral(generic));
         Assert.Equal(expected, Neutral(planned));
 

@@ -85,7 +85,10 @@ public class CFullHostileReviewTests
         const string defs = "Step(a, b) = a, b\nColl(*xs) = xs\nFwd(*xs) = Coll(xs*)\nFwd2(*xs) = Fwd(xs*)\n";
         var multi = await AcrossStrategies(defs + "repeat(Step, 1, 1, 2)");
         var single = await AcrossStrategies(defs + "(1, 2)");
-        Assert.Equal(2, multi.Value.EmittedCount);
+        // A completed loop is an ordinary value boundary (Q-26): its two-slot final state
+        // is ONE value with the very count of the written pair — the loop origin is not
+        // observable in the count either.
+        Assert.Equal(1, multi.Value.EmittedCount);
         Assert.Equal(1, single.Value.EmittedCount);
         Assert.True(Result.ValueComparer.Equals(multi.Value.Value, single.Value.Value));
 
@@ -143,7 +146,8 @@ public class CFullHostileReviewTests
         {
             var raw = await AcrossStrategies(defs + call);
             Assert.True(raw.IsOk);
-            Assert.Equal(2, raw.Value.EmittedCount);
+            // The two-slot final state is ONE value (Q-26); its slots stay intact inside it.
+            Assert.Equal(1, raw.Value.EmittedCount);
             AssertValue(await AcrossStrategies(defs + $"Coll({call})"), $"[({value}, 2)]");
             AssertValue(await AcrossStrategies(defs + $"Coll({call}*)"), $"[{value}, 2]");
         }

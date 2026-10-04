@@ -644,17 +644,19 @@ public class ExplicitValueOpeningTests
     [InlineData("repeat(Swap, 1, (1, 2))", "(2, 1)")]
     [InlineData("repeat(LSwap, 1, [1, 2])", "[2, 1]")]
     [InlineData("repeat(Swap, 2, (1, 2))", "(1, 2)")]
-    [InlineData("repeat(Fib, 5, 0, 1)", "5\n8")]
+    [InlineData("repeat(Fib, 5, 0, 1)", "(5, 8)")]
     [InlineData("repeat(Cnt, 1, (1, 2))", "1")]
     [InlineData("repeat(Cnt, 1, [1, 2])", "1")]
     [InlineData("repeat(Cnt, 1, 1, 2)", "2")]
     [InlineData("repeat(Cnt, 1, (1, 2)*)", "2")]
-    [InlineData("while(W, 0, (1, 2))", "1\n1")]
-    [InlineData("while(W, 0, [1, 2])", "1\n1")]
-    [InlineData("while(W, 0, 1, 2)", "1\n2")]
+    [InlineData("while(W, 0, (1, 2))", "(1, 1)")]
+    [InlineData("while(W, 0, [1, 2])", "(1, 1)")]
+    [InlineData("while(W, 0, 1, 2)", "(1, 2)")]
     public void LoopStateSlots_AreEstablishedItems(string call, string expected)
     {
-        // A lone multi-slot loop result displays one root row per state slot.
+        // A structured state slot stays ONE item through every iteration (`xs.count` is 1 for a
+        // pair or list slot). A completed loop is one value (Q-26), so a lone multi-slot loop
+        // result is one root row, and the slot facts show in that value.
         const string defs = "Id(x) = x\nSwap((a, b)) = (b, a)\nLSwap([a, b]) = [b, a]\nFib(a, b) = b, a + b\nCnt(*xs) = xs.count\n" +
             "W(n, *xs) = n + 1, xs.count, n < 1\n";
         Assert.Equal(expected, Display(defs + call));
@@ -680,9 +682,9 @@ public class ExplicitValueOpeningTests
     }
 
     [Theory]
-    [InlineData("(1, 2)", "[(1, 2)]\n2")]
-    [InlineData("()", "[()]\n2")]
-    [InlineData("[1, 2]", "[[1, 2]]\n2")]
+    [InlineData("(1, 2)", "([(1, 2)], 2)")]
+    [InlineData("()", "([()], 2)")]
+    [InlineData("[1, 2]", "([[1, 2]], 2)")]
     public void CollectorInLoopTemp_BindsOneArgument(string value, string expected)
     {
         var source = Coll + "V = " + value + "\n" +
@@ -694,7 +696,8 @@ public class ExplicitValueOpeningTests
         var (planned, _) = Evaluator.RunCountedObserved(ast, loopDiagnostics: loop);
         var (generic, _) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(generic), AsyncEvaluationHarness.NeutralOf(planned));
-        Assert.Equal(2, planned.Value.EmittedCount);
+        // The two-slot final state is one loop result value (Q-26).
+        Assert.Equal(1, planned.Value.EmittedCount);
         var snapshot = loop.GetSnapshot();
         Assert.True(snapshot.OptimizedLoopHits > 0);
         Assert.True(snapshot.PlannedExpressionHits > 0);

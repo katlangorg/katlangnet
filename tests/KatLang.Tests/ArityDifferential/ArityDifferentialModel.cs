@@ -137,11 +137,27 @@ public enum ReceiverLaw
     /// <summary>Each explicit loop init argument is one initial state slot; spread supplies slots like every written slot context.</summary>
     LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS,
 
-    /// <summary>Loop state is a multi-slot supply, not a value boundary: flat step output spread re-spreads into separate state slots.</summary>
-    LOOP_STATE_SLOTS_ARE_NOT_A_VALUE_BOUNDARY,
+    /// <summary>
+    /// The step's emitted ROW SUPPLY is the next state (LOOP-03): each non-spread row is one
+    /// slot and each spread row supplies its spread items, so a flat step's output spread
+    /// re-spreads a collected list into separate state slots.
+    /// </summary>
+    LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
 
-    /// <summary>In a sequence-value-patterned step's output, a top-level spread contributes ONE packed next-state slot (zero-item spread contributes none).</summary>
-    LOOP_PATTERNED_STEP_PACKS_TOPLEVEL_SPREAD,
+    /// <summary>
+    /// Q-24 (decided October 2026): a step's parameter patterns bind the INCOMING state only.
+    /// A structural (or repeated-name, or collecting) step's top-level spread row supplies its
+    /// items exactly like a flat step's; no pattern category repacks the emitted supply (the
+    /// former LOOP-04 packing is retired).
+    /// </summary>
+    LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE,
+
+    /// <summary>
+    /// Q-26 (decided October 2026): a completed <c>while</c>/<c>repeat</c> is ONE value — the
+    /// canonical capture of its final state slots — with emitted count <c>valueCount</c>, so a
+    /// non-spread loop row is one row beside any other row; only <c>L*</c> opens it.
+    /// </summary>
+    LOOP_RESULT_IS_A_VALUE_BOUNDARY,
 
     /// <summary>The while step's last output slot is the continue flag; remaining slots are the committed state (pre-check semantics).</summary>
     WHILE_LAST_SLOT_IS_CONTINUE_FLAG,
@@ -205,10 +221,12 @@ public static class ReceiverLaws
             "KatLang.lean reduceLoop (reCountValueBoundary initOut); AGENTS.md written-slot reification incl. reduce initial accumulator",
         [ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS] =
             "KatLang.lean evalInitialLoopStateSlots (each explicit init argument is one initial state slot); tutorial repeat/while init-slot rule",
-        [ReceiverLaw.LOOP_STATE_SLOTS_ARE_NOT_A_VALUE_BOUNDARY] =
-            "KatLang.lean evalAlgOutputSlots (flat mode expands spread rows into state slots) + loopStateResult; AGENTS.md non-value-boundary list",
-        [ReceiverLaw.LOOP_PATTERNED_STEP_PACKS_TOPLEVEL_SPREAD] =
-            "KatLang.lean evalAlgOutputSlots preserveSequenceSpreadExpressionBoundaries branch; C# ShouldPreserveLoopStepSequenceSpreadExpressionBoundaries; docs/design/language-rules/sequences-lists-and-calls.md loop-step packed-slot exception",
+        [ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE] =
+            "KatLang.lean evalAlgOutputSlots (the step's row supply: a non-spread row one slot, a spread row its items) via runNeedStepSlots; C# Evaluator.EvalAlgOutputSlots; CoreTests ExplicitValueOpening loopStateSlotsAreEstablishedItems; CoreTests LoopCardinality",
+        [ReceiverLaw.LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE] =
+            "KatLang.lean runNeedStepSlots (bindNeedPatterns binds the incoming cells; evalAlgOutputSlots takes no pattern-derived argument — Q-24 retired the LOOP-04 packing); CoreTests LoopCardinality stepRowsIgnorePatternCategory*; C# LoopCardinalityLawTests",
+        [ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY] =
+            "KatLang.lean loopResultCounted (= reCountValueBoundary (loopStateResult finalSlots, n)); KatLangArityLaws: loop_result_is_a_value_boundary, loop_result_count_le_one; C# Evaluator.MakeCheckedLoopStateResult; LoopCardinalityLawTests",
         [ReceiverLaw.WHILE_LAST_SLOT_IS_CONTINUE_FLAG] =
             "KatLang.lean splitContSlots; tutorial \"Looping While a Condition Holds\" (a round whose condition is false is not kept)",
         [ReceiverLaw.COLLECT_SPREAD_ROUND_TRIP] =

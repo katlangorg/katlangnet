@@ -8,9 +8,9 @@ Model-C acquisition is centralized in `Evaluator.Needs.cs` and `Evaluation/NeedC
 
 ## Metadata and executors
 
-`CallableSignature`, `CallableSignatureDiagnostics`, `CallableBindingPlan` and `FlatCollectingBindingLayout` are shape/diagnostic data, never alternate acquisition semantics. `BindCallableArguments` allocates already-prepared items against a builtin signature without evaluating them. Builtin metadata assigns executed VALUE or CALLBACK roles after spread expansion. Native Math and host operations request their value arguments in their established order after arity.
+`CallableSignature`, `CallableSignatureDiagnostics` and `CallableBindingPlan` are shape/diagnostic data (planner eligibility, editor metadata, builtin allocation), never alternate acquisition semantics. `BindCallableArguments` allocates already-prepared items against a builtin signature without evaluating them. Builtin metadata assigns executed VALUE or CALLBACK roles after spread expansion. Native Math and host operations request their value arguments in their established order after arity.
 
-Callbacks pass produced items as Ready cells, with no invented callable identity. Loops form lazy initial cells and ordinary Ready next-state cells; final output materializes the required whole state. Optimized loops may read Ready values or demand parameter cells through the same funnel, preserving effects, failures and accounting. Sequence-pipeline fusion observes the same terminal state and callback demand rules.
+Callbacks pass produced items as Ready cells, with no invented callable identity. Loops form lazy initial cells and ordinary Ready next-state cells; a step's parameter patterns only bind the incoming cells, and its row supply — read without any pattern-derived flag — is the next state (Q-24); final output materializes the required whole state as ONE value, re-counted at the ordinary result boundary (Q-26). Optimized loops may read Ready values or demand parameter cells through the same funnel, preserving effects, failures and accounting. Sequence-pipeline fusion observes the same terminal state and callback demand rules.
 
 ## Identity, ownership and cache
 

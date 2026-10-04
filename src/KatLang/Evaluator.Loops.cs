@@ -48,11 +48,21 @@ public static partial class Evaluator
         ValEnv valEnv)
         => EvalZeroArgumentDemandOutput(alg, ctx, valEnv);
 
+    /// <summary>
+    /// The ROW SUPPLY of an algorithm's output — what a loop step's rows make the next
+    /// state (LOOP-03, VAL-07 applied to a step). Every output row is evaluated once, left
+    /// to right; a NON-spread row supplies exactly one item (its value, <c>()</c> included —
+    /// a surface row's emitted count is at most one, since every result, a completed
+    /// <c>while</c>/<c>repeat</c> included, is a value boundary: Q-26), and a spread row
+    /// <c>e*</c> supplies its spread items, possibly none. The supply depends on the rows
+    /// alone: no parameter-pattern category is consulted (Q-24 retired the former
+    /// pattern-triggered packing of a spread row), so <c>(a, b)</c> is one item and
+    /// <c>(a, b)*</c> two in every step. Lean: <c>evalAlgOutputSlots</c>.
+    /// </summary>
     private static EvalResult<IReadOnlyList<Result>> EvalAlgOutputSlots(
         Algorithm alg,
         EvalCtx ctx,
         ValEnv valEnv,
-        bool preserveSequenceSpreadExpressionBoundaries = false,
         IReadOnlyList<string>? parameterNames = null)
     {
         if (alg is Algorithm.Builtin(var builtin))
@@ -78,13 +88,6 @@ public static partial class Evaluator
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
-
-            if (preserveSequenceSpreadExpressionBoundaries && expr is Expr.SequenceSpread)
-            {
-                if (countedR.Value.EmittedCount != 0)
-                    slots.Add(countedR.Value.Value);
-                continue;
-            }
 
             if (expr is Expr.SequenceSpread || countedR.Value.EmittedCount != 0)
                 slots.AddRange(CountedTopLevelValues(countedR.Value));

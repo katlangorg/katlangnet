@@ -183,11 +183,10 @@ public class OutputRowsTests
     {
         var success = Success("repeat({a, b}, 1, 1, 2)\n5");
 
-        // EmittedCount is a literal arity count (three here: the two-slot loop
-        // state plus one row), but canonical display uses it only to select the
-        // multi-row view. The combined value retains the loop state as one
-        // top-level display row.
-        Assert.Equal(3, success.EmittedCount);
+        // A completed loop is an ordinary value boundary (Q-26): its two-slot final
+        // state is ONE row of the root supply, so the emitted count is the two written
+        // rows and equals the display rows (formerly 3 against 2 display rows, X-33).
+        Assert.Equal(2, success.EmittedCount);
         Assert.Equal(2, success.OutputRows.Count);
         Assert.Equal("(1, 2)", OutputFormatters.Exact.Format(new RunResult.Success(
             success.Root,
@@ -198,9 +197,28 @@ public class OutputRowsTests
     }
 
     [Fact]
-    public void LoneMultiSlotLoopResult_UsesItsEmittedArityAsSeparateRows()
+    public void LoneMultiSlotLoopResult_IsOneRow_LikeEveryValueBoundary()
     {
+        // Q-26: a lone multi-slot loop row is ONE row — its value — exactly like the same
+        // loop read through a property (formerly one row per final-state slot, X-33).
         var success = Success("repeat({a, b}, 1, 1, 2)");
+
+        Assert.Equal(1, success.EmittedCount);
+        var row = Assert.Single(success.OutputRows);
+        Assert.True(Result.ValueComparer.Equals(
+            new Result.SequenceValue([new Result.Atom(1), new Result.Atom(2)]), row));
+        Assert.Equal("(1, 2)", success.ToDisplayString());
+
+        var property = Success("L = repeat({a, b}, 1, 1, 2)\nL");
+        Assert.Equal(success.EmittedCount, property.EmittedCount);
+        Assert.Equal(success.ToDisplayString(), property.ToDisplayString());
+    }
+
+    [Fact]
+    public void SpreadMultiSlotLoopResult_EmitsTheValueItemsAsRows()
+    {
+        // Only the explicit spread opens the loop result into separate rows.
+        var success = Success("repeat({a, b}, 1, 1, 2)*");
 
         Assert.Equal(2, success.EmittedCount);
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], success.OutputRows);

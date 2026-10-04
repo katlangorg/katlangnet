@@ -303,7 +303,8 @@ def builtinProjectionExplicitCaseFailures : List String :=
 -- single value boundary -- exactly like value-position property access. A
 -- multi-output branch property such as `X = 1, 2, 3` therefore yields the grouped
 -- sequence value `(1, 2, 3)` with emitted count 1, not three separate outputs.
--- (Contrast `while`/`repeat`, whose multi-slot loop state is intentional.) These
+-- (A completed `while`/`repeat` re-counts its final state the same way since Q-26;
+-- only a loop step's own row supply stays multi-item.) These
 -- guards pin the emitted count exactly, which the `.succeeded` projection-parity
 -- cases above do not constrain.
 

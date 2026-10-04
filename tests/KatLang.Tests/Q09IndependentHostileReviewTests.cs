@@ -208,6 +208,10 @@ public class Q09IndependentHostileReviewTests
             "Step(s) = { T = s + 1\n T() + if(true, T, s) }\nrepeat(Step, 7, { trace(2) })",
             "range(trace(1), trace(5)).filter({ trace(x) mod 2 == 0 }).count",
             "Step(s) = if(true, s, 0)\nrepeat(Step, 1, { trace(7) })",
+            // Q-26 changes planner coverage here; move checkpoint blocks through the inner
+            // invocation and the subsequent row as well as through a spread handover.
+            "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib, 2, trace(n), n), n + 1\nrepeat(Step, 3, 0, 0)",
+            "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib, 2, trace(a), b)* }\nrepeat(Step, 3, 0, 1)",
         ];
         var runs = 0;
         foreach (var body in sources)
@@ -251,6 +255,11 @@ public class Q09IndependentHostileReviewTests
     [InlineData("Step(s) = s + 1\nrepeat(Step, trace(7), { trace(0) })")]
     [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step, 1, { trace(7) })")]
     [InlineData("Reject(x) = trace(false)\nrange(1, 1).filter(Reject).count")]
+    // Q-26: a nested loop step row is one value, so this outer loop now stays planned through it.
+    [InlineData("Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib, 1, trace(n), n), n + 1\nrepeat(StepT, 6, 0, 0)")]
+    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nStep(a, b) = { repeat(Fib, 2, a, b)* }\nrepeat(Step, 3, 0, 1)")]
+    [InlineData("Inner(n) = trace(n + 1), trace(n < 3)\nOuter(p, n) = while(Inner, n), trace(n + 1)\nrepeat(Outer, 3, 0, 0)")]
+    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nmap([1, 2], { repeat(Fib, 2, x, 1) })")]
     public async Task CancellationAtEveryEffect_KeepsCountersAndEffects_OnThreeRoutes(string body)
     {
         var source = "Probe = 0\nProbe\n" + body;
@@ -265,6 +274,8 @@ public class Q09IndependentHostileReviewTests
                 Assert.Equal("cancelled", generic.Outcome);
                 Assert.Equal(generic.Semantic, (await Run(source, 1, limits, cancelAt)).Semantic);
                 Assert.Equal(generic.Semantic, (await Run(source, 2, limits, cancelAt)).Semantic);
+                // A successful suspending run does not cover cancellation during suspension.
+                Assert.Equal(generic.Semantic, (await Run(source, 2, limits, cancelAt, suspend: true)).Semantic);
             }
         Assert.Equal(full.Semantic, (await Run(source, 2, suspend: true)).Semantic);
     }

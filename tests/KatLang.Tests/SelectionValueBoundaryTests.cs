@@ -543,8 +543,10 @@ public class SelectionValueBoundaryTests
                 (", k < 3 }\n", "while(S, 0, 0)"),
             })
             {
+                // The selected value stays ONE state slot through every iteration; the
+                // completed two-slot loop is one value (Q-26), so the root emits 1.
                 var (loops, _) = await AssertExecutionPaths(
-                    defs + step + tail + call, "(" + selected + ", 3)", emittedCount: 2);
+                    defs + step + tail + call, "(" + selected + ", 3)", emittedCount: 1);
                 Assert.True(loops.OptimizedLoopHits > 0);
                 Assert.Contains(loops.LoopPlans, plan => plan.Optimized && plan.Temps.Any(temp => temp.Name == "T"));
                 Assert.True(loops.PlannedExpressionHits > 0);

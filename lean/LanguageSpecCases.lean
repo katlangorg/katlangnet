@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 353
+- specification surface cases: 356
 - excluded parse-level cases (Lean has no surface parser): 50
 - excluded C#-only cases (each carries an explicit reason in the corpus): 19
-- Lean-guarded cases: 284
-- probe observations (C#-only by design): 1086
+- Lean-guarded cases: 287
+- probe observations (C#-only by design): 1095
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -300,6 +300,21 @@ def case_call_reentry_identity : Expr :=
 def case_call_value_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.num 5, .num 9]), (.sequenceSpread (.call (.resolve "F") [.num 5, .num 9]))])
 #guard obs case_call_value_boundary == "ok raw=S[L[5, 9], 5, 9] n=3"
+
+-- loop-result-is-one-value [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1) \n Fibonacci.repeat(10, 0, 1)*, \n Fibonacci.repeat(10, 0, 1), 7
+def case_loop_result_is_one_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), (.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))), (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), .num 7])
+#guard obs case_loop_result_is_one_value == "ok raw=S[S[55, 89], 55, 89, S[55, 89], 7] n=5"
+
+-- loop-step-patterns-only-bind [item-supply-vs-value]: Dup(x, x) = { (x + 1, x + 1)* } \n Same(x, x) = { x + 1, x + 1 } \n Step((a, b)) = (b, a + b) \n Dup.repeat(2, 1, 1), Same.repeat(2, 1, 1), Step.repeat(3, (0, 1))
+def case_loop_step_patterns_only_bind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))]), privateProp "Same" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]), privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", (.binary .add (.param "a") (.param "b"))])])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1])), (.dotCall (.resolve "Same") "repeat" (some [.num 2, .num 1, .num 1])), (.dotCall (.resolve "Step") "repeat" (some [.num 3, (.capture [.num 0, .num 1])]))])
+#guard obs case_loop_step_patterns_only_bind == "ok raw=S[S[3, 3], S[3, 3], S[2, 3]] n=3"
+
+-- loop-nested-step-row-is-one-slot [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci, 2, a, b)* } \n Two.repeat(3, 0, 1)
+def case_loop_nested_step_row_is_one_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"]))])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+#guard obs case_loop_nested_step_row_is_one_slot == "ok raw=S[8, 13] n=1"
 
 -- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates*
 def case_property_value_boundary : Expr :=
@@ -1521,7 +1536,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 284 canonical Lean-guarded specification cases.
+-- 287 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1569,6 +1584,9 @@ def specCaseIds : List String := [
   "capture-supply-spread",
   "call-reentry-identity",
   "call-value-boundary",
+  "loop-result-is-one-value",
+  "loop-step-patterns-only-bind",
+  "loop-nested-step-row-is-one-slot",
   "property-value-boundary",
   "spread-capture-count",
   "repeated-spread-fixed-point",
@@ -1814,6 +1832,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 284
+#guard specCaseIds.length == 287
 
 end LanguageSpecCases
