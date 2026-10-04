@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.ExceptionServices;
 using KatLang.Evaluation;
 
 namespace KatLang.Tests;
@@ -40,33 +39,26 @@ public class ModelCStackProcessTests
     public void ConstrainedChild()
     {
         if (Environment.GetEnvironmentVariable(Child) != "1") return;
-        Exception? failure = null;
-        var thread = new Thread(() =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () =>
         {
-            try
+            new NeedCellTests().OneHundredThousandProductionParameterTransports_ShareOneAddressOnAConstrainedStack();
+            var aliases = string.Join("\n", Enumerable.Range(0, 2_000).Select(i => $"A{i}=A{i+1}")) + "\nA2000=Inc\nInc(x)=x+1\nA0(6)";
+            var forwarding = string.Join("\n", Enumerable.Range(0, 16).Select(i => $"F{i}(x)=F{i+1}")) + "\nF16(x)=x+x\nF0(4)";
+            Success(aliases, "7"); Success(forwarding, "8");
+            Success("Down(0)=0\nDown(n)=Down(n-1)\nDown(16)", "0");
+            Success("F(n)=if(n==0,0,first(map([n-1],F)))\nF(8)", "0");
+            foreach (var source in new[] { "F(n)=F(n+1)\nF(0)", "F(n)=first(map([n+1],F))\nF(0)", "F(n)=repeat(F,1,n)\nF(0)" })
             {
-                new NeedCellTests().OneHundredThousandProductionParameterTransports_ShareOneAddressOnAConstrainedStack();
-                var aliases = string.Join("\n", Enumerable.Range(0, 2_000).Select(i => $"A{i}=A{i+1}")) + "\nA2000=Inc\nInc(x)=x+1\nA0(6)";
-                var forwarding = string.Join("\n", Enumerable.Range(0, 16).Select(i => $"F{i}(x)=F{i+1}")) + "\nF16(x)=x+x\nF0(4)";
-                Success(aliases, "7"); Success(forwarding, "8");
-                Success("Down(0)=0\nDown(n)=Down(n-1)\nDown(16)", "0");
-                Success("F(n)=if(n==0,0,first(map([n-1],F)))\nF(8)", "0");
-                foreach (var source in new[] { "F(n)=F(n+1)\nF(0)", "F(n)=first(map([n+1],F))\nF(0)", "F(n)=repeat(F,1,n)\nF(0)" })
-                {
-                    var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDepth = 32 } });
-                    var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
-                    Assert.True(error.Code is KatLangErrorCode.EvaluationDepthExceeded or KatLangErrorCode.EvaluationStackExhausted, error.Message);
-                }
-                NeedCell? cycle = null;
-                cycle = new NeedCell(() => cycle!.Demand(), () => cycle!.DemandAsync());
-                Assert.Equal(KatLangErrorCode.DemandCycle, cycle.Demand().Error.Code);
-                Assert.Equal(KatLangErrorCode.DemandCycle, cycle.DemandAsync().GetAwaiter().GetResult().Error.Code);
-                File.WriteAllText(Environment.GetEnvironmentVariable(Marker)!, "model-c-stack-ok");
+                var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDepth = 32 } });
+                var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
+                Assert.True(error.Code is KatLangErrorCode.EvaluationDepthExceeded or KatLangErrorCode.EvaluationStackExhausted, error.Message);
             }
-            catch (Exception error) { failure = error; }
-        }, 1024 * 1024);
-        thread.Start(); Assert.True(thread.Join(TimeSpan.FromSeconds(60)), "constrained thread timed out");
-        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+            NeedCell? cycle = null;
+            cycle = new NeedCell(() => cycle!.Demand(), () => cycle!.DemandAsync());
+            Assert.Equal(KatLangErrorCode.DemandCycle, cycle.Demand().Error.Code);
+            Assert.Equal(KatLangErrorCode.DemandCycle, cycle.DemandAsync().GetAwaiter().GetResult().Error.Code);
+            File.WriteAllText(Environment.GetEnvironmentVariable(Marker)!, "model-c-stack-ok");
+        }, TimeSpan.FromSeconds(60));
     }
 
     private static void Success(string source, string expected)

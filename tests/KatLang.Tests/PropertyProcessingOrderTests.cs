@@ -113,10 +113,7 @@ public sealed class PropertyProcessingOrderTests
         const int Count = 100_000;
         var soft = Enumerable.Range(0, Count).Select(static index => (index, (index + 1) % Count)).ToArray();
         var graph = Graph(Count, [], soft);
-        var cyclic = 0;
-        var thread = new Thread(() => cyclic = graph.CyclicIndices.Count, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
+        var cyclic = AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () => graph.CyclicIndices.Count);
         Assert.Equal(Count, cyclic);
     }
 

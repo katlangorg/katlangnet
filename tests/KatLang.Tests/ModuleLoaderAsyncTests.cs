@@ -414,29 +414,14 @@ public class ModuleLoaderAsyncTests
             diagnostics,
             (_, _) => ValueTask.FromResult("public Value = 1"));
 
-        Algorithm? elaborated = null;
-        Exception? failure = null;
-        var thread = new Thread(
-            () =>
-            {
-                try
-                {
-                    var task = loader.ElaborateAsync(root);
-                    Assert.True(task.IsCompleted);
-                    elaborated = task.GetAwaiter().GetResult();
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                }
-            },
-            maxStackSize: 192 * 1024);
-        thread.Start();
-        thread.Join();
+        var elaborated = AstStructuralDepthProcessTests.RunOnThreadWithStack(192 * 1024, () =>
+        {
+            var task = loader.ElaborateAsync(root);
+            Assert.True(task.IsCompleted);
+            return task.GetAwaiter().GetResult();
+        });
 
-        Assert.Null(failure);
-        Assert.NotNull(elaborated);
-        Assert.Empty(elaborated!.Output);
+        Assert.Empty(elaborated.Output);
         Assert.Contains(
             diagnostics,
             d => d.Message.Contains("remaining stack", StringComparison.Ordinal));

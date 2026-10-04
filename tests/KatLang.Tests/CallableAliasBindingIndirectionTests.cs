@@ -617,20 +617,7 @@ public class CallableAliasBindingIndirectionTests
     // ── 12. Long chains: no host recursion, no re-chase per call ───────────────────────────
 
     private static T OnOneMebibyteStack<T>(Func<T> work)
-    {
-        T result = default!;
-        Exception? failure = null;
-        var thread = new Thread(() =>
-        {
-            try { result = work(); }
-            catch (Exception exception) { failure = exception; }
-        }, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
-        if (failure is not null)
-            throw new InvalidOperationException("The work failed on the 1 MiB thread.", failure);
-        return result;
-    }
+        => AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, work);
 
     private static string Chain(int length, string head, string target)
         => $"{head}0 = {target}\n" + string.Concat(Enumerable.Range(1, length - 1).Select(i => $"{head}{i} = {head}{i - 1}\n"));

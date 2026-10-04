@@ -170,44 +170,36 @@ public class NeedCellTests
     [Fact]
     public void OneHundredThousandProductionParameterTransports_ShareOneAddressOnAConstrainedStack()
     {
-        Exception? failure = null;
-        var thread = new Thread(() =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(512 * 1024, () =>
         {
-            try
+            var starts = 0;
+            var projections = 0;
+            var span = new SourceSpan(2, 3, 2, 4);
+            var algorithm = new Algorithm.User(null, [], [], [], [new Expr.Num(7)]);
+            var budget = EvaluationBudget.Create(new EvaluationLimits { MaxDepth = 1, MaxSteps = 1 });
+            EvalResult<Evaluator.CountedResult> Evaluate() { starts++; return Value(); }
+            var original = new NeedCell(Evaluate, () => new(Evaluate()),
+                () => { projections++; return EvalResult<Algorithm?>.Ok(algorithm); }, span: span, budget: budget);
+            var current = original;
+            var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
+            for (var hop = 0; hop < 100_000; hop++)
             {
-                var starts = 0;
-                var projections = 0;
-                var span = new SourceSpan(2, 3, 2, 4);
-                var algorithm = new Algorithm.User(null, [], [], [], [new Expr.Num(7)]);
-                var budget = EvaluationBudget.Create(new EvaluationLimits { MaxDepth = 1, MaxSteps = 1 });
-                EvalResult<Evaluator.CountedResult> Evaluate() { starts++; return Value(); }
-                var original = new NeedCell(Evaluate, () => new(Evaluate()),
-                    () => { projections++; return EvalResult<Algorithm?>.Ok(algorithm); }, span: span, budget: budget);
-                var current = original;
-                var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
-                for (var hop = 0; hop < 100_000; hop++)
-                {
-                    ctx = ctx.WithNeedEnv([("x", current)]);
-                    current = Evaluator.SupplyCell(new Expr.Param("x"), ctx, []);
-                    Assert.Same(original, current);
-                }
-                Assert.Equal(0, starts);
-                Assert.Equal(0, budget.ConsumedSteps);
-                Assert.Equal(0, budget.PeakDepth);
-                Assert.Equal(span, current.Span);
-                Assert.Same(algorithm, current.ProjectCallable().Value);
-                Assert.Equal(0, starts);
-                Assert.True(current.Demand().IsOk);
-                Assert.True(current.DemandAsync().GetAwaiter().GetResult().IsOk);
-                Assert.Equal(1, starts);
-                Assert.Equal(1, projections);
-                Assert.Equal(0, budget.ConsumedSteps);
+                ctx = ctx.WithNeedEnv([("x", current)]);
+                current = Evaluator.SupplyCell(new Expr.Param("x"), ctx, []);
+                Assert.Same(original, current);
             }
-            catch (Exception error) { failure = error; }
-        }, 512 * 1024);
-        thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "transport or force did not finish");
-        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            Assert.Equal(0, starts);
+            Assert.Equal(0, budget.ConsumedSteps);
+            Assert.Equal(0, budget.PeakDepth);
+            Assert.Equal(span, current.Span);
+            Assert.Same(algorithm, current.ProjectCallable().Value);
+            Assert.Equal(0, starts);
+            Assert.True(current.Demand().IsOk);
+            Assert.True(current.DemandAsync().GetAwaiter().GetResult().IsOk);
+            Assert.Equal(1, starts);
+            Assert.Equal(1, projections);
+            Assert.Equal(0, budget.ConsumedSteps);
+        }, TimeSpan.FromSeconds(30));
     }
 
 }

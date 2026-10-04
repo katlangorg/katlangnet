@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
@@ -51,16 +52,23 @@ public class EvaluationLimitsProcessTests
             new Dictionary<string, string> { ["DOTNET_TieredCompilation"] = "0" });
 
     /// <summary>
-    /// For each PV-07 witness the probe FINDS — never hard-codes — the smallest thread stack
-    /// (64 KiB granularity) on which the UNCONFIGURED run completes, then requires every
+    /// For each PV-07 witness the probe FINDS — never hard-codes — the least stack headroom
+    /// (64 KiB granularity) with which the UNCONFIGURED run completes, then requires every
     /// non-binding limit configuration (<see cref="LimitConfigurationTransparencyTests.NonBindingConfigurations"/>)
-    /// to complete on exactly that stack with the same value, and to stop exactly like the
+    /// to complete with exactly that headroom with the same value, and to stop exactly like the
     /// unconfigured run one granule below it. Before Q-09b a configured <c>MaxSteps</c>,
     /// <c>MaxMaterializedItems</c>, <c>MaxStringLength</c> (even at its default) or
     /// <c>MaxMaterializedStringChars</c> switched loop planning and/or sequence fusion off, and the
     /// generic strategies need MORE stack for a fused-pipeline recursion (W1) and a loop at the
     /// bottom of a recursion, LESS for recursion routed through a loop step — so the first check
     /// failed for the first two witnesses and the second for the third.
+    /// <para>"The same host" is ONE probe thread: every run executes on it, below a padding frame
+    /// that consumes all but the given headroom of its fixed stack, so equal headroom means the
+    /// same stack pointer against the same stack limit. Threads that merely REQUEST the same stack
+    /// size are not the same host (Q-09a): glibc can give a new thread a cached stack up to four
+    /// times the requested size, and a new thread's first frame lands at a varying depth. A former
+    /// thread-per-run search failed on Linux CI that way: a reused larger stack satisfied its
+    /// "minimum", and the re-run, on a stack of exactly that size, stopped.</para>
     /// </summary>
     [Fact]
     public void NonBindingLimits_KeepTheHostStackOutcome_ProbeChild()
@@ -69,9 +77,11 @@ public class EvaluationLimitsProcessTests
             return;
 
         const int granuleKiB = 64;
+        // The probe thread's stack; a run's headroom is what its padding leaves of it.
+        const int stackGranules = 16 * 1024 / granuleKiB;
         // The search never goes below this floor: these witnesses have shallow SOURCE (every
         // recursion level crosses a probing chokepoint), and the floor stays clear of the
-        // sub-minimum stacks where deeply nested source was once seen to overflow between probes.
+        // sub-minimum headroom where deeply nested source was once seen to overflow between probes.
         const int floorGranules = 6;
         var step10 = "Step(s) = {\n" + string.Concat(Enumerable.Range(1, 10).Select(i => $"  T{i} = {(i == 1 ? "s" : $"T{i - 1}")} + 1\n")) + "  T10\n}\n";
         var witnesses = new[]
@@ -84,65 +94,67 @@ public class EvaluationLimitsProcessTests
             "S(s) = R(s - 1)\nR(n) = if(n > 0, repeat(S, 1, n), 0)\nR(25)",
         };
 
-        static string Outcome(string source, EvaluationLimits? limits, int stackKiB)
+        // The run with `headroomGranules` of the probe thread's stack left to it: this frame's
+        // padding consumes the rest. With tiering off, the outcome is a function of the headroom.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static string Outcome(string source, EvaluationLimits? limits, int headroomGranules)
         {
-            string? outcome = null;
-            var thread = new Thread(
-                () =>
+            Span<byte> padding = stackalloc byte[(stackGranules - headroomGranules) * granuleKiB * 1024 + 1];
+            padding[0] = 1;
+            var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = limits });
+            var outcome = result switch
+            {
+                RunResult.Success => "ok " + result.ToDisplayString(),
+                RunResult.EvalFailure failure => "err " + Assert.Single(failure.Errors).Code,
+                _ => result.GetType().Name,
+            };
+            // Read after the run, so the padding stays allocated across it.
+            Assert.Equal(1, padding[0]);
+            return outcome;
+        }
+
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(stackGranules * granuleKiB * 1024, () =>
+        {
+            foreach (var witness in witnesses)
+            {
+                // The least headroom with which the unconfigured run completes (outcomes are
+                // monotone in the headroom: more never stops a run that completed).
+                int low = floorGranules, high = stackGranules;
+                Assert.StartsWith("ok ", Outcome(witness, null, high));
+                while (low < high)
                 {
-                    var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = limits });
-                    outcome = result switch
-                    {
-                        RunResult.Success success => "ok " + result.ToDisplayString(),
-                        RunResult.EvalFailure failure => "err " + Assert.Single(failure.Errors).Code,
-                        _ => result.GetType().Name,
-                    };
-                },
-                stackKiB * 1024);
-            thread.Start();
-            thread.Join();
-            return outcome!;
-        }
+                    var middle = (low + high) / 2;
+                    if (Outcome(witness, null, middle).StartsWith("ok ", StringComparison.Ordinal))
+                        high = middle;
+                    else
+                        low = middle + 1;
+                }
 
-        foreach (var witness in witnesses)
-        {
-            // The smallest stack on which the unconfigured run completes (outcomes are monotone in
-            // the stack size: more headroom never stops a run that completed).
-            int low = floorGranules, high = 16 * 1024 / granuleKiB;
-            Assert.StartsWith("ok ", Outcome(witness, null, high * granuleKiB));
-            while (low < high)
-            {
-                var middle = (low + high) / 2;
-                if (Outcome(witness, null, middle * granuleKiB).StartsWith("ok ", StringComparison.Ordinal))
-                    high = middle;
-                else
-                    low = middle + 1;
-            }
+                var minimumKiB = high * granuleKiB;
+                var completed = Outcome(witness, null, high);
+                Assert.StartsWith("ok ", completed);
+                foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
+                {
+                    Assert.True(
+                        completed == Outcome(witness, limits, high),
+                        $"{name} changed the outcome with the {minimumKiB} KiB of headroom the unconfigured run completes with:\n{witness}");
+                }
 
-            var minimumKiB = high * granuleKiB;
-            var completed = Outcome(witness, null, minimumKiB);
-            Assert.StartsWith("ok ", completed);
-            foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
-            {
-                Assert.True(
-                    completed == Outcome(witness, limits, minimumKiB),
-                    $"{name} changed the outcome on the {minimumKiB} KiB stack the unconfigured run completes on:\n{witness}");
+                // The symmetric half: one granule below, where the unconfigured run stops, no
+                // configuration may complete instead. (Skipped only if a build's frames are so small
+                // that the witness completes at the search floor.)
+                if (high == floorGranules)
+                    continue;
+                var stopped = Outcome(witness, null, high - 1);
+                Assert.Equal("err EvaluationStackExhausted", stopped);
+                foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
+                {
+                    Assert.True(
+                        stopped == Outcome(witness, limits, high - 1),
+                        $"{name} changed the outcome with the {minimumKiB - granuleKiB} KiB of headroom the unconfigured run stops with:\n{witness}");
+                }
             }
-
-            // The symmetric half: one granule below, where the unconfigured run stops, no
-            // configuration may complete instead. (Skipped only if a build's frames are so small
-            // that the witness completes at the search floor.)
-            if (high == floorGranules)
-                continue;
-            var stopped = Outcome(witness, null, minimumKiB - granuleKiB);
-            Assert.Equal("err EvaluationStackExhausted", stopped);
-            foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
-            {
-                Assert.True(
-                    stopped == Outcome(witness, limits, minimumKiB - granuleKiB),
-                    $"{name} changed the outcome on the {minimumKiB - granuleKiB} KiB stack the unconfigured run stops on:\n{witness}");
-            }
-        }
+        });
 
         WriteProbeMarker();
     }

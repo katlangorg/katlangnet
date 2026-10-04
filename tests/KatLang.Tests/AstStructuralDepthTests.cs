@@ -1675,12 +1675,20 @@ public class AstStructuralDepthProcessTests
     }
 
     /// <summary>
-    /// Runs a probe body on a dedicated thread with an exactly-sized stack, so the
-    /// probe exercises the DOCUMENTED minimum supported environment (a 1 MiB thread
-    /// stack) deterministically instead of whatever stack the test host happens to
-    /// give its worker threads. Exceptions propagate to the caller.
+    /// Runs a probe body on a dedicated thread whose stack is EXACTLY
+    /// <paramref name="maxStackBytes"/>, so the probe exercises the stated environment (the
+    /// DOCUMENTED minimum supported 1 MiB thread stack, or a deliberately smaller hostile one)
+    /// instead of whatever stack the operating system hands the thread. Requesting the size is
+    /// not enough: glibc can give a new thread a cached stack up to four times the requested size
+    /// (<see cref="ThreadStackSize"/>), and a probe that must fit, or must fail, on the stated
+    /// stack then passes for the wrong reason. So the thread reads the stack it was actually given
+    /// and runs the body below a padding frame that consumes the excess. A new thread's first
+    /// frame still lands a few KiB deep, by an amount that varies per thread, so no probe may
+    /// depend on a boundary finer than that. Exceptions propagate to the caller; a body still
+    /// running after <paramref name="timeout"/> fails the caller with a
+    /// <see cref="TimeoutException"/>.
     /// </summary>
-    internal static void RunOnThreadWithStack(int maxStackBytes, Action body)
+    internal static void RunOnThreadWithStack(int maxStackBytes, Action body, TimeSpan? timeout = null)
     {
         Exception? failure = null;
         var thread = new Thread(
@@ -1688,7 +1696,7 @@ public class AstStructuralDepthProcessTests
             {
                 try
                 {
-                    body();
+                    RunBelowExcessStack(maxStackBytes, body);
                 }
                 catch (Exception ex)
                 {
@@ -1697,9 +1705,49 @@ public class AstStructuralDepthProcessTests
             },
             maxStackBytes);
         thread.Start();
-        thread.Join();
+        if (timeout is { } limit)
+        {
+            if (!thread.Join(limit))
+                throw new TimeoutException($"The body did not finish within {limit} on the {maxStackBytes}-byte stack.");
+        }
+        else
+        {
+            thread.Join();
+        }
+
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    /// <summary>The value-returning form of <see cref="RunOnThreadWithStack(int, Action, TimeSpan?)"/>.</summary>
+    internal static T RunOnThreadWithStack<T>(int maxStackBytes, Func<T> body)
+    {
+        T result = default!;
+        RunOnThreadWithStack(maxStackBytes, () => { result = body(); });
+        return result;
+    }
+
+    // On the new thread: the padding consumes whatever stack the operating system gave beyond the
+    // request, so the body sees the headroom of a freshly allocated stack of exactly that size.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void RunBelowExcessStack(int maxStackBytes, Action body)
+    {
+        var excess = (ThreadStackSize.OfCurrentThread() ?? maxStackBytes) - maxStackBytes;
+        if (excess < 0)
+        {
+            throw new InvalidOperationException(
+                $"The thread was given {maxStackBytes + excess} bytes of stack, fewer than the {maxStackBytes} it requested.");
+        }
+
+        Span<byte> padding = stackalloc byte[checked((int)excess)];
+        body();
+        KeepAllocated(padding);
+    }
+
+    // Uses the padding after the body has run, so it stays allocated across the whole body.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void KeepAllocated(Span<byte> padding)
+    {
     }
 
     [Fact]

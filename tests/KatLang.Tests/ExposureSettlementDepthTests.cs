@@ -14,28 +14,9 @@ public sealed class ExposureSettlementDepthTests
 {
     private const int Length = 1000;
 
-    /// <summary>Runs <paramref name="work"/> on a thread with a 1 MiB stack: a host stack overflow would end the test run.</summary>
+    /// <summary>Runs <paramref name="work"/> on a thread with exactly a 1 MiB stack: a host stack overflow would end the test run.</summary>
     private static T OnOneMebibyteStack<T>(Func<T> work)
-    {
-        T result = default!;
-        Exception? failure = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                result = work();
-            }
-            catch (Exception exception)
-            {
-                failure = exception;
-            }
-        }, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
-        if (failure is not null)
-            throw new InvalidOperationException("The work failed on the 1 MiB thread.", failure);
-        return result;
-    }
+        => AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, work);
 
     /// <summary>
     /// <c>P(i)</c> reads <c>A(i+1)</c> — through its own <c>open P(i+1)</c>, or as the dotted

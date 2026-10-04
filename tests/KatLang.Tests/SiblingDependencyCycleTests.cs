@@ -474,12 +474,8 @@ public sealed class SiblingDependencyCycleTests
             hard.Add((Ring + index, index == 0 ? Ring - 1 : Ring + index - 1));
         var graph = Graph(Ring + Chain, hard);
 
-        IReadOnlyList<int>? order = null;
-        var thread = new Thread(() => order = graph.TopologicalOrder, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
+        var order = AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () => graph.TopologicalOrder);
 
-        Assert.NotNull(order);
         Assert.Equal(Enumerable.Range(0, Ring + Chain), order);
     }
 

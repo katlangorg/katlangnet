@@ -192,9 +192,7 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
         IReadOnlyList<int>? order = null;
         IReadOnlySet<int>? refusals = null;
         var timer = Stopwatch.StartNew();
-        var thread = new Thread(() => { order = graph.TopologicalOrder; refusals = graph.CyclicIndices; }, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () => { order = graph.TopologicalOrder; refusals = graph.CyclicIndices; });
         output.WriteLine($"100,000 nodes in 25,000 SCCs and tails, both graph projections: {timer.ElapsedMilliseconds} ms");
         Assert.Equal(Enumerable.Range(0, Count), order);
         Assert.NotNull(refusals);
@@ -249,19 +247,9 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
         const int Count = 2_000;
         var source = string.Join("\n", Enumerable.Range(0, Count).Select(i => $"C{i} = P{i} + 0")
             .Concat(Enumerable.Range(0, Count).Select(i => $"P{i} = {{ H = P{(i + 1) % Count} + 0\n x + 1 }}"))) + "\n0";
-        ParseResult? parsed = null;
-        Exception? error = null;
         var timer = Stopwatch.StartNew();
-        var thread = new Thread(() =>
-        {
-            try { parsed = Parser.Parse(source); }
-            catch (Exception exception) { error = exception; }
-        }, maxStackSize: 1024 * 1024);
-        thread.Start();
-        thread.Join();
+        var parsed = AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () => Parser.Parse(source));
         output.WriteLine($"2,000 source cycle members + 2,000 consumers: {timer.ElapsedMilliseconds} ms");
-        Assert.Null(error);
-        Assert.NotNull(parsed);
         Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics));
         Assert.Equal(Count * 2, parsed.Root.Properties.Count);
         Assert.All(parsed.Root.Properties.Where(p => p.Name.StartsWith('C')), p => Assert.Equal(["x"], p.Value.Params));
