@@ -93,12 +93,13 @@ internal readonly record struct MetamorphicBoundaryInterval(
 /// Everything the harness knows about one resource dimension, declared as data.
 ///
 /// <para><b>Baseline vs value.</b> A boundary is only meaningful if it was derived under the
-/// SAME execution policy the boundary runs use. Two dimensions need care there: configuring any
-/// step budget switches the loop optimizer off, and configuring either string budget switches
-/// the sequence-pipeline optimizer off (<c>Evaluator.CreateRootCtx</c>). So those dimensions
-/// measure under a deliberately generous limit of their OWN kind rather than under the default
-/// policy — the measurement then describes the same execution the sweep will run, and only one
-/// limit ever varies.</para>
+/// SAME execution policy the boundary runs use. Since Q-09b (2026-10-04) no configured limit
+/// changes the execution policy — limits observe a run; they never choose how it runs, and every
+/// strategy charges every budget identically — so every dimension measures under the DEFAULT
+/// policy (<see cref="Baseline"/> <c>null</c>), and the in-budget-neutral law therefore compares
+/// the genuinely unconfigured run against a generous limit. (Until then a configured step budget
+/// switched the loop optimizer off and either string budget switched sequence fusion off, so those
+/// dimensions measured under a generous limit of their own kind.)</para>
 /// </summary>
 internal sealed record MetamorphicResourceDimensionDefinition(
     MetamorphicResourceDimension Dimension,
@@ -136,10 +137,10 @@ internal sealed record MetamorphicResourceDimensionDefinition(
 /// </summary>
 internal static class MetamorphicBoundaryPolicy
 {
-    /// <summary>Step budget the step dimension measures under — high enough never to bind.</summary>
+    /// <summary>Search ceiling of the step dimension: the largest step budget a case configures.</summary>
     internal const long StepProbeCeiling = 100_000;
 
-    /// <summary>Cumulative string budget the string dimension measures under.</summary>
+    /// <summary>Search ceiling of the cumulative string dimension.</summary>
     internal const long StringProbeCeiling = 100_000;
 
     /// <summary>Largest per-collection / per-string limit the bounded search will probe.</summary>
@@ -165,9 +166,7 @@ internal static class MetamorphicBoundaryPolicy
             ExpectedResourceKind: nameof(EvalError.EvaluationStepLimitExceeded),
             MetamorphicBoundaryStop.ResourceError,
             MetamorphicSurface.EvaluatorRunCountedObserved,
-            // A configured step budget switches the loop optimizer off, so the measurement must
-            // carry one too or it would describe a different execution than the sweep.
-            Baseline: new EvaluationLimits { MaxSteps = StepProbeCeiling },
+            Baseline: null,
             WithValue: static value => new EvaluationLimits { MaxSteps = value }),
 
         new(MetamorphicResourceDimension.PerCollectionItems, "per-collection-items",
@@ -194,8 +193,7 @@ internal static class MetamorphicBoundaryPolicy
             ExpectedResourceKind: nameof(EvalError.StringSizeLimitExceeded),
             MetamorphicBoundaryStop.ResourceError,
             MetamorphicSurface.EvaluatorRunCountedObserved,
-            // Either string budget switches the sequence-pipeline optimizer off; measure with one.
-            Baseline: new EvaluationLimits { MaxStringLength = EvaluationLimits.MaxSupportedStringLength },
+            Baseline: null,
             WithValue: static value => new EvaluationLimits { MaxStringLength = ToStringLimit(value) }),
 
         new(MetamorphicResourceDimension.CumulativeStringChars, "cumulative-string-chars",
@@ -204,7 +202,7 @@ internal static class MetamorphicBoundaryPolicy
             ExpectedResourceKind: nameof(EvalError.StringMaterializationLimitExceeded),
             MetamorphicBoundaryStop.ResourceError,
             MetamorphicSurface.EvaluatorRunCountedObserved,
-            Baseline: new EvaluationLimits { MaxMaterializedStringChars = StringProbeCeiling },
+            Baseline: null,
             WithValue: static value => new EvaluationLimits { MaxMaterializedStringChars = value }),
 
         new(MetamorphicResourceDimension.DisplayLength, "display-length",

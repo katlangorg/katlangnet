@@ -1,8 +1,8 @@
 namespace KatLang.Tests.AsyncEvaluation;
 
 /// <summary>
-/// Stack-shape safety of the async twin family. The SYNCHRONOUS evaluator's calibrated
-/// guarantees are checked by its own boundary pins; these
+/// Stack-shape safety of the async twin family. The synchronous evaluator's
+/// structured-failure boundaries are checked by its own pins; these
 /// tests characterize the TWIN path, whose synchronously-completing async frames are
 /// larger than their synchronous counterparts:
 ///
@@ -16,8 +16,9 @@ namespace KatLang.Tests.AsyncEvaluation;
 ///   <item>Pure expression SPINES stay iterative in the twin machine, so a deep flat
 ///   chain evaluates on a 384 KiB thread exactly as the synchronous machine's pin
 ///   demonstrates for the synchronous path.</item>
-///   <item>On an ordinary test thread, the twin path's verdicts for depth-limited
-///   recursion equal the synchronous verdicts exactly.</item>
+///   <item>A reduced dynamic depth ceiling reached before either host-stack backstop
+///   gives the same deterministic verdict. At the default ceiling either route may
+///   instead reach its environmental backstop (Q-09a).</item>
 /// </list>
 /// </summary>
 public class AsyncStackDepthTests

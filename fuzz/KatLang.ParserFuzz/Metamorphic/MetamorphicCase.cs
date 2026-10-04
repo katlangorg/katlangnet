@@ -157,37 +157,24 @@ internal enum MetamorphicOperationalRelation
     /// evaluation steps and peak dynamic depth. Declared only where the repository already
     /// establishes that contract — the user-defined extension call, whose two spellings
     /// resolve to one and the same user invocation
-    /// (<c>OperationalMetamorphicTests.UserExtensionCall_ChargesTheSameInBothForms</c>), and
-    /// the fluent-chain spread contexts, whose two spellings lower to the identical AST.
+    /// (<c>OperationalMetamorphicTests.UserExtensionCall_ChargesTheSameInBothForms</c>), the
+    /// fluent-chain spread contexts, whose two spellings lower to the identical AST, and the
+    /// optimized against the generic run of one source, whose strategies charge every budget
+    /// identically (Q-09b; <c>StrategyNeutralBudgetParityTests</c>).
     /// </summary>
     ExactObservedWorkEqual,
 
     /// <summary>
-    /// The RIGHT member never materializes MORE than the left. Declared where the right form is
-    /// eligible for sequence-pipeline FUSION and the left form is not: a fused pipeline that
-    /// materializes nothing legitimately charges less, and demanding equality would forbid the
-    /// fusion the runtime documents. The inequality still catches the failure mode that matters —
-    /// a dotted form doing MORE work than its ordinary equivalent, which is exactly how the
-    /// duplicate dotted-receiver materialization defect presented.
-    ///
-    /// <para>Declared only where fusion is EFFECTIVELY eligible
-    /// (<see cref="MetamorphicLimitPolicy.SequencePipelineFusionCanApply"/>: the optimizer flag
-    /// plus the string and step budgets that switch the sequence-pipeline optimizer off).
-    /// Measured: wherever fusion is ineligible the two forms agree exactly on all 144
-    /// chain/receiver pairs, so those policies keep the exact check.</para>
-    /// </summary>
-    MaterializationNeverIncreases,
-
-    /// <summary>
-    /// Everything <see cref="MaterializationNeverIncreases"/> requires PLUS "the left member
-    /// never charges more evaluation STEPS than the right".
+    /// The LEFT member never materializes more collection-item slots or string units, and never
+    /// charges more evaluation STEPS, than the right.
     ///
     /// <para>Declared where the left member is permitted to do strictly less TOTAL work than an
-    /// otherwise identical right member: an optimized run against the generic run of the same
-    /// source, and a cached-property run against the rebuilt form that constructs the same value
-    /// independently. Peak dynamic depth is deliberately NOT part of it — an optimized loop plan
-    /// can legitimately reach a different nesting profile than the generic interpreter, so the
-    /// depth is recorded and reported but never a failure condition.</para>
+    /// otherwise identical right member: a cached-property run against the rebuilt form that
+    /// constructs the same value independently. Peak dynamic depth is deliberately NOT part of
+    /// it. (An optimized run against the generic run of the same source used to declare it too,
+    /// and the dotted spelling of a fusible chain a materialization-only variant; since Q-09b
+    /// every execution strategy charges every budget identically, so both are exact relations
+    /// now.)</para>
     /// </summary>
     WorkNeverIncreases,
 

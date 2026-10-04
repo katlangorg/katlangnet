@@ -9,6 +9,8 @@ namespace KatLang.Optimizations.Loops;
 /// <see cref="Property"/> itself: a bare read of an EXPORTED temp goes through the
 /// run's zero-argument property cache under that binding (the same entry the
 /// generic evaluator uses), while a local-only temp is memoized per iteration.
+/// <see cref="ForwardsTransportedArguments"/> records whether a forwarding call of this temp
+/// can be planned at all (see <see cref="LoopOptimizer.TransportsForwardedArguments"/>).
 /// </summary>
 internal sealed record LoopTempPlan(
     string Name,
@@ -16,7 +18,8 @@ internal sealed record LoopTempPlan(
     IReadOnlyList<string> ParameterNames,
     LoopExprPlan Plan,
     SourceSpan? DeclarationSpan,
-    Property Binding);
+    Property Binding,
+    bool ForwardsTransportedArguments);
 
 internal sealed record LoopTempPlanBuild(
     IReadOnlyList<LoopTempPlan> Plans,
@@ -52,7 +55,8 @@ internal static partial class LoopOptimizer
                     parameterNames,
                     tempR.Plan,
                     property.FirstDeclarationSpan,
-                    property);
+                    property,
+                    TransportsForwardedArguments(property, stateNames, ctx));
                 plans.Add(plan);
                 diagnostics?.Add(new LoopTempDiagnosticSnapshot(
                     property.Name,
@@ -111,6 +115,59 @@ internal static partial class LoopOptimizer
             return new LoopTempPlanTryBuildResult(null, $"unsupported local property body {property.Name}: {bodyPlan.FallbackReason}");
 
         return new LoopTempPlanTryBuildResult(bodyPlan.Plan, null);
+    }
+
+    /// <summary>
+    /// Whether the forwarding call <c>T(p1, …, pn)</c> of a planned temp — its arguments are
+    /// exactly its own parameter names — can be planned: a planned call evaluates the temp's
+    /// body straight against the step's own bindings, which is the generic call EXACTLY only
+    /// when that call would TRANSPORT every argument's existing binding into the callee
+    /// (<c>Evaluator.SupplyCell</c> reuses a parameter's own cell): each parameter is a plain,
+    /// non-collecting capture with a distinct name, and each name is a step state parameter or
+    /// a parameter whose need cell the step context already holds. A repeated name would make
+    /// the generic binder demand both arguments at binding time, and an argument the step
+    /// holds only as a value would be a NEW cell whose first demand records its own dispatch
+    /// checkpoint — either would put budget charges or VALUE demand somewhere the planned call
+    /// does not, so such a call stays generic. (The front end never produces either: a temp
+    /// only acquires a parameter for a name no enclosing binding supplies, which the step then
+    /// forwards as one of its own state parameters.)
+    /// </summary>
+    internal static bool TransportsForwardedArguments(
+        Property property,
+        IReadOnlyList<string> stateNames,
+        Evaluator.EvalCtx ctx)
+    {
+        if (property.Value is not Algorithm.User userProperty)
+            return false;
+
+        var patterns = userProperty.ParameterPatterns;
+        for (var i = 0; i < patterns.Count; i++)
+        {
+            if (patterns[i] is not CaptureParameterPattern { Kind: ParameterKind.Normal } capture)
+                return false;
+
+            for (var j = 0; j < i; j++)
+            {
+                if (patterns[j] is CaptureParameterPattern earlier && earlier.Name == capture.Name)
+                    return false;
+            }
+
+            if (!ContainsStateName(stateNames, capture.Name) && Evaluator.ParameterNeedCell(capture.Name, ctx) is null)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool ContainsStateName(IReadOnlyList<string> stateNames, string name)
+    {
+        for (var i = 0; i < stateNames.Count; i++)
+        {
+            if (stateNames[i] == name)
+                return true;
+        }
+
+        return false;
     }
 
     private static bool IsLoopPlanVisibleParameter(

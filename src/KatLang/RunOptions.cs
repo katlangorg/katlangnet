@@ -213,7 +213,8 @@ public sealed class RunOptions
     /// control flow never alter the stream. A limit the run actually reaches ends the run
     /// (every resource-limit failure is terminal), so a tighter limit can make a seeded run
     /// fail, but a seeded run that succeeds has made exactly the draws of the same run under
-    /// no limit — a limit never shifts the stream of a successful run. Host-operation results are the host's
+    /// no limit — a limit never shifts the stream of a successful run, and a limit the run
+    /// does not reach changes nothing about it. Host-operation results are the host's
     /// responsibility and outside this guarantee. The exact stream may change in a future
     /// KatLang version when the generator, a sampling algorithm, or evaluation semantics
     /// deliberately change (release-noted); it is NOT promised across versions, and
@@ -296,6 +297,9 @@ public sealed class RunOptions
     /// <see cref="KatLang.EvaluationLimits.Default"/> applies: hard depth, per-collection,
     /// per-string, and returned-display ceilings are enforced; step and cumulative
     /// materialization budgets remain optional.
+    /// <para>Limits observe a run; they never choose how it runs: a limit the run does not
+    /// reach changes nothing about it — its value, effects, accounting, and evaluation
+    /// strategy included (see <see cref="KatLang.EvaluationLimits"/>).</para>
     /// <para>These are immutable configuration and safe to share across runs — the
     /// mutable counters live in run-scoped evaluation state, so every run starts
     /// fresh.</para>

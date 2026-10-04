@@ -394,10 +394,9 @@ public class EvaluationCancellationTests
 
     /// <summary>
     /// Pins the observation point the end-to-end test cannot isolate: the OPTIMIZED loop
-    /// executor observes the token at each iteration head. Fully-planned iterations
-    /// touch no charging chokepoint (and this path never runs under a step budget), so
-    /// without this observation a fused <c>repeat(S, huge, 0)</c> would be
-    /// un-cancellable exactly when no limits are configured.
+    /// executor observes the token before charging each iteration and mutating its
+    /// frame. Planned expression checkpoints also observe cancellation, with the
+    /// same behavior whether limits are configured or omitted.
     /// </summary>
     [Fact]
     public void OptimizedRepeatExecutor_ObservesTheTokenPerIteration()

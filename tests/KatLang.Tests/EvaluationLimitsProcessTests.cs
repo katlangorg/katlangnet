@@ -37,6 +37,116 @@ public class EvaluationLimitsProcessTests
     public async Task DeepErrorContextCode_IsStackSafe_InSubprocess()
         => await RunProbeChild(nameof(DeepErrorContextCode_ProbeChild));
 
+    /// <summary>
+    /// PV-07 / Q-09b, the host-stack half: a limit the run does not reach must not change
+    /// whether the host-stack backstop stops it ON THE SAME HOST. Runs in a child process with
+    /// tiered compilation OFF, so frame sizes are fixed for the whole probe (in a tiering
+    /// process the same run on the same thread can flip from failure to success as its code is
+    /// recompiled — which is host variability, Q-09a, not a configuration effect).
+    /// </summary>
+    [Fact]
+    public async Task NonBindingLimits_KeepTheHostStackOutcome_InSubprocess()
+        => await RunProbeChild(
+            nameof(NonBindingLimits_KeepTheHostStackOutcome_ProbeChild),
+            new Dictionary<string, string> { ["DOTNET_TieredCompilation"] = "0" });
+
+    /// <summary>
+    /// For each PV-07 witness the probe FINDS — never hard-codes — the smallest thread stack
+    /// (64 KiB granularity) on which the UNCONFIGURED run completes, then requires every
+    /// non-binding limit configuration (<see cref="LimitConfigurationTransparencyTests.NonBindingConfigurations"/>)
+    /// to complete on exactly that stack with the same value, and to stop exactly like the
+    /// unconfigured run one granule below it. Before Q-09b a configured <c>MaxSteps</c>,
+    /// <c>MaxMaterializedItems</c>, <c>MaxStringLength</c> (even at its default) or
+    /// <c>MaxMaterializedStringChars</c> switched loop planning and/or sequence fusion off, and the
+    /// generic strategies need MORE stack for a fused-pipeline recursion (W1) and a loop at the
+    /// bottom of a recursion, LESS for recursion routed through a loop step — so the first check
+    /// failed for the first two witnesses and the second for the third.
+    /// </summary>
+    [Fact]
+    public void NonBindingLimits_KeepTheHostStackOutcome_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        const int granuleKiB = 64;
+        // The search never goes below this floor: these witnesses have shallow SOURCE (every
+        // recursion level crosses a probing chokepoint), and the floor stays clear of the
+        // sub-minimum stacks where deeply nested source was once seen to overflow between probes.
+        const int floorGranules = 6;
+        var step10 = "Step(s) = {\n" + string.Concat(Enumerable.Range(1, 10).Select(i => $"  T{i} = {(i == 1 ? "s" : $"T{i - 1}")} + 1\n")) + "  T10\n}\n";
+        var witnesses = new[]
+        {
+            // W1: recursion through a fused filter predicate.
+            "R(n) = if(n > 0, range(n, n).filter({ R(x - 1) >= 0 }).count, 0)\nR(30)",
+            // rc_10_50: a planned ten-temp loop at the bottom of a recursion.
+            step10 + "R(n) = if(n > 0, R(n - 1), repeat(Step, 2, 0))\nR(50)",
+            // looprec: recursion routed through a loop step (the generic loop used LESS stack).
+            "S(s) = R(s - 1)\nR(n) = if(n > 0, repeat(S, 1, n), 0)\nR(25)",
+        };
+
+        static string Outcome(string source, EvaluationLimits? limits, int stackKiB)
+        {
+            string? outcome = null;
+            var thread = new Thread(
+                () =>
+                {
+                    var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = limits });
+                    outcome = result switch
+                    {
+                        RunResult.Success success => "ok " + result.ToDisplayString(),
+                        RunResult.EvalFailure failure => "err " + Assert.Single(failure.Errors).Code,
+                        _ => result.GetType().Name,
+                    };
+                },
+                stackKiB * 1024);
+            thread.Start();
+            thread.Join();
+            return outcome!;
+        }
+
+        foreach (var witness in witnesses)
+        {
+            // The smallest stack on which the unconfigured run completes (outcomes are monotone in
+            // the stack size: more headroom never stops a run that completed).
+            int low = floorGranules, high = 16 * 1024 / granuleKiB;
+            Assert.StartsWith("ok ", Outcome(witness, null, high * granuleKiB));
+            while (low < high)
+            {
+                var middle = (low + high) / 2;
+                if (Outcome(witness, null, middle * granuleKiB).StartsWith("ok ", StringComparison.Ordinal))
+                    high = middle;
+                else
+                    low = middle + 1;
+            }
+
+            var minimumKiB = high * granuleKiB;
+            var completed = Outcome(witness, null, minimumKiB);
+            Assert.StartsWith("ok ", completed);
+            foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
+            {
+                Assert.True(
+                    completed == Outcome(witness, limits, minimumKiB),
+                    $"{name} changed the outcome on the {minimumKiB} KiB stack the unconfigured run completes on:\n{witness}");
+            }
+
+            // The symmetric half: one granule below, where the unconfigured run stops, no
+            // configuration may complete instead. (Skipped only if a build's frames are so small
+            // that the witness completes at the search floor.)
+            if (high == floorGranules)
+                continue;
+            var stopped = Outcome(witness, null, minimumKiB - granuleKiB);
+            Assert.Equal("err EvaluationStackExhausted", stopped);
+            foreach (var (name, limits) in LimitConfigurationTransparencyTests.NonBindingConfigurations)
+            {
+                Assert.True(
+                    stopped == Outcome(witness, limits, minimumKiB - granuleKiB),
+                    $"{name} changed the outcome on the {minimumKiB - granuleKiB} KiB stack the unconfigured run stops on:\n{witness}");
+            }
+        }
+
+        WriteProbeMarker();
+    }
+
     [Fact]
     public void DeepErrorContextCode_ProbeChild()
     {
@@ -107,10 +217,11 @@ public class EvaluationLimitsProcessTests
             Assert.Equal(generic.Result.Value, planned.Result.Value);
             Assert.True(diagnostics.PlannedBuiltinOperations > 0);
             Assert.Equal(0, diagnostics.GenericExpressionEvaluationsInsideOptimizedLoops);
-            // Unconfigured step accounting can omit optimized iterations; configuring
-            // MaxSteps pins the generic strategy in CreateRootCtx. Depth and persistent
-            // materialization, in contrast, must agree even on this wholly planned path.
-            Assert.InRange(planned.Budget.ConsumedSteps, 0, generic.Budget.ConsumedSteps);
+            // Every strategy charges every budget identically (Q-09b): steps, the raw
+            // expression-work checkpoints, depth, and persistent materialization agree even
+            // on this wholly planned path. (Planned steps used to be allowed to fall short.)
+            Assert.Equal(generic.Budget.ConsumedSteps, planned.Budget.ConsumedSteps);
+            Assert.Equal(generic.Budget.ConsumedExpressionCheckpoints, planned.Budget.ConsumedExpressionCheckpoints);
             Assert.Equal(generic.Budget.PeakDepth, planned.Budget.PeakDepth);
             Assert.Equal(generic.Budget.MaterializedItems, planned.Budget.MaterializedItems);
             Assert.Equal(generic.Budget.MaterializedStringChars, planned.Budget.MaterializedStringChars);
@@ -217,7 +328,7 @@ public class EvaluationLimitsProcessTests
         WriteProbeMarker();
     }
 
-    private static async Task RunProbeChild(string childTestName)
+    private static async Task RunProbeChild(string childTestName, IReadOnlyDictionary<string, string>? extraEnvironment = null)
     {
         var assemblyPath = typeof(EvaluationLimitsProcessTests).Assembly.Location;
         var testName = typeof(EvaluationLimitsProcessTests).FullName + "." + childTestName;
@@ -238,6 +349,8 @@ public class EvaluationLimitsProcessTests
         startInfo.Environment[ProbeChildEnvironment] = "1";
         startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
+        foreach (var (name, value) in extraEnvironment ?? new Dictionary<string, string>())
+            startInfo.Environment[name] = value;
 
         try
         {

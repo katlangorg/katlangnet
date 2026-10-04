@@ -262,12 +262,6 @@ public class MetamorphicPhase4AuditTests
                     Assert.Equal(forward!.Kind, reverse!.Kind);
                     break;
 
-                case MetamorphicOperationalRelation.MaterializationNeverIncreases:
-                    // "right never exceeds left": cheap-left/costly-right must fail.
-                    Assert.NotNull(forward);
-                    Assert.Null(reverse);
-                    break;
-
                 case MetamorphicOperationalRelation.WorkNeverIncreases:
                     // "left never exceeds right": cheap-left/costly-right must pass.
                     Assert.Null(forward);
@@ -280,14 +274,11 @@ public class MetamorphicPhase4AuditTests
             }
         }
 
-        // The two directional relations point in OPPOSITE directions by design; a refactor that
-        // accidentally unified them would still satisfy each case above on its own.
-        var neverIncreases = CaseWith(
-            MetamorphicSemanticRelation.SemanticEqual, MetamorphicOperationalRelation.MaterializationNeverIncreases);
+        // The one remaining directional relation is oriented "left never exceeds right".
         var workNeverIncreases = CaseWith(
             MetamorphicSemanticRelation.SemanticEqual, MetamorphicOperationalRelation.WorkNeverIncreases);
-        Assert.NotNull(MetamorphicComparator.Compare(neverIncreases, cheap, costly));
         Assert.Null(MetamorphicComparator.Compare(workNeverIncreases, cheap, costly));
+        Assert.NotNull(MetamorphicComparator.Compare(workNeverIncreases, costly, cheap));
     }
 
     /// <summary>

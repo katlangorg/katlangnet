@@ -40,14 +40,21 @@ namespace KatLang;
 /// operation — and no argument the program ignores, callee that never reads a parameter, or
 /// builtin verdict absorbs it. A run that completes under a limit is therefore exactly the run
 /// without it: configuring a tighter limit can make a run fail earlier, but it can never change
-/// the value, the random draws, or the host operations of a run that still succeeds. WHERE a
-/// limit fires is not part of this guarantee: the host-stack backstop depends on the thread,
-/// build, and entry point (see <see cref="MaxDepth"/>), and configuring an opt-in budget such as
-/// <see cref="MaxSteps"/> can change which internal evaluation strategy runs, so different
-/// configurations or entry points may disagree on WHETHER a run stops — never on the value of a
-/// run that completes. Limits do not make evaluation eager: an argument the language does not
-/// evaluate (an unselected <c>if</c> branch, a callback that is never invoked) reaches no
-/// limit.</para>
+/// the value, the random draws, or the host operations of a run that still succeeds. Limits do
+/// not make evaluation eager: an argument the language does not evaluate (an unselected
+/// <c>if</c> branch, a callback that is never invoked) reaches no limit.</para>
+///
+/// <para><b>Limits observe a run; they never choose how it runs.</b> Configuring, raising, or
+/// removing a limit that a run does not reach changes nothing about that run — not its value,
+/// its effects or random draws, its budget accounting, which internal evaluation strategy
+/// runs, or whether it completes — and writing a limit's default value is the same as leaving
+/// it unset. Every internal evaluation strategy (the generic evaluator, optimized loops, fused
+/// sequence pipelines) charges every budget identically, so a limit that IS reached gives the
+/// same verdict whichever strategy runs. The one stopping point that is not a semantic limit
+/// is the host-stack backstop (<see cref="EvalError.EvaluationStackExhausted"/>; see
+/// <see cref="MaxDepth"/>): whether it stops a run depends on the host — the thread and its
+/// stack size, the build, the runtime and its JIT state, the platform, and the evaluation route
+/// — but never on which limits are configured, and no depth at which it fires is promised.</para>
 ///
 /// <para>Host cancellation and wall-clock timeouts are a third, different concept.
 /// They are host policy rather than deterministic semantic budgets, and are not
@@ -64,21 +71,20 @@ public sealed record EvaluationLimits
     /// on every entry point regardless of configuration. <see cref="MaxDepth"/> can
     /// only request a LOWER limit; it can never raise this ceiling.
     ///
-    /// <para>Calibrated by the process-isolated evaluator depth probes
-    /// (<c>fuzz/KatLang.ParserFuzz</c>, <c>eval-probe</c>) on the default 1 MiB Windows
-    /// stack. Measured host-stack failure boundaries, Debug / Release: plain
-    /// clause-family recursion 222 / 333, the same recursion wrapped in ten nested
-    /// parentheses per level 222 / 333, dotted recursion 176 / 272, recursion through
-    /// the <c>if</c> builtin 91 / 139, and recursion through a collection callback
-    /// 67 / 105. No single portable value is therefore simultaneously useful for real
-    /// programs and provably safe for the heaviest shape on the smallest stack.</para>
-    ///
-    /// <para>128 keeps a measured margin of 1.7x (Debug) to 2.6x (Release) below the
-    /// cheapest shape's boundary, so this deterministic limit — not the machine — is
-    /// what stops ordinary runaway recursion, on both Windows and Linux. For the two
-    /// most stack-expensive shapes the stack-headroom backstop described on
-    /// <see cref="EvalError.EvaluationStackExhausted"/> takes over and still yields a
-    /// structured error instead of terminating the process.</para>
+    /// <para>This is a deterministic SEMANTIC bound: a program reaches the same depth on
+    /// every machine, build, and evaluation strategy, and a run that would exceed it stops
+    /// with <see cref="EvalError.EvaluationDepthExceeded"/>. It is NOT a measure of
+    /// host-stack capacity and does not predict where the host stack runs out. The native
+    /// stack one level of depth costs depends on the shape of the recursion (a plain call,
+    /// an <c>if</c>, a collection callback, a chain of lazily demanded arguments), on the
+    /// build, the runtime and its JIT state (which changes within one process as code is
+    /// recompiled), the platform, the thread's stack size, and the evaluation route. On the
+    /// documented minimum 1 MiB stack, many recursive shapes therefore reach the host-stack
+    /// backstop described on <see cref="EvalError.EvaluationStackExhausted"/> before this
+    /// ceiling; the backstop stops such a run with that structured, terminal error instead
+    /// of terminating the process. KatLang promises that error kind, never a recursion
+    /// depth at which it fires, and no single portable value could be both useful for real
+    /// programs and stack-safe for the heaviest shape on the smallest stack.</para>
     /// </summary>
     public const int MaxSupportedDepth = 128;
 
@@ -98,25 +104,27 @@ public sealed record EvaluationLimits
     /// bounded here, while a host-built thousand-level expression spine is rejected by
     /// the structural preflight before evaluation begins.</para>
     ///
-    /// <para><b>Asynchronous evaluation may reach the stack backstop earlier.</b> The
-    /// ceiling is calibrated for the synchronous evaluator. A run that actually takes
-    /// the asynchronous twin path — one configured with an asynchronous
-    /// <see cref="HostOperation"/> through
+    /// <para><b>The host-stack backstop is separate from this limit.</b> Independently of the
+    /// deterministic depth limit, evaluation checks the remaining host stack and stops a run
+    /// that would exhaust it with the structured, terminal
+    /// <see cref="EvalError.EvaluationStackExhausted"/>. Where that happens is a property of
+    /// the host, not a language guarantee: it depends on the thread and its stack size, the
+    /// build, the runtime and its JIT state (the same run on the same thread can stop early
+    /// in a fresh process and complete once its code is recompiled), the platform, and the
+    /// route. A run that takes the asynchronous twin path — one configured with an
+    /// asynchronous <see cref="HostOperation"/> through
     /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
-    /// — executes larger per-level frames, so its host-stack backstop can stop a
-    /// recursive program with the structured <see cref="EvalError.EvaluationStackExhausted"/>
-    /// BEFORE this deterministic limit is reached, where the synchronous evaluator
-    /// would report <see cref="EvalError.EvaluationDepthExceeded"/> (or complete).
-    /// Both are resource-limit verdicts of the same safety envelope, never a process
-    /// crash. The depth at which the asynchronous path stops is an implementation and
-    /// platform characteristic (thread stack size, runtime version, JIT frame layout),
-    /// not a language guarantee: hosts must not assume any particular ratio to the
-    /// synchronous depth, and a program that must recurse deeply on the asynchronous
-    /// path should be restructured (<c>repeat</c>, <c>while</c>, or shallower recursion)
-    /// rather than rely on a measured depth. A sufficiently low <see cref="MaxDepth"/>
-    /// can make the deterministic verdict occur first, but it does not replace the
-    /// independent host-stack checks, including those for structural nesting.</para>
+    /// — executes larger per-level frames and usually reaches the backstop at a SHALLOWER
+    /// depth than the synchronous evaluator (where that would report
+    /// <see cref="EvalError.EvaluationDepthExceeded"/> or complete), while a twin run that
+    /// genuinely suspends before descending resumes on a fresh stack and can go DEEPER. The
+    /// backstop never depends on which limits are configured. Hosts must not assume any
+    /// particular depth or ratio between routes; a program that must recurse deeply should be
+    /// restructured (<c>repeat</c>, <c>while</c>, or shallower recursion) rather than rely on a
+    /// measured depth. A sufficiently low <see cref="MaxDepth"/> can make the deterministic
+    /// verdict occur first, but it does not replace the independent host-stack checks,
+    /// including those for structural nesting.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public int? MaxDepth
@@ -237,6 +245,13 @@ public sealed record EvaluationLimits
     /// evaluation work checkpoints. The bulk charge bounds pathological repeated
     /// evaluation of shared host-built expression subtrees while leaving small
     /// ordinary programs' accounting unchanged.
+    ///
+    /// <para>Steps are LOGICAL work: every internal evaluation strategy — optimized loops
+    /// and fused sequence pipelines included — charges exactly the same steps at the same
+    /// points as the generic evaluator, so the step count of a run, and the point at which a
+    /// budget stops it, does not depend on how the run is executed. Configuring this budget
+    /// therefore changes nothing about a run that does not reach it; <see cref="long.MaxValue"/>
+    /// is the same as <c>null</c>.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public long? MaxSteps
@@ -323,10 +338,11 @@ public sealed record EvaluationLimits
     /// for no cumulative budget (the default). This bounds a program that repeatedly
     /// builds individually legal collections; it counts slots CREATED, and is therefore
     /// deliberately not a live-memory measure — a run that builds and discards many
-    /// small collections still pays for each one. Configuring this budget selects the
-    /// generic sequence-pipeline strategy for the run, because a fused pipeline elides
-    /// intermediate collections and would otherwise give the same budget a different
-    /// success/failure meaning.
+    /// small collections still pays for each one. Slots are counted LOGICALLY: an internal
+    /// strategy that elides a collection the evaluation semantically creates (a fused
+    /// <c>filter</c>/<c>count</c> pipeline never allocates its range or its filtered list)
+    /// still charges those slots at the same point, so the budget has one meaning on every
+    /// strategy and configuring it changes nothing about a run that does not reach it.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public long? MaxMaterializedItems

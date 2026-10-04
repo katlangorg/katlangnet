@@ -394,6 +394,10 @@ public closed record EvalError
     /// depth limit was reached. This is the machine-dependent backstop that keeps
     /// stack-expensive evaluation shapes from terminating the process; it carries no
     /// machine-specific payload precisely because the boundary is not a semantic fact.
+    /// Whether and where it fires depends on the host — the thread and its stack size, the
+    /// build, the runtime and its JIT state, the platform, and the evaluation route — but
+    /// never on which <see cref="EvaluationLimits"/> are configured; only this error kind is
+    /// part of the language contract, never a depth at which it occurs.
     /// </summary>
     public sealed record EvaluationStackExhausted() : EvalError;
 

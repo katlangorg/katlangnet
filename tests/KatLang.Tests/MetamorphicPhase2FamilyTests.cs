@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using KatLang.Optimizations.Sequences;
 using KatLang.ParserFuzz;
 using KatLang.Tests.LanguageSpec;
 
@@ -1034,8 +1035,7 @@ public class MetamorphicPhase2FamilyTests
     public void ExactMaterializationAndBoundaryEquality_HoldForRepresentativeCases()
     {
         var exact = 0;
-        var directional = 0;
-        var fusionWitnesses = 0;
+        var fusedExact = 0;
 
         foreach (var parameters in RewritePoints.Where(p => p.LimitMode == MetamorphicLimitMode.Default))
         {
@@ -1045,27 +1045,33 @@ public class MetamorphicPhase2FamilyTests
 
             Assert.Equal(execution.Left!.Semantic.IsResourceLimit, execution.Right!.Semantic.IsResourceLimit);
 
-            if (testCase.OperationalRelation == MetamorphicOperationalRelation.MaterializationNeverIncreases)
-            {
-                // The right member is the fusion-eligible spelling: it may charge less, never more.
-                Assert.True(execution.Right.MaterializedItems <= execution.Left.MaterializedItems);
-                Assert.True(execution.Right.MaterializedStringChars <= execution.Left.MaterializedStringChars);
-                directional++;
-                if (execution.Right.MaterializedItems < execution.Left.MaterializedItems) fusionWitnesses++;
-                continue;
-            }
-
+            // Every representative pair agrees EXACTLY on materialization — the fusion-eligible
+            // dotted spelling included, because a fused pipeline reserves exactly the items the
+            // generic composition materializes (Q-09b). (It used to be allowed to charge less.)
             Assert.Equal(execution.Left.MaterializedItems, execution.Right.MaterializedItems);
             Assert.Equal(execution.Left.MaterializedStringChars, execution.Right.MaterializedStringChars);
             exact++;
+            if (testCase.EnableOptimizations && FusionHits(testCase.RightSource, testCase.Limits, optimize: true) > 0)
+                fusedExact++;
         }
 
-        Assert.True(exact > 0 && directional > 0, "both relation strengths must be exercised");
+        Assert.True(exact > 0, "no representative case was compared");
 
-        // The directional relation must be earned by a real optimization difference, not merely
-        // declared: at least one fusion-eligible pair charges strictly less on the dotted side.
-        // Without this the test would pass unchanged if the optimizer stopped fusing entirely.
-        Assert.True(fusionWitnesses > 0, "no fusion-eligible pair actually materialized less");
+        // Exactness must be earned where fusion really runs: at least one pair whose dotted side
+        // FUSED charges exactly what its ordinary side charges. Without this the test would pass
+        // unchanged if the optimizer stopped fusing entirely.
+        Assert.True(fusedExact > 0, "no representative pair actually fused");
+    }
+
+    /// <summary>Filter-count fusions the sequence-pipeline optimizer performed for one run.</summary>
+    private static long FusionHits(string source, EvaluationLimits? limits, bool optimize)
+    {
+        var parsed = Parser.Parse(source);
+        Assert.False(parsed.HasErrors, source);
+        var diagnostics = new SequencePipelineDiagnostics();
+        Evaluator.RunCountedObserved(
+            new Expr.AlgorithmExpr(parsed.Root), limits, enableOptimizations: optimize, sequenceDiagnostics: diagnostics);
+        return diagnostics.FilterCountFusionHits;
     }
 
     [Fact]
@@ -1257,14 +1263,15 @@ public class MetamorphicPhase2FamilyTests
         Assert.True(checkedCases > 0, "the generous policy produced no comparable case");
     }
 
-    // ── Chain fusion policy: the relation must match the EFFECTIVE optimizer ──
+    // ── Chain fusion policy: fusion never changes the accounting (Q-09b) ──
 
     /// <summary>
-    /// The harness's fusion-eligibility helper must agree with the runtime's own gate, measured
-    /// on a chain that demonstrably fuses. Configuring either string budget, the cumulative
-    /// item budget, or a step budget switches the sequence-pipeline optimizer off however
-    /// generous the value is, so an eligibility rule that reads only the optimizer flag
-    /// would be wrong here.
+    /// The harness's fusion-eligibility helper must agree with the runtime's own strategy
+    /// decision, measured on a chain that demonstrably fuses. Since Q-09b no configured limit —
+    /// string, cumulative-item, step, or per-collection — switches the sequence-pipeline optimizer
+    /// off, so eligibility is the optimizer flag alone; and fused or not, the two spellings charge
+    /// EXACTLY the same materialization. (Until then a configured string, cumulative-item, or step
+    /// budget turned fusion off however generous it was, and fusion charged fewer items.)
     /// </summary>
     [Fact]
     public void EffectiveFusionEligibility_MatchesWhatTheRuntimeActuallyDoes()
@@ -1288,34 +1295,33 @@ public class MetamorphicPhase2FamilyTests
             Assert.True(MetamorphicExecutor.TryObserve(ordinary, limits, optimize, out var left, out _));
             Assert.True(MetamorphicExecutor.TryObserve(dotted, limits, optimize, out var right, out _));
 
-            var eligible = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(optimize, limits);
+            var eligible = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(optimize);
             var describe = $"limits={MetamorphicCase.DescribeLimits(limits)} optimize={optimize}";
 
-            if (eligible)
-            {
-                // The helper claimed fusion is possible, and on THIS chain it really happens.
-                Assert.True(right.MaterializedItems < left.MaterializedItems, $"expected fusion: {describe}");
-            }
-            else
-            {
-                // The helper claimed fusion is impossible, so the two spellings agree exactly.
-                Assert.Equal(left.MaterializedItems, right.MaterializedItems);
-                Assert.Equal(left.MaterializedStringChars, right.MaterializedStringChars);
-            }
+            // The helper's verdict is what the runtime does on THIS chain: the dotted spelling
+            // fuses exactly when optimizations are on, whatever limits are configured, and the
+            // ordinary nested spelling never does.
+            Assert.True(eligible == FusionHits(dotted, limits, optimize) > 0, $"fusion eligibility: {describe}");
+            Assert.Equal(0, FusionHits(ordinary, limits, optimize));
+
+            // Fused or not, the two spellings charge the same materialization.
+            Assert.Equal(left.MaterializedItems, right.MaterializedItems);
+            Assert.Equal(left.MaterializedStringChars, right.MaterializedStringChars);
         }
     }
 
     /// <summary>
-    /// The directional relation is declared exactly where fusion can apply, and the observed
-    /// counters prove the directional branch is a real optimization difference rather than an
-    /// enum choice: the ordinary form materializes strictly more.
+    /// The chain relation is EXACT at every policy point — under every limit mode, with and
+    /// without optimizations — and the observed strategy proves the exactness is earned where
+    /// fusion really runs: the dotted spelling fuses wherever optimizations are on (configured
+    /// limits included) and still charges exactly what the unfused ordinary spelling charges.
     /// </summary>
     [Fact]
-    public void ChainRelation_IsDirectionalOnlyWhereFusionCanApply_AndTheDifferenceIsReal()
+    public void ChainRelation_IsExactEverywhere_AndFusionReallyRunsWhereEligible()
     {
         var definition = MetamorphicFamilyRegistry.Get(MetamorphicFamily.DottedChain);
-        var directionalWitnesses = 0;
-        var exactUnderStringLimits = 0;
+        var fusedExact = 0;
+        var fusedUnderConfiguredLimits = 0;
         var exactUnderOptimizerOff = 0;
 
         for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
@@ -1326,45 +1332,45 @@ public class MetamorphicPhase2FamilyTests
                     [0x03, 0, (byte)mode, 0, 0, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
                 if (!testCase.Precondition.Satisfied) continue;
 
-                var fusionCanApply = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(
-                    testCase.EnableOptimizations, testCase.Limits);
-
-                Assert.Equal(
-                    fusionCanApply
-                        ? MetamorphicOperationalRelation.MaterializationNeverIncreases
-                        : MetamorphicOperationalRelation.ExactMaterializationEqual,
-                    testCase.OperationalRelation);
+                Assert.Equal(MetamorphicOperationalRelation.ExactMaterializationEqual, testCase.OperationalRelation);
 
                 var execution = MetamorphicExecutor.Execute(testCase);
                 Assert.True(execution.Accepted);
                 Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
 
-                if (fusionCanApply)
-                {
-                    // The dotted spelling really does less work here; the left one is not fusible.
-                    Assert.True(execution.Right!.MaterializedItems < execution.Left!.MaterializedItems);
-                    directionalWitnesses++;
-                    continue;
-                }
+                var eligible = MetamorphicLimitPolicy.SequencePipelineFusionCanApply(testCase.EnableOptimizations);
+                var fused = FusionHits(testCase.RightSource, testCase.Limits, testCase.EnableOptimizations) > 0;
+                if (fused)
+                    Assert.True(eligible, "fusion ran where the helper says it cannot");
+                if (eligible && execution.Right!.Semantic.Outcome == "ok")
+                    Assert.True(fused, "an eligible, successful dotted chain did not fuse");
 
-                Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
-                if (testCase.Limits is { } limits && (limits.MaxStringLength is not null || limits.MaxMaterializedStringChars is not null))
-                    exactUnderStringLimits++;
+                if (MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
+                    Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
+
+                if (fused)
+                {
+                    fusedExact++;
+                    if (testCase.Limits is not null)
+                        fusedUnderConfiguredLimits++;
+                }
                 else if (!testCase.EnableOptimizations)
+                {
                     exactUnderOptimizerOff++;
+                }
             }
 
         // All three regimes must actually be exercised, so the test fails if the chain stops
-        // fusing, if the string-limit modes stop reaching the exact relation, or if the
+        // fusing, if a configured limit starts switching fusion off again, or if the
         // optimizer-off policy disappears.
-        Assert.True(directionalWitnesses > 0, "no fusion-eligible chain point charged less");
-        Assert.True(exactUnderStringLimits > 0, "no configured-string-budget point reached the exact relation");
+        Assert.True(fusedExact > 0, "no chain point fused");
+        Assert.True(fusedUnderConfiguredLimits > 0, "no configured-limit chain point kept fusion");
         Assert.True(exactUnderOptimizerOff > 0, "no optimizer-off point reached the exact relation");
     }
 
     /// <summary>
-    /// Every accepted chain point satisfies the relation the new selector chose for it, over the
-    /// whole chain x receiver x policy space rather than a sample.
+    /// Every accepted chain point satisfies its relation — exact materialization everywhere —
+    /// over the whole chain x receiver x policy space rather than a sample.
     /// </summary>
     [Fact]
     public void EveryAcceptedChainPoint_SatisfiesItsSelectedRelation()
@@ -1385,12 +1391,10 @@ public class MetamorphicPhase2FamilyTests
                         if (!execution.Accepted) continue;
                         accepted++;
 
+                        Assert.Equal(MetamorphicOperationalRelation.ExactMaterializationEqual, testCase.OperationalRelation);
                         Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
 
-                        // Where the exact relation was selected it must genuinely hold, not merely pass the
-                        // weaker inequality the directional relation would have applied.
-                        if (testCase.OperationalRelation == MetamorphicOperationalRelation.ExactMaterializationEqual
-                            && MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
+                        if (MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
                         {
                             Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
                             Assert.Equal(execution.Left.MaterializedStringChars, execution.Right.MaterializedStringChars);
@@ -1401,17 +1405,17 @@ public class MetamorphicPhase2FamilyTests
     }
 
     /// <summary>
-    /// A configured cumulative-item budget forces the generic sequence paths, so the
-    /// cumulative-item modes are ACCEPTED (the former
-    /// "fused-chain-does-not-share-the-cumulative-item-budget" rejection guarded a
-    /// divergence that is structurally impossible now), fusion eligibility is off for
-    /// them, and the two spellings agree exactly on the charged budget.
+    /// The cumulative-item modes are ACCEPTED (the former
+    /// "fused-chain-does-not-share-the-cumulative-item-budget" rejection is gone), a configured
+    /// cumulative budget keeps fusion eligible (Q-09b), and the two spellings charge the SAME
+    /// cumulative budget — fused or not.
     /// </summary>
     [Fact]
-    public void ChainCumulativeModes_AreAcceptedWhenTheirBudgetDisablesFusion()
+    public void ChainCumulativeModes_AreAccepted_AndBothSpellingsChargeTheSameBudget()
     {
         var definition = MetamorphicFamilyRegistry.Get(MetamorphicFamily.DottedChain);
         var cumulativePointsExercised = 0;
+        var fusedUnderCumulativeBudget = 0;
 
         for (var mode = 0; mode < definition.SupportedLimitModes.Length; mode++)
             for (var optimize = 0; optimize < 2; optimize++)
@@ -1422,7 +1426,7 @@ public class MetamorphicPhase2FamilyTests
                 var testCase = MetamorphicTemplates.Build(MetamorphicDecoder.Decode(
                     [0x03, 0, (byte)mode, 1, 1, (byte)optimize, FusibleChainIndex, ListReceiverIndex]));
 
-                // No mode is rejected for the retired cumulative-budget reason anymore.
+                // No mode is rejected for the retired cumulative-budget reason.
                 Assert.True(
                     testCase.Precondition.Satisfied
                         || testCase.Precondition.Reason != "fused-chain-does-not-share-the-cumulative-item-budget");
@@ -1431,20 +1435,24 @@ public class MetamorphicPhase2FamilyTests
                 if (!cumulative) continue;
                 cumulativePointsExercised++;
 
-                // The harness eligibility mirror and the runtime gate agree: a configured
-                // cumulative budget disables fusion however generous the value is…
-                Assert.False(MetamorphicLimitPolicy.SequencePipelineFusionCanApply(
-                    testCase.EnableOptimizations, testCase.Limits));
+                // The configured cumulative budget leaves fusion to the optimizer flag...
+                Assert.Equal(
+                    testCase.EnableOptimizations,
+                    MetamorphicLimitPolicy.SequencePipelineFusionCanApply(testCase.EnableOptimizations));
 
-                // …so both spellings run generic and charge the SAME cumulative budget.
+                // ...and both spellings charge the SAME cumulative budget either way.
                 var execution = MetamorphicExecutor.Execute(testCase);
                 Assert.True(execution.Accepted);
                 Assert.Null(MetamorphicComparator.Compare(testCase, execution.Left!, execution.Right!));
                 if (MetamorphicComparator.WorkIsComparable(execution.Left!, execution.Right!))
                     Assert.Equal(execution.Left!.MaterializedItems, execution.Right!.MaterializedItems);
+
+                if (testCase.EnableOptimizations && FusionHits(testCase.RightSource, testCase.Limits, optimize: true) > 0)
+                    fusedUnderCumulativeBudget++;
             }
 
         Assert.True(cumulativePointsExercised > 0, "no cumulative-item chain point was exercised");
+        Assert.True(fusedUnderCumulativeBudget > 0, "no cumulative-item chain point kept fusion");
     }
 
     /// <summary>The exhaustive Group B claim the family's ExactObservedWorkEqual relation rests on.</summary>

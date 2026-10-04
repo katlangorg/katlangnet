@@ -140,6 +140,18 @@ public class MaintainedDocumentationConsistencyTests
         // algorithm from a clause family, a builtin, an alias of either or a value, so no text
         // explains it as a step that has no parameters.
         { @"\bbecause\s+the\s+step\s+has\s+no\s+parameters\b", "the false loop-step explanation (before X-23)" },
+        // Q-09 (October 4 2026). Q-09b: limits observe a run; they never choose how it runs, so no
+        // text says a configured budget selects, disables or forces an evaluation strategy.
+        // Q-09a: host-stack headroom is not semantic — the async twin can stop shallower OR deeper
+        // than the synchronous evaluator — and no depth limit is calibrated against the host stack
+        // (X-34). `LimitDocumentationContractTests` pins the positive statements in the shipped
+        // XML documentation.
+        { @"\b(?:budgets?|limits?)\s+(?:\w+\s+){0,4}(?:selects?|disables?|forces?)\s+(?:the\s+)?(?:generic|loop\s+planning|(?:sequence[- ]pipeline\s+)?fusion|optimi[sz])", "a configured limit selecting an evaluation strategy (before Q-09b)" },
+        { @"\bcan\s+change\s+which\s+internal\s+evaluation\s+strategy\s+runs\b", "a configured limit selecting an evaluation strategy (before Q-09b)" },
+        { @"\balways\s+(?:\w+\s+){0,6}(?:earlier|shallower)\b", "a host-stack backstop that always fires earlier on one route (before Q-09a)" },
+        { @"\bmeasured\s+margin\b|\b\d+(?:\.\d+)?x\s+\((?:Debug|Release)\)", "a portable calibrated stack-safety margin (before X-34)" },
+        { @"calibrat\w*[^.;]{0,60}\b(?:depth\s+ceiling|depth\s+limit|depth\s+envelope|MaxSupportedDepth|MaxDepth)\b", "a depth limit calibrated against the host stack (before X-34)" },
+        { @"\b(?:MaxSupportedDepth|depth\s+ceiling|depth\s+limit|depth\s+envelope)\b[^.;]{0,60}\bcalibrat", "a depth limit calibrated against the host stack (before X-34)" },
     };
 
     [Theory]

@@ -21,36 +21,37 @@ internal sealed record MetamorphicOptimizerSource(
 /// and once with them disabled.
 ///
 /// <code>
-/// left:  optimizations ON   (the member permitted to do less)
+/// left:  optimizations ON   (the optimized strategies)
 /// right: optimizations OFF  (the generic reference execution)
 /// </code>
 ///
 /// <para><b>Equivalence argument.</b> There is nothing to rewrite: both members are the same
 /// source text. Only the execution POLICY differs, and the runtime documents the optimizers as
 /// meaning-preserving, so semantic equality is the contract itself rather than an inference about
-/// two spellings. What the optimizers are permitted to change is how much work happens, which is
-/// why the operational relation is the directional
-/// <see cref="MetamorphicOperationalRelation.WorkNeverIncreases"/> — optimized never charges more
-/// than generic — rather than equality.</para>
+/// two spellings. The optimizers change how the work is EXECUTED, never how it is ACCOUNTED: every
+/// strategy charges every budget identically (Q-09b, 2026-10-04 — limits observe a run and never
+/// choose its strategy), so the operational relation is
+/// <see cref="MetamorphicOperationalRelation.ExactObservedWorkEqual"/>: materialized items, string
+/// units, evaluation steps, and peak dynamic depth all equal (the optimizer EVIDENCE differs by
+/// design, so it is not compared). (It was the directional
+/// <c>WorkNeverIncreases</c> while planned loops charged no per-iteration step and fused pipelines
+/// reserved nothing.)</para>
 ///
-/// <para><b>Direction is fixed and explicit.</b> The optimized run is always the LEFT member, so
-/// the inequality always reads "left never exceeds right", and the fingerprint records the
-/// direction. What the payload varies instead is the EXECUTION ORDER: which of the two policies
-/// runs first. Every relation here must hold both ways round, so a policy that only agrees when
-/// it runs on a clean process is a state leak rather than an optimization.</para>
+/// <para><b>Direction is fixed and explicit.</b> The optimized run is always the LEFT member, and
+/// the fingerprint records the direction. What the payload varies instead is the EXECUTION ORDER:
+/// which of the two policies runs first. Every relation here must hold both ways round, so a
+/// policy that only agrees when it runs on a clean process is a state leak rather than an
+/// optimization.</para>
 ///
-/// <para><b>Peak depth is diagnostic only.</b> An optimized loop plan legitimately reaches a
-/// different nesting profile than the generic interpreter, so the relation deliberately does not
-/// constrain it. Materialized items, materialized string units, and steps are constrained.</para>
-///
-/// <para><b>Why the limit policy is nearly fixed.</b> Only fusion-neutral modes are
-/// generated. A configured cumulative item budget disables sequence fusion by production
-/// policy, so including it would prevent this mixed loop/sequence table from satisfying its
-/// measured optimizer-hit requirement uniformly; step and string budgets are excluded for the
-/// same execution-policy reason. The per-collection ceiling is kept because the runtime
-/// explicitly promises it is optimizer-INDEPENDENT
-/// (<c>EvaluationBudget.CheckCollectionSize</c> exists so a fused pipeline rejects the same
-/// collection size a generic one does), which makes it the budget worth comparing here.</para>
+/// <para><b>Why the limit policy is nearly fixed.</b> Only the modes this mixed loop/sequence
+/// table was measured under are generated. (A configured cumulative item, step, or string budget
+/// once disabled fusion or loop planning and so could not satisfy the optimizer-hit requirement;
+/// since Q-09b none does, and <c>LimitConfigurationTransparencyTests</c> pins that directly.)
+/// The per-collection ceiling is kept because the runtime
+/// explicitly promises it is optimizer-INDEPENDENT (a fused pipeline reserves, and so rejects,
+/// exactly the collection sizes a generic one does —
+/// <c>EvaluationBudget.TryReserveCollection</c>), which makes it the budget worth comparing
+/// here.</para>
 /// </summary>
 internal static class MetamorphicOptimizerTemplate
 {

@@ -107,8 +107,8 @@ One decision per run, at the async entry point:
   every such synchronous wrapper is exactly that projection, and the plain/counted
   value equivalence is a Lean-modelled invariant pinned by the explorer corpus.
 - The twin root context pins the GENERIC loop and sequence strategies (loop
-  optimization and pipeline fusion off — the same generic mode configured step/string/
-  materialization budgets already force on the synchronous path). Limit verdicts are
+  optimization and pipeline fusion off). Limits never select the synchronous
+  strategy or the async route. Limit verdicts are
   strategy-independent by the budget architecture, so this is an internal execution
   choice, not an observable one; a fail-loud guard
   (`ThrowIfAsyncStrategyPinningViolated`) turns a pinning violation into an
@@ -190,6 +190,14 @@ beyond the available headroom still returns a structured resource error.
 > and platform-dependent, and that both outcomes are structured resource-limit errors.
 > `AsyncStackDepthTests.PublicAsyncHostOperationSurface_DeepRecursion_FailsStructurallyNeverCrashes`
 > pins that contract through the public overload without pinning any depth number.
+>
+> *Update, October 2026 (Q-09):* the public documents now state BOTH directions — a twin that
+> genuinely suspends before descending resumes on a fresh stack and can go deeper — and that
+> host-stack headroom is host policy that never depends on which limits are configured (Q-09a).
+> The parenthetical above about configured budgets forcing the generic mode is historical: since
+> Q-09b no limit selects a strategy, and every strategy charges every budget identically
+> (`docs/design/language-rules/evaluator-and-hosting.md` § Limits observe a run; host-stack
+> headroom is not semantic).
 
 ## Divergence pinning
 

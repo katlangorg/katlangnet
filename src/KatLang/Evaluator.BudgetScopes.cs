@@ -7,32 +7,33 @@ namespace KatLang;
 /// protocol an evaluation strategy may enter around a re-entered algorithm body.
 /// Part of the <see cref="Evaluator"/> partial class.
 ///
-/// <para>The loop planner replaces three generic chokepoints: a builtin ARGUMENT level
-/// (<see cref="EvalArgumentAlgOutputCounted"/>:
-/// depth only), a zero-argument PROPERTY ACCESS (<see cref="GetOrEvaluateZeroArgPropertyResult"/>:
-/// one invocation, entered before the cache is consulted), and a USER CALL
-/// (<see cref="EvalUserCallCounted"/>: one invocation). The loop optimizer replaces
-/// those constructs with planned nodes (<c>LoopExprPlan.If</c>, <c>TempSlot</c>,
-/// <c>TempCall</c>) that never reach the generic sites, so their charges used to be
-/// re-implemented — or, as the B3 review found, omitted — beside them. Every such site,
-/// generic or planned, synchronous or async twin, now enters its level through one of
-/// the two <c>TryEnter…</c> helpers below and releases it by disposing the returned
-/// <see cref="BudgetLevel"/> from a <c>using</c>: the charge, the non-mutating
-/// rejection, the limit-error span stamping, and the exactly-once release are defined
-/// once and cannot drift apart. Dynamic depth is an always-active budget with a verdict
-/// on every run, which is why the strategies must be EQUALIZED rather than one of them
-/// forced (see <see cref="EvaluationBudget.HasConfiguredMaterializationLimit"/> and
-/// <c>BudgetCrossTalkMatrixTests</c>).</para>
+/// <para>The loop planner replaces two generic invocation chokepoints: a zero-argument
+/// PROPERTY ACCESS (<see cref="GetOrEvaluateZeroArgPropertyResult"/>: one invocation,
+/// entered before the cache is consulted) and a USER CALL (<see cref="EvalUserCallCounted"/>:
+/// one invocation). The loop optimizer replaces those constructs with planned nodes
+/// (<c>LoopExprPlan.TempSlot</c>, <c>TempCall</c>) that never reach the generic sites, so
+/// their charges used to be re-implemented — or, as the B3 review found, omitted — beside
+/// them. Every such site, generic or planned, synchronous or async twin, now enters its
+/// level through one of the two <c>TryEnter…</c> helpers below and releases it by disposing
+/// the returned <see cref="BudgetLevel"/> from a <c>using</c>: the charge, the non-mutating
+/// rejection, the limit-error span stamping, and the exactly-once release are defined once
+/// and cannot drift apart. (A builtin argument level — <see cref="EvalArgumentAlgOutputCounted"/>
+/// — is entered by the value-demand funnels that still re-enter an algorithm body; a
+/// Model-C supply cell, such as a planned or generic <c>if</c> argument, adds none.) Every
+/// budget is charged identically on every strategy — no strategy is ever selected to protect
+/// a budget's verdict (Q-09b; <c>Evaluator.CreateRootCtx</c>, <c>BudgetCrossTalkMatrixTests</c>).</para>
 ///
 /// <para>The helpers are deliberately NOT delegate-taking wrappers. A wrapper adds
-/// frames to every user-call level, and the per-level stack cost of that spine is what
-/// calibrates the deterministic depth ceiling
-/// (<see cref="EvaluationLimits.MaxSupportedDepth"/>) against the stack backstop on the
-/// smallest supported stack — two extra Debug frames per level were enough to turn a
-/// runaway recursion's deterministic depth verdict into a stack verdict on an ordinary
-/// test thread. Entering through a call that returns before the body runs, and
-/// releasing through a struct's <c>Dispose</c>, leaves the calling frame the only frame
-/// on the spine — exactly the inline <c>try</c>/<c>finally</c> it replaces.</para>
+/// frames to every user-call level, which raises the host-stack cost of every level of the
+/// recursive spine and so moves the host-stack backstop
+/// (<see cref="EvalError.EvaluationStackExhausted"/>) to a shallower recursion depth — two
+/// extra Debug frames per level were once enough to turn a runaway recursion's deterministic
+/// depth verdict (<see cref="EvaluationLimits.MaxSupportedDepth"/>) into a stack verdict on
+/// an ordinary test thread. Where the backstop fires is host policy, not a language promise
+/// (Q-09a), but keeping it clear of ordinary programs is still worth a frame. Entering
+/// through a call that returns before the body runs, and releasing through a struct's
+/// <c>Dispose</c>, leaves the calling frame the only frame on the spine — exactly the inline
+/// <c>try</c>/<c>finally</c> it replaces.</para>
 /// </summary>
 public static partial class Evaluator
 {
@@ -58,10 +59,9 @@ public static partial class Evaluator
     /// <summary>
     /// Enters ONE depth-only argument-evaluation level
     /// (<see cref="EvaluationBudget.TryEnterArgumentEvaluation"/>): the protocol of every
-    /// builtin argument and control argument — a planned <c>if</c> condition or selected
-    /// branch charges exactly this, per argument, like the generic
-    /// <see cref="EvalArgumentAlgOutputCounted"/> funnel it replaces. Returns the
-    /// structured limit error — UNSPANNED, with nothing mutated and
+    /// value-demand funnel that re-enters an algorithm body outside a dynamic invocation
+    /// (<see cref="EvalArgumentAlgOutputCounted"/>, the <c>.string</c> receiver reads).
+    /// Returns the structured limit error — UNSPANNED, with nothing mutated and
     /// <paramref name="level"/> empty — when the level is refused; otherwise <c>null</c>
     /// and the admitted level, which the caller MUST dispose from a <c>using</c>.
     /// </summary>

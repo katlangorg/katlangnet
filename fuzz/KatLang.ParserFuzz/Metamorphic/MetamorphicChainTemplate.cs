@@ -74,29 +74,6 @@ internal static class MetamorphicChainTemplate
 
     internal static MetamorphicParameters Normalize(MetamorphicParameters parameters) => parameters;
 
-    /// <summary>
-    /// The dotted spelling of a chain is the one the sequence-pipeline optimizer can FUSE; the
-    /// nested ordinary form is not. Fusion is documented to materialize less while still
-    /// enforcing the same single-collection boundary, so equality is claimed only where fusion
-    /// cannot apply, and the weaker directional relation only where it can.
-    ///
-    /// <para>Eligibility is the EFFECTIVE runtime condition, not the optimizer flag alone:
-    /// <see cref="MetamorphicLimitPolicy.SequencePipelineFusionCanApply"/> also accounts for the
-    /// configured string, step, and cumulative-item budgets that switch the
-    /// sequence-pipeline optimizer off. Keying on the flag alone would give away
-    /// detection strength for free — those limit modes run unfused and do agree
-    /// exactly, so they get the exact relation.</para>
-    ///
-    /// <para>Measured on the committed chain table: with fusion ineligible the two forms agree
-    /// exactly on all 144 chain/receiver pairs; with fusion eligible the dotted form charged less
-    /// on 5 of them (<c>filter &gt; count</c>) and never more.</para>
-    /// </summary>
-    internal static MetamorphicOperationalRelation SelectOperationalRelation(
-        MetamorphicParameters parameters, EvaluationLimits? limits)
-        => MetamorphicLimitPolicy.SequencePipelineFusionCanApply(parameters.EnableOptimizations, limits)
-            ? MetamorphicOperationalRelation.MaterializationNeverIncreases
-            : MetamorphicOperationalRelation.ExactMaterializationEqual;
-
     internal static MetamorphicPrecondition Validate(MetamorphicParameters parameters)
     {
         var chain = ChainOf(parameters);
@@ -104,14 +81,11 @@ internal static class MetamorphicChainTemplate
         if (chain.Length is < 2 or > MaxChainLength)
             return MetamorphicPrecondition.Rejected("chain-length-out-of-bounds");
 
-        // The cumulative-item modes need no rejection anymore: a CONFIGURED cumulative
-        // materialization budget forces the generic sequence paths in the runtime
-        // (Evaluator.CreateRootCtx, mirrored by
-        // MetamorphicLimitPolicy.SequencePipelineFusionCanApply), so both spellings run
-        // unfused and charge the budget identically — the divergence the former
-        // "fused-chain-does-not-share-the-cumulative-item-budget" rejection guarded is
-        // structurally impossible now. (Pinned by
-        // MetamorphicPhase2FamilyTests.ChainCumulativeModes_AreAcceptedWhenTheirBudgetDisablesFusion.)
+        // The cumulative-item modes need no rejection: the dotted spelling may FUSE under any
+        // configured limit (Q-09b: limits never select a strategy), and a fused pipeline reserves
+        // exactly the item slots the generic composition materializes, so both spellings charge
+        // the cumulative budget identically. (Pinned by
+        // MetamorphicPhase2FamilyTests.ChainCumulativeModes_AreAccepted_AndBothSpellingsChargeTheSameBudget.)
 
         foreach (var link in chain)
         {

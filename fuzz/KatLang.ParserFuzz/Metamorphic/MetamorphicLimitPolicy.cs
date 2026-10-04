@@ -34,40 +34,20 @@ internal static class MetamorphicLimitPolicy
             : Measurement.None;
 
     /// <summary>
-    /// Whether the sequence-pipeline optimizer can actually FUSE under one case's execution
-    /// policy. The optimizer flag alone does not decide this: the runtime gate is
+    /// Whether the sequence-pipeline optimizer can FUSE under one case's execution policy:
+    /// exactly when the optimizer flag requests it. LIMITS OBSERVE A RUN; THEY NEVER CHOOSE HOW IT
+    /// RUNS (Q-09b, 2026-10-04): no configured limit selects an evaluation strategy, and a fused
+    /// pipeline charges every budget exactly as the generic composition does, so the limits a case
+    /// configures play no part here. (Until then <c>Evaluator.CreateRootCtx</c> switched fusion off
+    /// whenever a step, string, or cumulative-item budget was configured, however generous, and
+    /// this mirror reproduced that rule.)
     ///
-    /// <code>
-    /// loopOptimize     = !budget.HasStepLimit
-    /// sequenceOptimize = loopOptimize
-    ///     &amp;&amp; !budget.HasConfiguredStringLimit
-    ///     &amp;&amp; !budget.HasConfiguredMaterializationLimit
-    /// </code>
-    ///
-    /// <para>(<c>Evaluator.CreateRootCtx</c>), and <c>EvaluationBudget</c> sets
-    /// <c>HasConfiguredStringLimit</c> whenever EITHER string limit was configured and
-    /// <c>HasConfiguredMaterializationLimit</c> when the cumulative item budget was. So a
-    /// configured string, step, or cumulative-item budget — however generous — turns fusion
-    /// off for the whole run even with optimizations requested; only the per-collection
-    /// ceiling (<c>MaxCollectionItems</c>) is fusion-neutral, because both strategies check
-    /// it identically at the same boundary.</para>
-    ///
-    /// <para>ONE place owns this rule, so a template, a relation selector, and a test cannot
-    /// drift into three slightly different approximations of it. It is an eligibility upper
-    /// bound, never a claim that a particular program WAS fused: a directional relation stays
-    /// sound when fusion is merely possible, and the exact relation is claimed only where it is
-    /// impossible.</para>
+    /// <para>ONE place owns this rule, so a template and a test cannot drift into two
+    /// approximations of it. It is an eligibility statement, never a claim that a particular
+    /// program WAS fused.</para>
     /// </summary>
-    internal static bool SequencePipelineFusionCanApply(bool enableOptimizations, EvaluationLimits? limits)
-        => enableOptimizations && !DisablesSequencePipelineFusion(limits);
-
-    /// <summary>The configured limits the runtime treats as fusion-disabling, in its own terms.</summary>
-    internal static bool DisablesSequencePipelineFusion(EvaluationLimits? limits)
-        => limits is not null
-            && (limits.MaxSteps is not null                       // -> EvaluationBudget.HasStepLimit
-                || limits.MaxStringLength is not null             // -> HasConfiguredStringLimit
-                || limits.MaxMaterializedStringChars is not null
-                || limits.MaxMaterializedItems is not null);      // -> HasConfiguredMaterializationLimit
+    internal static bool SequencePipelineFusionCanApply(bool enableOptimizations)
+        => enableOptimizations;
 
     /// <summary>
     /// Builds the limits for one case. Returns <c>null</c> for the default policy. KatLang
@@ -89,14 +69,12 @@ internal static class MetamorphicLimitPolicy
             // An explicit limit comfortably above everything the pair needs: the run must behave
             // exactly like the default policy, which is what makes this mode worth generating.
             //
-            // Only the PER-COLLECTION ceiling is configured. Every other budget — string, step,
-            // and (since the strategy-independence fix) the cumulative item budget — is
-            // fusion-DISABLING regardless of how large it is (see SequencePipelineFusionCanApply),
-            // so setting one here would quietly make "generous" a different execution policy from
-            // the default it exists to mirror — the pair would still agree, but on the unfused
-            // numbers. The dedicated CumulativeItems/CumulativeStrings/PerStringLength modes cover
-            // those budgets, and they are the modes where losing fusion is the point rather than
-            // an accident.
+            // Only the PER-COLLECTION ceiling is configured. (Every other budget was once
+            // fusion-disabling however large it was; since Q-09b none selects a strategy, so the
+            // choice is no longer forced. The dedicated CumulativeItems/CumulativeStrings/
+            // PerStringLength modes cover those budgets, and the budget-law family's
+            // in-budget-neutral law compares the unconfigured run against a generous limit of every
+            // kind.)
             var generousItems = checked(measurement.Items + GenerousHeadroom);
             return (new EvaluationLimits
             {

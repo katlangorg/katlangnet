@@ -2551,30 +2551,26 @@ public static partial class Evaluator
     /// Builds the root evaluation context for one run, including its fresh
     /// <see cref="EvaluationBudget"/>.
     ///
-    /// <para>Configured operational budgets must mean the same thing no matter which
-    /// internal execution strategy runs. A step budget disables both optimized loops
-    /// and sequence pipelines because their operation counts differ from the generic
-    /// paths. Configured string or cumulative-item budgets disable sequence fusion,
-    /// whose allocation profile differs, while optimized loops remain eligible because
-    /// both loop strategies charge those budgets identically. With none of those opt-in
-    /// budgets, every requested optimization remains eligible. This is strategy
-    /// independence by construction rather than by parallel accounting.</para>
+    /// <para><b>LIMITS OBSERVE A RUN; THEY NEVER CHOOSE HOW IT RUNS (Q-09b).</b> The
+    /// execution strategies a run uses are decided by the caller's request and the run's
+    /// route — never by <see cref="EvaluationLimits"/>: the optimization flags are passed
+    /// through exactly as requested, and the budget exposes only effective thresholds. That
+    /// is sound because every strategy charges every budget at the same logical points: a
+    /// planned loop charges one step per iteration and the generic evaluator's
+    /// expression-work checkpoints for every planned expression
+    /// (<c>LoopOptimizer.EvalLoopExprPlan</c>), and the fused <c>filter</c>→<c>count</c>
+    /// pipeline charges the dispatch checkpoints of the stage expressions it elides and
+    /// reserves the items the generic composition materializes
+    /// (<c>SequencePipelineOptimizer</c>). Depth, strings and the per-collection ceiling were
+    /// already charged identically. So a limit that is reached gives the same verdict at the
+    /// same point on every strategy, and a limit that is not reached changes nothing — not
+    /// the value, the effects, the counters, or which strategy runs (and with it, on the same
+    /// host, whether the host-stack backstop stops the run).</para>
     ///
-    /// <para><b>This construction covers OPT-IN budgets only.</b> It works because an
-    /// unconfigured step / cumulative-item / cumulative-string budget has no verdict at
-    /// all, so pinning one strategy from the moment it is configured settles the
-    /// question. An ALWAYS-ACTIVE budget — dynamic depth, the per-collection ceiling,
-    /// the per-string ceiling — has a verdict on every run and therefore cannot be
-    /// protected this way: whichever strategy runs, its accounting is observable. Those
-    /// budgets must instead be EQUALIZED between the strategies
-    /// (<see cref="EvaluationBudget.CheckCollectionSize"/> on the fused range path;
-    /// the argument-evaluation levels charged by
-    /// <c>SequencePipelineOptimizer.TryExecuteRecognized</c> and
-    /// <see cref="EvaluateRangeCallArgumentsForSequenceOptimizer"/>). Adding a strategy
-    /// switch here is never a way to make an always-active budget safe — and because
-    /// this method's switches are driven by which UNRELATED budgets the caller
-    /// configured, any inequality between the strategies becomes cross-talk. Pinned by
-    /// <c>BudgetCrossTalkMatrixTests</c>.</para>
+    /// <para>Never reintroduce a limit-to-strategy switch here to make a budget's accounting
+    /// convenient: an inequality between strategies is an accounting defect of the strategy,
+    /// to be fixed there. Pinned by <c>LimitConfigurationTransparencyTests</c>,
+    /// <c>StrategyNeutralBudgetParityTests</c> and <c>BudgetCrossTalkMatrixTests</c>.</para>
     /// </summary>
     private static EvalCtx CreateRootCtx(
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -2585,17 +2581,6 @@ public static partial class Evaluator
         EvaluationBudget budget,
         EvaluationObservations? observations = null)
     {
-        var loopOptimize = !budget.HasStepLimit;
-        // A configured cumulative materialization budget also forces the generic
-        // SEQUENCE paths: fused pipelines charge only the per-collection boundary,
-        // never the cumulative counter, so leaving them enabled made the verdict a
-        // function of whether an unrelated MaxSteps happened to disable them.
-        // Optimized LOOPS charge the cumulative counter identically to the generic
-        // paths (pinned by GenericAndOptimizedLoops_ChargeOnlyTheirFinalPersistentState),
-        // so they stay eligible.
-        var sequenceOptimize = loopOptimize
-            && !budget.HasConfiguredStringLimit
-            && !budget.HasConfiguredMaterializationLimit;
         // A run configured with host operations resolves names against that
         // configuration's extended prelude (the ordinary prelude plus one ambient
         // wrapper member per operation); the budget carries the configuration, so the
@@ -2607,9 +2592,9 @@ public static partial class Evaluator
             [],
             zeroArgPropertyResultCache,
             new RunScopedDeconstructionBindingCache(),
-            enableLoopOptimization && loopOptimize,
+            enableLoopOptimization,
             loopDiagnostics,
-            enableSequencePipelineOptimization && sequenceOptimize,
+            enableSequencePipelineOptimization,
             sequenceDiagnostics,
             observations,
             budget);

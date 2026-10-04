@@ -321,8 +321,8 @@ public class CollectionMaterializationLimitsTests
         }
 
         // The optimized side really ran the planned loop with `T()` planned as a fresh
-        // temp CALL — a configured cumulative string budget forces only the generic
-        // sequence strategy, never the generic loop strategy.
+        // temp CALL — a configured cumulative string budget preserves both the
+        // loop and sequence strategies and charges their logical string construction.
         var diagnostics = new LoopOptimizationDiagnostics();
         var observed = Evaluator.RunCountedObserved(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
@@ -432,11 +432,8 @@ public class CollectionMaterializationLimitsTests
     [InlineData("D(x) = x\nrange(1, 100000).map(D).count")]
     public void MaterializationVerdict_IsIndependentOfAnUnrelatedStepBudget(string source)
     {
-        // A configured MaxMaterializedItems forces the generic sequence paths
-        // (CreateRootCtx), exactly like a configured step or string budget: fused
-        // pipelines charge only the per-collection boundary, never the cumulative
-        // counter, so leaving them enabled made this verdict flip when an unrelated
-        // never-reached MaxSteps happened to disable fusion.
+        // Every strategy reserves the same logical collections. An unrelated,
+        // non-binding step budget cannot change the materialization verdict.
         var alone = Eval(source, new EvaluationLimits { MaxMaterializedItems = 10 });
         var withSteps = Eval(source, new EvaluationLimits { MaxMaterializedItems = 10, MaxSteps = 100_000_000 });
 
@@ -507,26 +504,23 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Fact]
-    public void ConfiguredCumulativeBudget_ForcesGenericPaths_SoBothStrategiesAgree()
+    public void ConfiguredCumulativeBudget_KeepsFusionAndItsLogicalReservations()
     {
-        // Formerly the fused filter-count skipped the cumulative charge for the
-        // collections it never materialized, so the SAME program under the SAME
-        // Total(1) budget succeeded fused and failed generic — the verdict was a
-        // function of which internal strategy ran (and configuring an unrelated
-        // MaxSteps flipped it by disabling fusion). A configured cumulative budget
-        // now forces the generic sequence paths in CreateRootCtx, exactly like a
-        // configured step or string budget: the budget's meaning is
-        // strategy-independent by construction.
+        // Fusion reserves its logical source and kept list at the generic boundaries,
+        // even though it does not allocate those lists.
         const string source = "Big(x) = x > 3\nrange(1, 100).filter(Big).count";
         Assert.IsType<EvalError.MaterializationLimitExceeded>(
             EvalWithOptimizations(source, Total(1), optimized: true).Error);
         Assert.IsType<EvalError.MaterializationLimitExceeded>(
             EvalWithOptimizations(source, Total(1), optimized: false).Error);
 
-        // Unconfigured cumulative budget: fusion stays eligible and the pipeline
-        // still allocates nothing (the per-collection boundary is checked on both
-        // paths identically).
-        Assert.False(Eval(source).IsError);
+        var diagnostics = new KatLang.Optimizations.Sequences.SequencePipelineDiagnostics();
+        var observed = Evaluator.RunCountedObserved(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), Total(200),
+            enableOptimizations: true, sequenceDiagnostics: diagnostics);
+        Assert.False(observed.Result.IsError);
+        Assert.Equal(1, diagnostics.FilterCountFusionHits);
+        Assert.Equal(197, observed.Budget.MaterializedItems);
     }
 
     // ── Engine host projection ───────────────────────────────────────────────

@@ -1,3 +1,4 @@
+using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Tests.LanguageSpec;
 
@@ -80,6 +81,72 @@ public class CorpusExecutionEquivalenceTests
             var generic = Neutral(Evaluator.RunCountedObserved(program, enableOptimizations: false).Result);
             if (optimized != generic)
                 mismatches.Add($"{id}: optimized={optimized} generic={generic}");
+        }
+
+        AssertNoMismatches(mismatches, Corpus.Count);
+    }
+
+    private static string Accounting(EvaluationBudget budget)
+        => $"steps={budget.ConsumedSteps} checkpoints={budget.ConsumedExpressionCheckpoints} depth={budget.PeakDepth} "
+            + $"items={budget.MaterializedItems} strings={budget.MaterializedStringChars}";
+
+    /// <summary>
+    /// STRATEGY-NEUTRAL ACCOUNTING over the corpora (Q-09b): the optimizers charge EXACTLY the
+    /// generic budgets — steps, the raw expression-work checkpoints, peak depth, materialized
+    /// items and string units — for every program, failing ones included (a failing run's
+    /// counters at its failure point agree too). This is the broad hostile companion of the
+    /// shape-by-shape <see cref="StrategyNeutralBudgetParityTests"/>.
+    /// </summary>
+    [Fact]
+    public void Optimized_ChargesExactlyTheGenericBudgets()
+    {
+        var mismatches = new List<string>();
+        foreach (var (id, program) in Corpus)
+        {
+            var (optimizedResult, optimized) = Evaluator.RunCountedObserved(program, enableOptimizations: true, randomSeed: 5);
+            var (genericResult, generic) = Evaluator.RunCountedObserved(program, enableOptimizations: false, randomSeed: 5);
+            var left = Neutral(optimizedResult) + " " + Accounting(optimized);
+            var right = Neutral(genericResult) + " " + Accounting(generic);
+            if (left != right)
+                mismatches.Add($"{id}: optimized=[{left}] generic=[{right}]");
+        }
+
+        AssertNoMismatches(mismatches, Corpus.Count);
+    }
+
+    /// <summary>
+    /// LIMITS OBSERVE A RUN; THEY NEVER CHOOSE HOW IT RUNS (Q-09b) over the corpora: every formerly
+    /// strategy-selecting limit, configured together at non-binding values, leaves every program's
+    /// outcome, accounting, and optimizer strategy (planned-loop and fusion hits) exactly as the
+    /// unconfigured run has them.
+    /// </summary>
+    [Fact]
+    public void NonBindingLimits_ChangeNothing()
+    {
+        var configured = new EvaluationLimits
+        {
+            MaxSteps = long.MaxValue,
+            MaxMaterializedItems = long.MaxValue,
+            MaxStringLength = EvaluationLimits.MaxSupportedStringLength,
+            MaxMaterializedStringChars = long.MaxValue,
+        };
+
+        string Observe(Expr program, EvaluationLimits? limits)
+        {
+            var loops = new KatLang.Optimizations.Loops.LoopOptimizationDiagnostics();
+            var sequences = new KatLang.Optimizations.Sequences.SequencePipelineDiagnostics();
+            var (result, budget) = Evaluator.RunCountedObserved(
+                program, limits, enableOptimizations: true, loopDiagnostics: loops, sequenceDiagnostics: sequences, randomSeed: 5);
+            return $"{Neutral(result)} {Accounting(budget)} loops={loops.OptimizedLoopHits} fusions={sequences.FilterCountFusionHits}";
+        }
+
+        var mismatches = new List<string>();
+        foreach (var (id, program) in Corpus)
+        {
+            var unconfigured = Observe(program, null);
+            var limited = Observe(program, configured);
+            if (unconfigured != limited)
+                mismatches.Add($"{id}: unconfigured=[{unconfigured}] configured=[{limited}]");
         }
 
         AssertNoMismatches(mismatches, Corpus.Count);

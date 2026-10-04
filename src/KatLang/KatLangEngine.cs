@@ -493,14 +493,17 @@ public static class KatLangEngine
     /// awaitable's) responsibility.</para>
     ///
     /// <para>A configuration with an asynchronous <see cref="RunOptions.HostOperations"/>
-    /// operation evaluates through the async twin path, whose larger per-level frames can
-    /// reach the host-stack backstop at a shallower recursion depth than
-    /// <see cref="Run(string, RunOptions?)"/>: a deeply recursive program may then fail
-    /// with the structured <see cref="KatLangErrorCode.EvaluationStackExhausted"/> error
-    /// where the synchronous run reports <see cref="KatLangErrorCode.EvaluationDepthExceeded"/>
-    /// or completes. The exact depth is implementation- and platform-dependent (see
-    /// <see cref="EvaluationLimits.MaxDepth"/>); both outcomes are ordinary
-    /// resource-limit failures, never a process crash.</para>
+    /// operation evaluates through the async twin path — even when the program never calls
+    /// that operation. Its larger per-level frames usually reach the host-stack backstop at a
+    /// shallower recursion depth than <see cref="Run(string, RunOptions?)"/>, so a deeply
+    /// recursive program may fail with the structured
+    /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> error where the synchronous run
+    /// reports <see cref="KatLangErrorCode.EvaluationDepthExceeded"/> or completes; a run that
+    /// genuinely suspends before descending resumes on a fresh stack and can instead go deeper.
+    /// The depth depends on the host and the route, never on which
+    /// <see cref="RunOptions.EvaluationLimits"/> are configured (see
+    /// <see cref="EvaluationLimits.MaxDepth"/>); both outcomes are ordinary resource-limit
+    /// failures, never a process crash.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>.

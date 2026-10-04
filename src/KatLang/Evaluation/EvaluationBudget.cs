@@ -24,6 +24,17 @@ namespace KatLang.Evaluation;
 /// exactly the places every unbounded execution shape must already pass through — with no
 /// parallel checkpoint system and no dependence on which opt-in limits are configured.
 /// See <see cref="ObserveCancellation"/> for the contract.</para>
+///
+/// <para><b>LIMITS OBSERVE A RUN; THEY NEVER CHOOSE HOW IT RUNS (Q-09b).</b> The budget holds
+/// only the EFFECTIVE thresholds — an unconfigured cumulative budget is the same
+/// <see cref="long.MaxValue"/> threshold as one configured to <see cref="long.MaxValue"/>, and
+/// a per-value ceiling configured to its default is the default — and exposes no "was this
+/// limit configured" fact, so nothing can select an execution strategy from the
+/// configuration. Every execution strategy charges every counter here at the SAME logical
+/// points (the planned loops and the fused sequence pipeline charge exactly what the generic
+/// evaluation they replace charges — <c>LoopOptimizer</c>, <c>SequencePipelineOptimizer</c>),
+/// so a limit that is reached gives the same verdict, at the same point, on every strategy,
+/// and a limit that is not reached changes nothing.</para>
 /// </summary>
 internal sealed class EvaluationBudget
 {
@@ -80,10 +91,6 @@ internal sealed class EvaluationBudget
         // draw path never has a lazy-initialization branch and every run owns exactly
         // one fully initialized source, whether or not the program ever draws.
         RandomSource = RandomSourceFactory.Create(randomSeed, RandomSourceFactory.ProductionEntropy);
-        HasStepLimit = limits.EffectiveMaxSteps is not null;
-        HasConfiguredStringLimit = limits.MaxStringLength is not null
-            || limits.MaxMaterializedStringChars is not null;
-        HasConfiguredMaterializationLimit = limits.MaxMaterializedItems is not null;
     }
 
     /// <summary>
@@ -173,51 +180,27 @@ internal sealed class EvaluationBudget
     /// verdicts, and a cancelled token must never instead surface as a step or depth
     /// error.</para>
     ///
-    /// <para>Called at the head of every budget chokepoint, and directly by the
-    /// optimized loop executor, whose fully-planned iterations of bare planned
-    /// arithmetic are the one unbounded execution shape that otherwise touches no
-    /// chokepoint (planned <c>if</c> arguments, temp reads, and temp calls charge exactly
-    /// the chokepoints their generic counterparts charge, through the shared
-    /// <c>Evaluator.BudgetScopes.cs</c> helpers; the per-iteration observation itself must
-    /// stay observation-only — charging anything there would break optimized-vs-generic
-    /// accounting parity).</para>
+    /// <para>Called at the head of every budget chokepoint. Every unbounded execution shape
+    /// passes one: the optimized loop executor charges its one step per iteration through
+    /// <see cref="TryChargeStep"/> exactly where the generic loop does, and its planned
+    /// expressions charge the generic evaluator's expression-work checkpoints
+    /// (<see cref="TryChargeExpressionNodeWork"/>).</para>
     /// </summary>
     internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();
 
     /// <summary>The enforced depth limit (the internal ceiling, or a lower configured value).</summary>
     internal int MaxDepth => _maxDepth;
 
-    /// <summary>True when a finite step budget is configured for this run.</summary>
-    internal bool HasStepLimit { get; }
-
-    /// <summary>True when the caller explicitly configured either string limit.</summary>
-    internal bool HasConfiguredStringLimit { get; }
-
-    /// <summary>
-    /// True when the caller explicitly configured the cumulative materialization
-    /// budget. Fused sequence pipelines deliberately avoid materializing and so do
-    /// not charge it (only the per-collection boundary check applies); a configured
-    /// cumulative budget therefore forces the generic paths, so its verdict cannot
-    /// depend on which internal execution strategy ran — the same strategy-independence
-    /// rule <see cref="HasStepLimit"/> and <see cref="HasConfiguredStringLimit"/>
-    /// already apply.
-    ///
-    /// <para>These flags may select a strategy only to protect an opt-in budget verdict,
-    /// and a new flag must not be added as a substitute for equalizing an always-active
-    /// one. <see cref="HasConfiguredStringLimit"/> deliberately groups the explicit
-    /// per-string and cumulative-string policies, but that does not make the per-string
-    /// ceiling opt-in: it still has a verdict on every run. Forcing a strategy protects
-    /// a budget only while there is an unconfigured state in which it has no verdict; depth
-    /// (<see cref="TryEnterInvocation"/>, <see cref="TryEnterArgumentEvaluation"/>), the
-    /// per-collection ceiling, and the per-string ceiling have a verdict on every run,
-    /// so they must be EQUALIZED between the strategies instead — see
-    /// <see cref="CheckCollectionSize"/> and the notes on
-    /// <c>Evaluator.CreateRootCtx</c>.</para>
-    /// </summary>
-    internal bool HasConfiguredMaterializationLimit { get; }
-
     /// <summary>Steps consumed so far by this run. Diagnostics and tests only.</summary>
     internal long ConsumedSteps => _steps;
+
+    /// <summary>
+    /// Expression-evaluation work checkpoints recorded so far by this run
+    /// (<see cref="TryChargeExpressionNodeWork"/>). Diagnostics and tests only: it is what
+    /// lets a test prove that an optimized strategy recorded EXACTLY the checkpoints of the
+    /// generic evaluation it replaces, not merely the same number of whole bulk steps.
+    /// </summary>
+    internal long ConsumedExpressionCheckpoints => _expressionEvaluationCheckpoints;
 
     /// <summary>
     /// Charges one dynamic algorithm invocation: one step of work, one level of depth.
@@ -343,25 +326,6 @@ internal sealed class EvaluationBudget
     internal long MaterializedItems => _materializedItems;
 
     /// <summary>
-    /// Checks the single-collection boundary WITHOUT consuming cumulative budget, for a
-    /// collection the source asked for but an optimized path will never materialize.
-    ///
-    /// <para>This is what keeps optimized and generic paths on the same observable
-    /// boundary: a fused pipeline such as <c>range(1, N).count</c> must reject the same
-    /// N as the generic path, even though it allocates nothing. Because it allocates
-    /// nothing it must NOT also consume the cumulative materialization budget — that
-    /// would be exactly the double charging a fused pipeline is supposed to avoid.</para>
-    /// </summary>
-    internal EvalError? CheckCollectionSize(long requestedCount)
-    {
-        if (CheckContinuation() is { } terminal) return terminal;
-
-        return requestedCount > _maxCollectionItems
-            ? RetainTerminal(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requestedCount))
-            : null;
-    }
-
-    /// <summary>
     /// RESERVES <paramref name="requestedCount"/> item slots for a collection that is
     /// about to be created. Callers MUST call this before allocating — the whole point
     /// is that a rejected request never allocates — and must abandon construction when
@@ -372,6 +336,12 @@ internal sealed class EvaluationBudget
     /// never corrupt the budget or make a later legal collection fail. The cumulative
     /// check is written as a subtraction against the remaining headroom so it cannot
     /// overflow for any <see cref="long"/> request.</para>
+    ///
+    /// <para>The reservation is LOGICAL: an optimized strategy that elides a collection
+    /// the generic evaluation would build (the fused pipeline's range source and filtered
+    /// list) reserves the same slots at the same point without allocating them, so the
+    /// per-collection ceiling and the cumulative budget mean the same thing on every
+    /// strategy (Q-09b).</para>
     /// </summary>
     internal EvalError? TryReserveCollection(long requestedCount)
     {
@@ -423,45 +393,66 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>
-    /// Bulk pathological-work bound for expression evaluation: every 4096 evaluator
-    /// work checkpoints charge ONE step. A checkpoint is recorded at the
-    /// <c>Eval</c>/<c>EvalCounted</c> dispatch heads and at each expression-spine
-    /// machine transition; it is deliberately a cheap operational proxy, not an exact
+    /// The number of expression-evaluation work checkpoints that make up ONE bulk step
+    /// (<see cref="TryChargeExpressionNodeWork"/>): the step is charged by the checkpoint
+    /// that completes each block of this many.
+    /// </summary>
+    internal const int ExpressionCheckpointsPerStep = 4096;
+
+    /// <summary>
+    /// Bulk pathological-work bound for expression evaluation: every
+    /// <see cref="ExpressionCheckpointsPerStep"/> evaluator work checkpoints charge ONE
+    /// step. A checkpoint is the LOGICAL unit the generic evaluator records at the
+    /// <c>Eval</c>/<c>EvalCounted</c> dispatch heads and at each expression-spine machine
+    /// transition; it is deliberately a cheap operational proxy, not an exact
     /// distinct-AST-node counter. Small ordinary programs stay below the first bulk
     /// block and keep their prior exact step accounting. What this bounds is
     /// re-evaluation blowup that otherwise charges nothing — a reference-shared
     /// (DAG-shaped) host expression evaluates every occurrence, so 25 shared
     /// Binary nodes can demand 2^24 evaluations while every per-invocation budget
     /// stays at zero. With a configured <see cref="EvaluationLimits.MaxSteps"/>
-    /// that work is now charged in bulk and stops with the ordinary step-limit
+    /// that work is charged in bulk and stops with the ordinary step-limit
     /// error; without one, steps remain unlimited and the run stays in the
     /// documented unbudgeted-compute class.
+    ///
+    /// <para><b>The unit is strategy-neutral (Q-09b).</b> An optimized strategy that
+    /// evaluates a source expression without entering the generic dispatch heads records
+    /// the SAME checkpoints, in the same order relative to every other charge, that the
+    /// generic evaluation of that expression records: a planned loop expression charges one
+    /// per dispatch head and spine transition the generic machine would perform
+    /// (<c>LoopOptimizer.EvalLoopExprPlan</c>), and the fused <c>filter</c>→<c>count</c>
+    /// pipeline charges the dispatch heads of the stage expressions it elides
+    /// (<c>SequencePipelineOptimizer</c>). Step counts are therefore identical on every
+    /// strategy, so a configured step budget never has to select one.</para>
     /// </summary>
     internal EvalError? TryChargeExpressionNodeWork()
     {
         // Observed on EVERY checkpoint, not only at batch boundaries: this is the
         // densest chokepoint, so it is what bounds cancellation latency for pure
-        // expression work to well under one 4096-checkpoint batch.
+        // expression work to well under one bulk block.
         if (CheckContinuation() is { } terminal) return terminal;
 
-        if (_expressionEvaluationCheckpointsInBatch < 4095)
+        if (_expressionEvaluationCheckpointsInBatch < ExpressionCheckpointsPerStep - 1)
         {
             _expressionEvaluationCheckpointsInBatch++;
+            _expressionEvaluationCheckpoints++;
             return null;
         }
 
         // The boundary checkpoint belongs to the step it completes. Commit the batch
         // marker only when that step is admitted: if the error is retained and evaluation
         // continues elsewhere, advancing the marker on rejection would incorrectly admit
-        // another 4095 checkpoints despite an already exhausted step budget.
+        // another block of checkpoints despite an already exhausted step budget.
         if (TryChargeStep() is { } stepError)
             return stepError;
 
         _expressionEvaluationCheckpointsInBatch = 0;
+        _expressionEvaluationCheckpoints++;
         return null;
     }
 
     private int _expressionEvaluationCheckpointsInBatch;
+    private long _expressionEvaluationCheckpoints;
 
     /// <summary>
     /// Charges one unit of semantic work (currently: one dynamic invocation, one

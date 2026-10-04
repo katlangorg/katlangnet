@@ -11,19 +11,18 @@ namespace KatLang.Tests;
 /// <c>L</c> must depend on <c>L</c> and on the resources the program actually
 /// consumes — never on which UNRELATED limits happen to be configured.
 ///
-/// <para><b>Why this exists.</b> Optimizer eligibility is decided by which budgets
-/// were CONFIGURED, not by what the program does: <c>Evaluator.CreateRootCtx</c>
-/// reads <c>EvaluationBudget.HasStepLimit</c>,
-/// <c>HasConfiguredStringLimit</c> and <c>HasConfiguredMaterializationLimit</c> and
-/// forces the generic strategy when any of them is set. That construction makes an
-/// OPT-IN budget strategy-independent (it has no verdict at all while unconfigured,
-/// so forcing one strategy once it IS configured settles the question). It does
-/// nothing for an ALWAYS-ACTIVE budget — dynamic depth, the per-collection ceiling,
-/// the per-string ceiling — which has a verdict on every run and therefore must be
-/// EQUALIZED between the strategies instead. The per-collection ceiling already was
-/// (<c>EvaluationBudget.CheckCollectionSize</c> on the fused range path); dynamic
-/// depth was not, which is the defect this suite was written to find and now pins
-/// (<see cref="ConfiguredStringLimit_DoesNotChangeDepthVerdict_OfAFusedSequencePipeline"/>).</para>
+/// <para><b>Why this exists.</b> Optimizer eligibility used to be decided by which budgets
+/// were CONFIGURED: <c>Evaluator.CreateRootCtx</c> forced the generic strategy whenever a
+/// step, string or cumulative-materialization limit was written. That construction never
+/// protected an ALWAYS-ACTIVE budget — dynamic depth, the per-collection ceiling, the
+/// per-string ceiling — which has a verdict on every run and must be EQUALIZED between the
+/// strategies; dynamic depth was not, which is the defect this suite was written to find
+/// and still pins
+/// (<see cref="ConfiguredStringLimit_DoesNotChangeDepthVerdict_OfAFusedSequencePipeline"/>).
+/// Since Q-09b (2026-10-04) no limit selects a strategy at all: every strategy charges every
+/// budget identically (<see cref="StrategyNeutralBudgetParityTests"/>), and the switch is
+/// gone (<see cref="LimitConfigurationTransparencyTests"/>), so every row here also runs the
+/// optimized strategies under its configured limits.</para>
 ///
 /// <para><b>How it tests.</b> Purely behaviourally. The harness never consults the
 /// production strategy predicate; it builds limits, calls the public evaluator, and
@@ -1448,7 +1447,10 @@ public class BudgetCrossTalkMatrixTests
     /// The value-shaped predicate rows (K3-02 of the fused-pipeline review) pin the same
     /// verdict for a deep predicate <c>(D)</c> / <c>D</c> that is never invoked: since the
     /// PV-19 repair neither strategy evaluates it (a CALLBACK slot is never demanded), so its
-    /// depth is never part of the boundary on either strategy.
+    /// depth is never part of the boundary on either strategy. Since Q-09b (2026-10-04) no
+    /// configured limit selects a strategy at all: every unrelated limit keeps the fused
+    /// pipeline (one fusion hit on every row), and the verdict is the generic one by accounting
+    /// parity rather than by forcing the generic strategy.
     /// </summary>
     [Theory]
     [InlineData("range(1, 3).filter(P).count")]
@@ -1485,7 +1487,8 @@ public class BudgetCrossTalkMatrixTests
                 passing.IsError,
                 $"MaxDepth={boundary} must succeed with unrelated limits {atBoundary}; got {(passing.IsError ? passing.Error : null)}");
 
-            Assert.Equal(stringLimit is null ? 1 : 0, diagnostics.GetSnapshot().FilterCountFusionHits);
+            // Strategy identity (Q-09b): an unrelated configured limit keeps fusion.
+            Assert.Equal(1, diagnostics.GetSnapshot().FilterCountFusionHits);
             var (reference, referenceBudget) = Evaluator.RunCountedObserved(ast, atBoundary, enableOptimizations: false);
             Assert.Equal(reference.Value.Value, passing.Value.Value, Result.ValueComparer);
             Assert.Equal(referenceBudget.ConsumedSteps, passingBudget.ConsumedSteps);

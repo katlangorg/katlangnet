@@ -378,15 +378,17 @@ public class MetamorphicPhase3FamilyTests
     }
 
     /// <summary>
-    /// The whole optimizer family: every accepted point agrees semantically and never charges more
-    /// optimized than generic, and at least one point genuinely charges LESS (otherwise the
-    /// directional relation would be untested).
+    /// The whole optimizer family: every accepted point agrees semantically and charges EXACTLY
+    /// the generic run's accounted work — items, string units, steps, and peak depth — because
+    /// every strategy charges every budget identically (Q-09b). The executor admits a point only
+    /// when the optimized run really took its declared optimizer path, so the equality is never a
+    /// generic-against-generic comparison. (The family used to require only "never charges more",
+    /// with at least one point charging strictly less.)
     /// </summary>
     [Fact]
-    public void OptimizerFamily_AgreesSemanticallyAndNeverChargesMore()
+    public void OptimizerFamily_AgreesSemanticallyAndChargesExactlyTheGenericWork()
     {
         var accepted = 0;
-        var strictlyCheaper = 0;
 
         foreach (var parameters in OfFamily(MetamorphicFamily.OptimizerGenericParity))
         {
@@ -394,16 +396,16 @@ public class MetamorphicPhase3FamilyTests
             if (execution is not { Accepted: true, Left: { } left, Right: { } right }) continue;
 
             accepted++;
+            Assert.Equal(MetamorphicOperationalRelation.ExactObservedWorkEqual, execution.Case.OperationalRelation);
             Assert.Null(MetamorphicComparator.Compare(execution.Case, left, right));
             Assert.Equal(left.Semantic, right.Semantic);
-            Assert.True(left.MaterializedItems <= right.MaterializedItems);
-            Assert.True(left.EvaluationSteps <= right.EvaluationSteps);
-            if (left.MaterializedItems < right.MaterializedItems || left.EvaluationSteps < right.EvaluationSteps)
-                strictlyCheaper++;
+            Assert.Equal(right.MaterializedItems, left.MaterializedItems);
+            Assert.Equal(right.MaterializedStringChars, left.MaterializedStringChars);
+            Assert.Equal(right.EvaluationSteps, left.EvaluationSteps);
+            Assert.Equal(right.PeakDynamicDepth, left.PeakDynamicDepth);
         }
 
         Assert.True(accepted > 50, $"expected a broad optimizer sweep, accepted only {accepted}.");
-        Assert.True(strictlyCheaper > 0, "no optimizer point charged strictly less; the relation is untested.");
     }
 
     /// <summary>
@@ -1740,11 +1742,16 @@ public class MetamorphicPhase3FamilyTests
                 left with { Semantic = left.Semantic with { Structure = "S[9]" } },
                 right)).Kind);
 
-        // 2. Wrong directional materialization: the optimized side charging MORE.
+        // 2. Optimizer accounting divergence in EITHER direction: every strategy charges every
+        //    budget identically (Q-09b), so charging more and charging less are both mismatches.
         var overcharging = left with { MaterializedItems = right.MaterializedItems + 1 };
-        var directional = Require(MetamorphicComparator.Compare(optimizerCase, overcharging, right));
-        Assert.Equal(MetamorphicMismatchKind.MaterializedItems, directional.Kind);
-        Assert.Equal(MetamorphicMismatchClass.Operational, directional.Class);
+        var over = Require(MetamorphicComparator.Compare(optimizerCase, overcharging, right));
+        Assert.Equal(MetamorphicMismatchKind.MaterializedItems, over.Kind);
+        Assert.Equal(MetamorphicMismatchClass.Operational, over.Class);
+        var undercharging = left with { EvaluationSteps = right.EvaluationSteps - 1 };
+        var under = Require(MetamorphicComparator.Compare(optimizerCase, undercharging, right));
+        Assert.Equal(MetamorphicMismatchKind.EvaluationSteps, under.Kind);
+        Assert.Equal(MetamorphicMismatchClass.Operational, under.Class);
 
         // 3. Cache relation inversion: the cached side charging more steps than the rebuilt one.
         var cacheCase = BuildOf(MetamorphicFamily.CachedPropertyReuse, 0, 1, 1, 0, 10, 1, 0);
@@ -2046,9 +2053,8 @@ public class MetamorphicPhase3FamilyTests
             Assert.Null(testCase.Limits!.MaxSteps);
             Assert.Null(testCase.Limits.MaxStringLength);
             Assert.Null(testCase.Limits.MaxMaterializedStringChars);
-            // A configured cumulative item budget forces the generic sequence paths, so a
-            // "generous" one would mirror a DIFFERENT execution policy than the default —
-            // only the fusion-neutral per-collection ceiling may be generous here.
+            // This mode varies only the per-collection ceiling; dedicated modes cover the
+            // cumulative budgets. Every configured budget preserves strategy eligibility.
             Assert.Null(testCase.Limits.MaxMaterializedItems);
 
             foreach (var profile in new[] { testCase.LeftProfile, testCase.RightProfile })

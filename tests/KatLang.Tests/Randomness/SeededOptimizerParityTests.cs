@@ -138,31 +138,38 @@ public class SeededOptimizerParityTests
         AssertSameAtoms(expected, Value(generic.Result).ToHostAtoms());
     }
 
-    // ── §24.3 Unrelated limits that disable a strategy ────────────────────────
+    // ── §24.3 Unrelated limits keep every strategy (Q-09b) ────────────────────
 
     [Fact]
-    public void AStepBudget_DisablesLoopPlanning_WithoutChangingTheSeededResult()
+    public void AStepBudget_KeepsLoopPlanning_AndTheSeededResult()
     {
-        // A configured MaxSteps forces the generic loop strategy (CreateRootCtx); the
-        // program's control flow is unchanged, so the stream is consumed identically.
+        // Limits observe a run; they never choose how it runs (Q-09b): a configured,
+        // non-binding MaxSteps keeps the planned loop (which charges exactly the generic
+        // steps), and the stream is consumed identically. (Until 2026-10-04 a configured
+        // MaxSteps forced the generic loop strategy — PV-07.)
         var limited = RunObserved(RandomLoop + StreamSentinel, optimize: true, Seed, new EvaluationLimits { MaxSteps = 100_000 });
         var unlimited = RunObserved(RandomLoop + StreamSentinel, optimize: true, Seed);
 
-        Assert.Equal(0, limited.Loop.OptimizedLoopHits);
-        Assert.Equal(1, unlimited.Loop.OptimizedLoopHits);
+        Assert.Equal(1, limited.Loop.OptimizedLoopHits);
+        Assert.Equal(unlimited.Loop.OptimizedLoopHits, limited.Loop.OptimizedLoopHits);
+        Assert.Equal(unlimited.Loop.LoopIterations, limited.Loop.LoopIterations);
         var words = Words(Seed);
         AssertSameAtoms([ExpectedLoopTotal(words), LowWordMod2Pow32(words)], Value(limited.Result).ToHostAtoms());
         AssertSameValue(Value(unlimited.Result), Value(limited.Result));
     }
 
     [Fact]
-    public void AStringBudget_DisablesSequenceFusion_WithoutChangingTheSeededResult()
+    public void AStringBudget_KeepsSequenceFusion_AndTheSeededResult()
     {
+        // A configured string budget keeps fusion (fused and generic pipelines create the
+        // same strings) and the seeded draws. (Until 2026-10-04 it forced the generic
+        // pipeline — PV-07.)
         var limited = RunObserved(RandomFilterCount + StreamSentinel, optimize: true, Seed, new EvaluationLimits { MaxMaterializedStringChars = 10_000 });
         var unlimited = RunObserved(RandomFilterCount + StreamSentinel, optimize: true, Seed);
 
-        Assert.Equal(0, limited.Sequence.FilterCountFusionHits);
-        Assert.Equal(1, unlimited.Sequence.FilterCountFusionHits);
+        Assert.Equal(1, limited.Sequence.FilterCountFusionHits);
+        Assert.Equal(unlimited.Sequence.FilterCountFusionHits, limited.Sequence.FilterCountFusionHits);
+        Assert.Equal(unlimited.Sequence.FilterCountPredicateCalls, limited.Sequence.FilterCountPredicateCalls);
         var words = Words(Seed);
         AssertSameAtoms([ExpectedFilteredCount(words), LowWordMod2Pow32(words)], Value(limited.Result).ToHostAtoms());
         AssertSameValue(Value(unlimited.Result), Value(limited.Result));

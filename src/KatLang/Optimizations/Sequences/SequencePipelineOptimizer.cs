@@ -158,6 +158,20 @@ internal static class SequencePipelineOptimizer
 
         // Supply cells add no invocation level. All eligibility checks are complete;
         // the source now executes once, and a failure after commitment is terminal.
+        //
+        // STRATEGY-NEUTRAL ACCOUNTING (Q-09b): the generic composition enters the `filter`
+        // stage expression this pipeline elides through one EvalCounted dispatch head — the
+        // first demand of the collection argument `count` (or the count dot edge's receiver)
+        // forms for it — before anything of the stage is evaluated. Fusion records that same
+        // expression-work checkpoint here, where nothing chargeable has happened since the
+        // count expression's own head. Like the generic stage head's, its limit error is
+        // returned undecorated, so it surfaces at the count expression's boundary.
+        if (ctx.Budget.TryChargeExpressionNodeWork() is { } stageHeadLimit)
+        {
+            result = stageHeadLimit;
+            return true;
+        }
+
         var status = TryCreateFilterCountPlan(preparation, services, ctx, valEnv, diagnostics,
             out var plan, out result);
         if (status == FilterCountRecognitionStatus.Error) return true;
@@ -629,10 +643,7 @@ internal static class SequencePipelineOptimizer
             var rangeR = WithContext(
                 preparation.Syntax,
                 ctx,
-                services.EvaluateRangeCallArguments(
-                    directRangeSource.Function,
-                    directRangeSource.Arguments,
-                    directRangeSource.Span));
+                EvaluateDirectRangeSource(directRangeSource, services, ctx));
             if (rangeR.IsError)
             {
                 result = rangeR.Error;
@@ -683,6 +694,41 @@ internal static class SequencePipelineOptimizer
                     sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }
+
+    /// <summary>
+    /// The elided <c>range(a, b)</c> source of the generic <c>filter</c> stage. The generic
+    /// stage demands its collection argument — the range call — through one more EvalCounted
+    /// dispatch head before the range call's own evaluation, inside the stage's diagnostic
+    /// boundary (the caller's <see cref="WithContext{T}"/>, so a limit there carries the
+    /// filter expression's span) and outside the range call's own (which
+    /// <see cref="SequencePipelineEvaluationServices.EvaluateRangeCallArguments"/> applies).
+    /// Fusion records that checkpoint here, then evaluates the bounds exactly as the generic
+    /// range does, which also RESERVES the item slots the generic range materializes.
+    /// </summary>
+    private static EvalResult<Evaluator.InclusiveRange> EvaluateDirectRangeSource(
+        BuiltinRangeSourceSyntax directRangeSource,
+        SequencePipelineEvaluationServices services,
+        Evaluator.EvalCtx ctx)
+    {
+        if (ctx.Budget.TryChargeExpressionNodeWork() is { } rangeHeadLimit)
+            return rangeHeadLimit;
+
+        return services.EvaluateRangeCallArguments(
+            directRangeSource.Function,
+            directRangeSource.Arguments,
+            directRangeSource.Span);
+    }
+
+    /// <summary>
+    /// RESERVES the item slots of the list the generic <c>filter</c> stage materializes for its
+    /// kept items (<c>Evaluator.EvalFilterCounted</c> → <c>MakeCollectionListResult</c>; the
+    /// empty list of an empty source included), at the same point — after the last predicate
+    /// call, before <c>count</c> reads it — without building the list. The limit error is
+    /// unspanned like the generic reservation's; the caller's <see cref="WithContext{T}"/>
+    /// positions it at the filter expression, as the generic stage boundary does.
+    /// </summary>
+    private static EvalError? ReserveKeptItems(Evaluator.EvalCtx ctx, long keptCount)
+        => ctx.Budget.TryReserveCollection(keptCount);
 
     private static EvalResult<Evaluator.CountedResult> ExecuteFilterCount(
         FilterCountPipelinePlan plan,
@@ -755,6 +801,20 @@ internal static class SequencePipelineOptimizer
                 keptCount++;
         }
 
+        if (ReserveKeptItems(ctx, keptCount) is { } keptLimit)
+        {
+            diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
+            diagnostics?.RecordPipelineExecution(
+                diagnosticKey,
+                sourcePlan.SourceItems.Count,
+                predicateCalls,
+                resultCount: null,
+                avoidedFilteredResultMaterializationCount: keptCount,
+                avoidedSourceMaterializationCount: 0);
+            diagnostics?.RecordAvoidedFilteredResultMaterialization(keptCount);
+            return keptLimit;
+        }
+
         // Match the generic composition: filter materializes its kept items as
         // ONE list value, and `count` opens exactly that one
         // list boundary through the shared builtin collection-item view, so the
@@ -821,6 +881,21 @@ internal static class SequencePipelineOptimizer
 
             if (predicateR.Value)
                 keptCount++;
+        }
+
+        if (ReserveKeptItems(ctx, keptCount) is { } keptLimit)
+        {
+            diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
+            diagnostics?.RecordPipelineExecution(
+                diagnosticKey,
+                sourceItemsSeen,
+                predicateCalls,
+                resultCount: null,
+                avoidedFilteredResultMaterializationCount: keptCount,
+                avoidedSourceMaterializationCount: sourceCount);
+            diagnostics?.RecordAvoidedFilteredResultMaterialization(keptCount);
+            diagnostics?.RecordAvoidedSourceMaterialization(sourceCount);
+            return keptLimit;
         }
 
         diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);

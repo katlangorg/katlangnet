@@ -33,14 +33,18 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         while (true)
         {
-            // A fully-planned iteration touches a charging budget chokepoint only where
-            // the generic path charges one — a planned `if` argument level, a temp read,
-            // a temp call — and an iteration of bare planned arithmetic touches none (this
-            // path never runs under a step budget), so this is the one guaranteed
-            // per-iteration host-cancellation observation. It must stay observation-only:
-            // charging any counter here would break the pinned optimized-vs-generic
-            // accounting parity.
-            ctx.Budget.ObserveCancellation();
+            // ONE step per iteration, charged first — exactly where the generic loop charges
+            // its iteration step (Evaluator.EvalNeedLoop / RunReadyNeedStepSlots), before
+            // anything of the iteration is evaluated. It is what bounds a runaway planned loop
+            // under a finite MaxSteps, and (with the planned expressions' checkpoints) what
+            // makes a planned run's step count identical to the generic one (Q-09b). It also
+            // observes host cancellation once per iteration, before any counter moves.
+            if (ctx.Budget.TryChargeStep() is { } iterationLimit)
+            {
+                result = iterationLimit;
+                return true;
+            }
+
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
             var requiresGenericContinuation = false;
@@ -171,10 +175,14 @@ internal static partial class LoopOptimizer
         var frame = new LoopRunFrame(plan, valEnv, stateValues);
         for (var iteration = 0L; iteration < count; iteration++)
         {
-            // Same rule as the optimized while path: an iteration of bare planned
-            // arithmetic touches no charging chokepoint, so observe host cancellation
-            // here, observation-only.
-            ctx.Budget.ObserveCancellation();
+            // Same rule as the optimized while path: one step per iteration, charged where
+            // the generic repeat charges it, observing host cancellation first.
+            if (ctx.Budget.TryChargeStep() is { } iterationLimit)
+            {
+                result = iterationLimit;
+                return true;
+            }
+
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
             var requiresGenericContinuation = false;

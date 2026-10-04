@@ -162,11 +162,18 @@ internal sealed class LoopRunFrame
     private IReadOnlyList<NeedCell> CurrentCells()
         => _pendingState ?? _stateSlots.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
 
-    public EvalResult<Result> GetStateSlot(int index, bool parameterUse = true)
+    /// <summary>
+    /// The value of state slot <paramref name="index"/>. A PENDING initial-state cell is demanded
+    /// here, at its first read. A parameter read demands it exactly as the generic read of the step
+    /// parameter does (<c>Evaluator.DemandParameter</c>), with the READING reference's span
+    /// (<paramref name="readSpan"/>), which positions an unspanned failure of a written-block cell —
+    /// a step limit falling on that cell's dispatch checkpoint — where the generic read positions it.
+    /// </summary>
+    public EvalResult<Result> GetStateSlot(int index, SourceSpan? readSpan, bool parameterUse = true)
     {
         if (_pendingState is null) return EvalResult<Result>.Ok(_stateSlots[index]);
         var demanded = parameterUse
-            ? Evaluator.DemandPlannedParameter(_pendingState[index], Template.Step.Params[index], null)
+            ? Evaluator.DemandPlannedParameter(_pendingState[index], Template.Step.Params[index], readSpan)
             : _pendingState[index].Demand();
         if (demanded.IsError) return demanded.Error;
         _stateSlots[index] = demanded.Value.Value;
@@ -214,7 +221,7 @@ internal sealed class LoopRunFrame
     {
         for (var index = 0; index < _stateSlots.Length; index++)
         {
-            var value = GetStateSlot(index, parameterUse: false);
+            var value = GetStateSlot(index, readSpan: null, parameterUse: false);
             if (value.IsError) return value.Error;
         }
         return Evaluator.MakeCheckedLoopStateResult(IterationCtx, _stateSlots);

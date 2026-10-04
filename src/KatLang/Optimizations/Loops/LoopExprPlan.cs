@@ -287,7 +287,7 @@ internal static partial class LoopOptimizer
                 if (func is Expr.Resolve(var tempName) && TryFindLoopTempPlan(tempPlans, tempName, out var calledTempPlan))
                 {
                     var argumentFacts = argumentMemo.Get(callArgs, calledTempPlan, ctx.LoopDiagnostics);
-                    if (argumentFacts.Matches)
+                    if (argumentFacts.Matches && calledTempPlan.ForwardsTransportedArguments)
                     {
                         return new LoopExprPlanTryBuildResult(
                             new LoopExprPlan.TempCall(
@@ -450,8 +450,78 @@ internal static partial class LoopOptimizer
             frame.Diagnostics?.RecordPlannedExpressionHit();
         }
 
-        return EvalLoopExprPlan(plan, frame);
+        // A step output row is what the generic step evaluates through one EvalCounted head
+        // (Evaluator.EvalAlgOutputSlots).
+        return EvalLoopExprPlan(plan, frame, LoopPlanDispatch.Head);
     }
+
+    /// <summary>
+    /// How the GENERIC evaluator would enter the source expression a plan node stands for —
+    /// which decides the expression-work checkpoints the planned evaluation must record in its
+    /// place (<see cref="EvaluationBudget.TryChargeExpressionNodeWork"/>). Planned and generic
+    /// evaluation therefore record the same checkpoints in the same order relative to every
+    /// other charge and effect, so their step counts — and any step-limit verdict, failure
+    /// point and error — are identical (Q-09b: limits never select a strategy).
+    /// </summary>
+    private enum LoopPlanDispatch : byte
+    {
+        /// <summary>
+        /// Entered through one <c>Eval</c>/<c>EvalCounted</c> dispatch head: a step output
+        /// row, a temp body's row, or an operand the expression-spine machine delegates
+        /// (<see cref="Evaluator.IsExpressionSpineNode"/> is false for it).
+        /// </summary>
+        Head,
+
+        /// <summary>
+        /// Pushed by its parent as a frame of the expression-spine machine, which records
+        /// no dispatch head for it (only the frame's own machine transitions).
+        /// </summary>
+        Spine,
+
+        /// <summary>
+        /// A written argument of the <c>if</c> builtin: the generic call forms one supply cell
+        /// for it (<c>Evaluator.SupplyCell</c>) whose first demand enters one EvalCounted
+        /// head — except that an argument naming a parameter whose need cell is already bound
+        /// TRANSPORTS that cell, so its demand enters no head at all.
+        /// </summary>
+        Argument,
+    }
+
+    /// <summary>
+    /// The dispatch for an operand of a planned operator, decided by the SAME predicate the
+    /// generic expression-spine machine uses to push or delegate that operand.
+    /// </summary>
+    private static LoopPlanDispatch OperandDispatch(LoopExprPlan operand)
+        => Evaluator.IsExpressionSpineNode(operand.Source) ? LoopPlanDispatch.Spine : LoopPlanDispatch.Head;
+
+    /// <summary>
+    /// Whether entering <paramref name="plan"/> through <paramref name="dispatch"/> records the
+    /// generic dispatch head's checkpoint. Compiler-exhaustive over the closed plan hierarchy,
+    /// so a new plan kind must decide.
+    /// </summary>
+    private static bool RecordsDispatchCheckpoint(LoopExprPlan plan, LoopPlanDispatch dispatch)
+        => plan switch
+        {
+            // Expression-spine kinds: a spine parent pushes them as frames; every other
+            // dispatch enters a head before the machine runs them.
+            LoopExprPlan.Unary or LoopExprPlan.Binary or LoopExprPlan.Comparison
+                => dispatch != LoopPlanDispatch.Spine,
+
+            // A read of a parameter bound to a need cell: as an `if` argument the generic call
+            // transports that very cell and demands it without a head.
+            LoopExprPlan.StateSlot or LoopExprPlan.NeedParameter
+                => dispatch != LoopPlanDispatch.Argument,
+
+            LoopExprPlan.Constant or LoopExprPlan.StringConstant or LoopExprPlan.CapturedSlot
+                or LoopExprPlan.CountedParamSlot or LoopExprPlan.TempSlot or LoopExprPlan.TempCall
+                or LoopExprPlan.If => true,
+
+            // Evaluated through Evaluator.EvalCounted, whose own head records the checkpoint.
+            // A fallback only ever stands for a whole step row (Head dispatch): an unplannable
+            // operand, `if` argument or temp body makes its whole parent unplannable, so no
+            // spine frame or transported argument is ever a fallback.
+            LoopExprPlan.Fallback => false,
+        };
 
     /// <summary>
     /// A bare zero-parameter temp read. MIRROR of the generic zero-argument property
@@ -496,7 +566,8 @@ internal static partial class LoopOptimizer
         if (frame.TryGetTempSlot(index, out var value))
             return EvalResult<PlannedLoopValue>.Ok(value);
 
-        var tempR = EvalLoopExprPlan(temp.Plan, frame);
+        // The generic miss evaluates the property's one output row through an EvalCounted head.
+        var tempR = EvalLoopExprPlan(temp.Plan, frame, LoopPlanDispatch.Head);
         if (tempR.IsError) return tempR.Error;
         frame.SetTempSlot(index, tempR.Value);
         return tempR;
@@ -527,7 +598,7 @@ internal static partial class LoopOptimizer
                 ctx.Budget),
             () =>
             {
-                var tempR = EvalLoopExprPlan(temp.Plan, frame);
+                var tempR = EvalLoopExprPlan(temp.Plan, frame, LoopPlanDispatch.Head);
                 if (tempR.IsError) return tempR.Error;
                 return EvalResult<ZeroArgPropertyResult>.Ok(
                     new ZeroArgPropertyResult(tempR.Value.ToResult(), tempR.Value.EmittedCount));
@@ -574,20 +645,43 @@ internal static partial class LoopOptimizer
     private static EvalResult<PlannedLoopValue> EvalFreshLoopTemp(
         LoopRunFrame frame,
         int index)
-        => EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame);
+        => EvalLoopExprPlan(frame.Template.TempPlans[index].Plan, frame, LoopPlanDispatch.Head);
 
-    /// <summary>
-    /// Evaluates one planned node. Compiler-exhaustive over the closed
-    /// <see cref="LoopExprPlan"/> hierarchy: every kind is named, there is no catch-all
-    /// arm, and a new kind fails the build here until it is given an evaluation.
-    /// </summary>
-    private static EvalResult<PlannedLoopValue> EvalLoopStateSlot(int index, LoopRunFrame frame)
+    // MIRROR of the generic parameter read (Evaluator.EvalParamCountedOf): a pending
+    // initial-state cell is demanded with the reading reference's span.
+    private static EvalResult<PlannedLoopValue> EvalLoopStateSlot(LoopExprPlan.StateSlot stateSlot, LoopRunFrame frame)
     {
-        var value = frame.GetStateSlot(index);
+        var value = frame.GetStateSlot(stateSlot.Index, stateSlot.Source.Span);
         return value.IsError ? value.Error : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(value.Value));
     }
 
+    /// <summary>
+    /// Evaluates one planned node entered through <paramref name="dispatch"/>. The generic
+    /// dispatch head's checkpoint (<see cref="RecordsDispatchCheckpoint"/>) is recorded FIRST,
+    /// outside every diagnostic boundary of the node — exactly where the generic head records
+    /// it, before the dispatch's own span and call-context decorations — so a step limit
+    /// reached there is the generic error, at the generic point.
+    /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopExprPlan(
+        LoopExprPlan plan,
+        LoopRunFrame frame,
+        LoopPlanDispatch dispatch)
+    {
+        if (RecordsDispatchCheckpoint(plan, dispatch)
+            && frame.IterationCtx.Budget.TryChargeExpressionNodeWork() is { } checkpointLimit)
+        {
+            return checkpointLimit;
+        }
+
+        return EvalLoopExprPlanNode(plan, frame);
+    }
+
+    /// <summary>
+    /// Evaluates one planned node after its dispatch checkpoint. Compiler-exhaustive over the
+    /// closed <see cref="LoopExprPlan"/> hierarchy: every kind is named, there is no catch-all
+    /// arm, and a new kind fails the build here until it is given an evaluation.
+    /// </summary>
+    private static EvalResult<PlannedLoopValue> EvalLoopExprPlanNode(
         LoopExprPlan plan,
         LoopRunFrame frame)
         => plan switch
@@ -597,7 +691,7 @@ internal static partial class LoopOptimizer
             LoopExprPlan.StringConstant constant => EvalLoopStringConstant(constant, frame),
 
             LoopExprPlan.StateSlot stateSlot =>
-                EvalLoopStateSlot(stateSlot.Index, frame),
+                EvalLoopStateSlot(stateSlot, frame),
 
             LoopExprPlan.CapturedSlot capturedSlot =>
                 EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(frame.GetCapturedSlot(capturedSlot.Index))),
@@ -665,6 +759,18 @@ internal static partial class LoopOptimizer
             PlannedLoopValue.FromResult(countedParam.Value, countedParam.EmittedCount));
     }
 
+    /// <summary>
+    /// One transition of the generic expression-spine machine
+    /// (<c>Evaluator.EvalExpressionSpineCounted</c>), which records one expression-work
+    /// checkpoint at the top of every loop step: before a frame requests its first operand,
+    /// between operands, and before it applies. The planned operator evaluation records the
+    /// same transitions at the same points, so a planned spine and the generic machine charge
+    /// identical checkpoints in identical order (the machine returns a transition's limit
+    /// error undecorated, and so does this).
+    /// </summary>
+    private static EvalError? RecordSpineTransition(LoopRunFrame frame)
+        => frame.IterationCtx.Budget.TryChargeExpressionNodeWork();
+
     private static EvalResult<PlannedLoopValue> EvalLoopUnaryPlan(
         LoopExprPlan.Unary unary,
         LoopRunFrame frame)
@@ -675,8 +781,11 @@ internal static partial class LoopOptimizer
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        var operandR = EvalLoopExprPlan(unary.Operand, frame);
+        // Generic Unary frame: request the operand; apply.
+        if (RecordSpineTransition(frame) is { } requestLimit) return requestLimit;
+        var operandR = EvalLoopExprPlan(unary.Operand, frame, OperandDispatch(unary.Operand));
         if (operandR.IsError) return operandR.Error;
+        if (RecordSpineTransition(frame) is { } applyLimit) return applyLimit;
         frame.Diagnostics?.RecordPlannedBuiltinOperation();
         return ApplyPlannedUnary(unary.Op, operandR.Value, unary.Source.Span);
     }
@@ -688,10 +797,14 @@ internal static partial class LoopOptimizer
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        var leftR = EvalLoopExprPlan(binary.Left, frame);
+        // Generic Binary frame: request the left operand; request the right one; apply.
+        if (RecordSpineTransition(frame) is { } leftLimit) return leftLimit;
+        var leftR = EvalLoopExprPlan(binary.Left, frame, OperandDispatch(binary.Left));
         if (leftR.IsError) return leftR.Error;
-        var rightR = EvalLoopExprPlan(binary.Right, frame);
+        if (RecordSpineTransition(frame) is { } rightLimit) return rightLimit;
+        var rightR = EvalLoopExprPlan(binary.Right, frame, OperandDispatch(binary.Right));
         if (rightR.IsError) return rightR.Error;
+        if (RecordSpineTransition(frame) is { } applyLimit) return applyLimit;
         frame.Diagnostics?.RecordPlannedBuiltinOperation();
         return ApplyPlannedBinary(binary.Op, binary.Left.Source, binary.Right.Source, leftR.Value, rightR.Value, binary.Source.Span);
     }
@@ -701,7 +814,10 @@ internal static partial class LoopOptimizer
     /// <c>Evaluator.EvalExpressionSpineCounted</c>): the first operand, then link by
     /// link — evaluate the operand, compare the PREVIOUS operand's value with it (every
     /// operand evaluated exactly once, one planned operation per link), keep going past a
-    /// false link, stop at the first error before any later operand is evaluated.
+    /// false link, stop at the first error before any later operand is evaluated. Its
+    /// machine transitions are the generic frame's: one requesting the first operand, one
+    /// requesting the first link's operand, then one per link applying it (and requesting
+    /// the next operand in the same transition).
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopComparisonPlan(
         LoopExprPlan.Comparison comparison,
@@ -710,8 +826,10 @@ internal static partial class LoopOptimizer
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        var previousR = EvalLoopExprPlan(comparison.First, frame);
+        if (RecordSpineTransition(frame) is { } firstLimit) return firstLimit;
+        var previousR = EvalLoopExprPlan(comparison.First, frame, OperandDispatch(comparison.First));
         if (previousR.IsError) return previousR.Error;
+        if (RecordSpineTransition(frame) is { } firstLinkLimit) return firstLinkLimit;
         var previous = previousR.Value;
         var previousSource = comparison.First.Source;
         var holds = true;
@@ -721,8 +839,9 @@ internal static partial class LoopOptimizer
         for (var index = 0; index < links.Count; index++)
         {
             var link = links[index];
-            var nextR = EvalLoopExprPlan(link.Operand, frame);
+            var nextR = EvalLoopExprPlan(link.Operand, frame, OperandDispatch(link.Operand));
             if (nextR.IsError) return nextR.Error;
+            if (RecordSpineTransition(frame) is { } linkLimit) return linkLimit;
             frame.Diagnostics?.RecordPlannedBuiltinOperation();
             var linkR = ApplyPlannedComparison(
                 link.Op, previousSource, link.Operand.Source, previous, nextR.Value, comparison.Source.Span);
@@ -774,25 +893,21 @@ internal static partial class LoopOptimizer
     }
 
     /// <summary>
-    /// One planned <c>if</c> argument — the condition, or the selected branch. MIRROR of
-    /// the generic builtin argument funnel (<c>Evaluator.EvalResolvedArgumentCounted</c>
-    /// over <c>EvalArgumentAlgOutputCounted</c>): EVERY argument the generic <c>if</c>
-    /// evaluates is one VALUE-side algorithm re-entered under one depth-only
-    /// argument-evaluation level — a literal, a parameter, or an expression is wrapped in
-    /// a value thunk, and a bare reference to a zero-parameter local property resolves to
-    /// its value side, the ordinary property READ (how a property value is consumed does
-    /// not affect caching). The level is charged through the SAME helper as the generic
-    /// funnel, so nested planned <c>if</c>s stack levels exactly like the generic
-    /// composition, and a <see cref="LoopExprPlan.TempSlot"/> argument is then the
-    /// ordinary planned temp read (<see cref="EvalLoopTempSlot"/>: the charged dynamic
-    /// invocation plus the run cache or per-iteration memo), exactly as the generic
-    /// wrapper's property read is. An unselected branch is never evaluated and charges
-    /// nothing, on either strategy.
+    /// One planned <c>if</c> argument — the condition, or the selected branch. MIRROR of the
+    /// generic builtin's demand of its supply cell (<c>Evaluator.EvalResolvedArgumentCounted</c>
+    /// over the cell <c>Evaluator.SupplyCell</c> formed for the written argument): a Model-C
+    /// cell adds no depth level; its first demand enters one EvalCounted head — recorded here
+    /// through <see cref="LoopPlanDispatch.Argument"/> — unless the argument names a parameter
+    /// whose bound cell the call transports, which is demanded without one. A bare reference to
+    /// a zero-parameter local property is then the ordinary planned temp read
+    /// (<see cref="EvalLoopTempSlot"/>: the charged dynamic invocation plus the run cache or
+    /// per-iteration memo), exactly as the generic cell's property read is. An unselected
+    /// branch is never evaluated and charges nothing, on either strategy.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopIfArgument(
         LoopExprPlan argument,
         LoopRunFrame frame)
-        => EvalLoopExprPlan(argument, frame);
+        => EvalLoopExprPlan(argument, frame, LoopPlanDispatch.Argument);
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedUnary(
         UnaryOp op,

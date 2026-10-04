@@ -15,7 +15,7 @@ public class ImplicitArgumentSharingHostileReviewTests
         var arguments = new OutputBundle([new Expr.Param("a"), new Expr.Param("b") { Span = span }]);
         LoopTempPlan Temp(params string[] names) => new("G", 0, names,
             new LoopExprPlan.Constant(new Expr.Num(0), PlannedLoopValue.FromNumeric(0)), null,
-            new Property("G", Body(new Expr.Num(0))));
+            new Property("G", Body(new Expr.Num(0))), ForwardsTransportedArguments: true);
         var matching = Temp("a", "b");
         var other = Temp("b", "a");
         var memo = new LoopTempCallArgumentMemo();

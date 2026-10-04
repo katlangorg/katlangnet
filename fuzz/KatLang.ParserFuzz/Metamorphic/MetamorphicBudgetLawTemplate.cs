@@ -35,8 +35,7 @@ internal enum MetamorphicBudgetLaw
 
     /// <summary>
     /// Law 5: two TRUSTED EQUIVALENT FORMS (Phase 1/2 families) executed at the same derived
-    /// boundary. Applied only to pairs whose declared operational relation is exact — never to a
-    /// fused chain, whose materialization relation is directional by design.
+    /// boundary. Applied only to pairs whose declared operational relation is exact.
     /// </summary>
     EquivalentFormBoundaryParity,
 }
@@ -120,9 +119,10 @@ internal static class MetamorphicBudgetLawTemplate
 
     /// <summary>
     /// Trusted equivalent forms from Phases 1 and 2, used by
-    /// <see cref="MetamorphicBudgetLaw.EquivalentFormBoundaryParity"/>. Fused chains are
-    /// deliberately absent: their materialization relation is directional, so requiring a shared
-    /// boundary would contradict the relation Phase 2 established.
+    /// <see cref="MetamorphicBudgetLaw.EquivalentFormBoundaryParity"/>. (Fused chains were
+    /// absent because a fused pipeline used to materialize less than its ordinary spelling; since
+    /// Q-09b it reserves exactly the generic composition's items, which
+    /// <c>StrategyNeutralBudgetParityTests</c> pins directly.)
     /// </summary>
     internal static readonly ImmutableArray<MetamorphicEquivalentForms> Forms =
     [
@@ -395,10 +395,10 @@ internal static class MetamorphicBudgetLawTemplate
         MetamorphicResourceDimensionDefinition dimension,
         long boundary)
     {
-        // The dimension's BASELINE is the default policy wherever configuring the dimension does
-        // not change optimizer eligibility, and a deliberately non-binding limit of the same kind
-        // where it does (steps and strings). Either way both members run the same execution
-        // policy and differ only in a limit that cannot bind.
+        // The dimension's BASELINE is the default policy for every dimension (Q-09b: no
+        // configured limit changes the execution policy), so this law is NON-BINDING LIMIT
+        // TRANSPARENCY: the unconfigured run against the same run with a limit that cannot bind
+        // must agree in value, work, and optimizer evidence.
         var left = new MetamorphicExecutionProfile(dimension.Surface, dimension.Baseline, EnableOptimizations: true);
         var right = new MetamorphicExecutionProfile(
             dimension.Surface, MetamorphicBoundaryPolicy.GenerousLimits(dimension.Dimension, boundary),

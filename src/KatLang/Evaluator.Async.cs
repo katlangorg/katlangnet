@@ -52,13 +52,13 @@ namespace KatLang;
 ///
 /// <para><b>Strategy pinning.</b> The twin path always creates its root context with
 /// loop optimization and sequence-pipeline fusion DISABLED, so the twins only ever
-/// mirror the generic strategies. This is the same generic-strategies mode that
-/// configured step/string/materialization budgets already force on the synchronous path,
-/// and the budget architecture guarantees strategy independence of every limit verdict
-/// (see <c>CreateRootCtx</c>), so results and verdicts are unchanged; only internal
-/// diagnostics observations (which honestly record the generic strategy) differ. The
-/// optimized executors can be taught to cooperate with the twin family later without any
-/// architectural change.</para>
+/// mirror the generic strategies. Every strategy charges every budget identically
+/// (Q-09b; see <c>CreateRootCtx</c>), so results, budget accounting and limit verdicts are
+/// unchanged; only internal diagnostics observations (which honestly record the generic
+/// strategy) differ. The ROUTE itself is chosen by capability — an async-capable cache, an
+/// asynchronous host operation, a deferred module region — never by
+/// <see cref="EvaluationLimits"/>. The optimized executors can be taught to cooperate with
+/// the twin family later without any architectural change.</para>
 ///
 /// <para><b>Cancellation.</b> Identical to the synchronous contract: the run token lives
 /// on the shared <see cref="EvaluationBudget"/> and is observed at the same chokepoints
@@ -183,14 +183,15 @@ public static partial class Evaluator
     /// overload.</para>
     ///
     /// <para><b>Recursion depth on the async twin path.</b> The twin path's per-level
-    /// frames are larger than the calibrated synchronous frames, so a deeply recursive
-    /// program can reach the host-stack backstop — the structured
+    /// frames are larger than the synchronous frames, so a deeply recursive program that
+    /// does not suspend usually reaches the host-stack backstop — the structured
     /// <see cref="EvalError.EvaluationStackExhausted"/> — at a SHALLOWER recursion depth
     /// than the synchronous evaluator, and before the deterministic
-    /// <see cref="EvaluationLimits.MaxDepth"/> verdict. The outcome is always a structured
-    /// resource-limit error, never a process crash; the exact depth is implementation-
-    /// and platform-dependent and is not a language guarantee (see
-    /// <see cref="EvaluationLimits.MaxDepth"/>).</para>
+    /// <see cref="EvaluationLimits.MaxDepth"/> verdict; one that genuinely suspends before
+    /// descending resumes on a fresh stack and can go DEEPER. The outcome is always a
+    /// structured resource-limit error, never a process crash; the depth depends on the host
+    /// (thread, build, runtime and JIT state, platform), never on which limits are configured,
+    /// and is not a language guarantee (see <see cref="EvaluationLimits.MaxDepth"/>).</para>
     /// </summary>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="expr"/> is null, or <paramref name="hostOperations"/> is null — a run

@@ -18,13 +18,16 @@ namespace KatLang.Tests;
 /// recognized fusion spelling, and asserts only that the optimized and generic
 /// executions observe the SAME value, emitted count, and error category.</para>
 ///
-/// <para><b>Termination gate.</b> A configured step budget forces the generic
-/// path (see <c>Evaluator.CreateRootCtx</c>), so the optimized side cannot be
-/// bounded by limits. Generated <c>while</c> programs can legitimately fail to
-/// terminate, so each case is first probed under a step budget; a program that
-/// exhausts it is skipped rather than compared. Every family asserts that it
-/// actually compared a substantial number of cases, so a generator change that
-/// silently made everything non-terminating cannot pass as a green sweep.</para>
+/// <para><b>Termination gate and exact accounting.</b> Generated <c>while</c> programs can
+/// legitimately fail to terminate, so BOTH strategies run under the same step budget. Since
+/// Q-09b a configured step budget no longer forces the generic path, and every strategy
+/// charges every budget identically, so the two executions must agree not only on the
+/// outcome but on the full error tree and every budget counter — steps, the raw
+/// expression-work checkpoints, peak depth, materialized items and string units — including,
+/// for a program that exhausts the budget, at the exact failure point. Such a program counts as
+/// "bounded" rather than "compared". Every family asserts that it compared a substantial number
+/// of terminating cases, so a generator change that silently made everything non-terminating
+/// cannot pass as a green sweep.</para>
 /// </summary>
 public class OptimizerEquivalenceSweepTests
 {
@@ -62,12 +65,12 @@ public class OptimizerEquivalenceSweepTests
             Assert.True(
                 Mismatches.Count == 0,
                 $"{Mismatches.Count} optimized/generic mismatches out of {Compared} compared "
-                + $"({Skipped} skipped as non-terminating):\n"
+                + $"({Skipped} bounded by the step budget):\n"
                 + string.Join("\n", Mismatches.Take(25)));
             Assert.True(
                 Compared >= minimumCompared,
-                $"Only {Compared} cases were comparable (expected at least {minimumCompared}); "
-                + $"{Skipped} were skipped as non-terminating. The generator degenerated.");
+                $"Only {Compared} cases terminated within the step budget (expected at least {minimumCompared}); "
+                + $"{Skipped} were bounded by it. The generator degenerated.");
         }
     }
 
@@ -76,6 +79,16 @@ public class OptimizerEquivalenceSweepTests
             ? "err " + SemanticExplorerHarness.ErrorCategory(result.Error)
             : $"ok raw={SemanticExplorerHarness.Neutral(result.Value.Value)} n={result.Value.EmittedCount}";
 
+    /// <summary>The outcome, the full error tree, and every budget counter of one bounded run.</summary>
+    private static string Observe(Expr expr, bool optimize)
+    {
+        var (result, budget) = Evaluator.RunCountedObserved(expr, ProbeLimits, enableOptimizations: optimize);
+        return Neutral(result)
+            + (result.IsError ? "\n" + LoopDiagnosticParityAssertions.DescribeErrorTree(result.Error) : "")
+            + $"\n  steps={budget.ConsumedSteps} checkpoints={budget.ConsumedExpressionCheckpoints} depth={budget.PeakDepth} "
+            + $"items={budget.MaterializedItems} strings={budget.MaterializedStringChars}";
+    }
+
     private static void Compare(string id, string source, SweepResult sweep)
     {
         var parsed = Parser.Parse(source);
@@ -83,17 +96,13 @@ public class OptimizerEquivalenceSweepTests
             return;
 
         var expr = new Expr.AlgorithmExpr(parsed.Root);
-
-        var probe = Evaluator.RunCountedObserved(expr, ProbeLimits, enableOptimizations: false).Result;
-        if (probe.IsError && SemanticExplorerHarness.ErrorCategory(probe.Error) == "evaluationStepLimitExceeded")
-        {
+        var optimized = Observe(expr, optimize: true);
+        var generic = Observe(expr, optimize: false);
+        if (generic.StartsWith("err evaluationStepLimitExceeded", StringComparison.Ordinal))
             sweep.Skipped++;
-            return;
-        }
+        else
+            sweep.Compared++;
 
-        sweep.Compared++;
-        var optimized = Neutral(Evaluator.RunCountedObserved(expr, enableOptimizations: true).Result);
-        var generic = Neutral(Evaluator.RunCountedObserved(expr, enableOptimizations: false).Result);
         if (optimized != generic)
         {
             sweep.Mismatches.Add(

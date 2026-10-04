@@ -1837,9 +1837,9 @@ public static partial class Evaluator
     /// preserving the frozen step accounting (steps count dynamic invocations and
     /// loop iterations only) and the plain/dot work-parity pins. The level is entered
     /// through the shared <see cref="TryEnterArgumentEvaluationLevel"/> helper and
-    /// released by its <see cref="BudgetLevel"/> — a planned loop <c>if</c> enters the
-    /// same one per condition and selected branch, so the two strategies' depth charges
-    /// cannot drift (see <c>Evaluator.BudgetScopes.cs</c>).
+    /// released by its <see cref="BudgetLevel"/> (see <c>Evaluator.BudgetScopes.cs</c>). A
+    /// Model-C supply cell — every written argument of an ordinary call, the generic and the
+    /// planned <c>if</c> alike — is demanded without such a level.
     /// </summary>
     private static EvalResult<CountedResult> EvalArgumentAlgOutputCounted(
         Algorithm algorithm,
@@ -1963,7 +1963,7 @@ public static partial class Evaluator
     /// the read happens inside one depth-only argument-evaluation level exactly as
     /// <c>sum(A)</c>'s value channel is read: the argument level, then the property access's
     /// own dynamic invocation — which also keeps a self-referential <c>A = A.string</c>
-    /// inside the calibrated depth envelope. Kept out of the receiver dispatch's own frame
+    /// bounded by the deterministic depth limit. Kept out of the receiver dispatch's own frame
     /// (<c>.string</c> chains recurse through it).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

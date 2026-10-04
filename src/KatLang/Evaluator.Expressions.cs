@@ -29,8 +29,13 @@ public static partial class Evaluator
     /// recursive paths and are bounded by the structural ceiling instead; the internal
     /// sequence-join kinds already have their own iterative handling
     /// (<see cref="EvalSequenceConstructCounted"/>, <see cref="EvalSequenceSpreadCounted"/>).
+    /// <para>It is also the ONE decision of whether a child expression is pushed as a machine
+    /// frame (no dispatch head) or delegated through <see cref="Eval"/> (one dispatch head),
+    /// which is why the planned loop evaluator reads it too: a planned expression charges the
+    /// expression-work checkpoints of exactly the dispatch this predicate selects
+    /// (<c>LoopOptimizer.EvalLoopExprPlan</c>).</para>
     /// </summary>
-    private static bool IsExpressionSpineNode(Expr expr)
+    internal static bool IsExpressionSpineNode(Expr expr)
         => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
 
     /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>

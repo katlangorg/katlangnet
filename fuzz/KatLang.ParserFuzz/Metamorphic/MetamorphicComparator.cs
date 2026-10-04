@@ -133,8 +133,6 @@ internal static class MetamorphicComparator
             MetamorphicOperationalRelation.ExactMaterializationEqual => CompareExactMaterializationEqual(left, right),
             MetamorphicOperationalRelation.ExactObservedWorkEqual =>
                 CompareExactMaterializationEqual(left, right) ?? CompareObservedWork(left, right),
-            MetamorphicOperationalRelation.MaterializationNeverIncreases =>
-                CompareMaterializationNeverIncreases(left, right),
             MetamorphicOperationalRelation.WorkNeverIncreases => CompareWorkNeverIncreases(left, right),
             MetamorphicOperationalRelation.IdenticalWork =>
                 CompareExactMaterializationEqual(left, right)
@@ -486,43 +484,10 @@ internal static class MetamorphicComparator
     }
 
     /// <summary>
-    /// The DIRECTIONAL materialization relation: the right member may charge less (it is the
-    /// fusion-eligible spelling) but never more. Doing more work than the equivalent ordinary
-    /// form is never a legitimate implementation choice.
-    /// </summary>
-    private static MetamorphicMismatch? CompareMaterializationNeverIncreases(
-        MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)
-    {
-        if (right.MaterializedItems > left.MaterializedItems)
-        {
-            return new MetamorphicMismatch(
-                MetamorphicMismatchKind.MaterializedItems, MetamorphicMismatchClass.Operational,
-                "materialized collection-item slots (right must never exceed left)",
-                Number(left.MaterializedItems), Number(right.MaterializedItems));
-        }
-
-        if (right.MaterializedStringChars > left.MaterializedStringChars)
-        {
-            return new MetamorphicMismatch(
-                MetamorphicMismatchKind.MaterializedStringChars, MetamorphicMismatchClass.Operational,
-                "materialized string UTF-16 units (right must never exceed left)",
-                Number(left.MaterializedStringChars), Number(right.MaterializedStringChars));
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// The Phase 3 directional relation, in the opposite direction from
-    /// <see cref="CompareMaterializationNeverIncreases"/> because the member permitted to do
-    /// less is the LEFT one: an optimized run against the generic run of the same source, and a
-    /// cached-property run against the rebuilt form.
-    ///
-    /// <para>Steps are included — an optimizer and a cache both exist to perform less work, and
-    /// "the optimized run took more steps than the generic one" is never a legitimate
-    /// implementation choice. Peak dynamic depth is NOT included: an optimized loop plan reaches
-    /// a different nesting profile than the generic interpreter by design, so it is recorded and
-    /// reported but never a failure condition.</para>
+    /// The Phase 3 directional relation: the member permitted to do less is the LEFT one — a
+    /// cached-property run against the rebuilt form. Steps are included: a cache exists to
+    /// perform less work, never more. Peak dynamic depth is NOT included; it is recorded and
+    /// reported but never a failure condition.
     /// </summary>
     private static MetamorphicMismatch? CompareWorkNeverIncreases(
         MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)

@@ -30,14 +30,12 @@ internal sealed record MetamorphicFamilyDefinition(
 
     /// <summary>
     /// The operational relation for ONE case. Usually the family's headline
-    /// <see cref="OperationalRelation"/>, but a family whose two spellings differ in
-    /// FUSION eligibility declares a policy-dependent relation instead — requiring equality
-    /// where fusion cannot apply and an inequality where it can.
+    /// <see cref="OperationalRelation"/>; a family may choose a stronger relation for
+    /// a particular generated variant.
     ///
-    /// <para>The DERIVED limits are part of that decision, not just the optimizer flag: a
-    /// configured string or step budget disables the sequence-pipeline optimizer no matter how
-    /// generous it is, so a case carrying one is back in exact-equality territory. That is why
-    /// this takes the limits the case will actually run with.</para>
+    /// <para>The limits are available to a relation selector as the case's effective
+    /// constraints. They never select a runtime strategy: fusion and loop planning charge
+    /// exactly the generic logical work under every configuration (Q-09b).</para>
     /// </summary>
     public MetamorphicOperationalRelation OperationalRelationFor(
         MetamorphicParameters parameters, EvaluationLimits? limits)
@@ -153,16 +151,16 @@ internal static class MetamorphicFamilyRegistry
             // chain template, receiver shape
             ExtraDimensionSizes: [MetamorphicChainTemplate.ChainCount, MetamorphicTables.ReceiverShapes.Length],
             SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
-            // Headline relation; the selector below weakens it to a directional one exactly
-            // where sequence-pipeline fusion can apply to the dotted spelling.
+            // Exact everywhere: the dotted spelling may fuse, but a fused pipeline reserves exactly
+            // the items the generic composition materializes (Q-09b), so the two spellings charge
+            // identical materialization whether or not fusion applies.
             OperationalRelation: MetamorphicOperationalRelation.ExactMaterializationEqual,
             LeanRepresentable: true,
             Description: "a bounded dotted chain against its structurally built nested ordinary form",
             Normalize: MetamorphicChainTemplate.Normalize,
             ValidatePreconditions: MetamorphicChainTemplate.Validate,
             Build: MetamorphicChainTemplate.Build,
-            DescribeVariantCore: MetamorphicChainTemplate.DescribeVariant,
-            SelectOperationalRelation: MetamorphicChainTemplate.SelectOperationalRelation),
+            DescribeVariantCore: MetamorphicChainTemplate.DescribeVariant),
 
         // ── Group D ────────────────────────────────────────────────────────────────
         new(
@@ -203,9 +201,11 @@ internal static class MetamorphicFamilyRegistry
             // source template, execution order
             ExtraDimensionSizes: [MetamorphicOptimizerTemplate.SourceCount, MetamorphicOptimizerTemplate.Orders.Length],
             SemanticRelation: MetamorphicSemanticRelation.SemanticEqual,
-            // The optimizers exist to do LESS. Equality would forbid them; the inequality still
-            // catches an optimized path that costs more than the generic one it replaced.
-            OperationalRelation: MetamorphicOperationalRelation.WorkNeverIncreases,
+            // Every execution strategy charges every budget identically (Q-09b: limits observe a
+            // run and never choose its strategy), so the optimized and generic runs of one source
+            // do EXACTLY the same accounted work: items, string units, steps, and peak depth. (Not
+            // IdenticalWork: that also compares optimizer evidence, which differs by design here.)
+            OperationalRelation: MetamorphicOperationalRelation.ExactObservedWorkEqual,
             LeanRepresentable: true,
             Description: "one source with optimizations enabled against the same source with them disabled",
             Normalize: MetamorphicOptimizerTemplate.Normalize,

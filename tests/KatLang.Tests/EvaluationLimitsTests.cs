@@ -1,5 +1,6 @@
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
+using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
 
@@ -64,7 +65,9 @@ public class EvaluationLimitsTests
     {
         Assert.Null(EvaluationLimits.Default.MaxDepth);
         Assert.Null(EvaluationLimits.Default.MaxSteps);
-        Assert.False(EvaluationBudget.Create(null).HasStepLimit);
+        // The default enforces NO step budget (Q-09b: the budget holds only effective
+        // thresholds; there is no "configured" fact a strategy could be chosen from).
+        Assert.Null(EvaluationLimits.Default.EffectiveMaxSteps);
         Assert.Equal(EvaluationLimits.MaxSupportedDepth, EvaluationBudget.Create(null).MaxDepth);
     }
 
@@ -879,19 +882,23 @@ public class EvaluationLimitsTests
     // ── Optimizer independence ───────────────────────────────────────────────
 
     [Fact]
-    public void StepBudget_DisablesOptimizedPaths_SoChargingIsOptimizerIndependent()
+    public void StepBudget_KeepsOptimizedPaths_AndChargingIsOptimizerIndependent()
     {
-        // A budgeted run always takes the generic loop/pipeline paths, so the charged
-        // count cannot depend on whether an optimization applied to this shape.
-        var budgeted = Eval("Inc = x + 1\nInc.repeat(500, 0)", Steps(100_000));
-        var generic = Evaluator.Run(
-            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Inc = x + 1\nInc.repeat(500, 0)").Root),
-            UncachedZeroArgPropertyResultCache.Instance,
-            enableLoopOptimization: false);
+        // Limits observe a run; they never choose how it runs (Q-09b): a budgeted run keeps
+        // the planned loop, which charges exactly the generic loop's steps, so the charged
+        // count cannot depend on whether an optimization applied to this shape. (Until
+        // 2026-10-04 a configured step budget forced the generic paths instead — PV-07.)
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Inc = x + 1\nInc.repeat(500, 0)").Root);
+        var loops = new LoopOptimizationDiagnostics();
+        var (budgeted, budgetedBudget) = Evaluator.RunCountedObserved(program, Steps(100_000), loopDiagnostics: loops);
+        var (generic, genericBudget) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
 
         Assert.False(budgeted.IsError);
         Assert.False(generic.IsError);
-        Assert.Equal(generic.Value, budgeted.Value, Result.ValueComparer);
+        Assert.Equal(1, loops.OptimizedLoopHits);
+        Assert.Equal(generic.Value.Value, budgeted.Value.Value, Result.ValueComparer);
+        Assert.Equal(genericBudget.ConsumedSteps, budgetedBudget.ConsumedSteps);
+        Assert.Equal(genericBudget.ConsumedExpressionCheckpoints, budgetedBudget.ConsumedExpressionCheckpoints);
     }
 
     [Theory]

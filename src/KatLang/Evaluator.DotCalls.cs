@@ -191,7 +191,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// Evaluate already-recognized builtin <c>range(...)</c> arguments for the
-    /// sequence optimizer while preserving the generic range call diagnostics.
+    /// sequence optimizer while preserving the generic range call diagnostics, and RESERVE
+    /// the item slots the generic range call materializes (the per-collection ceiling and
+    /// the cumulative materialization budget alike, with the generic range's limit-error
+    /// span) without building the list: the cumulative budget is charged exactly as the
+    /// generic composition charges it, so a configured <see cref="EvaluationLimits.MaxMaterializedItems"/>
+    /// needs no strategy of its own (Q-09b).
     /// </summary>
     private static EvalResult<InclusiveRange> EvaluateRangeCallArgumentsForSequenceOptimizer(
         Expr function,
@@ -205,9 +210,10 @@ public static partial class Evaluator
         var rangeR = WithSpan(callSpan, WithCallCtx(CallDiagnosticName.FromExpression(function),
             ctx, EvalBuiltinRangeCallArguments(args, ctx, valEnv)));
         if (rangeR.IsError) return rangeR;
-        // Check the ordinary collection ceiling without reserving for a list that
-        // fusion never constructs. Generic execution reserves its real list once.
-        return ctx.Budget.CheckCollectionSize(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
+        // The generic range call reserves its list right here (BuildInclusiveRangeChecked),
+        // after its bounds; a refusal is unspanned there until the range call's own boundary
+        // positions it, which is the span attached here.
+        return ctx.Budget.TryReserveCollection(CountInclusiveRangeValues(rangeR.Value)) is { } limitError
             ? AtSpanIfMissing(limitError, callSpan) : rangeR;
     }
 

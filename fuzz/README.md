@@ -389,14 +389,15 @@ check are reached, so nothing records a fallback. Collapsing the two would let t
 template claim it exercised a fallback it never reached. Proving that an outer loop *wrapper* ran is
 explicitly not enough, which is why `LoopExecutions` alone is never a requirement.
 
-**Limit policy.** Only fusion-neutral modes are generated (`Default`, `PerCollectionItems`,
-`Generous`, where generous now configures only the per-collection ceiling). A configured cumulative
-item budget disables sequence fusion by production policy; including it in this family would therefore
-prevent the sequence sources from satisfying the family's measured optimizer-hit precondition while the
-loop sources could remain optimized. Step and string budgets are omitted for the same execution-policy
-reason. The per-collection ceiling *is* kept, because the runtime explicitly promises it is optimizer-
-independent (`EvaluationBudget.CheckCollectionSize` exists so a fused pipeline rejects the same
-collection size a generic one does).
+**Limit policy.** Only the modes this table was measured under are generated (`Default`,
+`PerCollectionItems`, `Generous`, where generous configures only the per-collection ceiling). A
+configured cumulative-item, step, or string budget once disabled sequence fusion or loop planning by
+production policy, which would have stopped the sources from showing their declared optimizer hit;
+since Q-09b (October 2026) no limit selects a strategy, so those modes are no longer impossible here,
+merely not generated (the transparency law itself is pinned by `LimitConfigurationTransparencyTests`
+and by the budget-law family's in-budget-neutral law). The per-collection ceiling *is* kept, because
+the runtime explicitly promises it is optimizer-independent (a fused pipeline reserves, and so rejects,
+exactly the collection sizes a generic one does — `EvaluationBudget.TryReserveCollection`).
 
 #### Group B — cached versus rebuilt
 
@@ -574,27 +575,17 @@ never a reason to weaken the relation.
   `EvaluationSteps`). The committed exhaustive family sweep
   (`MetamorphicPhase2FamilyTests.UserExtensionCall_AgreesOnExactWorkAtEveryParameterPoint`)
   verifies exact observed-work equality for every accepted user-extension parameter point.
-* **`MaterializationNeverIncreases`** (Group C, where fusion is **effectively eligible**). The
-  dotted spelling is the one the sequence-pipeline optimizer can **fuse**; the nested ordinary
-  form is not. A fused pipeline materializes nothing and is documented to charge less while still
-  enforcing the same single-collection ceiling, so equality there would forbid fusion. The
-  inequality still catches the failure mode that matters — a dotted form doing *more* work than
-  its ordinary equivalent, which is exactly how the duplicate dotted-receiver defect presented.
-
-  Eligibility is the **runtime's own gate**, not the optimizer flag alone. `Evaluator.CreateRootCtx`
-  computes `loopOptimize = !budget.HasStepLimit` and `sequenceOptimize = loopOptimize && !budget.HasConfiguredStringLimit && !budget.HasConfiguredMaterializationLimit`.
-  `EvaluationBudget` sets the latter flags when either
-  string limit or the cumulative item limit was configured — so any string, step, or cumulative-item
-  budget, however generous, switches fusion off for the whole run. One helper owns that rule
-  (`MetamorphicLimitPolicy.SequencePipelineFusionCanApply`) and both the relation selector and the
-  tests read it, so an approximate copy cannot drift in. Wherever fusion is ineligible — the
-  optimizer-off policy and those limit modes alike — the relation returns to exact equality, measured
-  144/144. This is why `Generous` configures only the fusion-neutral per-collection ceiling: any other
-  generous budget would silently make it a different execution policy from the default it mirrors.
-
-  Cumulative-item modes are accepted rather than rejected: configuring that budget itself forces both
-  chain spellings through the generic sequence path, so they charge the same cumulative counter. The
-  per-collection ceiling remains fusion-neutral and is enforced identically on both strategies.
+* **Group C (dotted chains) is `ExactMaterializationEqual` everywhere.** The dotted spelling is the
+  one the sequence-pipeline optimizer can **fuse**; the nested ordinary form is not. Since Q-09b
+  (October 2026) a fused pipeline RESERVES exactly the item slots the generic composition
+  materializes — without allocating them — so the two spellings charge identical materialization
+  whether or not fusion applies, and fusion stays eligible under every configured limit. (Until then
+  a fused pipeline charged less, so Group C declared a directional `MaterializationNeverIncreases`
+  relation wherever fusion was effectively eligible, and a configured string, step, or
+  cumulative-item budget switched fusion off; that relation is deleted.) One helper still owns the
+  eligibility rule (`MetamorphicLimitPolicy.SequencePipelineFusionCanApply`, now the optimizer flag
+  alone) and the tests read it, so an approximate copy cannot drift in. Cumulative-item modes are
+  accepted: both spellings charge the same cumulative counter, fused or not.
 
 Phase 3 adds five more, all declared for the same reason: the relation must match the pair.
 
@@ -612,12 +603,14 @@ Phase 3 adds five more, all declared for the same reason: the relation must matc
 * **Semantic — `IndependentRunStable`** (failed-reservation stability, run isolation). Two independent
   executions must be indistinguishable in *every* recorded respect — semantics, projections, counters,
   optimizer path, cache profile. Any difference at all means run state survived a run boundary.
-* **`WorkNeverIncreases`** (Groups A and B). The **left** member never charges more materialized items,
-  string units, or steps than the right. The opposite direction from Group C's
-  `MaterializationNeverIncreases`, because here the member permitted to do less is the left one: an
-  optimized run against the generic run of the same source, and a cached run against the rebuilt form.
-  Peak dynamic depth is deliberately excluded — an optimized loop plan reaches a different nesting
-  profile than the generic interpreter by design, so it is recorded and reported but never a failure.
+* **`WorkNeverIncreases`** (Group B). The **left** member never charges more materialized items,
+  string units, or steps than the right: a cached run against the rebuilt form, where the member
+  permitted to do less is the left one. Peak dynamic depth is not part of it.
+* **Group A (optimized against generic) is `ExactObservedWorkEqual`.** Since Q-09b every execution
+  strategy charges every budget identically, so the optimized and generic runs of one source agree
+  exactly on materialized items, string units, steps, and peak dynamic depth (the optimizer EVIDENCE
+  differs by design, which is why it is not `IdenticalWork`). It was `WorkNeverIncreases` while planned
+  loops charged no per-iteration step and fused pipelines reserved nothing.
 * **`IdenticalWork`** (in-budget neutrality, isolation, at/above boundary sweeps). Materialized items,
   string units, steps, peak depth, **and** the recorded optimizer and cache evidence all equal.
 * **`NotCompared`** — declared where at least one surface cannot report counters at all, so the case is
@@ -832,10 +825,9 @@ shown invalid independently.
 
 * Chains are bounded to three links, drawn from twelve fixed link lists — the fuzzer selects a
   chain, it never assembles one.
-* Group C claims only a directional operational relation where sequence-pipeline fusion is
-  effectively eligible; the exact claim is made wherever it is not (optimizer off, or any
-  configured string, step, or cumulative-item budget). Cumulative-item modes are accepted because
-  configuring that budget makes fusion ineligible by construction.
+* Group C claims the exact materialization relation at every policy point: a fused dotted chain
+  reserves exactly what its ordinary spelling materializes (Q-09b). Cumulative-item modes are
+  accepted because both spellings charge that budget identically.
 * Operational counters are not compared when either side aborts on a resource limit (see the
   qualification under *Declared relations*); those cases still compare their full semantic
   observation, including the structured resource-limit payload.
@@ -845,8 +837,8 @@ shown invalid independently.
 
 *Phase 3:*
 
-* Group A uses only fusion-neutral modes so every source in its mixed loop/sequence table can still
-  demonstrate the declared optimizer hit. Group B rejects cumulative budgets because a limit
+* Group A uses only the modes its mixed loop/sequence table was measured under (since Q-09b every
+  mode would keep the declared optimizer hit, but the generated set is unchanged). Group B rejects cumulative budgets because a limit
   derived from the cheaper cached side can legitimately stop the rebuilt side. Varying budgets is
   the budget-law family's job.
 * Group A's optimizer sources are a fixed reviewed table of 28 programs with **declared** paths; the
@@ -920,9 +912,10 @@ rounds, mixed succeeding/failing runs, and cache/budget/diagnostic contamination
    consumer's callback arity), reduce it in the family's `Normalize` — and make that reduction
    **idempotent**, or `Decode(Encode(p)) == p` breaks.
 4. Declare the relations the construction actually justifies. Use an inequality whenever the
-   implementation is *permitted* to do less (fusion, caching); exact equality is only for pairs
-   that are two spellings of the same work; `ExactObservedWorkEqual` only where the repository
-   already establishes that contract.
+   implementation is *permitted* to do less (caching); exact equality is for pairs that are two
+   spellings or two execution strategies of the same work (every strategy charges every budget
+   identically — Q-09b); `ExactObservedWorkEqual` only where the repository already establishes
+   that contract.
 5. State the family's real preconditions in its validator. A rejected case is counted and
    reported by reason, never silently skipped and never a mismatch.
 6. Add curated seeds and extend `MetamorphicPhase2FamilyTests` — its stratified sweep crosses
