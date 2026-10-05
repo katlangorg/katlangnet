@@ -303,7 +303,7 @@ Before emitting code, verify silently:
 - Builtin `if` has exactly 3 arguments: `if(condition, whenTrue, whenFalse)`. Normally generate the three arguments directly. `if(X*)` is valid when `X` supplies exactly three values whose first is a Boolean, such as `X = true, 2, 3` (explicit spread opens it into the three slots); a non-spread `if(X)` is one argument and is invalid. Never generate a 2-argument call to builtin `if`. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
-- Every `repeat`/`while` step's state is validated against its parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list): fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded), and captured enclosing names are not state slots.
+- Every `repeat`/`while` step is an ordinary callable invoked with the current state slots as its arguments, so the state must suit that call: a user step's parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list) — fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded) — a clause family's clauses (ordinary clause dispatch each iteration), or a builtin's own signature; captured enclosing names are not state slots.
 - A `while` result does not depend on state changes produced only by the terminating step whose `continue_flag` is `false`; required updates are committed on an earlier continuing step.
 - Constants captured from an enclosing algorithm are not state slots. Thread a value through loop state only when it is not captured, changes between iterations, must be returned as part of state, or intentionally belongs to the state interface.
 - Boolean truth: `true`/`false` values; numbers are never truth values.
@@ -321,7 +321,7 @@ Before emitting code, verify silently:
 - Numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators.
 - Strings are single-line, single-quoted literals with no invented escapes or double quotes.
 - Named sequence inputs can be passed as the value itself, via dot-call, or with an explicit spread star, but those are not interchangeable. For fixed signatures — `range`, `atoms`, and ALL collection builtins — avoid `value*` unless the supplied slot count matches the required call shape (`range(Bounds*)` with a two-item `Bounds` is valid). For variadic user callables, a spread expression is a valid item-supply input: spread items join the call's argument supply, so `Scale(Arg*, 10)` works for `Scale(*items, factor)`. A collection builtin takes exactly one collection argument, so pass the named input directly: with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are `3`, while `count(Values*)` is a three-argument arity error.
-- Loop step state shape is taken from the step's explicit parameter pattern when it has one (not only from free identifiers); fixed and implicit interfaces need an exact slot count, while a top-level variadic loop interface binds the state as an item supply (structural minimum = parameter count, fixed prefix/suffix bind from the ends, the collecting parameter collects the matched middle slots as one list, max unbounded); captured enclosing names are not counted as state slots.
+- Loop step state shape is taken from the step's explicit parameter pattern when it has one (not only from free identifiers); fixed and implicit interfaces need an exact slot count, while a top-level variadic loop interface binds the state as an item supply (structural minimum = parameter count, fixed prefix/suffix bind from the ends, the collecting parameter collects the matched middle slots as one list, max unbounded); captured enclosing names are not counted as state slots. A clause-family step takes its state shape from its clause heads and a builtin step from its own signature (its one result value is one next-state slot), so neither needs a wrapper.
 - Callback items are selected values (one value each, the `S:i` boundary) and the reducer accumulator shape is intentional; reducers emit exactly one accumulator value (a sequence value is one; a bare multi-output is invalid), with sequence-value vs top-level-collecting accumulator binding chosen deliberately.
 - `load` appears only in valid compile-time positions (property definition or open list) with exactly one literal HTTPS URL.
 - Conditional branch patterns are not duplicate-equivalent (unique up to binder renaming).
@@ -594,6 +594,13 @@ Properties can contain nested property definitions using `{ ... }` syntax. This 
 ## Step–State Arity in repeat/while
 
 The initial state must provide the slots the interface requires. A fixed or implicit interface needs an exact slot count. A top-level variadic interface — a step with a collecting parameter such as `Step(first, *middle, last)` — instead binds the loop state as an item supply: the fixed prefix and suffix slots are required, and the collecting parameter collects the remaining middle slots as one list. This is not an exact three-slot interface, and `*middle` is not a single required sequence-valued state slot; the step accepts additional middle slots (max unbounded) and requires at least as many state slots as it has parameters. For example, `Step(first, *middle, last)` with `Step.repeat(2, 0, 5, 5, 10)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`. The step output must be bindable as the next iteration's state interface, and `while` adds one extra final continue flag after the next-state output. Captured enclosing names consume no loop-state slots.
+
+Any callable can be a step, with no wrapper: a user algorithm, a clause family, a builtin, a Math function, a host operation, an alias, or a callable passed through a parameter. Each iteration invokes the step exactly as the ordinary call `Step(state…)` would. A clause family dispatches its clauses over the current state each iteration (a state no clause matches is an error, never loop termination), which makes it a natural `while` step with a base case; a builtin runs with its ordinary argument roles and its ONE result value is ONE next-state slot (a collection result is one slot, `()` too). A value — a number, list, selection, or call result — is never a step.
+
+    Countdown(0) = 0, false
+    Countdown(n) = n - 1, true
+    Countdown.while(3)             # 0: a clause family is a while step with a base case
+    repeat(count, 1, [1, 2])       # 2: a builtin's one result is one next-state slot
 
 Explicit-signature step (valid even though `x` is not a free identifier):
 
@@ -1568,7 +1575,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (133 of the 356-case canonical language specification,
+Verified reference examples (136 of the 366-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1798,6 +1805,35 @@ Regenerate this block from the repo root with:
 
   Displays:
     (8, 13)
+
+[loop-step-clause-family] A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step, 2, 3)` is `Step(Step(3))`.
+
+    Step(0) = 0
+    Step(n) = n - 1
+    repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+
+  Displays:
+    1
+    0
+    1
+
+[loop-step-family-while] A clause family is a natural `while` step with a base case: the selected clause's last row is the continuation flag, as for any step.
+
+    Countdown(0) = 0, false
+    Countdown(n) = n - 1, true
+    Countdown.while(3)
+
+  Displays:
+    0
+
+[loop-step-builtin-is-one-row-wrapper] A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.
+
+    C(c) = count(c)
+    repeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])
+
+  Displays:
+    true
+    2
 
 [spread-capture-count] Parentheses around a supply-producing expression perform CAPTURE — they are not always redundant grouping: `(A*).count` counts one captured sequence value (3), while the fluent `A*.count` is the call `count(A*)` whose three argument slots do not fit the fixed `count(collection)` signature (an arity error).
 

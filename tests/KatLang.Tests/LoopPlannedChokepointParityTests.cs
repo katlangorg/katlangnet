@@ -713,9 +713,9 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void TempCallMemoIsolation_DoesNotCopyEveryDeclaredTempPerCall()
     {
-        var declarations = string.Join("\n", Enumerable.Range(0, 2000).Select(index => $"T{index} = 1"));
-        long Measure(int iterations)
+        long Measure(int declarationsCount, int iterations)
         {
+            var declarations = string.Join("\n", Enumerable.Range(0, declarationsCount).Select(index => $"T{index} = 1"));
             var ast = Program("Step = {\n" + declarations + "\nn + if(T0 == T1(), 1, 0)\n}\nStep.repeat(" + iterations + ", 0)");
             var diagnostics = new LoopOptimizationDiagnostics();
             var before = GC.GetAllocatedBytesForCurrentThread();
@@ -726,10 +726,24 @@ public class LoopPlannedChokepointParityTests
             return allocated;
         }
 
-        var oneIteration = Measure(1);
-        var manyIterations = Measure(1001);
-        Assert.True(manyIterations - oneIteration < 500_000,
-            $"The extra 1000 calls allocated {manyIterations - oneIteration:N0} bytes.");
+        long WarmedMedianDelta(int declarationsCount)
+        {
+            // Both workloads must have executed before measuring their difference: a
+            // first invocation's runtime initialization is not per-call allocation.
+            Measure(declarationsCount, 1);
+            Measure(declarationsCount, 1001);
+            var deltas = Enumerable.Range(0, 3)
+                .Select(_ => Measure(declarationsCount, 1001) - Measure(declarationsCount, 1))
+                .Order().ToArray();
+            return deltas[1];
+        }
+
+        var narrowDelta = WarmedMedianDelta(16);
+        var wideDelta = WarmedMedianDelta(2000);
+        Assert.True(wideDelta < 500_000,
+            $"The extra 1000 calls allocated {wideDelta:N0} bytes.");
+        Assert.True(wideDelta - narrowDelta < 64_000,
+            $"Adding 1984 unused declarations increased per-call allocation by {wideDelta - narrowDelta:N0} bytes.");
     }
 
     [Fact]

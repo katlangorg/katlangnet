@@ -4243,6 +4243,33 @@ def isLiftableArgResolutionError : Error → Bool
 def loopStateResult (stateSlots : List Result) : Result :=
   Result.normalize (.sequenceValue stateSlots)
 
+/-- The ROW SUPPLY a builtin loop step contributes (LOOP-03, LOOP-08, Q-23 decided
+    October 2026): a builtin has no written rows, so the ONE result value of its
+    ordinary invocation is ONE non-spread row — exactly the row its one-row user
+    wrapper `W(p…) = builtin(p…)` writes. The emitted count is never consulted: a
+    `()` result is one visible slot (never zero slots, as `countedTopLevelValues`
+    would read it) and a collection result is one slot holding the collection.
+    Laws: `loop_step_builtin_result_is_one_row`, `loop_step_builtin_rows_ignore_emitted_count`.
+    C#: the builtin arm of `Evaluator.InvokeLoopStepSupply`. -/
+def loopStepBuiltinRows (out : CountedResult) : List Result := [out.fst]
+
+/-- The name a loop step's own call frame and a family step's `noMatchingBranch`
+    report (LOOP-08, Q-23): the written expression its SUPPLY CELL retains — the
+    step argument as written, or, for a cell transported through a parameter, the
+    argument originally written for it (`supplyNeed`) — named exactly as the
+    ordinary call names its callee (`openExprName`); a cell with no written source
+    (a spread item) is the loop's step. C#: `Evaluator.StepDiagnosticName`. -/
+def loopStepName (loopName : String) (step : ResolvedArgumentAlgorithm) : EvalM String := do
+  let written? : Option Expr <- match step.need? with
+    | some address => do
+        match (<- get).needs[address]? with
+        | some { suspension := .expression source _ _, .. } => pure (some source)
+        | _ => pure none
+    | none => pure step.source?
+  pure (match written? with
+    | some e => openExprName e
+    | none => loopName ++ " step")
+
 /-- The completed `while`/`repeat` result (LOOP-07, Q-26 decided October 2026):
     ONE value — the canonical capture of the final state's slots (`()` for zero
     slots, the slot itself for one, a sequence for several) — crossing the
@@ -5540,13 +5567,22 @@ mutual
     let result <- evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
     pure (if recount then reCountValueBoundary result else result)
 
-  partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (recount : Bool := true) : EvalM CountedResult := do
+  /-- The ordinary clause-family dispatcher over an already formed cell supply: the
+      duplicate-pattern check, the family's cardinality, then the clauses in WRITTEN
+      order, each attempt inspecting the SAME cells through the one binder in family
+      mode (a successful mismatch tries the next clause; a runtime failure during
+      inspection aborts dispatch; no clause is `noMatchingBranch`), and finally the
+      selected branch's activation. It returns the activated body, its context and
+      its values WITHOUT evaluating it, so each receiver reads the body its own way:
+      the ordinary call as one value (`evalNeedFamilySupply`), a loop step as its
+      row supply (`runNeedStepSlots`, LOOP-08). C#: `BindNeedFamilySupply`. -/
+  partial def selectNeedFamilyBranch (callee : Algorithm) (cells : List Nat)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM (Algorithm × EvalCtx × ValEnv) := do
     if callee.hasDuplicateBranchPatterns then throw Error.duplicateBranchPattern
     let branches := Algorithm.branches callee
     if !branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) then
       throw (Error.arityMismatch ((branches.head?.map (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0) cells.length)
-    let rec choose : List CondBranch -> EvalM CountedResult
+    let rec choose : List CondBranch -> EvalM (Algorithm × EvalCtx × ValEnv)
       | [] => throw (Error.noMatchingBranch calleeName)
       | branch :: rest => do
         match <- bindNeedPatterns (needClauseHead branch.pattern) cells true with
@@ -5556,9 +5592,14 @@ mutual
           let next <- needBindingContext (ctx.push callee) bindings
           let values := ValEnv.shadow env names
           let body <- wireSelectedBranchBody callee branch.body names next values
-          let result <- evalAlgOutputCounted body next values
-          pure (if recount then reCountValueBoundary result else result)
+          pure (body, next, values)
     choose branches
+
+  partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (recount : Bool := true) : EvalM CountedResult := do
+    let (body, next, values) <- selectNeedFamilyBranch callee cells ctx env calleeName
+    let result <- evalAlgOutputCounted body next values
+    pure (if recount then reCountValueBoundary result else result)
 
   partial def invokeNeed (arg : ResolvedArgumentAlgorithm) : EvalM (Option Algorithm) := do
     if let some address := arg.need? then return (<- projectNeedCallable address)
@@ -5569,20 +5610,46 @@ mutual
     | some address => pure address
     | none => do readyNeed (<- evalArgumentValueCounted arg ctx env)
 
-  /-- One loop iteration's step invocation (LOOP-03, Q-24 decided October 2026):
-      the step's parameter patterns BIND the incoming state cells
-      (`bindNeedPatterns`, the one inspecting binder), and the step's emitted
-      row supply (`evalAlgOutputSlots`) IS the next state. The two concerns are
-      separate: no pattern category — plain, repeated, structural, collecting —
-      is consulted when the rows form the next state, so equal rows produce an
-      equal next state whatever the step's head (`Dup(x, x) = { x + 1, x + 1 }`
-      and `Dup(x, x) = { (x + 1, x + 1)* }` both supply two slots). -/
+  /-- One loop iteration's step invocation. A LOOP STEP IS AN ORDINARY CALLABLE
+      INVOKED OVER THE CURRENT STATE SUPPLY (LOOP-08, Q-23 decided October 2026):
+      the state cells are an already formed supply, and the step is invoked on them
+      by its own ordinary machinery — a user algorithm through the one inspecting
+      binder over its parameter patterns, a clause family through the ordinary
+      family dispatcher (`selectNeedFamilyBranch`), a builtin through its ordinary
+      argument roles (`applyBuiltinCountedResolved` over need-backed arguments, the
+      callback route), an alias as its target. Only the RECEIVER is the loop's: the
+      invocation's ROW SUPPLY is the next state (LOOP-03, Q-24) — a user body's or
+      the selected clause's rows, and for a builtin, which has no written rows, its
+      ONE result value as ONE non-spread row (`()` and collections included; never
+      the result's emitted count). Patterns bind the incoming cells only: no
+      pattern category is consulted when the rows form the next state
+      (`Dup(x, x) = { x + 1, x + 1 }` and `Dup(x, x) = { (x + 1, x + 1)* }` both
+      supply two slots). A family's or builtin's failure is its ordinary
+      invocation failure under the step's own call frame (`stepName`, the written
+      step as the ordinary call names its callee — `loopStepName`); a user step's
+      supplied-cardinality failure keeps its loop-state report, while pattern
+      inspection retains the ordinary binder's error. C#: `Evaluator.InvokeLoopStepSupply`. -/
   partial def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-      (cells : List Nat) : EvalM (List Result) := do
-    let some bindings <- bindNeedPatterns ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
-      | throw Error.badArity
-    let next <- needBindingContext ctx bindings
-    evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step))
+      (cells : List Nat) (stepName : String) : EvalM (List Result) := do
+    match step with
+    | .builtin b =>
+        withCtx s!"while evaluating call to {stepName}" do
+          let supplied := cells.map fun address =>
+            ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)
+          let out <- applyBuiltinCountedResolved b supplied ctx env
+          pure (loopStepBuiltinRows out)
+    | .conditional _ _ _ _ =>
+        withCtx s!"while evaluating call to {stepName}" do
+          let (body, next, values) <- selectNeedFamilyBranch step cells ctx env stepName
+          evalAlgOutputSlots body next values
+    | .alias _ _ _ _ _ => do
+        let target <- resolveAliasTarget step ctx
+        runNeedStepSlots target ctx env cells stepName
+    | .mk _ _ _ _ _ _ => do
+        let some bindings <- bindNeedPatterns ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
+          | throw Error.badArity
+        let next <- needBindingContext ctx bindings
+        evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step))
 
 
   --------------------------------------------------------------------------
@@ -5637,13 +5704,18 @@ mutual
       spread row was retired by Q-24), so `(a, b)` is one item and `(a, b)*` two
       in every step. The internal `sequenceConstruct` join (never
       parser-produced) may still emit several values and is expanded by
-      `countedTopLevelValues`. C#: `Evaluator.EvalAlgOutputSlots`. -/
+      `countedTopLevelValues`. A builtin has no written rows, so its value is ONE
+      row (LOOP-03, Q-23) — never a re-counted supply that would read a `()` result
+      as zero slots; a builtin loop step never reaches this arm (`runNeedStepSlots`
+      invokes it over the state supply), only a host-built clause body that IS a
+      builtin does, read with nothing supplied as the ordinary family call reads it.
+      C#: `Evaluator.EvalAlgOutputSlots`. -/
   partial def evalAlgOutputSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
     match a with
     | .builtin b => do
         let out <- evalBuiltinValueCounted b
-        pure (countedTopLevelValues out)
+        pure [out.fst]
     | _ =>
       match a.findDuplicatePropName with
       | some n => .error (Error.duplicateProperty n)
@@ -6347,9 +6419,10 @@ mutual
               .error (builtinArityError b args.length)
             else
             let initialCells <- initAlgs.mapM (fun arg => argumentNeed arg ctx env)
+            let stepName <- loopStepName "while" step
             let rec loop (cells : List Nat) : EvalM (List Nat) := do
               let some algorithm <- invokeNeed step | throw (Error.arityMismatch 0 cells.length)
-              let outputSlots <- runNeedStepSlots algorithm ctx env cells
+              let outputSlots <- runNeedStepSlots algorithm ctx env cells stepName
               let (nextSlots, cont) <- splitContSlots outputSlots
               if cont then loop (<- nextSlots.mapM (fun value => readyNeed (value, Result.valueCount value)))
               else pure cells
@@ -6367,10 +6440,11 @@ mutual
               .error (Error.illegalInEval "Repeat count must be >= 0")
             else
               let initialCells <- initAlgs.mapM (fun arg => argumentNeed arg ctx env)
+              let stepName <- loopStepName "repeat" step
               let rec repeatLoop (remaining : Int) (cells : List Nat) : EvalM (List Nat) := do
                 if remaining = 0 then return cells
                 let some algorithm <- invokeNeed step | throw (Error.arityMismatch 0 cells.length)
-                let outputSlots <- runNeedStepSlots algorithm ctx env cells
+                let outputSlots <- runNeedStepSlots algorithm ctx env cells stepName
                 let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
                 repeatLoop (remaining - 1) next
               let finalCells <- repeatLoop n initialCells
@@ -8093,8 +8167,9 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
      while(step, s1, s2, ..., sk)         -- k ≥ 1
      repeat(step, count, s1, s2, ..., sk) -- k ≥ 1
 
-   Each explicit init argument is evaluated independently and becomes exactly
-   one initial state slot.  Therefore `repeat(Step, 3, a, b)` starts with two
+   Each explicit init argument is supplied independently (one demand cell,
+   never evaluated by the loop itself) and becomes exactly one initial state
+   slot.  Therefore `repeat(Step, 3, a, b)` starts with two
    slots, while `repeat(Step, 3, Pair)` starts with one slot even if `Pair`
    evaluates to multiple values.  Use explicit selections such as `Pair:0,
    Pair:1` when the intended initial state is two slots.
@@ -8102,6 +8177,13 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    DotCall lexical fallback (`Step.repeat(...)` / `Step.while(...)`) injects
    the receiver as the step argument and keeps the remaining explicit args in
    the same boundary-preserving form after structural property lookup.
+
+   Any callable is a step (LOOP-08, Q-23, October 2026): each iteration
+   invokes it as the ORDINARY call over the current state slots
+   (`runNeedStepSlots`) — a clause family dispatches its clauses, a builtin
+   binds them through its argument roles — so `repeat(F, 1, s)` is `F(s)` for
+   every callable; a builtin's one result value is one next-state slot
+   (`loopStepBuiltinRows`), and a value with no callable identity is no step.
 
    Step outputs define the state slots for the next iteration as a ROW SUPPLY
    (LOOP-03): each non-spread output row is one next-state slot and each spread

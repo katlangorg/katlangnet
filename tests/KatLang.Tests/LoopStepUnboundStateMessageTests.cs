@@ -6,16 +6,17 @@ namespace KatLang.Tests;
 /// X-23: the loop-state <see cref="EvalError.ArityMismatch"/> must tell the truth. When the loop's
 /// state binding finds NO parameter of the step to bind a state value to, the structured error is
 /// <c>WithContext(LoopStateBindingContext(loop, [], n), ArityMismatch(0, n))</c> — one shape for a
-/// zero-parameter algorithm, a clause family, a builtin, an alias of either, and a value that is not
-/// a callable at all. The message used to explain that shape as "because the step has no
-/// parameters", which is false for a family (its clauses declare parameters), a builtin
-/// (<c>count(collection)</c>), an alias of either, and a value (it is not a callable). The payload
-/// cannot tell these apart, so the message now states only the binding fact — the loop found no
-/// step parameter to bind the state to — and never what the step is or which callables may be steps.
-/// Which callables are valid loop steps is the open question Q-23 (packing is Q-24): this suite pins
-/// the wording and the UNCHANGED structured error, code, span, frames and acceptance, never a step
-/// contract. Rendered-message-only change: no Lean counterpart (the structured kind and its payload
-/// are what Lean models).
+/// zero-parameter callable and for a value that is not a callable at all. The message once explained
+/// that shape as "because the step has no parameters", which is false for a value (it is not a
+/// callable); it now states only the binding fact — the loop found no step parameter to bind the state
+/// to — and never what the step is.
+/// <para>Q-23 (decided October 2026): a clause family, a builtin, and an alias or forwarded parameter of
+/// either are ORDINARY callables invoked over the state supply (LOOP-08), so they no longer reach this
+/// shape at all — their former rows here are the positive cases of
+/// <see cref="LoopStepCallableDispatchTests"/>. What still reaches it: a genuinely zero-parameter
+/// callable supplied a non-empty state (its ordinary arity, through the user binder), and a value with
+/// no CALLABLE identity (NEED-06). Rendered-message-only coverage: no Lean counterpart (the structured
+/// kind and its payload are what Lean models).</para>
 /// </summary>
 public class LoopStepUnboundStateMessageTests
 {
@@ -32,27 +33,8 @@ public class LoopStepUnboundStateMessageTests
         { "zero-parameter block", "repeat({ 1 }, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
         { "zero-parameter property, while", "Z = true\nwhile(Z, 1)", "while", 1, ["while evaluating call to while"] },
         { "nested step whose names were captured", "Outer(x) = {\n  Step = x + 1\n  repeat(Step, 2, x)\n}\nOuter(1)", "repeat", 1, ["while evaluating call to Outer", "while evaluating call to repeat"] },
-        // clause families: their clauses DO declare parameters
-        { "clause family", "F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "clause family, while", "S(0) = 1, false\nS(n) = n + 1, n < 3\nwhile(S, 0)", "while", 1, ["while evaluating call to while"] },
-        { "unnameable clause family", "G(0) = 0\nG(1) = 1\nrepeat(G, 1, 0)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "clause family with two parameters", "T(0, b) = b\nT(a, b) = a + b\nrepeat(T, 1, 1, 2)", "repeat", 2, ["while evaluating call to repeat"] },
-        { "clause family with different clause kinds", "H(0) = 1\nH([x]) = x\nrepeat(H, 1, 0)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "fluent clause family step", "F(0) = 5\nF(n) = n * 10\nF.repeat(2, 1)", "repeat", 1, ["while evaluating dotCall .repeat of F"] },
-        { "clause family forwarded through a parameter", "F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s, 2, 1)\nRun(F)", "repeat", 1, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        // aliases: binding indirection to the target, never a wrapper
-        { "alias of a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nrepeat(W, 2, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "alias chain to a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nV = W\nrepeat(V, 2, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "alias of a builtin", "C = count\nrepeat(C, 1, [1, 2])", "repeat", 1, ["while evaluating call to repeat"] },
-        { "alias chain to a builtin", "C = count\nD = C\nrepeat(D, 1, [1, 2])", "repeat", 1, ["while evaluating call to repeat"] },
-        // builtins: they declare parameters (`count(collection)`)
-        { "builtin", "repeat(count, 1, [1, 2])", "repeat", 1, ["while evaluating call to repeat"] },
-        { "builtin, while", "while(count, [1, 2])", "while", 1, ["while evaluating call to while"] },
-        { "callback-taking builtin", "repeat(map, 1, [1, 2], [3])", "repeat", 2, ["while evaluating call to repeat"] },
-        { "if", "repeat(if, 1, true, 1, 2)", "repeat", 3, ["while evaluating call to repeat"] },
-        { "a loop builtin", "repeat(while, 1, 1, 2)", "repeat", 2, ["while evaluating call to repeat"] },
-        { "fluent builtin step", "sum.repeat(1, [1, 2])", "repeat", 1, ["while evaluating dotCall .repeat of sum"] },
-        { "builtin forwarded through a parameter", "Run(s) = repeat(s, 1, [1, 2])\nRun(count)", "repeat", 1, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        // (Q-23: clause families, builtins, and aliases or forwarded parameters of either are ordinary
+        // callables and never reach this shape — see FormerlyUnboundStepCategories below.)
         // zero-parameter prelude members
         { "zero-parameter Math member", "repeat(pi, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
         { "zero-parameter host operation", "repeat(tick, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
@@ -173,12 +155,12 @@ public class LoopStepUnboundStateMessageTests
     }
 
     [Fact]
-    public void Message_ForAClauseFamilyStep_IsPinnedVerbatim()
+    public void Message_ForANonCallableValueStep_IsPinnedVerbatim()
     {
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2, 1)"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal(new SourceSpan(3, 1, 3, 16), error.Span);
+        Assert.Equal(new SourceSpan(3, 1, 3, 19), error.Span);
         Assert.Equal(
             "while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state "
             + "has 1 state value, but the loop found no step parameter to bind it to. Loop state values are bound positionally to "
@@ -245,7 +227,52 @@ public class LoopStepUnboundStateMessageTests
             Assert.Contains("If this is a nested step with inferred parameters, remember", error, StringComparison.Ordinal);
     }
 
-    // ── Q-23 non-interference: what the loop accepts is unchanged ─────────────────────────────
+    // ── Q-23: the formerly unbound step categories are ordinary callables ───────────────────────
+
+    /// <summary>
+    /// The rows this suite pinned as unbound until Q-23 was decided: each is now the ordinary invocation
+    /// of a callable — a value, or the callee's own ordinary failure — and never the unbound-step
+    /// message. The full category matrix is <see cref="LoopStepCallableDispatchTests"/>.
+    /// </summary>
+    [Theory]
+    [InlineData("clause family", "F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "ok 100")]
+    [InlineData("clause family, while", "S(0) = 1, false\nS(n) = n + 1, n < 3\nwhile(S, 0)", "ok 0")]
+    [InlineData("unnameable clause family", "G(0) = 0\nG(1) = 1\nrepeat(G, 1, 0)", "ok 0")]
+    [InlineData("clause family with two parameters", "T(0, b) = b\nT(a, b) = a + b\nrepeat(T, 1, 1, 2)", "ok 3")]
+    [InlineData("clause family with different clause kinds", "H(0) = 1\nH([x]) = x\nrepeat(H, 1, 0)", "ok 1")]
+    [InlineData("fluent clause family step", "F(0) = 5\nF(n) = n * 10\nF.repeat(2, 1)", "ok 100")]
+    [InlineData("clause family forwarded through a parameter", "F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s, 2, 1)\nRun(F)", "ok 100")]
+    [InlineData("alias of a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nrepeat(W, 2, 1)", "ok 100")]
+    [InlineData("alias chain to a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nV = W\nrepeat(V, 2, 1)", "ok 100")]
+    [InlineData("alias of a builtin", "C = count\nrepeat(C, 1, [1, 2])", "ok 2")]
+    [InlineData("alias chain to a builtin", "C = count\nD = C\nrepeat(D, 1, [1, 2])", "ok 2")]
+    [InlineData("builtin", "repeat(count, 1, [1, 2])", "ok 2")]
+    [InlineData("builtin, while", "while(count, [1, 2])", "err TypeMismatch")]
+    [InlineData("callback-taking builtin", "repeat(map, 1, [1, 2], [3])", "err ArityMismatch")]
+    [InlineData("if", "repeat(if, 1, true, 1, 2)", "ok 1")]
+    [InlineData("a loop builtin", "repeat(while, 1, 1, 2)", "err ArityMismatch")]
+    [InlineData("fluent builtin step", "sum.repeat(1, [1, 2])", "ok 3")]
+    [InlineData("builtin forwarded through a parameter", "Run(s) = repeat(s, 1, [1, 2])\nRun(count)", "ok 2")]
+    public async Task FormerlyUnboundStepCategories_AreOrdinaryCallables(string category, string source, string expected)
+    {
+        var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+        if (expected.StartsWith("ok ", StringComparison.Ordinal))
+        {
+            Assert.True(observation.Kind == "ok", $"{category}: {observation}");
+            Assert.Equal(expected[3..], observation.Value);
+            return;
+        }
+
+        // An ordinary failure of the invoked callable: `while(count, …)`'s numeric result is the flag;
+        // `map`'s callback slot holds a list; the inner `while` gets a value as ITS step.
+        Assert.Equal("err", observation.Kind);
+        var error = Assert.Single(observation.Errors);
+        Assert.StartsWith(expected[4..] + ": ", error, StringComparison.Ordinal);
+        if (category != "a loop builtin")
+            Assert.DoesNotContain("found no step parameter", error, StringComparison.Ordinal);
+    }
+
+    // ── Steps that bound before Q-23 are unchanged ──────────────────────────────────────────────
 
     [Theory]
     [InlineData("F(0) = 5\nF(n) = n * 10\nWrap(n) = F(n)\nrepeat(Wrap, 2, 1)", "100")]

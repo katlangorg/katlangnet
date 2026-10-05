@@ -881,6 +881,163 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "loop-step-clause-family",
+            Category = "conditionals",
+            Source = "Step(0) = 0\nStep(n) = n - 1\nrepeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n0\n1",
+            ExpectedRaw = "S[1, 0, 1]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // A wrong state arity is the family's own ordinary arity failure.
+                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nrepeat(Step, 1, 1, 2)", "err arity"),
+                // The selected clause's ROWS are the next state: two rows are two slots.
+                new SpecProbe("Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two, 2, 1)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step, 2, 3)` is `Step(Step(3))`.",
+        },
+        new()
+        {
+            Id = "loop-step-family-while",
+            Category = "conditionals",
+            Source = "Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown.while(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A clause that matches nothing is the ordinary NoMatchingBranch, never loop termination.
+                new SpecProbe("S(2) = 1, true\nS(1) = 0, true\nwhile(S, 2)", "err branch"),
+                new SpecProbe("S(2) = 1, true\nS(1) = 0, false\nwhile(S, 2)", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A clause family is a natural `while` step with a base case: the selected clause's last row is the continuation flag, as for any step.",
+        },
+        new()
+        {
+            Id = "loop-step-family-multi-slot",
+            Category = "conditionals",
+            Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd.while(48, 18):0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd, 48, 18)", "ok raw=S[6, 0] n=1"),
+                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd, 7, 0)", "ok raw=S[7, 0] n=1"),
+            ],
+            Explanation = "A multi-slot family step matches its literals against the current state slots through ordinary clause dispatch; the selected clause's rows are the next state and its last row is the flag.",
+        },
+        new()
+        {
+            Id = "loop-step-builtin-is-one-row-wrapper",
+            Category = "collection-builtins",
+            Source = "C(c) = count(c)\nrepeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true\n2",
+            ExpectedRaw = "S[true, 2]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // A collection result is ONE state slot, never its element count ...
+                new SpecProbe("repeat(take, 1, [1, 2, 3], 2)", "ok raw=L[1, 2] n=1"),
+                // ... so the next `take` invocation has one argument: take's own arity failure.
+                new SpecProbe("repeat(take, 2, [1, 2, 3], 2)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.",
+        },
+        new()
+        {
+            Id = "loop-step-builtin-empty-result-is-one-slot",
+            Category = "empty-visible-vs-spread",
+            Source = "while(first, [()])",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                // The one-row wrapper fails the same way: its `()` row is one slot, so it is the flag.
+                new SpecProbe("Fi(c) = first(c)\nwhile(Fi, [()])", "err type"),
+                new SpecProbe("repeat(first, 1, [()])", "ok raw=S[] n=1"),
+            ],
+            Explanation = "A builtin's `()` result is ONE state slot holding `()`, like a `()` row: as a `while` step that slot is the flag, so a Boolean is required (a zero-slot reading would instead be the empty-supply arity failure).",
+        },
+        new()
+        {
+            Id = "loop-step-alias-follows-target",
+            Category = "name-resolution",
+            Source = "Step(0) = 0\nStep(n) = n - 1\nA = Step\nC = count\nrepeat(A, 2, 3), repeat(C, 1, [1, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2",
+            ExpectedRaw = "S[1, 2]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nRun(f, *s) = repeat(f, 2, s*)\nRun(Step, 3)", "ok raw=1 n=1"),
+            ],
+            Explanation = "A callable alias — and a parameter forwarding a callable — is its target's callable as a loop step too: a family or builtin target is invoked exactly as when written directly.",
+        },
+        new()
+        {
+            Id = "loop-step-value-is-rejected",
+            Category = "errors",
+            Source = "repeat(5, 1, 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("A = 1, 2\nrepeat(A:0, 1, 0)", "err arity"),
+                // A genuinely zero-parameter callable is eligible, but one state value fails its ordinary arity.
+                new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
+            ],
+            Explanation = "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result is still no step, and the loop reports that it found no step parameter to bind the state to.",
+        },
+        new()
+        {
+            Id = "loop-step-zero-iterations-never-projects",
+            Category = "item-supply-vs-value",
+            Source = "repeat(5, 0, 1), repeat(1 / 0, 0, 5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n5",
+            ExpectedRaw = "S[1, 5]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(0) = 1\nrepeat(F, 0, 5)", "ok raw=5 n=1"),
+            ],
+            Explanation = "A zero-iteration `repeat` returns its initial state without projecting, validating or evaluating its step.",
+        },
+        new()
+        {
+            Id = "loop-step-family-no-match-is-ordinary",
+            Category = "conditionals",
+            Source = "F(0) = 1\nF(1) = 2\nrepeat(F, 1, 5)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "branch",
+            Explanation = "A family step whose clauses match none of the current state is the family's ordinary NoMatchingBranch, exactly as the call `F(5)`.",
+        },
+        new()
+        {
+            Id = "loop-step-lazy-builtin-roles",
+            Category = "collection-builtins",
+            Source = "repeat(if, 1, false, 1 / 0, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A callback slot of a builtin step invokes the callable the state supplies.
+                new SpecProbe("repeat(map, 1, [1, 2], { x + 1 })", "ok raw=L[2, 3] n=1"),
+            ],
+            Explanation = "A builtin step keeps its ordinary argument roles: `if` demands its condition and the selected branch only, so the unselected failing branch is never evaluated.",
+        },
+        new()
+        {
             Id = "property-value-boundary",
             Category = "item-supply-vs-value",
             Source = "Coordinates = 10, 20\nCoordinates\nCoordinates*",

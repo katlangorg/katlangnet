@@ -1966,6 +1966,21 @@ Collatz.while(27, 0):1
 
 A loop whose condition never becomes `false` runs forever, so check the condition carefully. When you are transforming a known collection, a pipeline with `map`, `filter`, and `reduce` is usually clearer than a loop; loops are for state that evolves step by step.
 
+### Any Callable Can Be a Step
+
+A step is called exactly as it would be called directly, with the current state as its arguments, so any callable — including a conditional algorithm (see Pattern Matching below) or a builtin — can be a step whenever the state supplies arguments it accepts. Clauses give a step a natural base case:
+
+<!-- spec:loop-step-family-while -->
+```
+Countdown(0) = 0, false
+Countdown(n) = n - 1, true
+Countdown.while(3)
+```
+
+**Result:** `0`
+
+Each round calls `Countdown` on the state and the matching clause's outputs form the next state and the condition, so the state becomes 2, 1 and 0, where the first clause returns `false`. A builtin step works the same way: `repeat(count, 1, [1, 2])` is `count([1, 2])`, which is `2`.
+
 ---
 
 ## Pattern Matching

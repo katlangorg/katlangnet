@@ -166,6 +166,13 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bwhich\s+(?:intentionally\s+)?preserve\s+multi-slot\s+loop\s+state\b", "a loop result keeping its slot count (before Q-26)" },
         { @"\bsole\s+exception:\s+a\s+nested\s+loop\s+row\b", "SUP-01's nested-loop step-row exception (before Q-26)" },
         { @"\bcontributes\s+its\s+k\s+(?:state\s+)?slots\b", "a nested loop row contributing its slots (before Q-26)" },
+        // Q-23 (October 2026): a loop step is an ordinary callable invoked over the current state
+        // supply. Any callable is eligible — a clause family dispatches its clauses, a builtin runs
+        // through its argument roles — so no text restricts steps by category or recommends a
+        // wrapper to make a family or builtin a step.
+        { @"\b(?:clause[- ]famil(?:y|ies)|builtins?)\s+(?:is|are)\s+(?:not|never)\s+(?:a\s+|an\s+)?(?:valid\s+|eligible\s+)?(?:loop\s+)?steps?\b", "a loop step restricted by callable category (before Q-23)" },
+        { @"\bwrap\w*\s+(?:a\s+|the\s+)?(?:clause[- ]family|family|builtin)\s+(?:\w+\s+){0,4}as\s+a\s+(?:loop\s+|while\s+|repeat\s+)?step\b", "a wrapper required to use a family or builtin as a loop step (before Q-23)" },
+        { @"\b(?:only|just)\s+(?:a\s+)?user(?:-defined)?\s+(?:algorithms?|callables?)\s+(?:can|may)\s+be\s+(?:a\s+)?(?:loop\s+)?steps?\b", "a loop step restricted to user algorithms (before Q-23)" },
     };
 
     [Theory]

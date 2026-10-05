@@ -289,11 +289,13 @@ public sealed class CliApplicationTests
     }
 
     [Theory]
-    // X-23: a loop step the loop finds no parameter of — a clause family, a builtin, a value that
-    // is not a callable — is reported by that binding fact, never as a step that "has no parameters".
-    [InlineData("F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "[3:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
-    [InlineData("repeat(count, 1, [1, 2])", "[1:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    // X-23: a loop step the loop finds no parameter of — a value that is not a callable, or a
+    // genuinely zero-parameter callable given a non-empty state — is reported by that binding fact,
+    // never as a step that "has no parameters". (Clause families and builtins are ordinary callables
+    // since Q-23: see Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables.)
     [InlineData("while(5, 1)", "[1:1] while evaluating call to while: `while` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    [InlineData("repeat([1], 2, 1)", "[1:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    [InlineData("Z = 5\nrepeat(Z, 2, 1)", "[2:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
     public async Task Eval_LoopStepWithNoBindableParameter_ReportsTheBindingFact(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);
@@ -302,6 +304,48 @@ public sealed class CliApplicationTests
         Assert.Equal("", result.Output);
         Assert.StartsWith(expected, result.TrimmedError);
         Assert.DoesNotContain("has no parameters", result.TrimmedError);
+    }
+
+    [Theory]
+    // Q-23: a loop step is an ordinary callable invoked over the current state supply — a clause
+    // family through its ordinary dispatch, a builtin through its argument roles (its one result is
+    // one state slot); a zero-iteration loop never projects its step.
+    [InlineData("F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "100")]
+    [InlineData("Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown.while(3)", "0")]
+    [InlineData("repeat(count, 1, [1, 2])", "2")]
+    [InlineData("repeat(take, 1, [1, 2, 3], 2)", "[1, 2]")]
+    [InlineData("repeat(1 / 0, 0, 5)", "5")]
+    public async Task Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables(string source, string expected)
+    {
+        var result = await Cli.InvokeAsync("eval", source);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal(expected, result.TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task Eval_BuiltinStepEmptyResult_IsOneSlot_SoItIsTheWhileFlag()
+    {
+        // `first([()])` returns `()`: ONE state slot, so as a `while` step it is the flag — a kind
+        // error, never the "Bad arity" a zero-slot reading would give.
+        var result = await Cli.InvokeAsync("eval", "while(first, [()])");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Contains("while continuation flag (the step's last output) must be a Boolean value (true or false), but was a sequence value with 0 sequence elements: ()",
+            result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task Eval_FamilyStepWithNoMatchingClause_ReportsTheOrdinaryFailure()
+    {
+        var result = await Cli.InvokeAsync("eval", "F(0) = 1\nF(1) = 2\nrepeat(F, 1, 5)");
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Contains("No matching branch for 'F'", result.TrimmedError);
+        Assert.DoesNotContain("found no step parameter", result.TrimmedError);
     }
 
     private const string InvalidOpenTargetSource = "open {\n  N(y) = y\n  public P(x) = N\n  public X = 1\n}\nX\n";

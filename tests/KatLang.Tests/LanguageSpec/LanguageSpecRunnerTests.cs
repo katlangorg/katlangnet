@@ -366,7 +366,7 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 287;
+        const int MinimumEncoderDerivedCases = 297;
         const int MaximumHandAuthoredOverrides = 0;
         const int MaximumCSharpOnlyCases = 19;
 

@@ -58,6 +58,11 @@ public static partial class Evaluator
     /// alone: no parameter-pattern category is consulted (Q-24 retired the former
     /// pattern-triggered packing of a spread row), so <c>(a, b)</c> is one item and
     /// <c>(a, b)*</c> two in every step. Lean: <c>evalAlgOutputSlots</c>.
+    /// <para>A builtin has no written rows, so its value is ONE row (LOOP-03, Q-23) — never a
+    /// re-counted top-level supply, which would read a <c>()</c> result as zero slots. A builtin
+    /// loop step never reaches this arm (<see cref="InvokeLoopStepSupply"/> invokes it over the
+    /// state supply); only a host-built clause body that IS a builtin does, read with nothing
+    /// supplied exactly as the ordinary family call reads it.</para>
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> EvalAlgOutputSlots(
         Algorithm alg,
@@ -70,7 +75,7 @@ public static partial class Evaluator
             var countedR = EvalBuiltinValueCounted(builtin);
             return countedR.IsError
                 ? countedR.Error
-                : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
+                : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
         if (alg.FindDuplicatePropName() is { } duplicateName)
@@ -369,8 +374,9 @@ public static partial class Evaluator
         ValEnv valEnv,
         IReadOnlyList<Result> stateSlots,
         string loopName,
+        CallDiagnosticName stepName,
         PreparedGenericLoopStep prepared)
-        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, prepared, asynchronous: false).GetAwaiter().GetResult();
+        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, stepName, prepared, asynchronous: false).GetAwaiter().GetResult();
 
     /// <summary>
     /// Split a loop step output into next state slots and the continuation flag. The
@@ -414,16 +420,17 @@ public static partial class Evaluator
         Algorithm step,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        CallDiagnosticName stepName)
     {
         // `while` always runs its step at least once, so the loop-invariant step
         // binding is prepared unconditionally — once per loop invocation, not per
         // iteration.
-        var prepared = PrepareGenericLoopStep(step, ctx);
+        var prepared = PrepareUserLoopStep(step, ctx);
         var stateSlots = initialStateSlots.ToList();
         while (true)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", prepared);
+            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", stepName, prepared);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             var splitR = SplitContSlots(outputSlotsR.Value);
             if (splitR.IsError) return splitR.Error;
@@ -438,7 +445,8 @@ public static partial class Evaluator
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        CallDiagnosticName stepName)
     {
         var stateSlots = initialStateSlots.ToList();
         // A zero-iteration repeat never binds its step, so it must not gain step
@@ -447,7 +455,7 @@ public static partial class Evaluator
         if (count <= 0)
             return MakeCheckedLoopStateResult(ctx, stateSlots);
 
-        var prepared = PrepareGenericLoopStep(step, ctx);
+        var prepared = PrepareUserLoopStep(step, ctx);
         // The counter is a LONG like `count` itself. An `int` counter silently wraps past
         // int.MaxValue and never satisfies `k < count` again, so a repeat count above
         // 2^31 - 1 (legal: the count is narrowed from Decimal128 to long) would spin
@@ -455,7 +463,7 @@ public static partial class Evaluator
         // EvaluatorLoopTests.RepeatLoopGenericCounter_IsLongAtBothMirrorSites.
         for (var k = 0L; k < count; k++)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", prepared);
+            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", stepName, prepared);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
             stateSlots = outputSlotsR.Value.ToList();
         }

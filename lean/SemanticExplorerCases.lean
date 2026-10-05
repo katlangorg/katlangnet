@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2511
+- surface corpus cases: 2528
 - excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2469
+- Lean-representable surface cases: 2486
 - internal-node cases: 14
-- total generated guards: 2483 case guards + 2 count guards
+- total generated guards: 2500 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -11875,6 +11875,91 @@ def case_special__callbackBodyLoopIsOneValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["x", "y"] [] [] [.param "y", (.binary .add (.param "x") (.param "y"))])] [(.dotCall (.listLiteral [.num 0, .num 1]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.call (.resolve "repeat") [.resolve "Fib", .num 2, .param "x", .num 1])]))]))])
 #guard obs case_special__callbackBodyLoopIsOneValue == "ok raw=L[S[1, 2], S[2, 3]] n=1"
 
+-- special__loopStepClauseFamily: Step(0) = 0 \n Step(n) = n - 1 \n repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+def case_special__loopStepClauseFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "Step", .num 2, .num 3]), (.dotCall (.resolve "Step") "repeat" (some [.num 5, .num 3])), (.call (.resolve "Step") [(.call (.resolve "Step") [.num 3])])])
+#guard obs case_special__loopStepClauseFamily == "ok raw=S[1, 0, 1] n=3"
+
+-- special__loopStepFamilyWhile: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n while(Countdown, 3)
+def case_special__loopStepFamilyWhile : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.call (.resolve "while") [.resolve "Countdown", .num 3])])
+#guard obs case_special__loopStepFamilyWhile == "ok raw=0 n=1"
+
+-- special__loopStepFamilyMultiSlot: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n while(Gcd, 48, 18)
+def case_special__loopStepFamilyMultiSlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.call (.resolve "while") [.resolve "Gcd", .num 48, .num 18])])
+#guard obs case_special__loopStepFamilyMultiSlot == "ok raw=S[6, 0] n=1"
+
+-- special__loopStepFamilyRowsAreTheNextState: Two(0) = 9, 9 \n Two(n) = n, n \n repeat(Two, 2, 1)
+def case_special__loopStepFamilyRowsAreTheNextState : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Two" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 9, .num 9])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩])] [(.call (.resolve "repeat") [.resolve "Two", .num 2, .num 1])])
+#guard obs case_special__loopStepFamilyRowsAreTheNextState == "err arity"
+
+-- special__loopStepFamilyNoMatch: F(0) = 1 \n F(1) = 2 \n repeat(F, 1, 5)
+def case_special__loopStepFamilyNoMatch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 5])])
+#guard obs case_special__loopStepFamilyNoMatch == "err branch"
+
+-- special__loopStepFamilyClauseOrder: F(x) = 1 \n F(0) = 2 \n repeat(F, 1, 0), F(0)
+def case_special__loopStepFamilyClauseOrder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.bind "x", (alg [] [] [] [.num 1])⟩, ⟨.litInt 0, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 0]), (.call (.resolve "F") [.num 0])])
+#guard obs case_special__loopStepFamilyClauseOrder == "ok raw=S[1, 1] n=2"
+
+-- special__loopStepFamilyStructural: Sw((a, b)) = (b, a) \n Sw([a, b]) = [b, a] \n repeat(Sw, 1, (1, 2)), repeat(Sw, 1, [1, 2])
+def case_special__loopStepFamilyStructural : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Sw" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "a", .bind "b"]], (alg [] [] [] [(.capture [.param "b", .param "a"])])⟩, ⟨.sequenceValue [.listValue [.bind "a", .bind "b"]], (alg [] [] [] [(.listLiteral [.param "b", .param "a"])])⟩])] [(.call (.resolve "repeat") [.resolve "Sw", .num 1, (.capture [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "Sw", .num 1, (.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__loopStepFamilyStructural == "ok raw=S[S[2, 1], L[2, 1]] n=2"
+
+-- special__loopStepFamilyRepeatedName: E(x, x) = 0, 0 \n E(a, b) = a + 1, b \n repeat(E, 3, 0, 2)
+def case_special__loopStepFamilyRepeatedName : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "E" (.conditional none [] [⟨.sequenceValue [.bind "x", .bind "x"], (alg [] [] [] [.num 0, .num 0])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [(.binary .add (.param "a") (.num 1)), .param "b"])⟩])] [(.call (.resolve "repeat") [.resolve "E", .num 3, .num 0, .num 2])])
+#guard obs case_special__loopStepFamilyRepeatedName == "ok raw=S[0, 0] n=1"
+
+-- special__loopStepBuiltinOneRow: C(c) = count(c) \n repeat(count, 1, [1, 2]), repeat(C, 1, [1, 2]), repeat(take, 1, [1, 2, 3], 2)
+def case_special__loopStepBuiltinOneRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["c"] [] [] [(.call (.resolve "count") [.param "c"])])] [(.call (.resolve "repeat") [.resolve "count", .num 1, (.listLiteral [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "take", .num 1, (.listLiteral [.num 1, .num 2, .num 3]), .num 2])])
+#guard obs case_special__loopStepBuiltinOneRow == "ok raw=S[2, 2, L[1, 2]] n=3"
+
+-- special__loopStepBuiltinCollectionNextArity: repeat(take, 2, [1, 2, 3], 2)
+def case_special__loopStepBuiltinCollectionNextArity : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "take", .num 2, (.listLiteral [.num 1, .num 2, .num 3]), .num 2])])
+#guard obs case_special__loopStepBuiltinCollectionNextArity == "err arity"
+
+-- special__loopStepBuiltinEmptyResultIsTheFlag: while(first, [()])
+def case_special__loopStepBuiltinEmptyResultIsTheFlag : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.resolve "first", (.listLiteral [(.emptySequence 0)])])])
+#guard obs case_special__loopStepBuiltinEmptyResultIsTheFlag == "err type"
+
+-- special__loopStepBuiltinLazyIf: repeat(if, 1, false, 1 / 0, 2)
+def case_special__loopStepBuiltinLazyIf : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "if", .num 1, .boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
+#guard obs case_special__loopStepBuiltinLazyIf == "ok raw=2 n=1"
+
+-- special__loopStepAliasOfFamilyAndBuiltin: Step(0) = 0 \n Step(n) = n - 1 \n A = Step \n C = count \n repeat(A, 2, 3), repeat(C, 1, [1, 2])
+def case_special__loopStepAliasOfFamilyAndBuiltin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Step")), privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "A", .num 2, .num 3]), (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])])])
+#guard obs case_special__loopStepAliasOfFamilyAndBuiltin == "ok raw=S[1, 2] n=2"
+
+-- special__loopStepForwardedFamily: Step(0) = 0 \n Step(n) = n - 1 \n Run(f, *s) = repeat(f, 2, s*) \n Run(Step, 3)
+def case_special__loopStepForwardedFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩]), privateProp "Run" (algWithParameters [{ name := "f" }, { name := "s", kind := .collecting }] [] [] [(.call (.resolve "repeat") [.param "f", .num 2, (.sequenceSpread (.param "s"))])])] [(.call (.resolve "Run") [.resolve "Step", .num 3])])
+#guard obs case_special__loopStepForwardedFamily == "ok raw=1 n=1"
+
+-- special__loopStepValueRejected: repeat(5, 1, 0)
+def case_special__loopStepValueRejected : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
+#guard obs case_special__loopStepValueRejected == "err arity"
+
+-- special__loopStepZeroIterationsNeverProject: repeat(5, 0, 1), repeat(1 / 0, 0, 5)
+def case_special__loopStepZeroIterationsNeverProject : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 0, .num 1]), (.call (.resolve "repeat") [(.binary .div (.num 1) (.num 0)), .num 0, .num 5])])
+#guard obs case_special__loopStepZeroIterationsNeverProject == "ok raw=S[1, 5] n=2"
+
+-- special__loopStepLoopBuiltinAsStep: repeat(repeat, 1, { x + 1 }, 2, 0)
+def case_special__loopStepLoopBuiltinAsStep : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "repeat", .num 1, (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])), .num 2, .num 0])])
+#guard obs case_special__loopStepLoopBuiltinAsStep == "ok raw=2 n=1"
+
 -- special__containsSequenceItem: contains(((1, 2), 3), (1, 2))
 def case_special__containsSequenceItem : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "contains") [(.capture [(.capture [.num 1, .num 2]), .num 3]), (.capture [.num 1, .num 2])])])
@@ -12440,7 +12525,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2469 differential cases.
+-- 2486 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14804,6 +14889,23 @@ def surfaceCaseIds : List String := [
   "special__nestedLoopStepRowIsOneSlot",
   "special__nestedLoopStepRowSpread",
   "special__callbackBodyLoopIsOneValue",
+  "special__loopStepClauseFamily",
+  "special__loopStepFamilyWhile",
+  "special__loopStepFamilyMultiSlot",
+  "special__loopStepFamilyRowsAreTheNextState",
+  "special__loopStepFamilyNoMatch",
+  "special__loopStepFamilyClauseOrder",
+  "special__loopStepFamilyStructural",
+  "special__loopStepFamilyRepeatedName",
+  "special__loopStepBuiltinOneRow",
+  "special__loopStepBuiltinCollectionNextArity",
+  "special__loopStepBuiltinEmptyResultIsTheFlag",
+  "special__loopStepBuiltinLazyIf",
+  "special__loopStepAliasOfFamilyAndBuiltin",
+  "special__loopStepForwardedFamily",
+  "special__loopStepValueRejected",
+  "special__loopStepZeroIterationsNeverProject",
+  "special__loopStepLoopBuiltinAsStep",
   "special__containsSequenceItem",
   "special__containsListItem",
   "special__containsEmptyItem",
@@ -14918,7 +15020,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2469
+#guard surfaceCaseIds.length == 2486
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -15020,5 +15122,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2483 case guards (2469 surface + 14 internal-node).
+-- Total: 2500 case guards (2486 surface + 14 internal-node).
 end SemanticExplorerCases

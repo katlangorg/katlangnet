@@ -784,7 +784,13 @@ Sequence-valued or multi-output values used as a single init argument remain one
 
 Step outputs define the state slots for the next iteration by emitted top-level output boundaries. To keep one structured slot across iterations, return a sequence-value step result; multi-output steps intentionally become many next-state slots. `Step = history*, next` emits history's items followed by `next` as multiple next-state slots (the comma is required — `history* next` would be the multiplication `history * next`), while `Step = (history*, next)` groups them into one next-state slot. This holds whatever the step's parameter patterns: patterns only bind the incoming state and never repack the step's rows, so `Step((a, b)) = (b, a + b)*` supplies TWO next-state slots (which its one-pattern head cannot re-bind) while `Step((a, b)) = (b, a + b)` keeps ONE. A nested loop written as a step row is ONE slot; spread it (`repeat(Inner, 2, a, b)*`) to supply its final items. The completed loop is ONE value, so `Fibonacci.repeat(10, 0, 1)` is `(55, 89)` on one row; spread it (`Fibonacci.repeat(10, 0, 1)*`) for separate rows.
 
-Step-state rule (derive the state interface from the step's parameters, not only from free identifiers):
+Any callable can be a step, with no wrapper: a user algorithm, a clause family, a builtin, a Math function, a host operation, an alias, or a callable passed through a parameter. Each iteration invokes the step exactly as the ordinary call `Step(state…)` would. A clause family dispatches its clauses over the current state each iteration (a state no clause matches is an error, never loop termination), which makes it a natural `while` step with a base case; a builtin runs with its ordinary argument roles and its ONE result value is ONE next-state slot (a collection result is one slot, `()` too). A value — a number, list, selection, or call result — is never a step.
+    Countdown(0) = 0, false
+    Countdown(n) = n - 1, true
+    Countdown.while(3)             # 0: a clause family is a while step with a base case
+    repeat(count, 1, [1, 2])       # 2: a builtin's one result is one next-state slot
+
+Step-state rule for a user-defined step (derive the state interface from the step's parameters, not only from free identifiers):
 - If the step has an explicit parameter pattern, the loop-state input shape comes from that explicit pattern. A sequence-value parameter pattern consumes one parent-level state slot and binds inside that sequence value; a top-level collecting parameter makes the step variadic and binds the loop state as an item supply, with required prefix/suffix slots and the collecting parameter collecting the matched middle slots as one exact list.
 - If the step has no explicit parameter list, the state slots come from its inferred implicit parameters (first appearance, left-to-right; use grace `~` if the natural order differs from the init slot order).
 - A fixed explicit signature requires its declared parent-level slots, and an implicit-parameter step requires exactly its inferred parameter count. A top-level variadic signature instead binds the loop state as an item supply: the fixed prefix and suffix slots are required and the collecting parameter collects the remaining middle slots as one list. So `Step(first, *middle, last)` is not an exact three-slot interface — `*middle` is not a single required sequence-valued state slot; it accepts additional middle slots (max unbounded) and requires at least as many state slots as the step has parameters (for example `Step.repeat(2, 0, 5, 5, 10)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`).
@@ -1069,7 +1075,7 @@ Numeric, operator, and literal correctness:
 
 Sequence, loop, reducer, and module correctness:
 - named sequence inputs can be passed as the value itself, via dot-call, or with an explicit spread star; for fixed signatures — `range`, `atoms`, and ALL collection builtins — avoid `value*` unless the supplied slot count matches the required call shape, while for variadic user callables a spread expression is a valid item-supply input (spread items join the call's argument supply, e.g. `Scale(Arg*, 10)` for `Scale(*items, factor)`); a collection builtin takes exactly one collection argument plus its fixed controls, so pass the value directly (`count(Values)`, `Values.count`) — `count(Values*)` is an arity error;
-- explicit loop step signatures are validated from the step's parameter pattern, not just free identifiers; a top-level variadic loop signature binds the state as an item supply (required prefix/suffix slots, the collecting parameter collects the matched middle slots as one exact list, max unbounded), not an exact structural slot count;
+- any callable is a valid loop step and is invoked like an ordinary call over the state slots (a clause family dispatches its clauses, a builtin's one result is one next-state slot — no wrapper needed); explicit loop step signatures are validated from the step's parameter pattern, not just free identifiers; a top-level variadic loop signature binds the state as an item supply (required prefix/suffix slots, the collecting parameter collects the matched middle slots as one exact list, max unbounded), not an exact structural slot count;
 - captured enclosing names are not counted as loop-state slots;
 - reducers emit exactly one accumulator value; the accumulator binding shape is intentional (sequence value vs top-level collecting slots);
 - `load` appears only in valid compile-time positions (property definition or open list) with exactly one literal HTTPS URL;
@@ -1094,7 +1100,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (133 of the 356-case canonical language specification,
+Verified reference examples (136 of the 366-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1324,6 +1330,35 @@ Regenerate this block from the repo root with:
 
   Displays:
     (8, 13)
+
+[loop-step-clause-family] A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step, 2, 3)` is `Step(Step(3))`.
+
+    Step(0) = 0
+    Step(n) = n - 1
+    repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+
+  Displays:
+    1
+    0
+    1
+
+[loop-step-family-while] A clause family is a natural `while` step with a base case: the selected clause's last row is the continuation flag, as for any step.
+
+    Countdown(0) = 0, false
+    Countdown(n) = n - 1, true
+    Countdown.while(3)
+
+  Displays:
+    0
+
+[loop-step-builtin-is-one-row-wrapper] A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.
+
+    C(c) = count(c)
+    repeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])
+
+  Displays:
+    true
+    2
 
 [spread-capture-count] Parentheses around a supply-producing expression perform CAPTURE — they are not always redundant grouping: `(A*).count` counts one captured sequence value (3), while the fluent `A*.count` is the call `count(A*)` whose three argument slots do not fit the fixed `count(collection)` signature (an arity error).
 

@@ -2838,6 +2838,43 @@ theorem loop_result_depends_only_on_the_final_value (left right : List Result)
   simp only [loopResultCounted, reCountValueBoundary, h]
 
 /-
+## Loop steps are ordinary callables (Q-23, decided October 2026)
+
+A loop step is invoked as the ORDINARY call over the current state supply
+(`runNeedStepSlots`: the one binder for a user algorithm, the ordinary family
+dispatcher `selectNeedFamilyBranch`, the ordinary builtin argument roles
+`applyBuiltinCountedResolved`); only the receiver is the loop's. That dispatch is
+exercised by `CoreTests/LoopSteps.lean` (including the one-iteration law:
+`repeat(F, 1, s…)` equals `F(s…)` value for value and failure category for
+failure category, for families, builtins, aliases and wrappers). The laws below
+pin the one piece of new receiver arithmetic — how a builtin's result becomes the
+next state — as total facts.
+-/
+
+/-- A builtin step supplies exactly ONE row, whatever its result. -/
+theorem loop_step_builtin_result_is_one_row (out : CountedResult) :
+    (loopStepBuiltinRows out).length = 1 := rfl
+
+/-- The row is the invocation's result value itself. -/
+theorem loop_step_builtin_row_is_the_result_value (out : CountedResult) :
+    loopStepBuiltinRows out = [out.fst] := rfl
+
+/-- The result's emitted count never decides the slot count: a `()` result
+(emitted count 0) and a value (emitted count 1) are both one row. -/
+theorem loop_step_builtin_rows_ignore_emitted_count (value : Result) (left right : Nat) :
+    loopStepBuiltinRows (value, left) = loopStepBuiltinRows (value, right) := rfl
+
+/-- The `()` result is one visible `()` slot — where re-counting the result as a
+top-level supply (`countedTopLevelValues`) would read it as NO slot. -/
+theorem loop_step_builtin_empty_result_is_one_slot :
+    loopStepBuiltinRows (.sequenceValue [], 0) = [.sequenceValue []] ∧
+      countedTopLevelValues (.sequenceValue [], 0) = [] := ⟨rfl, rfl⟩
+
+/-- A collection result is ONE slot holding the collection, never its elements. -/
+theorem loop_step_builtin_collection_result_is_one_slot (items : List Result) :
+    loopStepBuiltinRows (.listValue items, 1) = [.listValue items] := rfl
+
+/-
 ## `atoms` builtin laws (issue #136)
 
 `Result.languageAtoms` is the atoms builtin's collector: numeric atoms

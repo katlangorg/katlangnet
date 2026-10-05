@@ -33,3 +33,4 @@ import CoreTests.StructuralPatterns
 import CoreTests.AliasForwarding
 import CoreTests.ModelC
 import CoreTests.LoopCardinality
+import CoreTests.LoopSteps

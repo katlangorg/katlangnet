@@ -1441,7 +1441,7 @@ public static partial class Evaluator
             var countedR = EvalBuiltinValueCounted(builtin);
             return countedR.IsError
                 ? countedR.Error
-                : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
+                : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
         if (alg.FindDuplicatePropName() is { } duplicateName)

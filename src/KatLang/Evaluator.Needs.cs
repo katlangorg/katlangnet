@@ -334,22 +334,118 @@ public static partial class Evaluator
     internal static EvalCtx LoopNeedBindingContext(EvalCtx ctx, IReadOnlyList<string> names, IReadOnlyList<NeedCell> cells)
         => WithNeedBindings(ctx, names.Select((name, index) => (name, cells[index])).ToArray(), names);
 
+    /// <summary>
+    /// One iteration of the generic continuation a planned loop hands over to (and of nothing else):
+    /// the iteration's step charge, then the ONE loop-step invocation over the established state slots
+    /// (<see cref="InvokeLoopStepSupply"/>), exactly as <see cref="EvalNeedLoop"/> performs it.
+    /// </summary>
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> RunReadyNeedStepSlots(
         Algorithm step, IReadOnlyList<Result> state, EvalCtx ctx, ValEnv values, string loopName,
-        PreparedGenericLoopStep prepared, bool asynchronous)
+        CallDiagnosticName stepName, PreparedGenericLoopStep prepared, bool asynchronous)
     {
         if (ctx.Budget.TryChargeStep() is { } limit) return limit;
-        var patterns = prepared.NeedPatterns;
-        if (!NeedAcceptsCardinality(patterns, state.Count))
-            return LoopStateArityMismatch(prepared.BindingContract, patterns.Count - patterns.Count(pattern => pattern.Collecting), state.Count, loopName);
         var cells = state.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
-        var bindings = await BindNeedPatterns(patterns, cells, ctx, asynchronous, family: false).ConfigureAwait(false);
-        if (bindings.IsError) return bindings.Error;
-        var names = prepared.BindingContract.ParameterNames;
-        var next = WithNeedBindings(ctx, bindings.Value!, names);
-        return asynchronous ? await EvalAlgOutputSlotsAsync(step, next, ShadowValEnv(values, names), names).ConfigureAwait(false)
-            : EvalAlgOutputSlots(step, next, ShadowValEnv(values, names), names);
+        return await InvokeLoopStepSupply(step, prepared, cells, ctx, values, loopName, stepName, asynchronous).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// A LOOP STEP IS AN ORDINARY CALLABLE INVOKED OVER THE CURRENT STATE SUPPLY (LOOP-08, Q-23 decided
+    /// October 2026). The state slots are already a formed supply — Model-C cells, never re-opened,
+    /// re-counted or demanded here — and the step is invoked on them by the callable's OWN ordinary
+    /// machinery; the loop specializes only the RECEIVER: it reads the invocation as a ROW SUPPLY (the
+    /// next state, LOOP-03) instead of as the call's one value.
+    /// <list type="bullet">
+    /// <item>A user algorithm (also a block, a Math member and a host operation, which are user-shaped)
+    /// keeps its prepared loop binding: cardinality as the loop-state <see cref="LoopStateBindingContext"/>
+    /// failure, the ONE inspecting binder, then its written rows (<see cref="EvalAlgOutputSlots"/>).</item>
+    /// <item>A clause family is dispatched by the ordinary family dispatcher
+    /// (<see cref="BindNeedFamilySupply"/>: cardinality, clause order, inspecting patterns where a
+    /// successful mismatch tries the next clause and a runtime failure aborts, <c>NoMatchingBranch</c>,
+    /// selected-branch materialization and activation); the selected clause's rows are the supply.</item>
+    /// <item>A builtin runs through its ordinary argument roles (<see cref="ApplyBuiltinCountedResolved"/>,
+    /// the callback arm's own route); it has no written rows, so its ONE result value is ONE non-spread
+    /// row — <c>()</c> and collections included — never re-counted into zero or several slots.</item>
+    /// </list>
+    /// A family's or builtin's failure is its ordinary invocation failure under the step's own call
+    /// frame; the loop adds only its outer frame. Nothing here charges a step or enters an invocation
+    /// level: the caller charges one step per iteration, and a loop-step invocation stays outside the
+    /// depth protocol for every callable shape, as it always was for user steps. Lean:
+    /// <c>runNeedStepSlots</c>.
+    /// </summary>
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> InvokeLoopStepSupply(
+        Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values,
+        string loopName, CallDiagnosticName stepName, bool asynchronous)
+    {
+        switch (step)
+        {
+            case Algorithm.User:
+            {
+                var patterns = prepared.NeedPatterns;
+                if (!NeedAcceptsCardinality(patterns, state.Count))
+                    return LoopStateArityMismatch(prepared.BindingContract, patterns.Count - patterns.Count(pattern => pattern.Collecting), state.Count, loopName);
+                var bindings = await BindNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(false);
+                if (bindings.IsError) return bindings.Error;
+                var names = prepared.BindingContract.ParameterNames;
+                var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
+                var stepValues = ShadowValEnv(values, names);
+                return asynchronous
+                    ? await EvalAlgOutputSlotsAsync(step, stepCtx, stepValues, names).ConfigureAwait(false)
+                    : EvalAlgOutputSlots(step, stepCtx, stepValues, names);
+            }
+            case Algorithm.Conditional:
+            {
+                var matched = asynchronous
+                    ? await BindNeedFamilySupply(step, state, ctx, values, stepName, asynchronous: true).ConfigureAwait(false)
+                    : BindNeedFamilySupplyCounted(step, state, ctx, values, stepName);
+                if (matched.IsError) return WithCallCtx<IReadOnlyList<Result>>(stepName, ctx, matched.Error);
+                var activation = matched.Value;
+                return WithCallCtx(stepName, ctx, asynchronous
+                    ? await EvalAlgOutputSlotsAsync(activation.Body, activation.Context, activation.Values).ConfigureAwait(false)
+                    : EvalAlgOutputSlots(activation.Body, activation.Context, activation.Values));
+            }
+            case Algorithm.Builtin(var builtin):
+            {
+                var supplied = state.Select(static cell => new ResolvedArgumentAlgorithm(null, false) { Cell = cell }).ToArray();
+                var result = asynchronous
+                    ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
+                    : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values);
+                return result.IsError
+                    ? WithCallCtx<IReadOnlyList<Result>>(stepName, ctx, result.Error)
+                    : EvalResult<IReadOnlyList<Result>>.Ok([result.Value.Value]);
+            }
+            case Algorithm.Alias alias:
+            {
+                // A safety net out of line, as in every ordinary dispatcher: projection already normalizes
+                // an alias to its target, which is invoked exactly as when written directly (FWD-02).
+                var target = ResolveAliasTarget(alias, ctx);
+                if (target.IsError) return target.Error;
+                return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, ctx, values,
+                    loopName, stepName, asynchronous).ConfigureAwait(false);
+            }
+        }
+
+        // A statement-form dispatch over the closed Algorithm hierarchy: the compiler cannot prove it
+        // exhaustive, so an unhandled variant fails loudly rather than becoming a silent non-step.
+        throw new InvalidOperationException($"Unhandled loop-step callable shape '{step.GetType().Name}'.");
+    }
+
+    /// <summary>
+    /// The prepared loop binding of a USER-shaped step (<see cref="PrepareGenericLoopStep"/>); every other
+    /// callable shape binds through its own ordinary dispatcher, so nothing is prepared for it.
+    /// </summary>
+    private static PreparedGenericLoopStep PrepareUserLoopStep(Algorithm step, EvalCtx ctx)
+        => step is Algorithm.User ? PrepareGenericLoopStep(step, ctx) : default;
+
+    /// <summary>
+    /// The name of a loop step's own call frame (and of a family step's <c>NoMatchingBranch</c>): the written
+    /// expression its SUPPLY CELL retains — the step argument as written or, for a cell transported through a
+    /// parameter, the argument originally written for it (<see cref="SupplyCell"/>) — named as the ordinary call
+    /// names its callee; a cell with no written source (a spread item) is the loop's step. Lean: <c>loopStepName</c>.
+    /// </summary>
+    private static CallDiagnosticName StepDiagnosticName(ResolvedArgumentAlgorithm step, string loopName)
+        => (step.Cell is { } cell ? cell.Source : step.Source) is { } source
+            ? CallDiagnosticName.FromExpression(source)
+            : CallDiagnosticName.FromKnown(loopName + " step");
 
     private static EvalCtx WithNeedBindings(EvalCtx ctx, NeedEnv bindings, IReadOnlyList<string> names)
     {
@@ -562,41 +658,37 @@ public static partial class Evaluator
 
         Algorithm? step = null;
         PreparedGenericLoopStep prepared = default;
+        var loopName = repeat ? "repeat" : "while";
+        // The step's written spelling names its own call frame (LOOP-08): a family's or builtin's
+        // ordinary failure is reported under it, exactly as the ordinary call reports it.
+        var stepName = StepDiagnosticName(arguments[0], loopName);
         while (!repeat || remaining > 0)
         {
             if (step is null)
             {
+                // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
+                // `repeat` never projects or validates it (LOOP-05).
                 var projection = ResolveInvokedArgumentAlgorithm(arguments[0], ctx);
                 if (projection.IsError) return projection.Error;
                 step = projection.Value;
                 if (step is null)
-                    return LoopStateArityMismatch([], [], 0, state.Count, repeat ? "repeat" : "while");
+                    return LoopStateArityMismatch([], [], 0, state.Count, loopName);
                 var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);
                 if (!asynchronous && ctx.EnableLoopOptimization && eligible)
                 {
                     EvalResult<CountedResult> optimized;
                     var taken = repeat
                         ? LoopOptimizer.TryEvaluateRepeat(step, remaining, state, ctx, values,
-                            (count, slots) => RepeatLoopGenericCounted(step, count, slots, ctx, values), out optimized)
+                            (count, slots) => RepeatLoopGenericCounted(step, count, slots, ctx, values, stepName), out optimized)
                         : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
-                            slots => WhileLoopGenericCounted(step, slots, ctx, values), out optimized);
+                            slots => WhileLoopGenericCounted(step, slots, ctx, values, stepName), out optimized);
                     if (taken) return optimized;
                 }
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");
-                prepared = PrepareGenericLoopStep(step, ctx);
+                prepared = PrepareUserLoopStep(step, ctx);
             }
             if (ctx.Budget.TryChargeStep() is { } limit) return limit;
-            var patterns = prepared.NeedPatterns;
-            if (!NeedAcceptsCardinality(patterns, state.Count))
-                return LoopStateArityMismatch(prepared.BindingContract, patterns.Count - patterns.Count(pattern => pattern.Collecting), state.Count, repeat ? "repeat" : "while");
-            var bindings = await BindNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(false);
-            if (bindings.IsError) return bindings.Error;
-            var names = prepared.BindingContract.ParameterNames;
-            var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
-            var stepValues = ShadowValEnv(values, names);
-            var output = asynchronous
-                ? await EvalAlgOutputSlotsAsync(step, stepCtx, stepValues, names).ConfigureAwait(false)
-                : EvalAlgOutputSlots(step, stepCtx, stepValues, names);
+            var output = await InvokeLoopStepSupply(step, prepared, state, ctx, values, loopName, stepName, asynchronous).ConfigureAwait(false);
             if (output.IsError) return output.Error;
             IReadOnlyList<Result> next = output.Value;
             if (!repeat)

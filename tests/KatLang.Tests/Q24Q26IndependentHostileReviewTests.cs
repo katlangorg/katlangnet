@@ -69,16 +69,27 @@ public class Q24Q26IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("F(0) = 0\nF(n) = n + 1\nrepeat(F, 1, 0)")]
-    [InlineData("F(0) = 0\nF(n) = n + 1\nA = F\nrepeat(A, 1, 0)")]
-    [InlineData("repeat(count, 1, (1, 2))")]
-    [InlineData("A = count\nrepeat(A, 1, (1, 2))")]
     [InlineData("repeat((), 1, 1)")]
-    public async Task Q23_RejectedStepCategoriesStayRejected(string source)
+    [InlineData("repeat(5, 1, 1)")]
+    public async Task Q23_NonCallableValueStepsStayRejected(string source)
     {
+        // Q-23 made every CALLABLE an eligible step; a value still has no callable identity (NEED-06).
         var result = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("err", result.Kind);
         Assert.StartsWith("ArityMismatch:", Assert.Single(result.Errors), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("F(0) = 0\nF(n) = n + 1\nrepeat(F, 1, 0)", "0")]
+    [InlineData("F(0) = 0\nF(n) = n + 1\nA = F\nrepeat(A, 1, 0)", "0")]
+    [InlineData("repeat(count, 1, (1, 2))", "2")]
+    [InlineData("A = count\nrepeat(A, 1, (1, 2))", "2")]
+    public async Task Q23_FamilyAndBuiltinSteps_AreOrdinaryCallables(string source, string expected)
+    {
+        // These four rows pinned the rejection while Q-23 was open; the decision (October 2026) makes
+        // them the ordinary invocation over the state supply.
+        var result = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal(("ok", expected), (result.Kind, result.Value));
     }
 
     [Theory]
