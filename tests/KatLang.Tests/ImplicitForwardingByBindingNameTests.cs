@@ -562,7 +562,7 @@ public class ImplicitForwardingByBindingNameTests
     /// </summary>
     public static TheoryData<string, string, string> ForwardedOutcomes => new()
     {
-        { "direct-unequal", P + "P(7, 8)", "err ArityMismatch: while evaluating call to P: Bad arity" },
+        { "direct-unequal", P + "P(7, 8)", "err ArityMismatch: while evaluating call to P: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "direct-equal", P + "P(7, 7)", "ok 7" },
         { "forwarded", P + "Some = [P]:0\nSome(7)", "ok 7" },
         { "forwarded-once", P + "Some = [P]:0\nSome(trace(7))", "ok 7 [trace(7)]" },
@@ -574,12 +574,12 @@ public class ImplicitForwardingByBindingNameTests
         { "forwarded-accompanying-callable", "A = 5\nPF(f, f) = f, f()\nSome = [PF]:0\nSome(A)", "ok S[5, 5]" },
         { "forwarded-distinct-values-impossible", P + "Some = [P]:0\nSome(7), Some(8)", "ok S[7, 8]" },
         { "explicit-same", P + "Same(x) = P(x, x)\nSame(7)", "ok 7" },
-        { "explicit-two", P + "Both(a, b) = P(a, b)\nBoth(7, 8)", "err ArityMismatch: while evaluating call to Both: while evaluating call to P: Bad arity" },
+        { "explicit-two", P + "Both(a, b) = P(a, b)\nBoth(7, 8)", "err ArityMismatch: while evaluating call to Both: while evaluating call to P: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "nested-group-forwarded", "N(x, (x, y)) = y\nSome = [N]:0\nSome(7, 8)", "ok 8" },
         { "collector-forwarded", "C(x, *r, x) = x, r\nSome = [C]:0\nSome(7, 9)", "ok S[7, L[9]]" },
         // The callable alias is not a formula: it IS P, with its two independent arguments (Q-05).
         { "alias-equal", P + "Some = P\nSome(7, 7)", "ok 7" },
-        { "alias-unequal", P + "Some = P\nSome(7, 8)", "err ArityMismatch: while evaluating call to Some: Bad arity" },
+        { "alias-unequal", P + "Some = P\nSome(7, 8)", "err ArityMismatch: while evaluating call to Some: repeated parameter 'x' requires equal arguments: Bad arity" },
     };
 
     [Theory]

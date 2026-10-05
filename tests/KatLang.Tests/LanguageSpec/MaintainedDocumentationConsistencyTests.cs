@@ -173,6 +173,13 @@ public class MaintainedDocumentationConsistencyTests
         { @"\b(?:clause[- ]famil(?:y|ies)|builtins?)\s+(?:is|are)\s+(?:not|never)\s+(?:a\s+|an\s+)?(?:valid\s+|eligible\s+)?(?:loop\s+)?steps?\b", "a loop step restricted by callable category (before Q-23)" },
         { @"\bwrap\w*\s+(?:a\s+|the\s+)?(?:clause[- ]family|family|builtin)\s+(?:\w+\s+){0,4}as\s+a\s+(?:loop\s+|while\s+|repeat\s+)?step\b", "a wrapper required to use a family or builtin as a loop step (before Q-23)" },
         { @"\b(?:only|just)\s+(?:a\s+)?user(?:-defined)?\s+(?:algorithms?|callables?)\s+(?:can|may)\s+be\s+(?:a\s+)?(?:loop\s+)?steps?\b", "a loop step restricted to user algorithms (before Q-23)" },
+        // Q-27 + Q-06 (October 5 2026): an evaluation error names the first contract the operation
+        // cannot satisfy. `first`/`last` ARE selections, so the selection laws are total (errors
+        // included) and an empty `first` is BadIndex, never an arity error; a value in an invoking
+        // slot is NotAnAlgorithm, never an arity error against an invented zero-parameter thunk.
+        { @"wherever\s+(?:the\s+selection\s+is\s+)?valid", "the selection laws restricted to valid selections (before Q-27)" },
+        { @"first\(\(\)\)`?\s+(?:is|gives|reports)\s+(?:an?\s+)?`?(?:arity|ArityMismatch|BadArity)", "an empty `first` as an arity error (before Q-27)" },
+        { @"arity\s+error\s+on\s+the\s+value\s+thunk", "a value callback reported as the arity of an invented thunk (before Q-06)" },
     };
 
     [Theory]

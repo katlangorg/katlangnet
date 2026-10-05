@@ -1575,7 +1575,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (136 of the 366-case canonical language specification,
+Verified reference examples (136 of the 371-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1898,7 +1898,7 @@ Regenerate this block from the repo root with:
   Displays:
     2
 
-[variadic-grouped-and-spread] A collecting parameter collects the ARGUMENTS supplied to it, exactly as one list. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric items (sum 15). The grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued argument, collected as one element (`G(A)` counts 1) that the numeric `sum` rejects — exactly like a list argument `G([1, 2, 3, 4, 5])`. Only the explicit spread turns a value into several supplied items (`G([1, 2, 3, 4, 5]*)` sums to 15).
+[variadic-grouped-and-spread] A collecting parameter collects the ARGUMENTS supplied to it, exactly as one list. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric items (sum 15). The grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued argument, collected as one element (`G(A)` counts 1) that the numeric `sum` rejects as an element of the wrong kind (TypeMismatch) — exactly like a list argument `G([1, 2, 3, 4, 5])`. Only the explicit spread turns a value into several supplied items (`G([1, 2, 3, 4, 5]*)` sums to 15).
 
     A = 1, 2, 3, 4, 5
 

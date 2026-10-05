@@ -2419,7 +2419,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalResolvedCallbackCallCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalResolvedCallbackCallCountedAsync(
-        Algorithm? callee,
+        Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -2435,8 +2435,7 @@ public static partial class Evaluator
 
         try
         {
-            return callee is null ? new EvalError.ArityMismatch(0, args.Count)
-                : await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
         }
         finally
         {
@@ -2457,7 +2456,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalSequenceCallbackCallCounted"/> — keep in lock-step.</summary>
     private static ValueTask<EvalResult<CountedResult>> EvalSequenceCallbackCallCountedAsync(
-        Algorithm? callee,
+        Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -2466,7 +2465,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalSequenceReduceStepCounted"/> — keep in lock-step.</summary>
     private static ValueTask<EvalResult<CountedResult>> EvalSequenceReduceStepCountedAsync(
-        Algorithm? callee,
+        Algorithm callee,
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
@@ -2484,7 +2483,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalReduceCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalReduceCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm? stepAlg,
+        Algorithm stepAlg,
         Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -2496,7 +2495,7 @@ public static partial class Evaluator
         {
             var stepR = WithCtx(
                 "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                await EvalSequenceReduceStepCountedAsync(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step").ConfigureAwait(false));
+                await EvalSequenceReduceStepCountedAsync(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName).ConfigureAwait(false));
             if (stepR.IsError) return stepR.Error;
 
             var nextR = ExpectSingleAccumulator(stepR.Value);
@@ -2511,7 +2510,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalFilterCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalFilterCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm? predicateAlg,
+        Algorithm predicateAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -2535,14 +2534,14 @@ public static partial class Evaluator
     /// synchronous plain callback wrapper is the counted twin's value projection).
     /// </summary>
     private static async ValueTask<EvalResult<bool>> EvalFilterPredicateTruthAsync(
-        Algorithm? predicateAlg,
+        Algorithm predicateAlg,
         CountedResult item,
         int index,
         EvalCtx ctx,
         ValEnv valEnv)
     {
         var predicateCountedR = await EvalSequenceCallbackCallCountedAsync(
-            predicateAlg, item, ctx, valEnv, "filter predicate").ConfigureAwait(false);
+            predicateAlg, item, ctx, valEnv, FilterPredicateFrameName).ConfigureAwait(false);
         var predicateR = WithFilterItemCtx(
             item.Value,
             index,
@@ -2564,7 +2563,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalMapCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalMapCountedAsync(
         IReadOnlyList<CountedResult> items,
-        Algorithm? transformAlg,
+        Algorithm transformAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -2573,7 +2572,7 @@ public static partial class Evaluator
         {
             var transformR = WithCtx(
                 "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                await EvalSequenceCallbackCallCountedAsync(transformAlg, item, ctx, valEnv, "map transform").ConfigureAwait(false));
+                await EvalSequenceCallbackCallCountedAsync(transformAlg, item, ctx, valEnv, MapTransformFrameName).ConfigureAwait(false));
             if (transformR.IsError) return transformR.Error;
 
             var mappedElementR = ExpectSingleMappedElement(transformR.Value);

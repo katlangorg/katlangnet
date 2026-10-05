@@ -144,8 +144,9 @@ public partial class LoopStepCallableDispatchTests
         // A second unary call distinguishes [] from [()] without relying on final rendering.
         if (builtin is "first" or "last")
         {
+            // The second call selects from `()`, which has no position: BadIndex (SEQ-04, Q-27).
             var (twice, _) = await AllRoutesAsync($"repeat({builtin}, 2, {supply})");
-            Assert.IsType<EvalError.BadArity>(Innermost(GenericError($"repeat({builtin}, 2, {supply})")));
+            Assert.IsType<EvalError.BadIndex>(Innermost(GenericError($"repeat({builtin}, 2, {supply})")));
         }
     }
 

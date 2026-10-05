@@ -24,8 +24,8 @@ public class BuiltinRuntimeParityTests
 
     public static TheoryData<string, string, string, int, int> FixedBuiltinArityDiagnosticCases => new()
     {
-        { "range(1)", "range(start, stop)", "Callable `range(start, stop)` expects 2 arguments, but was called with 1 argument.", 0, 1 },
-        { "atoms(1, 2)", "atoms(value)", "Callable `atoms(value)` expects 1 argument, but was called with 2 arguments.", 0, 2 },
+        { "range(1)", "range(start, stop)", "Callable `range(start, stop)` expects 2 arguments, but was called with 1 argument.", 2, 1 },
+        { "atoms(1, 2)", "atoms(value)", "Callable `atoms(value)` expects 1 argument, but was called with 2 arguments.", 1, 2 },
     };
 
     [Theory]
@@ -63,22 +63,37 @@ public class BuiltinRuntimeParityTests
             take((1, 2), 'x')
             """, out var message);
 
-        Assert.Contains("take count must be exactly one whole-number value", message, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(error));
+        // A control of the wrong KIND is TypeMismatch (Q-27), named by its descriptor.
+        Assert.Contains("take count must be exactly one whole-number value, but was a string: 'x'", message, StringComparison.Ordinal);
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
     }
 
     [Theory]
     [MemberData(nameof(RequireNonEmptyCollectionBuiltinCases))]
     public void CollectionBuiltinEmptyPolicyMetadata_MatchesRuntimeDiagnostics(BuiltinId builtinId)
     {
+        // Q-27: the empty policy follows what the builtin IS. `first`/`last` select, so an
+        // empty collection names no position (BadIndex, as `():0`); `min`/`max`/`avg`
+        // aggregate, so it is outside their domain (IllegalInEval).
         var builtin = BuiltinRegistry.GetBuiltin(builtinId);
         Assert.NotNull(builtin.SequenceMetadata);
-        Assert.Equal(SequenceBuiltinEmptyPolicy.RequireAnyItem, builtin.SequenceMetadata.Value.EmptyPolicy);
+        var selection = builtinId is BuiltinId.@first or BuiltinId.@last;
+        Assert.Equal(
+            selection ? SequenceBuiltinEmptyPolicy.RequireSelectablePosition : SequenceBuiltinEmptyPolicy.RequireAnyItem,
+            builtin.SequenceMetadata.Value.EmptyPolicy);
 
         var error = AssertEvalFails($"{builtin.Name}(())", out var message);
 
-        Assert.Contains($"{builtin.Name} requires a non-empty collection", message, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(error));
+        if (selection)
+        {
+            Assert.Contains($"{builtin.Name} selects from an empty collection, which has no position to select", message, StringComparison.Ordinal);
+            Assert.IsType<EvalError.BadIndex>(Innermost(error));
+        }
+        else
+        {
+            Assert.Contains($"{builtin.Name} requires a non-empty collection", message, StringComparison.Ordinal);
+            Assert.IsType<EvalError.IllegalInEval>(Innermost(error));
+        }
     }
 
     [Fact]
@@ -199,7 +214,7 @@ public class BuiltinRuntimeParityTests
 
         Assert.Contains($"while evaluating call to {builtinName}", message, StringComparison.Ordinal);
         Assert.Contains($"{builtinName} requires a non-empty collection", message, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(error));
+        Assert.IsType<EvalError.IllegalInEval>(Innermost(error));
     }
 
     private static EvalError AssertEvalFails(string source, out string message)

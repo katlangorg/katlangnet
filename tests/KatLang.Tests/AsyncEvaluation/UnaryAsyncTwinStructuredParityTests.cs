@@ -67,11 +67,11 @@ public class UnaryAsyncTwinStructuredParityTests
         var ast = Program($"X = ()\n{op}X");
         var sync = Evaluator.RunCountedObserved(ast, enableOptimizations: false).Result;
         Assert.True(sync.IsError);
-        // The unary rejection (minus: BadArity; not: the Boolean-operand TypeMismatch) carries
-        // the unary expression's span (F5); after a genuine suspension the twin must report
-        // the identical span, not a spanless copy.
+        // The unary rejection (minus: the numeric-operand TypeMismatch, Q-27; not: the
+        // Boolean-operand TypeMismatch) carries the unary expression's span (F5); after a
+        // genuine suspension the twin must report the identical span, not a spanless copy.
         var innermost = Innermost(sync.Error);
-        Assert.IsType(op == "-" ? typeof(EvalError.BadArity) : typeof(EvalError.TypeMismatch), innermost);
+        Assert.IsType<EvalError.TypeMismatch>(innermost);
         Assert.Equal(new SourceSpan(2, 1, 2, op.Length + 2), innermost.Span);
 
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();

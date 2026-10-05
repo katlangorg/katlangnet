@@ -987,14 +987,14 @@ public static class LanguageSpecCorpus
             Category = "errors",
             Source = "repeat(5, 1, 0)",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "arity",
+            ExpectedErrorCategory = "notAnAlgorithm",
             Probes =
             [
-                new SpecProbe("A = 1, 2\nrepeat(A:0, 1, 0)", "err arity"),
+                new SpecProbe("A = 1, 2\nrepeat(A:0, 1, 0)", "err notAnAlgorithm"),
                 // A genuinely zero-parameter callable is eligible, but one state value fails its ordinary arity.
                 new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
             ],
-            Explanation = "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result is still no step, and the loop reports that it found no step parameter to bind the state to.",
+            Explanation = "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result is still no step, and the first iteration that needs it reports NotAnAlgorithm (Q-06) — by CALLABLE projection, never by demanding the value. A real zero-parameter callable is a step whose interface cannot bind one state value: ArityMismatch.",
         },
         new()
         {
@@ -1463,16 +1463,16 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.sum\nG(A)", "err arity"),
-                new SpecProbe("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", "err arity"),
+                new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.sum\nG(A)", "err type"),
+                new SpecProbe("G(*x) = x.sum\nG((1, 2, 3, 4, 5))", "err type"),
                 new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A)", "ok raw=1 n=1"),
                 new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A*)", "ok raw=5 n=1"),
                 new SpecProbe("A = 1, 2, 3, 4, 5\nG(*x) = x.count\nG(A, 0)", "ok raw=2 n=1"),
-                new SpecProbe("G(*x) = x.sum\nG([1, 2, 3, 4, 5])", "err arity"),
+                new SpecProbe("G(*x) = x.sum\nG([1, 2, 3, 4, 5])", "err type"),
                 new SpecProbe("G(*x) = x.sum\nG([1, 2, 3, 4, 5]*)", "ok raw=15 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A collecting parameter collects the ARGUMENTS supplied to it, exactly as one list. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric items (sum 15). The grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued argument, collected as one element (`G(A)` counts 1) that the numeric `sum` rejects — exactly like a list argument `G([1, 2, 3, 4, 5])`. Only the explicit spread turns a value into several supplied items (`G([1, 2, 3, 4, 5]*)` sums to 15).",
+            Explanation = "A collecting parameter collects the ARGUMENTS supplied to it, exactly as one list. `G(A*)` and `G(1, 2, 3, 4, 5)` supply five numeric items (sum 15). The grouped calls `G(A)` and `G((1, 2, 3, 4, 5))` supply ONE sequence-valued argument, collected as one element (`G(A)` counts 1) that the numeric `sum` rejects as an element of the wrong kind (TypeMismatch) — exactly like a list argument `G([1, 2, 3, 4, 5])`. Only the explicit spread turns a value into several supplied items (`G([1, 2, 3, 4, 5]*)` sums to 15).",
         },
         new()
         {
@@ -1595,8 +1595,8 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\nMean(1, 2, 2.718)", "ok raw=1.906 n=1"),
                 new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718)*.Mean", "ok raw=1.906 n=1"),
-                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", "err arity"),
-                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n[1, 2, 3].Mean", "err arity"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n(1, 2, 2.718).Mean", "err type"),
+                new SpecProbe("Mean(*Vector) = Vector.sum / Vector.count\n[1, 2, 3].Mean", "err type"),
                 new SpecProbe("Collect(*items) = items\n(1, 2).Collect", "ok raw=L[S[1, 2]] n=1"),
                 new SpecProbe("Collect(*items) = items\nCollect((1, 2))", "ok raw=L[S[1, 2]] n=1"),
                 new SpecProbe("Collect(*items) = items\n(1, 2)*.Collect", "ok raw=L[1, 2] n=1"),
@@ -3647,9 +3647,10 @@ public static class LanguageSpecCorpus
                 // accumulator see the callable's zero-argument value.
                 new SpecProbe("Only(*xs) = xs\nSize(xs) = count(xs)\nSize(Only)", "ok raw=0 n=1"),
                 new SpecProbe("Seven(*xs) = 7\nR(x, acc) = acc + x\nStart(i) = reduce([1, 2], R, i)\nStart(Seven)", "ok raw=10 n=1"),
-                // A value-only argument has no callable to invoke, directly or forwarded.
-                new SpecProbe("Apply(f, xs) = xs.map(f)\nApply(5, [1])", "err arity"),
-                new SpecProbe("[1].map(5)", "err arity"),
+                // A value-only argument has no callable to invoke, directly or forwarded:
+                // NotAnAlgorithm (Q-06).
+                new SpecProbe("Apply(f, xs) = xs.map(f)\nApply(5, [1])", "err notAnAlgorithm"),
+                new SpecProbe("[1].map(5)", "err notAnAlgorithm"),
                 // A callable whose zero-argument demand fails is bound on the algorithm
                 // channel only, and always worked.
                 new SpecProbe("Z(*xs) = 10 / xs.count\nApply(f, xs) = xs.map(f)\nApply(Z, [1, 2])", "ok raw=L[10, 10] n=1"),
@@ -4664,14 +4665,14 @@ public static class LanguageSpecCorpus
                 new SpecProbe("(()) + 1", "err type"),
                 // A NAMED empty operand takes the same path as the literal.
                 new SpecProbe("A = ()\nA / 2", "err type"),
-                // Unary minus uses its existing numeric conversion (arity category), and
-                // unary `not` its Boolean-operand rule (type category), with no
-                // empty-sequence bypass either.
-                new SpecProbe("-()", "err arity"),
+                // Unary minus rejects every non-numeric operand as a value of the wrong
+                // kind (Q-27), and unary `not` its non-Boolean operand, both in the type
+                // category, with no empty-sequence bypass either.
+                new SpecProbe("-()", "err type"),
                 new SpecProbe("not ()", "err type"),
-                new SpecProbe("-(1, 2)", "err arity"),
+                new SpecProbe("-(1, 2)", "err type"),
                 new SpecProbe("not (1, 2)", "err type"),
-                new SpecProbe("-[1, 2]", "err arity"),
+                new SpecProbe("-[1, 2]", "err type"),
                 new SpecProbe("not [1, 2]", "err type"),
                 new SpecProbe("-7", "ok raw=-7 n=1"),
                 new SpecProbe("not false", "ok raw=true n=1"),
@@ -4688,7 +4689,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("count(())", "ok raw=0 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Notes = "SYN-01. Binary operators previously returned the other operand when either was `()`; unary operators propagated `()`. Both bypasses are removed. Unary sequence/list rejection retains the existing arity category; binary rejection retains type. Empty NEUTRALITY belongs to the arity algebra's supply operations (capture/collect/spread) and is deliberately untouched, as the last two probes pin.",
+            Notes = "SYN-01. Binary operators previously returned the other operand when either was `()`; unary operators propagated `()`. Both bypasses are removed. Unary and binary operand rejections are both the type category (unary sequence/list rejection was arity until Q-27, 2026-10-05). Empty NEUTRALITY belongs to the arity algebra's supply operations (capture/collect/spread) and is deliberately untouched, as the last two probes pin.",
             Explanation = "The empty sequence value is a real value, not an operator identity: scalar operators apply their ordinary operand validation to `()` just as to any other non-scalar value. `10 / ()`, `-()`, and `not ()` are errors.",
         },
         new()
@@ -4697,12 +4698,12 @@ public static class LanguageSpecCorpus
             Category = "errors",
             Source = "order((1, 'hello'))",
             Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "arity",
+            ExpectedErrorCategory = "type",
             Probes =
             [
-                new SpecProbe("order(((1, 2), (3, 4)))", "err arity"),
+                new SpecProbe("order(((1, 2), (3, 4)))", "err type"),
             ],
-            Explanation = "`order` requires each item to be a single numeric value; strings and sequence-value items are rejected.",
+            Explanation = "`order` requires each item to be a single numeric value; strings and sequence-value items are elements of the wrong kind (TypeMismatch).",
         },
         new()
         {
@@ -4712,6 +4713,124 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
             Explanation = "Division by zero is a runtime error.",
+        },
+        new()
+        {
+            Id = "invoking-slot-without-callable-is-not-an-algorithm",
+            Category = "errors",
+            Source = "map([1, 2], 5)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                // Decided by CALLABLE projection only: the value is never demanded.
+                new SpecProbe("map([1, 2], 1 / 0)", "err notAnAlgorithm"),
+                new SpecProbe("filter([1], true)", "err notAnAlgorithm"),
+                new SpecProbe("reduce([1, 2], 5, 0)", "err notAnAlgorithm"),
+                new SpecProbe("count(filter([1, 2], 5))", "err notAnAlgorithm"),
+                new SpecProbe("[1, 2].map(5)", "err notAnAlgorithm"),
+                new SpecProbe("repeat(5, 1, 0)", "err notAnAlgorithm"),
+                new SpecProbe("while(true, 0)", "err notAnAlgorithm"),
+                new SpecProbe("repeat(map, 1, [1, 2], 5)", "err notAnAlgorithm"),
+                new SpecProbe("Through(xs, f) = map(xs, f)\nThrough([1], 5)", "err notAnAlgorithm"),
+                new SpecProbe("App(f, x) = f(x)\nApp(5, 1)", "err notAnAlgorithm"),
+                // A slot that is never invoked is never projected.
+                new SpecProbe("map([], 5)", "ok raw=L[] n=1"),
+                new SpecProbe("reduce([], 5, 7)", "ok raw=7 n=1"),
+                new SpecProbe("repeat(5, 0, 1)", "ok raw=1 n=1"),
+            ],
+            Notes = "Q-06, decided 2026-10-05: missing CALLABLE capability is NotAnAlgorithm in every invoking position (formerly a hand-written ArityMismatch(0, k) for builtin slots).",
+            Explanation = "A position that INVOKES its argument — the `map` transform, the `filter` predicate, the `reduce` reducer, a `while` or `repeat` step, a user higher-order parameter — needs a callable. A value has no callable identity, so the first invocation that needs one reports NotAnAlgorithm, decided by CALLABLE projection alone: the value is never demanded (`map([1, 2], 1 / 0)` is not a division by zero), and a slot that is never invoked is never projected (`map([], 5)` is `[]`).",
+        },
+        new()
+        {
+            Id = "zero-parameter-callable-in-invoking-slot-is-arity",
+            Category = "errors",
+            Source = "A = 7\nmap([1, 2], A)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("map([1, 2], { 5 })", "err arity"),
+                new SpecProbe("Lib = { public V = 5 }\nmap([1], Lib.V)", "err arity"),
+                new SpecProbe("map([1], Math.Pi)", "err arity"),
+                new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
+                new SpecProbe("A = 7\nApp(f, x) = f(x)\nApp(A, 1)", "err arity"),
+                new SpecProbe("map([1, 2], take)", "err arity"),
+                // Supply cardinality stays arity for every binder, a clause family included.
+                new SpecProbe("F(0) = 0\nF(n) = n\nF(1, 2)", "err arity"),
+                // The contrast: the plain value has no callable identity.
+                new SpecProbe("map([1, 2], 7)", "err notAnAlgorithm"),
+            ],
+            Explanation = "A zero-parameter callable — a property, a block, a member, a Math constant — HAS callable identity, so an invoking slot invokes it, and the supplied item does not fit its interface: ArityMismatch, exactly as any call that supplies more arguments than the callable accepts. The plain value `7` in the same slot has no callable identity and is NotAnAlgorithm instead.",
+        },
+        new()
+        {
+            Id = "kind-errors-are-type-mismatch",
+            Category = "errors",
+            Source = "-()",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                new SpecProbe("-[1]", "err type"),
+                new SpecProbe("-'a'", "err type"),
+                new SpecProbe("sqrt((4, 9))", "err type"),
+                new SpecProbe("A = 1, 2\nA:[0]", "err type"),
+                new SpecProbe("range([1], 3)", "err type"),
+                new SpecProbe("repeat({ x }, [1], 0)", "err type"),
+                new SpecProbe("sum((1, true))", "err type"),
+                new SpecProbe("order((3, [1]))", "err type"),
+                new SpecProbe("take([1, 2], 'x')", "err type"),
+                new SpecProbe("skip([1, 2], ())", "err type"),
+                // A number of the accepted kind outside the control's domain is not a kind error.
+                new SpecProbe("take([1, 2], 1.5)", "err illegalInEval"),
+            ],
+            Notes = "Q-27, decided 2026-10-05: kind failures that passed through the numeric conversion, the collection-element check or the whole-number control were formerly reported as arity.",
+            Explanation = "A present value of a kind the operation does not accept is TypeMismatch, whatever its shape: a Boolean, a string, a sequence (`()` included) or a list where a number is required — the operand of unary `-`, a Math argument, a selector, a `range` bound, a `repeat` count, a `take`/`skip` count, a numeric collection element. A number of the right kind that the operation cannot use, such as the fractional count `1.5`, is a domain failure instead (IllegalInEval).",
+        },
+        new()
+        {
+            Id = "first-last-empty-is-bad-index",
+            Category = "errors",
+            Source = "first(())",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "index",
+            Probes =
+            [
+                new SpecProbe("first([])", "err index"),
+                new SpecProbe("last(())", "err index"),
+                new SpecProbe("last([])", "err index"),
+                new SpecProbe("().first", "err index"),
+                new SpecProbe("[].last", "err index"),
+                new SpecProbe("E = ()\nlast(E)", "err index"),
+                new SpecProbe("A = (), 1\nfirst(A:0)", "err index"),
+                new SpecProbe("first(filter([1, 2], { x > 5 }))", "err index"),
+                new SpecProbe("():0", "err index"),
+                new SpecProbe("[]:(count([]) - 1)", "err index"),
+                new SpecProbe("first((1, 2)), (1, 2):0, last([3, 4]), [3, 4]:1", "ok raw=S[1, 1, 4, 4] n=4"),
+            ],
+            Notes = "Q-27 / SEQ-04, decided 2026-10-05 (P2): `first`/`last` on an empty collection were formerly the collection's arity rejection.",
+            Explanation = "`first(A)` is the selection `A:0` and `last(A)` is `A:(count(A) - 1)`, errors included: an empty collection names no position to select, so `first(())` and `last([])` report BadIndex exactly as `():0` does. BadIndex means a selection named no position, never merely that a container is empty.",
+        },
+        new()
+        {
+            Id = "aggregate-empty-is-domain-error",
+            Category = "errors",
+            Source = "min(())",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "illegalInEval",
+            Probes =
+            [
+                new SpecProbe("max([])", "err illegalInEval"),
+                new SpecProbe("avg([])", "err illegalInEval"),
+                new SpecProbe("avg(())", "err illegalInEval"),
+                new SpecProbe("min(filter([1], { x > 5 }))", "err illegalInEval"),
+                new SpecProbe("sum(())", "ok raw=0 n=1"),
+                new SpecProbe("count([])", "ok raw=0 n=1"),
+            ],
+            Notes = "Q-27, decided 2026-10-05: empty `min`/`max`/`avg` were formerly the collection's arity rejection.",
+            Explanation = "`min`, `max` and `avg` select no position: an empty collection is outside their domain (IllegalInEval) — not a selection error, and not an arity error, since the argument count is right. `sum` and `count` accept an empty collection.",
         },
         new()
         {

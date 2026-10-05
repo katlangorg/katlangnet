@@ -281,7 +281,7 @@ def test100 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "sum") [sequenceValuePairs]
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test100
@@ -291,7 +291,7 @@ def test101 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "sum") [.stringLiteral "hello"]
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err
   | _ => false
 
 #guard test101
@@ -822,7 +822,7 @@ def test116 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "min requires a non-empty collection" err && innermostIsBadArity err
+  | Except.error err => innermostIsIllegalInEval "min requires a non-empty collection" err
   | _ => false
 
 #guard test116
@@ -846,7 +846,7 @@ def test118 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "min") [sequenceValuePairs]
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "min expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test118
@@ -856,7 +856,7 @@ def test119 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "min") [.stringLiteral "hello"]
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err
   | _ => false
 
 #guard test119
@@ -944,7 +944,7 @@ def test125 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "max requires a non-empty collection" err && innermostIsBadArity err
+  | Except.error err => innermostIsIllegalInEval "max requires a non-empty collection" err
   | _ => false
 
 #guard test125
@@ -968,7 +968,7 @@ def test127 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "max") [sequenceValuePairs]
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "max expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test127
@@ -978,7 +978,7 @@ def test128 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "max") [.stringLiteral "hello"]
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err
   | _ => false
 
 #guard test128
@@ -1062,7 +1062,7 @@ def test134 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "avg requires a non-empty collection" err && innermostIsBadArity err
+  | Except.error err => innermostIsIllegalInEval "avg requires a non-empty collection" err
   | _ => false
 
 #guard test134
@@ -1086,7 +1086,7 @@ def test136 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "avg") [sequenceValuePairs]
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "avg expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test136
@@ -1096,7 +1096,7 @@ def test137 : Bool :=
   match runResult (.algorithmExpr (alg [] [] [] [
     .call (resolve "avg") [.stringLiteral "hello"]
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"" err
   | _ => false
 
 #guard test137
@@ -1178,7 +1178,7 @@ def test143 : Bool :=
       .capture [.num 1, .stringLiteral "hello"]
     ]
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was string value \"hello\"" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "order expects each collection element to be a single numeric value; item 1 was string value \"hello\"" err
   | _ => false
 
 #guard test143
@@ -1265,7 +1265,7 @@ def test149 : Bool :=
 
 #guard test149
 
--- Test 150: plain-call first requires a non-empty collection
+-- Test 150: plain-call first on an empty collection has no position to select (badIndex, Q-27)
 def test150 : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .call (resolve "first") [
@@ -1275,12 +1275,12 @@ def test150 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "first requires a non-empty collection" err && innermostIsBadArity err
+  | Except.error err => hasContext "first selects from an empty collection, which has no position to select" err && innermostIsBadIndex err
   | _ => false
 
 #guard test150
 
--- Test 151: plain-call last requires a non-empty collection
+-- Test 151: plain-call last on an empty collection has no position to select (badIndex, Q-27)
 def test151 : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("AlwaysFalse", alwaysFalseAlg66a)] [
     .call (resolve "last") [
@@ -1290,7 +1290,7 @@ def test151 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "last requires a non-empty collection" err && innermostIsBadArity err
+  | Except.error err => hasContext "last selects from an empty collection, which has no position to select" err && innermostIsBadIndex err
   | _ => false
 
 #guard test151
@@ -1331,7 +1331,7 @@ def test151d : Bool :=
       .capture [.num 3, .num 4]
     ]]
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "order expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test151d
@@ -1343,7 +1343,7 @@ def test151e : Bool :=
       .capture [.num 3, .num 4]
     ]]
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test151e
@@ -1559,7 +1559,7 @@ def test151q : Bool :=
       sequenceItems [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3], .num 0]
     ]
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "order expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test151q
@@ -1588,7 +1588,7 @@ def test151t : Bool :=
       sequenceItems [.capture [.num 3, .num 4, .num 2, .num 1, .num 3, .num 3], .num 0]
     ]
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test151t
@@ -1902,7 +1902,7 @@ def test170 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "order expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "order expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test170
@@ -1914,7 +1914,7 @@ def test171 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "orderDesc expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "orderDesc expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test171
@@ -1926,7 +1926,7 @@ def test172 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "min expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "min expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test172
@@ -1938,7 +1938,7 @@ def test173 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "max expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "max expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test173
@@ -1950,7 +1950,7 @@ def test174 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "sum expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test174
@@ -1962,7 +1962,7 @@ def test175 : Bool :=
       .capture [.num 2, .num 3]
     ]]
   ])) with
-  | Except.error err => hasContext "avg expects each collection element to be a single numeric value; item 1 was sequence value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "avg expects each collection element to be a single numeric value; item 1 was sequence value" err
   | _ => false
 
 #guard test175
@@ -2329,7 +2329,7 @@ def test192 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "take count must be exactly one whole-number value, but was a list value with 0 elements: []" err
   | _ => false
 
 #guard test192
@@ -2341,7 +2341,7 @@ def test193 : Bool :=
       .capture [.num 1, .num 2]
     ]
   ])) with
-  | Except.error err => hasContext "take count must be exactly one whole-number value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "take count must be exactly one whole-number value, but was a sequence value with 2 sequence elements: (1, 2)" err
   | _ => false
 
 #guard test193
@@ -2353,7 +2353,7 @@ def test194 : Bool :=
       .stringLiteral "hello"
     ]
   ])) with
-  | Except.error err => hasContext "skip count must be exactly one whole-number value" err && innermostIsBadArity err
+  | Except.error err => innermostIsTypeMismatch "skip count must be exactly one whole-number value, but was a string: 'hello'" err
   | _ => false
 
 #guard test194
@@ -2807,8 +2807,7 @@ def test215g : Bool :=
     .call (resolve "sum") [.index (.resolve "A") (.num 0)]
   ])) with
   | Except.error err =>
-      hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
-        && innermostIsBadArity err
+      innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test215g
@@ -2944,8 +2943,7 @@ def test219 : Bool :=
     .capture [.num 3, .num 4]
   ]) "sum" none) with
   | Except.error err =>
-      hasContext "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
-        && innermostIsBadArity err
+      innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
   | _ => false
 
 #guard test219

@@ -9,46 +9,51 @@ namespace KatLang.Tests;
 
 public class EvaluatorCollectionBuiltinTests
 {
-    private static void AssertBuiltinFailureWithExactContext(string source, string expectedContext)
+    /// <summary>
+    /// The builtin rejects its input with the innermost variant <typeparamref name="TInner"/>, whose
+    /// own text — a context frame or the innermost reason — is exactly <paramref name="expectedText"/>.
+    /// Q-27: a collection element or control of the wrong KIND is <c>TypeMismatch</c>, a count outside
+    /// its domain <c>IllegalInEval</c>, an empty selection <c>BadIndex</c> — never an arity error.
+    /// </summary>
+    private static void AssertBuiltinFailureWithExactText<TInner>(string source, string expectedText)
+        where TInner : EvalError
     {
-        var result = EvalFull(source);
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
-
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains(expectedContext, formatted);
-
-        var error = result.Error;
-        var contexts = new List<string>();
-        while (error is EvalError.WithContext wc)
-        {
-            contexts.Add(wc.Context);
-            error = wc.Inner;
-        }
-
-        Assert.Contains(expectedContext, contexts);
-        Assert.IsType<EvalError.BadArity>(error);
+        var (texts, error) = BuiltinFailureTexts(source, expectedText);
+        Assert.Contains(expectedText, texts);
+        Assert.IsType<TInner>(error);
     }
 
-    private static void AssertBuiltinFailureWithContext(string source, string expectedContext)
+    /// <summary>As <see cref="AssertBuiltinFailureWithExactText"/>, with a text that CONTAINS <paramref name="expectedText"/>.</summary>
+    private static void AssertBuiltinFailureWithText<TInner>(string source, string expectedText)
+        where TInner : EvalError
+    {
+        var (texts, error) = BuiltinFailureTexts(source, expectedText);
+        Assert.Contains(texts, text => text.Contains(expectedText));
+        Assert.IsType<TInner>(error);
+    }
+
+    private static (List<string> Texts, EvalError Innermost) BuiltinFailureTexts(string source, string expectedText)
     {
         var result = EvalFull(source);
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains(expectedContext, formatted);
+        Assert.Contains(expectedText, formatted);
 
         var error = result.Error;
-        var contexts = new List<string>();
+        var texts = new List<string>();
         while (error is EvalError.WithContext wc)
         {
-            contexts.Add(wc.Context);
+            texts.Add(wc.Context);
             error = wc.Inner;
         }
 
-        Assert.Contains(contexts, context => context.Contains(expectedContext));
-        Assert.IsType<EvalError.BadArity>(error);
+        if (error is EvalError.TypeMismatch typeMismatch)
+            texts.Add(typeMismatch.Message);
+        else if (error is EvalError.IllegalInEval illegal)
+            texts.Add(illegal.Reason);
+        return (texts, error);
     }
 
     // ── Range builtin ────────────────────────────────────────────────────────
@@ -139,13 +144,13 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Order_UnsupportedElement_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "order((1, 'hello'))",
             "order expects each collection element to be a single numeric value; item 1 was string value \"hello\"");
 
     [Fact]
     public void Eval_Order_SequenceValueMultiArgs_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "order(((1, 2), (3, 4)))",
             "order expects each collection element to be a single numeric value; item 0 was sequence value");
 
@@ -170,19 +175,19 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_OrderDesc_SequenceValueMultiArgs_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "orderDesc(((1, 2), (3, 4)))",
             "orderDesc expects each collection element to be a single numeric value; item 0 was sequence value");
 
     [Fact]
     public void Eval_Order_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "order((1, (2, 3)))",
             "order expects each collection element to be a single numeric value; item 1 was sequence value");
 
     [Fact]
     public void Eval_OrderDesc_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "orderDesc((1, (2, 3)))",
             "orderDesc expects each collection element to be a single numeric value; item 1 was sequence value");
 
@@ -226,12 +231,12 @@ public class EvaluatorCollectionBuiltinTests
     public void Eval_SequenceBuiltinDotCall_EmptyFilterReceiver_RespectsEmptyPolicies()
     {
         AssertEval("(1, 5, 3).filter{ n mod 2 == 0 }.sum", 0);
-        AssertBuiltinFailureWithExactContext(
+        AssertBuiltinFailureWithExactText<EvalError.BadIndex>(
             "(1, 5, 3).filter{ n mod 2 == 0 }.first",
-            "first requires a non-empty collection");
-        AssertBuiltinFailureWithExactContext(
+            "first selects from an empty collection, which has no position to select");
+        AssertBuiltinFailureWithExactText<EvalError.BadIndex>(
             "(1, 5, 3).filter{ n mod 2 == 0 }.last",
-            "last requires a non-empty collection");
+            "last selects from an empty collection, which has no position to select");
     }
 
     [Fact]
@@ -899,27 +904,27 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Take_EmptyCountArgument_FailsWithContext()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "take((1, 2), take(1, 0))",
-            "take count must be exactly one whole-number value");
+            "take count must be exactly one whole-number value, but was a list value with 0 elements: []");
 
     [Fact]
     public void Eval_Take_SequenceValueCountArgument_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "take((3, 4), (1, 2))",
-            "take count must be exactly one whole-number value");
+            "take count must be exactly one whole-number value, but was a sequence value with 2 sequence elements: (1, 2)");
 
     [Fact]
     public void Eval_Take_FractionalCountArgument_FailsWithContext()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithExactText<EvalError.IllegalInEval>(
             "take((1, 2), 1.5)",
-            "take count must be exactly one whole-number value");
+            "take count must be exactly one whole-number value, but was 1.5");
 
     [Fact]
     public void Eval_Skip_StringCountArgument_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "skip((1, 2), 'hello')",
-            "skip count must be exactly one whole-number value");
+            "skip count must be exactly one whole-number value, but was a string: 'hello'");
 
     [Fact]
     public void Eval_Skip_SpreadArguments_FollowOrdinaryFixedArity()
@@ -982,19 +987,19 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Min_SequenceValueElements_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "min(((1, 2), (3, 4)))",
             "min expects each collection element to be a single numeric value; item 0 was sequence value");
 
     [Fact]
     public void Eval_Min_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "min('hello')",
             "min expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Min_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "min((1, (2, 3)))",
             "min expects each collection element to be a single numeric value; item 1 was sequence value");
 
@@ -1045,19 +1050,19 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Max_SequenceValueElements_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "max(((1, 2), (3, 4)))",
             "max expects each collection element to be a single numeric value; item 0 was sequence value");
 
     [Fact]
     public void Eval_Max_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "max('hello')",
             "max expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Max_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "max((1, (2, 3)))",
             "max expects each collection element to be a single numeric value; item 1 was sequence value");
 
@@ -1115,7 +1120,7 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Sum_NestedSequenceValueReceiver_DotCallPreservesNestedSequenceValues()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "((1, 2), (3, 4)).sum",
             "sum expects each collection element to be a single numeric value; item 0 was sequence value");
 
@@ -1129,25 +1134,25 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Sum_SequenceValueElements_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "sum(((1, 2), (3, 4)))",
             "sum expects each collection element to be a single numeric value; item 0 was sequence value");
 
     [Fact]
     public void Eval_Sum_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "sum('hello')",
             "sum expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Sum_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "sum((1, (2, 3)))",
             "sum expects each collection element to be a single numeric value; item 1 was sequence value");
 
     [Fact]
     public void Eval_Sum_ProjectedNestedSequenceValueSelection_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
             sum(A:0)
@@ -1221,19 +1226,19 @@ public class EvaluatorCollectionBuiltinTests
 
     [Fact]
     public void Eval_Avg_SequenceValueElements_FailWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "avg(((1, 2), (3, 4)))",
             "avg expects each collection element to be a single numeric value; item 0 was sequence value");
 
     [Fact]
     public void Eval_Avg_StringElement_FailsWithContext()
-        => AssertBuiltinFailureWithExactContext(
+        => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "avg('hello')",
             "avg expects each collection element to be a single numeric value; item 0 was string value \"hello\"");
 
     [Fact]
     public void Eval_Avg_IndexedNumericDiagnostic_IncludesItemIndex()
-        => AssertBuiltinFailureWithContext(
+        => AssertBuiltinFailureWithText<EvalError.TypeMismatch>(
             "avg((1, (2, 3)))",
             "avg expects each collection element to be a single numeric value; item 1 was sequence value");
 

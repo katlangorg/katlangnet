@@ -20,10 +20,26 @@ internal readonly record struct SequenceBuiltinSuffixArgDescriptor(
     string Name,
     SequenceBuiltinSuffixArgKind Kind = SequenceBuiltinSuffixArgKind.Algorithm);
 
+/// <summary>
+/// What a collection builtin does with an EMPTY one-level collection view (Q-27). Lean:
+/// <c>SequenceBuiltinEmptyPolicy</c>.
+/// </summary>
 internal enum SequenceBuiltinEmptyPolicy
 {
+    /// <summary>The empty collection is an ordinary input (<c>count</c>, <c>sum</c>, <c>map</c>, ...).</summary>
     AllowEmpty,
+
+    /// <summary>
+    /// An aggregate that is undefined on no items (<c>min</c>, <c>max</c>, <c>avg</c>): the
+    /// empty collection is outside its domain, <c>IllegalInEval</c>.
+    /// </summary>
     RequireAnyItem,
+
+    /// <summary>
+    /// A SELECTION (<c>first</c>, <c>last</c>, SEQ-04): the empty collection has no position to
+    /// select, <c>BadIndex</c> — the very outcome of <c>A:0</c> on it.
+    /// </summary>
+    RequireSelectablePosition,
 }
 
 internal enum SequenceBuiltinItemShapeConstraint
@@ -326,10 +342,10 @@ internal static class BuiltinRegistry
         new([new("item", SequenceBuiltinSuffixArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata FirstSequenceMetadata =
-        new([], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
+        new([], SequenceBuiltinEmptyPolicy.RequireSelectablePosition, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata LastSequenceMetadata =
-        new([], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.Any);
+        new([], SequenceBuiltinEmptyPolicy.RequireSelectablePosition, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly SequenceBuiltinMetadata DistinctSequenceMetadata =
         new([], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);

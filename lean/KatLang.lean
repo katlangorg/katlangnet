@@ -521,15 +521,15 @@ inductive Error where
   | unknownProperty  : String -> Ident -> Error        -- object desc, property name
   | notPublicProperty : String -> Ident -> Error       -- object desc, property name (exists but private)
   | localOnlyProperty : String -> Ident -> PropExposure -> Error  -- object desc, property name, reason
-  | notAnAlgorithm   : String -> Error
+  | notAnAlgorithm   : String -> Error          -- an invoking position received no callable identity (Q-06)
   | illegalInOpen    : String -> Error                -- semantic restriction (e.g., builtin not allowed)
   | badOpenForm      : String -> Error                -- syntactic form not allowed in open
-  | illegalInEval    : String -> Error                -- not evaluable to a value
+  | illegalInEval    : String -> Error                -- a value outside the operation's domain (Q-27), or not evaluable
   | ambiguousOpen    : Ident -> List String -> Error   -- name, providers
-  | arityMismatch    : Nat -> Nat -> Error     -- expected, actual
-  | badArity         : Error                   -- shape / unpacking failure
-  | typeMismatch     : String -> Error          -- type error (e.g. string where number expected)
-  | badIndex         : Error
+  | arityMismatch    : Nat -> Nat -> Error     -- supply cardinality: expected, actual
+  | badArity         : Error                   -- supply/output cardinality without a count (Q-27)
+  | typeMismatch     : String -> Error          -- a present value of the wrong kind (Q-27)
+  | badIndex         : Error                   -- a selection names no position (first/last included)
   | divByZero        : Error                   -- division or modulo by zero
   | demandCycle      : Error                   -- a VALUE demand re-enters its evaluating cell
   | noMatchingBranch : Ident -> Error          -- conditional algorithm: no branch matched
@@ -660,9 +660,16 @@ structure SequenceBuiltinSuffixArgDescriptor where
   kind : SequenceBuiltinSuffixArgKind := .algorithm
   deriving Repr, BEq
 
+/-- What a collection builtin does with an EMPTY one-level collection view
+    (Q-27): an ordinary input (`allowEmpty`), outside an aggregate's domain
+    (`requireAnyItem`, `illegalInEval` — `min`, `max`, `avg`), or a SELECTION
+    that has no position to select (`requireSelectablePosition`, `badIndex` —
+    `first`, `last`, exactly as `collection:0`, SEQ-04).
+    C#: `SequenceBuiltinEmptyPolicy`. -/
 inductive SequenceBuiltinEmptyPolicy where
   | allowEmpty
   | requireAnyItem
+  | requireSelectablePosition
   deriving Repr, BEq, DecidableEq
 
 inductive SequenceBuiltinItemShapeConstraint where
@@ -710,10 +717,10 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
       suffixArgs := [{ name := "item", kind := .value }]
     }
   | .firstBuiltin => some {
-      emptyPolicy := .requireAnyItem
+      emptyPolicy := .requireSelectablePosition
     }
   | .lastBuiltin => some {
-      emptyPolicy := .requireAnyItem
+      emptyPolicy := .requireSelectablePosition
     }
   | .distinctBuiltin => some {
     }
@@ -850,16 +857,28 @@ def builtinArityDesc : Builtin -> String
           | .rangeBuiltin => "2"
           | _ => "?"
 
+/-- The fewest arguments a call of the builtin accepts — its fixed arity, or a
+    variadic-state loop's minimum (its fixed parameters plus one initial state):
+    exactly the arities `builtinAcceptsArity` admits. C#:
+    `BuiltinDescriptor.ArityFacts.MinTopLevelArgumentCount`. -/
+def builtinMinimumArity (b : Builtin) : Nat :=
+  match sequenceBuiltinMetadata? b with
+  | some metadata => 1 + metadata.suffixArgs.length
+  | none =>
+      match b with
+      | .ifBuiltin => 3
+      | .whileBuiltin => 2
+      | .repeatBuiltin => 3
+      | .atomsBuiltin => 1
+      | .rangeBuiltin => 2
+      | _ => 0
+
 def builtinArityError (b : Builtin) (actual : Nat) : Error :=
-  -- The numeric payload mirrors the C# `WrongBuiltinArity`: `if` is the one
-  -- builtin whose expected count is populated (it requires exactly 3
-  -- arguments); every other builtin still carries the placeholder 0 beside
-  -- the descriptive `builtinArityDesc` context.
-  let expected : Nat :=
-    match b with
-    | .ifBuiltin => 3
-    | _ => 0
-  Error.withContext s!"expected {builtinArityDesc b} arguments" (Error.arityMismatch expected actual)
+  -- The numeric payload is the builtin's real arity contract (Q-27 payload
+  -- hygiene, formerly a placeholder 0 for every builtin but `if`), beside the
+  -- descriptive `builtinArityDesc` context. Mirrors the C# `WrongBuiltinArity`.
+  Error.withContext s!"expected {builtinArityDesc b} arguments"
+    (Error.arityMismatch (builtinMinimumArity b) actual)
 
 --------------------------------------------------------------------------------
 -- Patterns (for clause heads and conditional algorithms)
@@ -3055,15 +3074,6 @@ def resultToString (r : Result) : EvalM Result :=
 -- Semantics
 --------------------------------------------------------------------------------
 
-/-- Coerce a Result to Int, or raise typeMismatch for strings, badArity otherwise. -/
-def expectInt (r : Result) : EvalM Int :=
-  match r with
-  | .str _ => .error (Error.typeMismatch "Expected a number, got a string")
-  | .bool _ => .error (Error.typeMismatch "Expected a number, got a Boolean value")
-  | _ => match Result.asInt? r with
-    | some n => pure n
-    | none   => .error Error.badArity
-
 partial def resultDiagnosticString : Result -> String
   | .atom value => toString value
   | .str value => "'" ++ value ++ "'"
@@ -3080,6 +3090,19 @@ def operandDescription : Result -> String
   | .bool value => s!"a Boolean value: {Result.boolText value}"
   | .atom value => s!"numeric value {value}"
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
+
+/-- Coerce a Result to Int. Every present value that is not a number — a
+    string, a Boolean, a sequence (`()` included) or a list — is the value-KIND
+    failure `typeMismatch` (Q-27): a selector, a `range` bound, a `repeat`
+    count and a Math argument of the wrong kind are never an arity error.
+    C#: `Evaluator.ExpectInt`. -/
+def expectInt (r : Result) : EvalM Int :=
+  match r with
+  | .str _ => .error (Error.typeMismatch "Expected a number, got a string")
+  | .bool _ => .error (Error.typeMismatch "Expected a number, got a Boolean value")
+  | _ => match Result.asInt? r with
+    | some n => pure n
+    | none   => .error (Error.typeMismatch s!"Expected a number, got {operandDescription r}")
 
 /-- An ordinary structural pattern that received a value of another kind —
     a sequence pattern given a list or a scalar, a list pattern given a
@@ -3189,6 +3212,12 @@ structure CallableCallItem where
     evaluates the value-side `algorithm?`. -/
 def CallableCallItem.named? (item : CallableCallItem) : Option Algorithm :=
   item.callable?.or item.algorithm?
+
+/-- The context of NEED-04's value verdict: the occurrences of one repeated
+    parameter name received unequal VALUE contributions (the binder's
+    `badArity`, unchanged by Q-27). C#: `Evaluator.RepeatedParameterContext`. -/
+def repeatedParameterContext (name : Ident) : String :=
+  s!"repeated parameter '{name}' requires equal arguments"
 
 /-- Callable identity includes its declaration and the captured lexical activation chain.
     Comparing identities does not evaluate either algorithm or consult its value cache. -/
@@ -4284,6 +4313,12 @@ def loopStepName (loopName : String) (step : ResolvedArgumentAlgorithm) : EvalM 
 def loopResultCounted (finalSlots : List Result) : CountedResult :=
   reCountValueBoundary (loopStateResult finalSlots, finalSlots.length)
 
+/-- The context of a `while` step that emitted no slot at all: its output has
+    no continuation flag, an emitted-slot cardinality failure (`badArity`,
+    Q-27). C#: `Evaluator.WhileStepWithoutFlagContext`. -/
+def whileStepWithoutFlagContext : String :=
+  "a while step must output at least its continuation flag"
+
 /-- Split a loop step output into next state slots and the continuation flag.
     The step's LAST output is the flag and must be a Boolean value (`true`
     continues, `false` stops); a number, string, sequence, or list there is a
@@ -4292,7 +4327,7 @@ def loopResultCounted (finalSlots : List Result) : CountedResult :=
     it must be Boolean too. C#: `Evaluator.SplitContSlots`. -/
 def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := do
   match outputSlots with
-  | [] => .error Error.badArity
+  | [] => .error (Error.withContext whileStepWithoutFlagContext Error.badArity)
   | [slot] =>
     match Result.asBool? slot with
     | some c => pure ([slot], c)
@@ -4390,11 +4425,19 @@ def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMet
   match metadata.emptyPolicy with
   | .allowEmpty =>
       pure collected
+  -- The empty collection is a DOMAIN failure of an aggregate and a missing
+  -- POSITION of a selection (Q-27): never an arity error, because the argument
+  -- count is correct.
   | .requireAnyItem =>
       if collected.totalItemCount = 0 then
+        .error (Error.illegalInEval s!"{builtinDisplayName b} requires a non-empty collection")
+      else
+        pure collected
+  | .requireSelectablePosition =>
+      if collected.totalItemCount = 0 then
         .error (Error.withContext
-          s!"{builtinDisplayName b} requires a non-empty collection"
-          Error.badArity)
+          s!"{builtinDisplayName b} selects from an empty collection, which has no position to select"
+          Error.badIndex)
       else
         pure collected
 
@@ -4404,7 +4447,10 @@ def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMet
     interpretation.
 
     Diagnostics identify the 0-based collection item index so numeric shape
-    failures remain debuggable after counted top-level extraction. -/
+    failures remain debuggable after counted top-level extraction. An element
+    that is not one number is a present value of the wrong KIND —
+    `typeMismatch` (Q-27), never an arity error.
+    C#: `Evaluator.CollectSingleAtomicNumbers`. -/
 def collectSingleAtomicNumbers (b : Builtin)
     : Nat -> List Result -> EvalM (List Int)
   | _, [] => pure []
@@ -4414,9 +4460,7 @@ def collectSingleAtomicNumbers (b : Builtin)
           let tail <- collectSingleAtomicNumbers b (index + 1) rest
           pure (n :: tail)
       | none =>
-          .error (Error.withContext
-            (numericSequenceItemErrorContext b index item)
-            Error.badArity)
+          .error (Error.typeMismatch (numericSequenceItemErrorContext b index item))
 
 def prepareSequenceBuiltinInput (b : Builtin) (metadata : SequenceBuiltinMetadata)
     (collected : CollectedSequenceBuiltinInput)
@@ -4519,12 +4563,14 @@ def prepareSequenceBuiltinSuffixArgItem
   | .wholeNumber =>
     match item.value? with
     | some value =>
+      -- The one numeric-control rule (Q-27): a present value of the wrong KIND
+      -- is `typeMismatch`. (A non-whole number is the C# runtime's
+      -- `illegalInEval`; the integer core has none.)
       match Result.singleAtomicNumber? value with
       | some number => pure (.wholeNumber number)
       | none =>
-          .error (Error.withContext
-            (sequenceBuiltinSuffixArgErrorContext b descriptor)
-            Error.badArity)
+          .error (Error.typeMismatch
+            s!"{sequenceBuiltinSuffixArgErrorContext b descriptor}, but was {operandDescription value}")
     | none =>
         match sequenceBuiltinValueDemandError? item with
         | some err => .error err
@@ -4651,21 +4697,24 @@ def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
     the ordinary value boundary (`Result.valueCount`), exactly like
     `collection:0` — a selected sequence or list stays one value, a selected
     `()` emits zero values, and only an explicit spread opens the selection.
-    The collection must be non-empty. Law: `first_is_select_zero`.
+    An empty collection has no position to select: `badIndex`, the outcome of
+    `collection:0` (SEQ-04, Q-27; the empty policy reports it first).
+    Laws: `first_is_select_zero`, `first_empty_is_badIndex`.
     C#: `EvalFirstCounted`. -/
 def evalFirstCounted (items : List Result) : EvalM CountedResult := do
   match items with
   | first :: _ => pure (first, Result.valueCount first)
-  | [] => .error Error.badArity
+  | [] => .error Error.badIndex
 
 /-- Evaluate `last(collection)`: SELECT the last top-level collection element
     through the same value boundary as `evalFirstCounted` and
-    `collection:(count - 1)`. The collection must be non-empty.
-    Law: `last_is_select_last`. C#: `EvalLastCounted`. -/
+    `collection:(count - 1)`. An empty collection has no position to select:
+    `badIndex`. Laws: `last_is_select_last`, `last_empty_is_badIndex`.
+    C#: `EvalLastCounted`. -/
 def evalLastCounted (items : List Result) : EvalM CountedResult := do
   match items.getLast? with
   | some last => pure (last, Result.valueCount last)
-  | none => .error Error.badArity
+  | none => .error Error.badIndex
 
 /-- Evaluate `take(collection, count)`.
     `take` returns the first `count` extracted top-level items unchanged,
@@ -4714,7 +4763,7 @@ def evalMinCounted (numbers : List Int) : EvalM CountedResult := do
     | n :: rest, currentMin =>
         minLoop rest (if n < currentMin then n else currentMin)
   match numbers with
-  | [] => .error Error.badArity
+  | [] => .error (Error.illegalInEval "min requires a non-empty collection")
   | first :: rest => do
       let minimum <- minLoop rest first
       pure (Result.atom minimum, 1)
@@ -4732,7 +4781,7 @@ def evalMaxCounted (numbers : List Int) : EvalM CountedResult := do
     | n :: rest, currentMax =>
         maxLoop rest (if n > currentMax then n else currentMax)
   match numbers with
-  | [] => .error Error.badArity
+  | [] => .error (Error.illegalInEval "max requires a non-empty collection")
   | first :: rest => do
       let maximum <- maxLoop rest first
       pure (Result.atom maximum, 1)
@@ -4760,7 +4809,7 @@ def evalSumCounted (numbers : List Int) : EvalM CountedResult := do
     recursively inspected, and strings are rejected. -/
 def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
   match numbers with
-  | [] => .error Error.badArity
+  | [] => .error (Error.illegalInEval "avg requires a non-empty collection")
   | values =>
       let total := values.foldl (fun acc n => acc + n) 0
       pure (Result.atom (total.tdiv (Int.ofNat values.length)), 1)
@@ -5284,14 +5333,44 @@ partial def projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) : EvalM 
   | _ => pure none
 end
 
+/-- The ROLE of a builtin's invoking (CALLABLE) slot — its callback, or a
+    loop's step: the description of the slot's missing-callability verdict
+    (Q-06), a structured semantic description and never a fake zero-parameter
+    callable. The per-item invocation frames keep their own names ("filter
+    predicate", "map transform", "reduce step").
+    C#: `Evaluator.InvokingSlotRoles.Of`. -/
+def invokingSlotRole : Builtin -> String
+  | .mapBuiltin => "map transform"
+  | .filterBuiltin => "filter predicate"
+  | .reduceBuiltin => "reduce reducer"
+  | .repeatBuiltin => "repeat step"
+  | .whileBuiltin => "while step"
+  | b => s!"{builtinDisplayName b} callback"
+
+/-- CALLABLE projection of ONE invoking builtin slot — a collection builtin's
+    callback (the `filter` predicate, the `map` transform, the `reduce`
+    reducer) or a `while`/`repeat` step — made only when the builtin is about
+    to invoke it, so an unused invoking slot is never projected or validated
+    (CALL-03, LOOP-05). It reads the slot's callable identity alone and never
+    demands its VALUE (NEED-06): a slot with no CALLABLE identity is
+    `notAnAlgorithm` described by the slot's role (Q-06), the verdict a user
+    higher-order parameter reports, raised before any invocation. A slot that
+    HAS callable identity keeps every ordinary binder verdict when it is
+    invoked. C#: `Evaluator.ProjectInvokingSlot`. -/
+def projectInvokingSlot (role : String) : Option Algorithm -> EvalM Algorithm
+  | some algorithm => pure algorithm
+  | none => .error (Error.notAnAlgorithm role)
+
 partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
-    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM (Option Algorithm) :=
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
   expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
     match arg with
-    | .needAlgorithm address => projectNeedCallable address
+    | .needAlgorithm address => do
+        projectInvokingSlot (invokingSlotRole b) (<- projectNeedCallable address)
     | .algorithm algorithm callable? =>
-        pure (some ({ algorithm := algorithm, callable? := callable? } : ResolvedArgumentAlgorithm).invoked)
+        projectInvokingSlot (invokingSlotRole b)
+          (some ({ algorithm := algorithm, callable? := callable? } : ResolvedArgumentAlgorithm).invoked)
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
@@ -5497,7 +5576,8 @@ mutual
       if let some previous := lookupAssoc name bound then
         let before <- demandNeed previous
         if !(before == value) then
-          if family then return none else throw Error.badArity
+          if family then return none
+          else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
         let first <- projectNeedCallable previous
         let second <- projectNeedCallable address
         if let some a := first then
@@ -6010,12 +6090,6 @@ mutual
         evalResolvedCallbackCallCounted target args ctx env calleeName
     | _ => evalUserCallbackCallCounted callee args ctx env
 
-  partial def evalOptionalCallbackCounted (callee : Option Algorithm)
-      (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (name : String) : EvalM CountedResult := do
-    match callee with
-    | some algorithm => evalResolvedCallbackCallCounted algorithm args ctx env name
-    | none => throw (Error.arityMismatch 0 args.length)
-
   /-- Non-counted wrapper for callback calls (the value projection of
       `evalResolvedCallbackCallCounted`). -/
   partial def evalResolvedCallbackCall (callee : Algorithm)
@@ -6197,15 +6271,16 @@ mutual
       written accumulator slot, reified at the ordinary value boundary before
       reduction, so empty collections return the initial accumulator as ONE
       value. -/
-  partial def evalOptionalReduceCounted (collection : List CountedResult)
-      (stepAlg : Option Algorithm) (initial : Result)
+  partial def evalReduceCounted (collection : List CountedResult)
+      (stepAlg : Algorithm) (initial : Result)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
       | [], acc => pure acc
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
             "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
-            evalOptionalCallbackCounted stepAlg [countedSequenceCallbackItem item, (accValue, Result.valueCount accValue)] ctx env "reduce step"
+            evalResolvedCallbackCallCounted stepAlg [countedSequenceCallbackItem item, (accValue, Result.valueCount accValue)] ctx env
+              "reduce step"
           let next <- expectSingleAccumulator stepOut
           reduceLoop rest (next, 1)
     -- The initial accumulator occupies ONE written accumulator slot: its value
@@ -6223,13 +6298,14 @@ mutual
       list values stay intact. The kept items remain the original collection
       items and are materialized as one list value, so keeping
       exactly `(1, 2)` yields `[(1, 2)]`. -/
-  partial def evalOptionalFilterCounted (items : List CountedResult) (predicateAlg : Option Algorithm)
+  partial def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
       | _, [] => pure []
       | index, item :: rest => do
         match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
-          (Prod.fst <$> evalOptionalCallbackCounted predicateAlg [countedSequenceCallbackItem item] ctx env "filter predicate")) with
+          (Prod.fst <$> evalResolvedCallbackCallCounted predicateAlg [countedSequenceCallbackItem item] ctx env
+            "filter predicate")) with
           | .error err =>
               .error err
           | .ok pr =>
@@ -6248,14 +6324,6 @@ mutual
     let kept <- filterLoop 0 items
     pure (makeCollectionListResult kept)
 
-  partial def evalReduceCounted (items : List CountedResult) (step : Algorithm) (initial : Result)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    evalOptionalReduceCounted items (some step) initial ctx env
-
-  partial def evalFilterCounted (items : List CountedResult) (predicate : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    evalOptionalFilterCounted items (some predicate) ctx env
-
   /-- Evaluate `map(collection, mapper)`.
       `map` processes top-level collection elements from left to right.
       `transform(element)` receives each item exactly as collected from the
@@ -6269,14 +6337,15 @@ mutual
       the list result (mapped elements are never flattened
       into the outer list), empty collections yield `[]`, and the output
       preserves the original element order and element count. -/
-  partial def evalOptionalMapCounted (collection : List CountedResult) (transformAlg : Option Algorithm)
+  partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec mapLoop : List CountedResult -> EvalM (List Result)
       | [] => pure []
       | item :: rest => do
           let mappedOut <- withCtx
             "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
-            evalOptionalCallbackCounted transformAlg [countedSequenceCallbackItem item] ctx env "map transform"
+            evalResolvedCallbackCallCounted transformAlg [countedSequenceCallbackItem item] ctx env
+              "map transform"
           let mapped <- expectSingleMappedElement mappedOut
           let restMapped <- mapLoop rest
           pure (mapped :: restMapped)
@@ -6304,13 +6373,13 @@ mutual
               if bound.iterationItems.isEmpty then return makeCollectionListResult []
               let predicateAlg <-
                 expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              evalOptionalFilterCounted bound.iterationItems predicateAlg ctx env
+              evalFilterCounted bound.iterationItems predicateAlg ctx env
         | .mapBuiltin =>
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               if bound.iterationItems.isEmpty then return makeCollectionListResult []
               let transformAlg <-
                 expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              evalOptionalMapCounted bound.iterationItems transformAlg ctx env
+              evalMapCounted bound.iterationItems transformAlg ctx env
         | .orderBuiltin =>
             withPreparedNumericItems fun numbers =>
               evalOrderCounted numbers
@@ -6366,13 +6435,9 @@ mutual
               if bound.iterationItems.isEmpty then return (initial, Result.valueCount initial)
               let stepAlg <-
                 expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              evalOptionalReduceCounted bound.iterationItems stepAlg initial ctx env
+              evalReduceCounted bound.iterationItems stepAlg initial ctx env
         | _ =>
             .error (builtinArityError b args.length)
-
-  partial def evalMapCounted (items : List CountedResult) (transform : Algorithm)
-      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    evalOptionalMapCounted items (some transform) ctx env
 
   /-- Builtin application with counted output shape.
       Used by `reduce` to validate that the step emits exactly one accumulator
@@ -6421,7 +6486,7 @@ mutual
             let initialCells <- initAlgs.mapM (fun arg => argumentNeed arg ctx env)
             let stepName <- loopStepName "while" step
             let rec loop (cells : List Nat) : EvalM (List Nat) := do
-              let some algorithm <- invokeNeed step | throw (Error.arityMismatch 0 cells.length)
+              let algorithm <- projectInvokingSlot (invokingSlotRole .whileBuiltin) (<- invokeNeed step)
               let outputSlots <- runNeedStepSlots algorithm ctx env cells stepName
               let (nextSlots, cont) <- splitContSlots outputSlots
               if cont then loop (<- nextSlots.mapM (fun value => readyNeed (value, Result.valueCount value)))
@@ -6443,7 +6508,7 @@ mutual
               let stepName <- loopStepName "repeat" step
               let rec repeatLoop (remaining : Int) (cells : List Nat) : EvalM (List Nat) := do
                 if remaining = 0 then return cells
-                let some algorithm <- invokeNeed step | throw (Error.arityMismatch 0 cells.length)
+                let algorithm <- projectInvokingSlot (invokingSlotRole .repeatBuiltin) (<- invokeNeed step)
                 let outputSlots <- runNeedStepSlots algorithm ctx env cells stepName
                 let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
                 repeatLoop (remaining - 1) next
@@ -7028,11 +7093,11 @@ mutual
 
   /-- Evaluate a unary operator expression as one counted value. The operand is
       read at its value boundary. `not` is the Boolean negation and REQUIRES a
-      Boolean operand (a number has no truth value); `-` is numeric negation
-      and rejects a Boolean operand as a value-kind error, keeping the
-      established string rejection and the numeric-conversion failure for
-      every other non-numeric operand — the empty sequence value follows the
-      same validation as other non-scalar values (SYN-01). Owned here so
+      Boolean operand (a number has no truth value); `-` is numeric negation:
+      every non-numeric operand — a string, a Boolean, a sequence (the empty
+      sequence value like any other, SYN-01) or a list — is the one value-kind
+      error naming the operator and the operand (Q-27), never an arity error.
+      Owned here so
       `eval` (the value projection) never carries independent operator
       semantics. C#: `Evaluator.ApplyUnaryOperator`, reached from the unary
       case of `EvalExpressionSpineCounted`. -/
@@ -7046,13 +7111,10 @@ mutual
         | none => .error (Error.typeMismatch
             s!"operator `not` expects a Boolean operand, but the operand was {operandDescription r}")
     | .minus =>
-        match r with
-        | .str _ => .error (Error.typeMismatch "Unary operator is not supported for strings")
-        | .bool _ => .error (Error.typeMismatch
+        match Result.asInt? r with
+        | some v => pure (Result.atom (-v), 1)
+        | none => .error (Error.typeMismatch
             s!"operator `-` expects a numeric scalar operand, but the operand was {operandDescription r}")
-        | _ => do
-          let v <- expectInt r
-          pure (Result.atom (-v), 1)
 
   /-- Evaluate a binary (arithmetic or logical) operator expression as one
       counted value. Both operands are read at their value boundaries; strings

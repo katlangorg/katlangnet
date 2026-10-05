@@ -1,13 +1,12 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// Builtin arity failures render SIGNATURE-FIRST in every call spelling: the
-/// non-<c>if</c> builtins deliberately carry the Lean-aligned placeholder
-/// <c>Expected = 0</c> beside their real <see cref="CallableSignature"/>, so
-/// the dot-call formatter must never leak the sentinel as
-/// "expects 0 parameters". The structured leaf payload is unchanged
-/// (rendering-only fix; <see cref="IfBuiltinArityPayloadTests"/> pins the
-/// <c>if</c> exception with <c>Expected = 3</c>); signatureless structural
+/// Builtin arity failures render SIGNATURE-FIRST in every call spelling, and the
+/// structured leaf carries the builtin's REAL arity contract beside its
+/// <see cref="CallableSignature"/>: <c>Expected</c> is the fixed arity, or a loop's
+/// minimum (Q-27 payload hygiene, 2026-10-05: formerly a Lean-aligned placeholder 0
+/// for every builtin but <c>if</c>, which <see cref="IfBuiltinArityPayloadTests"/>
+/// pins), so no formatter can render "expects 0 parameters"; signatureless structural
 /// user-property errors keep their receiver-specific wording. The expected count
 /// is the builtin's arity CONTRACT (<see cref="BuiltinDescriptor.ArityFacts"/>, Lean
 /// <c>builtinAcceptsArity</c> / <c>builtinArityDesc</c>): exact for a fixed-arity
@@ -27,6 +26,15 @@ public class BuiltinArityRenderingParityTests
         Assert.True(result.IsError, $"expected an arity failure for: {source}");
         return result.Error;
     }
+
+    /// <summary>The arity contract written out independently (Lean <c>builtinAcceptsArity</c>).</summary>
+    private static readonly Dictionary<string, int> ContractMinimum = new()
+    {
+        ["range"] = 2,
+        ["atoms"] = 1,
+        ["while"] = 2,
+        ["repeat"] = 3,
+    };
 
     private static EvalError Innermost(EvalError error)
     {
@@ -75,10 +83,10 @@ public class BuiltinArityRenderingParityTests
             Assert.Equal(expectedMessage, message);
             Assert.DoesNotContain("expects 0 parameter", message, StringComparison.Ordinal);
 
-            // The structured leaf keeps the Lean-aligned placeholder payload:
-            // Expected = 0 plus the real signature, identically in both spellings.
+            // The structured leaf carries the real arity contract (Lean
+            // `builtinMinimumArity`) plus the real signature, identically in both spellings.
             var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
-            Assert.Equal(0, arity.Expected);
+            Assert.Equal(ContractMinimum[builtinName], arity.Expected);
             Assert.Equal(actualArgumentCount, arity.Actual);
             Assert.Equal(builtinName, arity.Signature?.Name);
         }
@@ -120,7 +128,7 @@ public class BuiltinArityRenderingParityTests
         Assert.Equal(
             "Callable `range(start, stop)` expects 2 arguments, but was called with 3 arguments.",
             KatLangError.FromEvalError(legacy).Message);
-        Assert.Equal(0, arity.Expected);
+        Assert.Equal(2, arity.Expected);
     }
 
     // ── X-09: the loops' minimum arity ─────────────────────────────────────────────────
@@ -160,7 +168,7 @@ public class BuiltinArityRenderingParityTests
 
     /// <summary>
     /// Too few arguments for a loop name its MINIMUM — never an exact count — in every spelling and
-    /// on every route, with the structured payload unchanged (<c>Expected = 0</c>, the written
+    /// on every route, with the structured payload (<c>Expected</c> = that minimum, the written
     /// count, the runtime signature) and nothing evaluated: neither the step nor any written argument
     /// runs before the arity failure.
     /// </summary>
@@ -191,7 +199,7 @@ public class BuiltinArityRenderingParityTests
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root), operations, limits: null, randomSeed: null, CancellationToken.None);
         Assert.True(result.IsError);
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-        Assert.Equal(0, arity.Expected);
+        Assert.Equal(minimum, arity.Expected);
         Assert.Equal(actual, arity.Actual);
         Assert.Equal(signature, arity.Signature?.DisplayText);
     }

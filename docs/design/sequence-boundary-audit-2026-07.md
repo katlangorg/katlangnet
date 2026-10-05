@@ -111,8 +111,11 @@ supply describe the July 2026 model; the current rule is
 compare unequal. `()` is a first-class operand for `==`/`!=`. For every
 *non*-equality binary operator it is an ordinary non-scalar operand and is
 rejected like `(1, 2)` or `[]` (SYN-01, September 2026: `() > 1` and
-`() + ()` are type errors). Unary `-()` and `not ()` likewise fail their existing
-numeric conversion (`badArity`), exactly like other unsupported sequence/list values.
+`() + ()` are type errors). Unary `-()` and `not ()` are likewise value-kind errors
+(`typeMismatch`), exactly like other unsupported sequence/list operands. *(Corrected
+2026-10-05, Q-27 / X-31: this note said both failed their numeric conversion with
+`badArity`; `not ()` was already the Boolean-operand `typeMismatch` since the
+Boolean value kind, and `-()` became the numeric-operand `typeMismatch` with Q-27.)*
 
 **count / .count.** Both paths supply exactly one fixed `collection` argument.
 Only after fixed binding, the builtin collection view opens one outer sequence

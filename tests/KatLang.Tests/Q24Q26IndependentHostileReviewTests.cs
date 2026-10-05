@@ -73,10 +73,11 @@ public class Q24Q26IndependentHostileReviewTests
     [InlineData("repeat(5, 1, 1)")]
     public async Task Q23_NonCallableValueStepsStayRejected(string source)
     {
-        // Q-23 made every CALLABLE an eligible step; a value still has no callable identity (NEED-06).
+        // Q-23 made every CALLABLE an eligible step; a value still has no callable identity
+        // (NEED-06), so the step is NotAnAlgorithm (Q-06).
         var result = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("err", result.Kind);
-        Assert.StartsWith("ArityMismatch:", Assert.Single(result.Errors), StringComparison.Ordinal);
+        Assert.StartsWith("NotAnAlgorithm:", Assert.Single(result.Errors), StringComparison.Ordinal);
     }
 
     [Theory]

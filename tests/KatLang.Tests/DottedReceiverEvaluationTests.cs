@@ -546,13 +546,15 @@ public class DottedReceiverEvaluationTests
     [Fact]
     public void ReadyCallbackData_DoesNotAcquireCallableIdentityOrReification()
     {
+        // Ready data has no CALLABLE identity: an invoking slot that receives it is
+        // NotAnAlgorithm (Q-06) — the spread step here, `map`'s mapper slot below.
         var loopStep = Observe("S = 5\nwhile(S*, 1)");
         Assert.Equal(0, loopStep.Reifications);
-        Assert.Equal("err:arity", loopStep.Outcome);
+        Assert.Equal("err:notAnAlgorithm", loopStep.Outcome);
 
         var suffixSlot = Observe("(5, 6).reduce(map, ())");
         Assert.Equal(0, suffixSlot.Reifications);
-        Assert.Equal("err:arity", suffixSlot.Outcome);
+        Assert.Equal("err:notAnAlgorithm", suffixSlot.Outcome);
 
         var success = Observe("((), ()).reduce(map, ())");
         Assert.Equal(0, success.Reifications);

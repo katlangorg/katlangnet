@@ -117,7 +117,7 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("Inc(x) = trace(x) + 1\nR = repeat\nB = R\nApply(f) = f(Inc, 3, 0)\nApply(B)", "ok 3 [trace(0),trace(1),trace(2)]")]
     [InlineData("U((0, x)) = x\nU([x, 0]) = x\nA = U\nB = A\nmap([(0, 4), [5, 0]], B)", "ok L[4, 5]")]
     [InlineData("Only(*xs) = tick()\nA = Only\nP(f, f) = f()\nP(A, Only)",
-        "err ArityMismatch: while evaluating call to P: Bad arity [tick#1,tick#2]")]
+        "err ArityMismatch: while evaluating call to P: repeated parameter 'f' requires equal arguments: Bad arity [tick#1,tick#2]")]
     [InlineData("F(x) = {\n    M = 2\n    x\n}\nA = {\n    M = 1\n    F\n}\nB = A\nM(v) = 9\nNavigate(f) = f.M\nA.M, F.M, B.M, Navigate(A)", "ok S[1, 2, 9, 2]")]
     [InlineData("K = C + 1\nC = B\nB = A\nA = F\nF = Inc + 1\nInc(x) = x + 1\nK(3)", "ok 6")]
     [InlineData("C = count\nC(trace(1) / 0, trace(2))",

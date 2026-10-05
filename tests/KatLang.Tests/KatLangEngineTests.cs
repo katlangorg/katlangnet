@@ -444,14 +444,17 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void Run_Filter_NonCallablePredicate_ExplainsImplicitItemArgument()
+    public void Run_Filter_NonCallablePredicate_NamesTheNonCallableSlot()
     {
+        // A value in the predicate slot has no CALLABLE identity: NotAnAlgorithm, named by the
+        // slot's role and never described as a callable with zero parameters (Q-06).
         var result = KatLangEngine.Run("range(1, 5).filter(1)");
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact", error.Message);
-        Assert.Contains("Expected 0 parameters, but was called with 1 argument.", error.Message);
+        Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
+        Assert.Contains("The filter predicate is not callable: the argument supplied for it is a value, not an algorithm.", error.Message);
+        Assert.DoesNotContain("Expected 0 parameters", error.Message);
     }
 
     [Fact]

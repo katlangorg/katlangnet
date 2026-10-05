@@ -160,7 +160,7 @@ public class AliasAndBareForwardingTests
         { "N", "F(y, x) = y - x\nG(x, y) = F\nG(10, 3)", "ok -7" },
         // A repeated-name alias keeps P's two independent arguments and their constraint.
         { "R-alias", "P(x, x) = x\nA = P\nA(5, 5)", "ok 5" },
-        { "R-alias-unequal", "P(x, x) = x\nA = P\nA(5, 6)", "err ArityMismatch: while evaluating call to A: Bad arity" },
+        { "R-alias-unequal", "P(x, x) = x\nA = P\nA(5, 6)", "err ArityMismatch: while evaluating call to A: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "R-alias-arity", "P(x, x) = x\nA = P\nA(5)", "err ArityMismatch: Callable `A(x, x)` expects 2 arguments, but was called with 1 argument." },
         // Bare forwarding is by binding name: A's one x feeds both of P's occurrences.
         { "R-bare", "P(x, x) = x\nA(x) = P\nA(7)", "ok 7" },
@@ -785,7 +785,7 @@ public class AliasAndBareForwardingTests
         { "Two(a, b) = [a, b]", "Two([x, y], (y, z))", "x, y, z", "1, 2, 3", "ok L[L[1, 2], S[2, 3]]" },
         { "Coll(*vs) = vs", "Coll(xs*, y)", "xs, y", "(1, 2), 3", "ok L[1, 2, 3]" },
         { "P(x, x) = x", "P(q, q)", "q", "7", "ok 7" },
-        { "P(x, x) = x", "P(q, r)", "q, r", "7, 8", "err ArityMismatch: while evaluating call to G: while evaluating call to P: Bad arity" },
+        { "P(x, x) = x", "P(q, r)", "q, r", "7, 8", "err ArityMismatch: while evaluating call to G: while evaluating call to P: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "Add((a, b)) = a + b", "Add((x + 1, y * 2))", "x, y", "2, 3", "ok 9" },
         { "Add((a, b)) = a + b", "Add((x~, y))", "y, x", "2, 3", "ok 5" },
     };
@@ -874,12 +874,12 @@ public class AliasAndBareForwardingTests
     /// merged into one.
     /// </summary>
     [Theory]
-    [InlineData("A = P\nB = A\nB(7, 8)", "err ArityMismatch: while evaluating call to B: Bad arity")]
+    [InlineData("A = P\nB = A\nB(7, 8)", "err ArityMismatch: while evaluating call to B: repeated parameter 'x' requires equal arguments: Bad arity")]
     [InlineData("G(x) = P\nG(7)", "ok 7")]
     [InlineData("G(x) = P\nG(trace(7))", "ok 7 [trace(7)]")]
     [InlineData("G(x, y) = P\nG(7, 8)", "ok 7")]
     [InlineData("G(x, x) = P\nG(7, 7)", "ok 7")]
-    [InlineData("G(x, x) = P\nG(7, 8)", "err ArityMismatch: while evaluating call to G: Bad arity")]
+    [InlineData("G(x, x) = P\nG(7, 8)", "err ArityMismatch: while evaluating call to G: repeated parameter 'x' requires equal arguments: Bad arity")]
     [InlineData("G = P(x, x)\nG(7)", "ok 7")]
     [InlineData("G = P(x, x)\nG(trace(7))", "ok 7 [trace(7)]")]
     [InlineData("A = P\nA(trace(7), trace(7))", "ok 7 [trace(7),trace(7)]")]

@@ -150,10 +150,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// Evaluate a resolved algorithm against pre-evaluated callback arguments
-    /// that preserve their emitted top-level counts.
+    /// that preserve their emitted top-level counts. The callee is always a callable:
+    /// an invoking slot with no CALLABLE identity was already reported as
+    /// <c>NotAnAlgorithm</c> when the builtin projected it (<see cref="ProjectInvokingSlot"/>, Q-06).
     /// </summary>
     private static EvalResult<CountedResult> EvalResolvedCallbackCallCounted(
-        Algorithm? callee,
+        Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -173,8 +175,7 @@ public static partial class Evaluator
 
         try
         {
-            return callee is null ? new EvalError.ArityMismatch(0, args.Count)
-                : EvalResolvedCallbackCallCountedCore(callee, args, ctx, valEnv, calleeName);
+            return EvalResolvedCallbackCallCountedCore(callee, args, ctx, valEnv, calleeName);
         }
         finally
         {
@@ -211,7 +212,7 @@ public static partial class Evaluator
     /// their ordinary value-boundary counts inside the counted implementation.
     /// </summary>
     private static EvalResult<Result> EvalResolvedCallbackCall(
-        Algorithm? callee,
+        Algorithm callee,
         IReadOnlyList<CountedResult> args,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -222,7 +223,7 @@ public static partial class Evaluator
     /// Evaluate a higher-order sequence callback on one iterated item.
     /// </summary>
     private static EvalResult<Result> EvalSequenceCallbackCall(
-        Algorithm? callee,
+        Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -233,7 +234,7 @@ public static partial class Evaluator
     /// Counted variant of <see cref="EvalSequenceCallbackCall"/>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceCallbackCallCounted(
-        Algorithm? callee,
+        Algorithm callee,
         CountedResult item,
         EvalCtx ctx,
         ValEnv valEnv,

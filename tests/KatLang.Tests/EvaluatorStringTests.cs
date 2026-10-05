@@ -352,8 +352,9 @@ public class EvaluatorStringTests
         Assert.True(result.IsError);
         var error = result.Error;
         while (error is EvalError.WithContext wc) error = wc.Inner;
+        // The ONE unary-minus kind error, naming the operator and the operand (Q-27).
         var tm = Assert.IsType<EvalError.TypeMismatch>(error);
-        Assert.Contains("not supported for strings", tm.Message);
+        Assert.Equal("operator `-` expects a numeric scalar operand, but the operand was a string: 'hello'", tm.Message);
     }
 
     [Fact]

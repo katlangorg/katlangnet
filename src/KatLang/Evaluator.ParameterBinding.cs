@@ -444,6 +444,14 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The context of NEED-04's value verdict: the occurrences of one repeated parameter
+    /// name received unequal VALUE contributions (the binder's <c>BadArity</c>, unchanged by
+    /// Q-27). Lean: <c>bindNeedPatterns</c>.
+    /// </summary>
+    private static string RepeatedParameterContext(string name)
+        => $"repeated parameter '{name}' requires equal arguments";
+
+    /// <summary>
     /// One bound range of a pattern level: its first-occurrence binding set, the per-pattern
     /// contributions the cross merges read (for a range of more than one pattern), and whether
     /// some name repeated inside it — a repeat the range may have left to the cross merges

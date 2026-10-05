@@ -315,8 +315,9 @@ public class NumericSemanticLawReviewTests
         Assert.Equal(Decimal128.NegativeInfinity, Assert.Single(Run($"avg(({Maximum}, ln(0), {Maximum}))").Atoms));
         foreach (var special in new[] { "sqrt(-1)", "ln(0)", "-ln(0)" })
             Assert.Equal(Run(special).Value, Run($"avg({special})").Value);
+        // An empty collection is outside the mean's domain (Q-27).
         var empty = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("avg([])"));
-        Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(empty.Errors).Code);
+        Assert.Equal(KatLangErrorCode.IllegalInEval, Assert.Single(empty.Errors).Code);
     }
 
     [Fact]

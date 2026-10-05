@@ -7763,42 +7763,42 @@ def case_order__n1 : Expr :=
 -- order__bt: order(true)
 def case_order__bt : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [.boolLiteral true])])
-#guard obs case_order__bt == "err arity"
+#guard obs case_order__bt == "err type"
 
 -- order__bf: order(false)
 def case_order__bf : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [.boolLiteral false])])
-#guard obs case_order__bf == "err arity"
+#guard obs case_order__bf == "err type"
 
 -- order__pbt: order((true))
 def case_order__pbt : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [.boolLiteral true])])
-#guard obs case_order__pbt == "err arity"
+#guard obs case_order__pbt == "err type"
 
 -- order__pbt_e: order((true, ()))
 def case_order__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [.boolLiteral true, (.emptySequence 0)])])])
-#guard obs case_order__pbt_e == "err arity"
+#guard obs case_order__pbt_e == "err type"
 
 -- order__pbt_1: order((true, 1))
 def case_order__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [.boolLiteral true, .num 1])])])
-#guard obs case_order__pbt_1 == "err arity"
+#guard obs case_order__pbt_1 == "err type"
 
 -- order__lbt: order([true])
 def case_order__lbt : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [.boolLiteral true])])])
-#guard obs case_order__lbt == "err arity"
+#guard obs case_order__lbt == "err type"
 
 -- order__lbt_bf: order([true, false])
 def case_order__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [.boolLiteral true, .boolLiteral false])])])
-#guard obs case_order__lbt_bf == "err arity"
+#guard obs case_order__lbt_bf == "err type"
 
 -- order__lpbt_1: order([(true, 1)])
 def case_order__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])])
-#guard obs case_order__lpbt_1 == "err arity"
+#guard obs case_order__lpbt_1 == "err type"
 
 -- order__p1: order((1))
 def case_order__p1 : Expr :=
@@ -7818,42 +7818,42 @@ def case_order__p123 : Expr :=
 -- order__pee: order(((), ()))
 def case_order__pee : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
-#guard obs case_order__pee == "err arity"
+#guard obs case_order__pee == "err type"
 
 -- order__pe1: order(((), 1))
 def case_order__pe1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.emptySequence 0), .num 1])])])
-#guard obs case_order__pe1 == "err arity"
+#guard obs case_order__pe1 == "err type"
 
 -- order__p1e: order((1, ()))
 def case_order__p1e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [.num 1, (.emptySequence 0)])])])
-#guard obs case_order__p1e == "err arity"
+#guard obs case_order__p1e == "err type"
 
 -- order__p12_3: order(((1, 2), 3))
 def case_order__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
-#guard obs case_order__p12_3 == "err arity"
+#guard obs case_order__p12_3 == "err type"
 
 -- order__p12_34: order(((1, 2), (3, 4)))
 def case_order__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])])
-#guard obs case_order__p12_34 == "err arity"
+#guard obs case_order__p12_34 == "err type"
 
 -- order__pe_12: order(((), (1, 2)))
 def case_order__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])])
-#guard obs case_order__pe_12 == "err arity"
+#guard obs case_order__pe_12 == "err type"
 
 -- order__ppe1_2: order((((), 1), 2))
 def case_order__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])])
-#guard obs case_order__ppe1_2 == "err arity"
+#guard obs case_order__ppe1_2 == "err type"
 
 -- order__p12_e: order(((1, 2), ()))
 def case_order__p12_e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])])
-#guard obs case_order__p12_e == "err arity"
+#guard obs case_order__p12_e == "err type"
 
 -- order__ppe: order((()))
 def case_order__ppe : Expr :=
@@ -7888,27 +7888,27 @@ def case_order__l12 : Expr :=
 -- order__l12_3: order([[1, 2], 3])
 def case_order__l12_3 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])])
-#guard obs case_order__l12_3 == "err arity"
+#guard obs case_order__l12_3 == "err type"
 
 -- order__lle: order([[]])
 def case_order__lle : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [(.listLiteral [])])])])
-#guard obs case_order__lle == "err arity"
+#guard obs case_order__lle == "err type"
 
 -- order__l_e: order([()])
 def case_order__l_e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [(.emptySequence 0)])])])
-#guard obs case_order__l_e == "err arity"
+#guard obs case_order__l_e == "err type"
 
 -- order__l_p12: order([(1, 2)])
 def case_order__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.listLiteral [(.capture [.num 1, .num 2])])])])
-#guard obs case_order__l_p12 == "err arity"
+#guard obs case_order__l_p12 == "err type"
 
 -- order__p_l12: order(([1, 2], 3))
 def case_order__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
-#guard obs case_order__p_l12 == "err arity"
+#guard obs case_order__p_l12 == "err type"
 
 -- order__pl1: order(([1]))
 def case_order__pl1 : Expr :=
@@ -11193,7 +11193,7 @@ def case_special__emptyOpBoth : Expr :=
 -- special__emptyUnaryMinus: -()
 def case_special__emptyUnaryMinus : Expr :=
   .algorithmExpr (alg [] [] [] [(.unary .minus (.emptySequence 0))])
-#guard obs case_special__emptyUnaryMinus == "err arity"
+#guard obs case_special__emptyUnaryMinus == "err type"
 
 -- special__emptyUnaryNot: not ()
 def case_special__emptyUnaryNot : Expr :=
@@ -11673,12 +11673,12 @@ def case_special__minScalar : Expr :=
 -- special__minEmpty: min(())
 def case_special__minEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "min") [(.emptySequence 0)])])
-#guard obs case_special__minEmpty == "err arity"
+#guard obs case_special__minEmpty == "err illegalInEval"
 
 -- special__minNestedItem: min(((1, 2), 3))
 def case_special__minNestedItem : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "min") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
-#guard obs case_special__minNestedItem == "err arity"
+#guard obs case_special__minNestedItem == "err type"
 
 -- special__minDot: x = 3, 1, 2 \n x.min
 def case_special__minDot : Expr :=
@@ -11698,7 +11698,7 @@ def case_special__maxList : Expr :=
 -- special__maxEmpty: max(())
 def case_special__maxEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "max") [(.emptySequence 0)])])
-#guard obs case_special__maxEmpty == "err arity"
+#guard obs case_special__maxEmpty == "err illegalInEval"
 
 -- special__maxDot: x = 3, 1, 2 \n x.max
 def case_special__maxDot : Expr :=
@@ -11728,7 +11728,7 @@ def case_special__firstEmptyItem : Expr :=
 -- special__firstEmpty: first(())
 def case_special__firstEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "first") [(.emptySequence 0)])])
-#guard obs case_special__firstEmpty == "err arity"
+#guard obs case_special__firstEmpty == "err index"
 
 -- special__firstDot: x = 1, 2, 3 \n x.first
 def case_special__firstDot : Expr :=
@@ -11748,7 +11748,7 @@ def case_special__lastListElementStaysExact : Expr :=
 -- special__lastEmpty: last(())
 def case_special__lastEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "last") [(.emptySequence 0)])])
-#guard obs case_special__lastEmpty == "err arity"
+#guard obs case_special__lastEmpty == "err index"
 
 -- special__orderDescSeq: orderDesc((1, 3, 2))
 def case_special__orderDescSeq : Expr :=
@@ -11778,7 +11778,7 @@ def case_special__orderDescEmpty : Expr :=
 -- special__orderDescString: orderDesc(('b', 'a'))
 def case_special__orderDescString : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "orderDesc") [(.capture [.stringLiteral "b", .stringLiteral "a"])])])
-#guard obs case_special__orderDescString == "err arity"
+#guard obs case_special__orderDescString == "err type"
 
 -- special__orderDescDot: x = 1, 3, 2 \n x.orderDesc
 def case_special__orderDescDot : Expr :=
@@ -11948,7 +11948,7 @@ def case_special__loopStepForwardedFamily : Expr :=
 -- special__loopStepValueRejected: repeat(5, 1, 0)
 def case_special__loopStepValueRejected : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
-#guard obs case_special__loopStepValueRejected == "err arity"
+#guard obs case_special__loopStepValueRejected == "err notAnAlgorithm"
 
 -- special__loopStepZeroIterationsNeverProject: repeat(5, 0, 1), repeat(1 / 0, 0, 5)
 def case_special__loopStepZeroIterationsNeverProject : Expr :=

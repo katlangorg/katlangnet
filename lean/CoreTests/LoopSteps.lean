@@ -198,8 +198,10 @@ private def lsFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
     lsRepeat (resolve "Cnt") 1 [.listLiteral [.num 1, .num 2]], lsRepeat (resolve "Cnt2") 1 [.listLiteral [.num 1, .num 2]]]
   (.sequenceValue [.atom 1, .atom 1, .atom 2, .atom 2])
 
--- A value has no callable identity: still no step.
-#guard lsFails [lsRepeat (.num 5) 1 [.num 0]] (innermostIsArityMismatch 0 1)
+-- A value has no callable identity: still no step, and the iteration that needs
+-- it reports `notAnAlgorithm` (Q-06), never by demanding the value.
+#guard lsFails [lsRepeat (.num 5) 1 [.num 0]] (innermostIsNotAnAlgorithm "repeat step")
+#guard lsFails [lsRepeat (.binary .div (.num 1) (.num 0)) 1 [.num 0]] (innermostIsNotAnAlgorithm "repeat step")
 
 -- Zero iterations never project the step: a value and a failing expression alike.
 #guard lsOk [lsRepeat (.num 5) 0 [.num 1], lsRepeat (.binary .div (.num 1) (.num 0)) 0 [.num 5],

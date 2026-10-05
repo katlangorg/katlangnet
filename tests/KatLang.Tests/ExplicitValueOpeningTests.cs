@@ -182,9 +182,10 @@ public class ExplicitValueOpeningTests
         Assert.Equal("2", Display(defs + "Values*.Mean"));
 
         // One sequence or list argument is ONE collected element: the numeric `sum`
-        // rejects the structured element (Lean: the element-constraint `badArity`).
+        // rejects the structured element as a value of the wrong KIND (Q-27; Lean: the
+        // element constraint's `typeMismatch`).
         foreach (var one in new[] { "Mean((1, 2, 3))", "Mean([1, 2, 3])", "Values.Mean", "(1, 2, 3).Mean" })
-            Assert.Equal(KatLangErrorCode.ArityMismatch, FailureCode(defs + one));
+            Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(defs + one));
     }
 
     // ── 3. Origin independence ─────────────────────────────────────────────

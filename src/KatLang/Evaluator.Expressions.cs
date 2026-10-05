@@ -248,7 +248,7 @@ public static partial class Evaluator
 
                     hasPendingChild = false;
 
-                    // ExpectInt reports TypeMismatch/BadArity from a Result and so has no
+                    // ExpectInt reports a TypeMismatch from a Result and so has no
                     // span of its own; the index expression is the nearest source location.
                     var nR = ExpectInt(pendingChild.Value);
                     if (nR.IsError)
@@ -772,7 +772,7 @@ public static partial class Evaluator
             var valR = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (valR.IsError) return valR.Error;
             // The ONE numeric coercion (strings and Booleans are value-kind
-            // errors, other non-numeric shapes BadArity), shared with the twin.
+            // errors, and so is every other non-numeric shape, Q-27), shared with the twin.
             var numR = ExpectInt(valR.Value);
             if (numR.IsError) return numR.Error;
             args[i] = numR.Value;

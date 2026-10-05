@@ -515,12 +515,14 @@ def listIndexingOutOfRangeIsBadIndex : Bool :=
 #guard listIndexingOutOfRangeIsBadIndex
 
 -- Selector validation is unchanged by list targets: a list-valued selector
--- never coerces to a number (badArity), and a string selector stays the
--- string type mismatch — identical to sequence targets.
+-- never coerces to a number — a value of the wrong KIND, typeMismatch (Q-27) —
+-- and a string selector stays the string type mismatch — identical to
+-- sequence targets.
 def listIndexingSelectorValidationUnchanged : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 0])])) with
-   | Except.error err => innermostIsBadArity err | _ => false) &&
+   | Except.error err => innermostIsTypeMismatch "Expected a number, got a list value with 1 element: [0]" err
+   | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral [.num 1, .num 2]) (.stringLiteral "0")])) with
    | Except.error err => innermostIsTypeMismatch "Expected a number, got a string" err | _ => false)

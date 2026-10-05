@@ -252,7 +252,8 @@ public class CallArgumentAssemblyTests
         var divisionError = AssertFails("Bad = 1 / 0\nG(*items) = items.count\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));
 
+        // `first([])` selects no position: BadIndex (SEQ-04, Q-27).
         var emptyError = AssertFails("Data = first([])\nG(*items) = items\nG(Data)");
-        Assert.IsType<EvalError.BadArity>(Innermost(emptyError));
+        Assert.IsType<EvalError.BadIndex>(Innermost(emptyError));
     }
 }

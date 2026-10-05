@@ -278,11 +278,12 @@ public class TutorialSemanticContractTests
     {
         // The headline example: the spread receiver supplies the items of `Mean(1, 2, 3)`,
         // while the unspread group is ONE sequence value — one argument, collected as one
-        // non-numeric element exactly like a list receiver — so the numeric sum rejects it.
+        // non-numeric element exactly like a list receiver — so the numeric sum rejects it as
+        // an element of the wrong KIND (Q-27).
         const string mean = "Mean(*Vector) = Vector.sum / Vector.count\n";
         Assert.Equal("2\n2", Display(mean + "Mean(1, 2, 3)\n(1, 2, 3)*.Mean"));
-        RunFailure(mean + "(1, 2, 3).Mean", KatLangErrorCode.ArityMismatch);
-        RunFailure(mean + "[1, 2, 3].Mean", KatLangErrorCode.ArityMismatch);
+        RunFailure(mean + "(1, 2, 3).Mean", KatLangErrorCode.TypeMismatch);
+        RunFailure(mean + "[1, 2, 3].Mean", KatLangErrorCode.TypeMismatch);
         Assert.Equal("2", Display(mean + "[1, 2, 3]*.Mean"));
 
         // The receiver's origin never matters, `()` included: the dotted spelling and the

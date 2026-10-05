@@ -438,7 +438,11 @@ public class PatternBindingErrorPrecedenceTests
             var result = (EvalResult<Evaluator.CountedResult>)bind.Invoke(null, [callee, inputs, Evaluator.EvalCtx.Empty,
                 Array.Empty<(string Name, Result Value)>(), "P"])!;
             Assert.True(result.IsError);
-            Assert.IsType<EvalError.BadArity>(result.Error);
+            // NEED-04's value verdict: the binder's BadArity, under the context naming the
+            // repeated parameter (wording only, Q-27).
+            var context = Assert.IsType<EvalError.WithContext>(result.Error);
+            Assert.IsType<EvalError.BadArity>(context.Inner);
+            Assert.Equal("repeated parameter 'f' requires equal arguments: Bad arity", KatLangError.FromEvalError(result.Error).Message);
         }
     }
 

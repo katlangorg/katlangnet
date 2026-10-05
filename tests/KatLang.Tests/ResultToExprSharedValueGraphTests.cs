@@ -845,8 +845,9 @@ public class ResultToExprSharedValueGraphTests
     {
         var run = ObserveSource(DagProgram("while(A*, 1)"), optimize);
 
+        // A spread item is Ready data with no CALLABLE identity: it is no step (Q-06).
         Assert.True(run.IsError);
-        Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
+        Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
         Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
         if (optimize)
@@ -884,8 +885,10 @@ public class ResultToExprSharedValueGraphTests
             MultiEmissionDagProgram("[(B*)].reduce(while, 1)"),
             optimize);
 
+        // `while` invoked as the reducer receives the element as ITS step: Ready data
+        // with no CALLABLE identity (Q-06).
         Assert.True(run.IsError);
-        Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
+        Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
         Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
@@ -900,7 +903,7 @@ public class ResultToExprSharedValueGraphTests
             optimize);
 
         Assert.True(run.IsError);
-        Assert.IsType<EvalError.ArityMismatch>(run.InnermostError);
+        Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
         Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
@@ -970,9 +973,9 @@ public class ResultToExprSharedValueGraphTests
         Assert.True(plain.IsError);
         Assert.True(counted.IsError);
         Assert.True(flat.IsError);
-        Assert.IsType<EvalError.ArityMismatch>(Innermost(plain.Error));
-        Assert.IsType<EvalError.ArityMismatch>(Innermost(counted.Error));
-        Assert.IsType<EvalError.ArityMismatch>(Innermost(flat.Error));
+        Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(plain.Error));
+        Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(counted.Error));
+        Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(flat.Error));
         Assert.Equal(plain.Error.ToString(), counted.Error.ToString());
         Assert.Equal(plain.Error.ToString(), flat.Error.ToString());
         Assert.Equal(plain.Error.Span, counted.Error.Span);

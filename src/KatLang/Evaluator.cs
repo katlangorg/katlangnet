@@ -1761,7 +1761,12 @@ public static partial class Evaluator
             : ChildOf(globalScope, alg);
     }
 
-    /// <summary>Coerce a Result to a number, or raise TypeMismatch for strings and Boolean values, BadArity otherwise. Lean: expectInt.</summary>
+    /// <summary>
+    /// Coerce a Result to a number. Every present value that is not a number — a string, a
+    /// Boolean, a sequence (<c>()</c> included) or a list — is the value-KIND failure
+    /// <c>TypeMismatch</c> (Q-27): a selector, a <c>range</c> bound, a <c>repeat</c> count and a
+    /// Math argument of the wrong kind are never an arity error. Lean: expectInt.
+    /// </summary>
     internal static EvalResult<Decimal128> ExpectInt(Result r)
     {
         if (r is Result.Str)
@@ -1771,7 +1776,7 @@ public static partial class Evaluator
         var v = r.AsNum();
         return v is not null
             ? EvalResult<Decimal128>.Ok(v.Value)
-            : new EvalError.BadArity();
+            : new EvalError.TypeMismatch($"Expected a number, got {DescribeOperand(r)}");
     }
 
     /// <summary>
@@ -1832,6 +1837,13 @@ public static partial class Evaluator
 
     /// <summary>The role text of the <c>while</c> continuation flag in <see cref="BooleanRequiredMessage"/>.</summary>
     internal const string WhileContinuationFlagRole = "while continuation flag (the step's last output)";
+
+    /// <summary>
+    /// The context of a <c>while</c> step that emitted no slot at all: its output has no
+    /// continuation flag, an emitted-slot cardinality failure (<c>ArityMismatch</c>, Q-27).
+    /// Lean: <c>splitContSlots</c>.
+    /// </summary>
+    internal const string WhileStepWithoutFlagContext = "a while step must output at least its continuation flag";
 
     /// <summary>
     /// How a diagnostic names one value that failed an operand, condition, or predicate
@@ -2084,7 +2096,10 @@ public static partial class Evaluator
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
-        var expected = builtin == BuiltinId.@if ? descriptor.FixedArity ?? 0 : 0;
+        // The payload is the builtin's real arity contract: its fixed arity, or a variadic-state
+        // loop's minimum (every builtin; formerly a placeholder 0 for all but `if`). Lean:
+        // `builtinMinimumArity`, read by `builtinArityError`.
+        var expected = descriptor.ArityFacts.MinTopLevelArgumentCount;
 
         // The message renders the descriptor's arity CONTRACT beside the runtime signature: the
         // variadic-state loops accept at least their runtime parameters, which the signature's

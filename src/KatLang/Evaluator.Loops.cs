@@ -154,10 +154,11 @@ public static partial class Evaluator
     /// unary application semantics and error/span policy, shared by the generic
     /// expression-spine machine, its async twin, and the planned loop evaluator's
     /// non-numeric arm, so evaluation strategies cannot drift: the empty sequence value
-    /// follows ordinary numeric-conversion validation (SYN-01), and BOTH operand
-    /// rejections — the string rejection and the numeric-conversion failure of
-    /// <see cref="ExpectInt"/> (a multi-item or empty sequence value, or a list value:
-    /// <see cref="EvalError.BadArity"/>) — carry the unary expression's span, exactly as
+    /// is an ordinary non-numeric operand (SYN-01), and EVERY operand rejection — the ONE
+    /// value-kind failure of every non-numeric operand of `-` (a string, a Boolean, a
+    /// multi-item or empty sequence value, or a list value: one
+    /// <see cref="EvalError.TypeMismatch"/> naming the operator and the operand, Q-27) and
+    /// the non-Boolean operand of `not` — carries the unary expression's span, exactly as
     /// the binary operators attach their expression span to an operand rejection. The
     /// innermost error's span is public structured state, so it is attached HERE, at the
     /// one unary application site, and the surrounding evaluation boundaries never
@@ -179,22 +180,16 @@ public static partial class Evaluator
                 { Span = span };
         }
 
-        if (operandValue is Result.Str)
-            return new EvalError.TypeMismatch("Unary operator is not supported for strings") { Span = span };
-
-        // `-` is numeric negation: a Boolean operand is a value-kind error, every other
-        // non-numeric operand keeps the numeric-conversion failure of ExpectInt.
-        if (operandValue is Result.Bool)
+        // `-` is numeric negation: every non-numeric operand — a string, a Boolean, a sequence
+        // (`()` included) or a list — is the one value-kind error naming the operand (Q-27).
+        if (operandValue.AsNum() is not { } number)
         {
             return new EvalError.TypeMismatch(
                 $"operator `-` expects a numeric scalar operand, but the operand was {DescribeOperand(operandValue)}")
             { Span = span };
         }
 
-        var vR = ExpectInt(operandValue);
-        if (vR.IsError) return AtSpanIfMissing(vR.Error, span);
-
-        return EvalResult<Result>.Ok(new Result.Atom(-vR.Value));
+        return EvalResult<Result>.Ok(new Result.Atom(-number));
     }
 
     /// <summary>
@@ -390,7 +385,7 @@ public static partial class Evaluator
         IReadOnlyList<Result> outputSlots)
     {
         if (outputSlots.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
 
         if (outputSlots.Count == 1)
         {

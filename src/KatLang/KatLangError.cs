@@ -803,10 +803,12 @@ public sealed class KatLangError
             : FormatNamedArityMismatch(calleeDesc, arity.Expected, arity.Actual, preferPropertyName);
 
     /// <summary>
-    /// The two STRUCTURED not-callable descriptions the evaluators share with Lean
-    /// (<c>param(name)</c>, <c>num(value)</c>) are rendered in KatLang terms — the payload
-    /// is unchanged, only its presentation; every other description names the expression
-    /// shape as before.
+    /// The STRUCTURED not-callable descriptions the evaluators share with Lean are rendered in
+    /// KatLang terms — the payload is unchanged, only its presentation: a parameter
+    /// (<c>param(name)</c>), a number (<c>num(value)</c>), and the ROLE of an invoking builtin
+    /// slot (Q-06: "map transform", "filter predicate", "reduce reducer", "repeat step",
+    /// "while step" — the closed set <see cref="Evaluator.InvokingSlotRoles"/> owns). Every other
+    /// description names the expression shape as before.
     /// </summary>
     private static string FormatNotAnAlgorithm(string description)
     {
@@ -815,6 +817,11 @@ public sealed class KatLangError
             var name = description[6..^1];
             return $"Parameter '{name}' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for '{name}', or read it as a value.";
         }
+
+        // An invoking builtin slot — a callback or a loop step — whose argument has no CALLABLE
+        // identity (Q-06): named by its role, never as a callable with zero parameters.
+        if (Evaluator.InvokingSlotRoles.Contains(description))
+            return $"The {description} is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block {{ ... }}.";
 
         if (description.StartsWith("num(", StringComparison.Ordinal) && description.EndsWith(')'))
             return $"The number {description[4..^1]} is not callable.";

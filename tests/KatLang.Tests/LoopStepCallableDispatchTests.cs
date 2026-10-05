@@ -73,11 +73,11 @@ public partial class LoopStepCallableDispatchTests
         { "builtin, wrong state arity", "repeat(take, 1, [1, 2])", "err ArityMismatch" },
         { "builtin, wrong argument kind", "repeat(if, 1, 5, 1, 2)", "err TypeMismatch" },
         { "Math function, wrong state arity", "repeat(Math.Pow, 1, 2)", "err ArityMismatch" },
-        { "number", "repeat(5, 1, 0)", "unbound" },
-        { "list", "repeat([1], 1, 0)", "unbound" },
-        { "empty sequence", "repeat((), 1, 0)", "unbound" },
-        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 0)", "unbound" },
-        { "selection", "A = 1, 2\nrepeat(A:0, 1, 0)", "unbound" },
+        { "number", "repeat(5, 1, 0)", "notAnAlgorithm" },
+        { "list", "repeat([1], 1, 0)", "notAnAlgorithm" },
+        { "empty sequence", "repeat((), 1, 0)", "notAnAlgorithm" },
+        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 0)", "notAnAlgorithm" },
+        { "selection", "A = 1, 2\nrepeat(A:0, 1, 0)", "notAnAlgorithm" },
         { "zero-parameter property", "Z = 5\nrepeat(Z, 1, 0)", "unbound" },
         { "zero-parameter host operation", "repeat(tick, 1, 0)", "unbound" },
         { "zero-parameter Math member", "repeat(pi, 1, 0)", "unbound" },
@@ -97,10 +97,20 @@ public partial class LoopStepCallableDispatchTests
 
         Assert.True(observation.Kind == "err", $"{category}: {observation}");
         var error = Assert.Single(observation.Errors);
+        if (expected == "notAnAlgorithm")
+        {
+            // No callable identity (NEED-06): the step's missing-callability verdict, named by its
+            // role (Q-06), never the loop-state binding failure and never a category rule.
+            Assert.StartsWith("NotAnAlgorithm: ", error, StringComparison.Ordinal);
+            Assert.Contains("The repeat step is not callable", error, StringComparison.Ordinal);
+            Assert.DoesNotContain(NoStepParameter, error, StringComparison.Ordinal);
+            return;
+        }
+
         if (expected == "unbound")
         {
-            // No callable identity (NEED-06), or a callable whose real arity is zero: the loop-state
-            // binding failure (X-23's truthful wording), never a category rule.
+            // A callable whose real arity is zero: the loop-state binding failure (X-23's truthful
+            // wording), never a category rule.
             Assert.StartsWith("ArityMismatch: ", error, StringComparison.Ordinal);
             Assert.Contains(NoStepParameter, error, StringComparison.Ordinal);
             return;

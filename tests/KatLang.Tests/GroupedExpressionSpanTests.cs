@@ -136,10 +136,11 @@ public class GroupedExpressionSpanTests
     public void UnaryOnAGroup_LocatesTheUnaryFromItsOperator()
     {
         // `-(1, 2)`: the group is the unary's operand, so the unary expression — and
-        // its BadArity (F5) — spans from the operator through the closing parenthesis.
+        // its operand rejection (F5; the value-kind TypeMismatch, Q-27) — spans from the
+        // operator through the closing parenthesis.
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("-(1, 2)"));
         var error = Assert.Single(failure.Errors);
-        Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
+        Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
         Assert.Equal(new SourceSpan(1, 1, 1, 8), error.Span);
     }
 

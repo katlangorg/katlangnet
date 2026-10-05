@@ -10,13 +10,13 @@ namespace KatLang.Tests;
 ///
 /// <para>The loop optimizer plans <c>-x</c> / <c>not x</c> into
 /// <c>LoopExprPlan.Unary</c> and once applied it through its own operator copy,
-/// which stamped the unary expression's span onto the numeric-conversion failure
-/// (<c>ExpectInt</c>'s <c>BadArity</c>) while the generic evaluator returned it
-/// unspanned — the same program produced the same error KIND with different
-/// structured span metadata depending on the evaluation strategy. Both
-/// strategies now share <c>Evaluator.ApplyUnaryOperator</c>, whose policy is
-/// pinned here: every operand rejection — the numeric-conversion failure and the
-/// string rejection alike — carries the unary expression's span (F5), identically
+/// which stamped the unary expression's span onto the numeric-operand rejection
+/// while the generic evaluator returned it unspanned — the same program produced
+/// the same error KIND with different structured span metadata depending on the
+/// evaluation strategy. Both strategies now share <c>Evaluator.ApplyUnaryOperator</c>,
+/// whose policy is pinned here: every operand rejection — the value-kind
+/// <c>TypeMismatch</c> of a non-numeric operand of <c>-</c> (Q-27) and the string
+/// rejection alike — carries the unary expression's span (F5), identically
 /// on both paths, and the innermost span is never overwritten by an enclosing
 /// evaluation layer.</para>
 ///
@@ -90,9 +90,9 @@ public class LoopPlannedUnaryDiagnosticParityTests
     public void Repeat_PlannedUnary_StateBecomesListMidLoop_NumericConversionFailureMatchesGenericExactly()
     {
         // Iteration 1 binds y = 0 (`-y` succeeds) and the fallback sibling moves
-        // the list into y's slot; iteration 2 fails numeric conversion INSIDE the
-        // planned unary. Both strategies report ExpectInt's BadArity at the written
-        // unary `-y` (line 2, columns 11-12; F5) — the planned evaluator once
+        // the list into y's slot; iteration 2 rejects the list operand INSIDE the
+        // planned unary. Both strategies report the value-kind TypeMismatch at the
+        // written unary `-y` (line 2, columns 11-12; F5) — the planned evaluator once
         // stamped a span the generic one omitted, so the same program produced
         // two different structured error trees depending on the strategy.
         var error = AssertOptimizerTransparentFailure(PlannedListRegressionSource);
@@ -101,8 +101,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
 
         var generic = Run(PlannedListRegressionSource, enableLoopOptimization: false);
         Assert.True(generic.IsError);
-        var genericInnermost = Assert.IsType<EvalError.BadArity>(Innermost(generic.Error));
-        var optimizedInnermost = Assert.IsType<EvalError.BadArity>(Innermost(error));
+        var genericInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error));
+        var optimizedInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
         Assert.Equal(new SourceSpan(2, 11, 2, 13), genericInnermost.Span);
         Assert.Equal(new SourceSpan(2, 11, 2, 13), optimizedInnermost.Span);
     }
@@ -203,12 +203,10 @@ public class LoopPlannedUnaryDiagnosticParityTests
 
         var error = AssertOptimizerTransparentFailure(source);
 
-        // The innermost error is the operand rejection (ExpectInt's BadArity for `-`, the
-        // Boolean-operand TypeMismatch for `not`), carrying the span of the written unary
-        // in the step body on both paths (F5), never spanless.
-        var rejection = unaryPlanSummary.StartsWith("Not(", StringComparison.Ordinal)
-            ? typeof(EvalError.TypeMismatch)
-            : typeof(EvalError.BadArity);
+        // The innermost error is the operand rejection — the value-kind TypeMismatch for
+        // `-` and the Boolean-operand TypeMismatch for `not` (Q-27) — carrying the span of
+        // the written unary in the step body on both paths (F5), never spanless.
+        var rejection = typeof(EvalError.TypeMismatch);
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
         var genericInnermost = Innermost(generic.Error);
@@ -249,8 +247,9 @@ public class LoopPlannedUnaryDiagnosticParityTests
         Assert.True(generic.IsError);
         var genericInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error));
         var optimizedInnermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(error));
-        Assert.Equal("Unary operator is not supported for strings", genericInnermost.Message);
-        Assert.Equal("Unary operator is not supported for strings", optimizedInnermost.Message);
+        const string message = "operator `-` expects a numeric scalar operand, but the operand was a string: 'ab'";
+        Assert.Equal(message, genericInnermost.Message);
+        Assert.Equal(message, optimizedInnermost.Message);
 
         // Absolute span pin on BOTH innermost errors: the shared helper stamps
         // the unary expression's span, so strategy parity alone cannot mask a
@@ -515,10 +514,10 @@ public class LoopPlannedUnaryDiagnosticParityTests
 
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
-        // The innermost BadArity sits at the unary expression `-a` (line 1, columns 8-9)
+        // The innermost TypeMismatch sits at the unary expression `-a` (line 1, columns 8-9)
         // on both paths (F5).
-        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
-        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 8, 1, 10), Assert.IsType<EvalError.TypeMismatch>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         Assert.Equal(1, loop.OptimizedLoopHits);
@@ -539,7 +538,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         var error = AssertOptimizerTransparentFailure(source);
         // `{op}a` starts at column 8 of line 1 and ends just past the operand (F5).
         var innermost = Innermost(error);
-        Assert.IsType(op == "-" ? typeof(EvalError.BadArity) : typeof(EvalError.TypeMismatch), innermost);
+        Assert.IsType<EvalError.TypeMismatch>(innermost);
         Assert.Equal(new SourceSpan(1, 8, 1, 9 + op.Length), innermost.Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
@@ -576,12 +575,12 @@ public class LoopPlannedUnaryDiagnosticParityTests
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
-        // The planned unary reports the operand rejection (BadArity for `-`, the
-        // Boolean-operand TypeMismatch for `not`) at the written unary expression on
+        // The planned unary reports the operand rejection (the value-kind TypeMismatch
+        // for `-`, the Boolean-operand TypeMismatch for `not`) at the written unary expression on
         // line 2 (F5); AssertOptimizerTransparentFailure has already proven the span
         // identical on the generic path.
         var innermost = Innermost(error);
-        Assert.IsType(op == "-" ? typeof(EvalError.BadArity) : typeof(EvalError.TypeMismatch), innermost);
+        Assert.IsType<EvalError.TypeMismatch>(innermost);
         var innermostSpan = Assert.NotNull(innermost.Span);
         Assert.Equal(2, innermostSpan.Start.Line);
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
@@ -607,7 +606,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
     {
         // The failing `repeat` sits inside a binary expression inside a
         // property, so several outer evaluator layers run after the planned
-        // unary fails. The innermost BadArity keeps the span of the written
+        // unary fails. The innermost TypeMismatch keeps the span of the written
         // unary `-y` (line 2, columns 11-12) on both paths; the surrounding
         // boundaries never overwrite it, identically in both strategies.
         var source = """
@@ -621,8 +620,8 @@ public class LoopPlannedUnaryDiagnosticParityTests
 
         var generic = Run(source, enableLoopOptimization: false);
         Assert.True(generic.IsError);
-        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.BadArity>(Innermost(generic.Error)).Span);
-        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.BadArity>(Innermost(error)).Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.TypeMismatch>(Innermost(generic.Error)).Span);
+        Assert.Equal(new SourceSpan(2, 11, 2, 13), Assert.IsType<EvalError.TypeMismatch>(Innermost(error)).Span);
 
         var (_, loop, _) = RunObserved(source, enableLoopOptimization: true);
         AssertPlannedUnarySlot(loop, "S.repeat", "output", 0, "Negate(StateSlot(y))");

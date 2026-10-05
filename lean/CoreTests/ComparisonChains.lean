@@ -155,7 +155,7 @@ def operandsEvaluateLeftToRightIncrementally : Bool :=
    | _ => false) &&
   -- and the mirror image: a failing second operand surfaces after a fine first one
   (match runResult (chain (.num 1) [(.lt, .unary .minus (.stringLiteral "s"))]) with
-   | Except.error err => innermostIsTypeMismatch "Unary operator is not supported for strings" err
+   | Except.error err => innermostIsTypeMismatch "operator `-` expects a numeric scalar operand, but the operand was a string: 's'" err
    | _ => false) &&
   (match runResult (chain (.num 1) [(.lt, .boolLiteral true), (.lt, .binary .div (.num 1) (.num 0))]) with
    | Except.error err =>

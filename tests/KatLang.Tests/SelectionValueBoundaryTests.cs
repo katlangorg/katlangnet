@@ -401,14 +401,13 @@ public class SelectionValueBoundaryTests
     [Fact]
     public void SelectionFromAnEmptyCollection_FailsInEveryForm()
     {
-        // The equivalence is stated for VALID selections; an empty target has none.
-        // (`first`/`last` report the collection arity rejection and `:` the index
-        // rejection — both are evaluation errors, pinned by kind.)
+        // The equivalence is TOTAL (SEQ-04, Q-27): an empty target names no position, so
+        // `first`/`last` report the very rejection `:` reports — BadIndex in every form.
         foreach (var target in new[] { "()", "[]" })
         {
             var defs = "A = " + target + "\n";
-            Assert.IsType<EvalError.BadArity>(Innermost(EvalFull(defs + "first(A)").Error));
-            Assert.IsType<EvalError.BadArity>(Innermost(EvalFull(defs + "last(A)").Error));
+            Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "first(A)").Error));
+            Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "last(A)").Error));
             Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "A:0").Error));
         }
     }

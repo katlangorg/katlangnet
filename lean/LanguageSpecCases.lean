@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 366
+- specification surface cases: 371
 - excluded parse-level cases (Lean has no surface parser): 50
 - excluded C#-only cases (each carries an explicit reason in the corpus): 19
-- Lean-guarded cases: 297
-- probe observations (C#-only by design): 1110
+- Lean-guarded cases: 302
+- probe observations (C#-only by design): 1159
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -349,7 +349,7 @@ def case_loop_step_alias_follows_target : Expr :=
 -- loop-step-value-is-rejected [errors]: repeat(5, 1, 0)
 def case_loop_step_value_is_rejected : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
-#guard obs case_loop_step_value_is_rejected == "err arity"
+#guard obs case_loop_step_value_is_rejected == "err notAnAlgorithm"
 
 -- loop-step-zero-iterations-never-projects [item-supply-vs-value]: repeat(5, 0, 1), repeat(1 / 0, 0, 5)
 def case_loop_step_zero_iterations_never_projects : Expr :=
@@ -1284,12 +1284,37 @@ def case_empty_sequence_is_not_an_operator_identity : Expr :=
 -- order-rejects-non-numeric [errors]: order((1, 'hello'))
 def case_order_rejects_non_numeric : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "order") [(.capture [.num 1, .stringLiteral "hello"])])])
-#guard obs case_order_rejects_non_numeric == "err arity"
+#guard obs case_order_rejects_non_numeric == "err type"
 
 -- division-by-zero [errors]: 1 / 0
 def case_division_by_zero : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .div (.num 1) (.num 0))])
 #guard obs case_division_by_zero == "err div0"
+
+-- invoking-slot-without-callable-is-not-an-algorithm [errors]: map([1, 2], 5)
+def case_invoking_slot_without_callable_is_not_an_algorithm : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .num 5])])
+#guard obs case_invoking_slot_without_callable_is_not_an_algorithm == "err notAnAlgorithm"
+
+-- zero-parameter-callable-in-invoking-slot-is-arity [errors]: A = 7 \n map([1, 2], A)
+def case_zero_parameter_callable_in_invoking_slot_is_arity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 7])] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "A"])])
+#guard obs case_zero_parameter_callable_in_invoking_slot_is_arity == "err arity"
+
+-- kind-errors-are-type-mismatch [errors]: -()
+def case_kind_errors_are_type_mismatch : Expr :=
+  .algorithmExpr (alg [] [] [] [(.unary .minus (.emptySequence 0))])
+#guard obs case_kind_errors_are_type_mismatch == "err type"
+
+-- first-last-empty-is-bad-index [errors]: first(())
+def case_first_last_empty_is_bad_index : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "first") [(.emptySequence 0)])])
+#guard obs case_first_last_empty_is_bad_index == "err index"
+
+-- aggregate-empty-is-domain-error [errors]: min(())
+def case_aggregate_empty_is_domain_error : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "min") [(.emptySequence 0)])])
+#guard obs case_aggregate_empty_is_domain_error == "err illegalInEval"
 
 -- spread-arguments-fail-left-to-right [errors]: P = 1 / 0 \n Q = 'x' + 1 \n range(P*, Q*)
 def case_spread_arguments_fail_left_to_right : Expr :=
@@ -1586,7 +1611,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 297 canonical Lean-guarded specification cases.
+-- 302 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1832,6 +1857,11 @@ def specCaseIds : List String := [
   "empty-sequence-is-not-an-operator-identity",
   "order-rejects-non-numeric",
   "division-by-zero",
+  "invoking-slot-without-callable-is-not-an-algorithm",
+  "zero-parameter-callable-in-invoking-slot-is-arity",
+  "kind-errors-are-type-mismatch",
+  "first-last-empty-is-bad-index",
+  "aggregate-empty-is-domain-error",
   "spread-arguments-fail-left-to-right",
   "unresolved-implicit-parameter",
   "string-equality-exact",
@@ -1892,6 +1922,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 297
+#guard specCaseIds.length == 302
 
 end LanguageSpecCases

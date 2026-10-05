@@ -336,20 +336,29 @@ def logicalOperatorsEvaluateBothOperands : Bool :=
 
 #guard logicalOperatorsEvaluateBothOperands
 
--- Unary `-` uses the existing expectInt validation: every unsupported
--- sequence/list value is badArity, including `()`; strings keep typeMismatch;
--- a Boolean operand is a value-kind error. Unary `not` REQUIRES a Boolean:
--- every other operand kind — numbers included — is the one typeMismatch
--- naming the operand.
+-- Unary `-` rejects every non-numeric operand as a value KIND (Q-27): a
+-- sequence or list value — `()` included — and a Boolean are the one
+-- typeMismatch naming the operand; strings keep their own typeMismatch. Unary
+-- `not` REQUIRES a Boolean: every other operand kind — numbers included — is
+-- the one typeMismatch naming the operand.
 def unaryNonScalarOperandsRejected : Bool :=
-  ([emptyOperandExpr, .emptySequence 2, .capture [.num 1, .num 2],
-    .listLiteral [], .listLiteral [.num 1], .listLiteral [.num 1, .num 2]]).all
-    (fun operand => match runResult (.unary .minus operand) with
-     | Except.error err => innermostIsBadArity err
-     | _ => false) &&
+  (([(emptyOperandExpr, "a sequence value with 0 sequence elements: ()"),
+     (.capture [.num 1, .num 2], "a sequence value with 2 sequence elements: (1, 2)"),
+     (.listLiteral [], "a list value with 0 elements: []"),
+     (.listLiteral [.num 1], "a list value with 1 element: [1]"),
+     (.listLiteral [.num 1, .num 2], "a list value with 2 elements: [1, 2]")] : List (KatLang.Expr × String)).all
+    (fun (operand, description) => match runResult (.unary .minus operand) with
+     | Except.error err =>
+         innermostIsTypeMismatch
+           s!"operator `-` expects a numeric scalar operand, but the operand was {description}" err
+     | _ => false)) &&
+  (match runResult (.unary .minus (.emptySequence 2)) with
+   | Except.error err => innermostIsAnyTypeMismatch err
+   | _ => false) &&
   (match runResult (.unary .minus (.stringLiteral "text")) with
    | Except.error err =>
-       innermostIsTypeMismatch "Unary operator is not supported for strings" err
+       innermostIsTypeMismatch
+         "operator `-` expects a numeric scalar operand, but the operand was a string: 'text'" err
    | _ => false) &&
   (match runResult (.unary .minus (.boolLiteral true)) with
    | Except.error err =>

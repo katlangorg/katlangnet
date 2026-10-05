@@ -315,6 +315,10 @@ public static partial class Evaluator
             /// <summary>The callback an invoking slot applies (Lean: <c>ResolvedArgumentAlgorithm.invoked</c>).</summary>
             internal KatLang.Evaluation.NeedCell? Cell { get; init; }
 
+            // A whole collector has no single original argument span. Keep the current
+            // written slot as the fallback, just as a loop's step argument does.
+            internal Expr? WrittenSource { get; init; }
+
             public KatLang.Algorithm? InvokedAlgorithm => Callable ?? AlgorithmValue;
         }
 

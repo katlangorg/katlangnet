@@ -196,7 +196,7 @@ def spreadReceiverWithSuffixArgSuppliesSlots : Bool :=
   let callee := ("SumPlusLast", receiverSymmetrySumAlg)
   let rejectsElement (out : KatLang.Expr) : Bool :=
     match runReceiverSymmetryCase multiOutputValuesReceiverProp callee out with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   expectFlat (runReceiverSymmetryCase multiOutputValuesReceiverProp callee
     (.dotCall (sequenceSpread (resolve "Values")) "SumPlusLast" (some [.num 5]))) [35] &&
@@ -264,7 +264,7 @@ def dotReceiverMeanIntegerTwin : Bool :=
   ] [
     .dotCall (.capture [.num 1, .num 2, .num 3]) "Mean" none
   ])) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false)
 
 #guard dotReceiverMeanIntegerTwin

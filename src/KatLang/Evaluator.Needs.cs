@@ -269,8 +269,10 @@ public static partial class Evaluator
                     {
                         var before = asynchronous ? await previous.DemandAsync().ConfigureAwait(false) : previous.Demand();
                         if (before.IsError) return before.Error;
+                        // NEED-04 (frozen): unequal VALUE contributions are the binder's BadArity;
+                        // the context names the violated agreement.
                         if (before.Value.EmittedCount != value.Value.EmittedCount || !Result.ValueComparer.Equals(before.Value.Value, value.Value.Value))
-                            return Mismatch(new EvalError.BadArity());
+                            return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
                         var first = previous.ProjectCallable();
                         if (first.IsError) return first.Error;
                         var second = cell.ProjectCallable();
@@ -667,12 +669,11 @@ public static partial class Evaluator
             if (step is null)
             {
                 // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
-                // `repeat` never projects or validates it (LOOP-05).
-                var projection = ResolveInvokedArgumentAlgorithm(arguments[0], ctx);
+                // `repeat` never projects or validates it (LOOP-05), and a step argument with no
+                // CALLABLE identity is NotAnAlgorithm (Q-06, LOOP-08), never a VALUE demand.
+                var projection = ProjectLoopStep(arguments[0], builtin);
                 if (projection.IsError) return projection.Error;
                 step = projection.Value;
-                if (step is null)
-                    return LoopStateArityMismatch([], [], 0, state.Count, loopName);
                 var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);
                 if (!asynchronous && ctx.EnableLoopOptimization && eligible)
                 {

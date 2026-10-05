@@ -462,12 +462,12 @@ def userCollectingDotCallSpreadReceiverSumsSuppliedItems : Bool :=
   (match runFlat (.algorithmExpr (algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
     .dotCall (.capture [.num 1, .num 2]) "Mean" none
   ])) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] [("Mean", userCollectingDotCallMeanAlg)] [
     .dotCall (.listLiteral [.num 1, .num 2]) "Mean" none
   ])) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false)
 
 #guard userCollectingDotCallSpreadReceiverSumsSuppliedItems
@@ -509,7 +509,7 @@ def flatCollectingSlotQmeanNormalRoot : Algorithm :=
 -- Supplying the items is the explicit-spread call `Qmean(Vector*)` below.
 def flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError : Bool :=
   match runResult (.algorithmExpr flatCollectingSlotQmeanNormalRoot) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard flatCollectingSlotQmeanSingleGroupedArgumentIsNumericConstraintError
@@ -538,7 +538,7 @@ def flatCollectingSlotQmeanDotRoot : Algorithm :=
 -- call above.
 def flatCollectingSlotQmeanDotCallMatchesGroupedCall : Bool :=
   match runResult (.algorithmExpr flatCollectingSlotQmeanDotRoot) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard flatCollectingSlotQmeanDotCallMatchesGroupedCall
@@ -609,7 +609,7 @@ def flatCollectingSlotSumNormalRoot : Algorithm :=
 -- `Sum(Values*, 7)` binds `values = [10, 20]` and sums to 37.
 def flatCollectingSlotGroupedMiddleArgumentIsOneItemAfterSuffix : Bool :=
   (match runResult (.algorithmExpr flatCollectingSlotSumNormalRoot) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] []
       [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [
@@ -672,7 +672,7 @@ def flatCollectingSlotSumDotSuffixRoot : Algorithm :=
 -- sequence element, matching the plain call; `Values*.Sum(7)` is 37.
 def flatCollectingSlotDotReceiverWithSuffixMatchesGroupedCall : Bool :=
   (match runResult (.algorithmExpr flatCollectingSlotSumDotSuffixRoot) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] []
       [("Values", flatCollectingSlotValuesAlg), ("Sum", flatCollectingSlotSumAlg)] [

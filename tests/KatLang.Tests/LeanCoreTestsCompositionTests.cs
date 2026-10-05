@@ -42,6 +42,7 @@ public class LeanCoreTestsCompositionTests
         "ModelC",
         "LoopCardinality",
         "LoopSteps",
+        "ErrorTaxonomy",
     ];
 
     [Fact]

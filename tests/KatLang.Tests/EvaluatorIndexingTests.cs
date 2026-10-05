@@ -190,13 +190,16 @@ public class EvaluatorIndexingTests
     [InlineData("[1, 2, 3]:[0]")]
     [InlineData("(1, 2, 3):()")]
     [InlineData("[1, 2, 3]:()")]
-    public void Eval_Index_NonNumericStructuredSelector_FailsWithBadArity(string source)
+    public void Eval_Index_NonNumericStructuredSelector_FailsWithTypeMismatch(string source)
     {
+        // A structured selector is a present value of the wrong KIND (Q-27), exactly like a
+        // string or Boolean selector — never an arity error.
         var result = EvalFull(source);
         if (result.IsOk)
-            Assert.Fail($"Expected BadArity error but got: {result.Value}");
+            Assert.Fail($"Expected TypeMismatch error but got: {result.Value}");
 
-        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+        var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
+        Assert.StartsWith("Expected a number, got a ", mismatch.Message, StringComparison.Ordinal);
     }
 
     [Theory]

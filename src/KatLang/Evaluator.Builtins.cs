@@ -405,7 +405,7 @@ public static partial class Evaluator
     /// return exactly one value. Lean: <c>evalSequenceReduceStepCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
-        Algorithm? callee,
+        Algorithm callee,
         CountedResult element,
         Result accumulator,
         EvalCtx ctx,
@@ -645,9 +645,11 @@ public static partial class Evaluator
     /// keeps its algorithm-channel binding (<see cref="ResolvedArgumentAlgorithm.Callable"/>),
     /// so a callable forwarded through a parameter is invoked exactly as the generic filter
     /// invokes it. Evaluates nothing: an unused predicate runs no effect, draws nothing and
-    /// cannot fail or recurse.
+    /// cannot fail or recurse. Called only once the source is known to be non-empty, so a
+    /// predicate with no CALLABLE identity is reported exactly where the generic filter
+    /// reports it (<see cref="ResolvePreparedCallback"/>).
     /// </summary>
-    internal static EvalResult<Algorithm?> PrepareFilterPredicateArgument(
+    internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
         ResolvedArgumentAlgorithm predicate,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -656,7 +658,7 @@ public static partial class Evaluator
         var preparedR = PrepareSequenceBuiltinSuffixArg(BuiltinId.@filter, descriptor, UnevaluatedCallItem(predicate), ctx, valEnv);
         if (preparedR.IsError) return preparedR.Error;
         return preparedR.Value is PreparedSequenceBuiltinSuffixArg.AlgorithmArg callback
-            ? ResolvePreparedCallback(callback)
+            ? ResolvePreparedCallback(BuiltinId.@filter, callback)
             : throw new InvalidOperationException("The filter predicate must be an algorithm argument.");
     }
 
@@ -788,9 +790,9 @@ public static partial class Evaluator
                 {
                     if (item.Cell is { } cell)
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(null) { Cell = cell });
+                            new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(null) { Cell = cell, WrittenSource = item.Source });
                     return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(item.Algorithm) { Callable = item.Callable });
+                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(item.Algorithm) { Callable = item.Callable, WrittenSource = item.Source });
                 }
 
             case SequenceBuiltinSuffixArgKind.Value:
@@ -812,12 +814,21 @@ public static partial class Evaluator
                             SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
                             new EvalError.BadArity());
 
+                    // A whole-number control follows the one numeric-control rule (Q-27): a
+                    // present value of the wrong KIND is TypeMismatch, a number outside the
+                    // control's domain (a fraction, NaN, an infinity) is IllegalInEval —
+                    // exactly as `range`, `repeat` and `randomInt` report their bounds.
                     var numeric = item.Value.SingleAtomicNumber();
-                    if (numeric is null || !Decimal128.IsInteger(numeric.Value))
+                    if (numeric is null)
                     {
-                        return new EvalError.WithContext(
-                            SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                            new EvalError.BadArity());
+                        return new EvalError.TypeMismatch(
+                            $"{SequenceBuiltinSuffixArgErrorContext(builtin, descriptor)}, but was {DescribeOperand(item.Value)}");
+                    }
+
+                    if (!Decimal128.IsInteger(numeric.Value))
+                    {
+                        return new EvalError.IllegalInEval(
+                            $"{SequenceBuiltinSuffixArgErrorContext(builtin, descriptor)}, but was {Rendering.ValueTextRenderer.FormatNumberInvariant(numeric.Value)}");
                     }
 
                     return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
@@ -836,12 +847,16 @@ public static partial class Evaluator
         SequenceBuiltinMetadata metadata,
         CollectedSequenceBuiltinInput collected)
     {
+        // The empty collection is a DOMAIN failure of an aggregate and a missing POSITION of
+        // a selection (Q-27): never an arity error, because the argument count is correct.
         return metadata.EmptyPolicy switch
         {
             SequenceBuiltinEmptyPolicy.AllowEmpty => EvalResult<CollectedSequenceBuiltinInput>.Ok(collected),
-            SequenceBuiltinEmptyPolicy.RequireAnyItem when collected.TotalItemCount == 0 => new EvalError.WithContext(
-                $"{BuiltinDisplayName(builtin)} requires a non-empty collection",
-                new EvalError.BadArity()),
+            SequenceBuiltinEmptyPolicy.RequireAnyItem when collected.TotalItemCount == 0 => new EvalError.IllegalInEval(
+                $"{BuiltinDisplayName(builtin)} requires a non-empty collection"),
+            SequenceBuiltinEmptyPolicy.RequireSelectablePosition when collected.TotalItemCount == 0 => new EvalError.WithContext(
+                $"{BuiltinDisplayName(builtin)} selects from an empty collection, which has no position to select",
+                new EvalError.BadIndex()),
             _ => EvalResult<CollectedSequenceBuiltinInput>.Ok(collected),
         };
     }
@@ -885,7 +900,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalReduceCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm? stepAlg,
+        Algorithm stepAlg,
         Result initial,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -900,7 +915,7 @@ public static partial class Evaluator
         {
             var stepR = WithCtx(
                 "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, "reduce step"));
+                EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName));
             if (stepR.IsError) return stepR.Error;
 
             var nextR = ExpectSingleAccumulator(stepR.Value);
@@ -923,7 +938,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalFilterCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm? predicateAlg,
+        Algorithm predicateAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -948,7 +963,7 @@ public static partial class Evaluator
     /// duplicating callback semantics.
     /// </summary>
     internal static EvalResult<bool> EvalFilterPredicateTruth(
-        Algorithm? predicateAlg,
+        Algorithm predicateAlg,
         CountedResult item,
         int index,
         EvalCtx ctx,
@@ -958,7 +973,7 @@ public static partial class Evaluator
             item.Value,
             index,
             ctx,
-            EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, "filter predicate"));
+            EvalSequenceCallbackCall(predicateAlg, item, ctx, valEnv, FilterPredicateFrameName));
         if (predicateR.IsError)
             return predicateR.Error;
 
@@ -983,7 +998,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
         IReadOnlyList<CountedResult> items,
-        Algorithm? transformAlg,
+        Algorithm transformAlg,
         EvalCtx ctx,
         ValEnv valEnv)
     {
@@ -992,7 +1007,7 @@ public static partial class Evaluator
         {
             var transformR = WithCtx(
                 "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, "map transform"));
+                EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, MapTransformFrameName));
             if (transformR.IsError) return transformR.Error;
 
             var mappedElementR = ExpectSingleMappedElement(transformR.Value);
@@ -1009,7 +1024,9 @@ public static partial class Evaluator
     /// Used by numeric ordering and aggregation builtins that only accept
     /// clearly comparable numeric elements and reject strings or sequence values.
     /// Diagnostics include the 0-based item index after counted top-level
-    /// extraction so numeric shape failures are easier to debug.
+    /// extraction so numeric shape failures are easier to debug. An element that
+    /// is not one number is a present value of the wrong KIND — <c>TypeMismatch</c>
+    /// (Q-27), never an arity error. Lean: <c>collectSingleAtomicNumbers</c>.
     /// </summary>
     private static EvalResult<List<Decimal128>> CollectSingleAtomicNumbers(
         BuiltinId builtin,
@@ -1021,11 +1038,7 @@ public static partial class Evaluator
             var item = elements[index];
             var numeric = item.SingleAtomicNumber();
             if (numeric is null)
-            {
-                return new EvalError.WithContext(
-                    NumericSequenceItemErrorContext(builtin, index, item),
-                    new EvalError.BadArity());
-            }
+                return new EvalError.TypeMismatch(NumericSequenceItemErrorContext(builtin, index, item));
 
             numbers.Add(numeric.Value);
         }
@@ -1222,14 +1235,76 @@ public static partial class Evaluator
     /// <summary>
     /// The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
     /// <c>filter</c> predicate, the <c>map</c> mapper, the <c>reduce</c> reducer): the
-    /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>).
+    /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>),
+    /// projected through the ONE invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only
+    /// once the builtin is about to invoke it (a non-empty collection).
     /// Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
     /// </summary>
-    private static EvalResult<Algorithm?> ResolvePreparedCallback(PreparedSequenceBuiltinSuffixArg.AlgorithmArg arg)
-        => arg.Cell is { } cell ? cell.ProjectCallable()
-            : EvalResult<Algorithm?>.Ok(arg.InvokedAlgorithm);
+    private static EvalResult<Algorithm> ResolvePreparedCallback(BuiltinId builtin, PreparedSequenceBuiltinSuffixArg.AlgorithmArg arg)
+        => ProjectInvokingSlot(arg.Cell, arg.InvokedAlgorithm, InvokingSlotRoles.Of(builtin), arg.WrittenSource?.Span);
 
-    private static EvalResult<Algorithm?> ExpectPreparedAlgorithmSuffixArg(
+    /// <summary>
+    /// The ROLE of every invoking (CALLABLE) builtin slot: the description of its missing-callability
+    /// verdict, <see cref="EvalError.NotAnAlgorithm"/> (Q-06), and the closed set the renderer
+    /// recognizes to name the slot in a sentence (<c>KatLangError.FormatNotAnAlgorithm</c>) — a
+    /// structured description owned here, never a fake zero-parameter callable. The per-item
+    /// invocation frames keep their own names (<see cref="FilterPredicateFrameName"/>,
+    /// <see cref="MapTransformFrameName"/>, <see cref="ReduceStepFrameName"/>).
+    /// Lean: <c>invokingSlotRole</c>.
+    /// </summary>
+    internal static class InvokingSlotRoles
+    {
+        internal const string MapTransform = "map transform";
+        internal const string FilterPredicate = "filter predicate";
+        internal const string ReduceReducer = "reduce reducer";
+        internal const string RepeatStep = "repeat step";
+        internal const string WhileStep = "while step";
+
+        /// <summary>The role of a builtin's invoking slot: its callback, or a loop's step.</summary>
+        internal static string Of(BuiltinId builtin) => builtin switch
+        {
+            BuiltinId.@map => MapTransform,
+            BuiltinId.@filter => FilterPredicate,
+            BuiltinId.@reduce => ReduceReducer,
+            BuiltinId.@repeat => RepeatStep,
+            BuiltinId.@while => WhileStep,
+            _ => throw new InvalidOperationException($"The builtin {BuiltinDisplayName(builtin)} has no invoking slot."),
+        };
+
+        /// <summary>Whether a <see cref="EvalError.NotAnAlgorithm"/> description names an invoking builtin slot.</summary>
+        internal static bool Contains(string description)
+            => description is MapTransform or FilterPredicate or ReduceReducer or RepeatStep or WhileStep;
+    }
+
+    // The callee names of the per-item callback invocations (their call frames), unchanged by Q-06.
+    private const string FilterPredicateFrameName = "filter predicate";
+    private const string MapTransformFrameName = "map transform";
+    private const string ReduceStepFrameName = "reduce step";
+
+    /// <summary>
+    /// CALLABLE projection of ONE invoking builtin slot — a collection builtin's callback (the
+    /// <c>filter</c> predicate, the <c>map</c> transform, the <c>reduce</c> reducer) or a
+    /// <c>while</c>/<c>repeat</c> step — made only when the builtin is about to invoke it, so
+    /// an unused invoking slot is never projected or validated (CALL-03, LOOP-05). It reads
+    /// the argument's algorithm channel alone and never demands its VALUE (NEED-06): a slot
+    /// with no CALLABLE identity — a literal, a capture, a list, a selection, a call result,
+    /// any computed value — is <c>NotAnAlgorithm</c> (Q-06) described by the slot's ROLE
+    /// (<see cref="InvokingSlotRoles"/>), the verdict a user higher-order parameter reports,
+    /// positioned at the supplied argument (a cell keeps the original argument's span across
+    /// transport) and raised before any invocation is charged. A slot that HAS callable
+    /// identity keeps every ordinary binder verdict when it is invoked (a zero-parameter
+    /// callable given an item is <c>ArityMismatch</c>). Lean: <c>projectInvokingSlot</c>.
+    /// </summary>
+    private static EvalResult<Algorithm> ProjectInvokingSlot(NeedCell? cell, Algorithm? invoked, string role, SourceSpan? span)
+    {
+        var projected = cell is not null ? cell.ProjectCallable() : EvalResult<Algorithm?>.Ok(invoked);
+        if (projected.IsError) return projected.Error;
+        return projected.Value is { } callable
+            ? EvalResult<Algorithm>.Ok(callable)
+            : new EvalError.NotAnAlgorithm(role) { Span = cell?.Span ?? span };
+    }
+
+    private static EvalResult<Algorithm> ExpectPreparedAlgorithmSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
@@ -1241,8 +1316,8 @@ public static partial class Evaluator
             index,
             SequenceBuiltinSuffixArgKind.Algorithm,
             (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg algorithmArg
-                ? ResolvePreparedCallback(algorithmArg)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm?>(
+                ? ResolvePreparedCallback(builtin, algorithmArg)
+                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm>(
                     builtin,
                     $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
 
@@ -1409,14 +1484,16 @@ public static partial class Evaluator
     /// re-counted through the ordinary value boundary (<see cref="CountValue(Result)"/>),
     /// exactly like <c>collection:0</c> — a selected sequence or list stays one
     /// value, a selected <c>()</c> emits zero values, and only an explicit
-    /// spread opens the selection. The collection must be non-empty.
+    /// spread opens the selection. An empty collection has no position to
+    /// select: <c>BadIndex</c>, the outcome of <c>collection:0</c> (SEQ-04, Q-27;
+    /// the empty policy reports it before this point).
     /// Lean: <c>evalFirstCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalFirstCounted(
         IReadOnlyList<Result> items)
     {
         if (items.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.BadIndex();
 
         return CountValue(items[0]);
     }
@@ -1425,14 +1502,14 @@ public static partial class Evaluator
     /// Evaluate <c>last(collection)</c> by SELECTING the last top-level
     /// collection element through the same value boundary as
     /// <see cref="EvalFirstCounted"/> and <c>collection:(count - 1)</c>.
-    /// The collection must be non-empty.
+    /// An empty collection has no position to select: <c>BadIndex</c>.
     /// Lean: <c>evalLastCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalLastCounted(
         IReadOnlyList<Result> items)
     {
         if (items.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.BadIndex();
 
         return CountValue(items[^1]);
     }
@@ -1495,7 +1572,7 @@ public static partial class Evaluator
         IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.IllegalInEval("min requires a non-empty collection");
 
         // Decimal128.Min propagates NaN (any NaN element makes the result NaN),
         // so the outcome never depends on where in the collection a NaN sits —
@@ -1523,7 +1600,7 @@ public static partial class Evaluator
         IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.IllegalInEval("max requires a non-empty collection");
 
         // NaN-propagating for the same reason as EvalMinCounted, and IEEE 754
         // `maximum` for signed zero: a zero maximum is 0 whenever an ordinary zero
@@ -1618,7 +1695,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<Decimal128> numbers)
     {
         if (numbers.Count == 0)
-            return new EvalError.BadArity();
+            return new EvalError.IllegalInEval("avg requires a non-empty collection");
 
         var total = SumNumbers(numbers, noteExactness: true, out var provablyExact);
         var average = provablyExact || numbers.Any(static number => !Decimal128.IsFinite(number))
@@ -2116,14 +2193,15 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The algorithm a loop step INVOKES: the argument's algorithm-channel identity
-    /// (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), so a step forwarded through a
-    /// parameter is the callable itself, never its demanded value. Lean: <c>step.invoked</c>.
-    /// Already evaluated data retains the legacy counted-value wrapper when necessary.
+    /// The algorithm a <c>while</c>/<c>repeat</c> step INVOKES: the argument's algorithm-channel
+    /// identity (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), so a step forwarded
+    /// through a parameter is the callable itself, never its demanded value — projected through
+    /// the ONE invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only when an iteration needs
+    /// it, and positioned at the step argument. Lean: <c>projectInvokingSlot</c> over
+    /// <c>invokeNeed step</c>.
     /// </summary>
-    private static EvalResult<Algorithm?> ResolveInvokedArgumentAlgorithm(ResolvedArgumentAlgorithm arg, EvalCtx ctx)
-        => arg.Cell is { } cell ? cell.ProjectCallable()
-            : EvalResult<Algorithm?>.Ok(arg.InvokedAlgorithm);
+    private static EvalResult<Algorithm> ProjectLoopStep(ResolvedArgumentAlgorithm step, BuiltinId loop)
+        => ProjectInvokingSlot(step.Cell, step.InvokedAlgorithm, InvokingSlotRoles.Of(loop), step.Source?.Span);
 
     private static EvalResult<Result> EvalResolvedArgument(
         ResolvedArgumentAlgorithm arg,

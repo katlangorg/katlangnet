@@ -401,16 +401,17 @@ def firstIsSelectionAtZeroAndLastIsSelectionAtCountMinusOne : Bool :=
 
 #guard firstIsSelectionAtZeroAndLastIsSelectionAtCountMinusOne
 
--- An empty target has no valid selection: `first`/`last` report the collection
--- arity rejection and `:` the index rejection.
+-- An empty target has no valid selection: `first`, `last` and `:` all report
+-- the one missing-position rejection, `badIndex` (SEQ-04, Q-27) — the
+-- selection laws hold for every target, errors included.
 def selectionFromAnEmptyCollectionFailsInEveryForm : Bool :=
   [KatLang.Expr.emptySequence 0, .listLiteral []].all fun target =>
     let props := [("A", alg [] [] [] [target])]
     let run (out : KatLang.Expr) := runResult (.algorithmExpr (algPrivate [] [] props [out]))
     (match run (.call (resolve "first") [resolve "A"]) with
-     | Except.error err => innermostIsBadArity err | _ => false) &&
+     | Except.error err => innermostIsBadIndex err | _ => false) &&
     (match run (.call (resolve "last") [resolve "A"]) with
-     | Except.error err => innermostIsBadArity err | _ => false) &&
+     | Except.error err => innermostIsBadIndex err | _ => false) &&
     (match run (.index (resolve "A") (.num 0)) with
      | Except.error err => innermostIsBadIndex err | _ => false)
 

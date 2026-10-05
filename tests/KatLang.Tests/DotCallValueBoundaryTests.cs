@@ -497,9 +497,10 @@ public class DotCallValueBoundaryTests
 
     /// <summary>
     /// The source's effect happens exactly once and the first error is identical on every
-    /// strategy and spelling; the zero-parameter predicate is a CALLBACK and is never
-    /// evaluated for its value (formerly its eager value attempt ran <c>Probe(2)</c> on every
-    /// strategy, PV-19), so a valid source reaches the ordinary callback arity error.
+    /// strategy and spelling; the predicate is a CALLBACK and is never evaluated for its value
+    /// (formerly its eager value attempt ran <c>Probe(2)</c> on every strategy, PV-19). A call
+    /// result has no CALLABLE identity, so a valid source reaches the predicate's
+    /// missing-callability verdict, <c>NotAnAlgorithm</c> (Q-06).
     /// </summary>
     [Theory]
     [InlineData("Probe(1)", "Probe(2)", false)]
@@ -534,9 +535,9 @@ public class DotCallValueBoundaryTests
             Assert.Equal(baseline, outcome);
             Assert.Equal(new[] { 1 }, trace);
             Assert.True(result.IsError);
-            // With a valid source, the zero-parameter predicate fails callback arity when it is
-            // invoked with the first element, before its body could run.
-            Assert.Equal(sourceDivisionError ? KatLangErrorCode.DivisionByZero : KatLangErrorCode.ArityMismatch, result.Error.Code);
+            // With a valid source, the predicate is projected when the first element needs it and
+            // has no CALLABLE identity: NotAnAlgorithm, its value never evaluated (Q-06).
+            Assert.Equal(sourceDivisionError ? KatLangErrorCode.DivisionByZero : KatLangErrorCode.NotAnAlgorithm, result.Error.Code);
         }
     }
 

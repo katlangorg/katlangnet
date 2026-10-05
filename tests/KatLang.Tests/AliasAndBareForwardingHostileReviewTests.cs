@@ -76,7 +76,7 @@ public class AliasAndBareForwardingHostileReviewTests
         // A repeated name beside a collector survives a three-level chain, and its constraint is
         // enforced by the alias's own binder before anything is called.
         { "chain-keeps-repeated-name-and-collector", "P(x, *rest, x) = x + rest.count\nA = P\nB = A\nB(1, 2, 3, 1)", "ok 3" },
-        { "chain-rejects-unequal-repeated-values", "P(x, *rest, x) = x + rest.count\nA = P\nB = A\nB(1, 2, 3, 4)", "err ArityMismatch: while evaluating call to B: Bad arity" },
+        { "chain-rejects-unequal-repeated-values", "P(x, *rest, x) = x + rest.count\nA = P\nB = A\nB(1, 2, 3, 4)", "err ArityMismatch: while evaluating call to B: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "callee-with-its-own-open", "Lib = { public K = 10 }\nF(x) = {\n    open Lib\n    x + K\n}\nA = F\nA(1)", "ok 11" },
         { "callee-declared-after-the-alias", "A = F\nF(x) = x + 1\nA(1)", "ok 2" },
         { "public-alias-of-a-private-sibling", "Lib = {\n    public A = F\n    F(x) = x + 1\n}\nLib.A(5)", "ok 6" },
@@ -105,7 +105,7 @@ public class AliasAndBareForwardingHostileReviewTests
 
         // ── Bare forwarding is by name ────────────────────────────────────────────────────
         { "forwarding-with-a-repeated-list", "F(x, y) = x * 10 + y\nG(x, x, y) = F\nG(3, 3, 4)", "ok 34" },
-        { "forwarding-with-a-repeated-list-unequal", "F(x, y) = x * 10 + y\nG(x, x, y) = F\nG(3, 4, 4)", "err ArityMismatch: while evaluating call to G: Bad arity" },
+        { "forwarding-with-a-repeated-list-unequal", "F(x, y) = x * 10 + y\nG(x, x, y) = F\nG(3, 4, 4)", "err ArityMismatch: while evaluating call to G: repeated parameter 'x' requires equal arguments: Bad arity" },
         { "forwarding-with-a-middle-collector", "F(a, *m, z) = a * 100 + m.count * 10 + z\nG(a, *m, z) = F\nG(1, 7, 7, 7, 2)", "ok 132" },
         { "forwarding-branch-with-a-repeated-head", "F(x) = x * 2\nG(x, x) = F\nG(y, z) = 0\nG(3, 3), G(3, 4)", "ok S[6, 0]" },
         // Q-04: a name the closed list does not bind is the enclosing PARAMETER binding it denotes;

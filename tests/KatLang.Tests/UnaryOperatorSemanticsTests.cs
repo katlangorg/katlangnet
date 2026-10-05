@@ -9,9 +9,10 @@ namespace KatLang.Tests;
 /// These complement strategy-parity tests, which cannot detect a defect shared by
 /// every caller.
 ///
-/// <para>Unary minus is numeric negation: non-numeric operands keep the
-/// numeric-conversion <see cref="EvalError.BadArity"/>, strings their TypeMismatch, and a
-/// Boolean is a value-kind TypeMismatch. Unary <c>not</c> is Boolean negation and rejects
+/// <para>Unary minus is numeric negation: every non-numeric operand — a Boolean, a
+/// sequence (<c>()</c> included) or a list — is the value-kind
+/// <see cref="EvalError.TypeMismatch"/> naming the operand (Q-27), and strings keep their own
+/// TypeMismatch. Unary <c>not</c> is Boolean negation and rejects
 /// every non-Boolean operand — numbers included, there is no numeric truthiness — with the
 /// Boolean-operand <see cref="EvalError.TypeMismatch"/>. Every rejection carries the unary
 /// expression's span when the caller supplies one (F5).</para>
@@ -33,15 +34,19 @@ public class UnaryOperatorSemanticsTests
     }
 
     [Fact]
-    public void EmptySequence_IsTheNumericConversionFailureOfMinusAtTheUnarySpan()
+    public void EmptySequence_IsTheNumericOperandRejectionOfMinusAtTheUnarySpan()
     {
-        // SYN-01: `()` is an ordinary operand and fails numeric conversion like
-        // `(1, 2)`; the BadArity carries the unary expression's span (F5) — the
-        // same location policy as the string rejection below.
+        // SYN-01: `()` is an ordinary operand and is rejected like `(1, 2)` — a value
+        // of the wrong KIND, the one TypeMismatch naming the operand (Q-27); it carries
+        // the unary expression's span (F5) — the same location policy as the string
+        // rejection below.
         var span = new SourceSpan(7, 3, 7, 9);
-        var error = Fail(UnaryOp.Minus, Result.SequenceValue.TakeOwnership([]), span);
+        var error = Assert.IsType<EvalError.TypeMismatch>(Fail(UnaryOp.Minus, Result.SequenceValue.TakeOwnership([]), span));
 
-        Assert.Equal(span, Assert.IsType<EvalError.BadArity>(error).Span);
+        Assert.Equal(
+            "operator `-` expects a numeric scalar operand, but the operand was a sequence value with 0 sequence elements: ()",
+            error.Message);
+        Assert.Equal(span, error.Span);
     }
 
     [Fact]
@@ -65,7 +70,7 @@ public class UnaryOperatorSemanticsTests
         // structured rejection; the helper attaches a span only when it has one.
         var error = Fail(op, Result.SequenceValue.TakeOwnership([]), span: null);
 
-        Assert.IsType(op == UnaryOp.Minus ? typeof(EvalError.BadArity) : typeof(EvalError.TypeMismatch), error);
+        Assert.IsType<EvalError.TypeMismatch>(error);
         Assert.Null(error.Span);
     }
 
@@ -137,7 +142,7 @@ public class UnaryOperatorSemanticsTests
     }
 
     [Theory]
-    [InlineData(UnaryOp.Minus, "Unary operator is not supported for strings")]
+    [InlineData(UnaryOp.Minus, "operator `-` expects a numeric scalar operand, but the operand was a string: 'text'")]
     [InlineData(UnaryOp.Not, "operator `not` expects a Boolean operand, but the operand was a string: 'text'")]
     public void StringFailure_HasTheUnaryExpressionSpan(UnaryOp op, string message)
     {
@@ -152,7 +157,7 @@ public class UnaryOperatorSemanticsTests
     public void OtherNonNumericFailures_CarryTheUnaryExpressionSpan()
     {
         // A list value and a multi-item sequence value are the other operand
-        // shapes that fail numeric conversion (minus) and the Boolean-operand rule
+        // shapes that fail the numeric-operand rule (minus) and the Boolean-operand rule
         // (not); every one of them reports its rejection AT the unary expression
         // (F5), never a spanless error.
         Result[] operands =
@@ -164,7 +169,7 @@ public class UnaryOperatorSemanticsTests
 
         foreach (var operand in operands)
         {
-            Assert.Equal(span, Assert.IsType<EvalError.BadArity>(Fail(UnaryOp.Minus, operand, span)).Span);
+            Assert.Equal(span, Assert.IsType<EvalError.TypeMismatch>(Fail(UnaryOp.Minus, operand, span)).Span);
             Assert.Equal(span, Assert.IsType<EvalError.TypeMismatch>(Fail(UnaryOp.Not, operand, span)).Span);
         }
     }

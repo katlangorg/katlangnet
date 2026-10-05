@@ -368,16 +368,27 @@ def test74 : Bool :=
 
 #guard test74
 
--- Test 75: filter predicate arity mismatch explains the implicit item argument
+-- Test 75: a filter predicate with no callable identity is `notAnAlgorithm`
+-- (Q-06), decided when filter is about to invoke it — before any item is
+-- visited, so no item context frames it — while a zero-parameter callable
+-- predicate is invoked for item 0 and rejected by the ordinary binder, the
+-- frame explaining the implicit item argument.
 def test75 : Bool :=
-  match runResult (.dotCall
+  (match runResult (.dotCall
     (.call (resolve "range") [.num 1, .num 5])
     "filter"
     (some [.num 1])) with
   | Except.error err =>
+      !hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
+      innermostIsNotAnAlgorithm "filter predicate" err
+  | _ => false) &&
+  (match runResult (.algorithmExpr (algPrivate [] [] [("P", alg [] [] [] [.num 1])] [
+    .dotCall (.call (resolve "range") [.num 1, .num 5]) "filter" (some [resolve "P"])
+  ])) with
+  | Except.error err =>
       hasContext "while evaluating filter predicate for item 0: 1 (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" err &&
       innermostIsArityMismatch 0 1 err
-  | _ => false
+  | _ => false)
 
 #guard test75
 

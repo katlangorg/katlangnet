@@ -59,7 +59,15 @@ public enum KatLangErrorCode
     /// <summary>A property exists but is local-only and cannot be accessed structurally (<see cref="EvalError.LocalOnlyProperty"/>).</summary>
     LocalOnlyProperty = 4,
 
-    /// <summary>An expression does not resolve to an algorithm (<see cref="EvalError.NotAnAlgorithm"/>).</summary>
+    /// <summary>
+    /// A position that INVOKES its argument received no callable identity
+    /// (<see cref="EvalError.NotAnAlgorithm"/>): a callee, a user higher-order parameter, a
+    /// builtin callback (the <c>map</c> transform, the <c>filter</c> predicate, the
+    /// <c>reduce</c> reducer) or a <c>while</c>/<c>repeat</c> step holds a value. Decided when
+    /// the invocation is needed, by callable projection only — the value is never evaluated to
+    /// find out (Q-06). A real callable whose parameters cannot bind the supply is
+    /// <see cref="ArityMismatch"/> instead.
+    /// </summary>
     NotAnAlgorithm = 5,
 
     /// <summary>A semantic restriction in an open expression was violated (<see cref="EvalError.IllegalInOpen"/>).</summary>
@@ -71,7 +79,13 @@ public enum KatLangErrorCode
     /// </summary>
     BadOpenForm = 7,
 
-    /// <summary>An expression form is not evaluable to a value (<see cref="EvalError.IllegalInEval"/>).</summary>
+    /// <summary>
+    /// A general value-domain failure (<see cref="EvalError.IllegalInEval"/>): a value of the
+    /// accepted kind that the operation cannot use — an empty collection for <c>min</c>,
+    /// <c>max</c> or <c>avg</c>, a fractional or negative count, a non-whole bound, an inverted
+    /// random interval, <c>0 ^ -1</c> (Q-27; a zero divisor is <see cref="DivisionByZero"/>) — or
+    /// an expression form that a host-built tree may not evaluate.
+    /// </summary>
     IllegalInEval = 8,
 
     /// <summary>Multiple opens provide the same name publicly (<see cref="EvalError.AmbiguousOpen"/>).</summary>
@@ -80,19 +94,34 @@ public enum KatLangErrorCode
     // ── Arity, types, and operations ────────────────────────────────────────
 
     /// <summary>
-    /// The supplied items do not fit the callable or binding shape: parameter
-    /// count vs argument count, a variadic callable's fixed-parameter minimum,
-    /// or a shape/unpacking failure (<see cref="EvalError.ArityMismatch"/>,
-    /// <see cref="EvalError.VariadicArityMismatch"/>, <see cref="EvalError.BadArity"/>,
-    /// plus <see cref="DiagnosticCode.ArityMismatch"/>, which no front-end path
-    /// produces since SYN-05 — see that member).
+    /// Supply or output CARDINALITY: the supplied items do not fit the callable or binder's
+    /// interface — parameter count vs argument count, a variadic callable's fixed-parameter
+    /// minimum, a clause family's heads, a loop step's state, a structural pattern's length, a
+    /// deconstruction's item count — an operation received the wrong number of emitted slots (a
+    /// <c>map</c> or <c>reduce</c> result, a <c>while</c> step without its flag), or the
+    /// occurrences of a repeated parameter name received unequal values (NEED-04). Never a value
+    /// kind (<see cref="TypeMismatch"/>), a domain (<see cref="IllegalInEval"/>) or a missing
+    /// callable (<see cref="NotAnAlgorithm"/>) failure (Q-27). Variants:
+    /// <see cref="EvalError.ArityMismatch"/>, <see cref="EvalError.VariadicArityMismatch"/>,
+    /// <see cref="EvalError.BadArity"/>, plus <see cref="DiagnosticCode.ArityMismatch"/>, which no
+    /// front-end path produces since SYN-05 — see that member.
     /// </summary>
     ArityMismatch = 10,
 
-    /// <summary>A type error, for example a string where a number is expected (<see cref="EvalError.TypeMismatch"/>).</summary>
+    /// <summary>
+    /// A present VALUE of a kind the operation does not accept (<see cref="EvalError.TypeMismatch"/>):
+    /// a string, Boolean, sequence or list where a number is required (an operand, a selector, a
+    /// bound or count, a Math argument, a numeric collection element), a non-Boolean condition,
+    /// or a structural pattern given a value of the other kind (Q-27).
+    /// </summary>
     TypeMismatch = 11,
 
-    /// <summary>An index is out of range or invalid (<see cref="EvalError.BadIndex"/>).</summary>
+    /// <summary>
+    /// A selection names no position (<see cref="EvalError.BadIndex"/>): an index out of range,
+    /// negative or not whole, or <c>first</c>/<c>last</c> of an empty collection, which are
+    /// selections (SEQ-04, Q-27). It never means merely that a container is empty: the empty
+    /// <c>min</c>/<c>max</c>/<c>avg</c> select nothing and are <see cref="IllegalInEval"/>.
+    /// </summary>
     BadIndex = 12,
 
     /// <summary>Division or modulo by a zero-valued divisor (<see cref="EvalError.DivByZero"/>).</summary>

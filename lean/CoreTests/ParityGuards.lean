@@ -18,9 +18,11 @@ open KatLang (Pattern CondBranch)
 -- builtin across argument counts 0..6 on both dispatch paths:
 --   - a rejected count must fail with an arity-mismatch error, and
 --   - an accepted count must never fail with one. It may still fail for
---     value/domain reasons; domain rejections (empty-collection policy,
---     numeric item shape) deliberately bottom out in `badArity`, not
---     `arityMismatch`, so the two directions stay distinguishable.
+--     value/domain reasons, and those name their own contract (Q-27): the
+--     empty-collection policy is a missing position (`badIndex`) or a domain
+--     failure (`illegalInEval`), a numeric item of the wrong shape a value
+--     kind (`typeMismatch`) — never `arityMismatch`, so the two directions
+--     stay distinguishable.
 
 inductive BuiltinApplyOutcome where
   | succeeded
@@ -180,14 +182,26 @@ def builtinAcceptedAritySpotFailures : List String :=
 #guard builtinAcceptedAritySpotFailures == []
 
 -- Accepted count does not promise success: the empty-collection policy rejects
--- `first(())`-style calls at the accepted count 1 with a non-arity diagnostic.
--- Pin that distinction so the accepted direction of the sweep stays meaningful.
+-- `first(())`-style calls at the accepted count 1 with a non-arity diagnostic —
+-- the selection's missing position for `first`/`last` (`badIndex`) and the
+-- aggregate's domain for `min`/`max`/`avg` (`illegalInEval`), Q-27. The probe
+-- arguments are REAL empty collections, a sequence and a list (X-11: an
+-- output-less algorithm stops at its missing output and never reaches the
+-- policy). Pin that distinction so the accepted direction of the sweep stays
+-- meaningful.
 def builtinEmptyPolicyFailuresAreNotArityErrors : Bool :=
-  let emptyArg := alg [] [] [] []
-  [KatLang.Builtin.firstBuiltin, .lastBuiltin, .minBuiltin, .maxBuiltin, .avgBuiltin].all
-    fun b =>
-      KatLang.builtinAcceptsArity b 1
-      && (applyBuiltinOutcomes b [emptyArg]).all (· == .failedOtherwise)
+  [alg [] [] [] [.emptySequence 0], alg [] [] [] [.listLiteral []]].all fun emptyArg =>
+    ([(KatLang.Builtin.firstBuiltin, innermostIsBadIndex),
+      (.lastBuiltin, innermostIsBadIndex),
+      (.minBuiltin, innermostIsIllegalInEval "min requires a non-empty collection"),
+      (.maxBuiltin, innermostIsIllegalInEval "max requires a non-empty collection"),
+      (.avgBuiltin, innermostIsIllegalInEval "avg requires a non-empty collection")]
+      : List (KatLang.Builtin × (Error -> Bool))).all fun (b, expected) =>
+        KatLang.builtinAcceptsArity b 1
+        && (applyBuiltinOutcomes b [emptyArg]).all (· == .failedOtherwise)
+        && (builtinApplyResults b [emptyArg]).all fun
+            | .error err => expected err
+            | .ok _ => false
 
 #guard builtinEmptyPolicyFailuresAreNotArityErrors
 

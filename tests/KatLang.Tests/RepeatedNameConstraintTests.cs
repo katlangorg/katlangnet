@@ -204,8 +204,12 @@ public class RepeatedNameConstraintTests
     /// <summary>The evaluation frame of the dot-call <c>receiver.member(...)</c>.</summary>
     private static string Dot(string receiver, string member) => $"while evaluating dotCall .{member} of {receiver}: ";
 
-    /// <summary>The ordinary unequal-values failure, inside <paramref name="frames"/>.</summary>
-    private static string Unequal(string frames = "") => $"err ArityMismatch: {frames}Bad arity";
+    /// <summary>
+    /// The ordinary unequal-values failure of the repeated parameter <paramref name="name"/>, inside
+    /// <paramref name="frames"/>: NEED-04's BadArity, its context naming the violated agreement.
+    /// </summary>
+    private static string Unequal(string name, string frames = "")
+        => $"err ArityMismatch: {frames}repeated parameter '{name}' requires equal arguments: Bad arity";
 
     /// <summary><c>Inc</c> passed bare: its OWN value demand, the arity rejection of <c>Inc(y)</c>.</summary>
     private static string IncValueDemand(string frames = "")
@@ -236,8 +240,8 @@ public class RepeatedNameConstraintTests
         { "equal-values-traced", "P(x, x) = x\nP(trace(7), trace(7))", "ok 7 [trace(7),trace(7)]" },
 
         // 2. Unequal values do not match (the language's normal repeated-name failure).
-        { "unequal-values", "P(x, x) = x\nP(7, 8)", Unequal(Call("P")) },
-        { "unequal-ticks", "P(x, x) = x\nP(tick(), tick())", Unequal(Call("P")) + " [tick#1,tick#2]" },
+        { "unequal-values", "P(x, x) = x\nP(7, 8)", Unequal("x", Call("P")) },
+        { "unequal-ticks", "P(x, x) = x\nP(tick(), tick())", Unequal("x", Call("P")) + " [tick#1,tick#2]" },
 
         // 3. A callable-only argument beside a value: never a dual-channel binding, both orders.
         // Formerly `ok S[1, 6]`: x read the value 1 and x(5) invoked Inc.
@@ -278,11 +282,11 @@ public class RepeatedNameConstraintTests
         // 7. Nested patterns: an occurrence inside a group never completes a top-level one.
         // Formerly `ok 9` and `ok 8`.
         { "nested-equal", "N(x, (x, y)) = y\nN(7, (7, 8))", "ok 8" },
-        { "nested-unequal", "N(x, (x, y)) = y\nN(6, (7, 8))", Unequal(Call("N")) },
+        { "nested-unequal", "N(x, (x, y)) = y\nN(6, (7, 8))", Unequal("x", Call("N")) },
         { "nested-callable", Inc + "N(x, (x, y)) = x(y)\nN(Inc, (7, 8))", IncValueDemand(Call("N")) },
         { "nested-failed", Bad + "N(x, (x, y)) = y\nN(Bad, (7, 8))", DivisionByZero(Call("N")) + BadTraced },
         { "nested-inside-one-group", "M((x, x)) = x\nM((7, 7))", "ok 7" },
-        { "nested-inside-one-group-unequal", "M((x, x)) = x\nM((7, 8))", Unequal(Call("M")) },
+        { "nested-inside-one-group-unequal", "M((x, x)) = x\nM((7, 8))", Unequal("x", Call("M")) },
 
         // 8. Families use the common complete-binding constraint: identity conflicts fall through,
         // while an actual failed demand aborts dispatch.
@@ -297,10 +301,10 @@ public class RepeatedNameConstraintTests
 
         // 9. Lists and sequences: the ONE structural, kind-sensitive value equality.
         { "list-equal", "P(x, x) = x\nP([1], [1])", "ok L[1]" },
-        { "list-vs-scalar", "P(x, x) = x\nP([1], 1)", Unequal(Call("P")) },
+        { "list-vs-scalar", "P(x, x) = x\nP([1], 1)", Unequal("x", Call("P")) },
         { "sequence-equal", "P(x, x) = x\nP((1, 2), (1, 2))", "ok S[1, 2]" },
-        { "list-vs-sequence", "P(x, x) = x\nP([1, 2], (1, 2))", Unequal(Call("P")) },
-        { "empty-list-vs-empty-sequence", "P(x, x) = 0\nP([], ())", Unequal(Call("P")) },
+        { "list-vs-sequence", "P(x, x) = x\nP([1, 2], (1, 2))", Unequal("x", Call("P")) },
+        { "empty-list-vs-empty-sequence", "P(x, x) = 0\nP([], ())", Unequal("x", Call("P")) },
         { "family-list-vs-scalar", "E(x, x) = true\nE(x, y) = false\nE([1], 1)", "ok false" },
 
         // 10. Collected parameters: the name repeats across the collector.
@@ -315,7 +319,7 @@ public class RepeatedNameConstraintTests
 
         // 12. Inspection settles immediately in written order; an earlier conflict stops later demands.
         { "binding-failure-before-verdict", Bad + "Q2(x, x, y, y) = 0\nQ2(Bad, 7, 1, 2)", DivisionByZero(Call("Q2")) + BadTraced },
-        { "binding-failure-before-verdict-late", Bad + "Q2(x, x, y, y) = 0\nQ2(1, 2, Bad, 7)", Unequal(Call("Q2")) },
+        { "binding-failure-before-verdict-late", Bad + "Q2(x, x, y, y) = 0\nQ2(1, 2, Bad, 7)", Unequal("x", Call("Q2")) },
     };
 
     [Theory]
@@ -491,7 +495,7 @@ public class RepeatedNameConstraintTests
             else if (valueOfB is not null)
                 expected = valueOfB;
             else if ((await OnEveryRouteAsync($"{Vocabulary}Eq(x, y) = x == y\nEq({a}, {b})")).Outcome != "ok true")
-                expected = Unequal();
+                expected = Unequal("f");
             else if (CarriesCallable(a) && CarriesCallable(b) && !(a == b && a != "{5}"))
                 expected = Identity();
             else

@@ -289,12 +289,10 @@ public sealed class CliApplicationTests
     }
 
     [Theory]
-    // X-23: a loop step the loop finds no parameter of — a value that is not a callable, or a
-    // genuinely zero-parameter callable given a non-empty state — is reported by that binding fact,
-    // never as a step that "has no parameters". (Clause families and builtins are ordinary callables
-    // since Q-23: see Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables.)
-    [InlineData("while(5, 1)", "[1:1] while evaluating call to while: `while` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
-    [InlineData("repeat([1], 2, 1)", "[1:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    // X-23: a genuinely zero-parameter callable given a non-empty state is reported by the binding
+    // fact, never as a step that "has no parameters". (A value step has no callable identity at all:
+    // Eval_ValueStep_IsNotCallable. Clause families and builtins are ordinary callables since Q-23:
+    // see Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables.)
     [InlineData("Z = 5\nrepeat(Z, 2, 1)", "[2:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
     public async Task Eval_LoopStepWithNoBindableParameter_ReportsTheBindingFact(string source, string expected)
     {
@@ -304,6 +302,38 @@ public sealed class CliApplicationTests
         Assert.Equal("", result.Output);
         Assert.StartsWith(expected, result.TrimmedError);
         Assert.DoesNotContain("has no parameters", result.TrimmedError);
+    }
+
+    [Theory]
+    // Q-06: a value in an invoking position has no callable identity — NotAnAlgorithm, named by the
+    // slot's role and positioned at the supplied argument, never the loop-state binding fact.
+    [InlineData("while(5, 1)", "[1:7] while evaluating call to while: The while step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    [InlineData("repeat([1], 2, 1)", "[1:8] while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    public async Task Eval_ValueStep_IsNotCallable(string source, string expected)
+    {
+        var result = await Cli.InvokeAsync("eval", source);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(expected, result.TrimmedError);
+        Assert.DoesNotContain("found no step parameter", result.TrimmedError);
+    }
+
+    [Theory]
+    // The Q-27 + Q-06 error taxonomy as a user sees it: each message names the violated contract.
+    [InlineData("map([1, 2], 5)", "[1:13] while evaluating call to map: The map transform is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    [InlineData("-()", "[1:1] Type mismatch: operator `-` expects a numeric scalar operand, but the operand was a sequence value with 0 sequence elements: ()")]
+    [InlineData("first(())", "[1:1] while evaluating call to first: first selects from an empty collection, which has no position to select: Bad index")]
+    [InlineData("min(())", "[1:1] while evaluating call to min: Illegal in eval: min requires a non-empty collection")]
+    public async Task Eval_ErrorTaxonomy_NamesTheViolatedContract(string source, string expected)
+    {
+        var result = await Cli.InvokeAsync("eval", source);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(expected, result.TrimmedError);
+        Assert.DoesNotContain("Bad arity", result.TrimmedError);
+        Assert.DoesNotContain("Expected 0 parameters", result.TrimmedError);
     }
 
     [Theory]

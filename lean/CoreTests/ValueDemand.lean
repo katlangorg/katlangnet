@@ -555,19 +555,21 @@ def forwardedCallbackAgrees (direct forwarded : KatLang.Expr) (expected : List I
 #guard expectFlat (runFlat (forwardingRoot [.call (resolve "ApplyInitial") [resolve "A"]])) [10]
 
 -- A parameter bound on the VALUE channel only has no algorithm binding, so an
--- invoking slot still receives its value and rejects it as a zero-parameter
--- callback — exactly what the direct spelling `map([1, 2], 5)` reports; a
--- forwarded zero-parameter property is invoked like the direct one and rejected
--- the same way.
-def invokedRejectsLikeDirect (direct forwarded : KatLang.Expr) : Bool :=
+-- invoking slot finds no CALLABLE identity and reports `notAnAlgorithm` (Q-06)
+-- — exactly what the direct spelling `map([1, 2], 5)` reports; a forwarded
+-- zero-parameter property is invoked like the direct one and rejected by the
+-- ordinary binder (`arityMismatch 0 1`) the same way.
+def invokedRejectsLikeDirect (direct forwarded : KatLang.Expr) (expected : Error -> Bool) : Bool :=
   match runResult (forwardingRoot [direct]), runResult (forwardingRoot [forwarded]) with
-  | .error d, .error f => innermostIsArityMismatch 0 1 d && innermostIsArityMismatch 0 1 f
+  | .error d, .error f => expected d && expected f
   | _, _ => false
 #guard invokedRejectsLikeDirect
   (.call (resolve "map") [oneTwo, .num 5])
   (.call (resolve "ApplyMap") [.num 5, oneTwo])
+  (innermostIsNotAnAlgorithm "map transform")
 #guard invokedRejectsLikeDirect
   (.call (resolve "map") [oneTwo, resolve "A"])
   (.call (resolve "ApplyMap") [resolve "A", oneTwo])
+  (innermostIsArityMismatch 0 1)
 
 end KatLangTests

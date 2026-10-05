@@ -1717,13 +1717,80 @@ theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
     rfl
   · simp [Result.select?, Result.projectionItems, Result.toItems]
 
-/-- `first` and `last` never carry a count of their own: `first(())` and
-`last(())` are the collection-arity rejection. -/
-theorem first_empty_is_badArity (s : EvalState) :
-    (evalFirstCounted []).run s = (Except.error Error.badArity : Except Error (CountedResult × EvalState)) := rfl
+/-- `first` and `last` ARE selections (SEQ-04), so on an empty collection they
+report the selection's own missing position, `badIndex` — the outcome of
+`():0` — and never a count of their own (Q-27, decided 2026-10-05). -/
+theorem first_empty_is_badIndex (s : EvalState) :
+    (evalFirstCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
-theorem last_empty_is_badArity (s : EvalState) :
-    (evalLastCounted []).run s = (Except.error Error.badArity : Except Error (CountedResult × EvalState)) := rfl
+theorem last_empty_is_badIndex (s : EvalState) :
+    (evalLastCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
+
+/-- SEQ-04 made TOTAL (Q-27, decided 2026-10-05): over EVERY collection view,
+the empty one included, `first(A)` is the selection `A:0` — the same element
+under the same value boundary, or, when the view names no position 0, the same
+`badIndex` the `.index` arm of `evalCounted` reports for `select? … = none`. -/
+theorem first_is_select_zero_total (items : List Result) (s : EvalState) :
+    (evalFirstCounted items).run s
+      = (match Result.select? (Result.sequenceValue items) 0 with
+          | some x => Except.ok ((x, Result.valueCount x), s)
+          | none => Except.error Error.badIndex
+          : Except Error (CountedResult × EvalState)) := by
+  cases items with
+  | nil => rfl
+  | cons x xs => simp [evalFirstCounted, Result.select?, Result.projectionItems, Result.toItems]; rfl
+
+/-- `last(A)` is the selection `A:(count(A) - 1)` over EVERY collection view, the
+empty one included: on the empty view the index is `-1`, which the `.index` arm
+rejects as `badIndex` before selecting, and `last` reports that same `badIndex`;
+on every other view both select the last element under the same value
+boundary. -/
+theorem last_is_select_last_total (items : List Result) (s : EvalState) :
+    (evalLastCounted items).run s
+      = (if items.length = 0 then Except.error Error.badIndex
+         else match Result.select? (Result.sequenceValue items) (items.length - 1) with
+          | some x => Except.ok ((x, Result.valueCount x), s)
+          | none => Except.error Error.badIndex
+          : Except Error (CountedResult × EvalState)) := by
+  cases items with
+  | nil => rfl
+  | cons x xs =>
+      simp [evalLastCounted, Result.select?, Result.projectionItems, Result.toItems,
+        List.getLast?_eq_getElem?]
+      rfl
+
+/-- The empty policy follows what a builtin IS (Q-27): `first` and `last` select,
+so their empty collection names no position (`badIndex`); `min`, `max` and
+`avg` aggregate, so theirs is outside the domain (`illegalInEval`). No policy
+is decided by a builtin's identity at run time. -/
+theorem empty_policy_follows_what_the_builtin_is :
+    (sequenceBuiltinMetadata? .firstBuiltin).map (·.emptyPolicy) = some .requireSelectablePosition
+    ∧ (sequenceBuiltinMetadata? .lastBuiltin).map (·.emptyPolicy) = some .requireSelectablePosition
+    ∧ (sequenceBuiltinMetadata? .minBuiltin).map (·.emptyPolicy) = some .requireAnyItem
+    ∧ (sequenceBuiltinMetadata? .maxBuiltin).map (·.emptyPolicy) = some .requireAnyItem
+    ∧ (sequenceBuiltinMetadata? .avgBuiltin).map (·.emptyPolicy) = some .requireAnyItem :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Q-06 (decided 2026-10-05): an invoking builtin slot — a callback or a loop
+step — whose argument has no CALLABLE identity is `notAnAlgorithm`, whatever
+the consumer; a slot with callable identity is that callable, kept for the
+ordinary binder. The projection is reached only when an invocation is
+required, and it reads no VALUE. -/
+theorem invoking_slot_without_callable_is_notAnAlgorithm (role : String) (s : EvalState) :
+    (projectInvokingSlot role none).run s
+      = (Except.error (Error.notAnAlgorithm role) : Except Error (Algorithm × EvalState)) := rfl
+
+theorem invoking_slot_with_callable_is_that_callable (role : String) (a : Algorithm) (s : EvalState) :
+    (projectInvokingSlot role (some a)).run s = (Except.ok (a, s) : Except Error (Algorithm × EvalState)) := rfl
+
+/-- Q-06's shared diagnostic vocabulary: a reducer role is distinct from the
+per-invocation "reduce step" frame. Pin the concrete roles, since the generic
+projection laws above intentionally accept any string and cannot detect drift. -/
+theorem invoking_slot_roles_follow_the_shared_vocabulary :
+    [invokingSlotRole .mapBuiltin, invokingSlotRole .filterBuiltin,
+      invokingSlotRole .reduceBuiltin, invokingSlotRole .repeatBuiltin,
+      invokingSlotRole .whileBuiltin] =
+    ["map transform", "filter predicate", "reduce reducer", "repeat step", "while step"] := rfl
 
 /-- A higher-order callback item is a selected value: whatever count the
 iteration supplied, the callback observes the value-boundary re-count. -/
@@ -3383,6 +3450,14 @@ every clause needs its arguments. -/
 theorem builtin_reference_lifts_and_is_never_cacheable (b : Builtin) :
     Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false
     ∧ liftsBareValueReference (builtinLiftingSignature b) = true := by
+  cases b <;> decide
+
+/-- Q-27 payload hygiene is checked against the independent acceptance predicate for every
+    builtin, including its minimum and the immediately smaller supply. -/
+theorem builtin_minimum_payload_is_the_first_accepted_supply (b : Builtin) :
+    builtinAcceptsArity b (builtinMinimumArity b) = true
+    ∧ builtinMinimumArity b > 0
+    ∧ builtinAcceptsArity b (builtinMinimumArity b - 1) = false := by
   cases b <;> decide
 
 theorem nameable_family_reference_lifts :

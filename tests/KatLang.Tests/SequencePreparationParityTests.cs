@@ -90,10 +90,11 @@ public class SequencePreparationParityTests
     /// (CALL-03): neither strategy materializes the string it would build, so no string limit
     /// is ever reached (before the PV-19 repair both strategies ran an eager value attempt that
     /// materialized it, and a limit of 3 was their terminal verdict). An empty source never
-    /// invokes the predicate; a non-empty one invokes the zero-parameter value with one
-    /// element — the ordinary arity error, identical on both strategies. The fused plan is
-    /// prepared and executed in every case (no fallback, one hit): preparation evaluates
-    /// nothing that could fail, so the arity error arises while the plan runs.
+    /// projects the predicate; a non-empty one projects it for its first element: a capture has
+    /// no CALLABLE identity (<c>NotAnAlgorithm</c>, Q-06), while the zero-parameter property or
+    /// block is invoked with one element — the ordinary arity error — identically on both
+    /// strategies. The fused plan is prepared and executed in every case (no fallback, one hit):
+    /// preparation evaluates nothing that could fail, so the verdict arises while the plan runs.
     /// </summary>
     [Theory]
     [InlineData("E.filter((D)).count", true)]
@@ -129,7 +130,7 @@ public class SequencePreparationParityTests
                 var error = optimized.Result.Error;
                 while (error is EvalError.WithContext context) error = context.Inner;
                 if (pipeline.Contains("(D, ())", StringComparison.Ordinal))
-                    Assert.Equal((0, 1), (Assert.IsType<EvalError.ArityMismatch>(error).Expected, Assert.IsType<EvalError.ArityMismatch>(error).Actual));
+                    Assert.Equal("filter predicate", Assert.IsType<EvalError.NotAnAlgorithm>(error).Description);
                 else
                 {
                     var arity = Assert.IsType<EvalError.ArityMismatch>(error);
@@ -146,7 +147,8 @@ public class SequencePreparationParityTests
     /// activation's <c>v</c> never builds it, so the collection-size limit that value would
     /// break is never reached (before the PV-19 repair both strategies' eager value attempt
     /// built it in the caller's value environment and failed the limit). Both strategies agree:
-    /// the empty source gives 0, a non-empty one the callback's ordinary arity error.
+    /// the empty source gives 0, a non-empty one the captured predicate's missing-callability
+    /// verdict (<c>NotAnAlgorithm</c>, Q-06).
     /// </summary>
     [Theory]
     [InlineData("E.filter((D)).count", true)]
@@ -167,7 +169,7 @@ public class SequencePreparationParityTests
         {
             var error = generic.Result.Error;
             while (error is EvalError.WithContext context) error = context.Inner;
-            Assert.Equal((0, 1), (Assert.IsType<EvalError.ArityMismatch>(error).Expected, Assert.IsType<EvalError.ArityMismatch>(error).Actual));
+            Assert.Equal("filter predicate", Assert.IsType<EvalError.NotAnAlgorithm>(error).Description);
         }
 
         AssertParity(generic, optimized);

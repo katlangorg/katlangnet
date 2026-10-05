@@ -7,14 +7,15 @@ namespace KatLang.Tests;
 /// written unary expression, on every evaluation path (plain, counted, the async twin,
 /// and the engine's error projection) and for every operand shape — the same location
 /// policy the unary string rejection and the binary operators' operand rejections
-/// already followed. For unary minus the rejection is the numeric-conversion
-/// <see cref="EvalError.BadArity"/> (the empty sequence value, a multi-item sequence
-/// value, a list value); for unary <c>not</c> it is the Boolean-operand
-/// <see cref="EvalError.TypeMismatch"/> (every non-Boolean operand). Before this pin
+/// already followed. For unary minus the rejection is the numeric-operand
+/// <see cref="EvalError.TypeMismatch"/> naming the operand (the empty sequence value, a
+/// multi-item sequence value, a list value — a value of the wrong KIND, Q-27); for unary
+/// <c>not</c> it is the Boolean-operand <see cref="EvalError.TypeMismatch"/> (every
+/// non-Boolean operand). Before this pin
 /// the error was structurally spanless, so a host could not point at the failing
 /// expression at all. The fix locates each failure; it never re-classifies it.
 /// </summary>
-public class UnaryBadAritySpanTests
+public class UnaryOperandSpanTests
 {
     private static EvalError Innermost(EvalError error)
         => error is EvalError.WithContext withContext ? Innermost(withContext.Inner) : error;
@@ -50,8 +51,8 @@ public class UnaryBadAritySpanTests
 
     [Theory]
     [MemberData(nameof(FailingMinusOperands))]
-    public Task EveryEvaluationPath_ReportsBadArityAtTheUnaryExpression(string label, string source, SourceSpan expected)
-        => AssertEveryPathReportsAtTheUnaryExpression<EvalError.BadArity>(label, source, expected);
+    public Task EveryEvaluationPath_ReportsTheNumericOperandMismatchAtTheUnaryExpression(string label, string source, SourceSpan expected)
+        => AssertEveryPathReportsAtTheUnaryExpression<EvalError.TypeMismatch>(label, source, expected);
 
     [Theory]
     [MemberData(nameof(FailingNotOperands))]
@@ -89,9 +90,10 @@ public class UnaryBadAritySpanTests
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("-(1, 2)"));
         var error = Assert.Single(failure.Errors);
-        Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
+        Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
         Assert.False(error.IsResourceLimit);
         Assert.Equal(new SourceSpan(1, 1, 1, 8), error.Span);
+        Assert.Contains("operator `-` expects a numeric scalar operand, but the operand was a sequence value with 2 sequence elements: (1, 2)", error.Message);
 
         var notFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("X = ()\nnot X"));
         var notError = Assert.Single(notFailure.Errors);
@@ -110,11 +112,11 @@ public class UnaryBadAritySpanTests
         // overwrites an operand failure that already carries a span.
         var minus = Evaluator.Run(Program("-(-(1, 2))"));
         Assert.True(minus.IsError);
-        Assert.Equal(new SourceSpan(1, 2, 1, 11), Assert.IsType<EvalError.BadArity>(Innermost(minus.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 2, 1, 11), Assert.IsType<EvalError.TypeMismatch>(Innermost(minus.Error)).Span);
 
         var not = Evaluator.Run(Program("not (-(1, 2))"));
         Assert.True(not.IsError);
-        Assert.Equal(new SourceSpan(1, 5, 1, 14), Assert.IsType<EvalError.BadArity>(Innermost(not.Error)).Span);
+        Assert.Equal(new SourceSpan(1, 5, 1, 14), Assert.IsType<EvalError.TypeMismatch>(Innermost(not.Error)).Span);
     }
 
     [Theory]

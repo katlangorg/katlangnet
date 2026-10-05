@@ -847,13 +847,15 @@ public class NormalizeSharedValueGraphTests
         var expr = new Expr.AlgorithmExpr(
             SourceProvenance.ParseValid(DagProgram("[1]:(A, A)")).Root);
 
+        // A structured selector is a value of the wrong KIND (Q-27); its bounded diagnostic
+        // rendering must not expand the shared DAG either.
         var plain = Evaluator.Run(expr);
         Assert.True(plain.IsError);
-        Assert.IsType<EvalError.BadArity>(plain.Error);
+        Assert.IsType<EvalError.TypeMismatch>(plain.Error);
 
         var counted = Evaluator.RunCounted(expr);
         Assert.True(counted.IsError);
-        Assert.IsType<EvalError.BadArity>(counted.Error);
+        Assert.IsType<EvalError.TypeMismatch>(counted.Error);
     }
 
     [Fact]

@@ -916,8 +916,8 @@ internal static partial class LoopOptimizer
     {
         // MIRROR of Evaluator.ApplyUnaryOperator's numeric negation arm: a numeric
         // operand of `-` stays in the unboxed planned representation. Every other
-        // case — `not` (Boolean-only), the string and Boolean rejections, and the
-        // numeric-conversion failure, all stamped with the unary expression's span —
+        // case — `not` (Boolean-only) and the one value-kind failure of every
+        // non-numeric operand of `-`, all stamped with the unary expression's span —
         // delegates to the shared operator application so the planned strategy
         // cannot drift from the generic error/span policy.
         if (op == UnaryOp.Minus && operand.AsNum() is { } value)

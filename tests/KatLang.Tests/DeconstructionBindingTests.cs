@@ -678,11 +678,11 @@ public class DeconstructionBindingTests
         // are each ONE collected element, so the numeric `.sum` fails on them —
         // alone or beside another argument; only the spread and the inline items
         // supply the three numbers (sum 6).
-        AssertEvalError<EvalError.BadArity>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)");
+        AssertEvalError<EvalError.TypeMismatch>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c)");
         AssertAtoms("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c*)", 6);
         AssertAtoms("Sum(*values) = values.sum\nSum(1, 2, 3)", 6);
-        AssertEvalError<EvalError.BadArity>("Sum(*values) = values.sum\nSum([1, 2, 3])");
-        AssertEvalError<EvalError.BadArity>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c, 0)");
+        AssertEvalError<EvalError.TypeMismatch>("Sum(*values) = values.sum\nSum([1, 2, 3])");
+        AssertEvalError<EvalError.TypeMismatch>("c = 1, 2, 3\nSum(*values) = values.sum\nSum(c, 0)");
     }
 
     [Fact]
@@ -703,13 +703,13 @@ public class DeconstructionBindingTests
         // another argument; only A*, the list's spread, and the inline items
         // supply the five numbers (sum 15).
         const string g = "A = 1, 2, 3, 4, 5\nG(*x) = x.sum\n";
-        AssertEvalError<EvalError.BadArity>(g + "G(A)");
+        AssertEvalError<EvalError.TypeMismatch>(g + "G(A)");
         AssertAtoms(g + "G(A*)", 15);
         AssertAtoms("G(*x) = x.sum\nG(1, 2, 3, 4, 5)", 15);
-        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG((1, 2, 3, 4, 5))");
-        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG([1, 2, 3, 4, 5])");
+        AssertEvalError<EvalError.TypeMismatch>("G(*x) = x.sum\nG((1, 2, 3, 4, 5))");
+        AssertEvalError<EvalError.TypeMismatch>("G(*x) = x.sum\nG([1, 2, 3, 4, 5])");
         AssertAtoms("G(*x) = x.sum\nG([1, 2, 3, 4, 5]*)", 15);
-        AssertEvalError<EvalError.BadArity>(g + "G(A, 0)");
+        AssertEvalError<EvalError.TypeMismatch>(g + "G(A, 0)");
     }
 
     [Fact]
@@ -761,7 +761,7 @@ public class DeconstructionBindingTests
         // collecting shape collects that one sequence as one non-numeric element,
         // and the mixed shapes bind their fixed positions to the whole value —
         // every shape fails until the spread supplies the items.
-        AssertEvalError<EvalError.BadArity>("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))");
+        AssertEvalError<EvalError.TypeMismatch>("G(*x) = x.sum\nG(((1, 2, 3, 4, 5)))");
         AssertAtoms("G(*x) = x.sum\nG(((1, 2, 3, 4, 5))*)", 15);
         AssertEvalError<EvalError.TypeMismatch>("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5)))");
         AssertAtoms("F(*x, y) = x.sum + y\nF(((1, 2, 3, 4, 5))*)", 15);

@@ -203,7 +203,12 @@ public closed record EvalError
                 RequiredParameters is null ? 0 : RequiredParameters.Count);
     }
 
-    /// <summary>Expression does not resolve to an algorithm.</summary>
+    /// <summary>
+    /// A position that invokes its argument received no callable identity: a callee, a user
+    /// higher-order parameter, a builtin callback or a loop step holds a value (Q-06). The
+    /// description names the parameter (<c>param(f)</c>), the number, the builtin slot's role
+    /// ("map transform", "repeat step", ...) or the expression shape.
+    /// </summary>
     public sealed record NotAnAlgorithm(string Description) : EvalError;
 
     /// <summary>Semantic restriction in an open expression (e.g. builtin not allowed).</summary>
@@ -212,7 +217,11 @@ public closed record EvalError
     /// <summary>Syntactic form not allowed in open position.</summary>
     public sealed record BadOpenForm(string Reason) : EvalError;
 
-    /// <summary>Expression form not evaluable to a value (e.g. name literal, spread in algorithm position).</summary>
+    /// <summary>
+    /// A value of an accepted kind outside the operation's domain (an empty collection for
+    /// <c>min</c>/<c>max</c>/<c>avg</c>, a fractional or negative count, <c>0 ^ -1</c>, ...; Q-27),
+    /// or an expression form a host-built tree may not evaluate (e.g. a surviving Grace node).
+    /// </summary>
     public sealed record IllegalInEval(string Reason) : EvalError;
 
     /// <summary>A supplied computation depends on its own in-progress VALUE demand.</summary>
@@ -271,13 +280,17 @@ public closed record EvalError
         internal CallableSignature? Signature { get; init; }
     }
 
-    /// <summary>Shape / unpacking failure.</summary>
+    /// <summary>
+    /// A supply or output cardinality failure without a count payload: an unpacking or shape
+    /// count, an emitted-slot count, or NEED-04's unequal values for a repeated parameter name —
+    /// never a value-kind or domain failure (Q-27).
+    /// </summary>
     public sealed record BadArity() : EvalError;
 
-    /// <summary>Type error (e.g. string where number expected).</summary>
+    /// <summary>A present value of a kind the operation does not accept (e.g. a string, Boolean, sequence or list where a number is expected; Q-27).</summary>
     public sealed record TypeMismatch(string Message) : EvalError;
 
-    /// <summary>Index is out of range or invalid.</summary>
+    /// <summary>A selection names no position: an index out of range, negative or not whole, or <c>first</c>/<c>last</c> of an empty collection (SEQ-04, Q-27).</summary>
     public sealed record BadIndex() : EvalError;
 
     /// <summary>Division or modulo by zero.</summary>

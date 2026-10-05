@@ -136,7 +136,7 @@ def variadicMeanMatchesBuiltinSumCount : Bool :=
   ]
   let rejectsElement (receiver : KatLang.Expr) : Bool :=
     match runResult (.algorithmExpr (algPrivate [] [] props [.dotCall receiver "Mean" none])) with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   (match runFlat (.algorithmExpr (algPrivate [] [] props [
     .call (resolve "Mean") [sequenceSpread (resolve "Arg")],
@@ -244,7 +244,7 @@ def collectingNamedMultiOutputDotCallWithSuffixIsOneArgument : Bool :=
   (match runResult (.algorithmExpr (algPrivate [] [] props [
     .dotCall (resolve "Data") "TotalWithFee" (some [.num 5])
   ])) with
-  | Except.error err => innermostIsBadArity err
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] props [
     .dotCall (sequenceSpread (resolve "Data")) "TotalWithFee" (some [.num 5])
@@ -276,7 +276,7 @@ def variadicSpreadReceiverOpensSequenceAndListAlike : Bool :=
     match runResult (.algorithmExpr (algPrivate [] [] dataProps [
       .dotCall receiver "TotalWithFee" (some [.num 5])
     ])) with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   rejectsElement (resolve "Data") &&
   totals65 (sequenceSpread (resolve "Data")) &&
@@ -302,7 +302,7 @@ def variadicNestedInlineTupleDotCallIsOneArgument : Bool :=
     ]))
   let rejectsElement (receiver : KatLang.Expr) : Bool :=
     match run receiver with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   rejectsElement (.capture [.capture [.num 10, .num 20, .num 30]]) &&
   rejectsElement (.capture [.capture [.num 10, .num 20], .num 30]) &&
@@ -1809,7 +1809,7 @@ def restOnlyConsumesItemSupply : Bool :=
     match runResult (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
       .call (resolve "Sum") [resolve "A"]
     ])) with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   let spreadArg :=
     match runFlat (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("Sum", restOnlyCollectAlg)] [
@@ -1827,7 +1827,7 @@ def restOnlyConsumesItemSupply : Bool :=
     match runResult (.algorithmExpr (algPrivate [] [] [("Sum", restOnlyCollectAlg)] [
       .call (resolve "Sum") [.listLiteral [.num 1, .num 2, .num 3]]
     ])) with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   singleGroupedArg && spreadArg && multipleSlots && singleListArg
 
@@ -1844,7 +1844,7 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
     .call (resolve "G") [resolve "sum"]
   ])) with
   | Except.error err =>
-      innermostIsArityMismatch 0 0 err
+      innermostIsArityMismatch 1 0 err
   | _ => false
 
 #guard restFunctionShapedArgumentReportsTypeMismatch
@@ -1947,7 +1947,7 @@ def restOnlyLoneSequenceIsOneArgument : Bool :=
     match runResult (.algorithmExpr (algPrivate [] [] [("A", deconstructFiveArg), ("G", itemSupplySumAlg)] [
       .call (resolve "G") args
     ])) with
-    | Except.error err => innermostIsBadArity err
+    | Except.error err => innermostIsAnyTypeMismatch err
     | _ => false
   elementFails [resolve "A"]
     && sumsTo15 [sequenceSpread (resolve "A")]

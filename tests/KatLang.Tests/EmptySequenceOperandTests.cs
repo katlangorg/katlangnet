@@ -19,9 +19,10 @@ namespace KatLang.Tests;
 /// the string contract, ordinary arithmetic/ordering/logical results, and the empty
 /// <em>supply</em> neutrality of capture/collect/spread.</para>
 ///
-/// <para>Unary minus retains its numeric-conversion validation: unsupported
-/// sequence/list operands, including <c>()</c>, raise <see cref="EvalError.BadArity"/>;
-/// strings retain their TypeMismatch. Unary <c>not</c> requires a Boolean operand, so
+/// <para>Unary minus rejects every non-numeric operand as a value of the wrong KIND:
+/// unsupported sequence/list operands, including <c>()</c>, raise the
+/// <see cref="EvalError.TypeMismatch"/> naming the operand (Q-27); strings retain their
+/// TypeMismatch. Unary <c>not</c> requires a Boolean operand, so
 /// every non-Boolean operand — <c>()</c> included — is the Boolean-operand
 /// <see cref="EvalError.TypeMismatch"/>.</para>
 ///
@@ -247,13 +248,14 @@ public class EmptySequenceOperandTests
             var counted = Evaluator.RunCountedObserved(ast).Result;
             Assert.True(plain.IsError, $"`{source}` must reject the non-scalar operand");
             Assert.True(counted.IsError);
-            Assert.IsType<EvalError.BadArity>(Innermost(plain.Error));
-            // The BadArity is located at the whole unary expression (F5).
+            // A non-numeric operand is a value of the wrong KIND (Q-27), located at the
+            // whole unary expression (F5).
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(plain.Error));
             Assert.Equal(new SourceSpan(1, 1, 1, source.Length + 1), Innermost(plain.Error).Span);
             Assert.Equal(DescribeErrorTree(plain.Error), DescribeErrorTree(counted.Error));
         }
 
-        Assert.Equal("Unary operator is not supported for strings", TypeMismatchOf("-'text'").Message);
+        Assert.Equal("operator `-` expects a numeric scalar operand, but the operand was a string: 'text'", TypeMismatchOf("-'text'").Message);
     }
 
     [Fact]
@@ -301,7 +303,8 @@ public class EmptySequenceOperandTests
             var innermost = Innermost(result.Error);
             if (op == "-")
             {
-                Assert.IsType<EvalError.BadArity>(innermost);
+                var mismatch = Assert.IsType<EvalError.TypeMismatch>(innermost);
+                Assert.Contains("operator `-` expects a numeric scalar operand", mismatch.Message);
             }
             else
             {

@@ -5,30 +5,32 @@ namespace KatLang.Tests;
 /// <summary>
 /// X-23: the loop-state <see cref="EvalError.ArityMismatch"/> must tell the truth. When the loop's
 /// state binding finds NO parameter of the step to bind a state value to, the structured error is
-/// <c>WithContext(LoopStateBindingContext(loop, [], n), ArityMismatch(0, n))</c> — one shape for a
-/// zero-parameter callable and for a value that is not a callable at all. The message once explained
-/// that shape as "because the step has no parameters", which is false for a value (it is not a
-/// callable); it now states only the binding fact — the loop found no step parameter to bind the state
-/// to — and never what the step is.
+/// <c>WithContext(LoopStateBindingContext(loop, [], n), ArityMismatch(0, n))</c>. The message once
+/// explained that shape as "because the step has no parameters"; it now states only the binding fact —
+/// the loop found no step parameter to bind the state to — and never what the step is.
 /// <para>Q-23 (decided October 2026): a clause family, a builtin, and an alias or forwarded parameter of
 /// either are ORDINARY callables invoked over the state supply (LOOP-08), so they no longer reach this
 /// shape at all — their former rows here are the positive cases of
-/// <see cref="LoopStepCallableDispatchTests"/>. What still reaches it: a genuinely zero-parameter
-/// callable supplied a non-empty state (its ordinary arity, through the user binder), and a value with
-/// no CALLABLE identity (NEED-06). Rendered-message-only coverage: no Lean counterpart (the structured
-/// kind and its payload are what Lean models).</para>
+/// <see cref="LoopStepCallableDispatchTests"/>. Only a genuinely zero-parameter callable supplied a
+/// non-empty state still reaches it (its ordinary arity, through the user binder).</para>
+/// <para>Q-06 (decided 2026-10-05): a value with no CALLABLE identity (NEED-06) is not a step at all —
+/// it no longer shares the zero-parameter shape: the iteration that needs it reports
+/// <see cref="EvalError.NotAnAlgorithm"/> ("The repeat step is not callable"), positioned at the step
+/// argument, by CALLABLE projection alone. Rendered-message-only coverage: no Lean counterpart (the
+/// structured kind and its payload are what Lean models).</para>
 /// </summary>
 public class LoopStepUnboundStateMessageTests
 {
     private const string FalseClaim = "has no parameters";
 
     /// <summary>
-    /// Every step category the loop's state binding finds no parameter of, the loop, the number of
-    /// state values, and the evaluation frames that enclose the loop-state frame (outermost first).
+    /// Every step category the loop's state binding finds no parameter of — a callable whose
+    /// parameter interface accepts no supplied state value — the loop, the number of state values,
+    /// and the evaluation frames that enclose the loop-state frame (outermost first).
     /// </summary>
     public static TheoryData<string, string, string, int, string[]> NoBindableStepParameter() => new()
     {
-        // zero-parameter user algorithms: "no parameters" is true here, but the payload is shared
+        // zero-parameter user algorithms
         { "zero-parameter property", "Z = 5\nrepeat(Z, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
         { "zero-parameter block", "repeat({ 1 }, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
         { "zero-parameter property, while", "Z = true\nwhile(Z, 1)", "while", 1, ["while evaluating call to while"] },
@@ -38,20 +40,68 @@ public class LoopStepUnboundStateMessageTests
         // zero-parameter prelude members
         { "zero-parameter Math member", "repeat(pi, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
         { "zero-parameter host operation", "repeat(tick, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        // values that are not callables
-        { "number", "repeat(5, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "number, while", "while(5, 1)", "while", 1, ["while evaluating call to while"] },
-        { "string", "repeat('a', 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "Boolean", "repeat(true, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "list", "repeat([1, 2], 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "sequence", "repeat((1, 2), 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "empty sequence", "repeat((), 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "operator result", "repeat(2 + 3, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "selection", "A = 1, 2\nrepeat(A:0, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "dot-call value", "A = 3\nrepeat(A.abs, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "value forwarded through a parameter", "Run(s) = repeat(s, 1, 1)\nRun(5)", "repeat", 1, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        // (Q-06: a value with no CALLABLE identity is not a step at all — see NoCallableIdentityStep.)
     };
+
+    /// <summary>
+    /// Every step argument with no CALLABLE identity (NEED-06), the loop, the 1-based column of the
+    /// step argument on the last source line, and the evaluation frames that enclose the verdict.
+    /// </summary>
+    public static TheoryData<string, string, string, int, string[]> NoCallableIdentityStep() => new()
+    {
+        { "number", "repeat(5, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "number, while", "while(5, 1)", "while", 7, ["while evaluating call to while"] },
+        { "string", "repeat('a', 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "Boolean", "repeat(true, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "list", "repeat([1, 2], 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "sequence", "repeat((1, 2), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "empty sequence", "repeat((), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "operator result", "repeat(2 + 3, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "selection", "A = 1, 2\nrepeat(A:0, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "dot-call value", "A = 3\nrepeat(A.abs, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "value forwarded through a parameter", "Run(s) = repeat(s, 1, 1)\nRun(5)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+    };
+
+    private static string NotCallableSentence(string loop)
+        => $"The {loop} step is not callable: the argument supplied for it is a value, not an algorithm. "
+            + "Pass an algorithm: a named algorithm, a builtin, or a block { ... }.";
+
+    [Theory]
+    [MemberData(nameof(NoCallableIdentityStep))]
+    public async Task NoCallableIdentityStep_IsNotAnAlgorithm_OnEveryRoute(string category, string source, string loop, int column, string[] frames)
+    {
+        _ = column;
+        var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+
+        Assert.Equal("err", observation.Kind);
+        var error = Assert.Single(observation.Errors);
+        Assert.StartsWith($"{KatLangErrorCode.NotAnAlgorithm}: {string.Join(": ", frames)}: {NotCallableSentence(loop)}", error, StringComparison.Ordinal);
+
+        // Never the loop-state binding shape a callable reaches, and never a value demand.
+        Assert.DoesNotContain("found no step parameter", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("binding", error, StringComparison.Ordinal);
+        Assert.Empty(observation.HostCalls);
+        Assert.False(string.IsNullOrEmpty(category));
+    }
+
+    [Theory]
+    [MemberData(nameof(NoCallableIdentityStep))]
+    public async Task NoCallableIdentityStep_IsPositionedAtTheStepArgument(string category, string source, string loop, int column, string[] frames)
+    {
+        _ = (category, frames);
+        var lastLine = source.Split('\n').Length;
+        foreach (var (route, error) in await ErrorsOnEveryRouteAsync(source))
+        {
+            Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
+            var inner = Assert.IsAssignableFrom<EvalError>(error.Source);
+            while (inner is EvalError.WithContext withContext)
+                inner = withContext.Inner;
+            var notAnAlgorithm = Assert.IsType<EvalError.NotAnAlgorithm>(inner);
+            Assert.Equal($"{loop} step", notAnAlgorithm.Description);
+            Assert.True(new SourcePosition(lastLine, column) == error.Span?.Start, $"{route}: {error.Span}");
+        }
+    }
 
     private static string ExpectedSentence(string loop, int stateValues)
         => $"`{loop}` cannot bind the current loop state to its step: the current loop state has "
@@ -155,18 +205,33 @@ public class LoopStepUnboundStateMessageTests
     }
 
     [Fact]
-    public void Message_ForANonCallableValueStep_IsPinnedVerbatim()
+    public void Message_ForAZeroParameterStep_IsPinnedVerbatim()
     {
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2, 1)"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("Z = 5\nrepeat(Z, 2, 1)"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
-        Assert.Equal(new SourceSpan(3, 1, 3, 19), error.Span);
+        Assert.Equal(new SourceSpan(2, 1, 2, 16), error.Span);
         Assert.Equal(
             "while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state "
             + "has 1 state value, but the loop found no step parameter to bind it to. Loop state values are bound positionally to "
             + "the step's parameters. If this is a nested step with inferred parameters, remember that names already bound by an enclosing algorithm are "
             + "captured, not added as step parameters; use a distinct state-slot name such as `candidate` when threading an outer "
             + "value through the loop state.",
+            error.Message);
+    }
+
+    [Fact]
+    public void Message_ForANonCallableValueStep_IsPinnedVerbatim()
+    {
+        // Q-06: the call result `F(1)` has no CALLABLE identity — it is not a step, whatever it
+        // would evaluate to; nothing evaluates it to find that out.
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2, 1)"));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
+        Assert.Equal(new SourceSpan(3, 8, 3, 12), error.Span);
+        Assert.Equal(
+            "while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, "
+            + "not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.",
             error.Message);
     }
 
@@ -248,9 +313,9 @@ public class LoopStepUnboundStateMessageTests
     [InlineData("alias chain to a builtin", "C = count\nD = C\nrepeat(D, 1, [1, 2])", "ok 2")]
     [InlineData("builtin", "repeat(count, 1, [1, 2])", "ok 2")]
     [InlineData("builtin, while", "while(count, [1, 2])", "err TypeMismatch")]
-    [InlineData("callback-taking builtin", "repeat(map, 1, [1, 2], [3])", "err ArityMismatch")]
+    [InlineData("callback-taking builtin", "repeat(map, 1, [1, 2], [3])", "err NotAnAlgorithm")]
     [InlineData("if", "repeat(if, 1, true, 1, 2)", "ok 1")]
-    [InlineData("a loop builtin", "repeat(while, 1, 1, 2)", "err ArityMismatch")]
+    [InlineData("a loop builtin", "repeat(while, 1, 1, 2)", "err NotAnAlgorithm")]
     [InlineData("fluent builtin step", "sum.repeat(1, [1, 2])", "ok 3")]
     [InlineData("builtin forwarded through a parameter", "Run(s) = repeat(s, 1, [1, 2])\nRun(count)", "ok 2")]
     public async Task FormerlyUnboundStepCategories_AreOrdinaryCallables(string category, string source, string expected)
@@ -264,12 +329,12 @@ public class LoopStepUnboundStateMessageTests
         }
 
         // An ordinary failure of the invoked callable: `while(count, …)`'s numeric result is the flag;
-        // `map`'s callback slot holds a list; the inner `while` gets a value as ITS step.
+        // `map`'s callback slot holds a list and the inner `while` gets a value as ITS step — neither
+        // has CALLABLE identity, so each is the invoked builtin's own NotAnAlgorithm (Q-06).
         Assert.Equal("err", observation.Kind);
         var error = Assert.Single(observation.Errors);
         Assert.StartsWith(expected[4..] + ": ", error, StringComparison.Ordinal);
-        if (category != "a loop builtin")
-            Assert.DoesNotContain("found no step parameter", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("found no step parameter", error, StringComparison.Ordinal);
     }
 
     // ── Steps that bound before Q-23 are unchanged ──────────────────────────────────────────────

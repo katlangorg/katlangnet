@@ -229,7 +229,8 @@ public class EvaluatorCollectingParameterTests
             ((10, 20), 30)*.TotalWithFee(5)
             """);
         Assert.True(result.IsError, $"Expected failure but got: {(result.IsOk ? result.Value : null)}");
-        Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
+        // The inner pair is a collection element of the wrong KIND for `sum` (Q-27).
+        Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
         Assert.Contains(
             "sum expects each collection element to be a single numeric value",
             KatLangError.FromEvalError(result.Error).Message,

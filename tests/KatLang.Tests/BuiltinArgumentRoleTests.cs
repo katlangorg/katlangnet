@@ -419,8 +419,9 @@ public class BuiltinArgumentRoleTests
         // A zero-parameter callable invoked with an element is rejected by the binder before
         // its body runs (formerly the eager attempt had already run it once).
         AssertFails(await OnEveryRouteAsync("A = tick()\nmap([1], A)"), KatLangErrorCode.ArityMismatch);
-        AssertFails(await OnEveryRouteAsync("map([1, 2], 1 / 0)"), KatLangErrorCode.ArityMismatch);
-        AssertFails(await OnEveryRouteAsync("map([1, 2], 5)"), KatLangErrorCode.ArityMismatch);
+        // A value has no CALLABLE identity: NotAnAlgorithm (Q-06), never by demanding the value.
+        AssertFails(await OnEveryRouteAsync("map([1, 2], 1 / 0)"), KatLangErrorCode.NotAnAlgorithm);
+        AssertFails(await OnEveryRouteAsync("map([1, 2], 5)"), KatLangErrorCode.NotAnAlgorithm);
     }
 
     [Fact]
