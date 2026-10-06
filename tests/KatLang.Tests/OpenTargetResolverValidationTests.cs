@@ -621,7 +621,7 @@ public class OpenTargetResolverValidationTests
     // ── G. Diagnostic multiplicity follows the property position ──────────────────────────────
 
     [Fact]
-    public async Task OneCachedModuleAtTwoImportSites_ReportsOncePerSite_LikeTwoLoads()
+    public async Task OneCachedModuleAtTwoImportSites_ReportsOnce_AtTheFirstSite_LikeTwoLoads()
     {
         var module = InvalidModules[0].Text;
         const string opened = $"A = {{\n  open '{Url}'\n  X\n}}\nB = {{\n  open '{Url}'\n  X\n}}\nA + B";
@@ -630,13 +630,11 @@ public class OpenTargetResolverValidationTests
         var viaOpen = await OnModuleRoutesAsync(EagerModuleRoutes, opened, (Url, module));
         var viaLoad = await OnModuleRoutesAsync(EagerModuleRoutes, loaded, (Url, module));
 
-        // One fetch; one report per import site — exactly the property-position multiplicity.
-        Assert.Equal(viaLoad.Errors.Count, viaOpen.Errors.Count);
+        // One fetch, one module declaration (Q-32 I-U), one report — at the first import site,
+        // however many sites import it and whichever spelling they use.
+        Assert.Single(viaLoad.Errors);
         Assert.Equal(
-            [
-                Describe(KatLangErrorCode.UnforwardableParameter, new SourceSpan(2, 8, 2, 8 + Url.Length + 2)),
-                Describe(KatLangErrorCode.UnforwardableParameter, new SourceSpan(6, 8, 6, 8 + Url.Length + 2)),
-            ],
+            [Describe(KatLangErrorCode.UnforwardableParameter, new SourceSpan(2, 8, 2, 8 + Url.Length + 2))],
             viaOpen.Errors);
         Assert.Equal(1, viaOpen.Fetches);
         Assert.Equal(1, viaLoad.Fetches);

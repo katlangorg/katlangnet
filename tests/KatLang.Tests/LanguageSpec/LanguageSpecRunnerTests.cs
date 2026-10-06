@@ -312,6 +312,15 @@ public class LanguageSpecRunnerTests
             "call-after-argument-bearing-dot-edge-is-a-parse-error",
             "closed-list-must-fallback-name-is-checked",
             "branch-must-fallback-name-is-checked",
+            // Open provider identity and static ambiguity (Q-19 D-I / Q-29 A-U, decided
+            // 2026-10-06): a WRITTEN name two different providers supply at one open level is a
+            // front-end rejection, parse-level by construction (Lean's evaluator keeps the
+            // run-time ambiguity only for lookups the receiver decides).
+            "open-distinct-declarations-stay-distinct-providers",
+            "open-local-only-member-is-a-second-provider",
+            "open-identical-inline-blocks-two-providers",
+            "ambiguous-open-written-use-is-static",
+            "inline-headed-open-paths-keep-distinct-providers",
         ];
         string[] expectedModelDivergences =
         [

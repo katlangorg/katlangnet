@@ -319,6 +319,7 @@ public enum KatLang.DiagnosticCode : int
   UnforwardableParameter = 49
   UnliftableClauseFamily = 50
   UnforwardableCallable = 51
+  AmbiguousOpen = 52
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1

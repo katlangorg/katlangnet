@@ -214,10 +214,23 @@ internal sealed class LeanAstEncoding
     public string EncodeAlgorithm(Algorithm algorithm)
     {
         var parent = _scope;
-        _scope = new ScopeCtx(parent, algorithm.Opens, algorithm.Properties);
+        // A loaded module is a source unit rooted at the prelude (Q-31 H-P): it has no enclosing
+        // scope wherever it is held, and its ONE declaration (Q-32 I-U) is marked so Lean wires it
+        // at the chain's root level (`PropertyIdentity.module`, `Algorithm.withParent`).
+        var isModule = algorithm.IsModuleRoot;
+        _scope = new ScopeCtx(isModule ? null : parent, algorithm.Opens, algorithm.Properties);
         try
         {
             var encoded = EncodeAlgorithmCore(algorithm);
+            if (isModule)
+            {
+                var module = algorithm.Declaration
+                    ?? throw new NotSupportedException("A loaded module must have a declaration identity.");
+                if (!_algorithmIdentities.TryGetValue(module, out var moduleIdentity))
+                    _algorithmIdentities[module] = moduleIdentity = _algorithmIdentities.Count;
+                return $"(Algorithm.withDeclarationId (some (.module {moduleIdentity})) {encoded})";
+            }
+
             if (!_sharing.Contains(algorithm)) return encoded;
             var declaration = algorithm.Declaration
                 ?? throw new NotSupportedException("A shared algorithm must have a declaration identity.");

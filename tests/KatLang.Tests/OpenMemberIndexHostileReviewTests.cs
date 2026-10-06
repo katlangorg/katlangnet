@@ -82,10 +82,16 @@ public class OpenMemberIndexHostileReviewTests
         Assert.Same(a.GetResolvedOpenProviders()[0].Target, b.GetResolvedOpenProviders()[0].Target);
     }
 
+    /// <summary>
+    /// Q-19 D-I (decided 2026-10-06): ONE declaration in one declaring scope is one provider,
+    /// however many targets reach it — here one host-built algorithm held by two properties of one
+    /// level, or written twice as one inline block — so the level counts it once (NEED-04 already
+    /// calls <c>P(A, B)</c> over it one callable). The member index stays shared by target object.
+    /// </summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SharedTargetIndex_DoesNotDeduplicateDistinctProviders(bool namedAliases)
+    public void SharedTarget_IsOneProvider_AndSharesOneIndex(bool namedAliases)
     {
         var lib = Owner([Member("x", 1)]);
         var cache = new OpenMemberIndexCache();
@@ -94,11 +100,10 @@ public class OpenMemberIndexHostileReviewTests
         Expr[] opens = namedAliases ? [new Expr.Resolve("A"), new Expr.Resolve("B")]
             : [new Expr.AlgorithmExpr(lib), new Expr.AlgorithmExpr(lib)];
         var scope = new ElaboratedPropertyScope(parent, opens, []);
-        var hits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, "x");
-        Assert.Equal(2, hits.Count);
-        Assert.All(hits, hit => Assert.Same(lib, hit.Owner));
+        var hit = Assert.Single(ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, "x"));
+        Assert.Same(lib, hit.Owner);
         Assert.Equal(1, cache.Count);
-        Assert.Equal(2, scope.GetResolvedOpenProviders().Count);
+        Assert.Single(scope.GetResolvedOpenProviders());
     }
 
     [Fact]

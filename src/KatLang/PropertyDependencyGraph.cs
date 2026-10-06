@@ -155,15 +155,37 @@ internal closed class OpenCandidate
     internal abstract string ContentKey { get; }
 }
 
-internal sealed class ResolvedOpenCandidate(PropertyDependencyGraphBuilder.SummarySeed seed, int providerLevel) : OpenCandidate(providerLevel)
+internal sealed class ResolvedOpenCandidate(
+    PropertyDependencyGraphBuilder.SummarySeed seed,
+    int providerLevel,
+    OpenProviderIdentity identity,
+    int identityKey) : OpenCandidate(providerLevel)
 {
     /// <summary>Frozen: never mutated after construction; readers clone before accumulating.</summary>
     public PropertyDependencyGraphBuilder.SummarySeed Seed { get; } = seed;
 
-    /// <summary>The same candidate — same opener level — carrying a re-derived seed.</summary>
-    public ResolvedOpenCandidate WithSeed(PropertyDependencyGraphBuilder.SummarySeed seed) => new(seed, ProviderLevel);
+    /// <summary>
+    /// The SEMANTIC identity of the provider this candidate settled (Q-19 D-I): two candidates
+    /// of one open lookup with equal identities are one provider, charged once. Built within the
+    /// body that settled it and extended as the reference escapes (see
+    /// <see cref="OpenProviderIdentity.IsComplete"/>).
+    /// </summary>
+    public OpenProviderIdentity Identity { get; } = identity;
 
-    internal override string ContentKey => $"resolved@{ProviderLevel}({Seed.ContentKey})";
+    /// <summary>The summary analysis's key for <see cref="Identity"/> (part of the content key).</summary>
+    public int IdentityKey { get; } = identityKey;
+
+    /// <summary>The same candidate — same opener level and provider — carrying a re-derived seed.</summary>
+    public ResolvedOpenCandidate WithSeed(PropertyDependencyGraphBuilder.SummarySeed seed) => new(seed, ProviderLevel, Identity, IdentityKey);
+
+    /// <summary>The same candidate after its reference escaped the body <paramref name="level"/>.</summary>
+    public ResolvedOpenCandidate EscapedThrough(Algorithm level, PropertyDependencyGraphBuilder.SummaryMemo memo)
+    {
+        var identity = Identity.EscapedThrough(level);
+        return ReferenceEquals(identity, Identity) ? this : new(Seed, ProviderLevel, identity, memo.ProviderIdentityKey(identity));
+    }
+
+    internal override string ContentKey => $"resolved@{ProviderLevel}#{IdentityKey}({Seed.ContentKey})";
 }
 
 internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps, int providerLevel) : OpenCandidate(providerLevel)
@@ -865,7 +887,8 @@ internal static class PropertyDependencyGraphBuilder
                 var firstLevel = candidates.TakeWhile(c => c.ProviderLevel == candidates[0].ProviderLevel).ToArray();
                 if (pending.Head == head && firstLevel.Length > 0 && firstLevel.All(c => c is ResolvedOpenCandidate))
                 {
-                    if (firstLevel.Length == 1)
+                    // Q-19 D-I: the level's PROVIDERS decide — candidates of one provider are one.
+                    if (firstLevel.Select(c => ((ResolvedOpenCandidate)c).Identity).Distinct().Count() == 1)
                     {
                         var selected = ((ResolvedOpenCandidate)firstLevel[0]).Seed.Clone();
                         selected.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
@@ -1293,8 +1316,42 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal sealed class SummaryMemo(FrontEndTraversalObservations? observations = null)
     {
+        // Active local-path equations, never cached completed summaries. Closing a repeated
+        // edge contributes no new set members; the enclosing walks retain its other terms.
+        internal HashSet<LocalPathExpansion>? ActiveLocalPaths;
+
+        internal sealed class LocalPathExpansion(LevelContext level, PendingReference pending) : IEquatable<LocalPathExpansion>
+        {
+            private readonly Algorithm _owner = level.Algorithm;
+            private readonly IReadOnlyDictionary<string, SummarySeed> _summaries = level.LocalPropertySummaries;
+            // A locally declared head wins before opens, so carried candidates cannot affect
+            // this equation. Bound-owner exclusions remain part of its identity.
+            private readonly string _path = pending.Candidates.Count == 0
+                ? pending.ContentKey : pending.WithCandidates([]).ContentKey;
+
+            public bool Equals(LocalPathExpansion? other) => other is not null
+                && ReferenceEquals(_owner, other._owner)
+                && ReferenceEquals(_summaries, other._summaries) && _path == other._path;
+            public override bool Equals(object? other) => other is LocalPathExpansion key && Equals(key);
+            public override int GetHashCode() => HashCode.Combine(RuntimeHelpers.GetHashCode(_owner),
+                RuntimeHelpers.GetHashCode(_summaries), StringComparer.Ordinal.GetHashCode(_path));
+        }
         internal readonly BranchContextInterner BranchContexts = new();
         internal Dictionary<Algorithm, AlgorithmSummary>? CompletedAlgorithmSummaries;
+
+        private Dictionary<OpenProviderIdentity, int>? _providerIdentityKeys;
+
+        /// <summary>
+        /// The analysis-local key of an open provider identity (Q-19 D-I): equal identities share
+        /// one key, so a candidate's content key distinguishes providers exactly as identity does.
+        /// </summary>
+        internal int ProviderIdentityKey(OpenProviderIdentity identity)
+        {
+            var keys = _providerIdentityKeys ??= new();
+            if (!keys.TryGetValue(identity, out var key))
+                keys.Add(identity, key = keys.Count);
+            return key;
+        }
 
         /// <summary>
         /// Completed conditional BRANCH-BODY summaries, keyed by body node REFERENCE plus the
@@ -1784,6 +1841,12 @@ internal static class PropertyDependencyGraphBuilder
         seed = ExpandAtLevel(seed, finalLevel);
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm, ownerHasParameters: ownerParameterNames.Count > 0, observations);
 
+        // A loaded module (Q-31 H-P) is wired to the prelude wherever it is held, exactly like an
+        // inline open block (TryChargeInlineOpenProvider): what still escapes its own levels is a
+        // lookup only the prelude answers, so nothing of the holder's chain can be required.
+        if (algorithm.IsModuleRoot)
+            seed = SettledAtPrelude(seed);
+
         // Navigating a member does not call its owner. Retain the exact declaration
         // that binds each parameter instead of reinterpreting its name at the consumer:
         // every member seed is already qualified with this algorithm's parameter names, because
@@ -1836,17 +1899,28 @@ internal static class PropertyDependencyGraphBuilder
                 }
 
                 var headNode = LocalPropertyValue(level.Algorithm, pending.Head);
-                var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
-                // This locally declared provider is outside the escaped reference's
-                // lexical chain unless its own call boundary accompanied that reference.
-                charged.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
-                    && pending.BoundOwners.Any(a => ReferenceEquals(a, r.Owner)));
-                var unavailable = charged.OwnerQualifiedParameters.Select(r => new OwnerQualifiedParameter(r.Name, null)).ToArray();
-                charged.OwnerQualifiedParameters.Clear();
-                charged.OwnerQualifiedParameters.UnionWith(unavailable);
-                if (navigated == 0)
-                    expanded.UnionWith(localSummary);
-                expanded.UnionWith(ExpandAtLevel(charged, level));
+                var active = level.Memos.SharedMemo.ActiveLocalPaths ??= [];
+                var key = new SummaryMemo.LocalPathExpansion(level, pending);
+                if (!active.Add(key))
+                    continue;
+                try
+                {
+                    var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
+                    // This locally declared provider is outside the escaped reference's
+                    // lexical chain unless its own call boundary accompanied that reference.
+                    charged.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
+                        && pending.BoundOwners.Any(a => ReferenceEquals(a, r.Owner)));
+                    var unavailable = charged.OwnerQualifiedParameters.Select(r => new OwnerQualifiedParameter(r.Name, null)).ToArray();
+                    charged.OwnerQualifiedParameters.Clear();
+                    charged.OwnerQualifiedParameters.UnionWith(unavailable);
+                    if (navigated == 0)
+                        expanded.UnionWith(localSummary);
+                    expanded.UnionWith(ExpandAtLevel(charged, level));
+                }
+                finally
+                {
+                    active.Remove(key);
+                }
                 continue;
             }
 
@@ -1866,7 +1940,9 @@ internal static class PropertyDependencyGraphBuilder
             switch (candidate)
             {
                 case ResolvedOpenCandidate resolved:
-                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level)));
+                    // The reference escapes this body: its settled provider is declared within it too.
+                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level))
+                        .EscapedThrough(level.Algorithm, level.Memos.SharedMemo));
                     break;
 
                 case UnresolvedOpenCandidate unresolved when level.LocalPropertySummaries.ContainsKey(unresolved.Head):
@@ -1898,6 +1974,11 @@ internal static class PropertyDependencyGraphBuilder
                 (candidates ??= []).Add(candidate);
         }
 
+        // Q-19 D-I: within one opener level, candidates settled to ONE provider count once —
+        // a carried target settled here can be the provider another target of its level settled.
+        if (candidates is not null)
+            candidates = DistinctProviders(candidates);
+
         if (candidates is null || candidates.Count == 0)
         {
             if (pending.Members.Count == 0)
@@ -1914,11 +1995,13 @@ internal static class PropertyDependencyGraphBuilder
 
     /// <summary>
     /// The candidates this level's <c>open</c> targets contribute to an escaping reference, in
-    /// declaration order with the evaluator's dedup rule (<see cref="Evaluator.OpenTargetDedupKey"/>).
-    /// A target whose head is this level's own property (or an inline block, bare or as the
-    /// head of a dotted path) is settled in place: it is a candidate exactly when it publicly
-    /// provides the reference's head, and then carries the charged member seed, relative to
-    /// this level's parent. A target whose head is declared farther out is carried unresolved.
+    /// declaration order (a repeated written-target key, <see cref="Evaluator.OpenTargetDedupKey"/>,
+    /// is skipped as the pure optimization it is; providers are counted by identity afterwards —
+    /// <see cref="DistinctProviders"/>). A target whose head is this level's own property (or an
+    /// inline block, bare or as the head of a dotted path) is settled in place: it is a candidate
+    /// exactly when it publicly provides the reference's head, and then carries the charged
+    /// member seed, relative to this level's parent, and its provider's identity. A target whose
+    /// head is declared farther out is carried unresolved.
     /// </summary>
     private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level, int providerLevel)
     {
@@ -1939,7 +2022,12 @@ internal static class PropertyDependencyGraphBuilder
             {
                 case Expr.AlgorithmExpr(var block):
                     if (TryChargeInlineOpenProvider(block, steps, pending, level.Memos) is { } inlineSeed)
-                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel);
+                    {
+                        var identity = PathIdentity(OpenProviderIdentity.DeclaredAtRoot(block), block, steps);
+                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel, identity,
+                            level.Memos.SharedMemo.ProviderIdentityKey(identity));
+                    }
+
                     break;
 
                 case Expr.Resolve(var head) when !level.LocalPropertySummaries.ContainsKey(head):
@@ -1952,6 +2040,58 @@ internal static class PropertyDependencyGraphBuilder
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// The complete identity of the provider a named open target reaches: its head declared at
+    /// <paramref name="declaringLevel"/>, then its public <paramref name="steps"/> (callers have
+    /// checked that every step is navigable).
+    /// </summary>
+    internal static OpenProviderIdentity ProviderIdentity(Algorithm head, ElaboratedPropertyScope declaringLevel, IReadOnlyList<string> steps)
+        => PathIdentity(OpenProviderIdentity.DeclaredAt(head, declaringLevel), head, steps);
+
+    /// <summary>
+    /// The identity of the provider an open target's public <paramref name="steps"/> reach from
+    /// <paramref name="head"/>, whose own identity is <paramref name="headIdentity"/>: each step a
+    /// member of the previous provider (callers have checked that every step is navigable).
+    /// </summary>
+    private static OpenProviderIdentity PathIdentity(OpenProviderIdentity headIdentity, Algorithm head, IReadOnlyList<string> steps)
+    {
+        var identity = headIdentity;
+        var current = head;
+        foreach (var step in steps)
+        {
+            current = ElaboratedScopeLookup.TryLookupPublicProperty(current, step)!.Value.Property.Value;
+            identity = identity.Member(current);
+        }
+
+        return identity;
+    }
+
+    /// <summary>
+    /// Q-19 D-I: the candidates with each SETTLED provider kept once per opener level — the
+    /// first occurrence represents it, exactly as the evaluator's <c>ResolveAllOpens</c> keeps
+    /// the first target of a provider. Unresolved candidates are kept; their settlement compares
+    /// them by the same identity. The input list when nothing repeats.
+    /// </summary>
+    internal static List<OpenCandidate> DistinctProviders(List<OpenCandidate> candidates)
+    {
+        HashSet<(int Level, OpenProviderIdentity Identity)>? seen = null;
+        List<OpenCandidate>? distinct = null;
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (candidate is ResolvedOpenCandidate resolved
+                && !(seen ??= []).Add((resolved.ProviderLevel, resolved.Identity)))
+            {
+                distinct ??= candidates.GetRange(0, i);
+                continue;
+            }
+
+            distinct?.Add(candidate);
+        }
+
+        return distinct ?? candidates;
     }
 
     /// <summary>
@@ -1978,12 +2118,14 @@ internal static class PropertyDependencyGraphBuilder
         if (provider is null || TryChargeProvidedMember(provider, pending, level.Memos) is not { } memberSeed)
             return null;
 
-        // The provided member's seed is relative to the provider, which is relative to
-        // the head's declaring level — this level; the dotted steps were navigated by
-        // ChargePath from the head, so expand the member seed through the same nodes.
-        var seed = ExpandThroughNodes(memberSeed, NodePath(LocalPropertyValue(level.Algorithm, head), steps), level.Memos);
+        // ChargePath's seed is already relative to the provider's parent. Expand only
+        // its ancestors: expanding the provider again duplicates its owner/identity level.
+        var headValue = LocalPropertyValue(level.Algorithm, head);
+        var seed = ExpandThroughNodes(memberSeed, NodePath(headValue, steps), level.Memos, skipLastNode: true);
         seed.UnionWith(providerSeed);
-        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel);
+        var identity = PathIdentity(OpenProviderIdentity.DeclaredWithin(headValue, level.Algorithm), headValue, steps);
+        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel, identity,
+            level.Memos.SharedMemo.ProviderIdentityKey(identity));
     }
 
     /// <summary>
@@ -2047,7 +2189,7 @@ internal static class PropertyDependencyGraphBuilder
 
             var summary = GetAlgorithmSummary(current, memos);
             if (summary.MemberSeeds.TryGetValue(name, out var memberSeed))
-                result.UnionWith(ExpandThroughNodes(memberSeed.Clone(), nodes, memos));
+                result.UnionWith(ExpandThroughNodes(memberSeed.Clone(), nodes, memos, skipLastNode: true));
 
             current = member.Value.Property.Value;
             nodes.Add(current);
@@ -2057,15 +2199,36 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// Brings a seed relative to the last node's parent level back to the first node's
-    /// declaring level: expand against each node's own local summaries, innermost first.
+    /// Expands against the supplied nodes, innermost first. A member seed is already
+    /// relative to its owner's parent: skip that owner when it is the last supplied node.
     /// </summary>
-    internal static SummarySeed ExpandThroughNodes(SummarySeed seed, IReadOnlyList<Algorithm> nodes, SummaryWalkMemos memos)
+    internal static SummarySeed ExpandThroughNodes(SummarySeed seed, IReadOnlyList<Algorithm> nodes, SummaryWalkMemos memos,
+        bool skipLastNode = false)
     {
-        for (var k = nodes.Count - 1; k >= 0; k--)
+        // Excluding an already-expanded module owner must still honor its prelude parent:
+        // none of the holder's earlier path nodes can capture the member's free names.
+        if (skipLastNode && nodes.Count > 0 && nodes[^1].IsModuleRoot)
+            return SettledAtPrelude(seed);
+        for (var k = nodes.Count - (skipLastNode ? 2 : 1); k >= 0; k--)
+        {
             seed = ExpandAtLevel(seed, new LevelContext(nodes[k], GetAlgorithmSummary(nodes[k], memos).MemberSeeds, memos));
+
+            // A navigated loaded module (Q-31 H-P) is rooted at the prelude, never at the node that
+            // holds it: what escapes it is settled there, and nothing reaches the holder's levels.
+            if (nodes[k].IsModuleRoot)
+                return SettledAtPrelude(seed);
+        }
+
         return seed;
     }
+
+    /// <summary>
+    /// A seed settled at the prelude: an escaping lookup there names a builtin, a Math member, a host
+    /// operation, or nothing, none of which requires anything, so only the requirement names remain
+    /// (the same settlement as an inline open provider's, <see cref="TryChargeInlineOpenProvider"/>).
+    /// </summary>
+    private static SummarySeed SettledAtPrelude(SummarySeed seed)
+        => new(seed.RequiredAncestorOwnedParameterNames, ownerQualifiedParameters: seed.OwnerQualifiedParameters);
 
     private static Algorithm LocalPropertyValue(Algorithm level, string name)
         => ElaboratedScopeLookup.TryLookupProperty(level, name)!.Value.Property.Value;
@@ -2133,7 +2296,7 @@ internal static class PropertyDependencyGraphBuilder
                 return null;
             }
 
-            charged = ExpandThroughNodes(memberSeed, NodePath(block, steps), memos);
+            charged = ExpandThroughNodes(memberSeed, NodePath(block, steps), memos, skipLastNode: true);
             charged.UnionWith(providerSeed);
         }
 
@@ -2846,6 +3009,12 @@ internal static class PropertyDependencyGraphBuilder
     {
         switch (value)
         {
+            // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: nothing in it
+            // reads the level that holds it, so it contributes no processing-order dependency.
+            case Algorithm.User { IsModuleElaborated: true }:
+            case Algorithm.Alias { IsModuleElaborated: true }:
+                break;
+
             // A callable alias (an already elaborated body: its one row is its target reference)
             // reads its target exactly as a body whose one row names it.
             case Algorithm.User or Algorithm.Alias:

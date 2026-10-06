@@ -123,17 +123,29 @@ public class OpenTargetDedupKeyTests
         Assert.DoesNotContain("sum", illegal.Reason, StringComparison.Ordinal);
     }
 
+    /// <summary>The innermost evaluator error, with context frames unwrapped (a fallback's ambiguity is reported inside its call).</summary>
+    private static EvalError? InnermostError(EvalError? error)
+    {
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+        return error;
+    }
+
     [Fact]
     public void InlineTargets_AreNeverDeduplicated_ForBothConsumers()
     {
-        // Two structurally identical inline blocks are two providers: the runtime
-        // reports the ambiguity by their positional keys, and the elaborated scope
+        // Two structurally identical inline blocks are two declarations, so two providers
+        // (Q-19 D-I): a WRITTEN X both provide is the front end's ambiguity (Q-29 A-U); a
+        // lookup only evaluation decides (a fallback on a parameter receiver) is the
+        // runtime's, reported by the blocks' positional names; and the elaborated scope
         // resolves two distinct provider targets.
-        const string source = "A = {\n    open { public X = 101 }, { public X = 101 }\n    X\n}\nA";
-        Assert.Equal("err ambiguousOpen", SemanticExplorerHarness.Observe("dedup.inline", source).Neutral);
+        const string written = "A = {\n    open { public X = 101 }, { public X = 101 }\n    X\n}\nA";
+        Assert.Equal("parseError", SemanticExplorerHarness.Observe("dedup.inline", written).Neutral);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(SourceProvenance.ExpectFrontEndError(written)).Code);
 
+        const string source = "A = {\n    open { public X(v) = 101 }, { public X(v) = 101 }\n    K(q) = q.X\n    K(10)\n}\nA";
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
-        var ambiguity = Assert.Single(failure.Errors.Select(static error => error.Source).OfType<EvalError.AmbiguousOpen>());
+        var ambiguity = Assert.Single(failure.Errors.Select(static error => InnermostError(error.Source)).OfType<EvalError.AmbiguousOpen>());
         Assert.Equal("X", ambiguity.Name);
         Assert.Equal(["(inline#0)", "(inline#1)"], ambiguity.Providers);
 
@@ -159,11 +171,15 @@ public class OpenTargetDedupKeyTests
     [Fact]
     public void Keys_CompareOrdinally_SoCaseDistinctTargetsAreDistinctProviders()
     {
-        const string source = "Lib = {\n    public X = 101\n}\nlib = {\n    public X = 202\n}\nA = {\n    open Lib, lib\n    X\n}\nA";
-        Assert.Equal("err ambiguousOpen", SemanticExplorerHarness.Observe("dedup.case", source).Neutral);
+        // `Lib` and `lib` are two declarations: a WRITTEN X both provide is the front end's
+        // ambiguity (Q-29 A-U), and a lookup only evaluation decides is the runtime's.
+        const string written = "Lib = {\n    public X = 101\n}\nlib = {\n    public X = 202\n}\nA = {\n    open Lib, lib\n    X\n}\nA";
+        Assert.Equal("parseError", SemanticExplorerHarness.Observe("dedup.case", written).Neutral);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(SourceProvenance.ExpectFrontEndError(written)).Code);
 
+        const string source = "Lib = {\n    public X(v) = 101\n}\nlib = {\n    public X(v) = 202\n}\nA = {\n    open Lib, lib\n    K(q) = q.X\n    K(10)\n}\nA";
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
-        var ambiguity = Assert.Single(failure.Errors.Select(static error => error.Source).OfType<EvalError.AmbiguousOpen>());
+        var ambiguity = Assert.Single(failure.Errors.Select(static error => InnermostError(error.Source)).OfType<EvalError.AmbiguousOpen>());
         Assert.Equal(["Lib", "lib"], ambiguity.Providers);
 
         var root = SourceProvenance.ParseValid(source).Root;

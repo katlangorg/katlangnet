@@ -90,9 +90,16 @@ internal static class ImplicitArgumentResolver
         Algorithm root,
         FrontEndTraversalObservations? observations = null,
         DiagnosticBag? diagnostics = null,
-        HostOperations? hostOperations = null)
+        HostOperations? hostOperations = null,
+        ModuleUnits? modules = null)
     {
-        var run = new ResolutionRun { Observations = observations, Prelude = PreludeContext.For(hostOperations) };
+        var run = new ResolutionRun
+        {
+            Observations = observations,
+            Prelude = PreludeContext.For(hostOperations),
+            Diagnostics = diagnostics,
+            Modules = modules ?? new(),
+        };
         return ProcessAlgorithm(
             root,
             parentParamMap: SignatureMap.Empty(observations, run.Pending),
@@ -140,6 +147,39 @@ internal static class ImplicitArgumentResolver
         public readonly struct ImportSiteScope(ResolutionRun run, SourceSpan? saved) : IDisposable
         {
             public void Dispose() => run.ImportSite = saved;
+        }
+
+        /// <summary>
+        /// The declaring owners of the level the walk is currently inside (Q-19 D-I): the chain an
+        /// open provider's identity is anchored at (<see cref="OpenProviderIdentity.DeclaredIn"/>),
+        /// mirroring the scope chain parameter detection builds. Walk state only: it decides no
+        /// rewrite and keys no memo (an open level's providers capture it when the level is built).
+        /// </summary>
+        public DeclaringOwners Owners = DeclaringOwners.Root;
+
+        /// <summary>
+        /// The operation's diagnostics sink — the run entry's. A loaded module reports into it
+        /// whichever walk reaches the module first (<see cref="ProcessModuleRoot"/>).
+        /// </summary>
+        public DiagnosticBag? Diagnostics;
+
+        /// <summary>
+        /// The operation's loaded module units (Q-32 I-U): every detected module declaration (one
+        /// per canonical URL) to its one resolved declaration (<see cref="ProcessModuleRoot"/>).
+        /// </summary>
+        public ModuleUnits Modules = new();
+
+        /// <summary>Enters a level whose declaring owners are <paramref name="owners"/>; disposal restores the outer chain.</summary>
+        public OwnersScope EnterOwners(DeclaringOwners owners)
+        {
+            var saved = Owners;
+            Owners = owners;
+            return new OwnersScope(this, saved);
+        }
+
+        public readonly struct OwnersScope(ResolutionRun run, DeclaringOwners saved) : IDisposable
+        {
+            public void Dispose() => run.Owners = saved;
         }
 
         /// <summary>
@@ -708,16 +748,23 @@ internal static class ImplicitArgumentResolver
     /// algorithm answers kind questions (a clause family, a user algorithm) and member questions (a
     /// dotted or opened callee's own signature); an entry's identity is a region-key token.
     /// </summary>
-    internal sealed class VisibleProperty(CallableSignature signature, Algorithm value)
+    internal sealed class VisibleProperty(CallableSignature signature, Algorithm value, DeclaringOwners? owners = null)
     {
         public CallableSignature Signature { get; } = signature;
 
         public Algorithm Value { get; } = value;
+
+        /// <summary>
+        /// The declaring owners of the level that declares this property (Q-19 D-I): what anchors
+        /// the identity of an open provider headed by it. Null for an entry built outside a level.
+        /// </summary>
+        public DeclaringOwners? Owners { get; } = owners;
     }
 
     /// <summary>
-    /// One level's <c>open</c> providers, deduplicated first-occurrence-wins by the evaluator's key
-    /// (<see cref="Evaluator.OpenTargetDedupKey"/>), and the enclosing levels' chain.
+    /// One level's <c>open</c> targets (a repeated written-target key skipped as the pure
+    /// optimization it is — <see cref="Evaluator.OpenTargetDedupKey"/>; providers are counted by
+    /// identity when a name is looked up), and the enclosing levels' chain.
     /// </summary>
     internal sealed record OpenLevel(IReadOnlyList<OpenProvider> Providers, OpenLevel? Outer);
 
@@ -738,23 +785,38 @@ internal static class ImplicitArgumentResolver
         /// (a signature question: a pending head property is processed on demand); otherwise the entry
         /// as recorded suffices (a kind or membership question).
         /// </summary>
-        public Algorithm? Resolve(bool current)
+        public Algorithm? Resolve(bool current) => ResolveProvider(current)?.Target;
+
+        /// <summary>
+        /// The provider with its semantic identity (Q-19 D-I, <see cref="OpenProviderIdentity"/>):
+        /// a head property declared at its level (the entry's declaring owners), a prelude member
+        /// declared at the root level, a block declared at the root level; each dotted step a member
+        /// of the previous provider.
+        /// </summary>
+        public ResolvedOpenTarget? ResolveProvider(bool current)
         {
             var head = target.OpenTargetHead(out var steps);
-            Algorithm? provider = head switch
+            ResolvedOpenTarget? resolved = head switch
             {
                 Expr.Resolve(var name) => (current
                         ? openerMap.TryGetCurrent(name, out var entry)
                         : openerMap.TryGetValue(name, out entry))
-                    ? entry.Value
-                    : prelude.TryGetMember(name, out var preludeMember) ? preludeMember.Value : null,
-                Expr.AlgorithmExpr(var block) => block,
+                    ? new ResolvedOpenTarget(entry.Value, OpenProviderIdentity.DeclaredIn(entry.Value, entry.Owners ?? DeclaringOwners.Root))
+                    : prelude.TryGetMember(name, out var preludeMember)
+                        ? new ResolvedOpenTarget(preludeMember.Value, OpenProviderIdentity.DeclaredIn(preludeMember.Value, DeclaringOwners.Root))
+                        : null,
+                Expr.AlgorithmExpr(var block) => new ResolvedOpenTarget(block, OpenProviderIdentity.DeclaredAtRoot(block)),
                 _ => null,
             };
 
-            for (var i = 0; provider is not null && i < steps.Count; i++)
-                provider = ElaboratedScopeLookup.TryLookupPublicProperty(provider, steps[i])?.Property.Value;
-            return provider;
+            for (var i = 0; resolved is { } current1 && i < steps.Count; i++)
+            {
+                resolved = ElaboratedScopeLookup.TryLookupPublicProperty(current1.Target, steps[i])?.Property.Value is { } member
+                    ? new ResolvedOpenTarget(member, current1.Identity.Member(member))
+                    : null;
+            }
+
+            return resolved;
         }
     }
 
@@ -1598,14 +1660,15 @@ internal static class ImplicitArgumentResolver
     /// declaration of a name wins the map, as ownership-first lookup reads one declaration).
     /// </summary>
     private static (VisibleProperty[] ByIndex, Dictionary<string, VisibleProperty> ByName) BuildPropertyEntries(
-        IReadOnlyList<Property> properties)
+        IReadOnlyList<Property> properties,
+        DeclaringOwners owners)
     {
         var byIndex = new VisibleProperty[properties.Count];
         var byName = new Dictionary<string, VisibleProperty>(StringComparer.Ordinal);
         for (var i = 0; i < properties.Count; i++)
         {
             var property = properties[i];
-            byIndex[i] = new VisibleProperty(CallableSignature.FromAlgorithm(property.Name, property.Value), property.Value);
+            byIndex[i] = new VisibleProperty(CallableSignature.FromAlgorithm(property.Name, property.Value), property.Value, owners);
             byName[property.Name] = byIndex[i];
         }
 
@@ -1613,8 +1676,9 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// One level's <c>open</c> providers over its processed targets, deduplicated first-occurrence-
-    /// wins by the evaluator's key: two opens of one target are one provider, never an ambiguity.
+    /// One level's <c>open</c> targets over its processed targets, a repeated written-target key
+    /// skipped (it resolves the same target); whether two different targets are one provider is
+    /// decided by identity when a name is looked up (<see cref="TryResolveOpened"/>).
     /// </summary>
     private static IReadOnlyList<OpenProvider> OpenProvidersOf(IReadOnlyList<Expr> opens, SignatureMap openerMap, PreludeContext prelude)
     {
@@ -1660,20 +1724,22 @@ internal static class ImplicitArgumentResolver
             return null;
 
         int? provider = null;
-        var hits = 0;
+        HashSet<OpenProviderIdentity>? providers = null;
         foreach (var open in level.Providers)
         {
-            if (open.Resolve(current: false) is not { } algorithm
-                || run.OpenMemberIndexes.IndexOf(algorithm).Lookup(name) is null)
+            // Q-19 D-I: two targets of one provider are one provider (the first represents it).
+            if (open.ResolveProvider(current: false) is not { } resolved
+                || run.OpenMemberIndexes.IndexOf(resolved.Target).Lookup(name) is null
+                || !(providers ??= []).Add(resolved.Identity))
             {
                 continue;
             }
 
-            hits++;
-            provider = SiblingHeadIndex(open, siblings);
+            if (providers.Count == 1)
+                provider = SiblingHeadIndex(open, siblings);
         }
 
-        return hits == 1 ? provider : null;
+        return providers?.Count == 1 ? provider : null;
     }
 
     private static int? SiblingHeadIndex(OpenProvider open, IReadOnlyList<Property> siblings)
@@ -1725,6 +1791,8 @@ internal static class ImplicitArgumentResolver
             // implicit calls. Returning it unchanged is O(1) and identical.
             Algorithm.User { AssignmentDeconstructionTarget: not null } => alg,
 
+            Algorithm.User { IsModuleElaborated: true } module when !isRoot => ProcessModuleRoot(module, observations, run),
+
             Algorithm.User user => ProcessUserAlgorithmRegion(
                 user, parentParamMap, forwardable, isRoot, observations, diagnostics, branchContext, run),
 
@@ -1732,6 +1800,35 @@ internal static class ImplicitArgumentResolver
             // so one reached here is already elaborated.
             Algorithm.Alias => alg,
         };
+
+    /// <summary>
+    /// A loaded module (Q-31 H-P, decided 2026-10-06) is a hygienic source unit rooted at the
+    /// prelude: it resolves with no enclosing signatures, no enclosing parameter bindings to forward
+    /// (Q-04's sources are the module's own), and its levels declared at the root level (Q-19 D-I's
+    /// provider identities restart at the module) — the same at every import site, so the operation
+    /// resolves it ONCE (Q-32 I-U), with its diagnostics in the operation's sink. A holder's
+    /// parameters reach the module's callables only through explicit arguments, bare forwarding, and
+    /// formula lifting written at the holder — never by the module reading them.
+    /// </summary>
+    private static Algorithm ProcessModuleRoot(Algorithm.User module, FrontEndTraversalObservations? observations, ResolutionRun run)
+    {
+        if (!run.Modules.TryGet(ModuleUnitPass.Resolution, module, out var resolved))
+        {
+            using var owners = run.EnterOwners(DeclaringOwners.Root);
+            resolved = ProcessUserAlgorithmRegion(
+                module,
+                SignatureMap.Empty(observations, run.Pending),
+                ForwardableParameters.None,
+                isRoot: false,
+                observations,
+                run.Diagnostics,
+                branchContext: null,
+                run);
+            run.Modules.Add(ModuleUnitPass.Resolution, module, resolved);
+        }
+
+        return resolved;
+    }
 
     /// <summary>
     /// The user-algorithm half of <see cref="ProcessAlgorithm"/>: the root is rewritten once
@@ -1807,6 +1904,11 @@ internal static class ImplicitArgumentResolver
         ResolutionRun run,
         List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
+        // This body is a level of its own (Q-19 D-I: what its properties' provider identities
+        // are anchored at); its property loop re-enters it for a property processed on demand.
+        var levelOwners = run.Owners.Inside(alg);
+        using var levelScope = run.EnterOwners(levelOwners);
+
         var newOpens = ProcessOpenExprs(alg.Opens, observations, diagnostics, run);
 
         // Q-04: the enclosing PARAMETER bindings this body's own forwarding reuses — those its
@@ -1824,7 +1926,7 @@ internal static class ImplicitArgumentResolver
 
         // The level's own entries: every property's INPUT signature and value until the loop below
         // processes it.
-        var (localEntries, localEntriesByName) = BuildPropertyEntries(alg.Properties);
+        var (localEntries, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners);
 
         // Visible map = parent + local (local overrides), plus this level's `open` providers as the
         // innermost open level. When there are neither local properties nor opens — the common leaf
@@ -1874,6 +1976,7 @@ internal static class ImplicitArgumentResolver
                 // A family's entry keeps its input value: processing rewrites branch bodies, never
                 // the heads its kind and lifting signature are read from.
                 using (run.EnterImportSiteExactly(ImportSite.OfProperty(prop) ?? loopImportSite))
+                using (run.EnterOwners(levelOwners))
                 {
                     processedProperties[idx] = prop.WithValue(ProcessConditionalProperty(
                         condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run));
@@ -1891,13 +1994,14 @@ internal static class ImplicitArgumentResolver
                 // property graph every reach observes the same, final signatures.
                 Algorithm processedBody;
                 using (run.EnterImportSiteExactly(ImportSite.OfProperty(prop) ?? loopImportSite))
+                using (run.EnterOwners(levelOwners))
                 {
                     processedBody = ProcessAlgorithm(
                         prop.Value, visibleParamMap, nestedForwarding, isRoot: false, observations, diagnostics, branchContext: null, run);
                 }
 
                 // Update the map with the processed, potentially augmented signature.
-                var processedEntry = new VisibleProperty(CallableSignature.FromAlgorithm(prop.Name, processedBody), processedBody);
+                var processedEntry = new VisibleProperty(CallableSignature.FromAlgorithm(prop.Name, processedBody), processedBody, levelOwners);
                 visibleParamMap.Set(prop.Name, processedEntry);
                 loop!.Complete(idx, processedEntry);
 
@@ -2089,6 +2193,8 @@ internal static class ImplicitArgumentResolver
         // its reported error, can never reach evaluation.
         var memos = new ResolverWalkMemos(run, observations, diagnostics);
         var processed = new List<Expr>(opens.Count);
+        // An open target is wired to the prelude: a block in it is a level of the root level.
+        using var rootOwners = run.EnterOwners(DeclaringOwners.Root);
         foreach (var open in opens)
             processed.Add(ProcessOpenExpr(open, memos));
         return processed;
@@ -2104,6 +2210,8 @@ internal static class ImplicitArgumentResolver
         ResolutionRun run)
     {
         var newOpens = ProcessOpenExprs(conditional.Opens, observations, diagnostics, run);
+        // A family that owns opens (host-built only) is a level of its own, as in detection.
+        using var familyOwners = run.EnterOwners(newOpens.Count == 0 ? run.Owners : run.Owners.Inside(conditional));
         var branches = new List<CondBranch>(conditional.Branches.Count);
         foreach (var branch in conditional.Branches)
         {
@@ -2125,7 +2233,10 @@ internal static class ImplicitArgumentResolver
                             propertyName,
                             branch.Pattern,
                             forwardable,
-                            run.Prelude)),
+                            run.Prelude)
+                        {
+                            Owners = run.Owners,
+                        }),
                     },
                 });
                 continue;
@@ -2177,7 +2288,11 @@ internal static class ImplicitArgumentResolver
         string BranchName,
         Pattern Pattern,
         ForwardableParameters Forwardable,
-        PreludeContext Prelude);
+        PreludeContext Prelude)
+    {
+        /// <summary>The declaring owners of the level the branch body is nested in (Q-19 D-I).</summary>
+        public DeclaringOwners Owners { get; init; } = DeclaringOwners.Root;
+    }
 
     /// <summary>
     /// Demand-time implicit-argument resolution of a deferred region's DETECTED body: the
@@ -2188,9 +2303,17 @@ internal static class ImplicitArgumentResolver
         DeferredBranchContext context,
         DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
-        SourceSpan? importSite = null)
+        SourceSpan? importSite = null,
+        ModuleUnits? modules = null)
     {
-        var run = new ResolutionRun(importSite, context.ParentParamMap.Pending) { Observations = observations, Prelude = context.Prelude };
+        var run = new ResolutionRun(importSite, context.ParentParamMap.Pending)
+        {
+            Observations = observations,
+            Prelude = context.Prelude,
+            Owners = context.Owners,
+            Diagnostics = diagnostics,
+            Modules = modules ?? new(),
+        };
         return ProcessAlgorithm(
             detectedBody,
             SignatureMap.FromSnapshot(context.ParentParamMap, observations, run.Pending),
@@ -3713,25 +3836,27 @@ internal static class ImplicitArgumentResolver
     {
         for (var level = paramMap.Opens; level is not null; level = level.Outer)
         {
+            // Q-19 D-I: the level's PROVIDERS decide — targets resolving to one provider are one.
             Property? found = null;
-            var hits = 0;
+            HashSet<OpenProviderIdentity>? providers = null;
             foreach (var provider in level.Providers)
             {
-                if (provider.Resolve(current) is { } algorithm
-                    && run.OpenMemberIndexes.IndexOf(algorithm).Lookup(name) is { } hit)
+                if (provider.ResolveProvider(current) is { } resolved
+                    && run.OpenMemberIndexes.IndexOf(resolved.Target).Lookup(name) is { } hit
+                    && (providers ??= []).Add(resolved.Identity)
+                    && providers.Count == 1)
                 {
-                    hits++;
                     found = hit.Property;
                 }
             }
 
-            if (hits == 1)
+            if (providers?.Count == 1)
             {
                 member = found!;
                 return true;
             }
 
-            if (hits > 1)
+            if (providers?.Count > 1)
                 break;
         }
 

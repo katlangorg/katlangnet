@@ -65,9 +65,11 @@ public class DotCallHigherOrderParameterTests
     /// after checking the counted innermost error has the same shape.
     /// </summary>
     private static EvalError AssertBothEvaluatorsFail(string source)
+        => AssertBothEvaluatorsFail(SourceProvenance.ParseValid(source).Root);
+
+    private static EvalError AssertBothEvaluatorsFail(Algorithm.User root)
     {
-        var provenance = SourceProvenance.ParseValid(source);
-        var expr = new Expr.AlgorithmExpr(provenance.Root);
+        var expr = new Expr.AlgorithmExpr(root);
 
         var plain = Evaluator.Run(expr);
         Assert.True(plain.IsError, $"Expected plain evaluation error but got: {(plain.IsError ? null : plain.Value)}");
@@ -215,22 +217,39 @@ public class DotCallHigherOrderParameterTests
                 open A, B
             """;
 
-        var dotError = Assert.IsType<EvalError.AmbiguousOpen>(AssertBothEvaluatorsFail(
-            declarations +
+        var dotSource = declarations +
             """
 
                 7.Pick
             }
             Outer
-            """));
-        var directError = Assert.IsType<EvalError.AmbiguousOpen>(AssertBothEvaluatorsFail(
-            declarations +
+            """;
+        var directSource = declarations +
             """
 
                 Pick(7)
             }
             Outer
-            """));
+            """;
+
+        // The literal receiver has no members, so the edge certainly selects its fallback: the
+        // written `Pick` of either spelling names no single declaration, which is the front
+        // end's AmbiguousOpen at the occurrence — the member token, the callee token — with
+        // one message (Q-29 A-U × Q-75, decided 2026-10-06).
+        var dotDiagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(dotSource));
+        var directDiagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(directSource));
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, dotDiagnostic.Code);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, directDiagnostic.Code);
+        Assert.Equal(directDiagnostic.Message, dotDiagnostic.Message);
+        Assert.Equal(new SourceSpan(9, 7, 9, 11), dotDiagnostic.Span);
+        Assert.Equal(new SourceSpan(9, 5, 9, 9), directDiagnostic.Span);
+
+        // The evaluators keep one run-time verdict for both spellings on the same trees
+        // handed over as host ASTs.
+        var dotError = Assert.IsType<EvalError.AmbiguousOpen>(
+            AssertBothEvaluatorsFail(SourceProvenance.ParseAllowingDiagnostics(dotSource).Root));
+        var directError = Assert.IsType<EvalError.AmbiguousOpen>(
+            AssertBothEvaluatorsFail(SourceProvenance.ParseAllowingDiagnostics(directSource).Root));
 
         Assert.Equal(directError.Name, dotError.Name);
         Assert.Equal(directError.Providers, dotError.Providers);

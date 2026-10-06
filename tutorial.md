@@ -2320,8 +2320,27 @@ After `open Lib`, `Area` could be used on its own, but `Helper` could not. A few
 
 - `open` comes first in its algorithm, before any definitions (clause definitions such as `P(x) = ...` included) and output rows. An algorithm has one `open` declaration, which may list several targets: `open Geometry, Physics`.
 - An open target names an algorithm: a name, a dotted path of public members such as `open Geometry.Shapes`, or a `{ ... }` block. Every part must exist, so a misspelled target is reported even if nothing is ever looked up through it.
-- Opened names never override other names. Your own definitions and the built-in names are found first, and `open` is consulted only for a name that neither provides. If two opened targets provide the same name, using that name is an error.
+- Opened names never override other names. Your own definitions and the built-in names are found first, and `open` is consulted only for a name that neither provides.
+- Two different opened algorithms may contain the same name; that alone is fine. Writing that name is an error, reported before the program runs — even in a definition that is never used — because it does not say which algorithm you mean. Use the qualified form (`A.X`) or open only one of them. Opening the same algorithm twice, under any spelling, counts once.
 - `open Math` makes the members of `Math` available under their own names, such as `Sqrt(16)` and `Pi`.
+
+Here both libraries define `X`, which is harmless because the program names each `X` with its library:
+
+```
+open A, B
+A = {
+    public X = 1
+    public P = 10
+}
+B = {
+    public X = 2
+    public Q = 20
+}
+
+P + Q + A.X + B.X
+```
+
+**Result:** `33`
 
 ### Loading External Algorithms
 
@@ -2354,6 +2373,8 @@ X + 3
 ```
 
 **Result:** `23`
+
+A loaded module is self-contained. Its names mean what they mean inside the module itself, or the built-in names — never what the loading program happens to define, so a program's own `sum` or `Rate` cannot change a library's results. A name the module uses without defining it becomes a parameter of the member that uses it: if the module's `public Price = Base * 1.2` does not define `Base`, then `Price` takes `Base` as a parameter and the program writes `Lib.Price(10)`. Loading the same URL several times in one program, or opening it, is always the same module: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all mean one thing, and its members are computed once. Two different URLs are two modules, even if they contain the same text.
 
 Loading is off unless the host application allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that the application allows, by default `katlang.org` and its subdomains.
 

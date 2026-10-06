@@ -44,6 +44,8 @@ public class LeanCoreTestsCompositionTests
         "LoopSteps",
         "ErrorTaxonomy",
         "DotIdentity",
+        "OpenProviderIdentity",
+        "ModuleUnits",
     ];
 
     [Fact]

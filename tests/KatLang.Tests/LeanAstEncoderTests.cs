@@ -59,6 +59,33 @@ public class LeanAstEncoderTests
         Assert.Equal($"(.capture [{box0}, {box1}])", LeanAstEncoder.EncodeExpr(Pair(box, otherBox)));
     }
 
+    [Fact]
+    public void LoadedModuleRoot_IsOneModuleDeclaration_WiredWithoutAnEnclosingScope()
+    {
+        // Q-31 H-P + Q-32 I-U: a loaded module root carries the `.module` mark (Lean wires it at the
+        // chain's root level), its members are encoded under NO enclosing scope wherever it is held,
+        // so two holders of the one module encode the same member identities.
+        var member = new Property("X", new Algorithm.User(null, [], [], [], [new Expr.Num(5)]), IsPublic: true);
+        var module = new Algorithm.User(null, [], [], [member], []) { IsModuleElaborated = true };
+        var root = new Algorithm.User(
+            null, [], [],
+            [new Property("A", module), new Property("B", module)],
+            [new Expr.DotCall(new Expr.Resolve("A"), "X", null)]);
+
+        const string value = "(Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))";
+        const string moduleEncoding = "(Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp \"X\" " + value + ") with identity := some (.shared 0) }] []))";
+        Assert.Equal(
+            ".algorithmExpr (alg [] [] [privateProp \"A\" " + moduleEncoding + ", privateProp \"B\" " + moduleEncoding + "] [(.dotCall (.resolve \"A\") \"X\" none)])",
+            LeanAstEncoder.EncodeProgram(root));
+
+        // The same body as an ordinary (written) declaration shared by two holders is `.shared`.
+        var written = module with { IsModuleElaborated = false };
+        Assert.DoesNotContain("(.module ", LeanAstEncoder.EncodeProgram(root with
+        {
+            Properties = [new Property("A", written), new Property("B", written)],
+        }), StringComparison.Ordinal);
+    }
+
     // ----- parameter channel: the three constructor spellings -----------------
 
     [Theory]

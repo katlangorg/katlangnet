@@ -414,6 +414,7 @@ public class KatLangErrorCodeTests
             ["UnforwardableParameter"] = 49,
             ["UnliftableClauseFamily"] = 50,
             ["UnforwardableCallable"] = 51,
+            ["AmbiguousOpen"] = 52,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);

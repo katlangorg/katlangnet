@@ -455,14 +455,34 @@ public static partial class Evaluator
     /// Lean: Algorithm.withParent. No-op for Builtin variant. The wired copy is a VIEW of the
     /// same written declaration: the record copy carries <see cref="Algorithm.Declaration"/>.
     /// An alias is wired like any declaration: its parent is the scope its target is resolved in.
+    /// <para>A loaded module (Q-31 H-P, decided 2026-10-06) is a hygienic source unit rooted at the
+    /// prelude: wherever it is reached — a property holding it, an <c>open</c>, a dot path, an
+    /// argument — it is wired under the chain's root level, never under the scope that reached it,
+    /// so its names never see the load site's and every reach is the ONE declaration in the ONE
+    /// declaring scope (Q-32 I-U: one member binding per module declaration).</para>
     /// </summary>
     private static Algorithm WithParent(Algorithm alg, ScopeCtx? parent) => alg switch
     {
         Algorithm.Builtin => alg,
+        Algorithm.User { IsModuleElaborated: true } module => module with { Parent = ChainRoot(parent) },
         Algorithm.User user => user with { Parent = parent },
         Algorithm.Conditional family => family with { Parent = parent },
+        Algorithm.Alias { IsModuleElaborated: true } module => module with { Parent = ChainRoot(parent) },
         Algorithm.Alias alias => alias with { Parent = parent },
     };
+
+    /// <summary>
+    /// The root level of a scope chain — the prelude level every evaluation chain is rooted at
+    /// (Lean <c>ScopeCtx.chainRoot</c>). A loaded module is wired there (see <see cref="WithParent"/>).
+    /// </summary>
+    private static ScopeCtx? ChainRoot(ScopeCtx? scope)
+    {
+        if (scope is null)
+            return null;
+        while (scope.Parent is { } outer)
+            scope = outer;
+        return scope;
+    }
 
     /// <summary>
     /// The plain (non-activated) declaring scope of an algorithm, owned by it.
@@ -798,21 +818,20 @@ public static partial class Evaluator
     internal static string OpenExprName(Expr e) => ExprNameRenderer.Render(e, ExprNameMode.Open);
 
     /// <summary>
-    /// The ONE dedup identity of a written <c>open</c> target, owned here beside
-    /// <see cref="OpenExprName"/> and shared by runtime open resolution
-    /// (<see cref="ResolveAllOpens"/>) and elaborated-scope lookup
-    /// (<c>ElaboratedPropertyScope.GetResolvedOpenProviders</c>), so both views
-    /// deduplicate targets by the same relation. An INLINE target
-    /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by
-    /// its written position, including when it heads a dotted path, so two
-    /// structurally identical inline blocks are never merged. A name-headed path uses
-    /// its COMPLETE spelling, so repeating one spelling is ONE provider (first occurrence wins; ordinal
-    /// comparison). Diagnostic rendering is bounded and must never decide this
-    /// identity: distinct long names can have the same abbreviated display.
-    /// Invalid host/recovery forms retain their bounded diagnostic key; validation
-    /// rejects them before lookup. A new inline-like form belongs in the positional
-    /// arm here — nowhere else.
-    /// Lean: <c>resolveAllOpens</c>.
+    /// The written-target key of an <c>open</c> target: a PRE-RESOLUTION OPTIMIZATION, never a
+    /// provider identity (Q-19 D-I, decided 2026-10-06). Two targets with the same key resolve
+    /// to the same provider by construction — one complete name spelling at one open level
+    /// resolves one target — so a consumer may skip re-resolving a repeated key; whether two
+    /// targets with DIFFERENT keys are one provider is decided after resolution by the semantic
+    /// provider identity (<see cref="ResolveAllOpens"/>: <see cref="SameRepeatedCallableIdentity"/>;
+    /// the front end: <c>ElaboratedScopeLookup.ResolveOpenProviderIdentity</c>). An INLINE target
+    /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by its written
+    /// position, including when it heads a dotted path, so the skip never merges two written
+    /// blocks. A name-headed path uses its COMPLETE spelling (ordinal comparison): diagnostic
+    /// rendering is bounded and must never decide even this skip, because distinct long names can
+    /// have the same abbreviated display. Invalid host/recovery forms retain their bounded
+    /// diagnostic key; validation rejects them before lookup. A new inline-like form belongs in
+    /// the positional arm here — nowhere else.
     /// </summary>
     internal static string OpenTargetDedupKey(Expr openExpr, int index)
     {
@@ -1474,12 +1493,18 @@ public static partial class Evaluator
     private readonly record struct OpenHit(string Provider, Algorithm Lib, Property Binding);
 
     /// <summary>
-    /// Resolve all opens of an algorithm upfront.
-    /// Deduplicates targets by the shared <see cref="OpenTargetDedupKey"/> (named
-    /// targets by their open spelling, first occurrence wins; inline blocks by
-    /// position, never deduplicated) to avoid repeated resolution and spurious
-    /// ambiguity from duplicate opens.
-    /// Validates all open expressions first for fail-fast diagnostics.
+    /// Resolve all opens of an algorithm upfront: the level's PROVIDERS, each counted once.
+    /// Q-19 D-I (decided 2026-10-06): written targets that resolve to the same semantic
+    /// provider count once, whatever their spelling or position — the provider identity is the
+    /// language's one callable identity (NEED-04's relation, <see cref="SameRepeatedCallableIdentity"/>:
+    /// the declaration, its declaring scope, and compatible activations), so <c>open M, M</c>,
+    /// <c>open M, (M)</c>, <c>open Sub, Lib.Sub</c> (one declaration) and two loads of one module
+    /// are one provider, while two written blocks, two declarations, or two canonical module URLs
+    /// stay two, however equal their members or values. The first occurrence supplies the
+    /// provider's diagnostic name; which providers the level has never depends on order.
+    /// A repeated written-target key (<see cref="OpenTargetDedupKey"/>) is skipped before
+    /// resolution as a pure optimization (it resolves the same target). Validates all open
+    /// expressions first for fail-fast diagnostics.
     /// Lean: resolveAllOpens → EvalM (List ResolvedOpen).
     /// </summary>
     private static EvalResult<IReadOnlyList<ResolvedOpen>> ResolveAllOpens(
@@ -1488,7 +1513,8 @@ public static partial class Evaluator
         if (alg.Opens.Count == 0)
             return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok([]);
 
-        // Deduplicate by key (first occurrence wins); inline blocks use positional keys
+        // Skip a repeated written-target key (it resolves the same target); inline blocks use
+        // positional keys, so this never merges two written blocks.
         var seen = new HashSet<string>();
         var deduped = new List<(string DisplayName, Expr Expr)>();
         for (var i = 0; i < alg.Opens.Count; i++)
@@ -1506,7 +1532,8 @@ public static partial class Evaluator
                 return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {displayName}");
         }
 
-        // Then resolve with bounded diagnostic names, separate from dedup identity.
+        // Then resolve with bounded diagnostic names, and count each semantic provider once:
+        // a target resolving to the callable identity of an earlier one is that provider.
         var result = new List<ResolvedOpen>(deduped.Count);
         foreach (var (displayName, openExpr) in deduped)
         {
@@ -1514,9 +1541,22 @@ public static partial class Evaluator
                 CtxOpen(displayName),
                 ResolveOpen(openExpr, ctx));
             if (libResult.IsError) return libResult.Error;
-            result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
+            if (!IsResolvedProvider(result, libResult.Value))
+                result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
         }
         return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok(result);
+    }
+
+    /// <summary>Whether <paramref name="provider"/> is the semantic provider of an earlier resolved target (Q-19 D-I).</summary>
+    private static bool IsResolvedProvider(List<ResolvedOpen> resolved, Algorithm provider)
+    {
+        foreach (var earlier in resolved)
+        {
+            if (SameRepeatedCallableIdentity(earlier.Lib, provider))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>

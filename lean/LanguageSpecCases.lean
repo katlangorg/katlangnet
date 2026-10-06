@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 380
-- excluded parse-level cases (Lean has no surface parser): 53
+- specification surface cases: 384
+- excluded parse-level cases (Lean has no surface parser): 58
 - excluded C#-only cases (each carries an explicit reason in the corpus): 19
-- Lean-guarded cases: 308
-- probe observations (C#-only by design): 1177
+- Lean-guarded cases: 307
+- probe observations (C#-only by design): 1188
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -906,15 +906,15 @@ def case_dot_local_only_member_outside_owner : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.dotCall (.resolve "Inner") "X" none)])] [(.dotCall (.dotCall (.resolve "Outer") "Inner" none) "X" none)])
 #guard obs case_dot_local_only_member_outside_owner == "err localOnlyProperty"
 
--- open-full-spelling-decides-provider-identity [name-resolution]: open NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA, NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB \n NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA = { public X = 1 } \n NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB = { public X = 2 } \n X
-def case_open_full_spelling_decides_provider_identity : Expr :=
-  .algorithmExpr (alg [] [.resolve "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA", .resolve "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB"] [privateProp "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNB" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2])] [])] [.resolve "X"])
-#guard obs case_open_full_spelling_decides_provider_identity == "err ambiguousOpen"
+-- open-two-spellings-one-provider [name-resolution]: Lib = { \n     public Sub = { \n         public X = 1 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
+def case_open_two_spellings_one_provider : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "R" (alg [] [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] [.resolve "X"])] [])] [(.dotCall (.resolve "Lib") "R" none)])
+#guard obs case_open_two_spellings_one_provider == "ok raw=1 n=1"
 
--- open-local-only-member-is-a-second-provider [name-resolution]: Pub = { \n     public X = 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X = p + 202 \n     } \n     0 \n } \n A = { \n     open Pub, Outer.Lib \n     X \n } \n A
-def case_open_local_only_member_is_a_second_provider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"]), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 202))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
-#guard obs case_open_local_only_member_is_a_second_provider == "err ambiguousOpen"
+-- ambiguous-open-unused-overlap-is-valid [name-resolution]: open A, B \n A = { \n     public X = 1 \n     public P = 10 \n } \n B = { \n     public X = 2 \n     public Q = 20 \n } \n P + Q
+def case_ambiguous_open_unused_overlap_is_valid : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1]), publicProp "P" (alg [] [] [] [.num 10])] []), privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2]), publicProp "Q" (alg [] [] [] [.num 20])] [])] [(.binary .add (.resolve "P") (.resolve "Q"))])
+#guard obs case_ambiguous_open_unused_overlap_is_valid == "ok raw=30 n=1"
 
 -- dot-chain-structural-member-beats-extension [access-boundaries]: Lib = { \n     public Sub = { \n         public Q = 1 \n     } \n } \n  \n Q(x) = 99 \n  \n Lib.Sub.Q
 def case_dot_chain_structural_member_beats_extension : Expr :=
@@ -935,11 +935,6 @@ def case_dot_chain_nested_structural_members : Expr :=
 def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
 #guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
-
--- inline-headed-open-paths-keep-distinct-providers [name-resolution]: open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S \n X
-def case_inline_headed_open_paths_keep_distinct_providers : Expr :=
-  .algorithmExpr (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])] [])) "S" none), (.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 7])] [])] [])) "S" none)] [] [.resolve "X"])
-#guard obs case_inline_headed_open_paths_keep_distinct_providers == "err ambiguousOpen"
 
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Probe(u) = Apply((Increment, Increment)) \n Probe(0)
 def case_capture_suppresses_higher_order_identity : Expr :=
@@ -1641,7 +1636,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 308 canonical Lean-guarded specification cases.
+-- 307 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1810,13 +1805,12 @@ def specCaseIds : List String := [
   "closed-list-may-fallback-name-is-runtime",
   "open-local-only-member-inside-owner",
   "dot-local-only-member-outside-owner",
-  "open-full-spelling-decides-provider-identity",
-  "open-local-only-member-is-a-second-provider",
+  "open-two-spellings-one-provider",
+  "ambiguous-open-unused-overlap-is-valid",
   "dot-chain-structural-member-beats-extension",
   "dot-chain-extension-fallback-composes",
   "dot-chain-nested-structural-members",
   "dot-chain-local-only-member-is-not-a-fallback",
-  "inline-headed-open-paths-keep-distinct-providers",
   "capture-suppresses-higher-order-identity",
   "capture-suppresses-structural-members",
   "output-dotted-access-ordinary",
@@ -1958,6 +1952,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 308
+#guard specCaseIds.length == 307
 
 end LanguageSpecCases

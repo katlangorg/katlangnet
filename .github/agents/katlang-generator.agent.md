@@ -400,10 +400,10 @@ If ANY checklist item fails, fix the output before emitting it.
 
 - Place the single `open` declaration before all property definitions and output — clause definitions such as `P(x) = ...` included — even when opening a sibling library defined later in the same algorithm (the forward reference resolves). An `open` after any property, clause definition, or output is a parse error. Every open target names an algorithm all the way down: a dotted target starts at a declared algorithm or an inline `{ ... }` block (never `open F(1).X` or `open 5.X`), and every dotted step must be a public member.
 - `open` imports public properties from the target. Ownership-first lookup applies: the owner walk first (each enclosing scope outward, where a scope owns both the parameters it binds and the properties it declares, and a property may not have the same name as a parameter — written, inferred, or added by automatic parameter forwarding — of that or any enclosing lexical algorithm), then opened public properties. Every owned name — a local or parent-scope property, and a parameter or branch binder of any enclosing scope — wins over an opened name.
-- If two targets of the same `open` declaration both provide the same public name, bare lookup is ambiguous and is an error that selects neither target (an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference (`A.X`) or open only the provider you need:
+- Two different opened algorithms may contain the same public name; the overlap alone is fine. WRITING that name where both are the nearest providers is a front-end error that selects neither (it is rejected before the program runs, even inside a definition that is never read; an `open` in a nested algorithm is consulted before an enclosing algorithm's, so only targets opened at the same level collide) — qualify the reference (`A.X`) or open only the provider you need. Two spellings of one algorithm (`open M, (M)`, `open Sub, Lib.Sub`) and two loads of one module URL are ONE provider:
 
       open A, B
-      X                  # error: Ambiguous open 'X': provided by A, B
+      X                  # error: 'X' is ambiguous: 2 different opened algorithms provide it (A, B)
 
 - `open` imports only public members; in an `open Lib.Sub` target path, each dotted member after the direct head must be public. Ordinary structural dot-access is more permissive — `Lib.UseHelper` may reach a private self-contained structural member (e.g. `Lib = { UseHelper = x + 1 }` then `Lib.UseHelper(10)` is `11`). Capturing (local-only) members are usable through `open` and dot access only from bodies inside the exact activation that owns each captured parameter; outside it they are refused even when marked `public`, and conditional-branch declarations are unreachable by name from outside their branch. An `open` target must be an algorithm that needs no call: `open Lib` with `Lib(p) = { ... }` (or an implicitly parameterized `Lib`, or a clause family) is a front-end error — call it instead, or open a parameterless provider. Every `open` target must also resolve, because `open` is static: `open Nope` (nothing visible named `Nope`), `open Lib.Missing` (no such member), and `open Lib.Helper` (a private path step) are front-end errors even when no name is looked up through them, and a target's first name resolves through the enclosing declarations and the prelude, never through another open (`open Outer, Lib` cannot reach a `Lib` that only `Outer` provides).
 - `open` is static, and the target name obeys the same lexical ownership as every other name: if the target's first name is owned by a PARAMETER of the opening algorithm or of an enclosing one (written, inferred, collecting, grouped, or a branch-pattern binder), that parameter owns the name and cannot be opened — the program is rejected (`Cannot open 'Lib': 'Lib' refers to a parameter`), and KatLang never looks farther outward for another declaration named `Lib`. Never generate `open Lib` inside `F(Lib) = { ... }` or in a body nested in it; use the parameter directly (`Lib.X`) or open a declared algorithm the body does not bind.
@@ -419,6 +419,8 @@ If ANY checklist item fails, fix the output before emitting it.
       Lib = load('https://katlang.org/lib.kat')      # property definition
       open load('https://katlang.org/lib.kat')       # open list
       open 'https://katlang.org/lib.kat'             # shorthand for open load(...)
+
+  A loaded module is self-contained: its names resolve in the module itself and then the built-in prelude, never in the importing program (an importer's `sum`, `abs`, or properties never change what it computes). A name the module does not define is a parameter of the member that uses it, so pass it as an argument (`Lib.Price(10)`) — or let a same-named parameter of the importing algorithm reach it by bare forwarding or formula lifting. Every `load`/`open` of one URL in a program is the SAME module (`open 'url'` ≡ `Lib = load('url')` + `open Lib`), so its members are computed once; two URLs are two modules.
 
   `load` requires exactly one literal single-quoted HTTPS URL, without user information (never `user@` or `user:password@` before the host). No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
 
@@ -1576,7 +1578,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (140 of the 380-case canonical language specification,
+Verified reference examples (144 of the 384-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2571,6 +2573,59 @@ Regenerate this block from the repo root with:
 
   Fails with an evaluation error (localOnlyProperty).
 
+[open-two-spellings-one-provider] Opening the same provider twice still opens it once, however the paths are spelled: inside `Lib.R`, `Sub` and `Lib.Sub` name the one declaration `Sub`, so `X` has one provider in either order, exactly like `open M, M` and `open M, (M)`. Provider identity is the declaration in its declaring scope, never the written text or its position in the list.
+
+    Lib = {
+        public Sub = {
+            public X = 1
+        }
+        public R = {
+            open Sub, Lib.Sub
+            X
+        }
+    }
+    Lib.R
+
+  Displays:
+    1
+
+[open-identical-inline-blocks-two-providers] Two written blocks are two declarations, so they are two providers even when their text and members are identical: providers are never merged by their contents or their values. A written `X` that both provide is ambiguous, while the overlap alone, with no written `X`, is valid.
+
+    open { public X = 1 }, { public X = 1 }
+    X
+
+  Rejected by the parser: "is ambiguous: 2 different opened algorithms provide it at the same open level ..."
+
+[ambiguous-open-written-use-is-static] A written name is resolved statically, whether or not evaluation ever demands it: `Y` is never read, yet its `X` reaches an open level where two different providers supply `X`, so it names no declaration and the program is rejected at that `X`. Demand decides what is computed, never what a written name means. Qualify the name (`A.X`) or open only one of the providers.
+
+    open A, B
+    A = {
+        public X = 1
+    }
+    B = {
+        public X = 2
+    }
+    Y = X
+    5
+
+  Rejected by the parser: "'X' is ambiguous: 2 different opened algorithms provide it at the same open level (A, B) ..."
+
+[ambiguous-open-unused-overlap-is-valid] Different opened algorithms may contain the same name: the overlap itself is valid, so adding an unused member to one library never breaks a program that opens it beside another. Only a written reference that resolves to two providers at the same open level is rejected, and lexical precedence decides first — an owned `X`, or a nearer open level that provides `X` once, is selected without ambiguity.
+
+    open A, B
+    A = {
+        public X = 1
+        public P = 10
+    }
+    B = {
+        public X = 2
+        public Q = 20
+    }
+    P + Q
+
+  Displays:
+    30
+
 [dot-chain-structural-member-beats-extension] Dot syntax is property-first at EVERY level of a chain: the receiver `Lib.Sub` is navigated to `Sub`'s algorithm, and because `Sub` exposes an accessible `Q`, that member is read before the visible extension `Q(x)` is ever considered — exactly as `Lib.Q` reads `Lib`'s own `Q`. Only a receiver without the member falls back to the extension call `Q(receiver)`; a same-named extension, whether declared at the root, in the enclosing algorithm, or as a parameter of it, never pre-empts a structural member.
 
     Lib = {
@@ -2639,12 +2694,12 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "Invalid open form: 'call' is not allowed in open declarations. ..."
 
-[inline-headed-open-paths-keep-distinct-providers] Each inline open target is a separate provider, including a dotted path starting at a brace block or loaded module. Two such targets that provide X are ambiguous, even when both paths have the same member names. A diagnostic abbreviation such as `{...}.S` never identifies a provider. Repeating a name-headed path such as `open Lib.S, Lib.S` still deduplicates by its complete name.
+[inline-headed-open-paths-keep-distinct-providers] Each written block is its own declaration, so a dotted path starting at a brace block is a separate provider from a path starting at another block, even when both paths have the same member names: a written `X` that both provide is ambiguous, while the overlap alone is valid. A diagnostic abbreviation such as `{...}.S` never identifies a provider, and two spellings of one name-headed path such as `open Lib.S, (Lib).S` are one provider.
 
     open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S
     X
 
-  Fails with an evaluation error (ambiguousOpen).
+  Rejected by the parser: "is ambiguous: 2 different opened algorithms provide it at the same open level ..."
 
 [open-after-clause-definition-rejected] A body's one `open` declaration is its import preamble: it comes before every declaration and output row of that body, clause definitions included — `P(a) = a` declares a property exactly as `P = a` does. Move the `open` to the top of the body; each nested `{ ... }` body, a clause body included, has its own preamble.
 

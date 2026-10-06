@@ -325,16 +325,19 @@ internal sealed class DeferredModuleRegion
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var observations = Loader.TraversalObservations;
+                    // The program's loaded modules are ONE unit each (Q-32 I-U): the body's loads
+                    // receive the declarations earlier operations elaborated (ModuleUnitRegistry).
+                    var modules = Loader.ModuleUnits.BeginOperation();
                     // Name resolution, then automatic parameter forwarding, exactly as the eager
                     // pipeline runs them (Q-04: forwarding never re-selects a binding). Every
                     // demand-time pass starts from the import site the region recorded: a
                     // diagnostic raised against module content — which carries no source
                     // location — is positioned at the site the current document wrote.
                     var detected = ParameterDetector.ElaborateDeferredBranch(
-                        loaded, Detection!, diagnostics, observations, ImportSite);
+                        loaded, Detection!, diagnostics, observations, ImportSite, modules);
                     cancellationToken.ThrowIfCancellationRequested();
                     var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                        detected, Resolution!, diagnostics, observations, importSite: ImportSite);
+                        detected, Resolution!, diagnostics, observations, importSite: ImportSite, modules: modules);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!diagnostics.HasReportedErrors)
                     {
@@ -344,7 +347,7 @@ internal sealed class DeferredModuleRegion
                     }
                     if (!diagnostics.HasReportedErrors)
                     {
-                        var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations);
+                        var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations, modules);
                         lock (_runLock)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -353,6 +356,7 @@ internal sealed class DeferredModuleRegion
 
                             Volatile.Write(ref _materialized, exposed);
                             run.IsFinished = true;
+                            modules.Publish();
                         }
                         return EvalResult<Algorithm>.Ok(exposed);
                     }

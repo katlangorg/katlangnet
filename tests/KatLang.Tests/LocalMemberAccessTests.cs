@@ -399,8 +399,14 @@ public class LocalMemberAccessTests
 
     [Fact]
     public void PublicLocalOnlyMember_IsASecondProvider()
-        // Selection is by visibility: the local-only X is provided and makes the name ambiguous.
-        => RunFailure("Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA", KatLangErrorCode.AmbiguousOpen);
+    {
+        // Selection is by visibility: the local-only X is provided and makes the name ambiguous —
+        // a WRITTEN X is the front end's ambiguity (Q-29 A-U), a fallback the receiver decides is
+        // the evaluators'.
+        const string written = "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA";
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(SourceProvenance.ExpectFrontEndError(written)).Code);
+        RunFailure("Pub = {\n    public X(v) = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X(v) = p + 202\n    }\n    0\n}\nA(q) = {\n    open Pub, Outer.Lib\n    q.X\n}\nA(10)", KatLangErrorCode.AmbiguousOpen);
+    }
 
     // ── Exposure of containers that read captured members ────────────────────
 

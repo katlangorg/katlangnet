@@ -288,9 +288,22 @@ public class CompletionIdentityDifferentialTests
                 wrappedInList = true;
             }
 
-            Assert.False(
-                parsedVariant.HasErrors,
-                $"[{programId}] probing '{name}' produced front-end errors: {string.Join(" | ", parsedVariant.Diagnostics.Select(d => d.Message))}");
+            // A written reference to a name two different providers supply at the deciding open
+            // level is the front end's AmbiguousOpen at the reference (Q-29 A-U) — exactly where
+            // authoritative lookup selects no unique declaration and completion offers nothing.
+            if (parsedVariant.Diagnostics is [{ Code: DiagnosticCode.AmbiguousOpen } ambiguity])
+            {
+                Assert.True(hits.Count > 1, $"[{programId}] '{name}' is reported ambiguous, but authoritative lookup selects {hits.Count} candidate(s).");
+                Assert.Null(symbol);
+                Assert.Equal(new SourcePosition(probe.Line, probeColumn), ambiguity.Span?.Start);
+            }
+            else
+            {
+                Assert.False(
+                    parsedVariant.HasErrors,
+                    $"[{programId}] probing '{name}' produced front-end errors: {string.Join(" | ", parsedVariant.Diagnostics.Select(d => d.Message))}");
+            }
+
             var resolution = SemanticModelBuilder.Build(parsedVariant).FindResolutionAt(new SourcePosition(probe.Line, probeColumn));
             Assert.True(resolution is not null, $"[{programId}] no editor resolution at the probe for '{name}'.");
             Assert.Equal(name, resolution!.Occurrence.Name);

@@ -528,8 +528,10 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void GracedEdgeFallback_AmbiguousOpenStaysExported_RuntimeReportsAmbiguity()
     {
-        // Static analysis records only a visible-name edge; the ambiguity is
-        // the runtime lookup's verdict, exactly as for a plain call.
+        // The receiver is P's own parameter, so whether the edge takes its fallback is the
+        // runtime receiver's question (Q-75 MAY): static analysis records only a visible-name
+        // edge — two providers at the deciding level charge nothing — and the ambiguity is the
+        // runtime lookup's verdict, exactly as for a plain call on a host-built tree.
         var source =
             """
             A = {
@@ -541,8 +543,8 @@ public class DotCallFallbackExposureTests
             Outer = {
                 open A, B
                 v = 5
-                P = v.Pick
-                P
+                P(q) = q.Pick
+                P(v)
             }
             Outer
             """;
@@ -550,15 +552,29 @@ public class DotCallFallbackExposureTests
         Assert.Equal(PropertyExposure.Exported, FindProperty(root, "Outer", "P").Exposure);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
-        Assert.Contains(failure.Errors, error => error.Message.Contains("ambiguous", StringComparison.OrdinalIgnoreCase));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.AmbiguousOpen, error.Code);
+        Assert.Contains("ambiguous", error.Message, StringComparison.OrdinalIgnoreCase);
 
-        // The graced spelling on the sibling property `v` is rejected before
-        // evaluation (F10); its recovery tree classifies identically.
+        // The graced spelling on the parameter `q` is rejected before evaluation (F10);
+        // its recovery tree classifies identically.
         AssertGracedControlRejected(
-            source.Replace("P = v.Pick", "P = v~.Pick", StringComparison.Ordinal),
-            "v",
+            source.Replace("P(q) = q.Pick", "P(q) = q~.Pick", StringComparison.Ordinal),
+            "q",
             PropertyExposure.Exported,
             "Outer", "P");
+
+        // On a receiver with no members the edge CERTAINLY takes its fallback (Q-75 MUST):
+        // the written `Pick` names no single declaration, the front end's AmbiguousOpen at
+        // the member token (Q-29 A-U) — and the classification is unchanged.
+        var certain = source.Replace("P(q) = q.Pick", "P = v.Pick", StringComparison.Ordinal)
+            .Replace("P(v)", "P", StringComparison.Ordinal);
+        var parse = Parser.Parse(certain);
+        var diagnostic = Assert.Single(parse.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(10, 11, 10, 15), diagnostic.Span);
+        Assert.Equal(PropertyExposure.Exported, FindProperty(parse.Root, "Outer", "P").Exposure);
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(certain));
     }
 
     [Fact]

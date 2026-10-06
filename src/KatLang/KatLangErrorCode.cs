@@ -88,7 +88,12 @@ public enum KatLangErrorCode
     /// </summary>
     IllegalInEval = 8,
 
-    /// <summary>Multiple opens provide the same name publicly (<see cref="EvalError.AmbiguousOpen"/>).</summary>
+    /// <summary>
+    /// A name resolves through <c>open</c> to two or more different providers at the same open
+    /// level: a written occurrence is rejected by the front end
+    /// (<see cref="DiagnosticCode.AmbiguousOpen"/>), and a lookup only evaluation decides fails at
+    /// run time (<see cref="EvalError.AmbiguousOpen"/>).
+    /// </summary>
     AmbiguousOpen = 9,
 
     // ── Arity, types, and operations ────────────────────────────────────────

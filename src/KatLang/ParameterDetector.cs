@@ -91,7 +91,8 @@ internal static class ParameterDetector
         Algorithm root,
         HostOperations? hostOperations = null,
         FrontEndTraversalObservations? observations = null,
-        DiagnosticBag? diagnostics = null)
+        DiagnosticBag? diagnostics = null,
+        ModuleUnits? modules = null)
     {
         diagnostics ??= new DiagnosticBag();
         var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
@@ -104,7 +105,7 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root });
+            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules ?? new() });
         return (processed, diagnostics);
     }
 
@@ -132,6 +133,8 @@ internal static class ParameterDetector
             Algorithm.User { AssignmentDeconstructionTarget: not null } deconstructionHelper
                 => RewriteAssignmentDeconstructionHelperOutput(deconstructionHelper),
 
+            Algorithm.User { IsModuleElaborated: true } module => ProcessModuleRoot(module, parentScope, observations, run),
+
             Algorithm.User user => ProcessUserAlgorithm(user, parentScope, capturedParameters, diagnostics, observations, run),
 
             // A callable alias is produced AFTER name resolution, by implicit-argument resolution
@@ -139,6 +142,32 @@ internal static class ParameterDetector
             Algorithm.Alias => throw new InvalidOperationException(
                 "Parameter detection received a callable alias: aliases are elaborated after name resolution, never before it."),
         };
+
+    /// <summary>
+    /// A loaded module (Q-31 H-P, decided 2026-10-06) is a hygienic source unit rooted at the
+    /// prelude: its names resolve in its own declarations, its own opens, and the prelude — never
+    /// in the scope that reached it, never against that scope's parameter bindings — exactly like a
+    /// block written as an open target, whatever position holds it (a property value, an
+    /// <c>open</c>, a dot path, an argument). So its elaboration is the same at every import site
+    /// and the operation elaborates it ONCE (Q-32 I-U: one module declaration per canonical URL —
+    /// load elaboration splices one import view per URL, and this memo maps it to one elaborated
+    /// declaration). Its diagnostics belong to the module, never to the walk that first reached it,
+    /// so they go to the operation's sink once, positioned at that first import site.
+    /// </summary>
+    private static Algorithm ProcessModuleRoot(
+        Algorithm.User module,
+        ElaboratedPropertyScope parentScope,
+        FrontEndTraversalObservations? observations,
+        DetectionRun run)
+    {
+        if (!run.Modules.TryGet(ModuleUnitPass.Detection, module, out var elaborated))
+        {
+            elaborated = ProcessUserAlgorithm(module, parentScope.Root, ParameterOwnership.Empty, run.Diagnostics, observations, run);
+            run.Modules.Add(ModuleUnitPass.Detection, module, elaborated);
+        }
+
+        return elaborated;
+    }
 
     /// <summary>
     /// The ordinary-body half of <see cref="ProcessAlgorithm"/>: every read and every rewrite
@@ -458,7 +487,8 @@ internal static class ParameterDetector
         DeferredBranchContext context,
         DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
-        SourceSpan? importSite = null)
+        SourceSpan? importSite = null,
+        ModuleUnits? modules = null)
         => ProcessConditionalBranchBody(
             loadedBody,
             context.ParentScope,
@@ -467,7 +497,7 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun { ImportSite = importSite });
+            new DetectionRun { ImportSite = importSite, Diagnostics = diagnostics, Modules = modules ?? new() });
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -639,6 +669,20 @@ internal static class ParameterDetector
         private Dictionary<ParameterOwnership, CanonicalNameSet>? _canonicalCapturedNames;
         private SuggestionContexts? _suggestionContexts;
         public readonly BranchContextInterner BranchContexts = new();
+
+        /// <summary>
+        /// The operation's diagnostics sink — the run entry's. A loaded module reports into it
+        /// whichever walk reaches the module first (<see cref="ProcessModuleRoot"/>): the module's
+        /// diagnostics are its own, never the reaching walk's (a transparent open-target walk
+        /// reports nothing of its own).
+        /// </summary>
+        public DiagnosticBag? Diagnostics;
+
+        /// <summary>
+        /// The operation's loaded module units (Q-32 I-U): every spliced import view (one per
+        /// canonical URL) to its one detected declaration (<see cref="ProcessModuleRoot"/>).
+        /// </summary>
+        public ModuleUnits Modules = new();
 
         /// <summary>
         /// This run's near-miss suggestion contexts (FE-1): every promotion of the run captures its
@@ -856,6 +900,13 @@ internal static class ParameterDetector
         public readonly IReadOnlyDictionary<Expr.DotCall, ImplicitParameterProvenance>? DotMembers = dotMembers;
 
         public Dictionary<Algorithm, Algorithm>? Algorithms;
+
+        /// <summary>
+        /// Set while a dot edge's stored fallback name is rewritten and the edge does not certainly
+        /// select it (Q-29 A-U × Q-75): that occurrence is no written use of an opened name, so
+        /// <see cref="ReportAmbiguousOpenUse"/> stays silent.
+        /// </summary>
+        public bool AmbiguousOpenUseSuppressed;
 
         public readonly DetectionRun Run = run;
 
@@ -2243,7 +2294,7 @@ internal static class ParameterDetector
             Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters)
                 => RewriteResolveAsParam(name, expr.Span, memo),
 
-            Expr.Resolve resolve => StampOpenedMathMember(resolve, scope, parameters),
+            Expr.Resolve resolve => StampOpenedMathMember(ReportAmbiguousOpenUse(resolve, scope, memo), scope, parameters),
 
             Expr.Binary binary => binary with
             {
@@ -2294,6 +2345,48 @@ internal static class ParameterDetector
             Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
                 or Expr.EmptySequence or Expr.NativeCall => expr,
         };
+    }
+
+    /// <summary>
+    /// Q-29 A-U (decided 2026-10-06): a WRITTEN name — this walk rewrites exactly the rows a body
+    /// writes, every body and branch alike — whose lexical resolution reaches an open level with
+    /// two or more DIFFERENT providers of it denotes no declaration, so it is the front-end error
+    /// <see cref="DiagnosticCode.AmbiguousOpen"/> at the occurrence, whether or not evaluation
+    /// would ever demand it (demand governs computations, never what a written name means). The
+    /// overlap itself is valid: a name nobody writes is never checked. Parameters were excluded by
+    /// the owner walk before this arm, an owned property or a nearer open level that provides the
+    /// name once decides first (<see cref="ElaboratedScopeLookup.FindAmbiguousOpenProviders"/>), and
+    /// providers are counted by identity (Q-19 D-I). A dot edge's fallback name is a written use only
+    /// when the edge certainly selects it (<see cref="RewriteDotCall"/>). Once per occurrence per
+    /// region: written leaves are memoized by <see cref="RewriteParams(Expr, ElaboratedPropertyScope, ParameterOwnership, RewriteWalkMemo)"/>.
+    /// A provisional walk (a deferred region's eager elaboration) reports nothing.
+    /// </summary>
+    private static Expr.Resolve ReportAmbiguousOpenUse(Expr.Resolve resolve, ElaboratedPropertyScope scope, RewriteWalkMemo memo)
+    {
+        if (memo.Diagnostics is null
+            || memo.AmbiguousOpenUseSuppressed
+            || ElaboratedScopeLookup.FindAmbiguousOpenProviders(scope, resolve.Name) is not { } providers)
+            return resolve;
+
+        memo.Diagnostics.Add(new Diagnostic(
+            FormatAmbiguousOpenUse(resolve.Name, providers),
+            DiagnosticSeverity.Error,
+            resolve.Span ?? memo.Run.ImportSite)
+        {
+            Code = DiagnosticCode.AmbiguousOpen,
+        });
+        return resolve;
+    }
+
+    /// <summary>The wording of <see cref="DiagnosticCode.AmbiguousOpen"/>: the name, the providers as written, and the two repairs.</summary>
+    internal static string FormatAmbiguousOpenUse(string name, IReadOnlyList<ResolvedOpenProvider> providers)
+    {
+        var shown = ExprNameRenderer.BoundName(name);
+        var written = ExprNameRenderer.BoundedJoin(
+            providers.Select(static provider => provider.Written is { } target ? Evaluator.OpenExprName(target) : "an opened algorithm"),
+            ", ");
+        return $"'{shown}' is ambiguous: {providers.Count} different opened algorithms provide it at the same open level ({written}), " +
+            "so it names no single declaration. Qualify it with the algorithm you mean, or open only one of them.";
     }
 
     /// <summary>
@@ -2403,15 +2496,33 @@ internal static class ParameterDetector
             ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, missSelection), scope, parameters, memo);
         }
 
+        var rewrittenTarget = RewriteParams(dotCall.Target, scope, parameters, memo);
+
+        // Q-29 A-U × Q-75: the fallback NAME is a written use of what it resolves to only when the
+        // edge certainly selects it (LexicalFallbackSelection.Always — `5.X` is `X(5)`); a
+        // structural hit is no lookup of the name at all, and a fallback the runtime receiver
+        // decides stays a run-time question (its ambiguity is the evaluator's AmbiguousOpen).
+        var suppressed = memo.AmbiguousOpenUseSuppressed;
+        memo.AmbiguousOpenUseSuppressed = dotCall.LexicalFallbackSelectionOf(missSelection) != LexicalFallbackSelection.Always;
+        Expr rewrittenFallback;
+        try
+        {
+            rewrittenFallback = RewriteParams(fallback, scope, parameters, memo);
+        }
+        finally
+        {
+            memo.AmbiguousOpenUseSuppressed = suppressed;
+        }
+
         // The promotion note this collection recorded for the edge's fallback
         // occurrence travels on the rewritten edge, so the post-exposure
         // finalizer can re-examine the edge against the completed tree. An edge
         // this collection recorded nothing for keeps the note it already carries.
         return dotCall with
         {
-            Target = RewriteParams(dotCall.Target, scope, parameters, memo),
+            Target = rewrittenTarget,
             Args = rewrittenArgs,
-            LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
+            LexicalFallback = rewrittenFallback,
             ElaboratedMissSelection = missSelection,
             InferredFallbackProvenance = memo.DotMembers is { } dotMembers && dotMembers.TryGetValue(dotCall, out var provenance)
                 ? provenance

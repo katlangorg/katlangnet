@@ -200,6 +200,17 @@ internal sealed class ParameterPropertyCollisionValidator(
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
+        // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: it meets none of its
+        // holder's parameters, so it is validated in the empty context — once, wherever it is held.
+        if (algorithm.IsModuleRoot && !_parameters.IsEmpty)
+        {
+            var holder = _parameters;
+            _parameters = ParameterBindings.Empty;
+            try { VisitAlgorithm(algorithm); }
+            finally { _parameters = holder; }
+            return;
+        }
+
         if (!FirstVisit(algorithm))
             return;
         // Provisional deferred signatures are not declarations of the loaded program.

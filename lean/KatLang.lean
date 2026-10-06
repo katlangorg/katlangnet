@@ -1110,11 +1110,18 @@ end Pattern
 /-- Declaration identity is independent of executable body equality. Ordinary
     tree declarations receive a fresh `syntax` identity once at run preparation.
     `shared` represents a host AST declaration reused at several syntax sites
-    (C# binding plus declaring-scope identity); encoders preserve that sharing explicitly. -/
+    (C# binding plus declaring-scope identity); encoders preserve that sharing explicitly.
+    `module` marks the ONE declaration of a loaded module (Q-31 H-P + Q-32 I-U, decided
+    2026-10-06): a hygienic source unit rooted at the prelude, so wherever it is reached it is
+    wired under the chain's root level (`Algorithm.withParent`), never under its holder, and
+    every holder reaches the one declaration in the one declaring scope. Lean has no loader;
+    the encoder emits the mark for the C# tree's loaded-module roots (C#:
+    `Algorithm.User.IsModuleElaborated`). -/
 inductive PropertyIdentity where
   | syntax : Nat -> PropertyIdentity
   | shared : Nat -> PropertyIdentity
   | runtime : Nat -> PropertyIdentity
+  | module : Nat -> PropertyIdentity
   deriving Repr, BEq
 
 mutual
@@ -2087,6 +2094,13 @@ def lookupPropPublic (ps : List PropDef) (k : Ident) : Option Algorithm :=
 def hasPropAny (ps : List PropDef) (k : Ident) : Bool :=
   (lookupPropDefAny? ps k).isSome
 
+/-- The root level of a scope chain — the prelude level every evaluation chain is rooted at.
+    A loaded module is wired there (`Algorithm.withParent`). C#: `Evaluator.ChainRoot`. -/
+def ScopeCtx.chainRoot : ScopeCtx -> ScopeCtx
+  | .mk none params opens props output branches activation id =>
+      .mk none params opens props output branches activation id
+  | .mk (some parent) _ _ _ _ _ _ _ => parent.chainRoot
+
 namespace Algorithm
   def normalCallableParameters (ps : List Ident) : List CallableParameter :=
     ps.map (fun p => { name := p })
@@ -2154,10 +2168,22 @@ namespace Algorithm
     | .alias p op pr target _ => .alias p op pr target id
     | .builtin b => .builtin b
 
+  /-- Whether this is a loaded module's own declaration (`PropertyIdentity.module`). -/
+  def isModuleRoot (a : Algorithm) : Bool :=
+    match a.declarationId with
+    | some (.module _) => true
+    | _ => false
+
+  /-- Wire under the scope `p`. A loaded module (Q-31 H-P) is wired under the chain's root
+      level instead, wherever it is reached: its names never see its holder's, and every reach
+      is the one declaration in the one declaring scope (Q-32 I-U). C#: `Evaluator.WithParent`. -/
   def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
+    | .mk _ parameterPatterns op pr out (some (.module n)) =>
+        .mk (p.map ScopeCtx.chainRoot) parameterPatterns op pr out (some (.module n))
     | .mk _ parameterPatterns op pr out id => .mk p parameterPatterns op pr out id
     | .builtin b => .builtin b
     | .conditional _ op bs id => .conditional p op bs id
+    | .alias _ op pr target (some (.module n)) => .alias (p.map ScopeCtx.chainRoot) op pr target (some (.module n))
     | .alias _ op pr target id => .alias p op pr target id
 
   def parameterForName? (x : Ident) : List CallableParameter -> Option CallableParameter
@@ -2579,10 +2605,13 @@ def staticAliasStep? (chain : List Algorithm) (alias : Algorithm) (target : Expr
         | .resolve name => staticLexicalLookup? scope name
         | .algorithmExpr block => some (block, scope)
         | _ => none
-      steps.foldl
+      -- A loaded module is rooted at the prelude (Q-31 H-P): what it declares resolves in a
+      -- chain that starts at the module, and the module itself has no enclosing chain.
+      (steps.foldl
         (fun acc step => acc.bind fun (value, valueChain) =>
-          (Algorithm.lookupPropDefAny? value step).map fun prop => (prop.alg, valueChain ++ [value]))
-        start
+          (Algorithm.lookupPropDefAny? value step).map fun prop =>
+            (prop.alg, (if value.isModuleRoot then [] else valueChain) ++ [value]))
+        start).map fun (value, valueChain) => (value, if value.isModuleRoot then [] else valueChain)
 
 /-- The STATIC alias chase from the alias `start` declared inside `chain`: whether it leads back
     to an alias already on it (a cycle, only possible in a host-built tree). The chase runs at most
@@ -2671,6 +2700,9 @@ mutual
       reads. C#: `AlgorithmValidation.PreEvaluationValidationWalker`. -/
   partial def validateAlgorithmTree (a : Algorithm) (name : Ident)
       (chain : List Algorithm) (aliases : Nat) : EvalM Unit := do
+    -- A loaded module is rooted at the prelude (Q-31 H-P): the static chain its aliases
+    -- resolve in restarts at the module, whatever holds it.
+    let chain := if a.isModuleRoot then [] else chain
     if a.hasSingletonSequencePattern then
       .error (Error.illegalInEval singletonSequencePatternMessage)
     if a.hasMultipleCollectingCaptures then
@@ -4958,17 +4990,26 @@ def Expr.openTargetHead : Expr → Expr
   | .dotMember receiver _ _ none => receiver.openTargetHead
   | e => e
 
-/-- Resolve all opens of an algorithm upfront.
-    Deduplicates named opens by `openExprName` (first occurrence wins) to
-    avoid repeated resolution and spurious ambiguity. Inline block heads, including
-    dotted paths from them, are never deduplicated (each gets a unique positional key).
-    Validates all open expressions first for fail-fast diagnostics. -/
+/-- Resolve all opens of an algorithm upfront: the level's PROVIDERS, each counted once.
+    Q-19 D-I (decided 2026-10-06): written targets that resolve to the same semantic
+    provider count once, whatever their spelling or position — the provider identity is
+    the language's one callable identity (`sameRepeatedCallableIdentity`, NEED-04's
+    relation: declaration, declaring scope, compatible activations). So `open M, M`,
+    `open Sub, Lib.Sub` for one declaration `Sub` of `Lib`, and two loads of one module
+    are one provider, while two written blocks or two declarations stay two, however
+    equal their members or values. The first occurrence names the provider; which
+    providers the level has never depends on order. A repeated written-target key
+    (`openExprName`; inline block heads, dotted paths from them included, are keyed by
+    position) is skipped before resolution as a pure optimization — it resolves the same
+    target. Validates all open expressions first for fail-fast diagnostics.
+    C#: `Evaluator.ResolveAllOpens`. -/
 def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) := do
   let rawOpens := Algorithm.opens a
-  -- Deduplicate by key (first occurrence wins); inline blocks use positional keys
+  -- Skip a repeated written-target key (it resolves the same target); inline blocks use
+  -- positional keys, so this never merges two written blocks.
   let tagged := rawOpens.mapIdx (fun idx e =>
     let key := match e.openTargetHead with
-      | .algorithmExpr _ => s!"(inline#{idx})"   -- * unique per original position, never deduped
+      | .algorithmExpr _ => s!"(inline#{idx})"   -- * unique per original position
       | .capture _        => s!"(inline#{idx})"
       | _                 => openExprName e
     (key, e))
@@ -4985,10 +5026,18 @@ def resolveAllOpens (a : Algorithm) (ctx : EvalCtx) : EvalM (List ResolvedOpen) 
       throw (Error.badOpenForm s!"{Expr.kind e}: {k}")
     else
       pure ()
-  -- Then resolve (each open wrapped with context using its dedup key)
-  acc.mapM (fun (key, e) => do
+  -- Then resolve (each open wrapped with context using its key), counting each semantic
+  -- provider once: a target resolving to the callable identity of an earlier one is that
+  -- provider. A provider whose declaration is not identified (a hand-built tree that never
+  -- passed the run's identification) is its own provider — C# compares declarations by
+  -- reference, so an unidentified declaration is never another's.
+  let resolved <- acc.mapM (fun (key, e) => do
     let lib <- withCtx (CtxMsg.openMsg key) (resolveOpen e ctx)
-    pure { key := key, expr := e, lib := lib })
+    pure { key := key, expr := e, lib := lib : ResolvedOpen })
+  pure (resolved.foldl (fun (providers : List ResolvedOpen) r =>
+    if r.lib.declarationId.isSome
+        && providers.any (fun p => sameRepeatedCallableIdentity p.lib r.lib) then providers
+    else providers ++ [r]) [])
 
 /-- Lookup in opened namespaces with ambiguity error — the ONE open-lookup
     implementation in the ownership-first chain. It returns the full
@@ -7476,8 +7525,14 @@ end
     (C# `DiagnosticCode.UnresolvedOpenTarget`), and a dotted path whose head is
     not itself an open form (`open 5.N`, which `resolveAlgForOpen` rejects through
     its receiver recursion) as C# `DiagnosticCode.BadOpenForm`, so in an accepted
-    program this probe only ever sees resolvable targets, and its `.error` arm
-    reports genuine lookup failures such as an ambiguous open.
+    program this probe only ever sees resolvable targets. Its `.error` arm reports
+    genuine lookup failures; an ambiguous open is no longer one of them for a
+    WRITTEN name: Q-29 A-U (decided 2026-10-06) makes a written name whose lookup
+    reaches two different providers at one open level the surface layer's static
+    rejection (C# `DiagnosticCode.AmbiguousOpen`), whether or not evaluation
+    demands it, while `ambiguousOpen` stays the evaluator's verdict for a lookup
+    only evaluation decides (a dot fallback the receiver decides) and for a
+    host-built tree.
 
     NOTE: This function is used only for ordinary algorithms without an explicit
     parameter-pattern list.  Explicit ordinary algorithms and conditional branch
@@ -8512,6 +8567,7 @@ mutual
   partial def identifyPropertyAlgorithm (algorithm : Algorithm) : StateM Nat Algorithm := do
     let identity <- match algorithm.declarationId with
       | some (.shared n) => pure (.shared n)
+      | some (.module n) => pure (.module n)
       | _ => do
           let next <- get
           set (next + 1)

@@ -411,4 +411,21 @@ public enum DiagnosticCode
     /// named parameters at all.
     /// </summary>
     UnforwardableCallable = 51,
+
+    /// <summary>
+    /// A WRITTEN name resolves through <c>open</c> to two or more DIFFERENT providers at the same
+    /// open level, so it names no single declaration (Q-29 A-U, decided 2026-10-06). Opened
+    /// providers may expose the same name — the overlap itself is valid — but a written occurrence
+    /// that reaches such a level is invalid source wherever it is written and whether or not
+    /// evaluation would ever demand it: in an unused property or argument, an unselected branch, an
+    /// uninvoked callback, a closed or inferring body, and in callee position alike, as is a dot
+    /// edge whose lexical fallback is certainly selected (<c>5.X</c>). Providers are counted by
+    /// semantic identity (Q-19 D-I), so one provider reached through two spellings is no
+    /// ambiguity, and lexical precedence decides first (an owned declaration or a nearer open level
+    /// that provides the name once wins). Reported at the written occurrence (a dot fallback's
+    /// member name). The evaluator's twin, for a lookup only evaluation decides (a dot fallback
+    /// the receiver decides, a host-built tree), is <see cref="EvalError.AmbiguousOpen"/>; both are
+    /// <see cref="KatLangErrorCode.AmbiguousOpen"/>.
+    /// </summary>
+    AmbiguousOpen = 52,
 }

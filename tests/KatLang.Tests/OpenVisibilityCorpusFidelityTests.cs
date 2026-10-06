@@ -81,11 +81,15 @@ public class OpenVisibilityCorpusFidelityTests
                     + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",
                 ResolveA),
 
-            ["openTwoProvidersAmbiguous"] = Golden(
-                "privateProp \"L1\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
-                    + "privateProp \"L2\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []), "
-                    + "privateProp \"A\" (alg [] [.resolve \"L1\", .resolve \"L2\"] [] [.resolve \"X\"])",
-                ResolveA),
+            // `openTwoProvidersAmbiguous` has no golden: a written name two different providers
+            // supply is invalid source (Q-29 A-U, decided 2026-10-06), so the case is a
+            // parse-level C#-only probe. Its run-time twin reaches the evaluators' ambiguity
+            // through a dot fallback the receiver decides.
+            ["openTwoProvidersAmbiguousAtRuntime"] = Golden(
+                "privateProp \"L1\" (alg [] [] [publicProp \"X\" (alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.num 101))])] []), "
+                    + "privateProp \"L2\" (alg [] [] [publicProp \"X\" (alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.num 202))])] []), "
+                    + "privateProp \"K\" (alg [\"p\"] [.resolve \"L1\", .resolve \"L2\"] [] [(.dotCall (.param \"p\") \"X\" none)])",
+                "(.call (.resolve \"K\") [.num 10])"),
 
             // Duplicate NAMED targets deduplicate first-occurrence-wins, so they
             // are one provider and never a spurious ambiguity (Lean: resolveAllOpens).
@@ -98,12 +102,20 @@ public class OpenVisibilityCorpusFidelityTests
                     + "(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
                 ResolveA),
 
-            // Inline blocks get positional keys and are NEVER deduplicated, so two
-            // structurally identical blocks really are two providers.
-            ["openDuplicateInlineBlocksAmbiguous"] = Golden(
-                "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] [])), "
-                    + "(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 202])] []))] [] [.resolve \"X\"])",
-                ResolveA),
+            // Q-19 D-I: two spellings of ONE declaration are one provider.
+            ["openTwoSpellingsOneProvider"] = Golden(
+                "privateProp \"Lib\" (alg [] [] [publicProp \"Sub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
+                    + "publicProp \"R\" (alg [] [.resolve \"Sub\", (.dotCall (.resolve \"Lib\") \"Sub\" none)] [] [.resolve \"X\"])] [])",
+                "(.dotCall (.resolve \"Lib\") \"R\" none)"),
+
+            // Two written blocks are two declarations — two providers however identical. A
+            // written X they both supply is invalid source (Q-29 A-U), so
+            // `openDuplicateInlineBlocksAmbiguous` is parse-level and C#-only; its run-time twin
+            // reaches the ambiguity through a dot fallback the receiver decides.
+            ["openDuplicateInlineBlocksAmbiguousAtRuntime"] = Golden(
+                "privateProp \"K\" (alg [\"p\"] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.num 101))])] [])), "
+                    + "(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.num 101))])] []))] [] [(.dotCall (.param \"p\") \"X\" none)])",
+                "(.call (.resolve \"K\") [.num 10])"),
 
             ["openInlineBlock"] = Golden(
                 "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
@@ -185,13 +197,15 @@ public class OpenVisibilityCorpusFidelityTests
                     + "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
                 ResolveA),
 
-            ["openLocalOnlyMemberIsASecondProvider"] = Golden(
-                "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
-                    + "privateProp \"A\" (alg [] [.resolve \"Pub\", (.dotCall (.resolve \"Outer\") \"Lib\" none)] [] [.resolve \"X\"]), "
+// `openLocalOnlyMemberIsASecondProvider` has no golden: its written X is invalid source
+            // (Q-29 A-U); the run-time twin pins the same selection through a dot fallback.
+            ["openLocalOnlyMemberIsASecondProviderAtRuntime"] = Golden(
+                "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.num 101))])] []), "
                     + "privateProp \"Outer\" (alg [\"p\"] [] [publicProp \"Lib\" (alg [] [] "
                     + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
-                    + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 202))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",
-                ResolveA),
+                    + "(alg [\"v\"] [] [] [(.binary .add (.param \"v\") (.param \"p\"))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0]), "
+                    + "privateProp \"A\" (alg [\"q\"] [.resolve \"Pub\", (.dotCall (.resolve \"Outer\") \"Lib\" none)] [] [(.dotCall (.param \"q\") \"X\" none)])",
+                "(.call (.resolve \"A\") [.num 5])"),
         };
 
     private static IReadOnlyList<ExplorerCase> Family()
@@ -261,10 +275,13 @@ public class OpenVisibilityCorpusFidelityTests
             "openPrivateMemberHidden",              // private member not exposed
             "openLocalOnlyCapturedParamsInsideOwner",   // local-only member provided inside its owner
             "openLocalOnlyCapturedParamsOutsideOwner",  // ... and refused at the access outside it
-            "openTwoProvidersAmbiguous",            // two-provider ambiguity
+            "openTwoProvidersAmbiguous",            // two-provider ambiguity of a written name (front end)
+            "openTwoProvidersAmbiguousAtRuntime",   // ... and of a lookup only evaluation decides
+            "openTwoSpellingsOneProvider",          // one declaration through two spellings is one provider
             "openDuplicateTargetDedup",             // duplicate named target is one provider
             "openDuplicateDottedTargetDedup",
-            "openDuplicateInlineBlocksAmbiguous",   // inline blocks are never deduplicated
+            "openDuplicateInlineBlocksAmbiguous",   // two written blocks are two providers
+            "openDuplicateInlineBlocksAmbiguousAtRuntime",
             "openInlineBlock",                      // inline-block interaction
             "openInlineBlockPrivateHidden",
             "openDottedPath",                       // dotted-path provider
@@ -279,6 +296,7 @@ public class OpenVisibilityCorpusFidelityTests
             "structuralDotSeesPrivateMember",       // structural access is not exposure
             "openPrivateMemberIsNotASecondProvider",     // hidden members never add ambiguity
             "openLocalOnlyMemberIsASecondProvider",      // selected members do, whatever their exposure
+            "openLocalOnlyMemberIsASecondProviderAtRuntime",
         ];
 
         foreach (var id in required)

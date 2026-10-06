@@ -413,13 +413,22 @@ public class NameResolutionAuditTests
     [InlineData("open B, A")]
     public void AmbiguousOpen_DoesNotLetTargetOrderDecideExposure(string openList)
     {
-        var source = $"Outer(p) = {{\n    A = {{\n        public X = p\n    }}\n    B = {{\n        public X = 7\n    }}\n    public Y = {{\n        {openList}\n        X\n    }}\n    0\n}}\nOuter.Y";
+        // The read is a fallback on a parameter receiver — a lookup only evaluation decides —
+        // so the two providers charge nothing whatever their order (Y stays exported), and
+        // the evaluators report the ambiguity.
+        var source = $"Outer(p) = {{\n    A = {{\n        public X(v) = p\n    }}\n    B = {{\n        public X(v) = 7\n    }}\n    public Y = {{\n        {openList}\n        K(q) = q.X\n        K(10)\n    }}\n    0\n}}\nOuter.Y";
         var parsed = SourceProvenance.ParseValid(source);
         var y = parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Properties.Single(p => p.Name == "Y");
         Assert.Equal(PropertyExposure.Exported, y.Exposure);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         Assert.Equal(KatLangErrorCode.AmbiguousOpen, Assert.Single(failure.Errors).Code);
+
+        // A WRITTEN X there is the front end's ambiguity at the occurrence (Q-29 A-U).
+        var written = $"Outer(p) = {{\n    A = {{\n        public X = p\n    }}\n    B = {{\n        public X = 7\n    }}\n    public Y = {{\n        {openList}\n        X\n    }}\n    0\n}}\nOuter.Y";
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(written));
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(10, 9, 10, 10), diagnostic.Span);
     }
 
     [Fact]
@@ -477,15 +486,30 @@ public class NameResolutionAuditTests
     }
 
     [Theory]
-    // an opened library's own `Sin`, a user `Math`, and an ambiguous open are not the Math member
+    // an opened library's own `Sin` and a user `Math` are not the Math member
     [InlineData("Lib = {\n    public Sin(x) = x * 100\n}\nA = {\n    open Lib\n    F = Sin(Z)\n    Z = q + 1\n    F\n}\nA")]
     [InlineData("Math = {\n    public Sin(x) = x * 100\n}\nA = {\n    open Math\n    F = Sin(Z)\n    Z = q + 1\n    F\n}\nA")]
-    [InlineData("Lib = {\n    public Sin(x) = x * 100\n}\nA = {\n    open Math, Lib\n    F = Sin(Z)\n    Z = q + 1\n    F\n}\nA")]
     // a callee that is a user callable keeps neutral arguments, dotted or not
     [InlineData("G(v) = v\nA = {\n    Z = q + 1\n    F = Z.G\n    F\n}\nA")]
     public void NonMathCallees_KeepNeutralArguments(string source)
     {
         var parsed = SourceProvenance.ParseValid(source);
+        var a = parsed.Root.Properties.Single(p => p.Name == "A").Value;
+        Assert.Empty(a.Properties.Single(p => p.Name == "F").Value.Params);
+    }
+
+    [Fact]
+    public void AmbiguousOpenedCallee_IsTheStaticAmbiguity_NeverTheMathMember()
+    {
+        // `open Math, Lib` gives `Sin` two providers at one level: the WRITTEN callee names
+        // no single declaration, which is the front end's ambiguity at the occurrence (Q-29
+        // A-U) — and the elaboration never treats it as the Math member, so its argument
+        // stays neutral.
+        const string source = "Lib = {\n    public Sin(x) = x * 100\n}\nA = {\n    open Math, Lib\n    F = Sin(Z)\n    Z = q + 1\n    F\n}\nA";
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(6, 9, 6, 12), diagnostic.Span);
         var a = parsed.Root.Properties.Single(p => p.Name == "A").Value;
         Assert.Empty(a.Properties.Single(p => p.Name == "F").Value.Params);
     }

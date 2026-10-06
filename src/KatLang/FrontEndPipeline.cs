@@ -256,6 +256,7 @@ internal static class FrontEndPipeline
             hostOperations: hostOperations,
             hasDeferredModuleRegions: loader.DeferredRegionCount > 0,
             provisional: modulesMissing,
+            modules: loader.ModuleUnits.BeginOperation(),
             cancellationToken: cancellationToken);
     }
 
@@ -291,6 +292,7 @@ internal static class FrontEndPipeline
         HostOperations? hostOperations = null,
         bool hasDeferredModuleRegions = false,
         bool provisional = false,
+        ModuleUnits? modules = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -335,8 +337,11 @@ internal static class FrontEndPipeline
         // parameter it adds is never what a written name refers to, so no binding is
         // re-selected once signatures are complete (the former ownership-completion pass
         // re-selected them, which is how adding a reference could rebind a written name).
+        // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
+        // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
+        modules ??= new ModuleUnits();
         var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
-            loadElaboratedRoot, hostOperations, diagnostics: passDiagnostics);
+            loadElaboratedRoot, hostOperations, diagnostics: passDiagnostics, modules: modules);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -347,7 +352,7 @@ internal static class FrontEndPipeline
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
         var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-            parameterizedRoot, observations: null, passDiagnostics, hostOperations);
+            parameterizedRoot, observations: null, passDiagnostics, hostOperations, modules);
 
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
         // The open PROVIDER rule and the output rule need completed signatures (an inferred
@@ -358,8 +363,13 @@ internal static class FrontEndPipeline
         InferredParameterOutputValidator.ValidateProgram(implicitResolvedRoot, passDiagnostics);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations);
+        var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations, modules);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // The program's later operations (deferred materializations) receive these module units —
+        // the very declarations this tree holds — when this elaboration is the evaluable one.
+        if (!provisional && !diagnostics.HasReportedErrors)
+            modules.Publish();
 
         // B2c: a tree with deferred module regions is evaluated by the async evaluation
         // family only (materializing a selected branch awaits the module downloader). The

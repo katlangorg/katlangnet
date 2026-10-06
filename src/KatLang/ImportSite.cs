@@ -3,7 +3,8 @@ namespace KatLang;
 /// <summary>
 /// The front end's half of the one-coordinate-space rule (Task 3a). A module spliced by
 /// load elaboration enters a document's tree as its locationless IMPORT VIEW
-/// (<see cref="Algorithm.User.IsModuleElaborated"/>; see <c>ModuleLoader.ToImportView</c>):
+/// (the module-root mark on either <see cref="Algorithm.User"/> or
+/// <see cref="Algorithm.Alias"/>; see <c>ModuleLoader.ToImportView</c>):
 /// nothing inside it carries a source location, so a diagnostic a front-end pass raises
 /// against imported content — a declaration collision, an undeclared identifier in a closed
 /// list or branch, a refused open provider, an ineffective Grace marker, a parameter-owned
@@ -18,7 +19,8 @@ namespace KatLang;
 /// walk state and applies it exactly where a diagnostic's own span is absent — never in
 /// place of a span the document wrote — so local diagnostics are positioned exactly as
 /// before, and imported ones at the local demand instead of at a foreign coordinate or a
-/// fabricated sentinel.
+/// fabricated sentinel. Alias conversion preserves that mark and must preserve this
+/// anchor too: validators use it to distinguish imported source from a spanless host tree.
 /// </summary>
 internal static class ImportSite
 {
@@ -27,7 +29,7 @@ internal static class ImportSite
     /// direct value is a spliced module root, otherwise null (the enclosing site stays).
     /// </summary>
     internal static SourceSpan? OfProperty(Property property)
-        => property.Value is Algorithm.User { IsModuleElaborated: true }
+        => property.Value.IsModuleRoot
             ? property.FirstDeclarationSpan
             : null;
 
@@ -36,5 +38,5 @@ internal static class ImportSite
     /// spliced module root, otherwise null (the enclosing site stays).
     /// </summary>
     internal static SourceSpan? OfBlock(Expr.AlgorithmExpr block)
-        => block.Algorithm is Algorithm.User { IsModuleElaborated: true } ? block.Span : null;
+        => block.Algorithm.IsModuleRoot ? block.Span : null;
 }

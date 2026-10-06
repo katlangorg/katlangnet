@@ -52,9 +52,15 @@ public class OpenTargetHeadValidityTests
     public async Task InlineHeadedPaths_AreDistinctProviders_InEitherOrder(string first, string second)
     {
         // The old dedup splitter sent both targets to the bounded renderer, producing the
-        // same key `{...}.S`. The second provider vanished before ambiguity or lookup.
+        // same key `{...}.S`. The second provider vanished before ambiguity or lookup. Two
+        // written blocks are two providers (Q-19 D-I), so a WRITTEN `X` both provide is the
+        // static ambiguity (Q-29 A-U) in either order, and a lookup only evaluation decides
+        // (a fallback on a parameter receiver) is the evaluators' run-time ambiguity.
         foreach (var targets in new[] { $"{first}, {second}", $"{second}, {first}" })
-            await AssertFivePaths($"open {targets}\nX", KatLangErrorCode.AmbiguousOpen);
+        {
+            await AssertStaticAmbiguity($"open {targets}\nX", new SourceSpan(2, 1, 2, 2));
+            await AssertFivePaths($"K(q) = {{\n    open {targets}\n    q.X\n}}\nK(10)", KatLangErrorCode.AmbiguousOpen);
+        }
     }
 
     [Theory]
@@ -72,16 +78,24 @@ public class OpenTargetHeadValidityTests
     public async Task NamedPaths_StillDeduplicateByCompleteName()
         => await AssertFivePaths("open Lib.S.T, (Lib.S).T\nLib = { public S = { public T = { public X = 7 } } }\nX", null, 7);
 
+    /// <summary>
+    /// Q-19 D-I (decided 2026-10-06): two module-headed paths into ONE module reach one
+    /// declaration — one provider, never an ambiguity; paths into two modules (two canonical
+    /// URLs) stay two providers.
+    /// </summary>
     [Theory]
-    [InlineData("lib.kat")]
-    [InlineData("other.kat")]
-    public async Task ModuleHeadedPaths_KeepEachWrittenProvider(string secondFile)
+    [InlineData("lib.kat", false)]
+    [InlineData("other.kat", true)]
+    public async Task ModuleHeadedPaths_CountProvidersByModule(string secondFile, bool twoProviders)
     {
         var options = ModuleOptions(
             (ModuleUrl, "public S = { public T = { public X = 5 } }"),
             ("https://mods.test/other.kat", "public S = { public T = { public X = 7 } }"));
         var source = $"open load('{ModuleUrl}').S.T, load('https://mods.test/{secondFile}').S.T\nX";
-        await AssertFivePaths(source, KatLangErrorCode.AmbiguousOpen, options: options);
+        if (twoProviders)
+            await AssertStaticAmbiguity(source, new SourceSpan(2, 1, 2, 2), options);
+        else
+            await AssertFivePaths(source, null, 5, options);
     }
 
     [Theory]
@@ -89,14 +103,25 @@ public class OpenTargetHeadValidityTests
     [InlineData(true)]
     public async Task DeepModuleProvider_SettlesAtItsOpeningLevel_AndParticipatesInAmbiguity(bool competing)
     {
-        var options = ModuleOptions((ModuleUrl, "public S = { public T = { public X = 5 } }"));
+        var options = ModuleOptions((ModuleUrl, "public S = { public T = { public X(v) = 5 } }"));
         var targets = (competing ? "Lib, " : "") + $"load('{ModuleUrl}').S.T";
-        var source = $"Outer(p) = {{\n open Lib\n Lib = {{ public X = p }}\n public Y = {{\n open {targets}\n X\n }}\n 1\n}}\nOuter.Y";
+        // The module provider settles at Y's own open level. Its member is read through a
+        // fallback on a parameter receiver — a lookup evaluation decides — so the competing
+        // level is the evaluators' run-time ambiguity, which charges nothing (Y stays exported).
+        var source = $"Outer(p) = {{\n open Lib\n Lib = {{ public X(v) = p }}\n public Y = {{\n open {targets}\n K(q) = q.X\n K(10)\n }}\n 1\n}}\nOuter.Y";
         var parsed = await Parser.ParseAsync(source, options);
         Assert.Empty(parsed.Diagnostics);
         var y = parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Properties.Single(p => p.Name == "Y");
         Assert.Equal(PropertyExposure.Exported, y.Exposure);
         await AssertFivePaths(source, competing ? KatLangErrorCode.AmbiguousOpen : null, 5, options);
+
+        // A WRITTEN X that the competing level provides twice is the static ambiguity (Q-29 A-U).
+        if (competing)
+        {
+            var writtenOptions = ModuleOptions((ModuleUrl, "public S = { public T = { public X = 5 } }"));
+            var written = $"Outer(p) = {{\n open Lib\n Lib = {{ public X = p }}\n public Y = {{\n open {targets}\n X\n }}\n 1\n}}\nOuter.Y";
+            await AssertStaticAmbiguity(written, new SourceSpan(6, 2, 6, 3), writtenOptions);
+        }
     }
 
     private static async Task AssertFivePaths(
@@ -145,6 +170,28 @@ public class OpenTargetHeadValidityTests
         Raw(Evaluator.RunCountedObserved(expression, enableOptimizations: true).Result);
         Raw((await Evaluator.RunCountedObservedAsync(expression,
             zeroArgPropertyResultCache: new KatLang.Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache())).Result);
+    }
+
+    /// <summary>
+    /// Q-29 A-U (decided 2026-10-06): a WRITTEN name two different providers supply is invalid
+    /// source — the engines' <see cref="RunResult.ParseFailure"/> and the parse's one diagnostic,
+    /// <see cref="DiagnosticCode.AmbiguousOpen"/> at the written occurrence (public
+    /// <see cref="KatLangErrorCode.AmbiguousOpen"/>), on the sync and async engines alike.
+    /// </summary>
+    private static async Task AssertStaticAmbiguity(string source, SourceSpan at, RunOptions? options = null)
+    {
+        options ??= new RunOptions();
+        var parsed = await Parser.ParseAsync(source, options);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(at, diagnostic.Span);
+
+        var engine = options.DownloadCode is null ? KatLangEngine.Run(source, options) : await KatLangEngine.RunAsync(source, options);
+        var error = Assert.Single(Assert.IsType<RunResult.ParseFailure>(engine).Errors);
+        Assert.Equal(KatLangErrorCode.AmbiguousOpen, error.Code);
+        Assert.Equal(at, error.Span);
+        var asyncEngine = await KatLangEngine.RunAsync(source, options);
+        Assert.Equal(KatLangErrorCode.AmbiguousOpen, Assert.Single(Assert.IsType<RunResult.ParseFailure>(asyncEngine).Errors).Code);
     }
 
     private const string ModuleUrl = "https://mods.test/lib.kat";
@@ -364,13 +411,20 @@ public class OpenTargetHeadValidityTests
     {
         // Two providers at one level select nothing (ambiguousOpen), so dependency analysis
         // charges nothing — it used to see Lib as the sole provider and refuse `Outer.Y` as
-        // local-only instead of reaching the true ambiguity.
-        var source = $"Outer(p) = {{\n    Lib = {{ public X = p }}\n    public Y = {{\n        {innerOpen}\n        X\n    }}\n    1\n}}\nOuter.Y";
+        // local-only instead of reaching the true ambiguity. The read is a fallback on a
+        // parameter receiver, a lookup only evaluation decides, so the ambiguity is the
+        // evaluators' (a WRITTEN X there is the static ambiguity, Q-29 A-U — pinned below).
+        var source = $"Outer(p) = {{\n    Lib = {{ public X(v) = p }}\n    public Y = {{\n        {innerOpen}\n        K(q) = q.X\n        K(10)\n    }}\n    1\n}}\nOuter.Y";
         var parsed = SourceProvenance.ParseValid(source);
         var y = parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Properties.Single(p => p.Name == "Y");
         Assert.Equal(PropertyExposure.Exported, y.Exposure);
         Assert.Equal(
             KatLangErrorCode.AmbiguousOpen,
             Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors).Code);
+
+        var written = $"Outer(p) = {{\n    Lib = {{ public X = p }}\n    public Y = {{\n        {innerOpen}\n        X\n    }}\n    1\n}}\nOuter.Y";
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(written));
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(5, 9, 5, 10), diagnostic.Span);
     }
 }

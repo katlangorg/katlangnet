@@ -527,8 +527,9 @@ public class ImplicitParameterDiagnosticsTests
     public void BareNameSuggestion_SuppressesAmbiguousOpenedCandidate()
     {
         // Correcting Valeu to Value would not resolve: the authoritative
-        // ownership-first lookup returns both open providers and evaluation
-        // reports AmbiguousOpen. A diagnostic must not present it confidently.
+        // ownership-first lookup returns both open providers, so the written
+        // name is the front end's AmbiguousOpen (Q-29 A-U). A diagnostic must
+        // not present it confidently.
         var (message, error) = FailWithParity(
             """
             A = { public Value = 1 }
@@ -543,7 +544,7 @@ public class ImplicitParameterDiagnosticsTests
         Assert.Null(SingleNote(error).SuggestedName);
         Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
 
-        var corrected = SourceProvenance.ParseValid(
+        var corrected = SourceProvenance.ExpectFrontEndError(
             """
             A = { public Value = 1 }
             B = { public Value = 2 }
@@ -552,8 +553,8 @@ public class ImplicitParameterDiagnosticsTests
               Value
             }
             Use
-            """).Evaluate();
-        Assert.IsType<EvalError.AmbiguousOpen>(Innermost(corrected.Error));
+            """);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(corrected).Code);
     }
 
     [Fact]
@@ -624,11 +625,9 @@ public class ImplicitParameterDiagnosticsTests
         Assert.Null(SingleNote(error).SuggestedName);
         Assert.DoesNotContain("Did you mean", message, StringComparison.Ordinal);
 
-        var corrected = SourceProvenance.ParseValid(
-            "Outer(seed) = { A = { public Value = 1 }\nB = { public Value = 2 }\nUse = { open A, B\nValue + seed }\nUse }\nOuter(9)")
-            .Evaluate();
-        Assert.True(corrected.IsError);
-        Assert.Equal(KatLangErrorCode.AmbiguousOpen, corrected.Error.Code);
+        var corrected = SourceProvenance.ExpectFrontEndError(
+            "Outer(seed) = { A = { public Value = 1 }\nB = { public Value = 2 }\nUse = { open A, B\nValue + seed }\nUse }\nOuter(9)");
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(corrected).Code);
     }
 
     [Fact]

@@ -83,15 +83,27 @@ public class NameResolutionHostileReviewTests
             ? $"{prefix} = {{\n public Left = {{ public X = 1 }}\n public Right = {{ public X = 2 }}\n}}"
             : $"{first} = {{ public X = 1 }}\n{second} = {{ public X = 2 }}";
         var targets = reverse ? $"{second}, {first}" : $"{first}, {second}";
+        // Two declarations are two providers (Q-19 D-I), so the WRITTEN `X` they both
+        // provide is the front end's ambiguity at the occurrence (Q-29 A-U).
         var source = $"open {targets}\n{declarations}\nX";
-        var parsed = SourceProvenance.ParseValid(source);
+        var line = source.Split('\n').Length;
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(line, 1, line, 2), diagnostic.Span);
         Assert.Empty(parsed.Root.Params);
         var scope = ElaboratedScopeLookup.CreateScope(parsed.Root);
         Assert.Equal(2, scope.GetResolvedOpenProviders().Count);
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var resolution = model.FindResolutionAt(new SourcePosition(source.Split('\n').Length, 1));
+        var resolution = model.FindResolutionAt(new SourcePosition(line, 1));
         Assert.Equal(IdentifierClassification.Unresolved, Assert.IsType<IdentifierResolution>(resolution).Classification);
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var rejected = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.AmbiguousOpen, Assert.Single(rejected.Errors).Code);
+
+        // A lookup only evaluation decides (a fallback on a parameter receiver) stays the
+        // evaluators' run-time ambiguity, whatever the targets' length.
+        var fallback = $"{declarations}\nK(q) = {{\n open {targets}\n q.X\n}}\nK(10)";
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(fallback));
         Assert.Equal(KatLangErrorCode.AmbiguousOpen, Assert.Single(failure.Errors).Code);
     }
 
@@ -112,12 +124,20 @@ public class NameResolutionHostileReviewTests
     {
         var prefix = new string('N', 520);
         var targets = reverse ? $"{prefix}B, {prefix}A" : $"{prefix}A, {prefix}B";
-        var source = $"Outer(p) = {{\n {prefix}A = {{ public X = p }}\n {prefix}B = {{ public X = 7 }}\n public Y = {{ open {targets}\n X }}\n 0\n}}\nOuter.Y";
+        // The read is a fallback on a parameter receiver — a lookup only evaluation decides —
+        // so the two providers charge nothing (Y stays exported) and the evaluators report it.
+        var source = $"Outer(p) = {{\n {prefix}A = {{ public X(v) = p }}\n {prefix}B = {{ public X(v) = 7 }}\n public Y = {{ open {targets}\n K(q) = q.X\n K(10) }}\n 0\n}}\nOuter.Y";
         var parsed = SourceProvenance.ParseValid(source);
         var y = parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Properties.Single(p => p.Name == "Y");
         Assert.Equal(PropertyExposure.Exported, y.Exposure);
         Assert.Equal(KatLangErrorCode.AmbiguousOpen,
             Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors).Code);
+
+        // A WRITTEN X there is the front end's ambiguity at the occurrence (Q-29 A-U).
+        var written = $"Outer(p) = {{\n {prefix}A = {{ public X = p }}\n {prefix}B = {{ public X = 7 }}\n public Y = {{ open {targets}\n X }}\n 0\n}}\nOuter.Y";
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(written));
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(5, 2, 5, 3), diagnostic.Span);
     }
 
     [Theory]
@@ -125,7 +145,15 @@ public class NameResolutionHostileReviewTests
     [InlineData("B, A")]
     public void InnerOpenAmbiguity_DoesNotFallThroughToOuterProvider(string targets)
     {
-        var source = $"open Outside\nOutside = {{ public X = 9 }}\nOuter(p) = {{\n A = {{ public X = p }}\n B = {{ public X = 7 }}\n public Y = {{\n open {targets}\n Inner = X\n Inner\n }}\n 0\n}}\nOuter.Y";
+        // The deciding level is Y's: its two providers select nothing, and the root's
+        // `Outside` provider is never consulted — for the written name (the front end's
+        // ambiguity, Q-29 A-U) and for a lookup only evaluation decides (the evaluators').
+        var written = $"open Outside\nOutside = {{ public X = 9 }}\nOuter(p) = {{\n A = {{ public X = p }}\n B = {{ public X = 7 }}\n public Y = {{\n open {targets}\n Inner = X\n Inner\n }}\n 0\n}}\nOuter.Y";
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(written));
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(8, 10, 8, 11), diagnostic.Span);
+
+        var source = $"open Outside\nOutside = {{ public X(v) = 9 }}\nOuter(p) = {{\n A = {{ public X(v) = p }}\n B = {{ public X(v) = 7 }}\n public Y = {{\n open {targets}\n Inner(q) = q.X\n Inner(10)\n }}\n 0\n}}\nOuter.Y";
         var parsed = SourceProvenance.ParseValid(source);
         var y = parsed.Root.Properties.Single(p => p.Name == "Outer").Value.Properties.Single(p => p.Name == "Y");
         Assert.Equal(PropertyExposure.Exported, y.Exposure);

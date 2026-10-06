@@ -637,20 +637,37 @@ public static class SemanticExplorerCorpus
             "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
             "Front-end rejection (DiagnosticCode.IllegalInOpen): the elaborated tree is a recovery tree; the evaluators refuse the same open with illegalInOpen."),
 
+        // Q-29 A-U (decided 2026-10-06): a WRITTEN name two different providers supply is
+        // invalid source, so this case is a parse-level C#-only probe; the run-time ambiguity
+        // both evaluators keep — a lookup only evaluation decides — is pinned by the
+        // `...AtRuntime` twin below (a dot fallback the receiver decides).
         Special("openTwoProvidersAmbiguous",
-            "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA"),
+            "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA",
+            "Front-end rejection (DiagnosticCode.AmbiguousOpen, Q-29 A-U): a written name two different providers supply is invalid source; the elaborated tree is a recovery tree. The run-time ambiguity is pinned by openTwoProvidersAmbiguousAtRuntime."),
 
-        // Duplicate NAMED targets deduplicate first-occurrence-wins, so they are
-        // one provider and never a spurious ambiguity (Lean: resolveAllOpens).
+        Special("openTwoProvidersAmbiguousAtRuntime",
+            "L1 = {\n    public X(v) = v + 101\n}\nL2 = {\n    public X(v) = v + 202\n}\nK(p) = {\n    open L1, L2\n    p.X\n}\nK(10)"),
+
+        // Duplicate NAMED targets are one provider and never a spurious ambiguity
+        // (Q-19 D-I: providers are counted by identity; Lean: resolveAllOpens).
         Special("openDuplicateTargetDedup", "Lib = {\n    public X = 101\n}\nA = {\n    open Lib, Lib\n    X\n}\nA"),
 
         Special("openDuplicateDottedTargetDedup",
             "Lib = {\n    public S = {\n        public X = 101\n    }\n}\nA = {\n    open Lib.S, Lib.S\n    X\n}\nA"),
 
-        // Inline blocks get positional keys and are NEVER deduplicated, so two
-        // structurally identical blocks really are two providers.
+        // Q-19 D-I: two spellings of ONE declaration are one provider.
+        Special("openTwoSpellingsOneProvider",
+            "Lib = {\n    public Sub = {\n        public X = 101\n    }\n    public R = {\n        open Sub, Lib.Sub\n        X\n    }\n}\nLib.R"),
+
+        // Two written blocks are two declarations, so two providers even when structurally
+        // identical; a written X they both supply is invalid source (Q-29 A-U), and the
+        // run-time twin pins the evaluators' ambiguity.
         Special("openDuplicateInlineBlocksAmbiguous",
-            "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA"),
+            "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA",
+            "Front-end rejection (DiagnosticCode.AmbiguousOpen, Q-29 A-U): a written name two different providers supply is invalid source; the elaborated tree is a recovery tree. The run-time ambiguity is pinned by openDuplicateInlineBlocksAmbiguousAtRuntime."),
+
+        Special("openDuplicateInlineBlocksAmbiguousAtRuntime",
+            "K(p) = {\n    open { public X(v) = v + 101 }, { public X(v) = v + 101 }\n    p.X\n}\nK(10)"),
 
         Special("openInlineBlock", "A = {\n    open { public X = 101 }\n    X\n}\nA"),
 
@@ -720,7 +737,11 @@ public static class SemanticExplorerCorpus
         // accessibility is checked on the selected member afterwards — so beside another
         // provider of the same name it is a genuine second provider (K1-08, September 2026).
         Special("openLocalOnlyMemberIsASecondProvider",
-            "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA"),
+            "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA",
+            "Front-end rejection (DiagnosticCode.AmbiguousOpen, Q-29 A-U): the local-only member is a genuine second provider, so the written X is invalid source; the elaborated tree is a recovery tree. The run-time selection is pinned by openLocalOnlyMemberIsASecondProviderAtRuntime."),
+
+        Special("openLocalOnlyMemberIsASecondProviderAtRuntime",
+            "Pub = {\n    public X(v) = v + 101\n}\nOuter(p) = {\n    public Lib = {\n        public X(v) = v + p\n    }\n    0\n}\nA(q) = {\n    open Pub, Outer.Lib\n    q.X\n}\nA(5)"),
 
         // F9: a builtin VALUE slot and the `.string` receiver demand their algorithm
         // through the ONE zero-argument demand law. A selected parameterized

@@ -335,17 +335,24 @@ public class ModuleCoordinateSpaceTests
     }
 
     [Fact]
-    public async Task ImportedCollision_WithALocalParameter_NamesTheLocalParameterPosition()
+    public async Task ImportedCollision_InsideTheModule_IsReportedAtTheImportSite_InThisDocumentsCoordinates()
     {
-        // The module's property `a` collides with the DOCUMENT's parameter `a` of F: the
-        // report sits at the import site and names the parameter's local position only.
-        var parsed = await Parser.ParseAsync(
+        // A loaded module meets none of its holder's parameters (Q-31 H-P): the module's `a` beside
+        // the DOCUMENT's parameter `a` of F is no collision at all.
+        var accepted = await Parser.ParseAsync(
             "F(a) = {\n  M = load('" + Lib + "')\n  M.a }\nF(1)",
             Options((Lib, "\n\n\npublic a = 3")));
+        Assert.Empty(accepted.Diagnostics);
+
+        // A collision INSIDE the module sits at the import site, and never presents the module's
+        // own coordinates (its `G(a)` at module line 4) as if they were this document's.
+        var parsed = await Parser.ParseAsync(
+            "F(k) = {\n  M = load('" + Lib + "')\n  M.V }\nF(1)",
+            Options((Lib, "\n\n\nG(a) = {\n  a = 3\n  a\n}\npublic V = G(1)")));
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
         Assert.Equal(new SourceSpan(2, 3, 2, 4), diagnostic.Span);
-        Assert.Contains("declared at line 1, column 3", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("line 4", diagnostic.Message, StringComparison.Ordinal);
     }
 
     // ── 8. The import view is structurally locationless ─────────────────────

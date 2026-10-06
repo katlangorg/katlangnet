@@ -45,12 +45,20 @@ public class LookupTwinEquivalenceTests
     /// Canonical observation for <c>X.string</c> (twin 2 via the dot-call target
     /// position), or <c>null</c> where the resolved value has no string form.
     /// </param>
+    /// <param name="WrittenProbeIsAmbiguous">
+    /// The probe reaches two different providers at one open level. Since Q-29 A-U
+    /// (decided 2026-10-06) a WRITTEN name that does so is invalid source — the front
+    /// end's <see cref="DiagnosticCode.AmbiguousOpen"/> at the probe, whatever its
+    /// spelling — so the evaluator twins are observed on the SAME elaborated tree handed
+    /// to the evaluator as a host-built AST, where the run-time ambiguity still decides.
+    /// </param>
     private sealed record TwinScenario(
         string Id,
         string Template,
         string ExpectedBare,
         string ExpectedCalled,
-        string? ExpectedDotTarget);
+        string? ExpectedDotTarget,
+        bool WrittenProbeIsAmbiguous = false);
 
     private const string ProbeName = "X";
 
@@ -82,11 +90,11 @@ public class LookupTwinEquivalenceTests
         // ---- ambiguity ----------------------------------------------------------
         new("twoProvidersAmbiguous",
             "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    {0}\n}\nA",
-            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen"),
+            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen", WrittenProbeIsAmbiguous: true),
 
         new("duplicateInlineBlocksAmbiguous",
             "A = {\n    open { public X = 101 }, { public X = 202 }\n    {0}\n}\nA",
-            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen"),
+            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen", WrittenProbeIsAmbiguous: true),
 
         // ---- scope-level precedence -----------------------------------------------
         new("innerOpenShadowsOuterOpen",
@@ -118,7 +126,7 @@ public class LookupTwinEquivalenceTests
         // parameterized `Lib(p)` provider is now refused at the open itself instead).
         new("localOnlyMemberIsASecondProvider",
             "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    {0}\n}\nA",
-            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen"),
+            "err ambiguousOpen", "err ambiguousOpen", "err ambiguousOpen", WrittenProbeIsAmbiguous: true),
 
         // The ownership-first controls that the shapes above replaced: an
         // ancestor property still wins over an open that provides nothing.
@@ -292,9 +300,25 @@ public class LookupTwinEquivalenceTests
     }
 
     private static string Observe(TwinScenario scenario, string probe)
-        => SemanticExplorerHarness
-            .Observe($"{scenario.Id}::{probe}", scenario.Template.Replace("{0}", probe, StringComparison.Ordinal))
-            .Neutral;
+    {
+        var source = scenario.Template.Replace("{0}", probe, StringComparison.Ordinal);
+        if (!scenario.WrittenProbeIsAmbiguous)
+            return SemanticExplorerHarness.Observe($"{scenario.Id}::{probe}", source).Neutral;
+
+        // The written probe is the front end's ambiguity at the probe (Q-29 A-U) ...
+        Assert.Equal("parseError", SemanticExplorerHarness.Observe($"{scenario.Id}::{probe}", source).Neutral);
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        var span = Assert.NotNull(diagnostic.Span);
+        Assert.Equal(ProbeName, source.Split('\n')[span.Start.Line - 1].Substring(span.Start.Column - 1, span.End.Column - span.Start.Column));
+
+        // ... and both evaluator twins keep the run-time verdict on the same tree as a host AST.
+        var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(parsed.Root));
+        return counted.IsError
+            ? $"err {SemanticExplorerHarness.ErrorCategory(counted.Error)}"
+            : $"ok raw={SemanticExplorerHarness.Neutral(counted.Value.Value)} n={counted.Value.EmittedCount}";
+    }
 
     /// <summary>
     /// <c>X.string</c> observes the same declaration as <c>X</c> but renders it

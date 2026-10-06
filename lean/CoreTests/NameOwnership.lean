@@ -459,8 +459,9 @@ def openSelectionIgnoresExposure : Bool :=
 
 #guard openSelectionIgnoresExposure
 
-/-- Open identity uses the complete spelling even beyond diagnostic display limits.
-    Two spellings of the same provider still count twice; repeating one counts once. -/
+/-- Providers are counted by identity, never by a bounded display of their spelling (Q-19
+    D-I): two DECLARATIONS whose long names abbreviate alike — with identical bodies — are two
+    providers (ambiguous), while one name written twice is one provider. -/
 def longOpenSpellingsKeepIdentity (duplicate : Bool) : Bool :=
   let nameStem := String.ofList (List.replicate 520 'N')
   let left := nameStem ++ "A"

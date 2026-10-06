@@ -165,6 +165,12 @@ public class SemanticExplorerLeanArtifactTests
                 // nothing (here a private dotted step) is refused statically
                 // (UnresolvedOpenTarget), so it never reaches evaluation either.
                 "special__openDottedPathPrivateIntermediate",
+                // Q-29 A-U (decided 2026-10-06): a WRITTEN name two different providers supply at
+                // one open level is the front end's AmbiguousOpen, so it never reaches evaluation
+                // (each has a run-time twin reached by a receiver-decided dot fallback).
+                "special__openTwoProvidersAmbiguous",
+                "special__openDuplicateInlineBlocksAmbiguous",
+                "special__openLocalOnlyMemberIsASecondProvider",
             ])
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();

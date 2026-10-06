@@ -195,9 +195,12 @@ public class LookupCoherenceTests
             "X", "ok raw=101 n=1", new Declared("X", 1)),
 
         // ---- provider topology ----------------------------------------------
+        // Two different providers at one open level: the WRITTEN `X` names no single
+        // declaration, which is the front end's AmbiguousOpen at the occurrence (Q-29 A-U,
+        // decided 2026-10-06) — the editor resolves nothing and no parameter is inferred.
         new("providers.twoProvidersAreAmbiguous",
             "L1 = {\n    public X = 101\n}\nL2 = {\n    public X = 202\n}\nA = {\n    open L1, L2\n    X\n}\nA",
-            "X", "err ambiguousOpen", new NoDeclaration()),
+            "X", "parseError", new NoDeclaration()),
 
         // Duplicate NAMED targets deduplicate first-occurrence-wins, so they are
         // one provider, not an ambiguity (Lean/evaluator: resolveAllOpens).
@@ -227,11 +230,11 @@ public class LookupCoherenceTests
             "L = {\n    public X = 101\n}\nM = L\nA = {\n    open L, M\n    X\n}\nA",
             "X", "ok raw=101 n=1", new Declared("X", 1)),
 
-        // Inline blocks get positional keys and are NEVER deduplicated, so two
-        // structurally identical blocks really are two providers.
+        // Two written inline blocks are two declarations, so two providers (Q-19 D-I),
+        // and the written `X` is the front end's ambiguity (Q-29 A-U).
         new("providers.duplicateInlineBlocksAreAmbiguous",
             "A = {\n    open { public X = 101 }, { public X = 202 }\n    X\n}\nA",
-            "X", "err ambiguousOpen", new NoDeclaration()),
+            "X", "parseError", new NoDeclaration()),
 
         new("providers.inlineBlockExposesPublicMember",
             "A = {\n    open { public X = 101 }\n    X\n}\nA",
@@ -426,7 +429,8 @@ public class LookupCoherenceTests
         {
             // The declaration-level rejections the matrix probes through: a property hiding a
             // completed parameter, an open target whose head a parameter owns, an open target
-            // that would need a call to have members, and one that resolves to nothing.
+            // that would need a call to have members, one that resolves to nothing, and a
+            // written name two different providers supply at one open level (Q-29 A-U).
             Assert.Contains(
                 Assert.Single(parsed.Diagnostics).Code,
                 new[]
@@ -435,6 +439,7 @@ public class LookupCoherenceTests
                     DiagnosticCode.OpenTargetIsParameter,
                     DiagnosticCode.IllegalInOpen,
                     DiagnosticCode.UnresolvedOpenTarget,
+                    DiagnosticCode.AmbiguousOpen,
                 });
         }
         else
@@ -590,7 +595,11 @@ public class LookupCoherenceTests
         Assert.Contains(Cases, c => c.Expected is ImplicitParameter);
         Assert.Contains(Cases, c => c.Expected is Tolerated);
 
-        Assert.Contains(Cases, c => c.ExpectedRuntime == "err ambiguousOpen");
+        // A written ambiguous name is rejected by the front end since Q-29 A-U (decided
+        // 2026-10-06); the evaluators' run-time ambiguity — a fallback the receiver decides,
+        // a host-built tree — is pinned by StaticAmbiguousOpenTests and the lookup twins.
+        Assert.Contains(Cases, c => c.Id == "providers.twoProvidersAreAmbiguous" && c.ExpectedRuntime == "parseError"
+            && Parser.Parse(c.Source).Diagnostics.Single().Code == DiagnosticCode.AmbiguousOpen);
         Assert.Contains(Cases, c => c.ExpectedRuntime == "err localOnlyProperty");
         // Every illegal open target a written program can name — a parameterized provider,
         // a clause family, a prelude builtin — is refused by the FRONT END since the final

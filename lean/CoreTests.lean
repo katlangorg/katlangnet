@@ -36,3 +36,5 @@ import CoreTests.LoopCardinality
 import CoreTests.LoopSteps
 import CoreTests.ErrorTaxonomy
 import CoreTests.DotIdentity
+import CoreTests.OpenProviderIdentity
+import CoreTests.ModuleUnits

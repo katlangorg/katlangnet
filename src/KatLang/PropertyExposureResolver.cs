@@ -147,7 +147,8 @@ internal static class PropertyExposureResolver
     internal static Algorithm Resolve(
         Algorithm root,
         FrontEndTraversalObservations? observations,
-        HostOperations? hostOperations = null)
+        HostOperations? hostOperations = null,
+        ModuleUnits? modules = null)
         => ResolveInScope(
             root,
             new SummaryScope(
@@ -156,7 +157,8 @@ internal static class PropertyExposureResolver
                     hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm(),
                     memberIndexes: new OpenMemberIndexCache(observations)),
                 NoSummaries),
-            observations);
+            observations,
+            modules);
 
     private static readonly IReadOnlyDictionary<string, RequirementSet> NoSummaries =
         new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
@@ -164,9 +166,10 @@ internal static class PropertyExposureResolver
     private static Algorithm ResolveInScope(
         Algorithm root,
         SummaryScope parent,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        ModuleUnits? modules = null)
     {
-        var run = new ExposureRun(observations);
+        var run = new ExposureRun(observations) { Modules = modules ?? new() };
         root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run);
         if (run.HasDotMemberOrigins)
             new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
@@ -182,6 +185,13 @@ internal static class PropertyExposureResolver
         }
 
         public bool HasDotMemberOrigins;
+
+        /// <summary>
+        /// The operation's loaded module units (Q-32 I-U): every resolved module declaration (one
+        /// per canonical URL) to its one classified declaration (see the module arm of
+        /// <see cref="ProcessAlgorithm"/>).
+        /// </summary>
+        public ModuleUnits Modules = new();
 
         /// <summary>
         /// FE-4a: the run's one requirement-set interner — every level's summaries are canonical sets
@@ -339,6 +349,11 @@ internal static class PropertyExposureResolver
         ExposureRun run)
         => algorithm switch
         {
+            // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: its exposure is
+            // settled under the prelude level whatever holds it — nothing in it can require the
+            // holder's parameters — so it is classified ONCE per resolution (Q-32 I-U).
+            Algorithm.User { IsModuleElaborated: true } or Algorithm.Alias { IsModuleElaborated: true }
+                => ProcessModuleRoot(algorithm, parent, summaryMemo, observations, run),
             // A callable alias is a scope body like a user algorithm's — its own opens and
             // declarations, and its one row, the target reference it reads — so its exposure is
             // computed from that read exactly as a body whose one row names its target.
@@ -350,6 +365,22 @@ internal static class PropertyExposureResolver
                 new ExposureWalkMemos(summaryMemo, observations, parent, run)),
             Algorithm.Builtin => algorithm,
         };
+
+    private static Algorithm ProcessModuleRoot(
+        Algorithm module,
+        SummaryScope parent,
+        PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
+        FrontEndTraversalObservations? observations,
+        ExposureRun run)
+    {
+        if (!run.Modules.TryGet(ModuleUnitPass.Exposure, module, out var classified))
+        {
+            classified = ProcessScopeBody(module, parent.Root, summaryMemo, observations, run);
+            run.Modules.Add(ModuleUnitPass.Exposure, module, classified);
+        }
+
+        return classified;
+    }
 
     private static Algorithm ProcessScopeBody(
         Algorithm algorithm,
@@ -801,28 +832,29 @@ internal static class PropertyExposureResolver
                         // Whether the carried candidate provides the pending head, and its charge: a
                         // resolved candidate exists only because its target provides the head, while
                         // an unresolved one is settled here, from the owning level outward (no level
-                        // it escaped declared the head).
+                        // it escaped declared the head). Q-19 D-I: each settled PROVIDER is offered
+                        // once, by its identity — the carried identity completed at this level.
                         switch (candidates[i])
                         {
                             case ResolvedOpenCandidate resolved:
                             {
+                                var identity = resolved.Identity.CompletedAt(level.PropertyScope);
+                                if (group.HasProvider(identity))
+                                    break;
                                 var charge = SeedFrame(resolved.Seed, level, site, boundOwners);
                                 yield return charge;
-                                group.Offer((true, charge.Result));
+                                group.Offer(identity, charge.Result);
                                 break;
                             }
 
                             case UnresolvedOpenCandidate unresolved:
                             {
-                                if (TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, out var provided, out var providerLevel))
+                                if (TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, out var provided, out var providerLevel, out var identity)
+                                    && !group.HasProvider(identity))
                                 {
                                     var charge = SeedFrame(provided, providerLevel, site, boundOwners);
                                     yield return charge;
-                                    group.Offer((true, charge.Result));
-                                }
-                                else
-                                {
-                                    group.Offer(default);
+                                    group.Offer(identity, charge.Result);
                                 }
 
                                 break;
@@ -851,7 +883,9 @@ internal static class PropertyExposureResolver
                         if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
                             continue;
 
-                        // The ONE open-target decomposition (AstHelpers.OpenTargetHead).
+                        // The ONE open-target decomposition (AstHelpers.OpenTargetHead). Q-19 D-I:
+                        // targets that resolve to one semantic provider are offered once, exactly
+                        // as the evaluator's ResolveAllOpens counts them.
                         switch (target.OpenTargetHead(out var steps))
                         {
                             case Expr.AlgorithmExpr(var block):
@@ -860,33 +894,31 @@ internal static class PropertyExposureResolver
                                 // is wired to the prelude: nothing outside it can be referenced, so
                                 // only its own requirement names survive.
                                 var inlineSeed = PropertyDependencyGraphBuilder.TryChargeInlineOpenProvider(block, steps, pending, memos);
-                                var inlineCharge = inlineSeed is null
-                                    ? default
-                                    : sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
-                                        .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners)));
+                                if (inlineSeed is not null
+                                    && ElaboratedScopeLookup.ResolveOpenProvider(current.PropertyScope, target) is { } inline
+                                    && !group.HasProvider(inline.Identity))
+                                {
+                                    group.Offer(inline.Identity, sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
+                                        .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners))));
+                                }
 
-                                group.Offer((inlineSeed is not null, inlineCharge));
                                 break;
                             }
 
                             case Expr.Resolve(var head):
                             {
-                                if (TryProvide(current, head, steps, pending, out var provided, out var providerLevel))
+                                if (TryProvide(current, head, steps, pending, out var provided, out var providerLevel, out var identity)
+                                    && !group.HasProvider(identity))
                                 {
                                     var charge = SeedFrame(provided, providerLevel, site, boundOwners);
                                     yield return charge;
-                                    group.Offer((true, charge.Result));
-                                }
-                                else
-                                {
-                                    group.Offer(default);
+                                    group.Offer(identity, charge.Result);
                                 }
 
                                 break;
                             }
 
                             default:
-                                group.Offer(default);
                                 break;
                         }
                     }
@@ -907,30 +939,32 @@ internal static class PropertyExposureResolver
         }
 
         /// <summary>
-        /// ONE open lookup level's verdict (the evaluator's <c>LookupOpens</c>): every deduplicated
-        /// target of the level is offered; the level decides the lookup as soon as any target
-        /// provides the head — the sole provider's charge when exactly one does, and NOTHING when
-        /// two or more do, because the evaluator then selects no declaration (ambiguousOpen).
+        /// ONE open lookup level's verdict (the evaluator's <c>LookupOpens</c>): every PROVIDER of
+        /// the level that provides the head is offered once, by its semantic identity (Q-19 D-I —
+        /// two targets of one provider are one offer); the level decides the lookup as soon as any
+        /// provider provides the head — the sole provider's charge when exactly one does, and
+        /// NOTHING when two or more do, because the evaluator then selects no declaration
+        /// (ambiguousOpen).
         /// </summary>
         private sealed class OpenLevelSettlement
         {
-            private int _providers;
+            private HashSet<OpenProviderIdentity>? _providers;
             private RequirementSet _charge;
 
-            public void Offer((bool Provides, RequirementSet Charge) offer)
-            {
-                if (!offer.Provides)
-                    return;
+            public bool HasProvider(OpenProviderIdentity identity) => _providers?.Contains(identity) == true;
 
-                _providers++;
-                _charge = offer.Charge;
+            public void Offer(OpenProviderIdentity identity, RequirementSet charge)
+            {
+                if ((_providers ??= []).Add(identity))
+                    _charge = charge;
             }
 
             public bool Decides(RequirementSetInterner sets, ref RequirementSet names)
             {
-                if (_providers == 1)
+                var providers = _providers?.Count ?? 0;
+                if (providers == 1)
                     names = sets.Union(names, _charge);
-                return _providers > 0;
+                return providers > 0;
             }
         }
 
@@ -945,10 +979,12 @@ internal static class PropertyExposureResolver
         /// </summary>
         private bool TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending,
             [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out PropertyDependencyGraphBuilder.SummarySeed? seed,
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SummaryScope? providerLevel)
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SummaryScope? providerLevel,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out OpenProviderIdentity? identity)
         {
             seed = null;
             providerLevel = null;
+            identity = null;
 
             // The head's DECLARATION is what matters here, never its summary.
             if (!openingLevel.TryLookup(head, out var found, out var hit, out _))
@@ -970,9 +1006,10 @@ internal static class PropertyExposureResolver
             seed = PropertyDependencyGraphBuilder.ExpandThroughNodes(
                 memberSeed,
                 PropertyDependencyGraphBuilder.NodePath(headNode, steps),
-                memos);
+                memos, skipLastNode: true);
             seed.UnionWith(providerSeed);
             providerLevel = found;
+            identity = PropertyDependencyGraphBuilder.ProviderIdentity(headNode, found.PropertyScope, steps);
             return true;
         }
 
@@ -1097,8 +1134,9 @@ internal static class PropertyExposureResolver
     internal static Algorithm ElaborateDeferredBranch(
         Algorithm resolvedBody,
         DeferredBranchContext context,
-        FrontEndTraversalObservations? observations = null)
-        => ResolveInScope(resolvedBody, context.Scope, observations);
+        FrontEndTraversalObservations? observations = null,
+        ModuleUnits? modules = null)
+        => ResolveInScope(resolvedBody, context.Scope, observations, modules);
 
     /// <summary>
     /// A call's argument bundle may be shared by several call edges — implicit lifting gives every

@@ -2917,11 +2917,16 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
                 return false;
             }
 
+            // A loaded module is rooted at the prelude (Q-31 H-P): what it declares resolves in a
+            // chain that starts at the module, never at the chain the chase navigated in through.
+            if (value.IsModuleRoot)
+                scope.Clear();
             scope.Add(value);
             value = member.Value;
         }
 
-        valueChain = scope;
+        // … and the module itself has no enclosing chain (Lean: `staticAliasStep?`).
+        valueChain = value.IsModuleRoot ? [] : scope;
         return true;
     }
 
@@ -3076,13 +3081,34 @@ internal static class AlgorithmValidation
             if (algorithm.DeferredRegion is not null)
                 return;
 
-            if (!FirstVisit(algorithm))
-                return;
+            // A loaded module is a source unit rooted at the prelude (Q-31 H-P): the static chain
+            // its aliases resolve in restarts at the module, whatever holds it (Lean: the `.module`
+            // arm of `validateExplicitParamOutputInvariant`).
+            List<Algorithm>? holderChain = null;
+            if (algorithm.IsModuleRoot && _chain.Count > 0)
+            {
+                holderChain = [.. _chain];
+                _chain.Clear();
+            }
 
-            // The static scope chain (outermost first) the alias check below resolves targets in.
-            _chain.Add(algorithm);
-            try { base.VisitAlgorithm(algorithm); }
-            finally { _chain.RemoveAt(_chain.Count - 1); }
+            try
+            {
+                if (!FirstVisit(algorithm))
+                    return;
+
+                // The static scope chain (outermost first) the alias check below resolves targets in.
+                _chain.Add(algorithm);
+                try { base.VisitAlgorithm(algorithm); }
+                finally { _chain.RemoveAt(_chain.Count - 1); }
+            }
+            finally
+            {
+                if (holderChain is not null)
+                {
+                    _chain.Clear();
+                    _chain.AddRange(holderChain);
+                }
+            }
         }
 
         private readonly List<Algorithm> _chain = [];

@@ -256,8 +256,15 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
     public override void VisitAlgorithm(Algorithm algorithm)
     {
         var previousScope = _scope;
+        // A loaded module (Q-31 H-P) is rooted at the prelude: its receivers resolve under the
+        // prelude level whatever holds it, so it is walked in that region once.
+        if (algorithm.IsModuleRoot)
+            _scope = _scope.Root;
         if (algorithm.DeferredRegion is not null || !Enter(algorithm))
+        {
+            _scope = previousScope;
             return;
+        }
         // Parameters already have Param identity. A level with no declarations
         // cannot change receiver lookup and need not split the diagnostic region.
         if (algorithm.Properties.Count != 0 || algorithm.Opens.Count != 0)

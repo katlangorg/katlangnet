@@ -299,7 +299,15 @@ public class EvaluatorOpenVisibilityTests
             }
             Test
             """;
-        var result = Eval(source);
+        // A WRITTEN name two different providers supply at one open level is the front
+        // end's AmbiguousOpen at the occurrence (Q-29 A-U, decided 2026-10-06) ...
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code);
+        Assert.Equal(new SourceSpan(8, 1, 8, 5), diagnostic.Span);
+
+        // ... and the evaluator keeps its run-time verdict on the same tree as a host AST.
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));
         Assert.True(result.IsError);
         Assert.IsType<EvalError.AmbiguousOpen>(Innermost(result.Error));
     }
@@ -416,7 +424,8 @@ public class EvaluatorOpenVisibilityTests
             B = { public X = 2 }
             X
             """;
-        AssertEvalAllPublicFails(source);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(SourceProvenance.ExpectFrontEndError(source)).Code);
+        AssertFrontEndRejectedAndRecoveryTreeAlsoFails(source);
     }
 
     [Fact]
@@ -732,10 +741,11 @@ public class EvaluatorOpenVisibilityTests
             B = { public X = 2 }
             X
             """;
-        AssertEvalAllPublicFails(source);
+        // The written X is the front end's ambiguity (Q-29 A-U) ...
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(SourceProvenance.ExpectFrontEndError(source)).Code);
 
-        // Verify it's specifically an AmbiguousOpen error
-        var ast = ParseValidRoot(source);
+        // ... and specifically the evaluator's AmbiguousOpen on the same tree as a host AST.
+        var ast = SourceProvenance.ParseAllowingDiagnostics(source).Root;
         var publicAst = MakeAllPublic(ast);
         var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(publicAst));
         Assert.True(result.IsError);

@@ -25,19 +25,31 @@ public class Fe4aHostileReviewTests
     {
         var owner = new Algorithm.User(null, [new CaptureParameterPattern(new ParameterDeclaration("x"))], [], [], OutputBundle.Empty);
         var captured = new PropertyDependencyGraphBuilder.SummarySeed(ownerQualifiedParameters: [new("x", owner)]);
+        var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
+        var provider = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
+        var otherProvider = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
+        ResolvedOpenCandidate Settled(int level, Algorithm? by = null)
+        {
+            var identity = OpenProviderIdentity.DeclaredAtRoot(by ?? provider);
+            return new ResolvedOpenCandidate(captured, level, identity, memo.ProviderIdentityKey(identity));
+        }
+
         PendingReference Lookup(string head, OpenCandidate[] candidates, bool bound = false)
             => new(head, [], candidates, bound ? [owner] : []);
-        var single = Lookup("V", [new ResolvedOpenCandidate(captured, 0)]);
-        var ambiguous = Lookup("V", [new ResolvedOpenCandidate(captured, 0), new ResolvedOpenCandidate(captured, 0)]);
-        var unresolved = Lookup("V", [new UnresolvedOpenCandidate("L", [], 0), new ResolvedOpenCandidate(captured, 1)]);
+        var single = Lookup("V", [Settled(0)]);
+        var ambiguous = Lookup("V", [Settled(0), Settled(0, otherProvider)]);
+        // Q-19 D-I: two candidates settled to ONE provider are that provider, never an ambiguity.
+        var oneProviderTwice = Lookup("V", [Settled(0), Settled(0)]);
+        var unresolved = Lookup("V", [new UnresolvedOpenCandidate("L", [], 0), Settled(1)]);
         PropertyDependencyGraphBuilder.SummarySeed Reduce(PendingReference pending)
             => new PropertyDependencyGraphBuilder.SummarySeed(pendingReferences: [pending]).UnderMissingLexicalHead("V");
         Assert.Empty(Reduce(single).PendingReferences);
         Assert.Equal([new OwnerQualifiedParameter("x", owner)], Reduce(single).OwnerQualifiedParameters);
         Assert.True(Reduce(ambiguous).IsEmpty);
+        Assert.Equal([new OwnerQualifiedParameter("x", owner)], Reduce(oneProviderTwice).OwnerQualifiedParameters);
         Assert.Single(Reduce(unresolved).PendingReferences);
-        Assert.Single(Reduce(Lookup("Other", [new ResolvedOpenCandidate(captured, 0)])).PendingReferences);
-        Assert.True(Reduce(Lookup("V", [new ResolvedOpenCandidate(captured, 0)], bound: true)).IsEmpty);
+        Assert.Single(Reduce(Lookup("Other", [Settled(0)])).PendingReferences);
+        Assert.True(Reduce(Lookup("V", [Settled(0)], bound: true)).IsEmpty);
         // Reduction is conditional: it never changes the original seed that lexical shadowing may select instead.
         Assert.Single(single.Candidates);
         Assert.Single(captured.OwnerQualifiedParameters);

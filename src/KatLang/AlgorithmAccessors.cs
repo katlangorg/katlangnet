@@ -120,6 +120,21 @@ internal static class AlgorithmAccessors
         };
 
         /// <summary>
+        /// Whether this algorithm is the root of a LOADED MODULE (Q-31 H-P / Q-32 I-U, decided
+        /// 2026-10-06): the declaration a canonical module URL denotes in this compiled program,
+        /// declared at the prelude wherever it is named. Load elaboration marks the root
+        /// (<see cref="Algorithm.User.IsModuleElaborated"/>), and a module whose one row is a
+        /// callable alias keeps the mark on its alias (<see cref="Algorithm.Alias.IsModuleElaborated"/>).
+        /// Lean: a declaration whose identity is <c>PropertyIdentity.module</c>.
+        /// </summary>
+        internal bool IsModuleRoot => algorithm switch
+        {
+            Algorithm.User user => user.IsModuleElaborated,
+            Algorithm.Alias alias => alias.IsModuleElaborated,
+            Algorithm.Builtin or Algorithm.Conditional => false,
+        };
+
+        /// <summary>
         /// Lean: <c>Algorithm.findDuplicatePropName</c> — total; <c>none</c> for a builtin or a
         /// family, which declare no properties (<see cref="Algorithm.User.FindDuplicatePropName"/>).
         /// </summary>

@@ -234,21 +234,20 @@ public class DeferredRegionAttachmentTests
     }
 
     [Fact]
-    public async Task OneModuleSplicedAtTwoSites_KeepsOneRegionPerFrontEndContext()
+    public async Task OneModuleSplicedAtTwoSites_IsOneDeclarationWithOneRegion()
     {
-        // The loader splices ONE cached module algorithm at every load site, so the module's
-        // deferred placeholder is one object reached by the front end from two importing
-        // owners. Each pass forks the region it finds on the output view it produces for the
-        // context it was reached under, so two owners with different scopes get two complete,
-        // independent regions over the one raw body, and selecting one path materializes
-        // exactly that region. The deferred code reads q as a property in First and as an
-        // ancestor parameter in Second, so stale phase snapshots change actual evaluation.
+        // The loader splices ONE cached module algorithm at every load site, and a loaded module is
+        // a hygienic unit rooted at the prelude (Q-31 H-P) that the operation elaborates ONCE (Q-32
+        // I-U): two holders with different scopes reach ONE elaborated declaration, so the module's
+        // deferred placeholder is one object carrying one complete region, and selecting it through
+        // either holder materializes it once. The holders' own `q` (a property in First, a
+        // parameter in Second) never reaches the module; each holder adds it itself.
         var modules = new CountingModules(
             (ModuleA, "public A = 1"),
-            (ModuleM, "public F(0) = {\n    open '" + ModuleA + "'\n    q + A + 10\n}\npublic F(n) = n"));
+            (ModuleM, "public F(0) = {\n    open '" + ModuleA + "'\n    A + 10\n}\npublic F(n) = n"));
         var parsed = await SourceProvenance.ParseValidAsync(
-            $"First = {{\n    q = 1\n    Lib = load('{ModuleM}')\n    Lib.F(0)\n}}\n" +
-            $"Second(q) = {{\n    Lib = load('{ModuleM}')\n    Lib.F(0)\n}}\n" +
+            $"First = {{\n    q = 1\n    Lib = load('{ModuleM}')\n    Lib.F(0) + q\n}}\n" +
+            $"Second(q) = {{\n    Lib = load('{ModuleM}')\n    Lib.F(0) + q\n}}\n" +
             "First, Second(100)",
             modules.Options);
         Assert.Equal(1, modules[ModuleM]);
@@ -258,20 +257,12 @@ public class DeferredRegionAttachmentTests
             => FamilyOf(Assert.IsType<Algorithm.User>(Assert.Single(owner.Properties, p => p.Name == "Lib").Value)).Branches[0].Body;
         var firstPlaceholder = PlaceholderUnder(Assert.Single(parsed.Root.Properties, p => p.Name == "First").Value);
         var secondPlaceholder = PlaceholderUnder(Assert.Single(parsed.Root.Properties, p => p.Name == "Second").Value);
-        var firstRegion = RegionOf(firstPlaceholder);
-        var secondRegion = RegionOf(secondPlaceholder);
-        Assert.NotSame(firstPlaceholder, secondPlaceholder);
-        Assert.NotSame(firstRegion, secondRegion);
-        Assert.Same(firstRegion.RawBody, secondRegion.RawBody);
-        Assert.Same(firstRegion.Loader, secondRegion.Loader);
-        Assert.Same(firstPlaceholder.Declaration, secondPlaceholder.Declaration);
-        Assert.NotSame(firstRegion.Detection!.ParentScope, secondRegion.Detection!.ParentScope);
-        Assert.NotNull(firstRegion.Resolution);
-        Assert.NotNull(firstRegion.Validation);
-        Assert.NotNull(firstRegion.Exposure);
-        Assert.NotNull(secondRegion.Resolution);
-        Assert.NotNull(secondRegion.Validation);
-        Assert.NotNull(secondRegion.Exposure);
+        Assert.Same(firstPlaceholder, secondPlaceholder);
+        var region = RegionOf(firstPlaceholder);
+        Assert.NotNull(region.Detection);
+        Assert.NotNull(region.Resolution);
+        Assert.NotNull(region.Validation);
+        Assert.NotNull(region.Exposure);
 
         var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root with
         {
@@ -279,15 +270,13 @@ public class DeferredRegionAttachmentTests
         }));
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
         Assert.Equal([12m], result.Value);
-        Assert.Equal(1, firstRegion.MaterializationAttempts);
-        Assert.Equal(0, secondRegion.MaterializationAttempts);
+        Assert.Equal(1, region.MaterializationAttempts);
         Assert.Equal(1, modules[ModuleA]);
 
         var both = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root));
         Assert.False(both.IsError, both.IsError ? both.Error.ToString() : null);
         Assert.Equal([12m, 111m], both.Value);
-        Assert.Equal(1, firstRegion.MaterializationAttempts);
-        Assert.Equal(1, secondRegion.MaterializationAttempts);
+        Assert.Equal(1, region.MaterializationAttempts);
         Assert.Equal(1, modules[ModuleA]);
     }
 

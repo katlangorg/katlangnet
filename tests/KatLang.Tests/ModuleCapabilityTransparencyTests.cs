@@ -771,7 +771,11 @@ public class ModuleCapabilityTransparencyTests
                 ParseOptions(suspending ? modules.DownloadSuspending : modules.Download));
             var p = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "P").Value);
             Assert.Equal(isModule, p.IsModuleElaborated);
-            Assert.Equal(LeanAstEncoder.EncodeProgram(oracle.Root), LeanAstEncoder.EncodeProgram(parsed.Root));
+            // The loaded module is the inline text's tree exactly, marked as the one module
+            // declaration it is (Q-31 H-P / Q-32 I-U: `PropertyIdentity.module`, wired at the
+            // prelude): the mark is the only difference.
+            Assert.True(ContainsModuleMark(LeanAstEncoder.EncodeProgram(parsed.Root)));
+            Assert.Equal(LeanAstEncoder.EncodeProgram(oracle.Root), WithoutModuleMarks(LeanAstEncoder.EncodeProgram(parsed.Root)));
             Assert.Equal(1, Assert.Single(modules.Fetches).Value);
             if (source.StartsWith("P(", StringComparison.Ordinal))
                 Assert.True(p.HasExplicitParameterList);
@@ -820,7 +824,7 @@ public class ModuleCapabilityTransparencyTests
         var parsed = await ParseCleanAsync(source,
             ParseOptions(new ModuleServer((NestedModule, remote), (BlockModule, BlockModuleText)).Download));
         Assert.Equal(LeanAstEncoder.EncodeProgram(ParseClean(inline, ParseOptions()).Root),
-            LeanAstEncoder.EncodeProgram(parsed.Root));
+            WithoutModuleMarks(LeanAstEncoder.EncodeProgram(parsed.Root)));
     }
 
     [Theory]
@@ -873,16 +877,16 @@ public class ModuleCapabilityTransparencyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task CanonicalAliasesShareCachedDraw_WhileInlineOpenKeepsItsOwner(bool inlineOpen)
+    public async Task CanonicalAliasesShareCachedDraw_AndEveryOpenOfTheModuleReadsIt(bool inlineOpen)
     {
         const string moduleText = "public V = randomInt(0, 1000000)";
         var open = inlineOpen ? $"open load('{BlockModule}')" : "open A";
         var source = $"{open}\nA = load('{BlockModule}')\nB = load('https://KATLANG.ORG:443/pv02/./block.kat#alias')\nA.V, B.V, V, randomInt(0, 1000000)";
-        // An inline open provider has its own lexical owner (MOD-06). Named open A
-        // navigates A instead. Keep that established difference in the independent oracle.
-        var inline = inlineOpen ? $"open {{ {moduleText} }}" : "open A";
+        // One canonical URL is ONE module declaration (Q-32 I-U), so an inline open of the module
+        // — unlike an inline open of a WRITTEN block, which is a declaration of its own (MOD-06) —
+        // reads the same member binding as the holders, exactly like the named `open A`.
         var oracle = await ObserveAsync(Route.EngineSync,
-            $"{inline}\nA = {{ {moduleText} }}\nA.V, A.V, V, randomInt(0, 1000000)", Modules());
+            $"open A\nA = {{ {moduleText} }}\nA.V, A.V, V, randomInt(0, 1000000)", Modules());
         Assert.Equal("ok", oracle.Kind);
         foreach (var route in DownloaderRoutes)
         {
@@ -899,6 +903,50 @@ public class ModuleCapabilityTransparencyTests
             var opened = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens)).Algorithm;
             Assert.Same(a.Declaration, opened.Declaration);
         }
+    }
+
+    private const string ModuleMarkPrefix = "(Algorithm.withDeclarationId (some (.module ";
+
+    private static bool ContainsModuleMark(string encoded) => encoded.Contains(ModuleMarkPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The Lean encoding with every loaded-module mark removed: each
+    /// <c>(Algorithm.withDeclarationId (some (.module N)) TERM)</c> becomes <c>TERM</c>.
+    /// </summary>
+    private static string WithoutModuleMarks(string encoded)
+    {
+        while (encoded.IndexOf(ModuleMarkPrefix, StringComparison.Ordinal) is var start and >= 0)
+        {
+            var termStart = encoded.IndexOf(")) ", start + ModuleMarkPrefix.Length, StringComparison.Ordinal) + 3;
+            var depth = 0;
+            var end = -1;
+            for (var i = start; i < encoded.Length && end < 0; i++)
+            {
+                switch (encoded[i])
+                {
+                    case '"':
+                        for (i++; i < encoded.Length && encoded[i] != '"'; i++)
+                        {
+                            if (encoded[i] == '\\')
+                                i++;
+                        }
+
+                        break;
+                    case '(':
+                        depth++;
+                        break;
+                    case ')':
+                        if (--depth == 0)
+                            end = i;
+                        break;
+                }
+            }
+
+            Assert.True(end > termStart, "unbalanced module mark");
+            encoded = encoded[..start] + encoded[termStart..end] + encoded[(end + 1)..];
+        }
+
+        return encoded;
     }
 
     [Theory]

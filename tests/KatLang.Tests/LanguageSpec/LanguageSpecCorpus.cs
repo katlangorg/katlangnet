@@ -3235,25 +3235,106 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "open-full-spelling-decides-provider-identity",
+            Id = "open-distinct-declarations-stay-distinct-providers",
             Category = "name-resolution",
-            Source = $"open {new string('N', 520)}A, {new string('N', 520)}B\n{new string('N', 520)}A = {{ public X = 1 }}\n{new string('N', 520)}B = {{ public X = 2 }}\nX",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "ambiguousOpen",
-            Explanation = "Named open targets deduplicate by their complete spelling. Distinct names remain distinct providers even when their diagnostic displays abbreviate to the same text; two providers of X are ambiguous in either order.",
+            Source = $"open {new string('N', 520)}A, {new string('N', 520)}B\n{new string('N', 520)}A = {{ public X = 1 }}\n{new string('N', 520)}B = {{ public X = 1 }}\nX",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is ambiguous: 2 different opened algorithms provide it at the same open level",
+            ExpectedDiagnosticCode = DiagnosticCode.AmbiguousOpen,
+            Probes =
+            [
+                new SpecProbe($"open {new string('N', 520)}A, {new string('N', 520)}A\n{new string('N', 520)}A = {{ public X = 1 }}\nX", "ok raw=1 n=1"),
+            ],
+            Notes = "Q-19 D-I (decided 2026-10-06) replaced the former `open-full-spelling-decides-provider-identity`, which taught that the written spelling identified a provider.",
+            Explanation = "An `open` list counts the PROVIDERS its targets resolve to — each declaration once, in its declaring scope — never their spellings or their contents. Two declarations stay two providers even when their bodies are identical and their names abbreviate to the same diagnostic text, so a written `X` that both provide is ambiguous; one declaration written twice is one provider.",
         },
         new()
         {
             Id = "open-local-only-member-is-a-second-provider",
             Category = "name-resolution",
             Source = "Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    X\n}\nA",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "ambiguousOpen",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is ambiguous: 2 different opened algorithms provide it at the same open level",
+            ExpectedDiagnosticCode = DiagnosticCode.AmbiguousOpen,
             Probes =
             [
                 new SpecProbe("Pub = {\n    public X = 101\n}\nLib = {\n    X = 202\n}\nA = {\n    open Pub, Lib\n    X\n}\nA", "ok raw=101 n=1"),
+                // The overlap itself is valid while nobody writes the name.
+                new SpecProbe("Pub = {\n    public X = 101\n}\nOuter(p) = {\n    public Lib = {\n        public X = p + 202\n    }\n    0\n}\nA = {\n    open Pub, Outer.Lib\n    5\n}\nA", "ok raw=5 n=1"),
             ],
-            Explanation = "`open` selects members by visibility alone: a public local-only member is provided by its open whatever its exposure and takes part in precedence and ambiguity like any provided name, so beside another provider of `X` it is a genuine second provider. Only a PRIVATE member is never provided. Whether the selected member may be used at the site is checked afterwards, which is what lets the front end select exactly what the evaluator selects before exposure is classified.",
+            Explanation = "`open` selects members by visibility alone: a public local-only member is provided by its open whatever its exposure and takes part in precedence and ambiguity like any provided name, so beside another provider of `X` it is a genuine second provider and a written `X` is ambiguous. Only a PRIVATE member is never provided. Whether the selected member may be used at the site is checked afterwards, which is what lets the front end select exactly what the evaluator selects before exposure is classified.",
+        },
+        new()
+        {
+            Id = "open-two-spellings-one-provider",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public Sub = {\n        public X = 1\n    }\n    public R = {\n        open Sub, Lib.Sub\n        X\n    }\n}\nLib.R",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Lib = {\n    public Sub = {\n        public X = 1\n    }\n    public R = {\n        open Lib.Sub, Sub\n        X\n    }\n}\nLib.R", "ok raw=1 n=1"),
+                new SpecProbe("open M, M\nM = {\n    public X = 1\n}\nX", "ok raw=1 n=1"),
+                new SpecProbe("open M, (M)\nM = {\n    public X = 1\n}\nX", "ok raw=1 n=1"),
+                new SpecProbe("open Lib.Sub, Lib.Sub\nLib = {\n    public Sub = {\n        public X = 1\n    }\n}\nX", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-19 D-I (decided 2026-10-06).",
+            Explanation = "Opening the same provider twice still opens it once, however the paths are spelled: inside `Lib.R`, `Sub` and `Lib.Sub` name the one declaration `Sub`, so `X` has one provider in either order, exactly like `open M, M` and `open M, (M)`. Provider identity is the declaration in its declaring scope, never the written text or its position in the list.",
+        },
+        new()
+        {
+            Id = "open-identical-inline-blocks-two-providers",
+            Category = "name-resolution",
+            Source = "open { public X = 1 }, { public X = 1 }\nX",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is ambiguous: 2 different opened algorithms provide it at the same open level",
+            ExpectedDiagnosticCode = DiagnosticCode.AmbiguousOpen,
+            Probes =
+            [
+                new SpecProbe("open { public X = 1 }, { public X = 1 }\n5", "ok raw=5 n=1"),
+                new SpecProbe("open { public X = 1 }, { public Y = 1 }\nX", "ok raw=1 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-19 D-I with Q-29 A-U (decided 2026-10-06).",
+            Explanation = "Two written blocks are two declarations, so they are two providers even when their text and members are identical: providers are never merged by their contents or their values. A written `X` that both provide is ambiguous, while the overlap alone, with no written `X`, is valid.",
+        },
+        new()
+        {
+            Id = "ambiguous-open-written-use-is-static",
+            Category = "name-resolution",
+            Source = "open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nY = X\n5",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'X' is ambiguous: 2 different opened algorithms provide it at the same open level (A, B)",
+            ExpectedDiagnosticCode = DiagnosticCode.AmbiguousOpen,
+            Probes =
+            [
+                new SpecProbe("open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nA.X + B.X", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-29 A-U (decided 2026-10-06): before, a written ambiguous name was accepted until evaluation demanded it.",
+            Explanation = "A written name is resolved statically, whether or not evaluation ever demands it: `Y` is never read, yet its `X` reaches an open level where two different providers supply `X`, so it names no declaration and the program is rejected at that `X`. Demand decides what is computed, never what a written name means. Qualify the name (`A.X`) or open only one of the providers.",
+        },
+        new()
+        {
+            Id = "ambiguous-open-unused-overlap-is-valid",
+            Category = "name-resolution",
+            Source = "open A, B\nA = {\n    public X = 1\n    public P = 10\n}\nB = {\n    public X = 2\n    public Q = 20\n}\nP + Q",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "30",
+            ExpectedRaw = "30",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Lexical precedence decides first: an owned X, or a nearer level that provides X once.
+                new SpecProbe("open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nX = 9\nX", "ok raw=9 n=1"),
+                new SpecProbe("open A, B\nA = {\n    public X = 1\n}\nB = {\n    public X = 2\n}\nC = {\n    open D\n    D = {\n        public X = 3\n    }\n    X\n}\nC", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-29 A-U (decided 2026-10-06).",
+            Explanation = "Different opened algorithms may contain the same name: the overlap itself is valid, so adding an unused member to one library never breaks a program that opens it beside another. Only a written reference that resolves to two providers at the same open level is rejected, and lexical precedence decides first — an owned `X`, or a nearer open level that provides `X` once, is selected without ambiguity.",
         },
         new()
         {
@@ -3369,17 +3450,18 @@ public static class LanguageSpecCorpus
             Id = "inline-headed-open-paths-keep-distinct-providers",
             Category = "name-resolution",
             Source = "open { public S = { public X = 5 } }.S, { public S = { public X = 7 } }.S\nX",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "ambiguousOpen",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is ambiguous: 2 different opened algorithms provide it at the same open level",
+            ExpectedDiagnosticCode = DiagnosticCode.AmbiguousOpen,
             Probes =
             [
-                new SpecProbe("open { public S = { public X = 7 } }.S, { public S = { public X = 5 } }.S\nX", "err ambiguousOpen"),
+                new SpecProbe("open { public S = { public X = 7 } }.S, { public S = { public X = 5 } }.S\n5", "ok raw=5 n=1"),
                 new SpecProbe("open { public S = { public Y = 5 } }.S, { public S = { public X = 7 } }.S\nX", "ok raw=7 n=1"),
                 new SpecProbe("open { public S = { X = 5 } }.S, { public S = { public X = 7 } }.S\nX", "ok raw=7 n=1"),
                 new SpecProbe("open Lib.S, (Lib).S\nLib = { public S = { public X = 7 } }\nX", "ok raw=7 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Each inline open target is a separate provider, including a dotted path starting at a brace block or loaded module. Two such targets that provide X are ambiguous, even when both paths have the same member names. A diagnostic abbreviation such as `{...}.S` never identifies a provider. Repeating a name-headed path such as `open Lib.S, Lib.S` still deduplicates by its complete name.",
+            Explanation = "Each written block is its own declaration, so a dotted path starting at a brace block is a separate provider from a path starting at another block, even when both paths have the same member names: a written `X` that both provide is ambiguous, while the overlap alone is valid. A diagnostic abbreviation such as `{...}.S` never identifies a provider, and two spellings of one name-headed path such as `open Lib.S, (Lib).S` are one provider.",
         },
         new()
         {

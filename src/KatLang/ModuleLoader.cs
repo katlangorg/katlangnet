@@ -123,6 +123,14 @@ internal sealed partial class ModuleLoader
     /// <summary>Deferred module regions this loader created during its most recent walk (test-observable).</summary>
     internal int DeferredRegionCount { get; private set; }
 
+    /// <summary>
+    /// The program's loaded module units (Q-32 I-U): the one elaborated declaration of each import
+    /// view this loader spliced, published by the error-free front-end operations of its document —
+    /// the parse, then each deferred materialization — so every operation of the program reaches
+    /// one declaration per canonical URL (<see cref="ModuleUnitRegistry"/>).
+    /// </summary>
+    internal ModuleUnitRegistry ModuleUnits { get; } = new();
+
     // The load directives the most recent walk REFUSED — the root elaboration or one deferred
     // materialization, nested module walks included. A refused load keeps its written node in the
     // output (RefuseLoad), so these are exactly the unresolved directives the post-elaboration
@@ -1555,12 +1563,12 @@ internal sealed partial class ModuleLoader
         // 5. Cache check — an already-elaborated module splices without re-traversal
         // or re-download, so it charges no cumulative traversal depth, no module slot, and
         // never suspends. The cached instance is ONE caller-independent import view: the
-        // splice stamps only the wrapper node with this site's span. The front end still
-        // elaborates the view once more in THIS site's scope (module content resolves against
-        // the scope it is spliced into), so the splice charges the module's elaborated weight
-        // against the aggregate: without it, K splices of one module in K distinct scopes cost
-        // K times the module's elaboration — a product of two source sizes no per-source
-        // ceiling bounds.
+        // splice stamps only the wrapper node with this site's span. A loaded module is a
+        // hygienic unit rooted at the prelude (Q-31 H-P) that the front end elaborates ONCE per
+        // program (Q-32 I-U: ModuleUnitRegistry), so a splice no longer multiplies front-end
+        // work; it still charges the module's elaborated weight against the aggregate, because
+        // source admission is host policy over the program as written (Q-71 unchanged: the
+        // aggregate bounds every splice of the elaborated program, exactly as before).
         if (_cache.TryGetValue(moduleUrl, out var cached))
         {
             if (!_budget.TryReserveAggregate(cached.Weight))

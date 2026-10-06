@@ -49,15 +49,46 @@ internal sealed class ElaboratedPropertyScope
         IReadOnlyList<Expr> opens,
         IReadOnlyList<PropertyLookupHit> properties,
         FrontEndTraversalObservations? observations = null,
-        OpenMemberIndexCache? memberIndexes = null)
+        OpenMemberIndexCache? memberIndexes = null,
+        Algorithm? owner = null)
     {
+        // A loaded module is a source unit rooted at the prelude (Q-31 H-P): its level's enclosing
+        // level is the chain's root level wherever it is held, so no lookup from inside it — by any
+        // pass, the editor included — ever reaches the holder's names.
+        if (owner?.IsModuleRoot == true && parent is not null)
+            parent = parent.Root;
+
         Parent = parent;
         Opens = opens;
         Properties = properties;
         Observations = parent?.Observations ?? observations;
         Root = parent is null ? this : parent.Root;
         MemberIndexes = memberIndexes ?? parent?.MemberIndexes;
+        OwnerDeclaration = owner?.Declaration ?? (object?)owner ?? this;
+        IsModuleLevel = owner?.IsModuleRoot == true;
+        HasOpensInChain = opens.Count > 0 || parent?.HasOpensInChain == true;
     }
+
+    /// <summary>
+    /// Whether this level is a loaded module's own body (Q-31 H-P): a declaration at the root level
+    /// wherever it is held, so a declaring chain restarts there (<see cref="OpenProviderIdentity"/>).
+    /// </summary>
+    internal bool IsModuleLevel { get; }
+
+    /// <summary>
+    /// Whether this level or an enclosing one declares an <c>open</c> target: whether a name
+    /// lookup from here can reach an open level at all (a pure fast path — the open fallback of a
+    /// chain without opens provides nothing).
+    /// </summary>
+    internal bool HasOpensInChain { get; }
+
+    /// <summary>
+    /// The declaration whose body this level is — the algorithm the level was created from
+    /// (its <see cref="Algorithm.Declaration"/>, so every <c>with</c> view of one written body is
+    /// one owner) — or, for a level built without an owner, the level itself. One element of a
+    /// provider's declaring-owner chain (<see cref="OpenProviderIdentity"/>).
+    /// </summary>
+    internal object OwnerDeclaration { get; }
 
     /// <summary>
     /// The owning operation's shared open-target member indexes (see the class remarks):
@@ -124,15 +155,15 @@ internal sealed class ElaboratedPropertyScope
     }
 
     /// <summary>
-    /// This level's resolved <c>open</c> providers in declaration order: named
-    /// targets deduplicated first-occurrence-wins by their open spelling
-    /// (inline blocks never deduplicate — the evaluator's
-    /// <c>ResolveAllOpens</c> rule, keyed by the one shared
-    /// <see cref="Evaluator.OpenTargetDedupKey"/>), unresolvable
-    /// targets omitted. Resolution is pure and diagnostic-free, and it is
-    /// performed LAZILY — only when a lookup actually consults this level's
-    /// opens — so owned-name precedence and the no-consultation case cost
-    /// exactly what they did before the cache.
+    /// This level's resolved <c>open</c> PROVIDERS in declaration order, each counted once
+    /// (Q-19 D-I, decided 2026-10-06): targets that resolve to the same semantic provider
+    /// (<see cref="OpenProviderIdentity"/> — the evaluator's <c>ResolveAllOpens</c> rule) are one
+    /// provider whatever their spelling or position, the first occurrence representing it;
+    /// unresolvable targets are omitted. A repeated written-target key
+    /// (<see cref="Evaluator.OpenTargetDedupKey"/>) is skipped before resolution as a pure
+    /// optimization. Resolution is pure and diagnostic-free, and it is performed LAZILY — only
+    /// when a lookup actually consults this level's opens — so owned-name precedence and the
+    /// no-consultation case cost exactly what they did before the cache.
     /// </summary>
     public IReadOnlyList<ResolvedOpenProvider> GetResolvedOpenProviders()
     {
@@ -144,6 +175,7 @@ internal sealed class ElaboratedPropertyScope
 
         List<ResolvedOpenProvider>? providers = null;
         HashSet<string>? seenKeys = null;
+        HashSet<OpenProviderIdentity>? seenProviders = null;
         for (var i = 0; i < Opens.Count; i++)
         {
             var openExpr = Opens[i];
@@ -152,8 +184,9 @@ internal sealed class ElaboratedPropertyScope
                 continue;
 
             Observations?.RecordLookupOpenTargetResolution();
-            if (ElaboratedScopeLookup.ResolveOpenTarget(this, openExpr) is { } target)
-                (providers ??= []).Add(new ResolvedOpenProvider(target, Observations, MemberIndexes));
+            if (ElaboratedScopeLookup.ResolveOpenProvider(this, openExpr) is { } resolved
+                && (seenProviders ??= []).Add(resolved.Identity))
+                (providers ??= []).Add(new ResolvedOpenProvider(resolved.Target, Observations, MemberIndexes, resolved.Identity) { Written = openExpr });
         }
 
         return _openProviders = providers is not null ? providers : [];
@@ -204,14 +237,22 @@ internal sealed class ResolvedOpenProvider
     public ResolvedOpenProvider(
         Algorithm target,
         FrontEndTraversalObservations? observations,
-        OpenMemberIndexCache? memberIndexes = null)
+        OpenMemberIndexCache? memberIndexes = null,
+        OpenProviderIdentity? identity = null)
     {
         Target = target;
         _observations = observations;
         _memberIndexes = memberIndexes;
+        Identity = identity;
     }
 
     public Algorithm Target { get; }
+
+    /// <summary>The provider's semantic identity (<see cref="OpenProviderIdentity"/>) when its level resolved it; null for a host-built provider.</summary>
+    public OpenProviderIdentity? Identity { get; }
+
+    /// <summary>The first written open target of the level that resolved to this provider (diagnostics only).</summary>
+    public Expr? Written { get; init; }
 
     public PropertyLookupHit? TryLookupPublicMember(string name)
     {
@@ -325,6 +366,191 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
 }
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
+
+/// <summary>
+/// The SEMANTIC identity of one <c>open</c> provider (Q-19 D-I, decided 2026-10-06): the
+/// provider's declaration followed by the declarations of the owners that declare it, outward to
+/// the chain's root level — the static form of the language's one callable identity (the
+/// evaluator's <c>SameRepeatedCallableIdentity</c>: the same declaration in the same declaring
+/// scope). Targets of one open level whose identities are equal are ONE provider, however they are
+/// spelled: <c>open M, M</c>, <c>open M, (M)</c>, and <c>open Sub, Lib.Sub</c> for one declaration
+/// <c>Sub</c> of <c>Lib</c>. A block written as an open target is declared at the root level (it is
+/// wired to the prelude), so two written blocks are two providers however equal their members.
+/// Identity never compares member names, member values, or source text. Every front-end consumer
+/// that counts providers — elaborated lookup (and with it detection, the static ambiguity check and
+/// the editor), exposure settlement, dependency analysis, and implicit-argument resolution — reads
+/// this one identity (<see cref="ElaboratedScopeLookup.ResolveOpenProvider"/>).
+/// </summary>
+internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
+{
+    /// <summary>
+    /// The chain's root level — the prelude every front-end chain is rooted at — as one element
+    /// of every declaring chain, so identities computed over different chains of one program agree.
+    /// </summary>
+    private static readonly object RootLevel = new();
+
+    // The provider's declaration first, then its declaring owners outward. Each element is a
+    // declaration (DeclarationIdentity, compared by reference — one written declaration), the root
+    // level, or, for a level or provider without a declaration, that object itself.
+    private readonly object[] _declarations;
+    private readonly int _hash;
+
+    private OpenProviderIdentity(object[] declarations, bool complete)
+    {
+        _declarations = declarations;
+        IsComplete = complete;
+        var hash = new HashCode();
+        hash.Add(complete);
+        foreach (var declaration in declarations)
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(declaration));
+        _hash = hash.ToHashCode();
+    }
+
+    /// <summary>
+    /// Whether the declaring chain is known all the way to the root level. The scope-free summary
+    /// walk of exposure analysis (<see cref="PropertyDependencyGraphBuilder"/>) builds an identity
+    /// inside a body whose enclosing levels it has not reached yet: such an identity is
+    /// INCOMPLETE — declared within the levels it lists — and is extended level by level as its
+    /// reference escapes (<see cref="EscapedThrough"/>) until the level that settles it completes
+    /// it (<see cref="CompletedAt"/>). Two identities of one open lookup are compared only when
+    /// both are complete or both end at the same level.
+    /// </summary>
+    internal bool IsComplete { get; }
+
+    /// <summary>A provider declared as a property of <paramref name="level"/>: its declaration, then the owners of that level outward.</summary>
+    internal static OpenProviderIdentity DeclaredAt(Algorithm provider, ElaboratedPropertyScope level)
+    {
+        if (provider.IsModuleRoot)
+            return DeclaredAtRoot(provider);
+        var declarations = new List<object> { DeclarationOf(provider) };
+        AppendChain(declarations, level);
+        return new([.. declarations], complete: true);
+    }
+
+    /// <summary>A provider declared as a property of the level whose declaring owners are <paramref name="owners"/>.</summary>
+    internal static OpenProviderIdentity DeclaredIn(Algorithm provider, DeclaringOwners owners)
+    {
+        if (provider.IsModuleRoot)
+            return DeclaredAtRoot(provider);
+        var declarations = new List<object> { DeclarationOf(provider) };
+        for (var current = owners; current is not null; current = current.Outer)
+            declarations.Add(current.Declaration);
+        return new([.. declarations], complete: true);
+    }
+
+    /// <summary>
+    /// A provider declared at the root level, wherever it is named: a block written as an open
+    /// target (it is wired to the prelude, never to its opener), and a loaded module wherever it is
+    /// held (Q-31 H-P / Q-32 I-U: one module declaration, wired to the prelude, whatever spelling
+    /// reaches it — <c>open 'u'</c>, <c>open M</c> for <c>M = load('u')</c>, <c>load('u').Sub</c>).
+    /// </summary>
+    internal static OpenProviderIdentity DeclaredAtRoot(Algorithm provider)
+        => new([DeclarationOf(provider), RootLevel], complete: true);
+
+    /// <summary>
+    /// A provider declared as a property of the body <paramref name="level"/> whose enclosing
+    /// levels are not known yet: an incomplete identity (see <see cref="IsComplete"/>) — unless the
+    /// provider or the level is a loaded module, which is declared at the root level.
+    /// </summary>
+    internal static OpenProviderIdentity DeclaredWithin(Algorithm provider, Algorithm level)
+        => provider.IsModuleRoot ? DeclaredAtRoot(provider)
+            : level.IsModuleRoot ? new([DeclarationOf(provider), DeclarationOf(level), RootLevel], complete: true)
+            : new([DeclarationOf(provider), DeclarationOf(level)], complete: false);
+
+    /// <summary>A member of this provider: the member's declaration, then this provider's identity (a member that is itself a loaded module restarts at the root level).</summary>
+    internal OpenProviderIdentity Member(Algorithm member)
+        => member.IsModuleRoot ? DeclaredAtRoot(member) : new([DeclarationOf(member), .. _declarations], IsComplete);
+
+    /// <summary>
+    /// An incomplete identity whose reference escaped the body <paramref name="level"/>: declared
+    /// within that level too — and complete when that level is a loaded module, which is declared at
+    /// the root level wherever it is held.
+    /// </summary>
+    internal OpenProviderIdentity EscapedThrough(Algorithm level)
+        => IsComplete ? this
+            : level.IsModuleRoot ? new([.. _declarations, DeclarationOf(level), RootLevel], complete: true)
+            : new([.. _declarations, DeclarationOf(level)], complete: false);
+
+    /// <summary>An incomplete identity settled from <paramref name="level"/>: the levels it lists are inside that level, whose own chain completes it.</summary>
+    internal OpenProviderIdentity CompletedAt(ElaboratedPropertyScope level)
+    {
+        if (IsComplete)
+            return this;
+        var declarations = new List<object>(_declarations);
+        AppendChain(declarations, level);
+        return new([.. declarations], complete: true);
+    }
+
+    private static void AppendChain(List<object> declarations, ElaboratedPropertyScope level)
+    {
+        for (var current = level; current is not null; current = current.Parent)
+        {
+            declarations.Add(current.Parent is null ? RootLevel : current.OwnerDeclaration);
+            if (current.IsModuleLevel && current.Parent is not null)
+            {
+                // A loaded module's level is declared at the root level wherever it is held.
+                declarations.Add(RootLevel);
+                return;
+            }
+        }
+    }
+
+    /// <summary>The root level's element of a declaring chain (see <see cref="DeclaringOwners.Root"/>).</summary>
+    internal static object RootLevelDeclaration => RootLevel;
+
+    internal static object DeclarationOf(Algorithm algorithm) => algorithm.Declaration ?? (object)algorithm;
+
+    public bool Equals(OpenProviderIdentity? other)
+    {
+        if (other is null || other._hash != _hash || other.IsComplete != IsComplete
+            || other._declarations.Length != _declarations.Length)
+            return false;
+        for (var i = 0; i < _declarations.Length; i++)
+        {
+            if (!ReferenceEquals(_declarations[i], other._declarations[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    public override bool Equals(object? obj) => Equals(obj as OpenProviderIdentity);
+
+    public override int GetHashCode() => _hash;
+}
+
+/// <summary>One resolved open target: the provider algorithm and its semantic identity.</summary>
+internal readonly record struct ResolvedOpenTarget(Algorithm Target, OpenProviderIdentity Identity);
+
+/// <summary>
+/// The declaring owners of one level, innermost first, ending at the root level — the chain an
+/// open provider's identity appends (<see cref="OpenProviderIdentity.DeclaredIn"/>) for a pass that
+/// walks levels without building <see cref="ElaboratedPropertyScope"/> chains (implicit-argument
+/// resolution). Immutable and persistent: a nested level extends its parent's chain in O(1).
+/// </summary>
+internal sealed class DeclaringOwners
+{
+    private DeclaringOwners(DeclaringOwners? outer, object declaration)
+    {
+        Outer = outer;
+        Declaration = declaration;
+    }
+
+    /// <summary>The root level (the prelude every chain is rooted at).</summary>
+    public static DeclaringOwners Root { get; } = new(null, OpenProviderIdentity.RootLevelDeclaration);
+
+    /// <summary>The enclosing level's chain; null at the root.</summary>
+    public DeclaringOwners? Outer { get; }
+
+    /// <summary>This level's owner declaration (see <see cref="ElaboratedPropertyScope.OwnerDeclaration"/>).</summary>
+    public object Declaration { get; }
+
+    /// <summary>
+    /// The chain of the body <paramref name="owner"/> nested in this level — or, for a loaded module,
+    /// the chain of a body declared at the root level wherever it is held (Q-31 H-P).
+    /// </summary>
+    public DeclaringOwners Inside(Algorithm owner) => new(owner.IsModuleRoot ? Root : this, OpenProviderIdentity.DeclarationOf(owner));
+}
 
 /// <summary>
 /// What the ownership-first OWNER WALK selects for a bare name.
@@ -447,7 +673,8 @@ internal static class ElaboratedScopeLookup
             algorithm.Opens,
             CreatePropertyHits(algorithm, algorithm.Properties),
             observations,
-            memberIndexes);
+            memberIndexes,
+            algorithm);
 
     public static PropertyLookupHit? TryLookupProperty(Algorithm owner, string name)
     {
@@ -564,11 +791,68 @@ internal static class ElaboratedScopeLookup
     /// name-headed and a block-headed path resolve by the same rule.
     /// </summary>
     public static Algorithm? ResolveOpenTarget(ElaboratedPropertyScope scope, Expr openExpr)
+        => ResolveOpenProvider(scope, openExpr)?.Target;
+
+    /// <summary>
+    /// The static target of one open expression together with its semantic provider identity
+    /// (<see cref="OpenProviderIdentity"/>), or null when it provides nothing: the ONE resolution
+    /// every front-end consumer that counts providers reads. A name head is declared at the level
+    /// the direct chain finds it on; a block head is declared at the chain's root (it is wired to
+    /// the prelude); each dotted step is a PUBLIC member of the previous provider, declared there.
+    /// </summary>
+    public static ResolvedOpenTarget? ResolveOpenProvider(ElaboratedPropertyScope scope, Expr openExpr)
     {
-        var receiver = ResolveOpenTargetHead(scope, openExpr.OpenTargetHead(out var steps));
-        for (var i = 0; receiver is not null && i < steps.Count; i++)
-            receiver = TryLookupPublicProperty(receiver, steps[i], scope.Observations)?.Property.Value;
-        return receiver;
+        var head = openExpr.OpenTargetHead(out var steps);
+        if (ResolveOpenProviderHead(scope, head) is not { } resolved)
+            return null;
+
+        var (receiver, identity) = resolved;
+        for (var i = 0; i < steps.Count; i++)
+        {
+            if (TryLookupPublicProperty(receiver, steps[i], scope.Observations) is not { } step)
+                return null;
+            receiver = step.Property.Value;
+            identity = identity.Member(receiver);
+        }
+
+        return new ResolvedOpenTarget(receiver, identity);
+    }
+
+    /// <summary>
+    /// The provider an open target's HEAD denotes with its identity (see
+    /// <see cref="ResolveOpenTargetHead"/>, whose resolution this is): a name head through the
+    /// direct chain, declared at the level that holds it; a block head declared at the root level.
+    /// </summary>
+    private static ResolvedOpenTarget? ResolveOpenProviderHead(ElaboratedPropertyScope scope, Expr head)
+    {
+        switch (head)
+        {
+            case Expr.Resolve(var name):
+            {
+                var observations = scope.Observations;
+                for (var current = scope; current is not null; current = current.Parent)
+                {
+                    observations?.RecordLookupLevelVisit();
+                    if (current.TryLookupOwnProperty(name) is { } hit)
+                    {
+                        var provider = hit.Property.Value;
+                        return new ResolvedOpenTarget(provider, OpenProviderIdentity.DeclaredAt(provider, current));
+                    }
+                }
+
+                return null;
+            }
+
+            case Expr.AlgorithmExpr(var algorithm):
+                return new ResolvedOpenTarget(algorithm, OpenProviderIdentity.DeclaredAtRoot(algorithm));
+
+            default:
+                // A parameter-owned head, a recovery capture, or a non-open form: the same verdict
+                // as ResolveOpenTargetHead, with a capture's empty recovery scope declared in place.
+                return ResolveOpenTargetHead(scope, head) is { } recovered
+                    ? new ResolvedOpenTarget(recovered, OpenProviderIdentity.DeclaredAtRoot(recovered))
+                    : null;
+        }
     }
 
     /// <summary>
@@ -649,6 +933,36 @@ internal static class ElaboratedScopeLookup
         return LookupOpenPropertyMatches(scope, name);
     }
 
+    /// <summary>
+    /// Q-29 A-U (decided 2026-10-06): the providers of the open level a bare-name lookup of
+    /// <paramref name="name"/> reaches when that level has two or more DIFFERENT providers of it
+    /// (counted by <see cref="OpenProviderIdentity"/>, Q-19 D-I) — the written name then denotes no
+    /// declaration — or null when lexical precedence decides first (a property of the direct chain,
+    /// the prelude included; a nearer open level providing it once) or no open provides it. The
+    /// caller has excluded parameters by the owner walk. Chains without any <c>open</c> answer null
+    /// without a lookup.
+    /// </summary>
+    public static IReadOnlyList<ResolvedOpenProvider>? FindAmbiguousOpenProviders(ElaboratedPropertyScope scope, string name)
+    {
+        if (!scope.HasOpensInChain || TryLookupDirectLexicalProperty(scope, name) is not null)
+            return null;
+
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            List<ResolvedOpenProvider>? providing = null;
+            foreach (var provider in current.GetResolvedOpenProviders())
+            {
+                if (provider.TryLookupPublicMember(name) is not null)
+                    (providing ??= []).Add(provider);
+            }
+
+            if (providing is not null)
+                return providing.Count > 1 ? providing : null;
+        }
+
+        return null;
+    }
+
     private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent, OpenMemberIndexCache? memberIndexes)
         => parent is null ? null : CreateScope(parent, memberIndexes);
 
@@ -657,7 +971,8 @@ internal static class ElaboratedScopeLookup
             CreateParentScope(scope.Parent, memberIndexes),
             scope.Opens,
             CreatePropertyHits(CreateSyntheticOwner(scope), scope.Properties),
-            memberIndexes: memberIndexes);
+            memberIndexes: memberIndexes,
+            owner: scope.Owner);
 
     private static IReadOnlyList<PropertyLookupHit> CreatePropertyHits(Algorithm owner, IReadOnlyList<Property> properties)
     {

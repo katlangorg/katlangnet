@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2528
-- excluded parse-level cases (Lean has no surface parser): 42
-- Lean-representable surface cases: 2486
+- surface corpus cases: 2532
+- excluded parse-level cases (Lean has no surface parser): 45
+- Lean-representable surface cases: 2487
 - internal-node cases: 14
-- total generated guards: 2500 case guards + 2 count guards
+- total generated guards: 2501 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -12005,10 +12005,10 @@ def case_special__openLocalOnlyCapturedParamsOutsideOwner : Expr :=
   .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (alg [] [(.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyCapturedParamsOutsideOwner == "err localOnlyProperty"
 
--- special__openTwoProvidersAmbiguous: L1 = { \n     public X = 101 \n } \n L2 = { \n     public X = 202 \n } \n A = { \n     open L1, L2 \n     X \n } \n A
-def case_special__openTwoProvidersAmbiguous : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "L1" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "L2" (alg [] [] [publicProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "L1", .resolve "L2"] [] [.resolve "X"])] [.resolve "A"])
-#guard obs case_special__openTwoProvidersAmbiguous == "err ambiguousOpen"
+-- special__openTwoProvidersAmbiguousAtRuntime: L1 = { \n     public X(v) = v + 101 \n } \n L2 = { \n     public X(v) = v + 202 \n } \n K(p) = { \n     open L1, L2 \n     p.X \n } \n K(10)
+def case_special__openTwoProvidersAmbiguousAtRuntime : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L1" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []), privateProp "L2" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 202))])] []), privateProp "K" (alg ["p"] [.resolve "L1", .resolve "L2"] [] [(.dotCall (.param "p") "X" none)])] [(.call (.resolve "K") [.num 10])])
+#guard obs case_special__openTwoProvidersAmbiguousAtRuntime == "err ambiguousOpen"
 
 -- special__openDuplicateTargetDedup: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib, Lib \n     X \n } \n A
 def case_special__openDuplicateTargetDedup : Expr :=
@@ -12020,10 +12020,15 @@ def case_special__openDuplicateDottedTargetDedup : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg [] [(.dotCall (.resolve "Lib") "S" none), (.dotCall (.resolve "Lib") "S" none)] [] [.resolve "X"])] [.resolve "A"])
 #guard obs case_special__openDuplicateDottedTargetDedup == "ok raw=101 n=1"
 
--- special__openDuplicateInlineBlocksAmbiguous: A = { \n     open { public X = 101 }, { public X = 202 } \n     X \n } \n A
-def case_special__openDuplicateInlineBlocksAmbiguous : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [(.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])), (.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 202])] []))] [] [.resolve "X"])] [.resolve "A"])
-#guard obs case_special__openDuplicateInlineBlocksAmbiguous == "err ambiguousOpen"
+-- special__openTwoSpellingsOneProvider: Lib = { \n     public Sub = { \n         public X = 101 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
+def case_special__openTwoSpellingsOneProvider : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), publicProp "R" (alg [] [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] [.resolve "X"])] [])] [(.dotCall (.resolve "Lib") "R" none)])
+#guard obs case_special__openTwoSpellingsOneProvider == "ok raw=101 n=1"
+
+-- special__openDuplicateInlineBlocksAmbiguousAtRuntime: K(p) = { \n     open { public X(v) = v + 101 }, { public X(v) = v + 101 } \n     p.X \n } \n K(10)
+def case_special__openDuplicateInlineBlocksAmbiguousAtRuntime : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["p"] [(.algorithmExpr (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] [])), (.algorithmExpr (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []))] [] [(.dotCall (.param "p") "X" none)])] [(.call (.resolve "K") [.num 10])])
+#guard obs case_special__openDuplicateInlineBlocksAmbiguousAtRuntime == "err ambiguousOpen"
 
 -- special__openInlineBlock: A = { \n     open { public X = 101 } \n     X \n } \n A
 def case_special__openInlineBlock : Expr :=
@@ -12080,10 +12085,10 @@ def case_special__openPrivateMemberIsNotASecondProvider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
 #guard obs case_special__openPrivateMemberIsNotASecondProvider == "ok raw=101 n=1"
 
--- special__openLocalOnlyMemberIsASecondProvider: Pub = { \n     public X = 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X = p + 202 \n     } \n     0 \n } \n A = { \n     open Pub, Outer.Lib \n     X \n } \n A
-def case_special__openLocalOnlyMemberIsASecondProvider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"]), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 202))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
-#guard obs case_special__openLocalOnlyMemberIsASecondProvider == "err ambiguousOpen"
+-- special__openLocalOnlyMemberIsASecondProviderAtRuntime: Pub = { \n     public X(v) = v + 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X(v) = v + p \n     } \n     0 \n } \n A(q) = { \n     open Pub, Outer.Lib \n     q.X \n } \n A(5)
+def case_special__openLocalOnlyMemberIsASecondProviderAtRuntime : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg ["v"] [] [] [(.binary .add (.param "v") (.param "p"))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0]), privateProp "A" (alg ["q"] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [(.dotCall (.param "q") "X" none)])] [(.call (.resolve "A") [.num 5])])
+#guard obs case_special__openLocalOnlyMemberIsASecondProviderAtRuntime == "err ambiguousOpen"
 
 -- special__ifSelectedParameterizedBranchIsArity: Inc(x) = x + 1 \n Probe(u) = if(true, Inc, 0) \n Probe(0)
 def case_special__ifSelectedParameterizedBranchIsArity : Expr :=
@@ -12525,7 +12530,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2486 differential cases.
+-- 2487 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14915,10 +14920,11 @@ def surfaceCaseIds : List String := [
   "special__openPrivateMemberHidden",
   "special__openLocalOnlyCapturedParamsInsideOwner",
   "special__openLocalOnlyCapturedParamsOutsideOwner",
-  "special__openTwoProvidersAmbiguous",
+  "special__openTwoProvidersAmbiguousAtRuntime",
   "special__openDuplicateTargetDedup",
   "special__openDuplicateDottedTargetDedup",
-  "special__openDuplicateInlineBlocksAmbiguous",
+  "special__openTwoSpellingsOneProvider",
+  "special__openDuplicateInlineBlocksAmbiguousAtRuntime",
   "special__openInlineBlock",
   "special__openInlineBlockPrivateHidden",
   "special__openDottedPath",
@@ -14930,7 +14936,7 @@ def surfaceCaseIds : List String := [
   "special__openBuiltinNameCollision",
   "special__structuralDotSeesPrivateMember",
   "special__openPrivateMemberIsNotASecondProvider",
-  "special__openLocalOnlyMemberIsASecondProvider",
+  "special__openLocalOnlyMemberIsASecondProviderAtRuntime",
   "special__ifSelectedParameterizedBranchIsArity",
   "special__ifSelectedParameterizedFalseBranchIsArity",
   "special__ifParameterizedConditionIsArity",
@@ -15020,7 +15026,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2486
+#guard surfaceCaseIds.length == 2487
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -15122,5 +15128,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2500 case guards (2486 surface + 14 internal-node).
+-- Total: 2501 case guards (2487 surface + 14 internal-node).
 end SemanticExplorerCases

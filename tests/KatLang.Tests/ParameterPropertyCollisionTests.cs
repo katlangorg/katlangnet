@@ -330,18 +330,22 @@ public class ParameterPropertyCollisionTests
         var failure = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(phantom, options));
         Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
 
-        // A spliced module is not the program root. Its declarations must still
-        // be checked against real enclosing callable parameters. The module's `Total`
-        // declaration has no position in THIS document (the spliced module is its
-        // locationless import view — its own 1:8-1:12 is never presented here), so the
-        // report sits at the import site, the declaring `Lib`, and names the parameter's
-        // local position.
+        // A spliced module is not the program root, and it is not a nested owner of its holder
+        // either: a loaded module is a source unit rooted at the prelude (Q-31 H-P), so its
+        // declarations meet none of the holder's parameters. The module's `Total` is its own
+        // member beside `Outer`'s parameter `Total` — no collision, and `Lib.Total` reads it.
         const string callable = "Outer(Total) = {\nLib = load('https://katlang.org/lib.kat')\nLib.Total\n}\nOuter(7)";
-        var rejected = await Parser.ParseAsync(callable, options);
+        var accepted = await Parser.ParseAsync(callable, options);
+        Assert.Empty(accepted.Diagnostics);
+        Assert.Equal("1", Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(callable, options)).ToDisplayString());
+
+        // A collision INSIDE the module is still the module's own declaration error, reported at
+        // the import site (the module's text has no position in this document).
+        var collidingOptions = new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("G(Total) = {\n  Total = 1\n  Total\n}\npublic V = G(2)") };
+        var rejected = await Parser.ParseAsync(callable.Replace("Lib.Total", "Lib.V", StringComparison.Ordinal), collidingOptions);
         var diagnostic = Assert.Single(rejected.Diagnostics);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, diagnostic.Code);
         Assert.Equal(new SourceSpan(2, 1, 2, 4), diagnostic.Span);
-        Assert.Contains("declared at line 1, column 7", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]

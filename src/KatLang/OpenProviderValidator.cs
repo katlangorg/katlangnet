@@ -92,7 +92,21 @@ internal sealed class OpenProviderValidator : AstWalker
     {
         // A deferred region's provisional body is validated when it materializes, under the
         // chain recorded at its branch.
-        if (algorithm.DeferredRegion is not null || !_openPresence.Contains(algorithm) || !FirstVisit(algorithm))
+        if (algorithm.DeferredRegion is not null || !_openPresence.Contains(algorithm))
+            return;
+
+        // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: its opens resolve
+        // under the prelude level whatever holds it, so it is validated in that region — once.
+        if (algorithm.IsModuleRoot && !ReferenceEquals(_scope, _scope.Root))
+        {
+            var holder = _scope;
+            _scope = _scope.Root;
+            try { VisitAlgorithm(algorithm); }
+            finally { _scope = holder; }
+            return;
+        }
+
+        if (!FirstVisit(algorithm))
             return;
 
         base.VisitAlgorithm(algorithm);
