@@ -134,8 +134,19 @@ public class GraceEffectivenessTests
             "Obj = {\n    public V = 42\n    0\n}\nObj.~V",
             "V",
             "the member 'V' always resolves structurally on its receiver");
-        AssertIneffective("K = x.~string\nK(5)", "string", "'.string' is the dot-only intrinsic");
-        AssertIneffective("v = 5\nK = v.~string\nK", "string", "'.string' is the dot-only intrinsic");
+        // Q-17 S-C: `.string` never consults a lexical `string`, so its occurrence never joins
+        // the implicit parameters on any receiver — the reason names what the edge CAN select.
+        // An opaque receiver may declare a `string` member (which then wins), a receiver known
+        // to lack one is the intrinsic, and a receiver known to declare one is that member.
+        AssertIneffective(
+            "K = x.~string\nK(5)",
+            "string",
+            "'.string' is the dot-only intrinsic unless its receiver declares a member named 'string'");
+        AssertIneffective("v = 5\nK = v.~string\nK", "string", "'.string' is the dot-only intrinsic on this receiver");
+        AssertIneffective(
+            "Obj = {\n    public string = 42\n    0\n}\nObj.~string",
+            "string",
+            "the member 'string' always resolves structurally on its receiver");
     }
 
     [Fact]

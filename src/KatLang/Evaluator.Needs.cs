@@ -48,15 +48,10 @@ public static partial class Evaluator
         var retainedValues = values;
         EvalResult<Algorithm?> Project()
         {
+            // A dot expression carries the ONE identity its projection gives it in every
+            // algorithm-capable position, the callee included (DOT-09).
             if (expression is Expr.DotCall edge)
-            {
-                if (edge.Args is not null || edge.UsesOrdinaryDotStringIntrinsic()) return EvalResult<Algorithm?>.Ok(null);
-                var member = ResolveDotReceiver(edge, caller, out var structural);
-                if (member.IsError) return IsLiftableError(member.Error) ? EvalResult<Algorithm?>.Ok(null) : member.Error;
-                if (!structural) return EvalResult<Algorithm?>.Ok(null);
-                var target = member.Value is Algorithm.Alias alias ? ResolveAliasTarget(alias, caller) : EvalResult<Algorithm>.Ok(member.Value);
-                return target.IsError ? target.Error : EvalResult<Algorithm?>.Ok(target.Value);
-            }
+                return ProjectDotPathCallable(edge, caller);
             if (ShouldWrapArgExprAsValue(expression)) return EvalResult<Algorithm?>.Ok(null);
             var resolved = ResolveAlg(expression, caller);
             return resolved.IsOk ? EvalResult<Algorithm?>.Ok(resolved.Value)

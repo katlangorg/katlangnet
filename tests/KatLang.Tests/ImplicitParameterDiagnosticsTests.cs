@@ -314,20 +314,30 @@ public class ImplicitParameterDiagnosticsTests
     [Fact]
     public void ConditionalBranch_RemainsClosedAndDoesNotInferTypoParameter()
     {
-        var parsed = SourceProvenance.ParseValid(
+        // A clause branch infers nothing. `Math` is statically known and lacks `Pie`, so
+        // `Math.Pie` is certainly the call `Pie(Math)`, and the branch checks that fallback name
+        // exactly like a closed explicit list does (Q-75 F-A): the typo is the front end's error
+        // at the member token, offering the receiver's near member — never an inferred
+        // parameter, and never left to fail only when the branch is selected.
+        var parsed = Parser.Parse(
             """
             F(0) = Math.Pie
             F(x) = x
             F(0)
             """);
 
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.Equal(new SourceSpan(1, 13, 1, 16), diagnostic.Span);
+        Assert.StartsWith(
+            "Property 'Pie' was not found on `Math`, so `Math.Pie` is the call `Pie(Math)`; 'Pie' is not declared in the "
+            + "pattern of conditional branch 'F' or otherwise visible here.",
+            diagnostic.Message,
+            StringComparison.Ordinal);
+        Assert.EndsWith("Did you mean 'Math.Pi'?", diagnostic.Message, StringComparison.Ordinal);
+
         var conditional = Assert.IsType<Algorithm.Conditional>(Assert.Single(parsed.Root.Properties).Value);
         Assert.All(conditional.Branches, branch => Assert.Empty(branch.Body.Parameters));
-
-        var result = parsed.Evaluate();
-        var unknown = Assert.IsType<EvalError.UnknownName>(Innermost(result.Error));
-        Assert.Equal("Pie", unknown.Name);
-        Assert.DoesNotContain("Did you mean", KatLangError.FromEvalError(result.Error).Message, StringComparison.Ordinal);
     }
 
     // ── 9. Dot candidates follow real member/fallback visibility rules ─────

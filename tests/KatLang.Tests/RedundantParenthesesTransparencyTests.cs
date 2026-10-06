@@ -391,7 +391,7 @@ public class RedundantParenthesesTransparencyTests
     }
 
     [Fact]
-    public void DotMemberArguments_AndCallingTheDotResult_KeepTheirDifferentGrammar()
+    public void DotMemberArguments_AndCallingTheGroupedMember_DifferInGrammarButNotInMeaning()
     {
         const string declarations = "M = { public Add(x) = x + 1 }\n";
         var member = Assert.IsType<Expr.DotCall>(Assert.Single(ParseValidRoot(declarations + "M.Add(1)").Output));
@@ -401,15 +401,19 @@ public class RedundantParenthesesTransparencyTests
         foreach (var target in new[] { "(M.Add)", "((M.Add))", "(((M.Add)))" })
         {
             // The closing group ends the dot production before the call delimiter.
-            // The result is Call(DotCall(args: null), args), not a Capture node.
+            // The result is Call(DotCall(args: null), args), not a Capture node — and,
+            // because grouping never changes callable identity (DOT-09, Q-18), the call
+            // of the grouped member reference IS the member call `M.Add(1)`.
             var call = Assert.IsType<Expr.Call>(Assert.Single(ParseValidRoot(declarations + target + "(1)").Output));
             Assert.Null(Assert.IsType<Expr.DotCall>(call.Function).Args);
-            var result = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(ParseValidRoot(declarations + target + "(1)"))).Result;
-            Assert.True(result.IsError);
-            var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
-            Assert.Equal(0, arity.Expected);
-            Assert.Equal(1, arity.Actual);
+            Assert.Equal("ok raw=2 n=1", Neutral(declarations + target + "(1)"));
+            AssertStrategiesAgree(declarations + target + "(1)", declarations + "M.Add(1)");
         }
+
+        // A call written after an argument-bearing edge follows a computed call RESULT: the
+        // same-line-item error, exactly like `Add(1)(1)` (SYN-09, Q-18 C-B3).
+        var afterResult = Assert.Single(Parser.Parse(declarations + "M.Add(1)(1)").Diagnostics, static d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, afterResult.Code);
     }
 
     [Theory]

@@ -356,10 +356,12 @@ public class EvaluatorSpreadTests
     public void Eval_SequenceConstruct_ErrorOrder_StopsAtEarlierContribution()
     {
         // Sequence-value evaluation evaluates contributions left to right and surfaces the
-        // first failure: the unknown-name error from `Math.Nope` is reported
-        // before the later `1 / 0` divide-by-zero is ever evaluated. (This is an
-        // evaluation ordering test — the source contains no spread expression.)
-        var error = GetEvalError(ClosedMemberProbe("", "(1, Math.Nope, 1 / 0)"));
+        // first failure: the unknown-name error from `m.Nope` (the probe's receiver is bound to
+        // `Math`, which declares no `Nope`) is reported before the later `1 / 0` divide-by-zero
+        // is ever evaluated. The receiver is a PARAMETER so the missing fallback name stays a
+        // runtime question (a statically known `Math.Nope` is a closed-list diagnostic, Q-75
+        // F-A). (This is an evaluation ordering test — the source contains no spread expression.)
+        var error = GetEvalError("Probe(m) = (1, m.Nope, 1 / 0)\nProbe(Math)");
         Assert.NotNull(error);
 
         var inner = error!;

@@ -95,16 +95,18 @@ internal sealed record SiblingOrderLookup(
 /// <summary>How a dot edge dispatches, as far as the roles of its receiver and arguments need it.</summary>
 internal enum DotEdgeKind
 {
-    /// <summary>The dot-only <c>string</c> intrinsic: it converts the receiver's VALUE.</summary>
+    /// <summary>The dot-only <c>string</c> intrinsic, the miss route of an edge spelled <c>string</c>
+    /// whose statically known receiver declares no member <c>string</c>: it converts the receiver's VALUE.</summary>
     StringIntrinsic,
 
-    /// <summary>A declared member of a statically known receiver: the receiver is navigated.</summary>
+    /// <summary>A declared member of a statically known receiver (a member named <c>string</c>
+    /// included): the receiver is navigated.</summary>
     StructuralMember,
 
     /// <summary>The lexical fallback is selected: the edge IS the call <c>F(receiver, args)</c>.</summary>
     Fallback,
 
-    /// <summary>A runtime receiver decides between a member and the fallback.</summary>
+    /// <summary>A runtime receiver decides between a member and the miss route.</summary>
     Undecided,
 }
 
@@ -157,19 +159,22 @@ internal static class FormulaLiftingRoles
     }
 
     /// <summary>
-    /// How <paramref name="edge"/> dispatches: the <c>string</c> intrinsic, a structural member of a
-    /// statically known receiver, the selected lexical fallback, or undecided (a runtime receiver).
-    /// <paramref name="selection"/> is the edge's fallback-selection verdict (the detector's stamp, or
-    /// the caller's own static resolution for an unstamped host tree).
+    /// How <paramref name="edge"/> dispatches — its ROUTE, decided member-first (DOT-01): a
+    /// structural member of a statically known receiver (a member named <c>string</c> included,
+    /// Q-17 S-C), the miss route of a statically certain miss — the <c>string</c> intrinsic for an
+    /// edge spelled <c>string</c>, the selected lexical fallback otherwise — or undecided (a runtime
+    /// receiver). <paramref name="missSelection"/> is the edge's structural-miss verdict (the
+    /// detector's stamp, or the caller's own static resolution for an unstamped host tree).
     /// </summary>
-    public static DotEdgeKind EdgeKind(Expr.DotCall edge, LexicalFallbackSelection selection)
-        => edge.UsesOrdinaryDotStringIntrinsic() ? DotEdgeKind.StringIntrinsic
-            : selection switch
-            {
-                LexicalFallbackSelection.Never => DotEdgeKind.StructuralMember,
-                LexicalFallbackSelection.Always => DotEdgeKind.Fallback,
-                _ => DotEdgeKind.Undecided,
-            };
+    public static DotEdgeKind EdgeKind(Expr.DotCall edge, LexicalFallbackSelection missSelection)
+        => missSelection switch
+        {
+            LexicalFallbackSelection.Never => DotEdgeKind.StructuralMember,
+            LexicalFallbackSelection.Always => edge.UsesOrdinaryDotStringIntrinsic()
+                ? DotEdgeKind.StringIntrinsic
+                : DotEdgeKind.Fallback,
+            _ => DotEdgeKind.Undecided,
+        };
 
     /// <summary>
     /// The role of a dot edge's receiver: the <c>string</c> intrinsic converts its value; a

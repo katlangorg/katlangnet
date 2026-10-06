@@ -40,39 +40,53 @@ internal readonly record struct StaticStructuralMemberProvider(
     Algorithm? Algorithm = null);
 
 /// <summary>
-/// The ONE static classification of a dot edge's structural-vs-lexical
-/// selection: whether the edge's stored lexical fallback can be the selected
-/// resolution at runtime. Consumers differ in WHICH states they act on, never
+/// The ONE static NEVER / MAY / MUST lattice of a dot edge's route. A dot edge
+/// is resolved member-first (DOT-01): the receiver's structural lookup either
+/// selects a declared member or MISSES, and a miss takes the edge's miss route —
+/// the extension fallback, or for an edge spelled <c>string</c> the intrinsic
+/// (DOT-08). The lattice classifies the MISS
+/// (<see cref="AstHelpers.GetStructuralMissSelection"/>, stamped by the detector as
+/// <see cref="Expr.DotCall.ElaboratedMissSelection"/>) and, projected through the
+/// miss route, the LEXICAL FALLBACK's selection
+/// (<see cref="AstHelpers.GetLexicalFallbackSelection"/>; a <c>.string</c> edge never
+/// selects its fallback). Consumers differ in WHICH states they act on, never
 /// in how the states are derived:
 /// <list type="bullet">
 /// <item>implicit parameter inference includes the fallback callable for
 /// <see cref="Conditional"/> and <see cref="Always"/> (a MAY-selection
 /// question: if the fallback can be needed, its callable identity must be
 /// representable in the inferred signature);</item>
+/// <item>a closed explicit parameter list and a clause-branch body check the
+/// fallback name for <see cref="Always"/> only (Q-75 F-A: a MUST-selected fallback
+/// IS the written call <c>F(R, args)</c>, whose callee name is a checked name; a
+/// MAY-selected one stays runtime-dependent);</item>
 /// <item>dependency/exposure analysis charges the fallback for the same
 /// MAY-selected states, read from the ELABORATED scope-aware verdict the
-/// detector stamps on the edge (<see cref="Expr.DotCall.ElaboratedFallbackSelection"/>,
-/// consumed through <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>): a
+/// detector stamps on the edge (consumed through
+/// <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>): a
 /// property whose fallback names an enclosing owner's parameter is local-only
 /// exactly when the runtime may read that parameter, while a receiver that
 /// declares the member (<see cref="Never"/>) keeps working structural/open
-/// access.</item>
+/// access;</item>
+/// <item>the unified formula-lifting roles read the miss verdict as the edge's
+/// kind (<see cref="FormulaLiftingRoles.EdgeKind"/>).</item>
 /// </list>
 /// </summary>
 internal enum LexicalFallbackSelection
 {
-    /// <summary>Structural resolution (a member hit, a local-only/no-branch
-    /// member error, or the dot-only <c>string</c> intrinsic) always
-    /// pre-empts the fallback.</summary>
+    /// <summary>NEVER: structural resolution (a member hit — any visibility —, a
+    /// local-only/no-branch member error, or a statically failing receiver) always
+    /// pre-empts the miss route; a <c>.string</c> edge never selects its lexical
+    /// fallback whatever its receiver.</summary>
     Never,
 
-    /// <summary>The receiver resolves to a runtime value this static view
+    /// <summary>MAY: the receiver resolves to a runtime value this static view
     /// cannot inspect (parameter or unresolved/ambiguous lexical reference):
-    /// the fallback may or may not be selected.</summary>
+    /// the miss route may or may not be selected.</summary>
     Conditional,
 
-    /// <summary>Structural resolution is statically impossible: the fallback
-    /// is unconditionally the selected resolution.</summary>
+    /// <summary>MUST: structural resolution is statically impossible: the miss
+    /// route is unconditionally the selected resolution.</summary>
     Always,
 }
 
@@ -250,11 +264,13 @@ internal static class AstHelpers
     }
 
     /// <summary>
-    /// Whether this edge selects the independently established dot-only
-    /// <c>.string</c> value intrinsic. Grace composed with dot syntax shares
-    /// it: <c>x~.string</c> and <c>x.~string</c> build the SAME ordinary dot
-    /// edge as <c>x.string</c>; Grace only affects inferred name order, so the
-    /// intrinsic applies identically.
+    /// Whether this edge's MISS ROUTE is the dot-only <c>.string</c> value intrinsic (DOT-08):
+    /// an ordinary dot edge spelled <c>string</c> selects a declared member named <c>string</c>
+    /// like any member (DOT-01; Q-17 S-C), and only on a structural miss is it the
+    /// number-to-text intrinsic, which takes the extension call's place — so its lexical
+    /// fallback is never selected. Grace composed with dot syntax shares it:
+    /// <c>x~.string</c> and <c>x.~string</c> build the SAME ordinary dot edge as
+    /// <c>x.string</c>; Grace only affects inferred name order.
     /// </summary>
     internal static bool UsesOrdinaryDotStringIntrinsic(this Expr.DotCall dotCall)
         => string.Equals(dotCall.Name, "string", StringComparison.Ordinal);
@@ -288,9 +304,10 @@ internal static class AstHelpers
     // parameter detection stamps the verdict (Expr.Resolve.ElaboratedMathMember).
     // Two questions read these facts differently. The CONSUMER contract — are a
     // call's arguments strict value positions? — belongs to what the callee IS,
-    // so it reads every spelling (TryGetRegistryProvenMathCalleeFacts), and a dot
+    // so it reads every spelling (TryGetRegistryProvenMathCalleeFacts); a dot
     // edge whose lexical fallback must be selected is the call `x(receiver, args)`
-    // with the same contract (HasRegistryProvenStrictValueFallback); a callable
+    // and is classified as that call by the unified formula-lifting roles
+    // (FormulaLiftingRoles.EdgeKind); a callable
     // ALIAS of a member (`A = abs`) carries it too, decided by the resolver from
     // the alias's normalized target rather than from a spelling. FORMULA lifting
     // and FWD-02's lone-row eligibility are identity-keyed and never read these
@@ -382,7 +399,7 @@ internal static class AstHelpers
     /// <summary>
     /// The Math member a CALLEE denotes, by identity — the consumer-contract question
     /// (are this call's arguments strict value positions?), which belongs to what the callee
-    /// IS, never to how it is written: the qualified native reference or prelude alias by shape
+    /// IS, never to how it is written: the qualified member reference or prelude alias by shape
     /// (<see cref="TryGetRegistryProvenMathAliasFacts"/>), or the canonical name
     /// (<c>Sin</c>) that parameter detection proved an <c>open Math</c> provides
     /// (<see cref="Expr.Resolve.ElaboratedMathMember"/>, whose verdict already accounts for
@@ -393,10 +410,10 @@ internal static class AstHelpers
         Func<string, bool>? isPreludeNameShadowed,
         [NotNullWhen(true)] out MathCallableFacts? facts)
     {
-        // `(Math.Abs)(value)` is an ordinary Call whose callee is the qualified
-        // native reference. ResolveAlg preserves that callable identity, so its
-        // consumer contract is the same as the argument-bearing dot spelling.
-        // An argument-bearing dot expression is a result wrapper, not this member.
+        // `(Math.Abs)(value)` is an ordinary Call whose callee is an argumentless
+        // structural path: it carries the member's own callable identity (DOT-09),
+        // so its consumer contract is the same as the argument-bearing dot spelling.
+        // An argument-bearing dot expression is a computed value, not this member.
         if (callee is Expr.DotCall { Args: null } qualified)
             return qualified.TryGetRegistryProvenCanonicalMathFacts(isPreludeNameShadowed, out facts);
 
@@ -408,35 +425,6 @@ internal static class AstHelpers
 
         return callee.TryGetRegistryProvenMathAliasFacts(isPreludeNameShadowed, out facts);
     }
-
-    /// <summary>
-    /// Whether a dot edge is the call <c>x(receiver, args)</c> of a Math member with
-    /// registry-proven strict-value arguments: its lexical fallback MUST be the selected
-    /// resolution (the scope-aware verdict parameter detection stamped,
-    /// <see cref="Expr.DotCall.ElaboratedFallbackSelection"/>) and the fallback callee
-    /// denotes the member (<see cref="TryGetRegistryProvenMathCalleeFacts"/>). Dotted-call
-    /// equivalence holds through elaboration (<c>A.sin</c> is <c>sin(A)</c>,
-    /// <c>2.pow(A)</c> is <c>pow(2, A)</c>), so the receiver and the written arguments are
-    /// then the same strict value positions the direct call's arguments are. A fallback
-    /// that is only POSSIBLY selected keeps them neutral: a structural member of the
-    /// runtime receiver would consume them instead.
-    /// </summary>
-    internal static bool HasRegistryProvenStrictValueFallback(
-        this Expr.DotCall dotCall,
-        Func<string, bool>? isPreludeNameShadowed = null)
-        => dotCall.ElaboratedFallbackSelection == LexicalFallbackSelection.Always
-            && dotCall.EffectiveLexicalFallback.TryGetRegistryProvenMathCalleeFacts(isPreludeNameShadowed, out var facts)
-            && facts.HasStrictValueArguments;
-
-    /// <summary>
-    /// The identity half of the consumer contract: whether the prelude <c>Math</c> module's member
-    /// DECLARED as <paramref name="memberName"/> is a Math FUNCTION member whose registry facts make
-    /// its arguments strict value positions. For a consumer that resolved a callee to the member
-    /// itself — through a callable alias of it (FWD-02) — rather than to one of its spellings
-    /// (<see cref="TryGetRegistryProvenMathCalleeFacts"/>). Constants carry no callable facts.
-    /// </summary>
-    internal static bool IsStrictValueMathMember(string memberName)
-        => BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts) && facts.HasStrictValueArguments;
 
     /// <summary>
     /// Whether registry facts prove that this dot edge's written arguments are
@@ -499,11 +487,13 @@ internal static class AstHelpers
     /// checked after selection); a conditional-branch-only member is a
     /// <see cref="StaticStructuralMemberProviderKind.KnownFailure"/> (the
     /// evaluator errors there, never falls back); a known receiver WITHOUT
-    /// the member makes the edge a value — its lexical fallback's result —
+    /// the member makes the edge a value — its miss route's result: the lexical
+    /// fallback's, or for <c>string</c> the intrinsic's text —
     /// which is <see cref="StaticStructuralMemberProviderKind.DefinitelyAbsent"/>;
     /// and a runtime-valued or unresolved receiver propagates its own
-    /// indeterminacy outward. The dot-only <c>string</c> intrinsic and every
-    /// argument-bearing edge are values, exactly like a written call.</para>
+    /// indeterminacy outward. An edge spelled <c>string</c> is classified like
+    /// any edge (Q-17 S-C: a declared member named <c>string</c> is selected).
+    /// Every argument-bearing edge is a value, exactly like a written call.</para>
     /// </summary>
     internal static StaticStructuralMemberProvider ResolveStaticStructuralMemberProvider(
         this Expr expr,
@@ -517,14 +507,14 @@ internal static class AstHelpers
                 StaticStructuralMemberProviderKind.KnownAlgorithm,
                 algorithm),
 
-            Expr.DotCall { Args: null } edge when !edge.UsesOrdinaryDotStringIntrinsic()
+            Expr.DotCall { Args: null } edge
                 => ResolveDotEdgeStructuralMemberProvider(edge, resolveLexicalReference),
 
-            // Capture, the `.string` intrinsic, and an argument-bearing dot
-            // result resolve through memberless algorithm wrappers. All
-            // remaining value/expression forms are rejected by ResolveAlg.
+            // Capture and an argument-bearing dot result are values (the
+            // evaluator carries them through memberless algorithm wrappers).
+            // All remaining value/expression forms are rejected by ResolveAlg.
             // Either way, no structural member can pre-empt a dot edge's
-            // lexical fallback. (Grace is stripped by callers before
+            // miss route. (Grace is stripped by callers before
             // classification — see UnwrapGraceOperand — and is classified
             // here only as the raw shape it is.)
             Expr.Capture
@@ -549,8 +539,8 @@ internal static class AstHelpers
     /// <summary>
     /// The dot-edge arm of <see cref="ResolveStaticStructuralMemberProvider"/>:
     /// the static twin of the evaluator's <c>ResolveDotReceiver</c> for ONE
-    /// argumentless, non-<c>string</c> edge, classified over its own receiver's
-    /// classification. Structural member lookup is the shared
+    /// argumentless edge (a <c>string</c> edge included), classified over its own
+    /// receiver's classification. Structural member lookup is the shared
     /// <see cref="ElaboratedScopeLookup.TryLookupProperty"/> (any visibility —
     /// structural access ignores <c>public</c>). Exposure takes no part: selection
     /// never depends on it (K1-08), so a declared local-only member IS the edge's
@@ -574,8 +564,8 @@ internal static class AstHelpers
 
                 return algorithm.DefinesConditionalBranchProperty(edge.Name)
                     ? new(StaticStructuralMemberProviderKind.KnownFailure)
-                    // The receiver lacks the member: the edge selects its lexical
-                    // fallback, whose result is a value.
+                    // The receiver lacks the member: the edge takes its miss route (the
+                    // lexical fallback, or the `.string` intrinsic), whose result is a value.
                     : new(StaticStructuralMemberProviderKind.DefinitelyAbsent);
             }
 
@@ -619,37 +609,32 @@ internal static class AstHelpers
     }
 
     /// <summary>
-    /// Derives the shared <see cref="LexicalFallbackSelection"/> fact for one
-    /// dot edge from the receiver's algorithm-position capability. Callers
-    /// supply the provider so each layer can bring its own resolution power
-    /// to a <see cref="StaticStructuralMemberProviderKind.LexicalReference"/>
-    /// receiver (the detector and the editor resolve it through their
-    /// elaborated scope to a <c>KnownAlgorithm</c>; scope-free consumers pass
-    /// the raw shape classification and an unresolved reference stays
-    /// <see cref="LexicalFallbackSelection.Conditional"/> — the safe state in
-    /// both directions). The mapping itself mirrors the evaluator's DotCall
-    /// law exactly:
-    /// the dot-only <c>string</c> intrinsic pre-empts both channels on every
-    /// receiver; a statically known algorithm with the member (declared, or
-    /// defined in a conditional branch — which the evaluator turns into a
-    /// local-only ERROR, not a fallback) never selects the fallback; a
-    /// statically known algorithm without the member, and every
-    /// definitely-memberless value shape, always selects it; runtime-valued
-    /// receivers may select it; and a receiver edge that is statically known
-    /// to fail (<see cref="StaticStructuralMemberProviderKind.KnownFailure"/>)
-    /// never reaches this edge's channels at all, so the fallback is never
-    /// selected there either — an error is not a fallback.
+    /// The edge's STRUCTURAL-MISS verdict, derived from the receiver's algorithm-position
+    /// capability: whether the receiver's structural lookup certainly selects a declared
+    /// member (<see cref="LexicalFallbackSelection.Never"/>), certainly misses
+    /// (<see cref="LexicalFallbackSelection.Always"/>), or depends on the runtime receiver
+    /// (<see cref="LexicalFallbackSelection.Conditional"/>). The route of a dot edge is decided
+    /// member-first (DOT-01), so this ONE classification decides every edge's route; on a miss
+    /// the edge takes its MISS ROUTE — the extension fallback, or for an edge spelled
+    /// <c>string</c> the intrinsic (DOT-08, Q-17 S-C). Callers supply the provider so each layer
+    /// can bring its own resolution power to a
+    /// <see cref="StaticStructuralMemberProviderKind.LexicalReference"/> receiver (the detector
+    /// and the editor resolve it through their elaborated scope to a <c>KnownAlgorithm</c>;
+    /// scope-free consumers pass the raw shape classification and an unresolved reference stays
+    /// <see cref="LexicalFallbackSelection.Conditional"/> — the safe state in both directions).
+    /// The mapping itself mirrors the evaluator's DotCall law exactly: a statically known
+    /// algorithm with the member (declared, any visibility — accessibility is checked after
+    /// selection — or defined in a conditional branch, which the evaluator turns into a
+    /// local-only ERROR, not a miss) never misses; a statically known algorithm without the
+    /// member, and every definitely-memberless value shape, always misses; runtime-valued
+    /// receivers may; and a receiver edge that is statically known to fail
+    /// (<see cref="StaticStructuralMemberProviderKind.KnownFailure"/>) never reaches this edge's
+    /// lookup at all, so it never misses either — an error is not a miss.
     /// </summary>
-    internal static LexicalFallbackSelection GetLexicalFallbackSelection(
+    internal static LexicalFallbackSelection GetStructuralMissSelection(
         this Expr.DotCall dotCall,
         StaticStructuralMemberProvider receiverProvider)
-    {
-        // The dot-only `string` value intrinsic pre-empts BOTH structural
-        // lookup and the lexical fallback on every receiver shape.
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
-            return LexicalFallbackSelection.Never;
-
-        return receiverProvider.Kind switch
+        => receiverProvider.Kind switch
         {
             StaticStructuralMemberProviderKind.LexicalReference
                 or StaticStructuralMemberProviderKind.RuntimeParameter
@@ -665,19 +650,52 @@ internal static class AstHelpers
             _ => throw new InvalidOperationException(
                 $"Unhandled static structural-member provider kind: {receiverProvider.Kind}"),
         };
-    }
+
+    /// <summary>
+    /// Derives the shared <see cref="LexicalFallbackSelection"/> fact for one dot edge — whether
+    /// its stored LEXICAL FALLBACK (the extension call) can be the selected resolution at
+    /// runtime — from its structural-miss verdict (<see cref="GetStructuralMissSelection"/>) and
+    /// its miss route: an edge spelled <c>string</c> never selects its lexical fallback (its miss
+    /// route is the intrinsic), every other edge selects it exactly when its structural lookup
+    /// misses. NEVER / MAY (<see cref="LexicalFallbackSelection.Conditional"/>) / MUST
+    /// (<see cref="LexicalFallbackSelection.Always"/>) is the lattice every consumer reads.
+    /// </summary>
+    internal static LexicalFallbackSelection GetLexicalFallbackSelection(
+        this Expr.DotCall dotCall,
+        StaticStructuralMemberProvider receiverProvider)
+        => dotCall.LexicalFallbackSelectionOf(dotCall.GetStructuralMissSelection(receiverProvider));
+
+    /// <summary>
+    /// The lexical-fallback projection of a structural-miss verdict: <see cref="LexicalFallbackSelection.Never"/>
+    /// for an edge whose miss route is the <c>.string</c> intrinsic, the verdict itself otherwise.
+    /// </summary>
+    internal static LexicalFallbackSelection LexicalFallbackSelectionOf(
+        this Expr.DotCall dotCall,
+        LexicalFallbackSelection missSelection)
+        => dotCall.UsesOrdinaryDotStringIntrinsic() ? LexicalFallbackSelection.Never : missSelection;
+
+    /// <summary>
+    /// The edge's structural-miss verdict as later passes read it: the ELABORATED scope-aware
+    /// verdict parameter detection stamped (<see cref="Expr.DotCall.ElaboratedMissSelection"/>;
+    /// final, never rechecked), or — on an unstamped edge (a raw parser or host-built tree) —
+    /// the receiver expression's raw shape classification.
+    /// </summary>
+    internal static LexicalFallbackSelection EffectiveMissSelection(this Expr.DotCall dotCall)
+        => dotCall.ElaboratedMissSelection
+            ?? dotCall.GetStructuralMissSelection(
+                dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider());
 
     /// <summary>
     /// The MAY-selection projection of <see cref="GetLexicalFallbackSelection"/>
     /// for the scope-free dependency/exposure walk: true when the edge's stored
     /// lexical fallback can be the selected resolution at runtime. The
     /// ELABORATED scope-aware verdict decides when present
-    /// (<see cref="Expr.DotCall.ElaboratedFallbackSelection"/>, stamped by
-    /// parameter detection; the verdict is final, never rechecked by exposure): a receiver
-    /// that declares the member never selects the fallback, so a Param
-    /// fallback hidden behind a structural winner charges nothing; a receiver
+    /// (<see cref="EffectiveMissSelection"/>; the verdict is final, never rechecked by
+    /// exposure): a receiver that declares the member never selects the fallback, so a
+    /// Param fallback hidden behind a structural winner charges nothing; a receiver
     /// known to lack it — a sibling property whose value is a list, a literal,
-    /// a call result — always does; a runtime-valued receiver may. An
+    /// a call result — always does; a runtime-valued receiver may; and a <c>.string</c>
+    /// edge never does (its miss route is the intrinsic). An
     /// unstamped edge (a raw parser or host-built tree) falls back to the
     /// receiver expression's raw shape classification, where an unresolved
     /// lexical reference stays <see cref="LexicalFallbackSelection.Conditional"/>
@@ -686,9 +704,7 @@ internal static class AstHelpers
     /// evaluator remains the only place that decides the actual dispatch.
     /// </summary>
     internal static bool LexicalFallbackMayBeSelected(this Expr.DotCall dotCall)
-        => (dotCall.ElaboratedFallbackSelection
-                ?? dotCall.GetLexicalFallbackSelection(
-                    dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider()))
+        => dotCall.LexicalFallbackSelectionOf(dotCall.EffectiveMissSelection())
             != LexicalFallbackSelection.Never;
 
     private static bool HasStructuralMemberOrConditionalBranchMember(Algorithm receiver, string name)

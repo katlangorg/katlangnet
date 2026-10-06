@@ -145,8 +145,10 @@ public static partial class Evaluator
                 return EvalResult<Algorithm>.Ok(resolved.Value.ResolvedAlgorithm);
             }
 
-            case Expr.DotCall { Args: null } edge when !edge.UsesOrdinaryDotStringIntrinsic():
+            case Expr.DotCall { Args: null } edge:
             {
+                // A declared member path, a member named `string` included (Q-17 S-C): an edge whose
+                // receiver lacks the member is a computed value, never an alias target.
                 var member = ResolveDotReceiver(edge, stepCtx, out var isStructuralMember);
                 if (member.IsError)
                     return AtSpanIfMissing(member.Error, step.Target.Span);
@@ -319,12 +321,12 @@ public static partial class Evaluator
             if (simpleCallee is not null)
             {
                 return AcceptsZeroArgumentValueDemand(simpleCallee)
-                    ? ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv))
+                    ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
                     : ZeroArgumentDemandArityMismatch(simpleCallee);
             }
 
             if (AcceptsZeroArgumentValueDemand(wired))
-                return ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv));
+                return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
 
             if (wired is Algorithm.Conditional)
                 return new EvalError.NoMatchingBranch(name);
@@ -471,16 +473,16 @@ public static partial class Evaluator
             if (simpleCallee is not null)
             {
                 return AcceptsZeroArgumentValueDemand(simpleCallee)
-                    ? ReCountValueBoundary(
+                    ? MarkSelectedMemberOutput(ReCountValueBoundary(
                         await EvalZeroArgPropertyAccessCountedAsync(
-                            targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false))
+                            targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false)))
                     : ZeroArgumentDemandArityMismatch(simpleCallee);
             }
 
             if (AcceptsZeroArgumentValueDemand(wired))
-                return ReCountValueBoundary(
+                return MarkSelectedMemberOutput(ReCountValueBoundary(
                     await EvalZeroArgPropertyAccessCountedAsync(
-                        targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false));
+                        targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)));
 
             if (wired is Algorithm.Conditional)
                 return new EvalError.NoMatchingBranch(name);

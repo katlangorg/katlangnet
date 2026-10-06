@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 371
-- excluded parse-level cases (Lean has no surface parser): 50
+- specification surface cases: 380
+- excluded parse-level cases (Lean has no surface parser): 53
 - excluded C#-only cases (each carries an explicit reason in the corpus): 19
-- Lean-guarded cases: 302
-- probe observations (C#-only by design): 1159
+- Lean-guarded cases: 308
+- probe observations (C#-only by design): 1177
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -866,6 +866,36 @@ def case_dot_fallback_on_known_receiver_stays_valid : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Double" (alg ["x"] [] [] [(.binary .mul (.num 2) (.param "x"))])] []), privateProp "Dubel" (alg ["a", "b"] [] [] [(.binary .mul (.param "b") (.num 3))])] [(.dotCall (.resolve "Lib") "Dubel" (some [.num 4]))])
 #guard obs case_dot_fallback_on_known_receiver_stays_valid == "ok raw=12 n=1"
 
+-- dot-string-declared-member-wins [strings]: Obj = { \n     public string = 5 \n     7 \n } \n  \n Obj.string
+def case_dot_string_declared_member_wins : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "string" (alg [] [] [] [.num 5])] [.num 7])] [(.dotCall (.resolve "Obj") "string" none)])
+#guard obs case_dot_string_declared_member_wins == "ok raw=5 n=1"
+
+-- dot-string-intrinsic-on-structural-miss [strings]: string(x) = 99 \n Obj = { \n     public V = 1 \n     7 \n } \n  \n 3.string \n Obj.string \n string(3)
+def case_dot_string_intrinsic_on_structural_miss : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "V" (alg [] [] [] [.num 1])] [.num 7]), privateProp "string" (alg ["x"] [] [] [.num 99])] [(.dotCall (.num 3) "string" none), (.dotCall (.resolve "Obj") "string" none), (.call (.resolve "string") [.num 3])])
+#guard obs case_dot_string_intrinsic_on_structural_miss == "ok raw=S['3', '7', 99] n=3"
+
+-- grouped-structural-callee-is-the-member [access-boundaries]: Box = { \n     public G(x) = x * 10 \n } \n Apply(f, v) = f(v) \n  \n Box.G(2) \n (Box.G)(2) \n Apply(Box.G, 2)
+def case_grouped_structural_callee_is_the_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))])] []), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])])] [(.dotCall (.resolve "Box") "G" (some [.num 2])), (.call (.dotCall (.resolve "Box") "G" none) [.num 2]), (.call (.resolve "Apply") [(.dotCall (.resolve "Box") "G" none), .num 2])])
+#guard obs case_grouped_structural_callee_is_the_member == "ok raw=S[20, 20, 20] n=3"
+
+-- grouped-zero-arg-member-call-is-fresh [access-boundaries]: Box = { \n     public V = 7 \n } \n  \n Box.V \n Box.V() \n (Box.V)()
+def case_grouped_zero_arg_member_call_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "V" (alg [] [] [] [.num 7])] [])] [(.dotCall (.resolve "Box") "V" none), (.dotCall (.resolve "Box") "V" (some [])), (.call (.dotCall (.resolve "Box") "V" none) [])])
+#guard obs case_grouped_zero_arg_member_call_is_fresh == "ok raw=S[7, 7, 7] n=3"
+
+-- computed-dot-callee-is-not-callable [errors]: Inc(x) = x + 1 \n (5.Inc)()
+def case_computed_dot_callee_is_not_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.dotCall (.num 5) "Inc" none) [])])
+#guard obs case_computed_dot_callee_is_not_callable == "err notAnAlgorithm"
+
+-- closed-list-may-fallback-name-is-runtime [access-boundaries]: Get(obj) = obj.size \n Obj = { \n     public size = 11 \n } \n size(v) = 77 \n  \n Get(Obj) \n Get(3)
+def case_closed_list_may_fallback_name_is_runtime : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Obj" (alg [] [] [publicProp "size" (alg [] [] [] [.num 11])] []), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "size" none)]), privateProp "size" (alg ["v"] [] [] [.num 77])] [(.call (.resolve "Get") [.resolve "Obj"]), (.call (.resolve "Get") [.num 3])])
+#guard obs case_closed_list_may_fallback_name_is_runtime == "ok raw=S[11, 77] n=2"
+
 -- open-local-only-member-inside-owner [access-boundaries]: Outer(n) = { \n     open Inner \n     Inner = { \n         public X = n \n     } \n     X + 0 \n } \n Outer(5)
 def case_open_local_only_member_inside_owner : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [.resolve "Inner"] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [.param "n"])) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.binary .add (.resolve "X") (.num 0))])] [(.call (.resolve "Outer") [.num 5])])
@@ -1611,7 +1641,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 302 canonical Lean-guarded specification cases.
+-- 308 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1772,6 +1802,12 @@ def specCaseIds : List String := [
   "grace-dot-keeps-structural-precedence",
   "dot-member-fallback-in-closed-parameter-list",
   "dot-fallback-on-known-receiver-stays-valid",
+  "dot-string-declared-member-wins",
+  "dot-string-intrinsic-on-structural-miss",
+  "grouped-structural-callee-is-the-member",
+  "grouped-zero-arg-member-call-is-fresh",
+  "computed-dot-callee-is-not-callable",
+  "closed-list-may-fallback-name-is-runtime",
   "open-local-only-member-inside-owner",
   "dot-local-only-member-outside-owner",
   "open-full-spelling-decides-provider-identity",
@@ -1922,6 +1958,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 302
+#guard specCaseIds.length == 308
 
 end LanguageSpecCases

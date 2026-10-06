@@ -171,7 +171,9 @@ public static class PreludeCatalog
 
     /// <summary>
     /// Receiver-only value intrinsics (<c>.string</c>): valid only after a dot,
-    /// never as bare names, so they are not part of <see cref="Symbols"/>.
+    /// never as bare names, so they are not part of <see cref="Symbols"/>. An intrinsic
+    /// is selected only on a structural miss: a receiver that declares its own member of
+    /// that name uses the member.
     /// </summary>
     public static IReadOnlyList<VisibleSymbol> DotIntrinsicSymbols { get; }
         = SemanticModelBuilder.CreateDotIntrinsicCatalogSymbols();

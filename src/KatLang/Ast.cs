@@ -1094,21 +1094,25 @@ public closed record Expr
             => LexicalFallback ?? new Resolve(Name) { Span = MemberSpan };
 
         /// <summary>
-        /// The front end's SCOPE-AWARE verdict on whether the stored lexical
-        /// fallback can be the selected resolution at runtime
-        /// (<see cref="LexicalFallbackSelection"/>), stamped by parameter
-        /// detection from the receiver's elaborated static structural-member
-        /// provider — the same classification implicit-signature inference acts
-        /// on. The verdict is final: selection never depends on exposure
-        /// (K1-08), so exposure analysis never rechecks it. The dependency
-        /// summary consumes it through
-        /// <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>, so a fallback
-        /// that names an enclosing owner's parameter is charged exactly when
-        /// the runtime may take it. <c>null</c> on an unelaborated tree (a raw
-        /// parser tree or a host-built one), where consumers fall back to the
-        /// receiver expression's raw shape classification.
+        /// The front end's SCOPE-AWARE verdict on whether the receiver's structural
+        /// lookup MISSES (<see cref="LexicalFallbackSelection"/>: NEVER — a declared
+        /// member, a branch-only member or a statically failing receiver is selected;
+        /// MUST — a certain miss; MAY — the runtime receiver decides), stamped by
+        /// parameter detection from the receiver's elaborated static structural-member
+        /// provider (<see cref="AstHelpers.GetStructuralMissSelection"/>) — the same
+        /// classification implicit-signature inference acts on. On a miss the edge takes
+        /// its miss route: the lexical fallback, or for an edge spelled <c>string</c> the
+        /// intrinsic, so for every other edge this IS the fallback's selection, and every
+        /// pass reads the edge's route from it (the formula-lifting roles, the sibling
+        /// order, exposure through <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>,
+        /// which charges a fallback that names an enclosing owner's parameter exactly when
+        /// the runtime may take it). The verdict is final: selection never depends on
+        /// exposure (K1-08), so later passes never recheck it. <c>null</c> on an
+        /// unelaborated tree (a raw parser tree or a host-built one), where consumers fall
+        /// back to the receiver expression's raw shape classification
+        /// (<see cref="AstHelpers.EffectiveMissSelection"/>).
         /// </summary>
-        internal LexicalFallbackSelection? ElaboratedFallbackSelection { get; init; }
+        internal LexicalFallbackSelection? ElaboratedMissSelection { get; init; }
 
         /// <summary>
         /// Diagnostic-only: the provenance note of the implicit parameter that
@@ -2808,8 +2812,10 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
     }
 
     /// <summary>
-    /// A STATIC PATH: a name, or an argumentless structural dot edge (never the <c>.string</c>
-    /// intrinsic) whose receiver is itself a static path or a block. Lean: <c>Expr.isStaticAliasPath</c>.
+    /// A STATIC PATH: a name, or an argumentless dot edge whose receiver is itself a static path
+    /// or a block — an edge spelled <c>string</c> included, since a declared member named
+    /// <c>string</c> is selected like any member (Q-17 S-C); whether the path's members exist is
+    /// decided where the chase resolves it. Lean: <c>Expr.isStaticAliasPath</c>.
     /// </summary>
     internal static bool IsStaticPath(Expr target)
     {
@@ -2820,7 +2826,7 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             {
                 case Expr.Resolve:
                     return true;
-                case Expr.DotCall { Args: null } edge when !edge.UsesOrdinaryDotStringIntrinsic():
+                case Expr.DotCall { Args: null } edge:
                     if (edge.Target is Expr.AlgorithmExpr)
                         return true;
                     current = edge.Target;

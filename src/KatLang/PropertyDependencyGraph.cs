@@ -2143,24 +2143,20 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// The static member path of a dot chain — a lexical head followed by argumentless,
-    /// non-<c>string</c> dot steps, the shape the evaluator navigates structurally
-    /// (<c>ResolveDotReceiver</c>) — with the final edge's member included whether or not it
-    /// carries arguments. False for every other receiver shape (a parameter, a block, a
-    /// capture, a call, the <c>string</c> intrinsic).
+    /// The static member path of a dot chain — a lexical head followed by argumentless dot
+    /// steps, the shape the evaluator navigates structurally (<c>ResolveDotReceiver</c>) — with
+    /// the final edge's member included whether or not it carries arguments. A step spelled
+    /// <c>string</c> is navigated like any step (Q-17 S-C): navigation charges a declared
+    /// member <c>string</c>, and a receiver the navigation stops at (the member is absent: the
+    /// edge is the intrinsic, which reads that receiver's VALUE) charges its output exactly as
+    /// the bare target seed would. False for every other receiver shape (a parameter, a block,
+    /// a capture, a call).
     /// </summary>
     private static bool TryGetStaticMemberPath(Expr.DotCall dotCall, out string head, out IReadOnlyList<string> members)
     {
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
-        {
-            head = string.Empty;
-            members = [];
-            return false;
-        }
-
         var reversed = new List<string> { dotCall.Name };
         var current = dotCall.Target.UnwrapGraceOperand();
-        while (current is Expr.DotCall { Args: null } edge && !edge.UsesOrdinaryDotStringIntrinsic())
+        while (current is Expr.DotCall { Args: null } edge)
         {
             reversed.Add(edge.Name);
             current = edge.Target.UnwrapGraceOperand();
@@ -2996,10 +2992,7 @@ internal static class PropertyDependencyGraphBuilder
 
             case Expr.DotCall dotCall:
             {
-                var kind = FormulaLiftingRoles.EdgeKind(
-                    dotCall,
-                    dotCall.ElaboratedFallbackSelection
-                        ?? dotCall.GetLexicalFallbackSelection(dotCall.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider()));
+                var kind = FormulaLiftingRoles.EdgeKind(dotCall, dotCall.EffectiveMissSelection());
                 if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
                 {
                     // A dotted callee: in a value role the resolver reads its member's PROCESSED

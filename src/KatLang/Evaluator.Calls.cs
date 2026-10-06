@@ -90,9 +90,48 @@ public static partial class Evaluator
             : new EvalError.WithContext(CtxCall(diagnosticName, ctx), error) { Span = error.Span };
 
     /// <summary>
+    /// The CALLABLE a call's CALLEE carries (DOT-09; Q-18 C-B3). A dot expression carries ONE
+    /// callable identity in every algorithm-capable position, so a dot callee is read through
+    /// the SAME projection a supplied argument is (<see cref="ProjectDotPathCallable"/>): an
+    /// argumentless structural path is its member's own callable — <c>(Box.G)(2)</c> is the
+    /// member call <c>Box.G(2)</c> and <c>(Box.V)()</c> the explicit fresh call <c>Box.V()</c>
+    /// (grouping never changes identity) — and every other dot expression is a computed VALUE,
+    /// which has no callable identity: <see cref="ComputedDotCalleeDescription"/>. (The parser
+    /// admits a call after an argumentless dot edge only, so only a host-built tree can write a
+    /// call after an argument-bearing one.) Every other callee shape resolves through canonical
+    /// <see cref="ResolveAlg"/>. The ONE callee law of every call site: both evaluators and the
+    /// sequence optimizer's recognition. Lean: <c>resolveCalleeAlg</c>.
+    /// </summary>
+    private static EvalResult<Algorithm> ResolveCallee(Expr callee, EvalCtx ctx)
+        => callee is Expr.DotCall dotCallee ? ResolveDotCallee(dotCallee, ctx) : ResolveAlg(callee, ctx);
+
+    /// <summary>
+    /// The dot arm of <see cref="ResolveCallee"/>, out of line so its temporaries never enlarge
+    /// the call-recursion frame (frame-size discipline).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Algorithm> ResolveDotCallee(Expr.DotCall callee, EvalCtx ctx)
+    {
+        var projected = ProjectDotPathCallable(callee, ctx);
+        if (projected.IsError)
+            return projected.Error;
+        return projected.Value is { } member
+            ? EvalResult<Algorithm>.Ok(member)
+            : new EvalError.NotAnAlgorithm(ComputedDotCalleeDescription) { Span = callee.Span };
+    }
+
+    /// <summary>
+    /// The structured <see cref="EvalError.NotAnAlgorithm"/> description of a dot expression
+    /// in callee position that carries no callable identity — a computed VALUE (an extension
+    /// call's or the <c>.string</c> intrinsic's result, a call result). Lean: the same payload
+    /// in <c>resolveCalleeAlg</c>.
+    /// </summary>
+    internal const string ComputedDotCalleeDescription = "dot result";
+
+    /// <summary>
     /// Counted expression-position call evaluation — the CANONICAL
     /// expression-position call dispatch (<see cref="EvalCallExpr"/> is its
-    /// value projection).
+    /// value projection). The callee is resolved by <see cref="ResolveCallee"/>.
     /// Lean: evalCallCountedExpr.
     /// </summary>
     private static EvalResult<CountedResult> EvalCallCountedExpr(
@@ -102,7 +141,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var diagnosticName = CallDiagnosticName.FromExpression(func);
-        var calleeR = ResolveAlg(func, ctx);
+        var calleeR = ResolveCallee(func, ctx);
         if (calleeR.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 

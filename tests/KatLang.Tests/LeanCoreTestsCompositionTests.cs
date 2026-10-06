@@ -43,6 +43,7 @@ public class LeanCoreTestsCompositionTests
         "LoopCardinality",
         "LoopSteps",
         "ErrorTaxonomy",
+        "DotIdentity",
     ];
 
     [Fact]

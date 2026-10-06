@@ -35,3 +35,4 @@ import CoreTests.ModelC
 import CoreTests.LoopCardinality
 import CoreTests.LoopSteps
 import CoreTests.ErrorTaxonomy
+import CoreTests.DotIdentity

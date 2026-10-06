@@ -27,7 +27,9 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
             "a ^ -b", "-(a ^ b)", "not a < b", "not (a and b)", "{ P = 1 }",
             "(a < b) < c", "a < (b < c)", "a < b < c", "a < b == c", "a == b != c",
             "(a*)", "(a*, b)", "[a*, b]", "(a.f(b)):0", "(a:0).f(b)", "(~a)(b)",
-            "(a.f)(b)", "(a.f(b))(c)", "(a.f)(b).g", "((a.f)(b)):0"
+            // A call after an argument-bearing edge, `(a.f(b))(c)`, is no source shape (SYN-09,
+            // Q-18 C-B3): like a call after any call result, only a host-built tree has it.
+            "(a.f)(b)", "(a.f)(b).g", "((a.f)(b)):0"
         };
         foreach (var outer in Operators)
         {

@@ -129,7 +129,9 @@ public static partial class Evaluator
                 GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
             ResolveArgumentAlgorithms: args => ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv),
-            ResolveAlgorithm: expr => ResolveAlg(expr, ctx),
+            // Recognition resolves CALLEES (`filter` in `count(filter(…))`, `range` in its source),
+            // so it reads the ONE callee identity the generic call reads (DOT-09).
+            ResolveAlgorithm: expr => ResolveCallee(expr, ctx),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));
 
         return SequencePipelineOptimizer.TryExecuteRecognized(
@@ -305,21 +307,23 @@ public static partial class Evaluator
     /// Resolve a dot edge's RECEIVER in algorithm position — the structural
     /// half of the ordinary DotCall law applied at EVERY level of a chain.
     /// Every receiver shape resolves through canonical <see cref="ResolveAlg"/>
-    /// except an argumentless, non-<c>string</c> dot edge <c>X.M</c>, which
-    /// NAVIGATES: when <c>X</c> (resolved the same way, recursively) is an
-    /// algorithm that declares <c>M</c> (any visibility; selection never
-    /// depends on exposure), the receiver IS that member algorithm wired to
-    /// <c>X</c> — so <c>Lib.Sub.Q</c> reads
-    /// <c>Sub</c>'s own <c>Q</c> before any lexical <c>Q(x)</c> is considered,
-    /// exactly as <c>Lib.Q</c> reads <c>Lib</c>'s. A declared <c>M</c> that is
-    /// inaccessible from the site (a local-only member outside its owner's
-    /// activation), or one defined only inside conditional branches, is the same
-    /// structural error that evaluating <c>X.M</c> itself reports — never a
-    /// fallback. When <c>X</c> does not declare <c>M</c> (or is not an
-    /// algorithm at all), the edge is an ordinary dot RESULT — its lexical
-    /// fallback's value, or the <c>string</c> intrinsic — and resolves to
-    /// <see cref="ResolveAlg"/>'s memberless wrapper, so the chain continues
-    /// by value (<c>3.A.B</c> stays <c>B(A(3))</c>). An argument-bearing edge
+    /// except an argumentless dot edge <c>X.M</c>, which NAVIGATES: when
+    /// <c>X</c> (resolved the same way, recursively) is an algorithm that
+    /// declares <c>M</c> (any visibility; selection never depends on exposure),
+    /// the receiver IS that member algorithm wired to <c>X</c> — so
+    /// <c>Lib.Sub.Q</c> reads <c>Sub</c>'s own <c>Q</c> before any lexical
+    /// <c>Q(x)</c> is considered, exactly as <c>Lib.Q</c> reads <c>Lib</c>'s.
+    /// A member named <c>string</c> is navigated like any member (Q-17 S-C:
+    /// <c>Obj.string.Q</c> reads the declared <c>string</c>'s own <c>Q</c>).
+    /// A declared <c>M</c> that is inaccessible from the site (a local-only
+    /// member outside its owner's activation), or one defined only inside
+    /// conditional branches, is the same structural error that evaluating
+    /// <c>X.M</c> itself reports — never a fallback. When <c>X</c> does not
+    /// declare <c>M</c> (or is not an algorithm at all), the edge is an ordinary
+    /// dot RESULT — its lexical fallback's value, or, for <c>string</c>, the
+    /// intrinsic's text — and resolves to <see cref="ResolveAlg"/>'s memberless
+    /// wrapper, the internal carrier of that VALUE, so the chain continues by
+    /// value (<c>3.A.B</c> stays <c>B(A(3))</c>). An argument-bearing edge
     /// is a call, hence a value, and never navigates; a capture receiver keeps
     /// suppressing structural identity (<c>(A, B).V</c> and <c>(A*).V</c> fall
     /// back — a redundant group never reaches the evaluator, so <c>(Obj).V</c>
@@ -328,11 +332,10 @@ public static partial class Evaluator
     /// <para>The resolution is identity navigation only: no intermediate edge
     /// is evaluated, so a parameterized or output-less container navigates
     /// exactly as it does at the first level (<c>F.Q</c> works while <c>F</c>
-    /// alone is an arity or missing-output error). The higher-order channel is
-    /// untouched — <see cref="ResolveAlg"/> still lifts every general
-    /// argumentless dot expression to its zero-parameter wrapper identity —
-    /// and the recursion is bounded by the structural depth preflight like the
-    /// dot-chain evaluation it mirrors.
+    /// alone is an arity or missing-output error), and the recursion is bounded
+    /// by the structural depth preflight like the dot-chain evaluation it
+    /// mirrors. A dot expression's CALLABLE identity is read from this
+    /// navigation by <see cref="ProjectDotPathCallable"/> alone.
     /// <paramref name="isStructuralMember"/> reports whether the receiver was
     /// reached by navigation, i.e. is a name-resolved property algorithm rather
     /// than a written value shape (the <c>.string</c> intrinsic uses it to
@@ -343,7 +346,7 @@ public static partial class Evaluator
     private static EvalResult<Algorithm> ResolveDotReceiver(Expr target, EvalCtx ctx, out bool isStructuralMember)
     {
         isStructuralMember = false;
-        if (target is not Expr.DotCall { Args: null } edge || edge.UsesOrdinaryDotStringIntrinsic())
+        if (target is not Expr.DotCall { Args: null } edge)
             return ResolveReceiverHead(target, ctx);
 
         var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
@@ -373,6 +376,51 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// THE ONE CALLABLE PROJECTION of a dot expression (DOT-09; NEED-06 for a supplied
+    /// argument, Q-18 C-B3 for a callee): a dot expression carries ONE callable identity in
+    /// every algorithm-capable position — supplied, forwarded, callback, loop step and
+    /// callee alike. An ARGUMENTLESS path whose every edge selects a DECLARED structural
+    /// member (<see cref="ResolveDotReceiver"/>'s navigation, accessibility checked after
+    /// selection) is its member's own callable, an alias member normalized to its target
+    /// (FWD-02); every other dot expression — an argument-bearing edge (a call), an edge
+    /// whose receiver lacks the member (the extension call's or the <c>.string</c>
+    /// intrinsic's VALUE), a value receiver — is a calculation value with NO callable
+    /// identity (<c>null</c>; the result-value boundary). Identity only: nothing is
+    /// evaluated and no VALUE is demanded. A structural failure on the path
+    /// (<c>LocalOnlyProperty</c>) is the projection's own error; a receiver that is simply
+    /// not an algorithm is no identity. Lean: <c>projectNeedStructuralMember</c> followed by
+    /// <c>resolveAliasTarget</c>.
+    /// </summary>
+    private static EvalResult<Algorithm?> ProjectDotPathCallable(Expr.DotCall edge, EvalCtx ctx)
+    {
+        if (edge.Args is not null)
+            return EvalResult<Algorithm?>.Ok(null);
+
+        var member = ResolveDotReceiver(edge, ctx, out var isStructuralMember);
+        if (member.IsError)
+            return IsLiftableError(member.Error) ? EvalResult<Algorithm?>.Ok(null) : member.Error;
+        if (!isStructuralMember)
+            return EvalResult<Algorithm?>.Ok(null);
+
+        var target = member.Value is Algorithm.Alias alias
+            ? ResolveAliasTarget(alias, ctx)
+            : EvalResult<Algorithm>.Ok(member.Value);
+        return target.IsError ? target.Error : EvalResult<Algorithm?>.Ok(target.Value);
+    }
+
+    /// <summary>
+    /// A zero-argument structural member read's outcome (<c>R.n</c>, DOT-01), a bare missing output
+    /// marked as the SELECTED MEMBER's own (<see cref="EvalError.MissingOutput.IsSelectedMemberOutput"/>)
+    /// so the renderer names the member reference — <c>Obj.string</c> for a declared member named
+    /// <c>string</c> (Q-17 S-C) — never the receiver the <c>.string</c> intrinsic would blame.
+    /// Diagnostic-only: kind, payload and equality are unchanged.
+    /// </summary>
+    private static EvalResult<CountedResult> MarkSelectedMemberOutput(EvalResult<CountedResult> result)
+        => result.IsError && result.Error is EvalError.MissingOutput missing
+            ? missing with { IsSelectedMemberOutput = true }
+            : result;
+
+    /// <summary>
     /// The <c>.string</c> intrinsic is a ZERO-parameter member. A written argument list is
     /// assembled exactly like every call's (each written slot evaluated once, left to
     /// right, spreads opened — <see cref="FormNeedSupply"/>) and then rejected by
@@ -399,27 +447,34 @@ public static partial class Evaluator
     /// <summary>
     /// Counted dotCall evaluation — the CANONICAL owner of dot-call dispatch
     /// (<see cref="EvalDotCall"/> is its value projection).
-    /// Smart dispatch:
+    /// The ROUTE is decided first, member-first at every edge (DOT-01; Q-17 S-C):
     /// 0. Receiver resolution through <see cref="ResolveDotReceiver"/>: a
     ///    chained receiver navigates its declared structural members (each
     ///    selected member then checked for accessibility), so the
     ///    property-first rule below holds at every level of <c>A.B.C.D</c>
-    /// 1. Value-based intrinsic (string) → evaluate target, convert numeric result to string
-    /// 2. Structural property found (navigation-only):
-    ///    - No args + 0-param → value access
-    ///    - No args + has params → arity mismatch error
+    /// 1. ONE structural lookup of the member on the resolved receiver — a member
+    ///    named <c>string</c> included:
+    ///    - selected → accessibility checked AFTER selection (K1-08), an alias
+    ///      member read or called as its target;
+    ///    - No args → the zero-argument value demand (a 0-param member is a
+    ///      cached value access; a parameterized one the arity rejection);
     ///    - Has args → delegate to <see cref="EvalResolvedCallCounted"/>
     ///      (dual-view binding, no receiver injection)
-    /// 3. No property → extension fallback (<see cref="CallLexicalWithReceiverCounted"/>):
-    ///    DOT-CALL PASSES A VALUE — <c>a.f(args)</c> is exactly the call
-    ///    <c>f(a, args)</c>, the receiver being the ordinary first argument slot
-    ///    (never a supply of its own; only the spread receiver <c>a*.f</c>, lowered
-    ///    by the parser to <c>f(a*)</c>, opens a boundary). Dot resolution therefore
-    ///    has three classes — structural member access (2), the intrinsic
-    ///    <c>.string</c> (1), and extension fallback (3) — and only the third
-    ///    injects the receiver.
-    /// When receiver resolution returns notAnAlgorithm (e.g. numeric literal target),
-    /// value-based intrinsics are checked before lexical fallback.
+    /// 2. A member declared only in conditional branches → <c>LocalOnlyProperty</c>
+    ///    (an error, never a miss route).
+    /// 3. A STRUCTURAL MISS takes the edge's miss route:
+    ///    - spelled <c>string</c> → the number-to-text intrinsic (DOT-08): the
+    ///      receiver's VALUE converted; a lexical <c>string</c> is never consulted;
+    ///    - otherwise → extension fallback (<see cref="CallLexicalWithReceiverCounted"/>):
+    ///      DOT-CALL PASSES A VALUE — <c>a.f(args)</c> is exactly the call
+    ///      <c>f(a, args)</c>, the receiver being the ordinary first argument slot
+    ///      (never a supply of its own; only the spread receiver <c>a*.f</c>, lowered
+    ///      by the parser to <c>f(a*)</c>, opens a boundary).
+    ///    Dot resolution therefore has three classes — structural member access (1),
+    ///    the intrinsic <c>.string</c> and extension fallback (3) — and only the
+    ///    extension call injects the receiver.
+    /// When receiver resolution returns notAnAlgorithm (a value receiver, e.g. a numeric
+    /// literal), there is no member to select: the miss route applies directly.
     /// (The graced sources <c>a~.f</c> / <c>a.~f</c> arrive here as the SAME
     /// node as <c>a.f</c>: Grace is a front-end parameter-order annotation that
     /// elaboration consumes, so this method — and every diagnostic it produces
@@ -447,6 +502,7 @@ public static partial class Evaluator
         {
             if (targetResult.Error is EvalError.NotAnAlgorithm)
             {
+                // A value receiver declares no member: the edge's miss route applies directly.
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 {
                     if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
@@ -465,19 +521,9 @@ public static partial class Evaluator
 
         var targetAlg = targetResult.Value;
 
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
-        {
-            if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
-                return arityRejection;
-            if (targetAlg is Algorithm.Alias)
-                return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-            if (val.IsError) return val.Error;
-            var outR = ResultToString(ctx, val.Value);
-            if (outR.IsError) return outR.Error;
-            return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
-        }
-
+        // ONE structural lookup decides the route, whatever the member's spelling: a declared
+        // member wins (a member named `string` included — Q-17 S-C), then a branch-only member
+        // is the local-only error, and only a structural MISS takes the miss route below.
         var prop = LookupPropBinding(targetAlg, name, ctx.Budget);
         if (prop is not null)
         {
@@ -499,12 +545,12 @@ public static partial class Evaluator
                 if (simpleCallee is not null)
                 {
                     return AcceptsZeroArgumentValueDemand(simpleCallee)
-                        ? ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv))
+                        ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
                         : ZeroArgumentDemandArityMismatch(simpleCallee);
                 }
 
                 if (AcceptsZeroArgumentValueDemand(wired))
-                    return ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv));
+                    return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
@@ -522,6 +568,22 @@ public static partial class Evaluator
 
         if (targetAlg.DefinesConditionalBranchProperty(name))
             return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
+
+        // A structural miss: `string` is the number-to-text intrinsic (DOT-08) — it takes the
+        // extension call's place, so a lexical `string` is never consulted — and every other
+        // member is the extension call `name(target, args)` (DOT-03).
+        if (dotCall.UsesOrdinaryDotStringIntrinsic())
+        {
+            if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
+                return arityRejection;
+            if (targetAlg is Algorithm.Alias)
+                return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+            if (val.IsError) return val.Error;
+            var outR = ResultToString(ctx, val.Value);
+            if (outR.IsError) return outR.Error;
+            return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+        }
 
         return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
     }

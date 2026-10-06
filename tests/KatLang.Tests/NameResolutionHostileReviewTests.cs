@@ -23,7 +23,9 @@ public class NameResolutionHostileReviewTests
     [InlineData("Math = { public Abs(x) = x }\nA = q + 1\nF(z) = (Math.Abs)(A)\nF(1)")]
     [InlineData("A = q + 1\nF(Math) = (Math.Abs)(A)\nF(1)")]
     [InlineData("A = q + 1\nF(z) = (Math.Pi)(A)\nF(1)")]
-    [InlineData("A = q + 1\nF(z) = (Math.Abs(-2))(A)\nF(1)")]
+    // A computed dot value is no Math member (a call written directly after an argument-bearing
+    // edge, `(Math.Abs(-2))(A)`, no longer parses at all — SYN-09, Q-18 C-B3).
+    [InlineData("A = q + 1\nF(z) = (2.abs)(A)\nF(1)")]
     public void OrdinaryCall_OnlyTheSelectedMathFunctionHasStrictArguments(string source)
     {
         var parsed = SourceProvenance.ParseValid(source);

@@ -633,7 +633,7 @@ public class ExprNameRendererTests
     public void OrdinaryAndDottedFailures_RetainExactDiagnosticNamesAndText()
     {
         var receiver = JoinChain(2);
-        var compoundFunction = new Expr.DotCall(receiver, "count", null);
+        var compoundFunction = CallableCompoundCallee(receiver);
         var ordinaryFailure = new Expr.Call(compoundFunction, Arguments(new Expr.Num(9)));
         var ordinaryName = Open(compoundFunction);
         var ordinaryObservations = new EvaluationObservations();
@@ -650,6 +650,22 @@ public class ExprNameRendererTests
             $"Callable `{ordinaryName}` expects 0 arguments, but was called with 1 argument.",
             KatLangError.FromEvalError(ordinary.Error).Message);
         Assert.Equal(2, ordinaryObservations.CallDiagnosticNameRenderCount);
+
+        // A COMPUTED dot callee has no callable identity (DOT-09): the call fails when its callee
+        // resolves, named by its call frame — rendered once, on that failure path only.
+        var computedCallee = new Expr.DotCall(receiver, "count", null);
+        var computedName = Open(computedCallee);
+        var computedObservations = new EvaluationObservations();
+        var computed = Evaluator.RunObserved(new Expr.Call(computedCallee, Arguments()), computedObservations);
+        Assert.True(computed.IsError);
+        var computedContext = Assert.IsType<EvalError.WithContext>(computed.Error);
+        Assert.Equal($"while evaluating call to {computedName}", computedContext.ErrorContext.ToString());
+        Assert.Equal(Evaluator.ComputedDotCalleeDescription, Assert.IsType<EvalError.NotAnAlgorithm>(computedContext.Inner).Description);
+        Assert.StartsWith(
+            $"`{computedName}` is a computed value, not a callable",
+            KatLangError.FromEvalError(computed.Error).Message,
+            StringComparison.Ordinal);
+        Assert.Equal(1, computedObservations.CallDiagnosticNameRenderCount);
 
         var dottedFailure = new Expr.DotCall(receiver, "take", Arguments());
         var receiverName = Open(receiver);
@@ -706,11 +722,16 @@ public class ExprNameRendererTests
     }
 
     private static Expr SuccessfulComplexCalleeCall(int joinCount)
-    {
-        var receiver = JoinChain(joinCount);
-        var callableDotExpression = new Expr.DotCall(receiver, "count", null);
-        return new Expr.Call(callableDotExpression, OutputBundle.Empty);
-    }
+        => new Expr.Call(CallableCompoundCallee(JoinChain(joinCount)), OutputBundle.Empty);
+
+    /// <summary>
+    /// A COMPOUND callee that resolves to a callable and whose diagnostic name renders the whole
+    /// (possibly deep) receiver: a host-built capture callee, the zero-parameter value thunk over its
+    /// one row <c>receiver.count</c>. (A dot expression is callable only as a structural member path,
+    /// DOT-09, so the computed <c>receiver.count</c> itself is no callee.)
+    /// </summary>
+    private static Expr CallableCompoundCallee(Expr receiver)
+        => new Expr.Capture(OutputBundle.TakeOwnership([new Expr.DotCall(receiver, "count", null)]));
 
     private static OutputBundle Arguments(params Expr[] expressions)
         => expressions;

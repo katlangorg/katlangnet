@@ -598,13 +598,18 @@ public class GraceDotCompositionTests
     [Fact]
     public void Certainty_StringIntrinsic_IsNeverAFallback()
     {
-        // The dot-only `.string` intrinsic pre-empts both channels on every
-        // receiver shape, so it contributes no fallback parameter — and prefix
-        // Grace on it is the ineffective-Grace error (F10), while postfix Grace on
-        // the free receiver stays effective.
+        // A `.string` edge never selects a lexical callable — on every receiver it is a
+        // declared member named `string` or, on a structural miss, the dot-only intrinsic
+        // (Q-17 S-C) — so it contributes no fallback parameter, and prefix Grace on it is
+        // the ineffective-Grace error (F10), while postfix Grace on the free receiver stays
+        // effective. A runtime receiver may declare the member, so the reason names both
+        // routes; a receiver known to lack it names the intrinsic (SpecialForm_* below).
         Assert.Equal(["v"], ParamsOf("K = v.string"));
         Assert.Equal(["v"], ParamsOf("K = v~.string"));
-        AssertGraceIneffective("K = v.~string", "string", "'.string' is the dot-only intrinsic");
+        AssertGraceIneffective(
+            "K = v.~string",
+            "string",
+            "'.string' is the dot-only intrinsic unless its receiver declares a member named 'string', and never a lexical callable");
     }
 
     // ── D. May-selection (signature) vs must-selection (closed lists) ───────

@@ -541,11 +541,7 @@ internal static class ParameterDetector
             if (_dotMember is { } dotMember && string.Equals(dotMember.MemberName, name, StringComparison.Ordinal))
             {
                 var description = ExprNameRenderer.RenderDotReceiver(dotMember.ReceiverExpr);
-                receiver = new DotMemberReceiver(
-                    dotMember.Algorithm,
-                    IsDottedNamePath(dotMember.ReceiverExpr)
-                        && !description.EndsWith(ExprNameRenderer.TruncationMarker, StringComparison.Ordinal)
-                            ? description : null);
+                receiver = DotMemberSuggestionReceiver(dotMember.Algorithm, dotMember.ReceiverExpr, description);
                 origin = new DotMemberFallbackOrigin(description);
             }
 
@@ -564,13 +560,26 @@ internal static class ParameterDetector
                 (DotMembers ??= new(ReferenceEqualityComparer.Instance))[member.Edge] = provenance;
         }
 
-        /// <summary>
-        /// True when the receiver is spelled as a dotted name path the user can
-        /// write a member after (<c>Math</c>, <c>Lib.Sub</c>), so a member
-        /// suggestion can be offered as <c>Math.Ceil</c>; an inline block or
-        /// any other receiver shape keeps the bare member suggestion.
-        /// </summary>
-        private static bool IsDottedNamePath(Expr receiver)
+    }
+
+    /// <summary>
+    /// The near-member suggestion receiver of a dot member on a statically known receiver: its
+    /// algorithm (whose declared members are the suggestion surface) and, when the receiver is
+    /// written as a dotted name path the user can write a member after (<c>Math</c>,
+    /// <c>Lib.Sub</c>), that spelling, so a member suggestion is offered as <c>Math.Ceil</c>; an
+    /// inline block, any other receiver shape, or a truncated spelling keeps the bare member
+    /// suggestion. Shared by the inferred-parameter provenance (G-24) and the closed-body report of
+    /// a MUST-selected fallback (Q-75 F-A).
+    /// </summary>
+    private static DotMemberReceiver DotMemberSuggestionReceiver(Algorithm algorithm, Expr receiverExpr, string description)
+    {
+        return new DotMemberReceiver(
+            algorithm,
+            IsDottedNamePath(receiverExpr)
+                && !description.EndsWith(ExprNameRenderer.TruncationMarker, StringComparison.Ordinal)
+                    ? description : null);
+
+        static bool IsDottedNamePath(Expr receiver)
         {
             while (true)
             {
@@ -734,10 +743,11 @@ internal static class ParameterDetector
 
     /// <summary>
     /// A completed branch-body region: the rewritten body, and the closed-branch undeclared
-    /// identifiers it reported (name and first-occurrence span) — the one diagnostic whose
-    /// wording names the family, re-issued for every further family that shares the body.
+    /// identifiers it reported (name, first-occurrence span and, for a checked dot fallback, its
+    /// edge) — the one diagnostic whose wording names the family, re-issued for every further
+    /// family that shares the body.
     /// </summary>
-    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<(string Name, SourceSpan? Span)>? UndeclaredNames);
+    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<UndeclaredName>? UndeclaredNames);
 
     /// <summary>
     /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
@@ -770,6 +780,17 @@ internal static class ParameterDetector
         public readonly List<Dictionary<string, GraceWeightEffect>?> OpenSlots = [];
 
         public readonly FrontEndTraversalObservations? Observations = observations;
+
+        /// <summary>
+        /// DeclaredNameCheck only (Q-75 F-A): the dot edges whose MUST-selected fallback NAME this
+        /// walk checked, by reference, with each edge's receiver provider — so the report sits on
+        /// the member token and is worded receiver-aware. Scope is constant for the walk, so one
+        /// verdict per edge reference; <c>null</c> until an edge is recorded.
+        /// </summary>
+        public Dictionary<Expr.DotCall, StaticStructuralMemberProvider>? CheckedFallbacks;
+
+        public void RecordCheckedFallback(Expr.DotCall edge, StaticStructuralMemberProvider receiver)
+            => (CheckedFallbacks ??= new(ReferenceEqualityComparer.Instance)).TryAdd(edge, receiver);
     }
 
     /// <summary>
@@ -1403,31 +1424,12 @@ internal static class ParameterDetector
 
         // Detect free identifiers that would be implicit parameters — these are
         // forbidden in conditional branch bodies (full-input-specification rule).
-        List<(string Name, SourceSpan? Span)>? undeclaredNames = null;
+        List<UndeclaredName>? undeclaredNames = null;
         if (diagnostics is not null)
         {
-            var freeNames = new HashSet<string>();
-            var freeOrder = new List<string>();
-            var dummyWeights = new Dictionary<string, int>();
-            CollectFreeParams(
-                writtenRows,
-                bodyScope,
-                bodyParameters,
-                freeNames,
-                freeOrder,
-                dummyWeights,
-                FreeNameCollection.DeclaredNameCheck,
-                recorder: null,
-                new FreeNameWalkMemo(observations));
-            // The first occurrence of every free identifier, found in one walk; an occurrence
-            // inside imported content has none and is reported at the import site.
-            var firstSpans = FindFirstResolveSpans(writtenRows, freeOrder, observations);
-            foreach (var freeName in freeOrder)
-            {
-                SourceSpan? span = firstSpans.TryGetValue(freeName, out var written) ? written : run.ImportSite;
-                (undeclaredNames ??= []).Add((freeName, span));
-                diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(freeName, branchName, span));
-            }
+            undeclaredNames = CollectUndeclaredNames(writtenRows, bodyScope, bodyParameters, run, observations);
+            foreach (var undeclared in undeclaredNames)
+                ReportUndeclaredName(diagnostics, undeclared, branchName);
         }
 
         // Process nested properties normally. As in ProcessAlgorithm's property loop,
@@ -1514,32 +1516,137 @@ internal static class ParameterDetector
         if (diagnostics is null || region.UndeclaredNames is null)
             return;
 
-        foreach (var (name, span) in region.UndeclaredNames)
-            diagnostics.Add(CreateConditionalBranchUndeclaredIdentifierDiagnostic(name, branchName, span));
+        foreach (var undeclared in region.UndeclaredNames)
+            ReportUndeclaredName(diagnostics, undeclared, branchName);
     }
 
-    private static Diagnostic CreateConditionalBranchUndeclaredIdentifierDiagnostic(string identifierName, string branchName, SourceSpan? span)
-        => new(
-            FormatConditionalBranchUndeclaredIdentifier(identifierName, branchName),
-            DiagnosticSeverity.Error,
-            span)
+    /// <summary>
+    /// One free name of a CLOSED body — a closed explicit parameter list or a clause-branch body —
+    /// in first-occurrence order: its first written occurrence (null inside imported content, which
+    /// is reported at the import site) and, when that occurrence is the member token of a dot edge
+    /// whose MUST-selected fallback name the check charged (Q-75 F-A), the edge — so the report
+    /// reads as the call the edge IS — with the near-member suggestion context of a statically
+    /// known receiver that declares members (captured only; evaluated when the report is stored).
+    /// </summary>
+    private sealed record UndeclaredName(
+        string Name,
+        SourceSpan? Span,
+        Expr.DotCall? MemberOf,
+        SuggestionQuery? MemberSuggestion);
+
+    /// <summary>
+    /// The free names a closed body uses (DeclaredNameCheck: every written name nothing binds, and
+    /// every MUST-selected dot fallback name — Q-75 F-A), each with its first occurrence found in
+    /// ONE walk; an occurrence inside imported content has none and is reported at the import site.
+    /// </summary>
+    private static List<UndeclaredName> CollectUndeclaredNames(
+        IReadOnlyList<Expr> rows,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership boundParameters,
+        DetectionRun run,
+        FrontEndTraversalObservations? observations)
+    {
+        var freeNames = new HashSet<string>();
+        var freeOrder = new List<string>();
+        var dummyWeights = new Dictionary<string, int>();
+        var memo = new FreeNameWalkMemo(observations);
+        CollectFreeParams(
+            rows, scope, boundParameters, freeNames, freeOrder, dummyWeights,
+            FreeNameCollection.DeclaredNameCheck,
+            recorder: null,
+            memo);
+
+        var undeclared = new List<UndeclaredName>(freeOrder.Count);
+        if (freeOrder.Count == 0)
+            return undeclared;
+
+        var firstOccurrences = FindFirstResolveSpans(rows, freeOrder, observations, memo.CheckedFallbacks);
+        var suggestionAttempts = 0;
+        foreach (var freeName in freeOrder)
         {
-            Code = DiagnosticCode.UndeclaredIdentifier,
-        };
+            if (!firstOccurrences.TryGetValue(freeName, out var occurrence))
+            {
+                undeclared.Add(new UndeclaredName(freeName, run.ImportSite, MemberOf: null, MemberSuggestion: null));
+                continue;
+            }
+
+            SuggestionQuery? memberSuggestion = null;
+            if (occurrence.MemberOf is { } edge
+                && memo.CheckedFallbacks![edge] is { Kind: StaticStructuralMemberProviderKind.KnownAlgorithm, Algorithm: { Properties.Count: > 0 } receiver }
+                && suggestionAttempts++ < MaxClosedBodySuggestionAttempts)
+            {
+                // A receiver that declares members makes the edge an apparent member access: the
+                // correction is searched among its own members only (NameSuggestions). Only the
+                // candidate context is captured; the suggestion is evaluated when the report is stored.
+                var receiverExpr = edge.Target.UnwrapGraceOperand();
+                memberSuggestion = run.SuggestionContexts(observations).Capture(
+                    freeName,
+                    scope,
+                    boundParameters,
+                    DotMemberSuggestionReceiver(receiver, receiverExpr, ExprNameRenderer.RenderDotReceiver(receiverExpr)));
+            }
+
+            undeclared.Add(new UndeclaredName(freeName, occurrence.Span, occurrence.MemberOf, memberSuggestion));
+        }
+
+        return undeclared;
+    }
+
+    /// <summary>
+    /// The suggestion work bound of one closed-body check, as the inferred-parameter recorder's: a
+    /// body with more undeclared member names than this offers no further suggestion.
+    /// </summary>
+    private const int MaxClosedBodySuggestionAttempts = 64;
+
+    /// <summary>
+    /// Reports one undeclared name of a closed explicit list (<paramref name="branchName"/> null) or
+    /// of a clause branch, with the ONE public code <see cref="DiagnosticCode.UndeclaredIdentifier"/>;
+    /// the message is formatted only when the diagnostic is stored.
+    /// </summary>
+    private static void ReportUndeclaredName(DiagnosticBag diagnostics, UndeclaredName undeclared, string? branchName)
+        => diagnostics.Report(
+            DiagnosticCode.UndeclaredIdentifier,
+            undeclared.Span,
+            (undeclared, branchName),
+            static state => FormatUndeclaredName(state.undeclared, state.branchName));
 
     // The family's name is echoed once per undeclared reference in its branches, so it is
     // bounded like every name a diagnostic repeats (ExprNameRenderer.BoundName).
-    private static string FormatConditionalBranchUndeclaredIdentifier(string identifierName, string branchName)
-        => string.Join(
-            Environment.NewLine,
-            $"Identifier '{ExprNameRenderer.BoundName(identifierName)}' is used in conditional branch '{ExprNameRenderer.BoundName(branchName)}', but it is not declared in the branch pattern.",
-            "If you want to use a parameter, declare it in the pattern, for example: `A(y) = y`.");
+    private static string FormatUndeclaredName(UndeclaredName undeclared, string? branchName)
+    {
+        var name = ExprNameRenderer.BoundName(undeclared.Name);
+        var remedy = branchName is null
+            ? "Explicit parameter lists are closed. Declare the parameter explicitly or define a visible property/opened name."
+            : "If you want to use a parameter, declare it in the pattern, for example: `A(y) = y`.";
+        if (undeclared.MemberOf is not { } edge)
+        {
+            return string.Join(
+                Environment.NewLine,
+                branchName is null
+                    ? $"Identifier '{undeclared.Name}' is used in an explicitly parameterized algorithm, but it is not declared in the parameter list."
+                    : $"Identifier '{name}' is used in conditional branch '{ExprNameRenderer.BoundName(branchName)}', but it is not declared in the branch pattern.",
+                remedy);
+        }
 
-    private static string FormatExplicitParameterUndeclaredIdentifier(string identifierName)
-        => string.Join(
-            Environment.NewLine,
-            $"Identifier '{identifierName}' is used in an explicitly parameterized algorithm, but it is not declared in the parameter list.",
-            "Explicit parameter lists are closed. Declare the parameter explicitly or define a visible property/opened name.");
+        // Q-75 F-A: a MUST-selected fallback is the written call `F(R, args)`, so the report
+        // explains the edge as that call (G-24's receiver-aware clause) and names the binding the
+        // call's callee lacks. The receiver is rendered as the call's first argument; written
+        // arguments are elided like every rendered call interior (`(...)`).
+        var receiver = edge.Target.UnwrapGraceOperand();
+        var edgeText = ExprNameRenderer.Render(new Expr.DotCall(receiver, edge.Name, edge.Args), ExprNameMode.Open);
+        var callText = $"{name}({ExprNameRenderer.Render(receiver, ExprNameMode.DiagnosticName)}{(edge.Args is { Count: > 0 } ? ", ..." : string.Empty)})";
+        var missing = branchName is null
+            ? $"'{name}' is not declared in the explicit parameter list or otherwise visible here."
+            : $"'{name}' is not declared in the pattern of conditional branch '{ExprNameRenderer.BoundName(branchName)}' or otherwise visible here.";
+        var lines = new List<string>(3)
+        {
+            $"{KatLangError.FormatDotMemberNotFound(name, ExprNameRenderer.RenderDotReceiver(receiver))}, so `{edgeText}` is the call `{callText}`; {missing}",
+            remedy,
+        };
+        if (undeclared.MemberSuggestion?.Evaluate()?.EligibleName is { } suggestion)
+            lines.Add($"Did you mean '{suggestion}'?");
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private static void ReportUndeclaredExplicitParameterNames(
         IReadOnlyList<Expr> output,
@@ -1552,34 +1659,16 @@ internal static class ParameterDetector
         if (diagnostics is null)
             return;
 
-        var freeNames = new HashSet<string>();
-        var freeOrder = new List<string>();
-        var dummyWeights = new Dictionary<string, int>();
-        CollectFreeParams(
-            output, scope, boundParameters, freeNames, freeOrder, dummyWeights,
-            FreeNameCollection.DeclaredNameCheck,
-            recorder: null,
-            new FreeNameWalkMemo(observations));
-
         // An occurrence the document wrote is reported at its span (every name's first one found
         // in one walk); one inside imported content at the import site.
-        var firstSpans = FindFirstResolveSpans(output, freeOrder, observations);
-        foreach (var freeName in freeOrder)
-        {
-            SourceSpan? span = firstSpans.TryGetValue(freeName, out var written) ? written : run.ImportSite;
-            diagnostics.Add(new Diagnostic(
-                FormatExplicitParameterUndeclaredIdentifier(freeName),
-                DiagnosticSeverity.Error,
-                span)
-            {
-                Code = DiagnosticCode.UndeclaredIdentifier,
-            });
-        }
+        foreach (var undeclared in CollectUndeclaredNames(output, scope, boundParameters, run, observations))
+            ReportUndeclaredName(diagnostics, undeclared, branchName: null);
     }
 
     /// <summary>
     /// The purpose a free-name collection serves — the two purposes act on
-    /// DIFFERENT dependency strengths for a dot edge's lexical fallback:
+    /// DIFFERENT dependency strengths for a dot edge's lexical fallback
+    /// (<see cref="CollectsFallbackName"/>):
     /// <list type="bullet">
     /// <item><see cref="ImplicitSignature"/> constructs an implicit
     /// parameter list, a MAY-selection question: whenever the fallback CAN be
@@ -1588,13 +1677,14 @@ internal static class ParameterDetector
     /// <see cref="LexicalFallbackSelection"/>).</item>
     /// <item><see cref="DeclaredNameCheck"/> REJECTS programs (the closed
     /// explicit-parameter-list rule and the conditional-branch
-    /// full-input-specification rule). A conditional fallback name is not a
-    /// definite dependency — the program stays runtime-valid through the
-    /// structural arm (`Get(obj) = obj.size` with a member-bearing runtime
-    /// receiver never selects the fallback) — so charging it here would
-    /// reject working programs. The checks therefore take no fallback
-    /// contribution, exactly like dependency/exposure analysis charges only
-    /// must-selected fallbacks.</item>
+    /// full-input-specification rule), so it charges only the names the body
+    /// DEFINITELY uses (Q-75 F-A): a MUST-selected fallback is the written call
+    /// `F(R, args)` (DOT-03) and its name is checked exactly like that call's
+    /// callee name (`Get(obj) = 5.size` is `UndeclaredIdentifier` like
+    /// `Get(obj) = size(5)`), while a MAY-selected fallback name is not a definite
+    /// dependency — the program stays runtime-valid through the structural arm
+    /// (`Get(obj) = obj.size` with a member-bearing runtime receiver never
+    /// selects the fallback) — so charging it would reject working programs.</item>
     /// </list>
     /// </summary>
     private enum FreeNameCollection
@@ -1602,6 +1692,20 @@ internal static class ParameterDetector
         ImplicitSignature,
         DeclaredNameCheck,
     }
+
+    /// <summary>
+    /// Whether a dot edge's fallback NAME is collected under <paramref name="mode"/>, given the
+    /// edge's lexical-fallback selection: an inferred signature represents every fallback that
+    /// MAY be selected (<see cref="LexicalFallbackSelection.Conditional"/> or
+    /// <see cref="LexicalFallbackSelection.Always"/>); a closed explicit list or a clause-branch
+    /// body checks the name exactly when the fallback MUST be selected
+    /// (<see cref="LexicalFallbackSelection.Always"/>; Q-75 F-A). A NEVER-selected edge has no
+    /// fallback name in either mode.
+    /// </summary>
+    private static bool CollectsFallbackName(FreeNameCollection mode, LexicalFallbackSelection selection)
+        => mode == FreeNameCollection.ImplicitSignature
+            ? selection != LexicalFallbackSelection.Never
+            : selection == LexicalFallbackSelection.Always;
 
     /// <summary>
     /// Collects identifiers that are free (not defined as properties in any visible scope).
@@ -1778,17 +1882,27 @@ internal static class ParameterDetector
                 CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
 
                 // A statically impossible fallback — a guaranteed structural
-                // member, a conditional-branch member (a local-only ERROR at
-                // runtime, never a fallback), or the dot-only `string`
-                // intrinsic — contributes no member occurrence. The
-                // DeclaredNameCheck mode likewise takes no fallback
-                // contribution because a conditional fallback is not a
-                // definite dependency (see FreeNameCollection).
-                if (mode == FreeNameCollection.ImplicitSignature)
+                // member (any visibility: accessibility is checked after
+                // selection), a conditional-branch member (a local-only ERROR at
+                // runtime, never a fallback), a statically failing receiver, or a
+                // `.string` edge (a declared member or the intrinsic) — contributes
+                // no member occurrence. An inferred signature represents every
+                // fallback that MAY be selected; a closed explicit list or a
+                // clause-branch body (DeclaredNameCheck) checks the fallback name
+                // exactly when the fallback MUST be selected, because the edge then
+                // IS the written call `F(R, args)` (DOT-03) whose callee name is a
+                // checked name (Q-75 F-A). A MAY-selected fallback is not a definite
+                // use: the runtime receiver may supply the member (see
+                // FreeNameCollection).
                 {
                     var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, boundParameters);
-                    if (dotCall.GetLexicalFallbackSelection(receiverProvider) != LexicalFallbackSelection.Never)
+                    if (CollectsFallbackName(mode, dotCall.GetLexicalFallbackSelection(receiverProvider)))
                     {
+                        // A checked fallback occurrence is reported at its member token and
+                        // worded receiver-aware (CollectUndeclaredNames).
+                        if (mode == FreeNameCollection.DeclaredNameCheck)
+                            memo.RecordCheckedFallback(dotCall, receiverProvider);
+
                         // While collecting the member/fallback occurrence, the
                         // recorder knows the receiver's statically known
                         // algorithm (when there is one — a KnownAlgorithm
@@ -1977,7 +2091,7 @@ internal static class ParameterDetector
     private static void ReportIneffectiveGrace(
         Expr graceNode,
         Expr gracedCore,
-        (Expr.DotCall Edge, LexicalFallbackSelection Selection)? memberEdge,
+        (Expr.DotCall Edge, LexicalFallbackSelection MissSelection)? memberEdge,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
@@ -1988,11 +2102,16 @@ internal static class ParameterDetector
             return;
 
         string reason;
-        if (memberEdge is { Selection: LexicalFallbackSelection.Never } edge)
+        if (memberEdge is { } edge
+            && edge.Edge.LexicalFallbackSelectionOf(edge.MissSelection) == LexicalFallbackSelection.Never)
         {
-            reason = string.Equals(edge.Edge.Name, "string", StringComparison.Ordinal)
-                ? "'.string' is the dot-only intrinsic, so this occurrence never joins the implicit parameters"
-                : $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters";
+            // A `.string` edge never selects a lexical callable: its member is a declared member
+            // named `string` like any member, and on a structural miss the intrinsic (Q-17 S-C).
+            reason = !edge.Edge.UsesOrdinaryDotStringIntrinsic() || edge.MissSelection == LexicalFallbackSelection.Never
+                ? $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters"
+                : edge.MissSelection == LexicalFallbackSelection.Always
+                    ? "'.string' is the dot-only intrinsic on this receiver, so this occurrence never joins the implicit parameters"
+                    : "'.string' is the dot-only intrinsic unless its receiver declares a member named 'string', and never a lexical callable, so this occurrence never joins the implicit parameters";
         }
         else if (memo.GracePolicy == GraceEffectPolicy.ImplicitSignature
             && memo.OwnParameterNames?.Contains(name) == true)
@@ -2260,26 +2379,28 @@ internal static class ParameterDetector
             ? RewriteParams(dotArgs, scope, parameters, memo)
             : null;
 
-        // The scope-aware selection verdict this walk already derives for
-        // implicit-signature collection (CollectFreeParams), stamped on the
-        // edge so the scope-free exposure walk charges a parameter-naming
-        // fallback exactly when the runtime may take it
-        // (AstHelpers.LexicalFallbackMayBeSelected).
-        var selection = dotCall.GetLexicalFallbackSelection(
+        // The scope-aware structural-miss verdict this walk already derives for
+        // free-name collection (CollectFreeParams), stamped on the edge so every
+        // later pass reads the edge's ROUTE from it: the scope-free exposure walk
+        // charges a parameter-naming fallback exactly when the runtime may take it
+        // (AstHelpers.LexicalFallbackMayBeSelected), and the formula-lifting roles
+        // and the sibling order classify a `.string` edge as the declared member or
+        // the intrinsic by its receiver (FormulaLiftingRoles.EdgeKind).
+        var missSelection = dotCall.GetStructuralMissSelection(
             ResolveDotCallReceiverProvider(dotCall, scope, parameters));
 
         // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
         // is effective only when that occurrence joined this level's inferred
-        // signature — which a member that always resolves structurally (or the
-        // dot-only `.string` intrinsic) never does — so it is examined here with
-        // the edge's own verdict (F10) and stripped like every other marker. A
-        // graced receiver (`a~.t`) is an ordinary bare-name occurrence and takes
-        // the Grace arm through the Target rewrite below.
+        // signature — which a member that always resolves structurally (or a
+        // `.string` edge, never a lexical callable) never does — so it is examined
+        // here with the edge's own verdict (F10) and stripped like every other
+        // marker. A graced receiver (`a~.t`) is an ordinary bare-name occurrence
+        // and takes the Grace arm through the Target rewrite below.
         var fallback = dotCall.EffectiveLexicalFallback;
         if (fallback is Expr.Grace memberGrace)
         {
             var memberCore = memberGrace.UnwrapGraceOperand();
-            ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, selection), scope, parameters, memo);
+            ReportIneffectiveGrace(memberGrace, memberCore, (dotCall, missSelection), scope, parameters, memo);
         }
 
         // The promotion note this collection recorded for the edge's fallback
@@ -2291,7 +2412,7 @@ internal static class ParameterDetector
             Target = RewriteParams(dotCall.Target, scope, parameters, memo),
             Args = rewrittenArgs,
             LexicalFallback = RewriteParams(fallback, scope, parameters, memo),
-            ElaboratedFallbackSelection = selection,
+            ElaboratedMissSelection = missSelection,
             InferredFallbackProvenance = memo.DotMembers is { } dotMembers && dotMembers.TryGetValue(dotCall, out var provenance)
                 ? provenance
                 : dotCall.InferredFallbackProvenance,
@@ -2452,38 +2573,50 @@ internal static class ParameterDetector
         => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;
 
     /// <summary>
-    /// The span of the FIRST written <see cref="Expr.Resolve"/> of each of <paramref name="names"/>
-    /// in <paramref name="exprs"/> — left to right, depth first — found in ONE walk. Reporting the
-    /// undeclared names of one body used to search the whole body once per name, so a body of K
-    /// undeclared names cost K full walks: time quadratic in the body (a 200 KB list of distinct
-    /// names took 11 s). An occurrence without a span (imported content) is skipped, exactly as
-    /// the per-name search skipped it; a name found nowhere is simply absent, and its diagnostic
-    /// is positioned at the import site.
+    /// The first written occurrence of an undeclared name: its span, and — when that occurrence is
+    /// the member token of a dot edge whose MUST-selected fallback name the check charged (Q-75
+    /// F-A) — the edge, so the report is worded as that edge's call.
+    /// </summary>
+    private readonly record struct FirstOccurrence(SourceSpan Span, Expr.DotCall? MemberOf);
+
+    /// <summary>
+    /// The FIRST written occurrence of each of <paramref name="names"/> in <paramref name="exprs"/>
+    /// — left to right, depth first, in the collection's own occurrence order (a dot edge's
+    /// receiver, then its member token when <paramref name="checkedFallbacks"/> charged its
+    /// fallback name, then its written arguments) — found in ONE walk. Reporting the undeclared
+    /// names of one body used to search the whole body once per name, so a body of K undeclared
+    /// names cost K full walks: time quadratic in the body (a 200 KB list of distinct names took
+    /// 11 s). An occurrence without a span (imported content) is skipped, exactly as the per-name
+    /// search skipped it; a name found nowhere is simply absent, and its diagnostic is positioned
+    /// at the import site. A member token of an edge the check did not charge (a structural member,
+    /// a MAY-selected fallback) is no occurrence of its name.
     /// <para>DAG-safe: a shared subtree is expanded once — a later reach can only find an
     /// occurrence the first reach already recorded — and the walk stops once every name is
     /// found. Iterative, so it adds no recursion to the calibrated detector frames.</para>
     /// </summary>
-    private static Dictionary<string, SourceSpan> FindFirstResolveSpans(
+    private static Dictionary<string, FirstOccurrence> FindFirstResolveSpans(
         IReadOnlyList<Expr> exprs,
         IReadOnlyCollection<string> names,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        IReadOnlyDictionary<Expr.DotCall, StaticStructuralMemberProvider>? checkedFallbacks)
     {
-        var found = new Dictionary<string, SourceSpan>(StringComparer.Ordinal);
+        var found = new Dictionary<string, FirstOccurrence>(StringComparer.Ordinal);
         var wanted = new HashSet<string>(names, StringComparer.Ordinal);
         if (wanted.Count == 0)
             return found;
 
         var expanded = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
-        var pending = new Stack<Expr>();
+        var pending = new Stack<(Expr Expr, Expr.DotCall? MemberOf)>();
         for (var index = exprs.Count - 1; index >= 0; index--)
-            pending.Push(exprs[index]);
+            pending.Push((exprs[index], null));
 
-        while (found.Count < wanted.Count && pending.TryPop(out var expr))
+        while (found.Count < wanted.Count && pending.TryPop(out var entry))
         {
+            var expr = entry.Expr;
             if (expr is Expr.Resolve resolve)
             {
                 if (resolve.Span is { } span && wanted.Contains(resolve.Name))
-                    found.TryAdd(resolve.Name, span);
+                    found.TryAdd(resolve.Name, new FirstOccurrence(span, entry.MemberOf));
                 continue;
             }
 
@@ -2492,8 +2625,16 @@ internal static class ParameterDetector
 
             observations?.RecordDetectorSpanSearchExpansion();
             var children = SpanSearchChildren(expr);
-            for (var index = children.Count - 1; index >= 0; index--)
-                pending.Push(children[index]);
+            for (var index = children.Count - 1; index >= 1; index--)
+                pending.Push((children[index], null));
+
+            // A checked member token sits after the receiver (a dot edge's child 0) and before its
+            // written arguments — the collection's own occurrence order (DOT-05).
+            if (expr is Expr.DotCall checkedEdge && checkedFallbacks?.ContainsKey(checkedEdge) == true)
+                pending.Push((checkedEdge.EffectiveLexicalFallback.UnwrapGraceOperand(), checkedEdge));
+
+            if (children.Count > 0)
+                pending.Push((children[0], null));
         }
 
         return found;
@@ -2501,7 +2642,9 @@ internal static class ParameterDetector
 
     /// <summary>
     /// The children <see cref="FindFirstResolveSpans"/> searches, in written order. Compiler-
-    /// exhaustive over the closed <see cref="Expr"/> hierarchy.
+    /// exhaustive over the closed <see cref="Expr"/> hierarchy. (A dot edge's member token is not
+    /// a child: it is an occurrence only for an edge whose fallback name the check charged, which
+    /// <see cref="FindFirstResolveSpans"/> inserts after the receiver.)
     /// </summary>
     private static IReadOnlyList<Expr> SpanSearchChildren(Expr expr) => expr switch
     {

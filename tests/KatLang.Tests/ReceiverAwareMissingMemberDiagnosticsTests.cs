@@ -234,27 +234,44 @@ public class ReceiverAwareMissingMemberDiagnosticsTests
         Assert.EndsWith("Did you mean 'Lib.Sub.Quotient'?", message, StringComparison.Ordinal);
     }
 
-    // ── 4. Closed parameter list: the existing good diagnostic is untouched ─
+    // ── 4. Closed parameter list: a CERTAIN fallback name is checked like the call it is ─
 
     [Fact]
-    public void ClosedParameterList_KeepsTheRuntimeMissingMemberDiagnostic()
+    public void ClosedParameterList_ChecksTheCertainFallbackNameStatically()
     {
+        // Q-75 F-A: `Math` is statically known and lacks `Ceiling`, so `Math.Ceiling(x)` IS the
+        // call `Ceiling(Math, x)` and, under the closed list, its name is checked exactly like the
+        // written callee name — `UndeclaredIdentifier` at the member token, worded receiver-aware
+        // and offering the receiver's near member, never inferred and never left to run time.
         const string source = "F(x) = Math.Ceiling(x)\nF(2.1)";
-        var parsed = SourceProvenance.ParseValid(source);
-        Assert.Equal(["x"], Assert.Single(parsed.Root.Properties).Value.Params);
+        var parsed = Parser.Parse(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.Equal(new SourceSpan(new SourcePosition(1, 13), new SourcePosition(1, 20)), diagnostic.Span);
+        Assert.Equal(
+            "Property 'Ceiling' was not found on `Math`, so `Math.Ceiling(...)` is the call `Ceiling(Math, ...)`; 'Ceiling' is not "
+            + "declared in the explicit parameter list or otherwise visible here."
+            + Environment.NewLine
+            + "Explicit parameter lists are closed. Declare the parameter explicitly or define a visible property/opened name."
+            + Environment.NewLine
+            + "Did you mean 'Math.Ceil'?",
+            diagnostic.Message);
+        Assert.DoesNotContain("implicit parameter", diagnostic.Message, StringComparison.Ordinal);
 
-        var result = parsed.Evaluate();
+        // The run-time missing-member diagnostic survives where the fallback is only POSSIBLE: a
+        // parameter receiver may declare the member, so the closed list accepts it and a receiver
+        // that lacks it reports at run time.
+        const string runtime = "F(m, x) = m.Ceiling(x)\nF(Math, 2.1)";
+        var accepted = SourceProvenance.ParseValid(runtime);
+        var result = accepted.Evaluate();
         Assert.True(result.IsError);
         var unknown = Assert.IsType<EvalError.UnknownName>(Innermost(result.Error));
         Assert.Equal("Ceiling", unknown.Name);
         Assert.Equal(KatLangErrorCode.UnknownName, result.Error.Code);
-
-        var message = KatLangError.FromEvalError(result.Error).Message;
         Assert.Equal(
-            "while evaluating call to F: Property 'Ceiling' was not found on `Math`, and no visible algorithm or property "
-            + "named 'Ceiling' can be used with `Math` as the first argument.",
-            message);
-        Assert.DoesNotContain("implicit parameter", message, StringComparison.Ordinal);
+            "while evaluating call to F: Property 'Ceiling' was not found on `m`, and no visible algorithm or property "
+            + "named 'Ceiling' can be used with `m` as the first argument.",
+            KatLangError.FromEvalError(result.Error).Message);
     }
 
     // ── 5. Valid lexical fallback on a known receiver survives ─────────────

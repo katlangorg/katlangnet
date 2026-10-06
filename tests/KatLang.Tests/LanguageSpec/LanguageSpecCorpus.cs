@@ -2981,7 +2981,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Get(obj) = obj.size\nsize(v) = 77\nGet(3)", "ok raw=77 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An explicit parameter list is CLOSED, and it asks the definite question: a member name whose fallback merely MAY be selected is not required to be declared. `K(x) = x.V` keeps arity 1, resolving `V` structurally on the runtime receiver and reaching the lexical fallback only when the receiver has no such member.",
+            Explanation = "An explicit parameter list is CLOSED, and it asks the definite question: a member name whose fallback merely MAY be selected — the runtime receiver may declare it — is not required to be declared. `K(x) = x.V` keeps arity 1, resolving `V` structurally on the runtime receiver and reaching the lexical fallback only when the receiver has no such member. A fallback that MUST be selected is checked like the call it is (`closed-list-must-fallback-name-is-checked`).",
         },
         new()
         {
@@ -3007,7 +3007,153 @@ public static class LanguageSpecCorpus
                 new SpecProbe("P = Math.Ceiling(2.1)\nTwice(a, b) = b * 2\nP(Twice)", "ok raw=4.2 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), but never the resolution or the validity of the program.",
+            Explanation = "A member name the receiver does not declare is not an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special status: `Lib.Dubel(4)` has no structural `Dubel`, so it is the ordinary lexical fallback `Dubel(Lib, 4)` — `a` receives the `Lib` algorithm and `b` receives `4`. Static receiver knowledge never changes the resolution: it improves the DIAGNOSTIC when no such callable is visible (the report names the receiver, explains the fallback, and suggests a real member), and it makes the fallback statically CERTAIN — so in an implicitly parameterized body the name is inferred like a written callee name, while under a closed parameter list it is checked like one (`closed-list-must-fallback-name-is-checked`).",
+        },
+        // ==================== law system U: route, identity, syntax, static obligation (Q-17, Q-18, Q-75) ====================
+        new()
+        {
+            Id = "dot-string-declared-member-wins",
+            Category = "strings",
+            Source = "Obj = {\n    public string = 5\n    7\n}\n\nObj.string",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Obj = {\n    public string(x) = x * 2\n    7\n}\nObj.string(5)", "ok raw=10 n=1"),
+                new SpecProbe("Obj = {\n    public string = {\n        public Q = 3\n        4\n    }\n    7\n}\nObj.string.Q", "ok raw=3 n=1"),
+                new SpecProbe("Apply(f, v) = f(v)\nObj = {\n    public string(x) = x * 2\n    7\n}\nApply(Obj.string, 5)", "ok raw=10 n=1"),
+                // Selection, then accessibility: an inaccessible or branch-only member is an error, never the intrinsic.
+                new SpecProbe("G(x) = {\n    public Sub = {\n        public string = x + 1\n        0\n    }\n    0\n}\nG.Sub.string", "err localOnlyProperty"),
+                new SpecProbe("F(0) = {\n    string = 1\n    0\n}\nF(n) = n\nF.string", "err localOnlyProperty"),
+            ],
+            Explanation = "A dot edge selects a DECLARED member first, whatever its spelling: a member named `string` is selected like any member — read, called, navigated, supplied as a callable — and its accessibility is checked after selection, so a local-only or branch-only `string` member is the LocalOnlyProperty error, never a fall-through to the intrinsic. Declarations named `string` are ordinary declarations.",
+        },
+        new()
+        {
+            Id = "dot-string-intrinsic-on-structural-miss",
+            Category = "strings",
+            Source = "string(x) = 99\nObj = {\n    public V = 1\n    7\n}\n\n3.string\nObj.string\nstring(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n7\n99",
+            ExpectedRaw = "S['3', '7', 99]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // The fluent spread receiver is the lexical call `string(A*)`.
+                new SpecProbe("string(x) = 99\nA = 5\nA*.string", "ok raw=99 n=1"),
+                // A runtime receiver without such a member converts its value.
+                new SpecProbe("Use(o) = o.string\nUse(12)", "ok raw='12' n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Only on a structural MISS is `.string` the number-to-text intrinsic, and the intrinsic takes the extension call's place: a lexical `string` is never consulted by `.string`. A receiver that declares no member named `string` — a number, a value, an algorithm without such a member — converts its numeric value (`3.string` is '3', `Obj.string` is '7'), while the written call `string(3)` uses the visible `string` callable. The fluent spread `A*.string` is that written call `string(A*)`.",
+        },
+        new()
+        {
+            Id = "grouped-structural-callee-is-the-member",
+            Category = "access-boundaries",
+            Source = "Box = {\n    public G(x) = x * 10\n}\nApply(f, v) = f(v)\n\nBox.G(2)\n(Box.G)(2)\nApply(Box.G, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "20\n20\n20",
+            ExpectedRaw = "S[20, 20, 20]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("Lib = {\n    public F(0) = 0\n    public F(n) = n * 2\n}\n(Lib.F)(4)", "ok raw=8 n=1"),
+                new SpecProbe("Inc(x) = x * 10\nObj = {\n    public M = Inc\n    7\n}\n(Obj.M)(5)", "ok raw=50 n=1"),
+                new SpecProbe("Lib = {\n    public M(x) = {\n        public Q = 7\n        x\n    }\n}\n(Lib.M)(3)", "ok raw=3 n=1"),
+                new SpecProbe("(Math.Abs)(-3)", "ok raw=3 n=1"),
+                new SpecProbe("Math = {\n    public Abs(x) = 100\n}\n(Math.Abs)(-3)", "ok raw=100 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Parentheses never change callable identity. A dot expression carries ONE callable identity in every position that uses a callable, and an argumentless member reference is its member's own callable: supplied (`Apply(Box.G, 2)`) or called after grouping (`(Box.G)(2)`), it is the member `G` — with its own parameters, clauses, alias target and members — exactly as `Box.G(2)` calls it. The prelude's `Math` members are ordinary members too.",
+        },
+        new()
+        {
+            Id = "grouped-zero-arg-member-call-is-fresh",
+            Category = "access-boundaries",
+            Source = "Box = {\n    public V = 7\n}\n\nBox.V\nBox.V()\n(Box.V)()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n7\n7",
+            ExpectedRaw = "S[7, 7, 7]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("open Box\nBox = {\n    public V = 7\n}\nV, V(), (V)()", "ok raw=S[7, 7, 7] n=3"),
+            ],
+            Notes = "Freshness is observable only through effects, which this harness does not run: pinned by DotSemanticsDecisionTests (host operations and seeded draws on six routes) and CoreTests/DotIdentity.lean (binding contexts and cache entries).",
+            Explanation = "`Box.V` is a property READ — evaluated once per run and cached — while `Box.V()` is an explicit CALL that evaluates the member afresh. Grouping does not change the call: `(Box.V)()` IS `Box.V()`, a fresh call that neither reads nor populates the cached value, exactly as `(V)()` is `V()`.",
+        },
+        new()
+        {
+            Id = "computed-dot-callee-is-not-callable",
+            Category = "errors",
+            Source = "Inc(x) = x + 1\n(5.Inc)()",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                new SpecProbe("(5.string)()", "err notAnAlgorithm"),
+                new SpecProbe("Other(o) = 7\nObj = {\n    public V = 1\n    5\n}\n(Obj.Other)()", "err notAnAlgorithm"),
+                // The value itself is fine: only calling it fails.
+                new SpecProbe("Inc(x) = x + 1\n5.Inc, Inc(5)", "ok raw=S[6, 6] n=2"),
+            ],
+            Explanation = "A dot expression whose receiver does not declare the member is a computed VALUE — the extension call's result (`5.Inc` is `Inc(5)`) or the `.string` intrinsic's text — and a computed value has no callable identity, so calling it is NotAnAlgorithm, never a hidden wrapper that re-evaluates the value.",
+        },
+        new()
+        {
+            Id = "call-after-argument-bearing-dot-edge-is-a-parse-error",
+            Category = "parser-layout",
+            Source = "X = {\n    public Mk(k) = k + 1\n}\n\nX.Mk(1)()",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "after a closed expression on the same line",
+            ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Front-end rejection (SYN-09, Q-18 C-B3); Lean has no surface parser. A host-built call written after an argument-bearing dot edge reaches the runtime law as a computed callee: notAnAlgorithm (CoreTests/DotIdentity.lean).",
+            Explanation = "A call may follow a callable reference — a name, a graced name, an argumentless member reference, or a redundant group of one — never an already computed call result. `X.Mk(1)` is a call, so `X.Mk(1)()` (like `X.G(1){ … }`) is the same-line-item error exactly as `Mk(1)()` is; `(X.Mk)(1)` is the member call.",
+        },
+        new()
+        {
+            Id = "closed-list-must-fallback-name-is-checked",
+            Category = "access-boundaries",
+            Source = "Get(obj) = 5.size\n\nGet(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "so `5.size` is the call `size(5)`",
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            IncludeInGeneratorPrompt = true,
+            Notes = "Front-end rule (Q-75 F-A; FORMAL-02 leaves static validity to the C# front end). The checked set is exactly LexicalFallbackSelection.Always.",
+            Explanation = "Under an explicit (closed) parameter list, a dot edge whose fallback is statically CERTAIN — a value receiver, or a known receiver that declares no such member — IS the call `size(5)`, so its name is checked exactly like the written callee name: `Get(obj) = 5.size` is the same UndeclaredIdentifier as `Get(obj) = size(5)`, reported at the member token whether or not `Get` is ever called.",
+        },
+        new()
+        {
+            Id = "closed-list-may-fallback-name-is-runtime",
+            Category = "access-boundaries",
+            Source = "Get(obj) = obj.size\nObj = {\n    public size = 11\n}\nsize(v) = 77\n\nGet(Obj)\nGet(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "11\n77",
+            ExpectedRaw = "S[11, 77]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("Get(obj) = obj.size\n7", "ok raw=7 n=1"),
+            ],
+            Explanation = "When only the runtime receiver decides — a parameter, an unresolved or ambiguous receiver — the fallback is merely POSSIBLE, so a closed parameter list does not require its name: `obj.size` reads the structural `size` of a receiver that declares one, and falls back to the lexical `size` only for a receiver that does not.",
+        },
+        new()
+        {
+            Id = "branch-must-fallback-name-is-checked",
+            Category = "conditionals",
+            Source = "F(0) = 0\nF(n) = (n + 1).G\n\nF(0)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "is the call `G(n + 1)`",
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            Probes =
+            [
+                new SpecProbe("F(0) = 0\nF(n) = n.G\nF(0)", "ok raw=0 n=1"),
+            ],
+            Notes = "Front-end rule (Q-75 F-A) shared with closed parameter lists; a load-bearing branch applies it when the branch is selected (MOD-10).",
+            Explanation = "A clause-branch body obeys the closed parameter list's law: `(n + 1).G` certainly falls back, so it is the call `G(n + 1)` and `G` must be visible — reported at the member token even though `F(0)` never selects that branch. A binder receiver (`F(n) = n.G`) only MAY fall back and stays valid.",
         },
         // ==================== local-only members are local-context-dependent (K1-08) ====================
         new()
@@ -3300,9 +3446,9 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("F2(x, y) = x + y\nX = 3\n(X).F2(4)", "ok raw=7 n=1"),
                 new SpecProbe("Obj = {public V = 7}\nQ(z) = (Obj).V\nQ(0)", "ok raw=7 n=1"),
-                new SpecProbe("Obj = {public V = 7\n0}\nQ(z) = (Obj*).V\nQ(0)", "err unknownName"),
+                new SpecProbe("Obj = {public V = 7\n0}\nV(x) = 99\nQ(z) = (Obj*).V\nQ(0)", "ok raw=99 n=1"),
             ],
-            Explanation = "Parentheses group syntax: `(Obj).V` IS `Obj.V`, so both read Obj's own property. A genuine capture receiver — a lone spread `(Obj*)` or a group of several slots — has no structural members, so `(Obj*).V` falls back lexically and injects the captured value as the leading argument. With no lexical member name in sight the fallback has nowhere to go — inside a closed parameter list that is an unknown-name error, and in an implicitly parameterized body the member becomes an inferred parameter instead.",
+            Explanation = "Parentheses group syntax: `(Obj).V` IS `Obj.V`, so both read Obj's own property. A genuine capture receiver — a lone spread `(Obj*)` or a group of several slots — has no structural members, so `(Obj*).V` falls back lexically and injects the captured value as the leading argument. That fallback is statically certain, so its name must be visible: inside a closed parameter list an undeclared one is the front-end UndeclaredIdentifier (`closed-list-must-fallback-name-is-checked`), and in an implicitly parameterized body the member becomes an inferred parameter instead.",
         },
         new()
         {

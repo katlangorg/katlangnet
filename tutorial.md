@@ -913,15 +913,31 @@ A dot can also select a **member** of an algorithm. `Math` is a built-in algorit
 The complete rule for `a.f(...)` is therefore:
 
 1. If the receiver `a` is an algorithm with a member named `f`, that member is used.
-2. Otherwise, `a.f(...)` is the call `f(a, ...)`.
+2. Otherwise, if `f` is `string`, the dot converts a number to text (see [Converting a Number to Text](#converting-a-number-to-text)).
+3. Otherwise, `a.f(...)` is the call `f(a, ...)`.
 
 Numbers, text, and the sequences and lists of the next chapters have no members, so for them the dot always means a call: `16.sqrt` is `sqrt(16)`. You will define algorithms with members of your own in [Organizing Programs](#organizing-programs).
 
-The rule also affects inferred parameters. In `Area = shape.V * 2`, the argument for `shape` might have no member `V`, and then `shape.V` would be the call `V(shape)`; so when nothing named `V` is defined, `V` is inferred as a parameter as well, and the signature is `Area(shape, V)`. To keep `V` out of the inferred parameters, write the parameter list: `Area(shape) = shape.V * 2`. The list settles only the signature, not what the dot does: a member `V` of `shape` still wins, and otherwise `shape.V` is still the call `V(shape)`.
+A member written without arguments names that member, so it can also be passed on or called after parentheses — `(Math.Sqrt)(16)` is exactly `Math.Sqrt(16)`:
+
+```
+Math.Sqrt(16)
+(Math.Sqrt)(16)
+```
+
+**Results:**
+```
+4
+4
+```
+
+A call can follow only such a name, never a result that has already been computed: `Math.Sqrt(16)(2)` is an error, and so is `(16.sqrt)(2)`, because `16.sqrt` is the call `sqrt(16)`, whose result is a number.
+
+The rule also affects inferred parameters. In `Area = shape.V * 2`, the argument for `shape` might have no member `V`, and then `shape.V` would be the call `V(shape)`; so when nothing named `V` is defined, `V` is inferred as a parameter as well, and the signature is `Area(shape, V)`. To keep `V` out of the inferred parameters, write the parameter list: `Area(shape) = shape.V * 2`. The list settles only the signature, not what the dot does: a member `V` of `shape` still wins, and otherwise `shape.V` is still the call `V(shape)`. When the receiver certainly has no such member — a number, a text, or an algorithm defined without it — the dot is certainly that call, so under a parameter list its name must be defined exactly as in the written call: `Get(x) = 5.Size` is an error unless `Size` is defined, just like `Get(x) = Size(5)`.
 
 ### Converting a Number to Text
 
-`.string` turns a number into text. It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined:
+`.string` turns a number into text. It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined. Members still come first: an algorithm with its own member named `string` uses that member, and a callable you define under the name `string` is reached only by the call `string(...)`, never by `.string`:
 
 ```
 42.string

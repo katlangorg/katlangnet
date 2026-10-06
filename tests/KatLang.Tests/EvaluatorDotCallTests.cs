@@ -1214,23 +1214,27 @@ public class EvaluatorDotCallTests
     [Fact]
     public void Eval_DotCall_MissingProperty_UsesKatLangFacingMessage()
     {
-        var source = ClosedMemberProbe(
-            """
+        const string definitions = """
             Lib = {
                 A = 1
             }
 
-            """,
-            "Lib.B");
+            """;
 
-        var result = EvalFull(source);
+        // `Lib` is statically known and lacks `B`, so under the closed list `Lib.B` is certainly
+        // the call `B(Lib)` and its name is checked before any run (Q-75 F-A).
+        AssertCertainFallbackNameUndeclared(ClosedMemberProbe(definitions, "Lib.B"), "B", "Lib");
+
+        // A parameter receiver MAY declare `B`, so the closed list accepts the edge and the
+        // RUNTIME miss keeps its KatLang-facing message, naming the receiver as written.
+        var result = EvalFull(ParameterMemberProbe(definitions, "B", "Lib"));
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var callContext = Assert.IsType<EvalError.WithContext>(result.Error);
         var contextual = Assert.IsType<EvalError.WithContext>(callContext.Inner);
         var dotContext = Assert.IsType<DotCallContext>(contextual.ErrorContext);
-        Assert.Equal("Lib", dotContext.ReceiverDescription);
+        Assert.Equal("receiver", dotContext.ReceiverDescription);
         Assert.Equal("B", dotContext.PropertyName);
         var unresolved = Assert.IsType<EvalError.UnknownName>(contextual.Inner);
         Assert.Equal("B", unresolved.Name);
@@ -1238,15 +1242,29 @@ public class EvaluatorDotCallTests
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.DoesNotContain("dotCall", formatted);
         Assert.DoesNotContain("Unknown name: B", formatted);
-        Assert.Contains("Property 'B' was not found on `Lib`", formatted);
+        Assert.Contains("Property 'B' was not found on `receiver`", formatted);
         Assert.Contains("visible algorithm or property named 'B'", formatted);
-        Assert.Contains("`Lib` as the first argument", formatted);
+        Assert.Contains("`receiver` as the first argument", formatted);
+
+        // The statically known receiver's runtime miss is reachable only from a host-built tree,
+        // and it renders that receiver exactly as the static diagnostic does.
+        var hostBuilt = EvalHostBuilt(ClosedMemberProbe(definitions, "Lib.B"));
+        Assert.True(hostBuilt.IsError);
+        var hostMessage = KatLangError.FromEvalError(hostBuilt.Error).Message;
+        Assert.Contains("Property 'B' was not found on `Lib`", hostMessage);
+        Assert.Contains("`Lib` as the first argument", hostMessage);
     }
 
     [Fact]
     public void Eval_DotCall_MissingProperty_OnExpression_RendersReceiver()
     {
-        var result = EvalFull(ClosedMemberProbe("", "(2 + 3).B"));
+        // A value receiver never declares members, so the fallback is certain: the front end
+        // renders the compound receiver in its check (Q-75 F-A) ...
+        var diagnostic = AssertCertainFallbackNameUndeclared(ClosedMemberProbe("", "(2 + 3).B"), "B", "(2 + 3)");
+        Assert.Contains("`(2 + 3).B` is the call `B(2 + 3)`", diagnostic.Message);
+
+        // ... and the runtime miss, reachable only from a host-built tree, renders it the same way.
+        var result = EvalHostBuilt(ClosedMemberProbe("", "(2 + 3).B"));
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 

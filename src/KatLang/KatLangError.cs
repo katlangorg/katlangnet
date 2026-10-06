@@ -279,6 +279,8 @@ public sealed class KatLangError
             return formattedImplicitParams;
         if (TryFormatReduceInitialAccumulator(error, out var formattedReduceInitialAccumulator))
             return formattedReduceInitialAccumulator;
+        if (TryFormatComputedDotCallee(error, out var formattedComputedDotCallee))
+            return formattedComputedDotCallee;
 
         // Compiler-exhaustive over the closed EvalError hierarchy: a new variant
         // fails this build until it has a message, instead of silently rendering
@@ -461,9 +463,9 @@ public sealed class KatLangError
             return true;
         }
 
-        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput })
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput missing })
         {
-            message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName);
+            message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName, missing.IsSelectedMemberOutput);
             return true;
         }
 
@@ -487,7 +489,7 @@ public sealed class KatLangError
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            message = FormatDotCallMissingOutput(receiverDesc, dotPropertyName);
+            message = FormatDotCallMissingOutput(receiverDesc, dotPropertyName, isSelectedMemberOutput: false);
             return true;
         }
 
@@ -719,14 +721,16 @@ public sealed class KatLangError
 
     /// <summary>
     /// The ONE spelling of "this receiver has no such member", shared by the
-    /// closed-list runtime failure (<see cref="FormatDotCallUnknownName"/>, where
-    /// the fallback found no callable either) and the receiver-aware provenance
-    /// of an inferred implicit parameter
+    /// runtime failure of an extension call whose callee does not exist
+    /// (<see cref="FormatDotCallUnknownName"/>, where the fallback found no callable
+    /// either — a runtime receiver that may have declared the member), the
+    /// receiver-aware provenance of an inferred implicit parameter
     /// (<see cref="FormatDotMemberFallbackInference"/>, where the fallback name was
-    /// promoted instead). Both describe the same dot-edge fact; they differ only
-    /// in what the lexical fallback then did.
+    /// promoted instead), and the front end's closed-body report of a MUST-selected
+    /// fallback name (Q-75 F-A; <c>ParameterDetector</c>). All describe the same
+    /// dot-edge fact; they differ only in what the lexical fallback then did.
     /// </summary>
-    private static string FormatDotMemberNotFound(string propertyName, string receiverDesc)
+    internal static string FormatDotMemberNotFound(string propertyName, string receiverDesc)
         => $"Property '{propertyName}' was not found on `{receiverDesc}`";
 
     private static string FormatDotCallUnknownName(string propertyName, string receiverDesc)
@@ -748,10 +752,14 @@ public sealed class KatLangError
 
     /// <summary>
     /// The <c>string</c> intrinsic renders receiver-only because it is a dot-only
-    /// value conversion (no <c>.string</c> property reference).
+    /// value conversion whose missing output is its RECEIVER's (no <c>.string</c>
+    /// property reference). A declared member named <c>string</c> is selected like any
+    /// member (Q-17 S-C): its own missing output is marked
+    /// (<see cref="EvalError.MissingOutput.IsSelectedMemberOutput"/>) and names the member
+    /// reference like every other member's.
     /// </summary>
-    private static string FormatDotCallMissingOutput(string receiverDesc, string propertyName)
-        => string.Equals(propertyName, "string", StringComparison.Ordinal)
+    private static string FormatDotCallMissingOutput(string receiverDesc, string propertyName, bool isSelectedMemberOutput)
+        => !isSelectedMemberOutput && string.Equals(propertyName, "string", StringComparison.Ordinal)
             ? FormatReferenceMissingOutput(receiverDesc)
             : FormatReferenceMissingOutput($"{receiverDesc}.{propertyName}");
 
@@ -826,7 +834,35 @@ public sealed class KatLangError
         if (description.StartsWith("num(", StringComparison.Ordinal) && description.EndsWith(')'))
             return $"The number {description[4..^1]} is not callable.";
 
+        // A dot expression in callee position that carries no callable identity (DOT-09, Q-18).
+        // With its call frame the callee is named (TryFormatComputedDotCallee).
+        if (string.Equals(description, Evaluator.ComputedDotCalleeDescription, StringComparison.Ordinal))
+            return $"A computed dot value is not callable: {ComputedDotCalleeReason}";
+
         return $"Not an algorithm: {description}";
+    }
+
+    private const string ComputedDotCalleeReason
+        = "a dot expression can be called only when it names a member that its receiver declares (such as `Lib.F`); otherwise it evaluates to a value.";
+
+    /// <summary>
+    /// A call whose callee is a computed dot value (DOT-09, Q-18 C-B3): named by the call frame,
+    /// e.g. "`5.Inc` is a computed value, not a callable: …".
+    /// </summary>
+    private static bool TryFormatComputedDotCallee(EvalError error, out string message)
+    {
+        if (error is EvalError.WithContext
+            {
+                ErrorContext: CallContext callContext,
+                Inner: EvalError.NotAnAlgorithm { Description: Evaluator.ComputedDotCalleeDescription },
+            })
+        {
+            message = $"`{callContext.CalleeDescription}` is a computed value, not a callable: {ComputedDotCalleeReason}";
+            return true;
+        }
+
+        message = string.Empty;
+        return false;
     }
 
     private static string FormatPropertyMissingOutput(string propertyName)

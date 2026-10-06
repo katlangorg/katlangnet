@@ -315,7 +315,26 @@ public closed record EvalError
     public sealed record ExplicitParametersRequireOutput() : EvalError;
 
     /// <summary>Forced user-defined algorithm value does not define an output.</summary>
-    public sealed record MissingOutput() : EvalError;
+    public sealed record MissingOutput() : EvalError
+    {
+        private readonly RuntimeStateSlot<bool> _isSelectedMemberOutput;
+
+        /// <summary>
+        /// Diagnostic-only: this missing output is a SELECTED STRUCTURAL MEMBER's own — the
+        /// zero-argument member read <c>R.n</c> (DOT-01) — never its receiver's. A dot context
+        /// alone cannot tell a member named <c>string</c> (selected like any member, Q-17 S-C)
+        /// from the <c>.string</c> intrinsic, which demands its RECEIVER's value and so blames the
+        /// receiver; the renderer reads this to name the member reference. Like the other
+        /// diagnostic slots, C#-side metadata with no Lean counterpart — the structured kind is
+        /// unchanged — carried in an equality-transparent slot, so the span-attaching and
+        /// context-wrapping <c>with</c> copies keep it while record equality ignores it.
+        /// </summary>
+        internal bool IsSelectedMemberOutput
+        {
+            get => _isSelectedMemberOutput.Value;
+            init => _isSelectedMemberOutput = new(value);
+        }
+    }
 
     /// <summary>Spread operand did not produce output.</summary>
     public sealed record SpreadMissingOutput() : EvalError;

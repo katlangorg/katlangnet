@@ -3851,14 +3851,14 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// How a dot edge dispatches (<see cref="FormulaLiftingRoles.EdgeKind"/>): the detector's stamped
-    /// fallback-selection verdict, or — for an unstamped host tree — this pass's own static receiver
+    /// structural-miss verdict, or — for an unstamped host tree — this pass's own static receiver
     /// resolution (a name through the map and the prelude).
     /// </summary>
     private static DotEdgeKind EdgeKindOf(Expr.DotCall edge, SignatureMap paramMap, ResolutionRun run)
         => FormulaLiftingRoles.EdgeKind(
             edge,
-            edge.ElaboratedFallbackSelection
-                ?? edge.GetLexicalFallbackSelection(edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(
+            edge.ElaboratedMissSelection
+                ?? edge.GetStructuralMissSelection(edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(
                     name => paramMap.TryGetValue(name, out var entry)
                         ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, entry.Value)
                         : run.Prelude.TryGetMember(name, out var member)

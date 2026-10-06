@@ -2525,19 +2525,18 @@ def openExprName (e : Expr) : String :=
   | .emptySequence depth => emptySequenceText depth
   | _ => s!"({Expr.kind e})"            -- * informative fallback using constructor kind
 
-/-- A STATIC PATH (FWD-02): a name, or an argumentless dot edge — never the `.string`
-    intrinsic — whose receiver is itself a static path or a block. Every callable alias
-    target is one; the surface pass forms an alias over nothing else. Returns the path's
-    head (a name or a block) and its member steps, outermost receiver first.
+/-- A STATIC PATH (FWD-02): a name, or an argumentless dot edge whose receiver is itself
+    a static path or a block — an edge spelled `string` included, since a declared member
+    named `string` is selected like any member (Q-17 S-C). Every callable alias target is
+    one; the surface pass forms an alias over nothing else. Returns the path's head (a name
+    or a block) and its member steps, outermost receiver first.
     C#: `StaticAliasTargets.IsStaticPath`. -/
 def Expr.staticAliasPath? : Expr -> Option (Expr × List Ident)
   | .resolve name => some (.resolve name, [])
   | .dotMember receiver member _ none =>
-      if member == "string" then none
-      else
-        match receiver with
-        | .algorithmExpr block => some (.algorithmExpr block, [member])
-        | other => (Expr.staticAliasPath? other).map (fun (head, steps) => (head, steps ++ [member]))
+      match receiver with
+      | .algorithmExpr block => some (.algorithmExpr block, [member])
+      | other => (Expr.staticAliasPath? other).map (fun (head, steps) => (head, steps ++ [member]))
   | _ => none
 
 def Expr.isStaticAliasPath (e : Expr) : Bool := (Expr.staticAliasPath? e).isSome
@@ -5244,14 +5243,16 @@ partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       | a::_ => lookupLexical a n ctx
       | []   => .error (Error.unknownName n)
   | .dotMember o n fallback args =>
-      -- Lift a.f / a.f(args) to a wrapper algorithm; evalDotCall handles all
-      -- semantics (builtin property special cases, structural property,
-      -- receiver injection, lexical fallback). The whole node — including its
-      -- elaborated fallback identity — rides along unchanged. This is the
-      -- higher-order/value identity of a dot RESULT; a dot edge in RECEIVER
-      -- position resolves through `resolveDotReceiver` below, which navigates
-      -- an argumentless chain's declared structural members before falling
-      -- back to this memberless wrapper.
+      -- The internal CARRIER of a dot RESULT used as a RECEIVER: a memberless
+      -- wrapper whose evaluation (evalDotCall) owns every dot semantic
+      -- (structural member, `.string` intrinsic, extension call). The whole
+      -- node — including its elaborated fallback identity — rides along
+      -- unchanged. Its only consumer is `resolveDotReceiver` below, where a
+      -- structural miss or an argument-bearing edge is a VALUE (DOT-02); it is
+      -- never a program-visible callable — every algorithm-capable position,
+      -- the callee included, reads a dot expression's identity through
+      -- `projectNeedStructuralMember` (DOT-09; `projectNeedCallable`,
+      -- `resolveCalleeAlg`).
       identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
@@ -5303,12 +5304,16 @@ partial def projectNeedCallable (address : Nat) : EvalM (Option Algorithm) := do
   modify fun current => { current with needs := (current.needs.modify address (fun currentCell => { currentCell with callable := some outcome })) }
   return <- outcome
 
-/-- Identity-only structural navigation. A computed dot result has no callable
-    channel; resolving a receiver must not mint a value-thunk identity. -/
+/-- Identity-only structural navigation: THE ONE CALLABLE PROJECTION of a dot
+    expression (DOT-09), shared by a supplied argument (`projectNeedCallable`, NEED-06)
+    and a callee (`resolveCalleeAlg`, Q-18 C-B3). An argumentless path whose every edge
+    selects a DECLARED member — a member named `string` included (Q-17 S-C) — is that
+    member (accessibility checked after selection); a computed dot result (an
+    argument-bearing edge, a structural miss) has no callable channel, and resolving a
+    receiver must not mint a value-thunk identity. C#: `ProjectDotPathCallable`. -/
 partial def projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
   match source with
   | .dotMember receiver name _ none =>
-      if name = "string" then return none
       let container <- projectNeedStructuralMember receiver ctx
       let some algorithm := container | return none
       match Algorithm.lookupPropDefAny? algorithm name with
@@ -5332,6 +5337,27 @@ partial def projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) : EvalM 
       | .error error => throw error
   | _ => pure none
 end
+
+/-- The structured `notAnAlgorithm` description of a dot expression in CALLEE position
+    that carries no callable identity — a computed VALUE (an extension call's or the
+    `.string` intrinsic's result, a call result). C#: `Evaluator.ComputedDotCalleeDescription`. -/
+def computedDotCalleeDescription : String := "dot result"
+
+/-- The CALLABLE a call's CALLEE carries (DOT-09; Q-18 C-B3). A dot expression carries ONE
+    callable identity in every algorithm-capable position, so a dot callee is read through
+    the SAME projection a supplied argument is (`projectNeedStructuralMember`, then alias
+    normalization — exactly `projectNeedCallable`'s dot arm): an argumentless structural
+    path is its member's own callable — `(Box.G)(2)` is the member call `Box.G(2)` and
+    `(Box.V)()` the explicit fresh call `Box.V()`, grouping never changing identity — and
+    every other dot expression is a computed value with no callable identity. Every other
+    callee shape resolves through canonical `resolveAlg`. C#: `Evaluator.ResolveCallee`. -/
+def resolveCalleeAlg (f : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
+  match f with
+  | .dotMember _ _ _ _ =>
+      match <- projectNeedStructuralMember f ctx with
+      | some algorithm => resolveAliasTarget algorithm ctx
+      | none => .error (Error.notAnAlgorithm computedDotCalleeDescription)
+  | _ => resolveAlg f ctx
 
 /-- The ROLE of a builtin's invoking (CALLABLE) slot — its callback, or a
     loop's step: the description of the slot's missing-callability verdict
@@ -5379,34 +5405,35 @@ partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     of the ordinary DotCall law applied at EVERY level of a chain.
 
     Every receiver shape resolves through canonical `resolveAlg` except an
-    argumentless, non-`string` dot edge `X.M`, which NAVIGATES: when `X`
-    (resolved the same way, recursively) is an algorithm that declares an
-    exported `M`, the receiver IS that member algorithm wired to `X`
-    (`Algorithm.childOf`), so `Lib.Sub.Q` reads `Sub`'s own `Q` before any
-    lexical `Q(x)` is considered, exactly as `Lib.Q` reads `Lib`'s. A declared
-    but local-only `M`, or one defined only inside conditional branches, is
-    the same structural error that evaluating `X.M` itself reports — never a
-    fallback. When `X` does not declare `M` (or is not an algorithm at all),
-    the edge is an ordinary dot RESULT — its lexical fallback's value, or the
-    `string` intrinsic — and resolves to `resolveAlg`'s memberless wrapper, so
-    the chain continues by value (`3.A.B` stays `B(A(3))`). An argument-bearing
-    edge is a call, hence a value, and never navigates; a capture receiver
-    keeps suppressing structural identity (`(A, B).V` and `(A*).V` fall back —
-    a redundant group never reaches this node, so the sources `(Obj).V` and
-    `(Lib.Sub).Q` are simply `Obj.V` and `Lib.Sub.Q`: parentheses group
-    syntax and never change which receiver is navigated).
+    argumentless dot edge `X.M`, which NAVIGATES: when `X` (resolved the same
+    way, recursively) is an algorithm that declares `M` (any visibility;
+    selection never depends on exposure), the receiver IS that member algorithm
+    wired to `X` (`childOfInContext`), so `Lib.Sub.Q` reads `Sub`'s own `Q`
+    before any lexical `Q(x)` is considered, exactly as `Lib.Q` reads `Lib`'s.
+    A member named `string` is navigated like any member (Q-17 S-C:
+    `Obj.string.Q` reads the declared `string`'s own `Q`). A declared `M` that
+    is inaccessible from the site (`memberAccessible?`), or one defined only
+    inside conditional branches, is the same structural error that evaluating
+    `X.M` itself reports — never a fallback. When `X` does not declare `M` (or
+    is not an algorithm at all), the edge is an ordinary dot RESULT — its
+    lexical fallback's value, or, for `string`, the intrinsic's text — and
+    resolves to `resolveAlg`'s memberless wrapper, the internal carrier of that
+    VALUE, so the chain continues by value (`3.A.B` stays `B(A(3))`). An
+    argument-bearing edge is a call, hence a value, and never navigates; a
+    capture receiver keeps suppressing structural identity (`(A, B).V` and
+    `(A*).V` fall back — a redundant group never reaches this node, so the
+    sources `(Obj).V` and `(Lib.Sub).Q` are simply `Obj.V` and `Lib.Sub.Q`:
+    parentheses group syntax and never change which receiver is navigated).
 
     The resolution is identity navigation only: no intermediate edge is
     evaluated, so a parameterized or output-less container navigates exactly
     as it does at the first level (`F.Q` works while `F` alone is an arity or
-    missing-output error). The higher-order channel is untouched: `resolveAlg`
-    still lifts every general argumentless dot expression to its
-    zero-parameter wrapper identity. C#: `ResolveDotReceiver`. -/
+    missing-output error). A dot expression's CALLABLE identity is read by
+    `projectNeedStructuralMember` alone (DOT-09). C#: `ResolveDotReceiver`. -/
 def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   match e with
   | .dotMember o n _ none =>
-      if n = "string" then resolveAlg e ctx
-      else do
+      do
         match <- evalAttempt (resolveDotReceiver o ctx) with
         | .ok a =>
             match Algorithm.lookupPropDefAny? a n with
@@ -6740,10 +6767,11 @@ mutual
 
   /-- Context-aware counted call evaluation for expression position — the
       CANONICAL expression-position call dispatch (`evalCallExpr` is its value
-      projection); attaches `CtxMsg.call` to resolution and dispatch errors. -/
+      projection); attaches `CtxMsg.call` to resolution and dispatch errors.
+      The callee is resolved by `resolveCalleeAlg` (DOT-09). -/
   partial def evalCallCountedExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let callee <- withCtx (CtxMsg.call f) <| resolveAlg f ctx
+    let callee <- withCtx (CtxMsg.call f) <| resolveCalleeAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
   /-- Counted extension-call fallback: DOT-CALL PASSES A VALUE (September
@@ -6827,20 +6855,19 @@ mutual
         | [] => evalZeroArgumentDemandOutput targetAlg ctx env
     | .param _ => eval target ctx env
     | .dotMember receiver member _ none =>
-        if member = "string" then evalZeroArgumentDemandOutput targetAlg ctx env
-        else
-          -- The same navigation `resolveDotReceiver` just performed: a member the
-          -- container DECLARES is the selected structural binding (its
-          -- accessibility was already enforced there); anything else is a dot result.
-          match <- evalAttempt (resolveDotReceiver receiver ctx) with
-          | .ok container =>
-              match Algorithm.lookupPropDefAny? container member with
-              | some p =>
-                  let accessed := (flatBinderUserEquivalent? targetAlg).getD targetAlg
-                  let counted <- evalZeroArgPropertyAccessCounted .structural container p accessed ctx env
-                  pure counted.fst
-              | none => evalZeroArgumentDemandOutput targetAlg ctx env
-          | .error _ => evalZeroArgumentDemandOutput targetAlg ctx env
+        -- The same navigation `resolveDotReceiver` just performed (a `string` step
+        -- included, Q-17 S-C): a member the container DECLARES is the selected
+        -- structural binding (its accessibility was already enforced there);
+        -- anything else is a dot result.
+        match <- evalAttempt (resolveDotReceiver receiver ctx) with
+        | .ok container =>
+            match Algorithm.lookupPropDefAny? container member with
+            | some p =>
+                let accessed := (flatBinderUserEquivalent? targetAlg).getD targetAlg
+                let counted <- evalZeroArgPropertyAccessCounted .structural container p accessed ctx env
+                pure counted.fst
+            | none => evalZeroArgumentDemandOutput targetAlg ctx env
+        | .error _ => evalZeroArgumentDemandOutput targetAlg ctx env
     | _ => evalZeroArgumentDemandOutput targetAlg ctx env
 
   /-- Evaluate dotCall: a.f or a.f(args). The member result is a value boundary:
@@ -6850,25 +6877,30 @@ mutual
       (count 1) and only a caller-site spread `value*` re-spreads
       it. This is the single owner
       of dot-call dispatch; `evalDotCall` is its Result projection.
-      Smart dispatch:
+      The ROUTE is decided first, member-first at every edge (DOT-01; Q-17 S-C):
       - Receiver resolution through `resolveDotReceiver`: a chained receiver
         navigates its declared structural members, so the property-first
         rule below holds at every level of `A.B.C.D`
-      - "string" value intrinsic → evaluate target, convert numeric result to string
-      - Structural property found (navigation-only):
+      - ONE structural lookup of the member (a member named `string` included):
         - If no args and 0-param → value access
         - If no args and has params → arity mismatch error
         - If args → direct argument binding (no receiver injection)
-      - No property → extension fallback (`callLexicalWithReceiverCounted`):
-        DOT-CALL PASSES A VALUE — `a.f(args)` is exactly the call
-        `f(a, args)`, the receiver being the ordinary first argument slot
-        (never a supply of its own; only the spread receiver `a*.f`, lowered
-        to `f(a*)`, opens a boundary). Dot resolution therefore has three
-        classes — structural member access, the intrinsic `.string`, and
-        extension fallback — and only the third one injects the receiver.
+      - A branch-only member → `localOnlyProperty`
+      - A structural MISS takes the edge's miss route:
+        - "string" → the value intrinsic: evaluate the receiver, convert its
+          numeric value to text (a lexical `string` is never consulted)
+        - otherwise → extension fallback (`callLexicalWithReceiverCounted`):
+          DOT-CALL PASSES A VALUE — `a.f(args)` is exactly the call
+          `f(a, args)`, the receiver being the ordinary first argument slot
+          (never a supply of its own; only the spread receiver `a*.f`, lowered
+          to `f(a*)`, opens a boundary).
+        Dot resolution therefore has three classes — structural member access,
+        the intrinsic `.string`, and extension fallback — and only the
+        extension call injects the receiver.
 
-      When receiver resolution returns notAnAlgorithm (e.g. numeric literal
-      target), value-based intrinsics are checked before lexical fallback.
+      When receiver resolution returns notAnAlgorithm (a value receiver, e.g. a
+      numeric literal), there is no member to select: the miss route applies
+      directly.
 
       (The C# front end consumes the Grace annotation in `a~.f` / `a.~f`, so
       Lean receives the same dotMember and the same structural-first dispatch
@@ -6883,42 +6915,10 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match <- evalAttempt (resolveDotReceiver target ctx) with
     | .ok targetAlg =>
-      if name = "string" then do
-        -- The intrinsic is a ZERO-parameter member: a written argument list is
-        -- assembled like every call's (each slot evaluated once, spreads opened)
-        -- and then rejected by arity exactly as `Obj.V(1)` is for a declared
-        -- zero-parameter member; `x.string()` (an empty list) stays the intrinsic.
-        -- C#: `RejectDotStringIntrinsicArguments`.
-        rejectDotStringIntrinsicArguments argsOpt ctx env
-        -- A receiver that is a callable alias is demanded as its TARGET, read through the
-        -- alias's own binding (C#: `EvalAliasDotStringCounted`).
-        let targetAlg <- resolveAliasTarget targetAlg ctx
-        -- The receiver is demanded for its VALUE with zero arguments, so the ONE
-        -- zero-argument demand law decides from the resolved receiver's
-        -- signature before its body is entered: `Inc.string` with `Inc(x)` is
-        -- the property arity error, a navigated parameterized member the bare
-        -- one, and a written parameterized block `unresolvedImplicitParams`.
-        -- The accepted receiver is then READ like a value position reads it
-        -- (`evalDotStringReceiverValue`): a named property through its cached
-        -- property access, a parameter through its bound value.
-        -- A PARAMETER receiver's value outcome was established at binding, so a
-        -- parameter whose argument slot FAILED its one value evaluation reports
-        -- that failure first, before the law judges its algorithm channel
-        -- (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `parameterValueFailure?`).
-        -- C#: `EvalDotStringReceiverAlgOutput`.
-        match target with
-        | .param x =>
-            match <- parameterValueFailure? x ctx env with
-            | some err => .error err
-            | none => pure ()
-        | _ => pure ()
-        match zeroArgumentDemandError? (some target) targetAlg with
-        | some err => .error err
-        | none => pure ()
-        let val <- evalDotStringReceiverValue target targetAlg ctx env
-        let out <- resultToString val
-        pure (out, Result.valueCount out)
-      else
+        -- ONE structural lookup decides the route, whatever the member's spelling: a
+        -- declared member wins (a member named `string` included — Q-17 S-C), then a
+        -- branch-only member is the local-only error, and only a structural MISS takes
+        -- the miss route.
         match Algorithm.lookupPropDefAny? targetAlg name with
         | some p =>
             -- Selection is by declaration (structural access ignores `public`); the
@@ -6957,9 +6957,48 @@ mutual
         | none =>
             if Algorithm.conditionalBranchesDefineProperty targetAlg name then
               .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+            else if name = "string" then do
+              -- A structural miss: `string` is the number-to-text intrinsic (DOT-08) —
+              -- it takes the extension call's place, so a lexical `string` is never
+              -- consulted.
+              -- The intrinsic is a ZERO-parameter member: a written argument list is
+              -- assembled like every call's (each slot evaluated once, spreads opened)
+              -- and then rejected by arity exactly as `Obj.V(1)` is for a declared
+              -- zero-parameter member; `x.string()` (an empty list) stays the intrinsic.
+              -- C#: `RejectDotStringIntrinsicArguments`.
+              rejectDotStringIntrinsicArguments argsOpt ctx env
+              -- A receiver that is a callable alias is demanded as its TARGET, read through the
+              -- alias's own binding (C#: `EvalAliasDotStringCounted`).
+              let targetAlg <- resolveAliasTarget targetAlg ctx
+              -- The receiver is demanded for its VALUE with zero arguments, so the ONE
+              -- zero-argument demand law decides from the resolved receiver's
+              -- signature before its body is entered: `Inc.string` with `Inc(x)` is
+              -- the property arity error, a navigated parameterized member the bare
+              -- one, and a written parameterized block `unresolvedImplicitParams`.
+              -- The accepted receiver is then READ like a value position reads it
+              -- (`evalDotStringReceiverValue`): a named property through its cached
+              -- property access, a parameter through its bound value.
+              -- A PARAMETER receiver's value outcome was established at binding, so a
+              -- parameter whose argument slot FAILED its one value evaluation reports
+              -- that failure first, before the law judges its algorithm channel
+              -- (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `parameterValueFailure?`).
+              -- C#: `EvalDotStringReceiverAlgOutput`.
+              match target with
+              | .param x =>
+                  match <- parameterValueFailure? x ctx env with
+                  | some err => .error err
+                  | none => pure ()
+              | _ => pure ()
+              match zeroArgumentDemandError? (some target) targetAlg with
+              | some err => .error err
+              | none => pure ()
+              let val <- evalDotStringReceiverValue target targetAlg ctx env
+              let out <- resultToString val
+              pure (out, Result.valueCount out)
             else
               callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
+      -- A value receiver declares no member: the edge's miss route applies directly.
       if name = "string" then do
         rejectDotStringIntrinsicArguments argsOpt ctx env
         let val <- eval target ctx env

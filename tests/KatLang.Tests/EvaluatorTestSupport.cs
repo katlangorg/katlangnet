@@ -441,23 +441,79 @@ internal static class EvaluatorTestSupport
     }
 
     /// <summary>
-    /// Wraps one expression in a CLOSED explicit-parameter probe so a dot
-    /// edge's unresolvable member reaches the RUNTIME lookup.
+    /// Wraps one expression in a CLOSED explicit-parameter probe:
+    /// <c>{definitions}Probe(probeInput) = {expression}</c>, called once.
     ///
-    /// Implicit parameter inference includes a dot edge's lexical fallback
-    /// whenever that fallback may be selected, so at root (or in any
-    /// implicitly parameterized body) an unresolvable member name becomes an
-    /// implicit parameter instead. A closed explicit parameter list asks the
-    /// DEFINITE question and takes no fallback contribution — the MAY vs MUST
-    /// distinction — so the member stays a lexical name and its runtime miss
-    /// stays observable.
+    /// <para>
+    /// Implicit parameter inference includes a dot edge's lexical fallback whenever that
+    /// fallback may be selected, so at root (or in any implicitly parameterized body) an
+    /// unresolvable member name becomes an implicit parameter. A closed explicit parameter
+    /// list infers nothing; under Q-75 F-A it CHECKS the fallback name exactly when the
+    /// fallback is CERTAIN — the receiver is statically known to lack the member (a property,
+    /// a module such as <c>Math</c>, or any value expression) — so such a probe is the front
+    /// end's <see cref="DiagnosticCode.UndeclaredIdentifier"/> at the member token
+    /// (<see cref="AssertCertainFallbackNameUndeclared"/>), never a run. A fallback that is
+    /// only POSSIBLE stays a runtime question (<see cref="ParameterMemberProbe"/>), and the
+    /// runtime miss of a statically known receiver is reachable only from a host-built tree
+    /// (<see cref="EvalHostBuilt"/>).
+    /// </para>
     /// </summary>
     internal static string ClosedMemberProbe(string definitions, string expression)
         => $"{definitions}Probe(probeInput) = {expression}\nProbe(0)";
 
-    internal static void AssertUnknownDotMember(string source, string expectedName)
+    /// <summary>
+    /// The runtime probe for a member its receiver MAY declare: the receiver is the closed
+    /// probe's own PARAMETER, so the fallback is possible but not certain (Q-75 MAY), the
+    /// closed list accepts the edge, and a supplied receiver that lacks the member reaches the
+    /// RUNTIME structural lookup and lexical fallback. <paramref name="receiverArgument"/> is
+    /// the written argument the probe is called with.
+    /// </summary>
+    internal static string ParameterMemberProbe(string definitions, string member, string receiverArgument)
+        => $"{definitions}Probe(receiver) = receiver.{member}\nProbe({receiverArgument})";
+
+    /// <summary>
+    /// Asserts the Q-75 F-A verdict on a <see cref="ClosedMemberProbe"/> whose receiver is
+    /// statically known to lack <paramref name="memberName"/>: exactly one front-end
+    /// <see cref="DiagnosticCode.UndeclaredIdentifier"/>, worded receiver-aware (the receiver
+    /// rendered by the same <c>ExprNameRenderer.RenderDotReceiver</c> the runtime miss uses)
+    /// and positioned at the member token.
+    /// </summary>
+    internal static Diagnostic AssertCertainFallbackNameUndeclared(string source, string memberName, string receiverText)
     {
-        var result = EvalFull(source);
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.StartsWith(
+            $"Property '{memberName}' was not found on `{receiverText}`, so ",
+            diagnostic.Message,
+            StringComparison.Ordinal);
+        var span = Assert.IsType<SourceSpan>(diagnostic.Span);
+        Assert.Equal(memberName.Length, span.End.Column - span.Start.Column);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        return diagnostic;
+    }
+
+    /// <summary>
+    /// Evaluates <paramref name="source"/> as a HOST-BUILT tree — its raw syntax, with no
+    /// elaboration — through <c>Evaluator.Run</c>, which evaluates a host tree as-is. Under
+    /// Q-75 F-A the runtime missing-member branch of a statically known receiver is unreachable
+    /// from written source (the front end reports the certain fallback name first), so its
+    /// runtime rendering is pinned at the API boundary that still reaches it, as
+    /// <c>EvaluatorDefensiveBranchTests</c> pins other pre-empted branches. The source must
+    /// parse without a syntax error and must not depend on elaboration (no implicit parameter,
+    /// parameter reference, Grace marker, or <c>load</c>).
+    /// </summary>
+    internal static EvalResult<Result> EvalHostBuilt(string source)
+    {
+        var syntax = Parser.ParseSyntax(source);
+        Assert.False(syntax.HasErrors, "A host-built probe must be syntactically valid: " + source);
+        return Evaluator.Run(new Expr.AlgorithmExpr(syntax.Root));
+    }
+
+    internal static void AssertUnknownDotMember(string source, string expectedName)
+        => AssertUnknownDotMember(EvalFull(source), expectedName);
+
+    internal static void AssertUnknownDotMember(EvalResult<Result> result, string expectedName)
+    {
         if (result.IsOk)
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 

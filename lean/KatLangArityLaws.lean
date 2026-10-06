@@ -502,6 +502,21 @@ theorem spread_dot_receiver_is_ordinary_spread_argument (operand : Expr) (args :
     prepareLexicalDotCallArgs (.sequenceSpread operand) (some args)
       = .sequenceSpread operand :: args := rfl
 
+/-- A dot expression carries ONE callable identity in every algorithm-capable position
+(DOT-09; Q-18 C-B3): in CALLEE position it is exactly the structural projection a
+supplied argument reads (`projectNeedStructuralMember`, then alias normalization —
+`projectNeedCallable`'s dot arm), never the receiver carrier `resolveAlg (.dotMember …)`:
+an argumentless structural path is its member's own callable, and a computed dot value
+has none. So `(Box.G)(2)` is the member call `Box.G(2)`, and `(Box.V)()` the fresh call
+`Box.V()`. -/
+theorem callee_projection_is_supplied_projection
+    (receiver : Expr) (name : Ident) (fallback : Expr) (args : Option OutputBundle) (ctx : EvalCtx) :
+    resolveCalleeAlg (.dotMember receiver name fallback args) ctx =
+      (do
+        match <- projectNeedStructuralMember (.dotMember receiver name fallback args) ctx with
+        | some algorithm => resolveAliasTarget algorithm ctx
+        | none => .error (Error.notAnAlgorithm computedDotCalleeDescription)) := rfl
+
 private theorem collectValues_single (v : Result) :
     bindParameterPatternList.collectValues [{ value? := some v : ParameterPatternInput }]
       = pure [v] := by

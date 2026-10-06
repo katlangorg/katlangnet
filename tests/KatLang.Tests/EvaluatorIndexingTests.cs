@@ -234,14 +234,21 @@ public class EvaluatorIndexingTests
     /// </summary>
     /// <summary>
     /// The receiver-rendering probe: <paramref name="definitions"/> plus the
-    /// dot edge under test, wrapped by <see cref="ClosedMemberProbe"/> so the
-    /// unresolvable member reaches the runtime lookup that renders the
-    /// receiver.
+    /// dot edge under test, wrapped by <see cref="ClosedMemberProbe"/>. An
+    /// index result is a value with no members, so the edge's fallback name is
+    /// certain and the closed list checks it statically (Q-75 F-A): the front
+    /// end renders the receiver in that diagnostic, and the runtime miss —
+    /// reachable only from a host-built tree — renders it through the same
+    /// <c>ExprNameRenderer.RenderDotReceiver</c>. Both must be source-faithful.
     /// </summary>
     private static void AssertIndexDiagnosticName(
         string definitions, string expression, string expectedName, string forbiddenBracketName)
     {
-        var result = EvalFull(ClosedMemberProbe(definitions, expression));
+        var source = ClosedMemberProbe(definitions, expression);
+        var diagnostic = AssertCertainFallbackNameUndeclared(source, "Missing", expectedName);
+        Assert.DoesNotContain(forbiddenBracketName, diagnostic.Message);
+
+        var result = EvalHostBuilt(source);
         if (result.IsOk)
             Assert.Fail($"Expected a diagnostic but got: {result.Value}");
 

@@ -736,8 +736,11 @@ internal static class ExprNameRenderer
             case Expr.Call(var function, _):
                 pending.Push(new Piece("(...)"));
                 // A bare argumentless dot edge absorbs the following argument
-                // list: a.f(...) is a DotCall, while (a.f)(...) calls its result.
-                // This grammar distinction needs parentheses even at equal tier.
+                // list: a.f(...) is a DotCall, while (a.f)(...) is a Call whose
+                // callee is the edge a.f (its member when a declares f, else a
+                // computed value — Q-18 C-B3). The two differ on a structural
+                // miss, so this grammar distinction needs parentheses even at
+                // equal tier.
                 if (function is Expr.DotCall { Args: null })
                     PushParenthesized(pending, function);
                 else

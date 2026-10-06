@@ -11,8 +11,9 @@ namespace KatLang.Tests;
 /// an ordinary elaborated name expression and flows through the SAME
 /// expression dependency walk as a written callee name whenever the fallback
 /// MAY be the selected resolution at runtime. The deciding fact is the
-/// detector's SCOPE-AWARE verdict stamped on the elaborated edge
-/// (<c>Expr.DotCall.ElaboratedFallbackSelection</c>): a receiver that declares
+/// detector's SCOPE-AWARE structural-miss verdict stamped on the elaborated edge
+/// (<c>Expr.DotCall.ElaboratedMissSelection</c>; a <c>.string</c> edge's miss route
+/// is the intrinsic, so it never selects its fallback): a receiver that declares
 /// the member (<see cref="LexicalFallbackSelection.Never"/>) never selects the
 /// fallback, so a structurally-resolving property is never made LocalOnly by
 /// an unreached fallback that happens to name a parameter; a receiver known
@@ -31,10 +32,11 @@ namespace KatLang.Tests;
 /// parameter-naming fallback exported, which let structural navigation read a
 /// dynamic binding through it and would have let the run-wide zero-argument
 /// property cache of an exported binding serve one activation's value to
-/// another (F3). The DEFINITE questions stay separate and still take no
-/// fallback contribution: the closed explicit-parameter-list rule and the
-/// conditional-branch full-input-specification rule
-/// (<c>GraceDotCompositionTests.MayVsMust_*</c>).
+/// another (F3). The DEFINITE questions stay separate: the closed
+/// explicit-parameter-list rule and the conditional-branch
+/// full-input-specification rule take a fallback contribution only when the
+/// fallback MUST be selected (Q-75 F-A; <c>GraceDotCompositionTests.MayVsMust_*</c>,
+/// <c>DotSemanticsDecisionTests</c>).
 ///
 /// Graced sources are a CONTROL family here: `a~.t` is the same ordinary
 /// dot edge as `a.t`, so every graced case must classify exactly like its
@@ -115,7 +117,7 @@ public class DotCallFallbackExposureTests
 
         var parsed = SourceProvenance.ParseValid(source);
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(FindProperty(parsed.Root, "Outer", "P").Value.Output));
-        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedFallbackSelection);
+        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedMissSelection);
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
             FindProperty(parsed.Root, "Outer", "Make", "Data").Exposure);
@@ -943,7 +945,7 @@ public class DotCallFallbackExposureTests
             var source = $"Id(x) = x\nChosen(x) = 77\n{receiver}.Chosen";
             var root = SourceProvenance.ParseValid(source).Root;
             var dotCall = Assert.IsType<Expr.DotCall>(root.Output[^1]);
-            Assert.Equal(LexicalFallbackSelection.Always, dotCall.ElaboratedFallbackSelection);
+            Assert.Equal(LexicalFallbackSelection.Always, dotCall.ElaboratedMissSelection);
             Assert.True(dotCall.LexicalFallbackMayBeSelected(), $"expected a selectable fallback for receiver {receiver}");
 
             var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
@@ -964,16 +966,18 @@ public class DotCallFallbackExposureTests
             """;
         var structuralRoot = SourceProvenance.ParseValid(structuralSource).Root;
         var structuralDot = Assert.IsType<Expr.DotCall>(structuralRoot.Output[^1]);
-        Assert.Equal(LexicalFallbackSelection.Never, structuralDot.ElaboratedFallbackSelection);
+        Assert.Equal(LexicalFallbackSelection.Never, structuralDot.ElaboratedMissSelection);
         Assert.False(structuralDot.LexicalFallbackMayBeSelected());
         var structuralRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run(structuralSource));
         Assert.Equal("42", structuralRun.ToDisplayString());
 
-        // The ordinary-dot string intrinsic pre-empts the fallback everywhere.
+        // A `.string` edge never selects its lexical fallback: on a structural miss — a value
+        // receiver certainly misses, so the stamped miss verdict is Always — its miss route is
+        // the intrinsic, which takes the extension call's place (Q-17 S-C).
         var stringSource = "string(x) = 0\n5.string";
         var stringRoot = SourceProvenance.ParseValid(stringSource).Root;
         var stringDot = Assert.IsType<Expr.DotCall>(stringRoot.Output[^1]);
-        Assert.Equal(LexicalFallbackSelection.Never, stringDot.ElaboratedFallbackSelection);
+        Assert.Equal(LexicalFallbackSelection.Always, stringDot.ElaboratedMissSelection);
         Assert.False(stringDot.LexicalFallbackMayBeSelected());
         var stringRun = Assert.IsType<RunResult.Success>(KatLangEngine.Run(stringSource));
         Assert.Equal("5", stringRun.ToDisplayString());
@@ -1028,11 +1032,16 @@ public class DotCallFallbackExposureTests
         // verdict, which the detector derives from the same shared classification
         // with its elaborated scope: it agrees with the raw shape view wherever
         // that view is decided, and decides the lexical-name receiver the raw view
-        // cannot (`V` is a known algorithm without `t`: Always, selectable).
+        // cannot (`V` is a known algorithm without `t`: Always, selectable). The
+        // stamp is the structural-MISS verdict; a `.string` edge projects it to a
+        // never-selected fallback (its miss route is the intrinsic).
         foreach (var source in new[] { "5.t", "{public u = 1\n0}.t", "5.string" })
         {
             var edge = LastEdge(source);
-            Assert.Equal(SelectionOf(edge), edge.ElaboratedFallbackSelection);
+            Assert.Equal(
+                edge.GetStructuralMissSelection(edge.Target.UnwrapGraceOperand().GetStaticStructuralMemberProvider()),
+                edge.ElaboratedMissSelection);
+            Assert.Equal(SelectionOf(edge), edge.LexicalFallbackSelectionOf(edge.ElaboratedMissSelection!.Value));
             Assert.Equal(
                 SelectionOf(edge) != LexicalFallbackSelection.Never,
                 edge.LexicalFallbackMayBeSelected());
@@ -1040,13 +1049,13 @@ public class DotCallFallbackExposureTests
 
         var siblingEdge = LastEdge("V = 5\nV.t");
         Assert.Equal(LexicalFallbackSelection.Conditional, SelectionOf(siblingEdge));
-        Assert.Equal(LexicalFallbackSelection.Always, siblingEdge.ElaboratedFallbackSelection);
+        Assert.Equal(LexicalFallbackSelection.Always, siblingEdge.ElaboratedMissSelection);
         Assert.True(siblingEdge.LexicalFallbackMayBeSelected());
 
         // An unstamped edge (a host-built tree) falls back to the raw shape view,
         // where the undecided lexical receiver is treated as MAY-selected.
         var unstamped = new Expr.DotCall(new Expr.Resolve("V"), "t");
-        Assert.Null(unstamped.ElaboratedFallbackSelection);
+        Assert.Null(unstamped.ElaboratedMissSelection);
         Assert.True(unstamped.LexicalFallbackMayBeSelected());
         Assert.False(new Expr.DotCall(new Expr.Num(5m), "string").LexicalFallbackMayBeSelected());
     }

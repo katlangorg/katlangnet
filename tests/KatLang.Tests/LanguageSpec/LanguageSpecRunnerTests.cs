@@ -305,6 +305,13 @@ public class LanguageSpecRunnerTests
             // front-end rejections.
             "bare-forwarding-needs-parameter-names",
             "open-of-a-callable-alias-is-refused",
+            // Dot semantics (Q-18 C-B3 / Q-75 F-A, October 2026): a call written after an
+            // argument-bearing dot edge is a parser diagnostic, and a CERTAIN fallback name under a
+            // closed list or clause branch is a front-end rejection — parse-level by construction
+            // (FORMAL-02: Lean models no front-end rule).
+            "call-after-argument-bearing-dot-edge-is-a-parse-error",
+            "closed-list-must-fallback-name-is-checked",
+            "branch-must-fallback-name-is-checked",
         ];
         string[] expectedModelDivergences =
         [

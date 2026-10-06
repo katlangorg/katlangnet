@@ -2256,47 +2256,6 @@ public static partial class Evaluator
 
     // ── Algorithm resolution (full — with opens) ─────────────────────────────
 
-    /// <summary>
-    /// Resolves the canonical qualified spelling of a runtime Math FUNCTION
-    /// (<c>Math.Abs</c>, <c>Math.Pow</c>, ...) to the same native wrapper algorithm
-    /// shared by its lowercase alias and an opened canonical name. General
-    /// argumentless dot calls keep their ordinary zero-parameter thunk identity;
-    /// this exception is gated both by authoritative Math metadata and by the
-    /// resolved member's actual <see cref="Expr.NativeCall"/> body, so a user-defined
-    /// property named <c>Math</c> is not reinterpreted as the prelude module.
-    /// </summary>
-    private static Algorithm? TryResolveQualifiedMathNativeReference(
-        Expr.DotCall dotCall,
-        EvalCtx ctx)
-    {
-        // The shape gate is the ONE canonical-Math-member classification
-        // (AstHelpers); it is binding-neutral here because binding is established
-        // below by resolving the receiver itself and verifying the resolved
-        // member's actual native body, not by a static shadow predicate.
-        if (!dotCall.TryGetRegistryProvenCanonicalMathFacts(isPreludeNameShadowed: null, out _))
-            return null;
-
-        var targetR = ResolveAlg(dotCall.Target, ctx);
-        if (targetR.IsError)
-            return null;
-
-        var memberName = dotCall.Name;
-        var binding = LookupPropBinding(targetR.Value, memberName, ctx.Budget);
-        if (binding is null || !IsExported(binding))
-            return null;
-
-        var candidate = ChildOf(targetR.Value, binding.Value);
-        if (candidate.Output.Count != 1
-            || candidate.Output[0] is not Expr.NativeCall(var nativeName, var argNames)
-            || !string.Equals(nativeName, memberName, StringComparison.Ordinal)
-            || !candidate.Params.SequenceEqual(argNames, StringComparer.Ordinal))
-        {
-            return null;
-        }
-
-        return candidate;
-    }
-
     /// <summary>Lean: resolveAlg → EvalM Algorithm.</summary>
     private static EvalResult<Algorithm> ResolveAlg(Expr expr, EvalCtx ctx)
     {
@@ -2349,26 +2308,21 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The higher-order/value identity of a dot RESULT (Lean: resolveAlg (.dotCall o n args)).
-    /// Math functions have one canonical callable identity across <c>Math.X</c>, opened
-    /// <c>X</c>, and the predefined alias: in algorithm position an argumentless canonical
-    /// reference resolves to the verified native wrapper itself so the callback/loop
-    /// binder can bind its declared parameters. Every other dotted expression (and every
-    /// explicit argument list) lifts to a memberless wrapper algorithm whose evaluation —
-    /// <c>evalDotCall</c> — owns all dot semantics (builtin property special cases,
-    /// structural lookup, lexical fallback). A dot edge in RECEIVER position resolves
-    /// through <c>ResolveDotReceiver</c> instead, which navigates an argumentless chain's
-    /// declared structural members before falling back to this memberless wrapper
-    /// (Lean: resolveDotReceiver).
+    /// The internal CARRIER of a dot RESULT used as a RECEIVER (Lean: resolveAlg
+    /// (.dotMember o n fallback args)): a memberless zero-parameter algorithm whose one output
+    /// row is the dot expression itself, so its evaluation — <c>evalDotCall</c> — owns every
+    /// dot semantic (structural lookup, the <c>.string</c> intrinsic, the extension call). Its
+    /// only consumer is RECEIVER resolution (<see cref="ResolveDotReceiver"/>, Lean
+    /// <c>resolveDotReceiver</c>): an edge whose receiver lacks the member, or an
+    /// argument-bearing edge, is a VALUE there (DOT-02), carried by this wrapper into the next
+    /// edge's member lookup (it declares none) and the <c>.string</c> intrinsic's value demand.
+    /// It is never a program-visible callable: every algorithm-capable position — a supplied
+    /// argument, a callback, a loop step and the callee alike — reads a dot expression's
+    /// identity through <see cref="ProjectDotPathCallable"/> (DOT-09), which gives a computed
+    /// value no callable identity at all.
     /// </summary>
     private static EvalResult<Algorithm> ResolveDotCallAlgorithm(Expr.DotCall dotCall, EvalCtx ctx)
     {
-        if (dotCall.Args is null
-            && TryResolveQualifiedMathNativeReference(dotCall, ctx) is { } mathNative)
-        {
-            return EvalResult<Algorithm>.Ok(mathNative);
-        }
-
         var wrapper = new Algorithm.User(
             Parent: null, ParameterPatterns: [], Opens: [],
             Properties: [], Output: [dotCall]);

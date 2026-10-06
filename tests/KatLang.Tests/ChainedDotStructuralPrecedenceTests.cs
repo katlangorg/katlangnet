@@ -540,7 +540,7 @@ public class ChainedDotStructuralPrecedenceTests
         Assert.Equal(
             LexicalFallbackSelection.Conditional,
             edge.GetLexicalFallbackSelection(edge.Target.GetStaticStructuralMemberProvider()));
-        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedFallbackSelection);
+        Assert.Equal(LexicalFallbackSelection.Never, edge.ElaboratedMissSelection);
         Assert.False(edge.LexicalFallbackMayBeSelected());
 
         // A local-only intermediate member is SELECTED by declaration exactly like the

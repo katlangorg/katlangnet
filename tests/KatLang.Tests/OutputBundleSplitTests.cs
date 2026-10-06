@@ -334,13 +334,18 @@ public class OutputBundleSplitTests
     public void CaptureReceiver_FailsStructuralLookup_AndInjectsIntoLexicalFallback()
     {
         // (Obj, Obj).V: a genuine capture exposes no members, so structural lookup
-        // fails and the lexical fallback resolves V lexically. The edge is inside a
-        // CLOSED explicit parameter list, so the unresolvable fallback stays a
-        // lexical name (it is not promoted to an implicit parameter) and the
-        // structured error is UnknownName("V"), never a member of Obj.
-        var missing = Innermost(EvalError("Obj = {public V = 7}\nQ(z) = (Obj, Obj).V\nQ(0)"));
-        var unknown = Assert.IsType<EvalError.UnknownName>(missing);
-        Assert.Equal("V", unknown.Name);
+        // fails and the lexical fallback resolves V lexically. The front end knows
+        // it: the fallback is CERTAIN on a capture receiver, so inside a CLOSED
+        // explicit parameter list the fallback name V is checked like the written
+        // call V((Obj, Obj)) it is (Q-75 F-A) — never promoted to an implicit
+        // parameter, and never resolved to the member of Obj.
+        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("Obj = {public V = 7}\nQ(z) = (Obj, Obj).V\nQ(0)"));
+        Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
+        Assert.Equal(new SourceSpan(2, 19, 2, 20), diagnostic.Span);
+        Assert.StartsWith(
+            "Property 'V' was not found on `(Obj, Obj)`, so `(Obj, Obj).V` is the call `V((Obj, Obj))`;",
+            diagnostic.Message,
+            StringComparison.Ordinal);
 
         // With a lexical one-parameter V, the receiver is injected as the one
         // leading argument: V(receiverValue). Obj has properties but NO output,

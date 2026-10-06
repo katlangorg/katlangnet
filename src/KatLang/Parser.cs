@@ -4432,11 +4432,15 @@ public sealed class Parser
                     // while `F` newline `(1, 2)` is the expression list `F, (1, 2)`.
                     // Multiline calls must open the delimiter before the newline
                     // (`F(` ... `)`); an already-open argument list spans lines
-                    // normally. Non-callable targets (numbers, calls, blocks,
-                    // operators) do not pass this gate, so `2 (3)` reaches the
-                    // expression-list boundary and is the SYN-07A separator
-                    // error — never a call and never multiplication.
-                    when (lhs is Expr.Resolve or Expr.DotCall or Expr.Grace)
+                    // normally. Only a callable REFERENCE is a call target (SYN-09):
+                    // a name, a graced name, or an ARGUMENTLESS dot edge — the member
+                    // reference `(Box.G)(2)` is the member call (DOT-09). A computed
+                    // result never is: numbers, calls, blocks, operators, and an
+                    // argument-bearing dot edge (`X.Mk(1)()`, `R.M(a){ … }` — a call
+                    // result, exactly like `Mk(1)()`) do not pass this gate, so
+                    // `2 (3)` reaches the expression-list boundary and is the SYN-07A
+                    // separator error — never a call and never multiplication.
+                    when (lhs is Expr.Resolve or Expr.DotCall { Args: null } or Expr.Grace)
                         && IsCallArgumentStart():
                     // Direct call: Name(args), Name~(args), or expr.Name(args) already handled above
                     // This handles: Name(args) → Call(Resolve(Name), args)

@@ -1347,9 +1347,6 @@ public static class SemanticModelBuilder
 
         private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveDotMember(Expr.DotCall dotCall, ScopeFrame scope)
         {
-            if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
-
             if (IsDeferredModuleReceiver(dotCall.Target, scope))
                 return (IdentifierClassification.DeferredModuleReference, null, null);
 
@@ -1360,7 +1357,8 @@ public static class SemanticModelBuilder
                 // A declared member is the edge's resolution whatever its exposure — the
                 // evaluator selects it by declaration and checks the site's accessibility
                 // afterwards (a refused access is a diagnostic at the site, never a
-                // different resolution).
+                // different resolution) — and whatever its spelling: a member named
+                // `string` wins over the intrinsic (Q-17 S-C).
                 if (TryResolveDeclaredProperty(targetAlgorithm, dotCall.Name) is { } declaredProperty)
                     return (ClassifyReferenceSymbol(declaredProperty), declaredProperty.Declaration, declaredProperty.PropertyInfo);
 
@@ -1373,8 +1371,17 @@ public static class SemanticModelBuilder
                 if (IsDeferredModulePlaceholder(targetAlgorithm))
                     return (IdentifierClassification.DeferredModuleReference, null, null);
 
-                return ResolveDotMemberFallbackBinding(dotCall, scope);
+                // A structural miss: `.string` is the intrinsic, every other member the fallback.
+                return dotCall.UsesOrdinaryDotStringIntrinsic()
+                    ? (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo)
+                    : ResolveDotMemberFallbackBinding(dotCall, scope);
             }
+
+            // A value receiver, or one only the runtime knows: the one statically nameable route of a
+            // `.string` edge is the intrinsic (a runtime receiver that declares `string` is not knowable
+            // here, exactly as its other members are not).
+            if (dotCall.UsesOrdinaryDotStringIntrinsic())
+                return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
 
             var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
             return fallbackSelection switch

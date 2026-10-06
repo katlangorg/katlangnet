@@ -9,21 +9,32 @@ namespace KatLang.Tests;
 
 public class EvaluatorStringTests
 {
+    // `.string` is the ONE dot intrinsic. Any other member name on a receiver that lacks it is
+    // an ordinary extension-fallback NAME: under a closed list a statically known receiver makes
+    // that name certain, so the front end checks it like a written callee (Q-75 F-A) — an
+    // intrinsic would have no fallback name to check — and a parameter receiver bound to the
+    // same value reaches the runtime fallback, which finds no such name either.
+    private static void AssertNotAnIntrinsic(string definitions, string receiver, string member, string receiverText)
+    {
+        AssertCertainFallbackNameUndeclared(ClosedMemberProbe(definitions, $"{receiver}.{member}"), member, receiverText);
+        AssertUnknownDotMember(ParameterMemberProbe(definitions, member, receiver), member);
+    }
+
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnPropertyReceiver()
-        => AssertUnknownDotMember(ClosedMemberProbe("Data = 1, 7\n", "Data.arity"), "arity");
+        => AssertNotAnIntrinsic("Data = 1, 7\n", "Data", "arity", "Data");
 
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnInlineParenReceiver()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "(1, 7).arity"), "arity");
+        => AssertNotAnIntrinsic("", "(1, 7)", "arity", "(1, 7)");
 
     [Fact]
     public void Eval_Arity_IsNoLongerRecognizedAsIntrinsic_OnNestedParenReceiver()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "((1, 7)).arity"), "arity");
+        => AssertNotAnIntrinsic("", "((1, 7))", "arity", "(1, 7)");
 
     [Fact]
     public void Eval_Length_IsNoLongerRecognizedAsIntrinsic()
-        => AssertUnknownDotMember(ClosedMemberProbe("X = 1, 2, 3\n", "X.length"), "length");
+        => AssertNotAnIntrinsic("X = 1, 2, 3\n", "X", "length", "X");
 
     // ── string intrinsic tests ──────────────────────────────────────────
 

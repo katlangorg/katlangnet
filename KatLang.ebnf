@@ -511,7 +511,10 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    `recv.~~Name`). Parameter detection consumes
                                    Grace, so every form builds the SAME ordinary
                                    dot edge as `recv.Name`: structural member
-                                   first, lexical fallback second.
+                                   first (any name, `string` included), then on a
+                                   structural miss the `.string` intrinsic for
+                                   `string` (Q-17 S-C), otherwise the lexical
+                                   fallback.
 
                                    Free-name collection follows semantic source order:
                                    receiver, participating member fallback,
@@ -565,9 +568,15 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    continuations chain on the call result
                                    (`x.Calculate*.Target.Other`). *)
                 | SpreadMarker  (* see SpreadExpression *)
-                | CallArgs ;    (* only when LHS is a callable target: Resolve, DotCall, or Grace,
-                                   and only when the call delimiter is on the same physical
-                                   line as the callable expression's last token. Same-line
+                | CallArgs ;    (* only when LHS is a callable target — a callable REFERENCE:
+                                   a name (Resolve), a graced name (Grace), an ARGUMENTLESS
+                                   dot edge (DotCall without arguments, e.g. "a.b" or the
+                                   redundant group "(a.b)"), or a redundant group of one of
+                                   those — and only when the call delimiter is on the same
+                                   physical line as the callable expression's last token. A
+                                   call never follows a computed call result: "X.Mk(1)()",
+                                   "R.M(a)()" and "R.M(a){ ... }" are the same-line-item
+                                   error exactly like "Mk(1)()" (Q-18 C-B3). Same-line
                                    whitespace continues the call, so F (1, 2) is the call
                                    F(1, 2), and the same holds for dot-call argument lists and
                                    brace argument lists. A physical newline never continues a
@@ -669,7 +678,9 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      (`K(b, a) = b, ~a`), a parameter of an enclosing
                      algorithm, a visible property, a builtin (`~count`), an
                      opened property, a dot member the receiver is known to
-                     declare (`Obj.~V`), the `.string` intrinsic, or ANY
+                     declare (`Obj.~V`), any `.string` edge (a declared
+                     `string` member or the intrinsic — never a lexical
+                     callable, Q-17 S-C), or ANY
                      occurrence under a closed explicit parameter list — is
                      the front-end error InvalidGraceMarker ("Grace has no
                      effect on 'a' because …"), reported by parameter
@@ -691,9 +702,14 @@ ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                      sequence value — and no later layer (binding, caching,
                      dot-call receivers, patterned calls, optimizers) can
                      observe the parentheses. A same-line call delimiter after
-                     a grouped callable name is a call ("(F)(1)" is "F(1)"),
-                     and "(a.b)(1)" is call syntax on the dot RESULT while
-                     "a.b(1)" is the member edge with arguments (see PostfixOp).
+                     a grouped callable reference is a call ("(F)(1)" is
+                     "F(1)"); "(a.b)(1)" is call syntax on the argumentless
+                     edge "a.b" while "a.b(1)" is the member edge with
+                     arguments (see PostfixOp) — and since a dot expression
+                     has ONE callable identity (Q-18 C-B3), "(a.b)(1)" calls
+                     the member exactly as "a.b(1)" does when "a" declares
+                     "b", while a computed "a.b" (a fallback result) is not
+                     callable.
                      Only a group whose parentheses DO something survives as
                      a capture node: several written slots ("(1, 2)", a
                      sequence value with useful structure, preserving nested

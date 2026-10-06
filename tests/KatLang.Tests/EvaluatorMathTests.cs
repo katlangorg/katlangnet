@@ -33,7 +33,13 @@ public class EvaluatorMathTests
 
     [Fact]
     public void Eval_RemovedMathE_UsesOrdinaryClosedMemberFailure()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.E"), "E");
+    {
+        // `Math` is statically known and lacks `E`, so under a closed list the certain fallback
+        // name is the front end's diagnostic (Q-75 F-A); a parameter receiver bound to `Math`
+        // reaches the runtime structural lookup, which finds no `E` either.
+        AssertCertainFallbackNameUndeclared(ClosedMemberProbe("", "Math.E"), "E", "Math");
+        AssertUnknownDotMember(ParameterMemberProbe("", "E", "Math"), "E");
+    }
 
     [Theory]
     [InlineData("Math.Exp()", 0)]
@@ -336,15 +342,23 @@ public class EvaluatorMathTests
 
     [Fact]
     public void Eval_MathRand_IsUnknownMember()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.Rand"), "Rand");
+        => AssertRemovedMathMember("Rand", "Rand");
 
     [Fact]
     public void Eval_MathRandCall_IsUnknownMember()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.Rand()"), "Rand");
+        => AssertRemovedMathMember("Rand()", "Rand");
 
     [Fact]
     public void Eval_MathRandInt_IsUnknownMember()
-        => AssertUnknownDotMember(ClosedMemberProbe("", "Math.RandInt(1, 7)"), "RandInt");
+        => AssertRemovedMathMember("RandInt(1, 7)", "RandInt");
+
+    private static void AssertRemovedMathMember(string edge, string member)
+    {
+        // Statically known receiver: the certain fallback name is checked (Q-75 F-A).
+        AssertCertainFallbackNameUndeclared(ClosedMemberProbe("", "Math." + edge), member, "Math");
+        // Parameter receiver bound to `Math`: the runtime lookup finds no such member.
+        AssertUnknownDotMember(ParameterMemberProbe("", edge, "Math"), member);
+    }
 
     [Fact]
     public void Eval_ExplicitZeroParameterCall_ReevaluatesRandomPropertyBody()
