@@ -204,6 +204,30 @@ public class DotSemanticsDecisionTests
         }
     }
 
+    [Theory]
+    [InlineData("Sub")]
+    [InlineData("string")]
+    public void Q17_Editor_AFailedStructuralReceiverDoesNotSelectTheIntrinsic(string member)
+    {
+        // The first edge selects a branch-only member and fails structurally. The outer
+        // `.string` edge is never reached, so it has no intrinsic symbol or hover signature.
+        var source = $"F(0) = {{\n    {member} = 1\n    0\n}}\nF(n) = n\nF.{member}.string";
+        var parsed = SourceProvenance.ParseValid(source);
+        var model = SemanticModelBuilder.Build(parsed.Root);
+        var site = new SourcePosition(6, $"F.{member}.".Length + 2);
+        var resolution = model.FindResolutionAt(site);
+        Assert.NotNull(resolution);
+        Assert.Equal(IdentifierClassification.Unresolved, resolution!.Classification);
+        Assert.Null(resolution.ResolvedDeclaration);
+        Assert.Null(model.FindPropertyAt(site));
+        var failedMember = model.FindResolutionAt(new SourcePosition(6, 4));
+        Assert.NotNull(failedMember);
+        Assert.Equal(IdentifierClassification.Unresolved, failedMember.Classification);
+        Assert.Null(model.FindPropertyAt(new SourcePosition(6, 4)));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
+    }
+
     // ── 2. Q-18 C-B3: one callable identity in callee position ──────────────────────────────────
 
     /// <summary>name, source, expected (<c>ok VALUE</c> or <c>err CODE</c>).</summary>
@@ -562,6 +586,7 @@ public class DotSemanticsDecisionTests
         ("alias of a builtin", "R = {\n    public M = abs\n}\n", "R.M"),
         ("Math member", "", "Math.Abs"),
         ("nested member", "R = {\n    public Sub = {\n        public M(x) = x * 3\n    }\n}\n", "R.Sub.M"),
+        ("nested member named string", "R = {\n    public Sub = {\n        public string(x) = x * 3\n    }\n}\n", "R.Sub.string"),
         ("member named string", "R = {\n    public string(x) = x * 3\n    0\n}\n", "R.string"),
         ("parameterized container", "R(k) = {\n    public M(x) = x * 3\n    k\n}\n", "R.M"),
     ];

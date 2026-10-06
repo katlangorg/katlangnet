@@ -1377,6 +1377,11 @@ public static class SemanticModelBuilder
                     : ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
+            // A failed structural edge never reaches a miss route. In particular, a following
+            // `.string` cannot select the intrinsic after a branch-only member refused access.
+            if (provider.Kind == StaticStructuralMemberProviderKind.KnownFailure)
+                return (IdentifierClassification.Unresolved, null, null);
+
             // A value receiver, or one only the runtime knows: the one statically nameable route of a
             // `.string` edge is the intrinsic (a runtime receiver that declares `string` is not knowable
             // here, exactly as its other members are not).

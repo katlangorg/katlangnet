@@ -268,4 +268,19 @@ def groupedInaccessibleCalleeIsLocalOnly : Bool :=
 
 #guard groupedInaccessibleCalleeIsLocalOnly
 
+-- The spelling exception must not return at an intermediate structural edge: the nested
+-- member named string has the same identity when supplied and when used as a callee.
+def nestedStringMemberHasOneCallableIdentity : Bool :=
+  let member := alg ["x"] [] [] [.binary .mul (param "x") (num 3)]
+  let sub := alg [] [] [publicProp "string" member] []
+  let lib := alg [] [] [publicProp "Sub" sub] []
+  let apply := alg ["f", "x"] [] [] [.call (param "f") [param "x"]]
+  let path := KatLang.Expr.dotCall (.dotCall (resolve "Lib") "Sub" none) "string" none
+  match dotIdFlat [("Lib", lib), ("Apply", apply)]
+      [.call (resolve "Apply") [path, num 5], .call path [num 5]] with
+  | .ok [15, 15] => true
+  | _ => false
+
+#guard nestedStringMemberHasOneCallableIdentity
+
 end KatLangTests
