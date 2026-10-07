@@ -88,8 +88,14 @@ internal static class SixRouteAgreement
                 HostOperation.Create("tick", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
-    internal static async Task<Observation> ObserveAsync(Route route, string source)
+    /// <summary>
+    /// Observes <paramref name="source"/> on <paramref name="route"/>. Values are rendered by
+    /// <paramref name="render"/> when given (a suite that compares representation exactly, such
+    /// as <see cref="NumericRepresentativeSelectionTests"/>), otherwise by <see cref="Neutral"/>.
+    /// </summary>
+    internal static async Task<Observation> ObserveAsync(Route route, string source, Func<Result, string>? render = null)
     {
+        render ??= Neutral;
         var log = new HostLog();
         var options = new RunOptions
         {
@@ -99,10 +105,10 @@ internal static class SixRouteAgreement
         switch (route)
         {
             case Route.EngineSync:
-                return FromRunResult(KatLangEngine.Run(source, options), log);
+                return FromRunResult(KatLangEngine.Run(source, options), log, render);
             case Route.EngineAsync:
             case Route.EngineAsyncTwin:
-                return FromRunResult(await KatLangEngine.RunAsync(source, options), log);
+                return FromRunResult(await KatLangEngine.RunAsync(source, options), log, render);
         }
 
         var parsed = Parser.Parse(source, options);
@@ -129,7 +135,7 @@ internal static class SixRouteAgreement
 
         return result.IsError
             ? new Observation("err", null, [Describe(KatLangError.FromEvalError(result.Error))], [.. log.Calls])
-            : new Observation("ok", Neutral(result.Value.Value), [], [.. log.Calls]);
+            : new Observation("ok", render(result.Value.Value), [], [.. log.Calls]);
     }
 
     /// <summary>
@@ -137,21 +143,21 @@ internal static class SixRouteAgreement
     /// engine — outcome kind, value, every error's code, message and position, and the exact host-call
     /// log. Returns the oracle.
     /// </summary>
-    internal static async Task<Observation> OnEveryRouteAsync(string source)
+    internal static async Task<Observation> OnEveryRouteAsync(string source, Func<Result, string>? render = null)
     {
-        var oracle = await ObserveAsync(Route.EngineSync, source);
+        var oracle = await ObserveAsync(Route.EngineSync, source, render);
         foreach (var route in Routes.Skip(1))
         {
-            var observation = await ObserveAsync(route, source);
+            var observation = await ObserveAsync(route, source, render);
             Assert.True(oracle.AgreesWith(observation), $"{route}: expected {oracle}, got {observation}\nsource:\n{source}");
         }
 
         return oracle;
     }
 
-    private static Observation FromRunResult(RunResult result, HostLog log) => result switch
+    private static Observation FromRunResult(RunResult result, HostLog log, Func<Result, string> render) => result switch
     {
-        RunResult.Success success => new("ok", Neutral(success.Value), [], [.. log.Calls]),
+        RunResult.Success success => new("ok", render(success.Value), [], [.. log.Calls]),
         RunResult.EvalFailure failure => new("err", null, [.. failure.Errors.Select(Describe)], [.. log.Calls]),
         RunResult.ParseFailure failure => new("parse", null, [.. failure.Errors.Select(Describe)], [.. log.Calls]),
         RunResult.NoProgramOutput none => new("none", null, [none.Diagnostic.Code.ToString()], [.. log.Calls]),

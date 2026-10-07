@@ -357,6 +357,11 @@ public class LanguageSpecRunnerTests
             "negative-near-one-base-power-is-sign-symmetric",
             // The signed-zero extremum freeze (September 2026): Lean's Int has one zero.
             "min-max-signed-zero",
+            // Q-28 N-F (October 2026): which equally rich contribution's representation a
+            // repeated name retains, and decimal / signed-zero literal patterns, are
+            // Decimal128-tier observations; Int has one representation per value.
+            "repeated-name-keeps-first-equally-rich-representative",
+            "decimal-literal-patterns-match-by-value",
         ];
 
         Assert.Equal(
@@ -384,7 +389,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 297;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 19;
+        const int MaximumCSharpOnlyCases = 21;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

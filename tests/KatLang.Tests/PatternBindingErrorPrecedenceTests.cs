@@ -220,12 +220,12 @@ public class PatternBindingErrorPrecedenceTests
         Assert.Equal(0, cache.SyncAccesses);
     }
 
-    // ── Repeated-name binding is order-independent ──────────────────────────
+    // ── Repeated-name satisfiability and ordered failure ────────────────────
 
     /// <summary>
-    /// Argument multisets for one repeated name, with the outcome every permutation must give
-    /// (Lean <c>repeatedNameFailure</c>: every PAIR of contributions compatible; and Q-05: every
-    /// contribution supplies its own value). <c>Inc</c> is a callable only, <c>Bad</c> a failed
+    /// Argument multisets for one repeated name, with the ordered outcome of the listed spelling.
+    /// Compatibility requires every pair to agree; NEED-04 inspects in written order and Q-05
+    /// requires each contribution's own value. <c>Inc</c> is a callable only, <c>Bad</c> a failed
     /// argument, <c>5</c>/<c>6</c> are values only, <c>A = 5</c>/<c>B = 6</c> carry both.
     /// </summary>
     public static TheoryData<string[], string> RepeatedNameMultisets => new()
@@ -234,8 +234,8 @@ public class PatternBindingErrorPrecedenceTests
         { ["Inc", "5", "A"], IncValueDemand },
         { ["Inc", "A", "A"], IncValueDemand },
         { ["Inc", "5", "5", "A"], IncValueDemand },
-        // A valueless contribution is a binding failure: it precedes the unequal-value verdict,
-        // in every order.
+        // A required value failure propagates when reached. These mixed sets are unsatisfiable
+        // in every order, but the ordered oracle below may select different failures.
         { ["A", "B", "Inc"], "BadArity in []" },
         { ["5", "6", "Inc"], "BadArity in []" },
         { ["5", "6", "Bad"], "BadArity in []" },
@@ -256,6 +256,8 @@ public class PatternBindingErrorPrecedenceTests
     [MemberData(nameof(RepeatedNameMultisets))]
     public void RepeatedNameVerdict_IsTheSameForEveryPermutation(string[] arguments, string expected)
     {
+        // "Verdict" means success versus failure. The exact error below is checked against
+        // written inspection order, rather than assumed equal across permutations.
         const string definitions = "A = 5\nB = 6\nBad = 1 / 0\nInc(y) = y + 1\n";
         var captures = string.Join(", ", Enumerable.Repeat("f", arguments.Length));
         Assert.Equal(expected, FirstConstraintOutcome(arguments));

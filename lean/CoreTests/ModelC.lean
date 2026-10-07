@@ -18,6 +18,32 @@ def call (parameters : List Ident) (body : List Expr) (arguments : OutputBundle)
   | .error error => innermostIsBadArity error
   | _ => false
 
+-- NEED-04 checks each contribution immediately. The owner follow-up (2026-10-07)
+-- preserves this ordered failure: satisfiability, rather than Error constructors,
+-- is permutation-invariant. Int suffices; no Decimal128 representation is modeled.
+def mixedRepeatedConflicts (arguments : OutputBundle) : Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("A", alg [] [] [] [.num 1]), ("B", alg [] [] [] [.num 1])]
+    [.call (.algorithmExpr (alg ["x", "x", "x"] [] [] [.param "x"])) arguments])
+#guard match runResult (mixedRepeatedConflicts [.resolve "A", .resolve "B", .num 2]) with
+  | .error error => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" error
+  | _ => false
+#guard match runResult (mixedRepeatedConflicts [.resolve "A", .num 2, .resolve "B"]) with
+  | .error error => innermostIsBadArity error
+  | _ => false
+
+-- The complete six-permutation table remains unsatisfiable. The two guards above
+-- independently pin the intentionally different innermost Error constructors.
+#guard ([[.resolve "A", .resolve "B", .num 2],
+         [.resolve "B", .resolve "A", .num 2],
+         [.resolve "A", .num 2, .resolve "B"],
+         [.resolve "B", .num 2, .resolve "A"],
+         [.num 2, .resolve "A", .resolve "B"],
+         [.num 2, .resolve "B", .resolve "A"]] : List OutputBundle).all
+  (fun arguments => match runResult (mixedRepeatedConflicts arguments) with
+    | .error _ => true
+    | _ => false)
+
 def collecting (body : List Expr) : Algorithm :=
   algWithParameters [{ name := "xs", kind := .collecting }] [] [] body
 def collectingCall (body : List Expr) (arguments : OutputBundle) : Expr :=

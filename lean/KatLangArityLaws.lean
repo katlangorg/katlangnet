@@ -2066,15 +2066,29 @@ theorem valid_signature_has_at_most_one_top_level_collector (ps : List Parameter
       omega
 
 /-
-## Repeated-name binding is order-independent (September 2026)
+## Historical total repeated-name compatibility helper (September 2026; scope clarified 2026-10-07)
 
 A repeated name is decided ONCE per pattern level, when its last contribution joins, by
 `repeatedNameFailure`: every PAIR of its contributions must be compatible (equal values;
 equal counted values; the same callable identity for two algorithm-channel bindings).
 Every contribution carries its own value — the binder fails a valueless one first
 (Q-05, see "Repeated names are constraints, not merges" below).
-The verdict is a function of the MULTISET of contributions, so no permutation of the
-arguments and no grouping of the merges can change it.
+The total HistoricalReadyBinding helper returns Option Error from already-evaluated
+contributions: it globally checks value/count conflicts before identity conflicts.
+Its theorem proves equality of that entire Option Error, including its constructor,
+under permutation (not merely existence of a failure). For the current language,
+"verdict" means only success versus failure. The historical helper is not the
+Model-C evaluator and its global priority is not the current failure-order law. This
+is not a theorem about Model-C's ordered bindNeedName inspection: a callable conflict
+can stop it before a later unequal value, whereas another order meets that unequal
+value first (CoreTests.ModelC.mixedRepeatedConflicts). A SUCCESSFUL compatible binding is
+permutation-invariant up to `==` (`BEq`) on its value channels and up to callable identity on
+its algorithm channel (`repeated_name_complete_binding_is_permutation_invariant`). On the C#
+Decimal128 tier, `==`-equal numbers may carry different representations (quantum, zero sign);
+there the FIRST written among equally rich contributions supplies the retained representation
+(Q-28, N-F, 2026-10-07) — an observation the Int model, with one representation per value,
+cannot make. The compatible-success observation agrees with C# up to `==`; the total
+helper's error-category theorem must not be extended to ordered Model-C failures.
 -/
 
 private theorem perm_any_eq {α} {l₁ l₂ : List α} (h : l₁.Perm l₂) (f : α → Bool) :
@@ -2221,8 +2235,10 @@ private theorem repeated_first_agrees_of_perm {A} (same : A → A → Bool)
         simpa using (List.any_eq_false.mp compatible) a (by simp)
       simpa using (List.any_eq_false.mp ha) b hb
 
-/-- Successful repeated-name binding preserves availability and contents on all
-    three channels under every contribution permutation. Association-list order
+/-- In HistoricalReadyBinding, successful repeated-name binding preserves availability
+    and contents up to BEq on value/count channels and callable identity on the
+    algorithm channel under every contribution permutation. This is not exact
+    Decimal128 representation invariance. Association-list order
     is not observable; callable contents are compared by callable identity. -/
 theorem repeated_name_complete_binding_is_permutation_invariant
     (names : List Ident) (name : Ident) (member : name ∈ names)

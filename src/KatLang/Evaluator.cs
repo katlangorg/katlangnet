@@ -9,8 +9,8 @@ namespace KatLang;
 
 /// <summary>
 /// The LOW-LEVEL evaluator: evaluates a host-built <see cref="Expr"/> exactly as supplied —
-/// without parsing, module loading, front-end elaboration, or the program's
-/// <c>DisplayDecimals</c> setting — and returns the structured value or error as an
+/// without parsing, module loading, front-end elaboration, or the engine's reading of the
+/// root's <c>DisplayDecimals</c> display filter — and returns the structured value or error as an
 /// <see cref="EvalResult{T}"/>. It is not a source runner: source text goes through
 /// <see cref="KatLangEngine"/> (or <see cref="Parser"/> to elaborate without evaluating), and
 /// an elaborated <see cref="ParseResult.Root"/> may be evaluated here only when it has no

@@ -198,8 +198,8 @@ public static class ConcurrencyCorpus
 
     /// <summary>ONE display-default options instance deliberately aliased into both
     /// lanes of a display-default case: <see cref="RunOptions.DefaultDisplayDecimals"/>
-    /// is immutable configuration, and the effective setting a program's own
-    /// <c>DisplayDecimals</c> decides lives on that run's result only.</summary>
+    /// is immutable configuration, and the effective setting it composes with a program's
+    /// own <c>DisplayDecimals</c> lives on that run's result only.</summary>
     public static readonly RunOptions SharedDisplayDefaultOptions = new() { DefaultDisplayDecimals = 3 };
 
     /// <summary>Two fractional rows whose display text depends on the run's effective display decimals.</summary>
@@ -575,13 +575,13 @@ public static class ConcurrencyCorpus
         },
         new()
         {
-            Id = "display/shared-default-beside-declared-override",
+            Id = "display/shared-default-beside-declared-filter",
             Scenario = ConcurrencyScenario.DisplayDefault,
-            Invariant = "ONE RunOptions { DefaultDisplayDecimals = 3 } instance aliased into two concurrent engine runs, lane B declaring its own DisplayDecimals = 6: the declared property decides only lane B's own result and is never written back into the shared options, so lane A keeps the default.",
+            Invariant = "ONE RunOptions { DefaultDisplayDecimals = 3 } instance aliased into two concurrent engine runs, lane B declaring its own stricter DisplayDecimals = 2: the composed filter (Q-10 D-F, the minimum of the two) decides only lane B's own result and nothing is written back into the shared options, so lane A keeps the host filter.",
             ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedDisplayDefaultOptions,
-            ProgramB = $"DisplayDecimals = 6\n{FractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDisplayDefaultOptions,
+            ProgramB = $"DisplayDecimals = 2\n{FractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDisplayDefaultOptions,
             ExpectedClassA = "engine ok n=2 display=0.143\\n0.667",
-            ExpectedClassB = "engine ok n=2 display=0.142857\\n0.666667",
+            ExpectedClassB = "engine ok n=2 display=0.14\\n0.67",
         },
         new()
         {

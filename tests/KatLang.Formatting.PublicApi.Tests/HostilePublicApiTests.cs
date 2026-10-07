@@ -98,7 +98,9 @@ public class HostilePublicApiTests
         var expected = Assert.IsType<RunResult.Success>(runs[0]).ToDisplayString();
         Assert.All(runs, run => Assert.Equal(expected, Assert.IsType<RunResult.Success>(run).ToDisplayString()));
         Assert.EndsWith("0.14", expected, StringComparison.Ordinal);
-        Assert.Equal("0.142857", (await KatLangEngine.RunAsync("DisplayDecimals = 6\n1 / 7", options)).ToDisplayString());
+        // The program's own filter composes with the shared host filter by their minimum (Q-10 D-F).
+        Assert.Equal("0.14", (await KatLangEngine.RunAsync("DisplayDecimals = 6\n1 / 7", options)).ToDisplayString());
+        Assert.Equal("0.1", (await KatLangEngine.RunAsync("DisplayDecimals = 1\n1 / 7", options)).ToDisplayString());
         Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync("1 / 0", options));
         Assert.Equal(expected, (await KatLangEngine.RunAsync(source, options)).ToDisplayString());
     }

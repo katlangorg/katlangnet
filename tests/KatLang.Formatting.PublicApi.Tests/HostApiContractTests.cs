@@ -243,9 +243,11 @@ public class HostApiContractTests
         const string program = "Math.RandomInt(1, 1000), 1 / 7";
         var first = KatLangEngine.Run(program, options).ToDisplayString();
 
-        // A run whose program declares its own DisplayDecimals, then a failing run, between
-        // two identical runs: neither leaves anything behind in the shared options object.
-        Assert.Equal("0.142857", KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options).ToDisplayString());
+        // A run whose program declares its own (stricter) DisplayDecimals filter, then a failing
+        // run, between two identical runs: neither leaves anything behind in the shared options
+        // object. The two filters compose by their minimum (Q-10 D-F).
+        Assert.Equal("0.1", KatLangEngine.Run("DisplayDecimals = 1\n1 / 7", options).ToDisplayString());
+        Assert.Equal("0.14", KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options).ToDisplayString());
         Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("1 / 0", options));
 
         Assert.Equal(first, KatLangEngine.Run(program, options).ToDisplayString());

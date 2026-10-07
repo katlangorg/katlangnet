@@ -43,12 +43,13 @@ internal static class HelpText
                              cryptographically secure.
 
           --display-decimals <integer>
-                             Default number of digits shown after the decimal
-                             point in displayed numbers, from 0 through 99. A
-                             program's own DisplayDecimals property overrides
-                             it. Display only: values, calculations, and
-                             comparisons are unchanged. Not valid for check,
-                             which does not evaluate.
+                             Display filter: digits shown after the decimal
+                             point in displayed numbers, from 0 through 99.
+                             A program's own DisplayDecimals property is a
+                             filter too; when both are set, the smaller
+                             count applies. Display only: values,
+                             calculations, and comparisons are unchanged.
+                             Not valid for check, which does not evaluate.
 
           --version          Show the KatLang version.
           --help             Show help.

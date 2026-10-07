@@ -10,9 +10,12 @@ public class DisplayDecimalsHostileReviewTests
     private static readonly OutputFormatter[] Formatters =
         [OutputFormatters.Exact, OutputFormatters.Readable, OutputFormatters.Concise];
 
+    // A host filter of 5 is stricter than every possible drawn source filter (6..8), so it
+    // decides the display (Q-10 D-F) while the source filter is still evaluated, suspended
+    // and all; 99 is looser, so the drawn source filter decides.
     [Theory]
     [InlineData(null)]
-    [InlineData(0)]
+    [InlineData(5)]
     [InlineData(99)]
     public async Task SuspendedSourceSetting_PreservesDrawOrderAndHostCalls_BeforeBoundedRendering(int? hostDefault)
     {
@@ -61,7 +64,7 @@ public class DisplayDecimalsHostileReviewTests
         var result = Assert.IsType<RunResult.Success>(await pending.WaitAsync(Timeout));
         Assert.Equal(fraction, Assert.Single(result.Atoms));
         Assert.Equal(1, result.EmittedCount);
-        Assert.Equal((int)digits, result.DisplayOptions.Decimals);
+        Assert.Equal(hostDefault is { } host ? Math.Min(host, (int)digits) : (int)digits, result.DisplayOptions.Decimals);
         Assert.Equal(["output", "display"], calls);
         Assert.True(result.RenderDisplay().LimitExceeded);
         foreach (var formatter in Formatters)
@@ -209,7 +212,8 @@ public class DisplayDecimalsHostileReviewTests
     {
         var options = new RunOptions { DefaultDisplayDecimals = 2 };
         var first = Assert.IsType<RunResult.Success>(KatLangEngine.Run("1 / 7", options));
-        var second = Assert.IsType<RunResult.Success>(KatLangEngine.Run("DisplayDecimals = 8\n1 / 7", options));
+        // The program's own stricter filter decides its run (Q-10 D-F: the minimum of the two).
+        var second = Assert.IsType<RunResult.Success>(KatLangEngine.Run("DisplayDecimals = 1\n1 / 7", options));
         _ = KatLangEngine.Run("DisplayDecimals = 0\n1 / 7", options);
         var firstCopy = first with { };
         Assert.Equal(first, firstCopy);
@@ -219,7 +223,7 @@ public class DisplayDecimalsHostileReviewTests
         Parallel.For(0, 96, i =>
         {
             var run = i % 2 == 0 ? firstCopy : second;
-            var expected = i % 2 == 0 ? "0.14" : "0.14285714";
+            var expected = i % 2 == 0 ? "0.14" : "0.1";
             Assert.Equal(expected, run.ToDisplayString());
             foreach (var formatter in Formatters)
                 Assert.Equal(expected, formatter.Format(run));

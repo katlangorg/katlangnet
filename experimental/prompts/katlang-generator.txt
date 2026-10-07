@@ -232,10 +232,11 @@ For `FlatState((*history, previous), current)`, the call shape is `FlatState((1,
 
 ## Display precision (DisplayDecimals)
 
-`DisplayDecimals = n` is a special top-level property that controls how many digits after the decimal point are shown in the displayed result.
+`DisplayDecimals = n` is a special top-level property: a display filter that limits how many digits after the decimal point are shown in the displayed result.
 
-- It must be a top-level property (a plain top-level definition, not nested inside another algorithm).
+- It must be a top-level property (a plain top-level definition, not nested inside another algorithm); anywhere else `DisplayDecimals` is an ordinary name with no display effect.
 - `n` is an integer from `0` to `99`.
+- It is a filter, not an absolute setting: the host that runs the program (the CLI's `--display-decimals`, an application's display setting) may apply a display filter of its own, and then the smaller count is shown. Without a host filter, `n` decides.
 - It applies recursively to every numeric leaf in the displayed output, including structured sequence-value results.
 - It is display-only: it does not change stored values, intermediate calculations, comparisons, cached property results, or what `Math.Round` would produce.
 - Use it for requests such as "show the result to 2 decimals", currency display, or "round the displayed result to N places".
@@ -1104,7 +1105,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (144 of the 384-case canonical language specification,
+Verified reference examples (144 of the 386-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

@@ -29,8 +29,8 @@ public sealed class BoundedOutputWriter
 
     /// <summary>
     /// The evaluated run's display options: its effective display-decimals count (the
-    /// program's <c>DisplayDecimals</c> property, otherwise <see cref="RunOptions.DefaultDisplayDecimals"/>)
-    /// and its display limit.
+    /// minimum of its present display filters — the program root's <c>DisplayDecimals</c>
+    /// property and <see cref="RunOptions.DefaultDisplayDecimals"/>) and its display limit.
     /// </summary>
     internal DisplayOptions DisplayOptions => _displayOptions;
 
@@ -46,9 +46,9 @@ public sealed class BoundedOutputWriter
 
     /// <summary>
     /// Appends one numeric atom in canonical culture-invariant form, honoring
-    /// the run's effective display decimals — its <c>DisplayDecimals</c>
-    /// property, otherwise <see cref="RunOptions.DefaultDisplayDecimals"/> —
-    /// exactly like canonical display.
+    /// the run's effective display decimals — the minimum of its present
+    /// display filters, the root's <c>DisplayDecimals</c> property and
+    /// <see cref="RunOptions.DefaultDisplayDecimals"/> — exactly like canonical display.
     /// </summary>
     public bool AppendAtom(Decimal128 value)
         => _core.Append(ValueTextRenderer.FormatAtom(value, _displayOptions));

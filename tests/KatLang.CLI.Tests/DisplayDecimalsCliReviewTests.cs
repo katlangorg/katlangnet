@@ -92,8 +92,10 @@ public class DisplayDecimalsCliReviewTests
     }
 
     [Fact]
-    public async Task AllOptionsAndTerminator_ComposeWithLoadingAndSourceOverride()
+    public async Task AllOptionsAndTerminator_ComposeWithLoadingAndTheSourceFilter()
     {
+        // The source filter 0 is the smaller of the two display filters (Q-10 D-F: the minimum),
+        // so the output is shown with no decimal places whatever the option order.
         const string url = "https://katlang.org/display-audit.kat";
         const string source = "open 'https://katlang.org/display-audit.kat'\nDisplayDecimals = 0\nThird, randomInt(2, 3)";
         var groups = new[] { new[] { "--display-decimals", "99" }, ["--random-seed", "123"], ["--allow-loading"] };

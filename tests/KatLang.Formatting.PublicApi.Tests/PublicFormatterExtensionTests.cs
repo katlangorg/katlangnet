@@ -48,23 +48,25 @@ public class PublicFormatterExtensionTests
     [Fact]
     public void CustomFormatter_ReceivesTheRunsEffectiveDisplayDecimals()
     {
-        // BoundedOutputWriter.AppendAtom reads the ONE effective setting the run resolved: the
-        // host default alone, the program's DisplayDecimals alone, and — when both are present
-        // — the program's declaration, exactly as canonical display does.
+        // BoundedOutputWriter.AppendAtom reads the ONE effective setting the run composed: the
+        // host filter alone, the program's DisplayDecimals filter alone, and — when both are
+        // present — the smaller of the two (Q-10 D-F), exactly as canonical display does.
         var formatter = new ShapeFormatter();
-        var hostDefault = new RunOptions { DefaultDisplayDecimals = 3 };
+        var hostFilter = new RunOptions { DefaultDisplayDecimals = 3 };
 
-        var hostOnly = KatLangEngine.Run("1 / 7", hostDefault);
+        var hostOnly = KatLangEngine.Run("1 / 7", hostFilter);
         var sourceOnly = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7");
-        var both = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", hostDefault);
+        var hostStricter = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", hostFilter);
+        var sourceStricter = KatLangEngine.Run("DisplayDecimals = 2\n1 / 7", hostFilter);
         var neither = KatLangEngine.Run("1 / 7");
 
         Assert.Equal("A:0.143", formatter.Format(hostOnly));
         Assert.Equal("A:0.142857", formatter.Format(sourceOnly));
-        Assert.Equal("A:0.142857", formatter.Format(both));
+        Assert.Equal("A:0.143", formatter.Format(hostStricter));
+        Assert.Equal("A:0.14", formatter.Format(sourceStricter));
         Assert.Equal("A:" + neither.ToDisplayString(), formatter.Format(neither));
 
-        foreach (var run in new[] { hostOnly, sourceOnly, both, neither })
+        foreach (var run in new[] { hostOnly, sourceOnly, hostStricter, sourceStricter, neither })
             Assert.Equal("A:" + run.ToDisplayString(), formatter.RenderDisplay(run).Text);
     }
 
@@ -77,10 +79,13 @@ public class PublicFormatterExtensionTests
         var host = new RunOptions { DefaultDisplayDecimals = decimals };
         var hosted = Assert.IsType<RunResult.Success>(KatLangEngine.Run("0.125", host));
         var declared = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125"));
-        var both = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125",
-            new RunOptions { DefaultDisplayDecimals = decimals == 0 ? 99 : 0 }));
+        // Both filters present: the smaller one decides, whichever side supplies it (Q-10 D-F).
+        var sourceDecides = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125",
+            new RunOptions { DefaultDisplayDecimals = RunOptions.MaxDisplayDecimals }));
+        var hostDecides = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
+            $"DisplayDecimals = {RunOptions.MaxDisplayDecimals}\n0.125", host));
         var expected = decimals == 0 ? "A:0" : "A:0.125" + new string('0', 96);
-        foreach (var run in new[] { hosted, declared, both })
+        foreach (var run in new[] { hosted, declared, sourceDecides, hostDecides })
             Assert.Equal(expected, formatter.Format(run));
 
         var bounded = KatLangEngine.Run("0.125", new RunOptions

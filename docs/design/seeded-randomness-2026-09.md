@@ -142,7 +142,7 @@ EvalNativeCall / EvalNativeCallAsync → ApplyMathNative(name, args, ctx.Budget.
 ```
 
 - One source per evaluator run, shared by every nested call, callback, loop
-  frame, property evaluation, the engine's `DisplayDecimals` evaluation, and both
+  frame, property evaluation, the engine's `DisplayDecimals` source-filter read, and both
   random operations in every spelling; context copies, loop frames, callback
   contexts, and async suspension/resumption never duplicate or reset it.
 - `RunOptions`, `EvaluationLimits`, and `HostOperations` hold immutable
@@ -178,8 +178,8 @@ or ambient default.
 
 ## 8. Version-stability policy
 
-For a given KatLang version: the same program (loaded module contents and any
-`DisplayDecimals` property included), the same seed, and the same semantically
+For a given KatLang version: the same program (loaded module contents and the
+root's `DisplayDecimals` filter included), the same seed, and the same semantically
 executed KatLang path produce the same random values on every supported
 platform. Synchronous versus asynchronous entry points, optimizer strategies
 (planned loops, fused sequence pipelines), and unrelated `EvaluationLimits` that
@@ -196,11 +196,13 @@ instead of the second.) A seed is
 a reproducible stream, not memoization: which calls execute and in what order is
 decided by the ordinary evaluation rules (left-to-right arguments, once-only
 written arguments, lazy `if` branches, the zero-argument property cache, explicit
-`A()` re-evaluation, callbacks in sequence order, output rows before
-`DisplayDecimals`). A host display default (`RunOptions.DefaultDisplayDecimals`,
-CLI `--display-decimals`) is never evaluated and draws nothing, so configuring
-one never alters the stream; a declared `DisplayDecimals` property keeps its
-stream position whether or not a default is configured.
+`A()` re-evaluation, callbacks in sequence order, output rows before the
+engine's read of the root's `DisplayDecimals` source filter). A host display
+filter (`RunOptions.DefaultDisplayDecimals`, CLI `--display-decimals`) is never
+evaluated and draws nothing, so configuring one never alters the stream; a
+declared root `DisplayDecimals` property keeps its stream position — it is read
+after successful output whatever the host filter is, the two filters composing
+by their minimum only afterwards (Q-10, D-F).
 
 The exact stream is NOT promised across KatLang versions: it may change when the
 generator, a sampling algorithm, or evaluation semantics deliberately change,

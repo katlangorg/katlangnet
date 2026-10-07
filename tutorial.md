@@ -319,7 +319,7 @@ The same rule covers an algorithm that has parameters but still works with no ar
 
 ### Displayed Decimal Places
 
-A property named `DisplayDecimals` sets how many decimal places the program's results show:
+A property named `DisplayDecimals` at the top level of a program is a display filter: it limits how many decimal places the program's results show:
 
 ```
 DisplayDecimals = 4
@@ -338,7 +338,9 @@ pi
 10
 ```
 
-Numbers with decimal places are rounded or padded to exactly that many places, while a number without decimal places, such as the `10` of `5 * 2`, is shown as it is. The setting changes only the display: calculations and comparisons still use the full values. It must be a whole number from 0 to 99. A host can also supply a default for programs that do not set it; the command-line tool has the option `--display-decimals` for this.
+Numbers with decimal places are rounded or padded to exactly that many places, while a number without decimal places, such as the `10` of `5 * 2`, is shown as it is. The setting changes only the display: calculations, comparisons, and `.string` still use the full values. It must be a whole number from 0 to 99.
+
+The program that runs your code can apply a display filter of its own — the command-line tool has the option `--display-decimals`, and an application can offer a display setting. When both are present, the smaller count is used: with the program above, a host filter of 2 shows `3.14`, `0.14` and `2.50`, while a host filter of 6 still shows four places. Without a host filter, the program's `DisplayDecimals` alone decides; without either, numbers are shown in full. Only a `DisplayDecimals` written at the top level of the program is a filter — inside a block, a module, or as a parameter it is an ordinary name.
 
 ---
 
@@ -2143,6 +2145,25 @@ Check(1)
 A callable that accepts zero arguments can supply its value through the ordinary cached read. `Check` declares its parameter list, so nothing is handed on to `Inc`; a formula without one would pass its own input on instead — `Check = Same(Inc, 1)` means `Check(y) = Same(Inc(y), 1)` (see [Formulas That Use Formulas](#formulas-that-use-formulas)).
 
 The check is about arguments that are supplied separately. When one input is handed on to both places, as `Twice = Common * 2` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own. An alias is different: `Same = Common` takes two separate arguments, exactly like `Common`.
+
+Equal means equal as values, the same test `==` makes: `1.5` and `1.50` are one number, and so are `0` and `-0`, so they are accepted as equal arguments. The name then holds the argument written first, exactly as it was written, which `.string` can show:
+
+```
+Show(x, x) = x.string
+
+Show(1.5, 1.50)
+Show(1.50, 1.5)
+```
+
+**Results:**
+```
+1.5
+1.50
+```
+
+A named property passed as one of the arguments is kept in preference to a plain number, on whichever side it stands: with `A = 1.50`, both `Show(1.5, A)` and `Show(A, 1.5)` give `1.50`.
+
+Repeated names preserve satisfiability when their contributions are permuted. Successful binding preserves VALUE up to `==`, callable identity and channel availability; equally rich compatible inputs retain the first written representation. When different incompatibilities coexist, ordinary binding order may report different categories: with `A = 1.0`, `B = 1.00`, `P(x,x,x) = x`, `P(A,B,2)` is `TypeMismatch` and `P(A,2,B)` is `ArityMismatch`. Both fail; family incompatibilities are clause non-match.
 
 ### Rules for Clauses
 

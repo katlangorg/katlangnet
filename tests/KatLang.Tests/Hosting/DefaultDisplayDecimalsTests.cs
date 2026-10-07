@@ -7,12 +7,14 @@ using KatLang.Tests.LanguageSpec;
 namespace KatLang.Tests.Hosting;
 
 /// <summary>
-/// <see cref="RunOptions.DefaultDisplayDecimals"/>: the host's display-decimals DEFAULT. The
-/// contract under test:
+/// <see cref="RunOptions.DefaultDisplayDecimals"/>: the HOST display filter. The contract under
+/// test (Q-10, D-F; the composition table itself is pinned by
+/// <see cref="DisplayDecimalsFilterCompositionTests"/>):
 /// <list type="bullet">
-///   <item>PRECEDENCE — a top-level <c>DisplayDecimals</c> property the program declares
-///   decides (an invalid one as its own failure: the default is a fallback, never error
-///   recovery), otherwise the host default, otherwise canonical display;</item>
+///   <item>COMPOSITION — the program root's own <c>DisplayDecimals</c> property is the SOURCE
+///   filter; both filters are upper bounds, so the effective count is the minimum of the
+///   present ones, otherwise canonical display; an invalid source filter is still its own
+///   failure whatever the host filter (the host filter never excuses it);</item>
 ///   <item>DISPLAY ONLY — values, atoms, emitted counts, diagnostics, the evaluation budget,
 ///   the random stream, host operations, and the property cache are exactly those of the same
 ///   run without a default;</item>
@@ -110,7 +112,7 @@ public class DefaultDisplayDecimalsTests
         Assert.Contains($"between 0 and {RunOptions.MaxDisplayDecimals}", exception.Message, StringComparison.Ordinal);
     }
 
-    // ── Precedence ───────────────────────────────────────────────────────────
+    // ── Composition ──────────────────────────────────────────────────────────
 
     [Fact]
     public void NoDefault_KeepsCanonicalDisplay_ByteForByte()
@@ -134,32 +136,34 @@ public class DefaultDisplayDecimalsTests
         => Assert.Equal("0.142857", Display(KatLangEngine.Run("DisplayDecimals = 6\n1 / 7")));
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(3)]
-    [InlineData(RunOptions.MaxDisplayDecimals)]
-    public void DeclaredProperty_OverridesTheHostDefault(int hostDefault)
+    [InlineData(0, "0")]
+    [InlineData(3, "0.143")]
+    [InlineData(6, "0.142857")]
+    [InlineData(RunOptions.MaxDisplayDecimals, "0.142857")]
+    public void DeclaredProperty_ComposesWithTheHostFilter_ByMinimum(int hostFilter, string expected)
     {
-        var run = Success("DisplayDecimals = 6\n1 / 7", Default(hostDefault));
-        Assert.Equal("0.142857", Display(run));
-        Assert.Equal(6, run.DisplayOptions.Decimals);
+        var run = Success("DisplayDecimals = 6\n1 / 7", Default(hostFilter));
+        Assert.Equal(expected, Display(run));
+        Assert.Equal(Math.Min(6, hostFilter), run.DisplayOptions.Decimals);
     }
 
     [Fact]
     public void Zero_IsARealSetting_NeverAbsence()
     {
-        // A declared 0 wins over a host default of 5; a host default of 0 applies (midpoints
-        // round away from zero, so 2.5 shows 3 and -2.5 shows -3); no default keeps the digits.
+        // A declared 0 is the smaller filter beside a host filter of 5; a host filter of 0
+        // applies (midpoints round away from zero, so 2.5 shows 3 and -2.5 shows -3); no
+        // filter keeps the digits.
         Assert.Equal("3\n-3", Display(KatLangEngine.Run("DisplayDecimals = 0\n2.5, -2.5", Default(5))));
         Assert.Equal("3\n-3", Display(KatLangEngine.Run("2.5, -2.5", Default(0))));
         Assert.Equal("2.5\n-2.5", Display(KatLangEngine.Run("2.5, -2.5", Default(null))));
     }
 
     [Fact]
-    public void OnlyTheRootsOwnDeclaration_OverridesTheDefault()
+    public void OnlyTheRootsOwnDeclaration_IsTheSourceFilter()
     {
         // A nested DisplayDecimals is an ordinary property of its block and an opened member is
-        // not declared by the root: neither is the program's display setting (unchanged
-        // behavior), so the host default applies to both.
+        // not declared by the root: neither is the program's source display filter (unchanged
+        // behavior), so the host filter alone applies to both.
         const string nested = "A = {\n    DisplayDecimals = 2\n    1 / 7\n}\nA";
         const string opened = "open M\nM = {\n    public DisplayDecimals = 2\n}\n1 / 7";
 
@@ -196,9 +200,14 @@ public class DefaultDisplayDecimalsTests
         "DisplayDecimals = {}\nMath.Pi",
     };
 
+    /// <summary>
+    /// A host filter never excuses an invalid source filter — not even a stricter one (host
+    /// <c>0</c>): the declared property is still evaluated and validated, and its failure is
+    /// exactly the failure without any host filter.
+    /// </summary>
     [Theory]
     [MemberData(nameof(InvalidDeclarations))]
-    public async Task InvalidDeclaredProperty_StillWins_AsItsOwnFailure(string source)
+    public async Task InvalidDeclaredProperty_StillFails_AsItsOwnFailure_WhateverTheHostFilter(string source)
     {
         var absent = KatLangEngine.Run(source);
         Assert.IsType<RunResult.EvalFailure>(absent);
@@ -298,19 +307,23 @@ public class DefaultDisplayDecimalsTests
     }
 
     [Fact]
-    public void RandomValuedDeclaration_StillEvaluatesAfterTheOutput_AndWins()
+    public void RandomValuedDeclaration_StillEvaluatesAfterTheOutput_AndComposes()
     {
-        // The declared property keeps its stream position (after the output rows) and its
-        // drawn value decides the display, whatever the host default says.
+        // The declared property keeps its stream position (after the output rows) whatever the
+        // host filter is; its drawn value decides the display when it is the smaller filter, and
+        // a stricter host filter decides otherwise — the draw happens either way.
         const string source = "Math.Random(0, 1)\nDisplayDecimals = Math.RandomInt(2, 5)";
 
         var baseline = Success(source, new RunOptions { RandomSeed = 7 });
-        var configured = Success(source, new RunOptions { RandomSeed = 7, DefaultDisplayDecimals = 9 });
+        var looser = Success(source, new RunOptions { RandomSeed = 7, DefaultDisplayDecimals = 9 });
+        var stricter = Success(source, new RunOptions { RandomSeed = 7, DefaultDisplayDecimals = 1 });
 
-        AssertSameRawOutcome(baseline, configured);
-        Assert.Equal(baseline.DisplayOptions, configured.DisplayOptions);
-        Assert.InRange(configured.DisplayOptions.Decimals!.Value, 2, 4);
-        Assert.Equal(Display(baseline), Display(configured));
+        AssertSameRawOutcome(baseline, looser);
+        AssertSameRawOutcome(baseline, stricter);
+        Assert.Equal(baseline.DisplayOptions, looser.DisplayOptions);
+        Assert.InRange(looser.DisplayOptions.Decimals!.Value, 2, 4);
+        Assert.Equal(Display(baseline), Display(looser));
+        Assert.Equal(1, stricter.DisplayOptions.Decimals);
     }
 
     [Fact]
@@ -346,9 +359,12 @@ public class DefaultDisplayDecimalsTests
         Assert.Equal("0.57", Display(Success("Digits / 7", new RunOptions { HostOperations = operations, DefaultDisplayDecimals = 2 })));
         Assert.Equal(1, counter.Count);
 
-        // A declared property calling it is ordinary evaluation, and it wins.
-        Assert.Equal("0.1429", Display(Success("DisplayDecimals = Digits\n1 / 7", new RunOptions { HostOperations = operations, DefaultDisplayDecimals = 1 })));
+        // A declared property calling it is ordinary evaluation: it is still evaluated beside a
+        // stricter host filter (which then decides, Q-10 D-F), and decides beside a looser one.
+        Assert.Equal("0.1", Display(Success("DisplayDecimals = Digits\n1 / 7", new RunOptions { HostOperations = operations, DefaultDisplayDecimals = 1 })));
         Assert.Equal(2, counter.Count);
+        Assert.Equal("0.1429", Display(Success("DisplayDecimals = Digits\n1 / 7", new RunOptions { HostOperations = operations, DefaultDisplayDecimals = 9 })));
+        Assert.Equal(3, counter.Count);
     }
 
     [Fact]
@@ -399,19 +415,29 @@ public class DefaultDisplayDecimalsTests
         Assert.Equal(Renderings(declared), Renderings(hosted));
     }
 
-    /// <summary>The override law: with a declared property, a host default changes no rendering at all.</summary>
+    /// <summary>
+    /// The composition law (Q-10 D-F): with a declared property AND a host filter, every
+    /// rendering surface renders exactly like the program declaring only the smaller count — a
+    /// looser host filter changes nothing, a stricter one decides.
+    /// </summary>
     [Theory]
     [MemberData(nameof(RenderingPrograms))]
-    public void DeclaredProperty_RendersAsIfNoDefaultWereConfigured(string program, int declaredDecimals)
+    public void DeclaredProperty_RendersLikeTheSmallerFilterAlone(string program, int declaredDecimals)
     {
         var source = $"DisplayDecimals = {declaredDecimals.ToString(CultureInfo.InvariantCulture)}\n{program}";
         var absent = Success(source);
 
-        foreach (var hostDefault in new int?[] { 0, 7, RunOptions.MaxDisplayDecimals })
+        foreach (var hostFilter in new[] { 0, 7, RunOptions.MaxDisplayDecimals })
         {
-            var hosted = Success(source, Default(hostDefault));
-            Assert.Equal(absent.DisplayOptions, hosted.DisplayOptions);
-            Assert.Equal(Renderings(absent), Renderings(hosted));
+            var effective = Math.Min(declaredDecimals, hostFilter);
+            var hosted = Success(source, Default(hostFilter));
+            var smallerAlone = Success(
+                $"DisplayDecimals = {effective.ToString(CultureInfo.InvariantCulture)}\n{program}");
+
+            Assert.Equal(absent.DisplayOptions with { Decimals = effective }, hosted.DisplayOptions);
+            Assert.Equal(Renderings(smallerAlone), Renderings(hosted));
+            if (hostFilter >= declaredDecimals)
+                Assert.Equal(Renderings(absent), Renderings(hosted));
         }
     }
 
@@ -484,9 +510,10 @@ public class DefaultDisplayDecimalsTests
     public async Task AsyncTwinPath_AgreesWithTheSynchronousRun()
     {
         // A genuinely suspending asynchronous host operation routes evaluation through the
-        // async twins; a declared DisplayDecimals computed from that suspended work still wins,
-        // and the result matches the synchronous run of the same program over a synchronous
-        // operation returning the same value.
+        // async twins; a declared DisplayDecimals computed from that suspended work is still
+        // evaluated and composes with the host filter by their minimum, and the result matches
+        // the synchronous run of the same program over a synchronous operation returning the
+        // same value.
         var asyncOperations = HostOperations.Create(HostOperation.CreateAsync("Digits", async (_, _) =>
         {
             await Task.Yield();
@@ -514,8 +541,10 @@ public class DefaultDisplayDecimalsTests
 
         Assert.Equal("0.57", Display(await KatLangEngine.RunAsync(
             "Digits / 7", new RunOptions { HostOperations = asyncOperations, DefaultDisplayDecimals = 2 })));
-        Assert.Equal("0.1429", Display(await KatLangEngine.RunAsync(
+        Assert.Equal("0.14", Display(await KatLangEngine.RunAsync(
             "DisplayDecimals = Digits\n1 / 7", new RunOptions { HostOperations = asyncOperations, DefaultDisplayDecimals = 2 })));
+        Assert.Equal("0.1429", Display(await KatLangEngine.RunAsync(
+            "DisplayDecimals = Digits\n1 / 7", new RunOptions { HostOperations = asyncOperations, DefaultDisplayDecimals = 5 })));
     }
 
     // ── Immutable configuration, isolated runs ───────────────────────────────
@@ -526,7 +555,8 @@ public class DefaultDisplayDecimalsTests
         var options = Default(3);
 
         Assert.Equal("0.143", Display(KatLangEngine.Run("1 / 7", options)));
-        Assert.Equal("0.142857", Display(KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options)));
+        Assert.Equal("0.143", Display(KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options)));
+        Assert.Equal("0.1", Display(KatLangEngine.Run("DisplayDecimals = 1\n1 / 7", options)));
         Assert.Equal("0.143", Display(KatLangEngine.Run("1 / 7", options)));
         Assert.Equal(3, options.DefaultDisplayDecimals);
     }
@@ -592,10 +622,11 @@ public class DefaultDisplayDecimalsTests
         LanguageSpecCorpus.AllCases().ToDictionary(static c => c.Id, StringComparer.Ordinal);
 
     /// <summary>
-    /// Over the whole executable specification: an explicit <c>null</c> default is byte-for-byte
-    /// the unconfigured run; a configured default leaves every raw outcome and every failure
-    /// untouched, overrides nothing a program declares, and otherwise becomes exactly the
-    /// run's effective decimals.
+    /// Over the whole executable specification: an explicit <c>null</c> host filter is
+    /// byte-for-byte the unconfigured run; a configured one leaves every raw outcome and every
+    /// failure untouched and becomes the run's effective decimals composed with what a program
+    /// declares — the minimum of the two (Q-10 D-F), so a looser host filter changes no
+    /// rendering of a declaring program at all.
     /// </summary>
     [Theory]
     [MemberData(nameof(SpecCaseIds))]
@@ -622,9 +653,12 @@ public class DefaultDisplayDecimalsTests
 
         var declares = success.Root.Properties.Any(static p => p.Name == "DisplayDecimals");
         Assert.Equal(
-            declares ? success.DisplayOptions : success.DisplayOptions with { Decimals = 7 },
+            success.DisplayOptions with
+            {
+                Decimals = declares ? Math.Min(success.DisplayOptions.Decimals!.Value, 7) : 7,
+            },
             configuredSuccess.DisplayOptions);
-        if (declares)
+        if (declares && success.DisplayOptions.Decimals <= 7)
             Assert.Equal(Renderings(success), Renderings(configuredSuccess));
     }
 }

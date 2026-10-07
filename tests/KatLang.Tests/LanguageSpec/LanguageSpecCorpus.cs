@@ -1954,7 +1954,8 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "type",
             Probes =
             [
-                // Every permutation of the same arguments gives the same verdict.
+                // This contribution set fails in every permutation. Its only incompatibility
+                // is callable identity; mixed VALUE/identity sets may report different categories.
                 new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(B, 5, A)", "err type"),
                 new SpecProbe("A = 5\nB = 2 + 3\nP(f, f, f) = f\nP(5, A, B)", "err type"),
                 // Every pair compatible: binds in every order.
@@ -6762,6 +6763,58 @@ public static class LanguageSpecCorpus
             ],
             Notes = "C#-only Decimal128 rule owned by IEEE 754 `minimum`/`maximum` (`Decimal128.Min`/`Max`) in `Evaluator.EvalMinCounted`/`EvalMaxCounted`, the one implementation the synchronous dispatch, the async twin, and the planned loop's fallback all reach. Which of several SAME-SIGNED equal values with different quanta is returned (`1` vs `1.0`, `-0` vs `-0.0`) is not part of the rule. `SignedZeroExtremaTests` holds the exhaustive arrangement matrix against an order-free oracle and the route, strategy, and presentation parity.",
             Explanation = "`-0` and `0` are one value to `==` and to the ordering operators (`-0 < 0` is `false`), but `min` and `max` decide a tie between the two zeros by sign, as IEEE 754 `minimum`/`maximum` do: `min` returns `-0` whenever a negative zero takes part in a zero minimum, and `max` returns `0` whenever an ordinary zero takes part in a zero maximum, whatever the element order. The result is always one of the elements, so `max((-0, -0))` stays `-0`, and a nonzero extremum wins as usual. KatLang spells the two zeros `0` and `-0`; there is no unary `+`.",
+        },
+        new()
+        {
+            Id = "repeated-name-keeps-first-equally-rich-representative",
+            Category = "variadic-calls",
+            Source = "P(x, x) = x.string\n\nP(1.5, 1.50)\nP(1.50, 1.5)\nP(0, -0)\nP(-0, 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1.5\n1.50\n0\n-0",
+            ExpectedRaw = "S['1.5', '1.50', '0', '-0']",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Decimal128 quantum and signed zero are outside the Lean Int numeric model: Int has one representation per value, so which of several equal contributions supplies the retained representation is unobservable there. Lean's `bindNeedName` keeps the earlier complete contribution unless a later one is strictly richer — the same rule — so the runtime agrees with Lean on every Int value (Q-28, N-F).",
+            Probes =
+            [
+                // NEED-04 decides first: a richer contribution (VALUE + CALLABLE) wins in either order.
+                new SpecProbe("A = 1.50\nP(x, x) = x.string\nP(1.5, A)", "ok raw='1.50' n=1"),
+                new SpecProbe("A = 1.50\nP(x, x) = x.string\nP(A, 1.5)", "ok raw='1.50' n=1"),
+                // Three occurrences: the first equally rich one.
+                new SpecProbe("P3(x, x, x) = x.string\nP3(1.50, 1.5, 1.500)", "ok raw='1.50' n=1"),
+                // A clause family's repeated binder keeps the same representative.
+                new SpecProbe("E(x, x) = x.string\nE(x, y) = 'diff'\nE(1.5, 1.50)", "ok raw='1.5' n=1"),
+                new SpecProbe("E(x, x) = x.string\nE(x, y) = 'diff'\nE(-0, 0)", "ok raw='-0' n=1"),
+                // Nested values: the first contribution whole, never a leaf-wise merge of both.
+                new SpecProbe("P(x, x) = x\nP((1.0, 2), (1, 2.0))", "ok raw=S[1.0, 2] n=1"),
+                // The verdict and the bound value up to == never depend on the order.
+                new SpecProbe("P(x, x) = x\nP(1.5, 1.50) == P(1.50, 1.5)", "ok raw=true n=1"),
+                new SpecProbe("P(x, x) = x\nP(1.5, 1.6)", "err arity"),
+            ],
+            Notes = "C#-only Decimal128 rule decided by Q-28 (N-F, 2026-10-07): `==` (Decimal128.Equals at numeric leaves) decides compatibility; the retained contribution is NEED-04's richest, the first in written pattern order among equally rich ones — `Evaluator.BindNeedPatterns` in C#, `bindNeedName` in Lean. `NumericRepresentativeSelectionTests` holds the six-route representation-exact matrix (22 representation pairs, four shapes, five origins, families and callbacks).",
+            Explanation = "A repeated name binds ONE complete contribution. `==` decides compatibility — Decimal128 equality ignores the quantum and the zero sign, so `1.5` and `1.50`, `0` and `-0`, bind. NEED-04 keeps the richest compatible contribution (a named property, which carries a callable, outranks a plain value in either order), and among equally rich contributions the FIRST in written pattern order supplies the retained value with its exact representation. `.string` shows that representation, so `P(1.5, 1.50)` is `'1.5'` and `P(1.50, 1.5)` is `'1.50'`; the verdict, the error kind and the value up to `==` never depend on the argument order.",
+        },
+        new()
+        {
+            Id = "decimal-literal-patterns-match-by-value",
+            Category = "conditionals",
+            Source = "F(1.5) = 'hit'\nF(x) = 'miss'\nZ(0) = 'zero'\nZ(x) = 'other'\n\nF(1.50), F(3 / 2), F(1.6)\nZ(-0), Z(0.0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "hit\nhit\nmiss\nzero\nzero",
+            ExpectedRaw = "S['hit', 'hit', 'miss', 'zero', 'zero']",
+            ExpectedEmittedCount = 5,
+            LeanExclusionReason = "Fractional Decimal128 literals, quantum and signed zero are outside the Lean Int numeric model (LeanAstEncoder refuses fractional numbers by design, and Int has one zero); a Lean numeric literal pattern matches by the same `==`, where every value has one representation (Q-28, X-12).",
+            Probes =
+            [
+                // The binder beside a literal keeps the argument's own representation; the literal binds nothing.
+                new SpecProbe("K((1.5, x)) = x.string\nK((y, x)) = 'other'\nK((1.50, 1.50))", "ok raw='1.50' n=1"),
+                // A positive exponent and an integral quantum are the same value too.
+                new SpecProbe("F(1e3) = 'hit'\nF(x) = 'miss'\nF(1000)", "ok raw='hit' n=1"),
+                new SpecProbe("F(1) = 'hit'\nF(x) = 'miss'\nF(0.5 + 0.5)", "ok raw='hit' n=1"),
+                // A negative-zero literal matches the ordinary zero as well.
+                new SpecProbe("F(-0) = 'hit'\nF(x) = 'miss'\nF(0)", "ok raw='hit' n=1"),
+            ],
+            Notes = "C#-only Decimal128 instance of PAT-05's value rule, recorded by Q-28 (X-12 resolved 2026-10-07). Equal literals with different representations are ONE clause head (`F(1.5)` beside `F(1.50)` is `DuplicateBranchPattern`), pinned by `NumericRepresentativeSelectionTests.EqualLiterals_AreTheSameClauseHead`.",
+            Explanation = "A numeric literal pattern matches every argument that is `==` to it, whatever either representation: `F(1.5)` matches `1.50` and `3 / 2`, and `Z(0)` matches `-0` and `0.0`. The literal binds nothing, so a binder beside it keeps the argument's own representation, and two literals that are `==` are the same clause head.",
         },
         new()
         {

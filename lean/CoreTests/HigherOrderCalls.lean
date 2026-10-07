@@ -1308,16 +1308,14 @@ def repeatedNameConstraintsRunLeftToRight : Bool :=
 
 #guard repeatedNameConstraintsRunLeftToRight
 
--- Model-C repeated-name compatibility is pairwise; first failure follows written order. A repeated name is
--- decided ONCE, when its last contribution at the level joins, by requiring every PAIR
--- of its contributions to be compatible (equal values; one callable identity). And
--- REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (Q-05): every contribution must supply its
--- OWN value, so for P(f, f, f) = f the triple (Inc, 5, A) — Inc a callable only, 5 a
--- value only, A = 5 both — fails in EVERY permutation with Inc's own arity rejection
--- (formerly the "algorithm-only" type mismatch), (A, A, 5) binds in every permutation,
--- (A, B, 5) is the unequal-value `badArity` in every permutation, and Inc beside unequal
--- values is still Inc's own failure: a valueless contribution is a binding failure, never
--- a verdict. Distinct callable identities reject.
+-- Model-C repeated-name compatibility constrains every pair; NEED-04 inspects and
+-- compares each occurrence immediately in written order. Satisfiability is invariant,
+-- while the first violated contract determines the reported failure (owner follow-up,
+-- 2026-10-07). Every contribution supplies its OWN value (Q-05); no failure is repaired.
+-- For P(f, f, f) = f, (Inc, 5, A) fails in every permutation with Inc's value-demand
+-- rejection, and (A, A, 5) succeeds in every permutation. (A, B, 5) has unequal values
+-- and fails with badArity; Inc beside unequal values may instead be reached first and
+-- report its own failure. Distinct available callable identities also conflict.
 def repeatedRun (patterns : List KatLang.ParameterPattern) (output : KatLang.Expr) (args : List KatLang.Expr)
     : Except Error Result :=
   runResult (.algorithmExpr (algPrivate [] [] [
@@ -1350,8 +1348,8 @@ def repeatedNameCompatibilityAndFirstFailure : Bool :=
   -- (A, B, 5): unequal values in every permutation.
   (repeatedPermutations (.resolve "A") (.resolve "B") (.num 5)).all (fun args =>
     match three args with | .error err => innermostIsBadArity err | _ => false) &&
-  -- (A, B, Inc): unequal values AND a valueless Inc — Inc's binding failure precedes the
-  -- verdict in every permutation.
+  -- (A, B, Inc): unequal values AND a valueless Inc. Every permutation fails;
+  -- written inspection order decides which failure is reached first.
   (repeatedPermutations (.resolve "A") (.resolve "B") (.resolve "Inc")).all (fun args =>
     match args with
     | [first, second, _] =>

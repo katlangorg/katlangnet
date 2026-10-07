@@ -8,10 +8,12 @@ namespace KatLang;
 /// <summary>
 /// One completed run's display configuration, carried by its <see cref="RunResult"/> so every
 /// rendering surface of that result reads the same values: <see cref="Decimals"/> is the run's
-/// EFFECTIVE display-decimals count (<c>null</c> for canonical full-precision display), decided
-/// once by the engine from the program's <c>DisplayDecimals</c> property and
-/// <see cref="RunOptions.DefaultDisplayDecimals"/>; <see cref="MaxDisplayLength"/> is the run's
-/// display-length bound.
+/// EFFECTIVE display-decimals count (<c>null</c> for canonical full-precision display), composed
+/// once by the engine from its two presentation filters — the program root's own
+/// <c>DisplayDecimals</c> property (the source filter) and
+/// <see cref="RunOptions.DefaultDisplayDecimals"/> (the host filter) — by
+/// <see cref="KatLangEngine.CombineDisplayDecimals"/>; <see cref="MaxDisplayLength"/> is the
+/// run's display-length bound.
 /// </summary>
 internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLength)
 {
@@ -368,15 +370,16 @@ public closed record RunResult
 ///     Console.WriteLine(success.ToDisplayString()); // 3
 /// </code>
 /// <para>Everything a run can be configured with — resource limits, cancellation, host
-/// operations, module loading, a random seed, and a default display precision — is supplied
+/// operations, module loading, a random seed, and a host display filter — is supplied
 /// per run through one <see cref="RunOptions"/> object. <see cref="RunAsync"/> is the
 /// asynchronous counterpart and the entry point for module loading and asynchronous host
 /// operations; <see cref="EvaluateToAtoms"/> is a numeric-only convenience.</para>
 /// <para>Two lower layers are public for advanced hosts: <see cref="Parser"/> runs the same
 /// complete front end without evaluating (validation and editor tooling), and
 /// <see cref="Evaluator"/> evaluates a host-built <see cref="Expr"/> exactly as supplied —
-/// without parsing, module loading, front-end elaboration, or the program's
-/// <c>DisplayDecimals</c> setting — so it is not a source runner.</para>
+/// without parsing, module loading, front-end elaboration, or the engine's reading of the
+/// program root's <c>DisplayDecimals</c> presentation filter — so it is not a source
+/// runner.</para>
 /// </summary>
 public static class KatLangEngine
 {
@@ -447,13 +450,16 @@ public static class KatLangEngine
 
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
 
-        // One budget for the whole run: the program output and the DisplayDecimals
-        // property are evaluated under the same run-scoped budget, so neither can reset
-        // or escape the other's accounting — and they share the run's one random stream
-        // (RunOptions.RandomSeed), the output rows drawing first and DisplayDecimals
-        // afterwards, in exactly that evaluation order. RunOptions.DefaultDisplayDecimals
-        // takes no part in evaluation: it is consumed afterwards, as a fallback only
-        // (ProjectEvaluationOutcome → ResolveDisplayOptions).
+        // One budget for the whole run: the program output and the root's own
+        // DisplayDecimals property (the source display filter) are evaluated under the
+        // same run-scoped budget, so neither can reset or escape the other's accounting —
+        // and they share the run's one random stream (RunOptions.RandomSeed), its
+        // zero-argument property cache and its cancellation token, the output rows first
+        // and DisplayDecimals afterwards, in exactly that evaluation order. The read
+        // happens whatever the host filter is: RunOptions.DefaultDisplayDecimals takes no
+        // part in evaluation and is consumed afterwards, composed with the source filter
+        // by their minimum (ProjectEvaluationOutcome → ResolveDisplayOptions →
+        // CombineDisplayDecimals).
         var evalResult = Evaluator.RunCountedWithTopLevelProperty(
             new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
             DisplayDecimalsPropertyName,
@@ -543,8 +549,8 @@ public static class KatLangEngine
         var zeroArgPropertyResultCache =
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations);
 
-        // One budget for the whole run, exactly as in Run; the display default is likewise
-        // consumed only afterwards, by the shared projection.
+        // One budget for the whole run, exactly as in Run; the host display filter is
+        // likewise consumed only afterwards, by the shared projection.
         var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
             program,
             DisplayDecimalsPropertyName,
@@ -595,7 +601,7 @@ public static class KatLangEngine
         FrontEndResult frontEndResult,
         EvalResult<Evaluator.CountedRootProgramResult> evalResult,
         EvaluationLimits limits,
-        int? defaultDisplayDecimals,
+        int? hostDisplayFilter,
         DisplayOptions diagnosticDisplayOptions,
         CancellationToken evaluationCancellationToken)
     {
@@ -621,7 +627,7 @@ public static class KatLangEngine
         var displayOptionsResult = ResolveDisplayOptions(
             evalResult.Value.TopLevelProperty,
             FindTopLevelPropertyDeclarationSpan(frontEndResult.ElaboratedRoot, DisplayDecimalsPropertyName),
-            defaultDisplayDecimals,
+            hostDisplayFilter,
             limits.EffectiveMaxDisplayLength);
         if (displayOptionsResult.IsError)
         {
@@ -737,49 +743,74 @@ public static class KatLangEngine
     /// <summary>
     /// The ONE place a completed run's effective display configuration is decided, shared by
     /// <see cref="Run"/> and <see cref="RunAsync"/>; the <see cref="RunResult"/> carries the
-    /// outcome, so every rendering surface of that result reads the same value. Precedence:
-    /// <list type="number">
-    ///   <item>a top-level <c>DisplayDecimals</c> property the program DECLARES decides:
-    ///   <paramref name="declaredDisplayDecimals"/> is its evaluated value, validated here, and an
-    ///   invalid value is its own diagnostic whatever the host configured — the default is a
-    ///   fallback, never error recovery (a declared property whose EVALUATION failed never
-    ///   reaches this point: the run has already failed with that error);</item>
-    ///   <item>otherwise <paramref name="defaultDisplayDecimals"/>
+    /// outcome, so every rendering surface of that result reads the same value. A run has two
+    /// independent presentation FILTERS, each an upper bound on displayed decimal places:
+    /// <list type="bullet">
+    ///   <item>the SOURCE filter — the program root's own declared <c>DisplayDecimals</c>
+    ///   property: <paramref name="sourceSetting"/> is its evaluated value, validated here
+    ///   (one numeric value, integral, <c>0</c> through <see cref="RunOptions.MaxDisplayDecimals"/>);
+    ///   an invalid value is its own diagnostic whatever the host configured, because the host
+    ///   filter never replaces or excuses the source one (a declared property whose EVALUATION
+    ///   failed never reaches this point: the run has already failed with that error);</item>
+    ///   <item>the HOST filter — <paramref name="hostFilter"/>
     ///   (<see cref="RunOptions.DefaultDisplayDecimals"/>, range-checked when the options were
-    ///   initialized);</item>
-    ///   <item>otherwise canonical rendering (<c>null</c>).</item>
+    ///   initialized).</item>
     /// </list>
+    /// Both are composed by <see cref="CombineDisplayDecimals"/>: an absent filter imposes no
+    /// limit, both present give their minimum, neither gives canonical rendering.
     /// <para>Absence is structural, never a value: the evaluator's one top-level property
     /// probe returns <c>null</c> exactly when the root declares no such property, so a declared
-    /// <c>0</c>, a declared invalid value, and no declaration stay three distinct states. The
-    /// default is pure configuration consumed after evaluation — it is never evaluated, so
-    /// nothing about the run but this display value depends on it.</para>
+    /// <c>0</c>, a declared invalid value, and no declaration stay three distinct states, and a
+    /// <c>null</c> host filter means no host filter — never zero places. The host filter is pure
+    /// configuration consumed after evaluation — it is never evaluated, so nothing about the
+    /// run but this display value depends on it.</para>
     /// </summary>
     private static EvalResult<DisplayOptions> ResolveDisplayOptions(
-        Evaluator.CountedResult? declaredDisplayDecimals,
+        Evaluator.CountedResult? sourceSetting,
         SourceSpan? span,
-        int? defaultDisplayDecimals,
+        int? hostFilter,
         int maxDisplayLength)
     {
-        if (declaredDisplayDecimals is not { } counted)
-            return EvalResult<DisplayOptions>.Ok(new DisplayOptions(defaultDisplayDecimals, maxDisplayLength));
+        int? sourceFilter = null;
+        if (sourceSetting is { } counted)
+        {
+            var value = counted.Value.AsNum();
+            if (counted.EmittedCount != 1 || value is null)
+                return DisplayDecimalsError("DisplayDecimals must be a single numeric value.", span);
 
-        var value = counted.Value.AsNum();
-        if (counted.EmittedCount != 1 || value is null)
-            return DisplayDecimalsError("DisplayDecimals must be a single numeric value.", span);
+            if (value.Value < 0)
+                return DisplayDecimalsError("DisplayDecimals must be a non-negative integer.", span);
 
-        if (value.Value < 0)
-            return DisplayDecimalsError("DisplayDecimals must be a non-negative integer.", span);
+            if (!Decimal128.IsInteger(value.Value))
+                return DisplayDecimalsError("DisplayDecimals must be an integer.", span);
 
-        if (!Decimal128.IsInteger(value.Value))
-            return DisplayDecimalsError("DisplayDecimals must be an integer.", span);
+            if (value.Value > RunOptions.MaxDisplayDecimals)
+                return DisplayDecimalsError($"DisplayDecimals must be between 0 and {RunOptions.MaxDisplayDecimals}.", span);
 
-        if (value.Value > RunOptions.MaxDisplayDecimals)
-            return DisplayDecimalsError($"DisplayDecimals must be between 0 and {RunOptions.MaxDisplayDecimals}.", span);
+            // Validated integral and within [0, MaxDisplayDecimals], so the narrowing is exact.
+            sourceFilter = (int)value.Value;
+        }
 
-        // Validated integral and within [0, MaxDisplayDecimals], so the narrowing is exact.
-        return EvalResult<DisplayOptions>.Ok(new DisplayOptions((int)value.Value, maxDisplayLength));
+        return EvalResult<DisplayOptions>.Ok(
+            new DisplayOptions(CombineDisplayDecimals(sourceFilter, hostFilter), maxDisplayLength));
     }
+
+    /// <summary>
+    /// The ONE composition law of the two display-decimals filters (Q-10, D-F): every present
+    /// filter is an upper bound on displayed decimal places, so the effective count is the
+    /// minimum of the present ones; an absent filter (<c>null</c>) imposes no limit, and with
+    /// neither present the result is <c>null</c> — canonical full-precision rendering. Both
+    /// inputs are already validated counts in <c>0</c> through
+    /// <see cref="RunOptions.MaxDisplayDecimals"/>.
+    /// </summary>
+    internal static int? CombineDisplayDecimals(int? sourceFilter, int? hostFilter)
+        => (sourceFilter, hostFilter) switch
+        {
+            ({ } source, { } host) => Math.Min(source, host),
+            ({ } source, null) => source,
+            (null, { } host) => host,
+            (null, null) => null,
+        };
 
     private static EvalError DisplayDecimalsError(string message, SourceSpan? span)
         => new EvalError.IllegalInEval(message) { Span = span };

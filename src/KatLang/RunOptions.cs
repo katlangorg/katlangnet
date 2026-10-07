@@ -2,14 +2,14 @@ namespace KatLang;
 
 /// <summary>
 /// Per-run configuration for <see cref="KatLangEngine"/> and <see cref="Parser"/>: resource
-/// limits, cancellation, host operations, module loading, a random seed, and a default display
-/// precision — every option a run has, in one place.
+/// limits, cancellation, host operations, module loading, a random seed, and a host display
+/// filter — every option a run has, in one place.
 /// <para><b>Defaults.</b> <c>new RunOptions()</c> — and a <c>null</c> options argument, which
 /// means the same — runs with <see cref="KatLang.EvaluationLimits.Default"/> and
 /// <see cref="KatLang.SourceProcessingLimits.Default"/>, no cancellation, no host operations,
 /// no module loading (a program using <c>load</c> gets a diagnostic and nothing is fetched),
-/// fresh entropy for random operations, and canonical full-precision display unless the
-/// program declares <c>DisplayDecimals</c>.</para>
+/// fresh entropy for random operations, and no host display filter: canonical full-precision
+/// display unless the program root declares its own <c>DisplayDecimals</c> filter.</para>
 /// <para><b>Lifetime.</b> Every member is init-only; collection inputs are snapshotted when the
 /// object is initialized. Configuration is safe to share across sequential and
 /// concurrent runs: each run creates its own budgets, caches, and random stream, and no run
@@ -25,11 +25,11 @@ public sealed class RunOptions
 {
     /// <summary>
     /// The largest valid display-decimals count: the upper bound of the inclusive range
-    /// <c>0</c> through <c>99</c> shared by a program's top-level <c>DisplayDecimals</c>
-    /// property and <see cref="DefaultDisplayDecimals"/>. It is a VALIDITY bound, not a
-    /// clamping ceiling like the <c>MaxSupported*</c> limits: a count outside the range is
-    /// rejected, never clamped — a program's <c>DisplayDecimals</c> property with a diagnostic,
-    /// <see cref="DefaultDisplayDecimals"/> with <see cref="ArgumentOutOfRangeException"/>.
+    /// <c>0</c> through <c>99</c> shared by both display filters — a program root's own
+    /// <c>DisplayDecimals</c> property and <see cref="DefaultDisplayDecimals"/>. It is a VALIDITY
+    /// bound, not a clamping ceiling like the <c>MaxSupported*</c> limits: a count outside the
+    /// range is rejected, never clamped — a program's <c>DisplayDecimals</c> property with a
+    /// diagnostic, <see cref="DefaultDisplayDecimals"/> with <see cref="ArgumentOutOfRangeException"/>.
     /// Like the public <c>MaxSupported*</c> constants, this is a versioned contract bound,
     /// not a runtime capability query. Consumers compile the constant into their assemblies;
     /// if a future release changes the bound, recompile consumers to use the new value.
@@ -197,10 +197,11 @@ public sealed class RunOptions
     /// distinct value names a distinct stream (<c>-5</c> and <c>5</c> differ; the seed's
     /// bit pattern is used as-is, never folded, hashed, or truncated).
     /// <para><b>Reproducibility contract.</b> For a given KatLang version: the same program
-    /// (loaded module contents and a <c>DisplayDecimals</c> property, which is itself
-    /// evaluated, included), the same seed, and the same semantically executed KatLang
+    /// (loaded module contents and the root's own <c>DisplayDecimals</c> property, which
+    /// <see cref="KatLangEngine"/> evaluates after the output whatever the host display filter
+    /// is, included), the same seed, and the same semantically executed KatLang
     /// path produce the same random values on every supported platform. A
-    /// <see cref="DefaultDisplayDecimals"/> host default is never evaluated and draws
+    /// <see cref="DefaultDisplayDecimals"/> host filter is never evaluated and draws
     /// nothing, so configuring one changes no random value. Both random
     /// operations, in every spelling, consume ONE run-scoped stream in actual evaluation
     /// order, so the values depend on which random calls execute and in what order —
@@ -234,22 +235,30 @@ public sealed class RunOptions
     public long? RandomSeed { get; init; }
 
     /// <summary>
-    /// Optional host DEFAULT for how many digits after the decimal point displayed numbers
-    /// show: an integer from <c>0</c> through <see cref="MaxDisplayDecimals"/>, or <c>null</c>
-    /// (the default) for none. <c>0</c> is a real setting — no digits after the decimal point,
-    /// so <c>2.5</c> shows as <c>3</c> — distinct from <c>null</c>. The default is the FALLBACK
-    /// of a run's effective display setting, never its authority:
-    /// <list type="number">
-    ///   <item>a top-level <c>DisplayDecimals</c> property the program declares decides — its
-    ///   evaluated value when valid, and its own diagnostic when not: the host default is a
-    ///   fallback, not error recovery, so an invalid declared property still fails the run;</item>
-    ///   <item>otherwise this default, when configured;</item>
-    ///   <item>otherwise canonical full-precision display.</item>
+    /// Optional HOST DISPLAY FILTER: an upper bound on how many digits after the decimal point
+    /// displayed numbers show — an integer from <c>0</c> through <see cref="MaxDisplayDecimals"/>,
+    /// or <c>null</c> (the default) for no host filter. <c>0</c> is a real filter — no digits
+    /// after the decimal point, so <c>2.5</c> shows as <c>3</c> — distinct from <c>null</c>, which
+    /// imposes no limit and never means zero places. (The name predates the filter model: the
+    /// value is a filter composed with the program's own, not a fallback below it.)
+    /// <para><b>Composition with the source filter.</b> A program root's own
+    /// <c>DisplayDecimals</c> property is the run's SOURCE display filter. Both filters have the
+    /// same role and compose by their minimum:
+    /// <list type="bullet">
+    ///   <item>neither present — canonical full-precision display;</item>
+    ///   <item>only the source filter — its value;</item>
+    ///   <item>only this host filter — this value;</item>
+    ///   <item>both — the smaller of the two (source <c>7</c> with host <c>5</c> shows 5 places;
+    ///   source <c>5</c> with host <c>7</c> shows 5 places).</item>
     /// </list>
-    /// <para><b>Display only.</b> The default selects fixed-point presentation exactly as the
-    /// same count in a <c>DisplayDecimals</c> property would — midpoint rounding away from zero,
-    /// culture-invariant digits, the canonical <c>NaN</c> / <c>Infinity</c> / <c>-Infinity</c>
-    /// spellings, and the signed-zero rule — and nothing else: stored values, calculations,
+    /// The host filter never replaces, suppresses, or excuses the source filter: a declared
+    /// root <c>DisplayDecimals</c> is still evaluated and validated with any host filter
+    /// configured, so an invalid or failing one still fails the run with its own error, even
+    /// when this filter is stricter.</para>
+    /// <para><b>Display only.</b> The effective count selects fixed-point presentation —
+    /// midpoint rounding away from zero, culture-invariant digits, the canonical <c>NaN</c> /
+    /// <c>Infinity</c> / <c>-Infinity</c> spellings, and the signed-zero rule — and nothing
+    /// else: stored values and their Decimal128 representations, <c>.string</c>, calculations,
     /// comparisons, cached property values, callbacks, control flow,
     /// <see cref="RunResult.Success.Value"/>, <see cref="RunResult.Success.Atoms"/>, and
     /// diagnostics are unchanged. The run's result carries its effective setting, so every
@@ -258,15 +267,16 @@ public sealed class RunOptions
     /// <see cref="Formatting.OutputFormatter"/> — built-in or custom, through
     /// <see cref="Formatting.BoundedOutputWriter.AppendAtom"/>.</para>
     /// <para><b>Host configuration, not a property.</b> Nothing is injected into the program.
-    /// The default is not a KatLang declaration, so name resolution, shadowing, collisions,
+    /// The filter is not a KatLang declaration, so name resolution, shadowing, collisions,
     /// source spans, diagnostics, and editor tooling see the program exactly as written
     /// (<see cref="Parser.Parse(string, RunOptions?)"/> and <see cref="Parser.ParseAsync"/>
-    /// ignore this property), and it is never evaluated: it consumes no evaluation budget,
-    /// draws no random value, invokes no host operation, adds no cancellation checkpoint, and
-    /// creates no zero-argument property cache entry. A declared <c>DisplayDecimals</c>
-    /// property keeps its ordinary evaluation — after the program output, under the same
-    /// run budget, random stream, and property cache — whether or not a default is
-    /// configured.</para>
+    /// ignore this property; a program reading an undeclared <c>DisplayDecimals</c> never sees
+    /// it), and it is never evaluated: it consumes no evaluation budget, draws no random
+    /// value, invokes no host operation, adds no cancellation checkpoint, and creates no
+    /// zero-argument property cache entry. A declared root <c>DisplayDecimals</c> property
+    /// keeps its ordinary evaluation — after the program output, under the same run budget,
+    /// random stream, cancellation token, and property cache — whether or not a host filter
+    /// is configured.</para>
     /// <para>This is immutable configuration, safe to share across concurrent and sequential
     /// runs; no run's <c>DisplayDecimals</c> property ever changes it.</para>
     /// </summary>

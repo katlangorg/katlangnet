@@ -517,6 +517,11 @@ public sealed class CliApplicationTests
     // companion `run` assertion below expects, and these cases would fail.
     [InlineData("1 / 0\n", "Division by zero")]
     [InlineData("Undefined\n", "implicit parameter")]
+    // The engine's post-output read of the root's DisplayDecimals source filter (Q-10 D-F)
+    // is evaluation too: `check` never runs it, so an invalid or failing source filter is
+    // reported by `run`/`eval` only.
+    [InlineData("DisplayDecimals = 1 / 0\n1 / 7\n", "Division by zero")]
+    [InlineData("DisplayDecimals = 100\n1 / 7\n", "DisplayDecimals must be between 0 and 99.")]
     public async Task Check_ValidatesWithoutEvaluating(string source, string evaluationOnlyDiagnostic)
     {
         using var file = new TempSourceFile(source);
@@ -1251,11 +1256,18 @@ public sealed class CliApplicationTests
         Assert.Equal(EngineDisplay(FractionSource, new RunOptions()), result.TrimmedOutput);
     }
 
+    /// <summary>
+    /// Q-10 D-F: the option is the HOST display filter and a program's own
+    /// <c>DisplayDecimals</c> is the SOURCE filter; both are upper bounds, so the smaller
+    /// count applies — the option never overrides the program, and the program never overrides
+    /// the option.
+    /// </summary>
     [Theory]
-    [InlineData("0")]
-    [InlineData("3")]
-    [InlineData("99")]
-    public async Task ProgramsOwnDisplayDecimals_OverridesTheOption(string token)
+    [InlineData("0", "0")]
+    [InlineData("3", "0.143")]
+    [InlineData("6", "0.142857")]
+    [InlineData("99", "0.142857")]
+    public async Task ProgramsOwnDisplayDecimals_ComposesWithTheOption_ByMinimum(string token, string expected)
     {
         using var file = new TempSourceFile("DisplayDecimals = 6\n1 / 7\n");
 
@@ -1263,9 +1275,110 @@ public sealed class CliApplicationTests
         var run = await Cli.InvokeAsync("run", file.Path, "--display-decimals", token);
 
         Assert.Equal(Success, eval.ExitCode);
-        Assert.Equal("0.142857", eval.TrimmedOutput);
+        Assert.Equal(expected, eval.TrimmedOutput);
         Assert.Equal(Success, run.ExitCode);
-        Assert.Equal("0.142857", run.TrimmedOutput);
+        Assert.Equal(expected, run.TrimmedOutput);
+    }
+
+    /// <summary>
+    /// The D-F composition table at the CLI boundary, against the package's own engine run with
+    /// the same host filter: source absent or <c>7</c> or <c>5</c>, flag absent or <c>5</c> or
+    /// <c>7</c> or <c>10</c>. The flag never bypasses the composition.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, "0.1428571428571428571428571428571429")]
+    [InlineData(null, "5", "0.14286")]
+    [InlineData(7, null, "0.1428571")]
+    [InlineData(7, "5", "0.14286")]
+    [InlineData(5, "7", "0.14286")]
+    [InlineData(7, "10", "0.1428571")]
+    [InlineData(0, "7", "0")]
+    [InlineData(7, "0", "0")]
+    public async Task DisplayFilters_ComposeByMinimum_ExactlyLikeTheEngine(int? source, string? flag, string expected)
+    {
+        var program = source is { } decimals
+            ? $"DisplayDecimals = {decimals.ToString(CultureInfo.InvariantCulture)}\n1 / 7"
+            : "1 / 7";
+        string[] args = flag is null ? ["eval", program] : ["eval", program, "--display-decimals", flag];
+
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal(expected, result.TrimmedOutput);
+        Assert.Equal(
+            EngineDisplay(program, new RunOptions
+            {
+                DefaultDisplayDecimals = flag is null ? null : int.Parse(flag, CultureInfo.InvariantCulture),
+            }),
+            result.TrimmedOutput);
+    }
+
+    /// <summary>
+    /// A stricter flag never makes a declared source filter harmless: the program's
+    /// <c>DisplayDecimals</c> is still evaluated and validated after the output, so an invalid,
+    /// out-of-range or failing one fails <c>eval</c> and <c>run</c> exactly as without the flag.
+    /// </summary>
+    [Theory]
+    [InlineData("DisplayDecimals = 100\n1 / 7", "DisplayDecimals must be between 0 and 99.")]
+    [InlineData("DisplayDecimals = 1.5\n1 / 7", "DisplayDecimals must be an integer.")]
+    [InlineData("DisplayDecimals = 1 / 0\n1 / 7", "Division by zero")]
+    public async Task InvalidSourceFilter_StillFails_UnderAStricterFlag(string source, string message)
+    {
+        using var file = new TempSourceFile(source + "\n");
+
+        var without = await Cli.InvokeAsync("eval", source);
+        foreach (var args in new[]
+                 {
+                     new[] { "eval", source, "--display-decimals", "5" },
+                     new[] { "eval", source, "--display-decimals", "0" },
+                     new[] { "run", file.Path, "--display-decimals", "5" },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
+            Assert.Equal(Failure, result.ExitCode);
+            Assert.Equal("", result.Output);
+            Assert.Contains(message, result.TrimmedError);
+            Assert.Equal(without.ExitCode, result.ExitCode);
+        }
+
+        Assert.Equal(without.TrimmedError, (await Cli.InvokeAsync("eval", source, "--display-decimals", "5")).TrimmedError);
+    }
+
+    /// <summary>
+    /// An effectful source filter (a seeded draw) is evaluated once after the output whatever the
+    /// flag is: the output's own draw is unchanged, the source filter's draw decides when it is
+    /// the smaller count, and a stricter flag decides otherwise.
+    /// </summary>
+    [Fact]
+    public async Task EffectfulSourceFilter_IsStillEvaluated_AndComposesWithTheFlag()
+    {
+        const string program = "Math.Random(0, 1)\nDisplayDecimals = Math.RandomInt(6, 9)";
+        var engine = Assert.IsType<RunResult.Success>(KatLangEngine.Run(program, new RunOptions { RandomSeed = 42 }));
+        var drawn = DecimalPlaces(engine.ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.InRange(drawn, 6, 8);
+
+        var noFlag = await Cli.InvokeAsync("eval", program, "--random-seed", "42");
+        var stricter = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--display-decimals", "5");
+        var looser = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--display-decimals", "10");
+
+        foreach (var result in new[] { noFlag, stricter, looser })
+            Assert.Equal(Success, result.ExitCode);
+        Assert.Equal(engine.ToDisplayString().ReplaceLineEndings("\n"), noFlag.TrimmedOutput);
+        Assert.Equal(drawn, DecimalPlaces(noFlag.TrimmedOutput));
+        Assert.Equal(5, DecimalPlaces(stricter.TrimmedOutput));
+        Assert.Equal(drawn, DecimalPlaces(looser.TrimmedOutput));
+        Assert.Equal(noFlag.TrimmedOutput, looser.TrimmedOutput);
+
+        // The output draws the stream's first word in every case: the source filter draws
+        // afterwards, so the shown number is the same draw at every filter.
+        var outputOnly = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Math.Random(0, 1)", new RunOptions { RandomSeed = 42 }));
+        Assert.Equal(outputOnly.Atoms, engine.Atoms);
+        Assert.Equal(
+            EngineDisplay("Math.Random(0, 1)", new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 5 }),
+            stricter.TrimmedOutput);
+
+        static int DecimalPlaces(string text) => text.Length - text.IndexOf('.', StringComparison.Ordinal) - 1;
     }
 
     [Fact]
@@ -1535,9 +1648,13 @@ public sealed class CliApplicationTests
         Assert.DoesNotContain("check <file> [--allow-loading] [--display-decimals", help);
 
         // The quoted range is KatLang's own, and the text says what the option is — a
-        // display default the program may override — never "significant digits".
+        // display filter composed with the program's own by the smaller count (Q-10 D-F),
+        // never an override in either direction — never "significant digits".
         Assert.Contains($"from 0 through {RunOptions.MaxDisplayDecimals}.", help);
-        Assert.Contains("DisplayDecimals property overrides", help);
+        Assert.Contains("Display filter:", help);
+        Assert.Contains("DisplayDecimals property is a", help);
+        Assert.Contains("when both are set, the smaller", help);
+        Assert.DoesNotContain("overrides", help);
         Assert.Contains("Display only", help);
         Assert.DoesNotContain("significant", help, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(2, help.Split("Not valid for check").Length - 1);

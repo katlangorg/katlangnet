@@ -112,10 +112,11 @@ public static class CliApplication
         // DownloadCode stays null and KatLang itself rejects loading source with
         // a diagnostic. The evaluation options (run/eval only; the parser refused
         // them for check) are KatLang's own: --random-seed is RunOptions.RandomSeed
-        // and --display-decimals is RunOptions.DefaultDisplayDecimals, the fallback a
-        // program's DisplayDecimals property overrides. The CLI adds no randomness
-        // or display semantics of its own: every result below is rendered by the
-        // package from the run's own display configuration.
+        // and --display-decimals is RunOptions.DefaultDisplayDecimals, the host display
+        // filter that KatLang composes with a program's own DisplayDecimals filter by
+        // their minimum. The CLI adds no randomness or display semantics of its own:
+        // every result below is rendered by the package from the run's own display
+        // configuration.
         var options = new RunOptions
         {
             DownloadCode = invocation.Options.AllowLoading
