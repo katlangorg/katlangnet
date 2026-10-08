@@ -191,6 +191,19 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bGrace\s+is\s+not\s+allowed\s+in\s+(?:conditional\s+)?(?:clause\s+)?branch\s+bod(?:y|ies)\b", "the lexical branch-body Grace ban (before Q-16 O)" },
         { @"\bGrace\b[^.]{0,20}\b(?:not\s+permitted|forbidden|not\s+allowed)\s+in\s+(?:both\s+)?(?:branch\s+)?patterns\s+(?:or|and)\s+(?:branch\s+)?bodies\b", "Grace banned from whole branch bodies (before Q-16 O)" },
         { @"\bno\s+Grace\s+in\s+(?:conditional\s+)?branch\s+bod(?:y|ies)\b", "Grace banned from whole branch bodies (before Q-16 O)" },
+        // X-49 (October 8 2026): the multi-marker Grace ORDER is decided — postfix movers first, from
+        // the last-occurring, then prefix movers from the first-occurring, residual weights kept —
+        // and weights are exact unbounded integers. No current text calls the order an undecided
+        // candidate, names the retired position-cursor procedure, or describes clamped weights.
+        { @"\bApplyGraceReordering\b", "the retired position-cursor Grace ordering procedure (before X-49)" },
+        { @"\bcandidate\s+X-49\b", "the multi-marker Grace order as an undecided candidate (before X-49)" },
+        { @"\bmulti-marker\s+(?:order|iteration)\b[^.]{0,60}\b(?:is\s+unchanged|is\s+the\s+implementation's|does\s+not\s+fully\s+determine)", "the multi-marker Grace order left to the implementation (before X-49)" },
+        { @"\bGraceWeightEffect\b|\bint-saturating\s+(?:grace\s+)?(?:weights?|additions?)\b", "int-saturating Grace weight arithmetic (before X-49)" },
+        // X-49 F1: equal weights preserve relative order. Translation of a contiguous run as a
+        // unit requires every outside weight to be zero; other movers can split the run.
+        { @"\bneighbours\s+marked\s+the\s+same\s+way\s+move\s+together\b", "the unconditional same-marked-neighbours group claim (X-49 F1)" },
+        { @"\bequally\s+marked\s+runs\s+move\s+as\s+a\s+unit\b", "the unconditional equally-marked-run group claim (X-49 F1)" },
+        { @"\badjacent\s+names\s+with\s+one\s+common\s+weight\s+move\s+as\s+a\s+unit\b", "the unconditional adjacent-equal-weight group claim (X-49 F1)" },
     };
 
     [Theory]
@@ -274,6 +287,24 @@ public class MaintainedDocumentationConsistencyTests
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
         Assert.Contains("zero-based", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("docs/design/language-rules/ownership-and-lookup.md")]
+    [InlineData("tutorial.md")]
+    [InlineData(".github/agents/katlang-generator.agent.md")]
+    [InlineData("experimental/prompts/katlang-generator.txt")]
+    public void GraceGroupTranslation_StatesItsZeroWeightCondition_AndTheSplitCounterexample(string relativePath)
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+        Assert.Contains("Equal accumulated weights preserve their original relative order.", text);
+        Assert.Contains("A contiguous equal-weight run moves as a unit when every parameter outside that run has zero weight.", text);
+        Assert.Contains("Other moving parameters can split the run while preserving its relative order.", text);
+        // The claims above are observed by GraceMovementLawTests and TutorialSemanticContractTests;
+        // each maintained restatement must also show the witness that prevents a contiguity reading.
+        Assert.Contains("K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d", text);
+        Assert.Contains("(c, a, d, b)", text);
+        Assert.Contains("2413", text);
     }
 
     /// <summary>Loosest first. Prefix <c>-</c> is its own tier, above the multiplicative one.</summary>

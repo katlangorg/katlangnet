@@ -46,6 +46,7 @@ public class LeanCoreTestsCompositionTests
         "DotIdentity",
         "OpenProviderIdentity",
         "ModuleUnits",
+        "GraceMovement",
     ];
 
     [Fact]
@@ -94,6 +95,9 @@ public class LeanCoreTestsCompositionTests
                     "CoreTests.Common",
                     "CoreTests.DotReceiverSegments",
                 ],
+                // A standalone model of the C#-only Grace movement law (PAR-06, X-49): it imports
+                // nothing, so it can never reach into the evaluator model.
+                "GraceMovement" => [],
                 _ => new[] { "KatLang", "CoreTests.Common" },
             };
 

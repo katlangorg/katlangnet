@@ -700,7 +700,7 @@ Implicit parameter order is determined by first appearance in the step body (lef
 
 The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init provides `(a=1, b=2, total=0, limit)`. (The accumulator is named `total`, not `sum`: `sum` is a builtin, and a free name that resolves to a builtin is never inferred as an implicit parameter.) Since `b` appears before `a` in the body, without grace the parameter binding would be `b=1, a=2` — the opposite of what the init arguments intend. Adding `b~` shifts `b` after `a`, producing parameter order `[a, b, total, limit]` which matches the init arguments.
 
-**Rule of thumb**: after writing a step body, trace the first-appearance order of all free identifiers. Compare this order against the init arguments. If they differ, apply grace `~` to the identifiers that appear too early (postfix `x~`) or too late (prefix `~x`).
+**Rule of thumb**: after writing a step body, trace the first-appearance order of all free identifiers. Compare this order against the init arguments. If they differ, fix it with grace `~` in ONE direction only: give each identifier one prefix `~` for every earlier-written identifier that must come after it (or one postfix `~` for every later-written identifier that must come before it).
 
 **Common pattern**: Fibonacci-style steps where the new `a` equals the old `b`. The expression `b, a + b` mentions `b` first, but the init arguments are `(a_init, b_init, ...)`. Always use `b~` (or `~a`) to restore `[a, b, ...]` order.
 
@@ -819,6 +819,8 @@ parameter, a clause binder, or a property/builtin name.
 - Prefix `~x`: shift `x` one position earlier. `~~x`: two positions earlier.
 - Postfix `x~`: shift `x` one position later. `x~~`: two positions later.
 - Weights add up per name across the whole body: `~x` on two occurrences of `x` is two positions earlier, `~x~` is zero (the markers cancel), and a name never moves past the ends of the list. An arity error reports the inferred signature (``Callable `F(c, a, b)` expects 3 arguments ...``), which is the way to check an order.
+- Several marked names move one at a time: first every name with postfix weight, starting from the last-written, then every name with prefix weight, starting from the first-written. A name never passes a neighbour that moves the same way with at least as much weight left, and weight it cannot use stays with it and still blocks. Equal accumulated weights preserve their original relative order. A contiguous equal-weight run moves as a unit when every parameter outside that run has zero weight. Other moving parameters can split the run while preserving its relative order. With zero weight outside the run: `K = s * 100 + ~x * 10 + ~y` takes `(x, y, s)` and `Z = s~ * 100 + x~ * 10 + y` takes `(y, s, x)`. In contrast, `K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d` takes `(c, a, d, b)` and `K(1, 2, 3, 4)` is `2413`; both original equal-weight pairs become noncontiguous.
+- EXACT ORDER RECIPE — mark in ONE direction only: give each identifier one prefix `~` for every earlier-written identifier that must end up after it, OR one postfix `~` for every later-written identifier that must end up before it. Either marking gives exactly the intended order; mixing directions, or marking each name with "desired position minus written position", does not.
 
 Use grace whenever natural first-appearance order differs from desired parameter order. Never use dummy arithmetic to force ordering.
 
@@ -1588,7 +1590,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (146 of the 389-case canonical language specification,
+Verified reference examples (147 of the 390-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2945,6 +2947,22 @@ Regenerate this block from the repo root with:
     Weighted(1, 2, 3)
 
   Displays:
+    132
+
+[grace-front-first-movement] Each Grace marker asks for one adjacent move, and the names move one at a time: first every name with postfix weight, starting from the last-written, then every name with prefix weight, starting from the first-written. A name passes a neighbour unless that neighbour moves the same way with at least as much weight left, and weight it cannot use stays with it. `A`: `x` moves first and clears the way for `y`, so `A(x, y, s)`. `B`: `x`, in front, moves first, then `s` passes `y`, so `B(y, s, x)`. `C`: `b` passes `c`, and `c` still takes its own turn and passes `a`, so `C(c, a, b)` — as without `b~`. `D`: `a` moves right first, then `c` moves left past `a`, so `D(b, c, a)`. `E`: `a` is already first and keeps its unused unit; `c` passes `b` but not `a`, whose remaining weight equals its own, so `E(a, c, b)`.
+
+    A = s * 100 + ~x * 10 + ~y
+    B = s~ * 100 + x~ * 10 + y
+    C = a * 100 + b~ * 10 + ~~c
+    D = a~ * 100 + b * 10 + ~c
+    E = ~a * 100 + b * 10 + ~~c
+    A(1, 2, 3), B(1, 2, 3), C(1, 2, 3), D(1, 2, 3), E(1, 2, 3)
+
+  Displays:
+    312
+    231
+    231
+    312
     132
 
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.

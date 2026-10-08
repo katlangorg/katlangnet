@@ -7,7 +7,7 @@ namespace KatLang.Tests;
 /// eligible, never "moved"). Grace `~` is valid on exactly one kind of occurrence: a FREE
 /// bare name that its owner's implicit-signature collection promotes to one of the owner's
 /// OWN inferred parameters — that is the one place its weight is consumed
-/// (<c>ParameterDetector.CollectFreeParams</c>, then <c>ApplyGraceReordering</c>), whether or
+/// (<c>ParameterDetector.CollectFreeParams</c>, then <c>GraceMovement.Apply</c>), whether or
 /// not the weight then moves the name. Every other occurrence has no inferred parameter for
 /// the weight to attach to and is the front-end error
 /// <see cref="DiagnosticCode.InvalidGraceMarker"/> naming what fixed the binding: an explicit

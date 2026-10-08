@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace KatLang;
 
 /// <summary>
@@ -193,7 +195,7 @@ internal static class ParameterDetector
         var paramNames = new HashSet<string>(parameterNames);
         var paramOrder = new List<string>(parameterNames);
         IReadOnlySet<string> ownParameterNames = paramNames;
-        var graceWeights = new Dictionary<string, int>();
+        var graceWeights = new Dictionary<string, BigInteger>();
         var hasExplicitParameterList = alg.HasExplicitParameterList;
 
         // The program root is never called: its signature (unresolved root names) binds
@@ -245,7 +247,7 @@ internal static class ParameterDetector
                 new FreeNameWalkMemo(observations));
 
             if (graceWeights.Count > 0)
-                ApplyGraceReordering(paramOrder, graceWeights);
+                GraceMovement.Apply(paramOrder, graceWeights);
         }
 
         // The bindings in force inside this body: every inferred parameter is now known, and
@@ -501,7 +503,7 @@ internal static class ParameterDetector
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
-    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
+    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// first promotes the unresolved name: its first semantic source
     /// occurrence span (the same occurrence order the inference itself uses)
     /// and the context of a conservative near-miss suggestion, captured against
@@ -794,26 +796,26 @@ internal static class ParameterDetector
     private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<UndeclaredName>? UndeclaredNames);
 
     /// <summary>
-    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
+    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// walk (one algorithm's collection region — scope, bound names, target sets, mode and
     /// recorder are all constant for the walk's lifetime). A legal shared (acyclic) subtree is
     /// expanded once; a later reach of the same node reference re-applies only the node's
-    /// memoized per-visit GRACE-WEIGHT EFFECT, because weight accumulation is the one
+    /// memoized per-visit GRACE-WEIGHT DELTA, because weight accumulation is the one
     /// per-occurrence-additive fact of this walk — every other contribution (name sets,
     /// first-occurrence order, provenance) is idempotent, so skipping the re-walk preserves
-    /// exactly the semantics of the equivalent duplicated tree. An effect retains the ORDERED
-    /// composition of the walk's per-occurrence int-saturating additions; a net sum is not
-    /// sufficient because saturation makes mixed positive/negative additions non-associative.
+    /// exactly the semantics of the equivalent duplicated tree. Weights are exact unbounded
+    /// integers (PAR-06), and exact addition is associative and commutative, so a subtree's
+    /// per-visit contribution is one signed sum per name, whatever the weight it is added to.
     /// </summary>
     private sealed class FreeNameWalkMemo(FrontEndTraversalObservations? observations)
     {
         /// <summary>
-        /// Completed nodes → their per-visit grace-weight effect (<c>null</c> = no weight
+        /// Completed nodes → their per-visit grace-weight delta (<c>null</c> = no weight
         /// contribution, the overwhelmingly common case). Completion-marked: a node appears
         /// only after its subtree finished, so an (illegal, preflight-rejected) cycle keeps
         /// today's non-terminating behavior instead of silently truncating the walk.
         /// </summary>
-        public readonly Dictionary<Expr, Dictionary<string, GraceWeightEffect>?> CompletedVectors =
+        public readonly Dictionary<Expr, Dictionary<string, BigInteger>?> CompletedVectors =
             new(ReferenceEqualityComparer.Instance);
 
         /// <summary>
@@ -821,7 +823,7 @@ internal static class ParameterDetector
         /// application lands in the walk's <c>graceWeights</c> AND in every open slot, so when a
         /// node completes, its slot holds exactly its subtree's per-visit contribution.
         /// </summary>
-        public readonly List<Dictionary<string, GraceWeightEffect>?> OpenSlots = [];
+        public readonly List<Dictionary<string, BigInteger>?> OpenSlots = [];
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -835,40 +837,6 @@ internal static class ParameterDetector
 
         public void RecordCheckedFallback(Expr.DotCall edge, StaticStructuralMemberProvider receiver)
             => (CheckedFallbacks ??= new(ReferenceEqualityComparer.Instance)).TryAdd(edge, receiver);
-    }
-
-    /// <summary>
-    /// Compact composition of an ordered sequence of int-saturating grace additions.
-    /// Every such sequence is a clamped translation; the arbitrary-precision offset avoids
-    /// overflowing while a shared diamond composes one effect exponentially many times.
-    /// </summary>
-    private readonly record struct GraceWeightEffect(
-        System.Numerics.BigInteger Offset,
-        int Minimum,
-        int Maximum)
-    {
-        public static GraceWeightEffect Addition(System.Numerics.BigInteger amount)
-            => new(amount, int.MinValue, int.MaxValue);
-
-        public int Apply(int value)
-        {
-            var shifted = value + Offset;
-            if (shifted <= Minimum)
-                return Minimum;
-            if (shifted >= Maximum)
-                return Maximum;
-            return (int)shifted;
-        }
-
-        /// <summary>Returns the effect of applying this effect, then <paramref name="next"/>.</summary>
-        public GraceWeightEffect Then(GraceWeightEffect next)
-        {
-            var minimum = next.Apply(Minimum);
-            var maximum = next.Apply(Maximum);
-            return minimum == maximum
-                ? new GraceWeightEffect(0, minimum, maximum)
-                : new GraceWeightEffect(Offset + next.Offset, minimum, maximum);
-        }
     }
 
     /// <summary>
@@ -933,8 +901,8 @@ internal static class ParameterDetector
     /// Grace eligibility of ONE owner region (F10, Q-16 G-O, decided 2026-10-07): Grace belongs
     /// to the owner whose written rows contain the marked occurrence, and a marker is valid
     /// exactly when that occurrence becomes one of the owner's OWN inferred parameters — the
-    /// one place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
-    /// <see cref="ApplyGraceReordering"/>). Eligibility never depends on whether the weight
+    /// one place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
+    /// <see cref="GraceMovement.Apply"/>). Eligibility never depends on whether the weight
     /// moves the name: a single own name, a name already at the boundary it points to, excess
     /// weight, a tie, a cancelled weight and the own/lifted boundary are saturation, not errors.
     /// Every other occurrence has no inferred parameter for the weight to attach to and is
@@ -990,47 +958,35 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Applies one grace-weight amount for <paramref name="name"/> to the walk's accumulated
-    /// weights (int-saturating, exactly once per semantic occurrence) and composes it into every
-    /// open memo slot, so each in-progress ancestor retains the subtree's ordered effect.
+    /// Adds one exact grace-weight amount for <paramref name="name"/> to the walk's accumulated
+    /// weights (exactly once per semantic occurrence) and to every open memo slot, so each
+    /// in-progress ancestor retains its subtree's per-visit delta.
     /// </summary>
     private static void AddGraceWeight(
-        Dictionary<string, int> graceWeights,
+        Dictionary<string, BigInteger> graceWeights,
         FreeNameWalkMemo memo,
         string name,
-        System.Numerics.BigInteger amount)
+        BigInteger amount)
     {
-        var addition = GraceWeightEffect.Addition(amount);
-        graceWeights[name] = addition.Apply(graceWeights.GetValueOrDefault(name));
+        graceWeights[name] = graceWeights.GetValueOrDefault(name) + amount;
         for (var i = 0; i < memo.OpenSlots.Count; i++)
         {
-            var slot = memo.OpenSlots[i] ??= new Dictionary<string, GraceWeightEffect>(StringComparer.Ordinal);
-            slot[name] = slot.TryGetValue(name, out var previous)
-                ? previous.Then(addition)
-                : addition;
+            var slot = memo.OpenSlots[i] ??= new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+            slot[name] = slot.GetValueOrDefault(name) + amount;
         }
     }
 
-    /// <summary>Re-applies a completed node's per-visit weight effect for one more reach.</summary>
+    /// <summary>Re-applies a completed node's per-visit weight delta for one more reach.</summary>
     private static void ApplyGraceVector(
-        Dictionary<string, GraceWeightEffect>? vector,
-        Dictionary<string, int> graceWeights,
+        Dictionary<string, BigInteger>? vector,
+        Dictionary<string, BigInteger> graceWeights,
         FreeNameWalkMemo memo)
     {
         if (vector is null)
             return;
 
-        foreach (var (name, effect) in vector)
-        {
-            graceWeights[name] = effect.Apply(graceWeights.GetValueOrDefault(name));
-            for (var i = 0; i < memo.OpenSlots.Count; i++)
-            {
-                var slot = memo.OpenSlots[i] ??= new Dictionary<string, GraceWeightEffect>(StringComparer.Ordinal);
-                slot[name] = slot.TryGetValue(name, out var previous)
-                    ? previous.Then(effect)
-                    : effect;
-            }
-        }
+        foreach (var (name, delta) in vector)
+            AddGraceWeight(graceWeights, memo, name, delta);
     }
 
     /// <summary>
@@ -1611,7 +1567,7 @@ internal static class ParameterDetector
     {
         var freeNames = new HashSet<string>();
         var freeOrder = new List<string>();
-        var dummyWeights = new Dictionary<string, int>();
+        var dummyWeights = new Dictionary<string, BigInteger>();
         var memo = new FreeNameWalkMemo(observations);
         CollectFreeParams(
             rows, scope, boundParameters, freeNames, freeOrder, dummyWeights,
@@ -1780,7 +1736,7 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, int> graceWeights,
+        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
@@ -1795,7 +1751,7 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, int> graceWeights,
+        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
@@ -1832,7 +1788,7 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, int> graceWeights,
+        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
@@ -1850,11 +1806,11 @@ internal static class ParameterDetector
                 // rejects complex operands, and a host-built one is handled
                 // defensively by collecting its names WITHOUT any reordering
                 // weight.
-                // A host-built AST can carry arbitrary int weights on stacked wrappers.
-                // Sum the one-occurrence amount without overflowing before the ordered,
-                // saturating GraceWeightEffect sees it; source `~` markers are only +/-1,
-                // so this widens host robustness without changing surface-language behavior.
-                var accumulatedWeight = new System.Numerics.BigInteger(graceWeight);
+                // A host-built AST can carry arbitrary int weights on stacked wrappers; the
+                // weight is an exact unbounded integer (PAR-06), so the one-occurrence amount
+                // is summed without overflow, wrapping or clamping. Source `~` markers are
+                // only +/-1 each.
+                var accumulatedWeight = new BigInteger(graceWeight);
                 var gracedCore = graceOperand;
                 while (gracedCore is Expr.Grace(var deeperOperand, var deeperWeight))
                 {
@@ -2084,55 +2040,6 @@ internal static class ParameterDetector
             1 => new(StaticStructuralMemberProviderKind.KnownAlgorithm, openHits[0].Property.Value),
             _ => new(StaticStructuralMemberProviderKind.LexicalReference),
         };
-    }
-
-    /// <summary>
-    /// Reorders parameters based on accumulated grace weights.
-    /// Positive weight moves rightward, negative weight moves leftward.
-    /// Each swap consumes one unit of weight. Movement stops at list boundaries
-    /// or when blocked by a neighbor with equal or more extreme weight.
-    /// </summary>
-    private static void ApplyGraceReordering(
-        List<string> paramOrder,
-        Dictionary<string, int> graceWeights)
-    {
-        var weights = paramOrder.Select(n =>
-            graceWeights.TryGetValue(n, out var w) ? w : 0).ToArray();
-
-        for (var i = 0; i < paramOrder.Count; i++)
-        {
-            var idx = i;
-            while (true)
-            {
-                if (weights[idx] == 0) break;
-
-                if (weights[idx] > 0) // postfix: move right
-                {
-                    if (idx < paramOrder.Count - 1 && weights[idx + 1] < weights[idx])
-                    {
-                        weights[idx]--;
-                        (paramOrder[idx], paramOrder[idx + 1]) = (paramOrder[idx + 1], paramOrder[idx]);
-                        (weights[idx], weights[idx + 1]) = (weights[idx + 1], weights[idx]);
-                        idx++;
-                        continue;
-                    }
-                    break;
-                }
-
-                if (weights[idx] < 0) // prefix: move left
-                {
-                    if (idx > 0 && weights[idx - 1] > weights[idx])
-                    {
-                        weights[idx]++;
-                        (paramOrder[idx], paramOrder[idx - 1]) = (paramOrder[idx - 1], paramOrder[idx]);
-                        (weights[idx], weights[idx - 1]) = (weights[idx - 1], weights[idx]);
-                        idx--;
-                        continue;
-                    }
-                    break;
-                }
-            }
-        }
     }
 
     // ── F10 / Q-16 G-O: a Grace marker with no own inferred parameter to weight ──

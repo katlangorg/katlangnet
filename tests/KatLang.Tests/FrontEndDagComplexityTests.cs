@@ -328,29 +328,35 @@ public class FrontEndDagComplexityTests
     }
 
     /// <summary>
-    /// Beyond any materializable tree (2^200 occurrences), the accumulated weight saturates
-    /// deterministically instead of overflowing; ordering still reflects an extreme weight.
+    /// Beyond any materializable tree (2^200 occurrences), the accumulated weight stays EXACT
+    /// (PAR-06: weights are unbounded integers): the memo re-applies one exact delta per reach, so
+    /// the walk stays bounded by distinct nodes and 2^200 still outweighs 2^200 − 1 by one unit.
     /// </summary>
     [Fact]
-    public Task Detector_AstronomicalGraceMultiplicity_SaturatesInsteadOfOverflowing()
+    public Task Detector_AstronomicalGraceMultiplicity_StaysExact()
         => AssertCompletesUnderWallClockGuard(() =>
         {
-            var detectedParams = DetectParams(
+            Assert.Equal(["a", "g"], DetectParams(
                 BinaryDiamond(200, new Expr.Grace(new Expr.Resolve("g"), 1)),
-                new Expr.Resolve("a"));
+                new Expr.Resolve("a")));
 
-            // Postfix weight moves g rightward past a; saturation keeps the walk finite and the
-            // outcome deterministic.
-            Assert.Equal(["a", "g"], detectedParams);
+            // g (2^200) passes h (2^200 − 1); a clamped sum would tie them, and h would block g.
+            Assert.Equal(["h", "g"], DetectParams(
+                BinaryDiamond(200, new Expr.Grace(new Expr.Resolve("g"), 1)),
+                new Expr.Capture(new OutputBundle(
+                [
+                    BinaryDiamond(200, new Expr.Grace(new Expr.Resolve("h"), 1)),
+                    new Expr.Grace(new Expr.Resolve("h"), -1),
+                ]))));
         });
 
     /// <summary>
-    /// Saturating addition is ordered, not reducible to one net delta: (+Max, +Max, -Max)
-    /// maps zero back to zero, while its arithmetic sum is +Max. Replaying a shared subtree's
-    /// memo must therefore compose the same per-occurrence clamp operations as a cloned tree.
+    /// Exact addition is associative and commutative, so replaying a shared subtree's memoized
+    /// delta equals walking a cloned tree: (+Max, +Max, −Max) is +Max per visit — never a clamped
+    /// zero — and two visits weigh 2 × Max.
     /// </summary>
     [Fact]
-    public void Detector_SharedMixedSaturatingGraceEffects_MatchDuplicatedTree()
+    public void Detector_SharedMixedGraceWeights_SumExactlyLikeTheDuplicatedTree()
     {
         static Expr WeightSequence()
             => new Expr.Capture(new OutputBundle(
@@ -364,18 +370,16 @@ public class FrontEndDagComplexityTests
         var dagParams = DetectParams(sharedSequence, sharedSequence, new Expr.Resolve("a"));
         var treeParams = DetectParams(WeightSequence(), WeightSequence(), new Expr.Resolve("a"));
 
-        Assert.Equal(["g", "a"], dagParams);
+        Assert.Equal(["a", "g"], dagParams);
         Assert.Equal(treeParams, dagParams);
     }
 
     /// <summary>
-    /// The composable effect uses an arbitrary-precision offset, so the amount assembled from
-    /// stacked wrappers on ONE host-built occurrence must not overflow an int before it reaches
-    /// that effect. Positive and negative overflow would otherwise wrap to the opposite sign and
-    /// reverse parameter movement.
+    /// The amount assembled from stacked wrappers on ONE host-built occurrence is summed exactly,
+    /// so it never wraps an int to the opposite sign (which would reverse the movement).
     /// </summary>
     [Fact]
-    public void Detector_StackedGraceWeights_DoNotOverflowBeforeSaturation()
+    public void Detector_StackedGraceWeights_SumExactly()
     {
         var positive = DetectParams(
             new Expr.Grace(

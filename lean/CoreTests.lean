@@ -38,3 +38,4 @@ import CoreTests.ErrorTaxonomy
 import CoreTests.DotIdentity
 import CoreTests.OpenProviderIdentity
 import CoreTests.ModuleUnits
+import CoreTests.GraceMovement

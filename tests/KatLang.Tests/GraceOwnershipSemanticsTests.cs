@@ -215,12 +215,13 @@ public class GraceOwnershipSemanticsTests
     }
 
     [Fact]
-    public void X49Witness_KeepsTheCurrentDeterministicOrder()
+    public void X49Witness_FollowsFrontFirstMovement()
     {
-        // Candidate X-49 (recorded, NOT decided by Q-16): PAR-06's prose does not fully determine
-        // ApplyGraceReordering's multi-marker iteration. Q-16 leaves the algorithm untouched, so the
-        // current deterministic orders are pinned exactly.
-        Assert.Equal(["a", "c", "b"], Params("F = a * 100 + b~ * 10 + ~~c", "F"));
+        // X-49 (decided 2026-10-08): postfix movers take their turns first, from the last-occurring;
+        // then prefix movers, from the first-occurring (PAR-06; GraceMovementLawTests pins the law).
+        // b passes c, and c — displaced, but still owed its own turn — passes a: (c, a, b), as
+        // without `b~`. Q-16's eligibility is unaffected; the other four orders were already these.
+        Assert.Equal(["c", "a", "b"], Params("F = a * 100 + b~ * 10 + ~~c", "F"));
         Assert.Equal(["c", "a", "b"], Params("F = a * 100 + b * 10 + ~~c", "F"));
         Assert.Equal(["b", "c", "a"], Params("F = a~ * 100 + b * 10 + ~c", "F"));
         Assert.Equal(["b", "a", "c"], Params("F = a~ + b + c~", "F"));

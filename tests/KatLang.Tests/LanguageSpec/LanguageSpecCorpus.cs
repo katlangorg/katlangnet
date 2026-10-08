@@ -4745,6 +4745,33 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "grace-front-first-movement",
+            Category = "parser-layout",
+            Source = "A = s * 100 + ~x * 10 + ~y\nB = s~ * 100 + x~ * 10 + y\nC = a * 100 + b~ * 10 + ~~c\nD = a~ * 100 + b * 10 + ~c\nE = ~a * 100 + b * 10 + ~~c\nA(1, 2, 3), B(1, 2, 3), C(1, 2, 3), D(1, 2, 3), E(1, 2, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "312\n231\n231\n312\n132",
+            ExpectedRaw = "S[312, 231, 231, 312, 132]",
+            ExpectedEmittedCount = 5,
+            Probes =
+            [
+                // Equal prefix weights at the front: a keeps its unused −1 and blocks b.
+                new SpecProbe("K = ~a * 100 + ~b * 10 + c\nK(1, 2, 3)", "ok raw=123 n=1"),
+                // Patent FIG. 12: a's unused second unit still protects it from b.
+                new SpecProbe("SumOfParams = a~~ * 10 + b~\nSumOfParams(1, 2)", "ok raw=21 n=1"),
+                // Equal-weight groups among zero-weight names move as a unit, rightward and leftward.
+                new SpecProbe("K = a~ * 1000 + b~ * 100 + c~ * 10 + d\nK(1, 2, 3, 4)", "ok raw=2341 n=1"),
+                new SpecProbe("K = a * 1000 + ~b * 100 + ~c * 10 + ~d\nK(1, 2, 3, 4)", "ok raw=4123 n=1"),
+                // Passive displacement: b, c and d carry e one place left before e takes its own turn.
+                new SpecProbe("K = a * 10000 + b~ * 1000 + c~ * 100 + d~ * 10 + ~e\nK(1, 2, 3, 4, 5)", "ok raw=23451 n=1"),
+                // A stronger same-direction push passes residual weight.
+                new SpecProbe("K = ~a * 100 + b * 10 + ~~~c\nK(1, 2, 3)", "ok raw=231 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "X-49 (decided 2026-10-08): front-first movement, postfix movers first, residual weights retained (PAR-06). `C` was `C(a, c, b)` = 132 before: a position cursor skipped `c` once `b` had displaced it.",
+            Explanation = "Each Grace marker asks for one adjacent move, and the names move one at a time: first every name with postfix weight, starting from the last-written, then every name with prefix weight, starting from the first-written. A name passes a neighbour unless that neighbour moves the same way with at least as much weight left, and weight it cannot use stays with it. `A`: `x` moves first and clears the way for `y`, so `A(x, y, s)`. `B`: `x`, in front, moves first, then `s` passes `y`, so `B(y, s, x)`. `C`: `b` passes `c`, and `c` still takes its own turn and passes `a`, so `C(c, a, b)` — as without `b~`. `D`: `a` moves right first, then `c` moves left past `a`, so `D(b, c, a)`. `E`: `a` is already first and keeps its unused unit; `c` passes `b` but not `a`, whose remaining weight equals its own, so `E(a, c, b)`.",
+        },
+        new()
+        {
             Id = "grace-prefix-marker-led-row",
             Category = "parser-layout",
             Source = "K = {\n  a\n  ~b\n}\nK(10, 20)",

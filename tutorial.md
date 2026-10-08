@@ -684,6 +684,35 @@ Double(4)
 
 **Result:** `8`
 
+Markers add up: `~~x` requests two positions earlier for `x`, stopping at the end or a blocking neighbour. Equal accumulated weights preserve their original relative order. A contiguous equal-weight run moves as a unit when every parameter outside that run has zero weight. Other moving parameters can split the run while preserving its relative order. The outside name has zero weight in both examples below, so `x` and `y` stay side by side:
+
+```
+Prefixed = s * 100 + ~x * 10 + ~y
+Prefixed(1, 2, 3)
+```
+
+**Result:** `312`
+
+```
+Postfixed = s~ * 100 + x~ * 10 + y
+Postfixed(1, 2, 3)
+```
+
+**Result:** `231`
+
+`Prefixed` takes its parameters in the order `(x, y, s)`, and `Postfixed` in the order `(y, s, x)`. A name never passes a neighbour that moves the same way at least as strongly. To get an exact order, mark in one direction only: give each name one `~` in front for every earlier-written name that must come after it, or one `~` behind for every later-written name that must come before it.
+
+Other movers can separate both original runs:
+
+```
+K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d
+K(1, 2, 3, 4)
+```
+
+**Result:** `2413`
+
+`K` takes `(c, a, d, b)`: `a` stays before `b` and `c` before `d`, but neither pair stays adjacent.
+
 A marker is an error only where there is no inferred parameter to reorder: on an explicit parameter, a property, or a built-in name such as `~count`.
 
 ### Undefined Names in the Program

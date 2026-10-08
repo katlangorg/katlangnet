@@ -621,10 +621,18 @@ public class TutorialSemanticContractTests
     [InlineData("Weighted = a~~ + 10 * b + 100 * c", new[] { "b", "c", "a" })]
     [InlineData("Divide = y / ~x", new[] { "x", "y" })]
     [InlineData("Tie = ~b + ~a", new[] { "b", "a" })]
+    // "Reordering Parameters with Grace": equal-weight runs among zero-weight names (X-49).
+    [InlineData("Prefixed = s * 100 + ~x * 10 + ~y", new[] { "x", "y", "s" })]
+    [InlineData("Postfixed = s~ * 100 + x~ * 10 + y", new[] { "y", "s", "x" })]
+    [InlineData("K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d", new[] { "c", "a", "d", "b" })]
     public void Grace_WeightsAccumulatePerName_AndReorderTheInferredSignature(string definition, string[] expected)
     {
         Assert.Equal(expected, InferredParams(definition));
     }
+
+    [Fact]
+    public void Grace_OtherMovingNamesCanSplitEqualWeightRuns()
+        => Assert.Equal("2413", Display("K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d\nK(1, 2, 3, 4)"));
 
     [Fact]
     public void Grace_TheInferredSignatureIsWhatAnArityErrorReports()

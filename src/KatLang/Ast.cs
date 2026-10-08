@@ -1151,8 +1151,10 @@ public closed record Expr
     /// operands are parse errors; a host-built one is handled defensively
     /// with no reordering effect).
     /// Grace affects implicit parameter ordering ONLY: front-end elaboration
-    /// consumes the weight and strips the wrapper, so no elaborated tree
-    /// contains one and evaluation semantics never observe it.
+    /// sums the weights exactly and moves the owner's own inferred parameters
+    /// by the movement law (<c>GraceMovement</c>, PAR-06), then strips
+    /// the wrapper, so no elaborated tree contains one and evaluation
+    /// semantics never observe it.
     /// Not part of the Lean specification.
     /// </summary>
     public sealed record Grace(Expr Inner, int Weight) : Expr;

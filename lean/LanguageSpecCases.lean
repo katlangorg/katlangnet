@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 389
+- specification surface cases: 390
 - excluded parse-level cases (Lean has no surface parser): 59
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 309
-- probe observations (C#-only by design): 1213
+- Lean-guarded cases: 310
+- probe observations (C#-only by design): 1219
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1246,6 +1246,11 @@ def case_grace_weights_accumulate : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Weighted" (alg ["c", "a", "b"] [] [] [(.binary .add (.binary .add (.param "a") (.binary .mul (.num 10) (.param "b"))) (.binary .mul (.num 100) (.param "c")))])] [(.call (.resolve "Weighted") [.num 1, .num 2, .num 3])])
 #guard obs case_grace_weights_accumulate == "ok raw=132 n=1"
 
+-- grace-front-first-movement [parser-layout]: A = s * 100 + ~x * 10 + ~y \n B = s~ * 100 + x~ * 10 + y \n C = a * 100 + b~ * 10 + ~~c \n D = a~ * 100 + b * 10 + ~c \n E = ~a * 100 + b * 10 + ~~c \n A(1, 2, 3), B(1, 2, 3), C(1, 2, 3), D(1, 2, 3), E(1, 2, 3)
+def case_grace_front_first_movement : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y", "s"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "s") (.num 100)) (.binary .mul (.param "x") (.num 10))) (.param "y"))]), privateProp "B" (alg ["y", "s", "x"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "s") (.num 100)) (.binary .mul (.param "x") (.num 10))) (.param "y"))]), privateProp "C" (alg ["c", "a", "b"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))]), privateProp "D" (alg ["b", "c", "a"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))]), privateProp "E" (alg ["a", "c", "b"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "A") [.num 1, .num 2, .num 3]), (.call (.resolve "B") [.num 1, .num 2, .num 3]), (.call (.resolve "C") [.num 1, .num 2, .num 3]), (.call (.resolve "D") [.num 1, .num 2, .num 3]), (.call (.resolve "E") [.num 1, .num 2, .num 3])])
+#guard obs case_grace_front_first_movement == "ok raw=S[312, 231, 231, 312, 132] n=5"
+
 -- grace-prefix-marker-led-row [parser-layout]: K = { \n   a \n   ~b \n } \n K(10, 20)
 def case_grace_prefix_marker_led_row : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["b", "a"] [] [] [.param "a", .param "b"])] [(.call (.resolve "K") [.num 10, .num 20])])
@@ -1646,7 +1651,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 309 canonical Lean-guarded specification cases.
+-- 310 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1883,6 +1888,7 @@ def specCaseIds : List String := [
   "grace-in-branch-nested-block-belongs-to-the-block",
   "grace-saturation-is-valid",
   "grace-weights-accumulate",
+  "grace-front-first-movement",
   "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
@@ -1964,6 +1970,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 309
+#guard specCaseIds.length == 310
 
 end LanguageSpecCases
