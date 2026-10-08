@@ -87,9 +87,13 @@ public class ClauseGroupElaborationTests
             "F(0) = 0\nF(*xs) = 1\nF(1)",
             [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'F'.", new SourceSpan(2, 1, 2, 11))]),
 
-        new("grace.inConditionalBody",
+        // Grace is no clause-family build diagnostic (Q-16 G-O): the builder keeps only the
+        // head-pattern grammar, and a marker in a branch body is judged by its OWNER in the
+        // parameter detector (a branch's own level is closed; a nested algorithm is an owner
+        // of its own) — so raw syntax reports nothing here.
+        new("grace.inConditionalBodyIsNoBuilderDiagnostic",
             "F(0) = 0\nF(x) = ~y + x\nF(1)",
-            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'F'.", new SourceSpan(2, 8, 2, 10))]),
+            []),
 
         // In-loop duplicate detection precedes the post-loop family validation, so the
         // duplicate is reported before the arity mismatch even though both belong to F.
@@ -272,17 +276,19 @@ public class ClauseGroupElaborationTests
     [Fact]
     public void InvalidFirstClause_StillEstablishesFamilyOrderAndDeclarationIdentity()
     {
-        // Z's FIRST clause is invalid once the family is known to be conditional:
-        // Grace is forbidden in a true conditional branch body. Recovery still keeps
-        // that clause as Z's first branch/declaration and, crucially, records Z as the
-        // first-seen family before A. Dropping invalid clauses from the ordering state
-        // would reorder the appended families to A, Z and change Z's canonical
-        // declaration identity.
-        const string source = "Z(0) = ~x\nA(0) = 0\nZ(x) = x\nA(y) = y\nZ(1)";
+        // Z's FIRST clause is invalid once the family is known to be conditional: a
+        // collecting binding is only valid in an ordinary explicit parameter list (a lone
+        // `Z((*xs))` clause would be an ordinary algorithm). Recovery still keeps that clause
+        // as Z's first branch/declaration and, crucially, records Z as the first-seen family
+        // before A. Dropping invalid clauses from the ordering state would reorder the
+        // appended families to A, Z and change Z's canonical declaration identity. (This
+        // witness used to be Grace in the clause body; Grace is no clause-family build
+        // diagnostic since Q-16 G-O — the parameter detector judges it per owner.)
+        const string source = "Z((*xs)) = 0\nA(0) = 0\nZ(x) = x\nA(y) = y\nZ(1)";
         var syntax = Parser.ParseSyntax(source);
 
         Assert.Equal(
-            [(DiagnosticCode.InvalidGraceMarker, "Grace is not allowed in conditional branch bodies for 'Z'.", new SourceSpan(1, 8, 1, 10))],
+            [(DiagnosticCode.InvalidCollectingBinding, "Collecting bindings are only supported in ordinary explicit parameter lists for 'Z'.", new SourceSpan(1, 1, 1, 13))],
             syntax.Diagnostics.Select(d => (d.Code, d.Message, d.Span)).ToList());
         Assert.Equal(
             [

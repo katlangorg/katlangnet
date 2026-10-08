@@ -272,7 +272,7 @@ public static class AstGraphFuzzer
 
     /// <summary>
     /// A Grace marker and its operand are never shared by reference. The front end treats
-    /// Grace per NODE — it reports an ineffective marker once per marker node in a region
+    /// Grace per NODE — it reports an ineligible marker once per marker node in a region
     /// (<c>ParameterDetector.ReportIneffectiveGrace</c>) — so a marker reachable from two
     /// parents, or two markers over one shared operand, need not elaborate like the clone,
     /// where every occurrence is its own node and reports once. That is a documented property of markers, not a sharing defect, so

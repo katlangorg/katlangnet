@@ -270,7 +270,7 @@ public class ModuleCoordinateSpaceTests
         { "closed branch", "\n\n\npublic Fine = 7\nK(0) = zz\nK(x) = x", DiagnosticCode.UndeclaredIdentifier },
         { "illegal open", "\n\n\nopen count\npublic Fine = 7", DiagnosticCode.IllegalInOpen },
         { "parameter open head", "\n\n\npublic Fine = 7\nK(p) = { open p\n 1 }", DiagnosticCode.OpenTargetIsParameter },
-        { "ineffective grace", "\n\n\npublic Fine = 7\nK(p) = ~p", DiagnosticCode.InvalidGraceMarker },
+        { "ineligible grace", "\n\n\npublic Fine = 7\nK(p) = ~p", DiagnosticCode.InvalidGraceMarker },
     };
 
     [Theory]

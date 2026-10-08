@@ -116,7 +116,7 @@ public class MarkerAttachmentTests
     public void NestedMultiplicationLayouts_HaveTheSameElaboratedStructureAndValue(string context, string expected)
     {
         // The `~~B` operand graces a FREE name (K's implicit parameter, bound by
-        // `K(6)`): Grace on a bound property would be the ineffective-Grace error.
+        // `K(6)`): Grace on a bound property would be the ineligible-Grace error.
         string? baseline = null;
         foreach (var product in new[] { "A*~~B", "A * ~~B", "A*\n~~B", "A *\r\n# comment\r\n~~B" })
         {
@@ -237,7 +237,7 @@ public class MarkerAttachmentTests
     [InlineData("K = {\n  a\n  ~b\n}\nK(10, 20)", "(20, 10)")]
     // Grace composed with ordinary dot syntax (the two supported forms) on free
     // names: base order (a, t) becomes (t, a). (A graced EXPLICIT parameter is
-    // the ineffective-Grace error — see GraceEffectivenessTests.)
+    // the ineligible-Grace error — see GraceEffectivenessTests.)
     [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
     [InlineData("K = a.~t\nK({a+1}, 7)", "8")]
     [InlineData("K = a~~.t\nK({a+1}, 7)", "8")]

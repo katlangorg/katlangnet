@@ -913,18 +913,25 @@ def builtinArityError (b : Builtin) (actual : Nat) : Error :=
     **Full-input-specification rule**: In a conditional algorithm, the branch
     pattern in `Name(...)` is the COMPLETE INPUT SPECIFICATION of that branch.
     - All branch inputs must appear in the pattern.
-    - Branch bodies do NOT infer additional implicit parameters from free
-      identifiers.  Only names bound by the pattern (plus ordinary lexical /
-      property / open / builtin resolution) are available in the body.
+    - The branch's OWN level does NOT infer additional implicit parameters
+      from free identifiers.  Only names bound by the pattern (plus ordinary
+      lexical / property / open / builtin resolution) are available in the
+      rows the branch writes.
     - Unused pattern-bound names are allowed.
-    - Grace `~` is NOT permitted in patterns or branch bodies.  Patterns
-      contain only matching constructs (binders, literals, nested sequence and
-      list patterns).  Branch bodies must not use Grace because conditional branches
-      have no implicit parameter inference or reordering to apply it to.
+    - Grace `~` is NOT permitted in patterns or on the branch's own level.
+      Patterns contain only matching constructs (binders, literals, nested
+      sequence and list patterns), and the branch's own rows have no inferred
+      parameter ordering to apply Grace to.  Algorithms NESTED inside a branch
+      body (brace blocks, properties, nested families' owners) are ordinary
+      independent owners: an inferring one infers its own signature, and may
+      use Grace on its own inferred parameters, in the C# front end before
+      Lean encoding (Q-16 G-O); its parameters are supplied by its caller and
+      are never added to the branch.
 
     This keeps conditional algorithms self-contained: branch selection and
     branch binding are the same operation, with no hidden remaining parameters
-    and no interaction with Grace-based parameter reordering. -/
+    and no interaction with Grace-based parameter reordering at the branch's
+    own level. -/
 inductive Pattern where
   | bind      : Ident -> Pattern
   | litInt    : Int -> Pattern
@@ -1281,8 +1288,10 @@ mutual
       The pattern is the complete input specification of the branch.
       Branch bodies receive bindings ONLY from the matched pattern (plus
       ordinary lexical resolution).  No extra implicit parameters are inferred
-      from free identifiers in the body.  Grace `~` is not allowed in patterns
-      or branch bodies.
+      at the branch's own level from free identifiers in the body, and Grace
+      `~` is not allowed in patterns or on that level; an algorithm nested in
+      the body is an ordinary independent owner (an inferring one may use
+      Grace on its own inferred parameters in the C# front end, Q-16 G-O).
       Nested internal output structure may vary. -/
   structure CondBranch where
     pattern : Pattern
@@ -1312,11 +1321,15 @@ mutual
         If no branch matches, evaluation fails with noMatchingBranch.
 
         **Full-input-specification invariant**: each branch pattern `Name(...)`
-        declares the complete input interface of that branch.  Branch bodies do
-        NOT infer additional implicit parameters from free identifiers — only
-        names bound by the pattern and names resolvable through ordinary lexical /
-        property / open / builtin lookup are available.  Grace `~` is forbidden
-        in both patterns and branch bodies.
+        declares the complete input interface of that branch.  A branch's own
+        level does NOT infer additional implicit parameters from free
+        identifiers — only names bound by the pattern and names resolvable
+        through ordinary lexical / property / open / builtin lookup are
+        available.  Grace `~` is forbidden in patterns and on the branch's own
+        level; algorithms nested in a branch body are ordinary independent
+        owners (an inferring one may use Grace on its own inferred parameters in
+        the C# front end before Lean encoding, Q-16 G-O), never adding a
+        parameter to the branch.
 
         **Uniform top-level arity invariant**: all branches of the same
         conditional algorithm must have the same top-level pattern arity

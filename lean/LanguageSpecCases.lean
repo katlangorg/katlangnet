@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 386
-- excluded parse-level cases (Lean has no surface parser): 58
+- specification surface cases: 389
+- excluded parse-level cases (Lean has no surface parser): 59
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 307
-- probe observations (C#-only by design): 1200
+- Lean-guarded cases: 309
+- probe observations (C#-only by design): 1213
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1231,6 +1231,16 @@ def case_star_before_declaration_or_boundary_is_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
 #guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
 
+-- grace-in-branch-nested-block-belongs-to-the-block [name-resolution]: Apply(f) = f(1, 10) \n F(0) = Apply({ y - ~x }) \n F(0)
+def case_grace_in_branch_nested_block_belongs_to_the_block : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 1, .num 10])]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "Apply") [(.algorithmExpr (alg ["x", "y"] [] [] [(.binary .sub (.param "y") (.param "x"))]))])])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_grace_in_branch_nested_block_belongs_to_the_block == "ok raw=9 n=1"
+
+-- grace-saturation-is-valid [parser-layout]: F = ~x + 1 \n A = p - q \n G = A - z~ \n H = ~a + b * 10 \n F(3), G(1, 2, 3), H(1, 2)
+def case_grace_saturation_is_valid : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "A" (alg ["p", "q"] [] [] [(.binary .sub (.param "p") (.param "q"))]), privateProp "G" (alg ["z", "p", "q"] [] [] [(.binary .sub (.call (.resolve "A") [.param "p", .param "q"]) (.param "z"))]), privateProp "H" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.binary .mul (.param "b") (.num 10)))])] [(.call (.resolve "F") [.num 3]), (.call (.resolve "G") [.num 1, .num 2, .num 3]), (.call (.resolve "H") [.num 1, .num 2])])
+#guard obs case_grace_saturation_is_valid == "ok raw=S[4, -2, 21] n=3"
+
 -- grace-weights-accumulate [parser-layout]: Weighted = a + 10 * b + 100 * ~~c \n  \n Weighted(1, 2, 3)
 def case_grace_weights_accumulate : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Weighted" (alg ["c", "a", "b"] [] [] [(.binary .add (.binary .add (.param "a") (.binary .mul (.num 10) (.param "b"))) (.binary .mul (.num 100) (.param "c")))])] [(.call (.resolve "Weighted") [.num 1, .num 2, .num 3])])
@@ -1636,7 +1646,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 307 canonical Lean-guarded specification cases.
+-- 309 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1870,6 +1880,8 @@ def specCaseIds : List String := [
   "trailing-comma-continues-line",
   "star-before-operand-row-is-multiplication",
   "star-before-declaration-or-boundary-is-spread",
+  "grace-in-branch-nested-block-belongs-to-the-block",
+  "grace-saturation-is-valid",
   "grace-weights-accumulate",
   "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
@@ -1952,6 +1964,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 307
+#guard specCaseIds.length == 309
 
 end LanguageSpecCases

@@ -5501,30 +5501,30 @@ public class ParserTests
         Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in clause-head patterns"));
     }
 
-    // ── Grace rejection in conditional branch bodies ────────────────────────
+    // ── Grace on a conditional branch's own level (Q-16 G-O) ────────────────
+    //
+    // Raw syntax carries no Grace verdict for branch bodies: the parser keeps only Grace SYNTAX
+    // (attachment, one bare name, clause-head patterns), and the marker survives as an ordinary
+    // written Grace node. Eligibility is the parameter detector's per-owner decision: a branch's
+    // own level is closed (its head is the complete input specification), so the elaborated parse
+    // reports a marker on a binder there exactly once, at the marker.
 
-    [Fact]
-    public void Parse_Conditional_PrefixGraceInBody_ReportsError()
-    {
-        var result = Parser.ParseSyntax("F(1, x) = ~x");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
-    }
+    private const string ClauseBinderGraceReason = "because it is a binder of this clause's head";
 
-    [Fact]
-    public void Parse_Conditional_PostfixGraceInBody_ReportsError()
+    [Theory]
+    [InlineData("F(1, x) = ~x", 1, 11, 1, 13)]
+    [InlineData("F(1, x) = x~", 1, 11, 1, 13)]
+    [InlineData("F(1, x) = 1 * ~x", 1, 15, 1, 17)]
+    [InlineData("F(1, a, t) = a~~.t", 1, 14, 1, 17)]
+    public void Parse_Conditional_GraceOnABinderInTheBranchsOwnRow_IsOneDetectorReport(
+        string source, int line, int column, int endLine, int endColumn)
     {
-        var result = Parser.ParseSyntax("F(1, x) = x~");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
-    }
+        Assert.False(Parser.ParseSyntax(source).HasErrors);
 
-    [Fact]
-    public void Parse_Conditional_GraceInNestedBodyExpr_ReportsError()
-    {
-        var result = Parser.ParseSyntax("F(1, x) = 1 * ~x");
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
+        var diagnostic = Assert.Single(Parser.Parse(source).Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Contains(ClauseBinderGraceReason, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(line, column, endLine, endColumn), diagnostic.Span);
     }
 
     [Fact]
@@ -5535,56 +5535,50 @@ public class ParserTests
             F(2, qty) = ~qty
             F(3, qty) = qty
             """;
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.Parse(source);
         Assert.True(result.HasErrors);
-        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("Grace is not allowed in conditional branch bodies"));
-        Assert.Equal(2, Assert.NotNull(diag.Span).Start.Line);
+        var diag = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diag.Code);
+        Assert.Contains(ClauseBinderGraceReason, diag.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(2, 13, 2, 17), diag.Span);
     }
 
     [Fact]
     public void Parse_Conditional_PostfixGraceBeforeDot_IsOrdinaryWrittenGrace()
     {
-        var result = Parser.ParseSyntax("F(1, a, t) = a~.t");
+        var raw = Parser.ParseSyntax("F(1, a, t) = a~.t");
 
-        Assert.True(result.HasErrors);
-        Assert.Single(
-            result.Diagnostics,
-            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
-        var conditional = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.False(raw.HasErrors);
+        var conditional = Assert.IsType<Algorithm.Conditional>(raw.Root.Properties[0].Value);
         var branch = Assert.Single(conditional.Branches);
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(branch.Body.Output));
         Assert.Equal("t", edge.Name);
         var receiverGrace = Assert.IsType<Expr.Grace>(edge.Target);
         Assert.Equal(+1, receiverGrace.Weight);
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(receiverGrace.Inner).Name);
+
+        var diagnostic = Assert.Single(Parser.Parse("F(1, a, t) = a~.t").Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.StartsWith("Grace cannot reorder 'a' " + ClauseBinderGraceReason, diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Parse_Conditional_PrefixGraceOnDotMember_IsOrdinaryWrittenGrace()
     {
-        var result = Parser.ParseSyntax("F(1, a, t) = a.~t");
+        var raw = Parser.ParseSyntax("F(1, a, t) = a.~t");
 
-        Assert.True(result.HasErrors);
-        Assert.Single(
-            result.Diagnostics,
-            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
-        var conditional = Assert.IsType<Algorithm.Conditional>(result.Root.Properties[0].Value);
+        Assert.False(raw.HasErrors);
+        var conditional = Assert.IsType<Algorithm.Conditional>(raw.Root.Properties[0].Value);
         var branch = Assert.Single(conditional.Branches);
         var edge = Assert.IsType<Expr.DotCall>(Assert.Single(branch.Body.Output));
         var memberGrace = Assert.IsType<Expr.Grace>(edge.LexicalFallback);
         Assert.Equal(-1, memberGrace.Weight);
         Assert.Equal("t", Assert.IsType<Expr.Resolve>(memberGrace.Inner).Name);
-    }
 
-    [Fact]
-    public void Parse_Conditional_RepeatedPostfixGraceBeforeDot_ReportsError()
-    {
-        var result = Parser.ParseSyntax("F(1, a, t) = a~~.t");
-
-        Assert.True(result.HasErrors);
-        Assert.Single(
-            result.Diagnostics,
-            diagnostic => diagnostic.Message.Contains("Grace is not allowed in conditional branch bodies"));
+        var diagnostic = Assert.Single(Parser.Parse("F(1, a, t) = a.~t").Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.StartsWith("Grace cannot reorder 't' " + ClauseBinderGraceReason, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 16, 1, 18), diagnostic.Span);
     }
 
     // ── Uniform top-level pattern arity validation ──────────────────────────

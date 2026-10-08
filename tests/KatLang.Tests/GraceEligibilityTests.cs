@@ -101,13 +101,14 @@ public class GraceEligibilityTests
     [Fact]
     public void GraceOnBoundName_IsRejectedAsIneffective()
     {
-        // `X` is a visible property, so `~X` can reorder nothing: the marker is not
-        // a silent no-op but a front-end error naming what fixed the binding (F10).
-        // The full effectiveness boundary is pinned in GraceEffectivenessTests.
+        // `X` is a visible property, so `~X` has no inferred parameter to weight: the
+        // marker is not silently ignored but a front-end error naming what fixed the
+        // binding (F10). The full eligibility boundary is pinned in GraceEffectivenessTests
+        // and the owner-local law (Q-16 G-O) in GraceOwnershipSemanticsTests.
         var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("X = 1\nK = ~X + 2\nK"));
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.Contains(
-            "Grace has no effect on 'X' because it already resolves to a property",
+            "Grace cannot reorder 'X' because it already resolves to a property",
             diagnostic.Message,
             StringComparison.Ordinal);
         Assert.Equal(new SourceSpan(2, 5, 2, 7), diagnostic.Span);

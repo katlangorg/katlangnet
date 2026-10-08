@@ -643,4 +643,47 @@ public class TutorialSemanticContractTests
         Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Line);
         Assert.Equal(14, Assert.NotNull(diagnostic.Span).Start.Column);
     }
+
+    // "Reordering Parameters with Grace": a marker on an inferred parameter is legal even when
+    // the name cannot move (Q-16(1) E) — the contract is the inferred list, which keeps its order.
+    [Theory]
+    [InlineData("F = ~x + 1", new[] { "x" })]
+    [InlineData("K = ~a + b * 10", new[] { "a", "b" })]
+    [InlineData("K = a + b~ * 10", new[] { "a", "b" })]
+    public void Grace_ThatCannotMoveItsName_IsLegal_AndKeepsTheOrder(string definition, string[] expected)
+    {
+        Assert.Equal(expected, InferredParams(definition));
+    }
+
+    [Fact]
+    public void Grace_NeverCrossesIntoTheNamesAFormulaLifts()
+    {
+        // A formula's own inferred names always come first; Grace orders only those.
+        var root = SourceProvenance.ParseValid("A = p - q\nG = A - z~").Root;
+        Assert.Equal(["z", "p", "q"], PropertyOf(root, "G").Value.Params);
+    }
+
+    // "Reordering Parameters with Grace" — clauses (Q-16(2) O): a clause branch's own level
+    // infers nothing, but a `{ … }` algorithm inside the branch infers — and orders — its own.
+    [Fact]
+    public void Grace_InABlockInsideAClause_OrdersTheBlocksOwnParameters_NotTheClauses()
+    {
+        var root = SourceProvenance.ParseValid("Apply(f) = f(1, 10)\nF(0) = Apply({ y - ~x })").Root;
+        var family = Assert.IsType<Algorithm.Conditional>(PropertyOf(root, "F").Value);
+        var branch = Assert.IsType<Algorithm.User>(Assert.Single(family.Branches).Body);
+        Assert.Empty(branch.Params);
+        var call = Assert.IsType<Expr.Call>(Assert.Single(branch.Output));
+        var block = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(call.Args));
+        Assert.Equal(["x", "y"], block.Algorithm.Params);
+        Assert.Equal("9", Display("Apply(f) = f(1, 10)\nF(0) = Apply({ y - ~x })\nF(0)"));
+    }
+
+    [Fact]
+    public void Grace_OnAClausesOwnLevel_IsAStructuredFrontEndError_AtTheMarker()
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics("F(0) = 0\nF(n) = ~n + 1\nF(1)");
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
+        Assert.Equal(new SourceSpan(2, 8, 2, 10), diagnostic.Span);
+    }
 }

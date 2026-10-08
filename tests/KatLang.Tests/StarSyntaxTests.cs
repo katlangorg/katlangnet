@@ -146,7 +146,7 @@ public class StarSyntaxTests
     [InlineData("a = 2\na*\n{3}", "6")]
     // A `~`-led operand: Grace on a FREE name (`K(3, 2)` binds b = 3, a = 2 after
     // `~b` moves `b` first); Grace on a bound property would be the
-    // ineffective-Grace error instead (GraceEffectivenessTests).
+    // ineligible-Grace error instead (GraceEffectivenessTests).
     [InlineData("K = a*\n~b\nK(3, 2)", "6")]
     [InlineData("a = 2\nb = false\na*\nif(not b, 1, 0)", "2")]
     [InlineData("a = 2\na*\n3", "6")]

@@ -180,6 +180,17 @@ public class MaintainedDocumentationConsistencyTests
         { @"wherever\s+(?:the\s+selection\s+is\s+)?valid", "the selection laws restricted to valid selections (before Q-27)" },
         { @"first\(\(\)\)`?\s+(?:is|gives|reports)\s+(?:an?\s+)?`?(?:arity|ArityMismatch|BadArity)", "an empty `first` as an arity error (before Q-27)" },
         { @"arity\s+error\s+on\s+the\s+value\s+thunk", "a value callback reported as the arity of an invented thunk (before Q-06)" },
+        // Q-16 G-O (October 7 2026): Grace is an owner-local ordering weight that requires an OWN
+        // inferred parameter — eligibility, never movement (a saturated marker is valid) — and a
+        // clause branch is closed at its OWN level only, so an algorithm nested in a branch keeps its
+        // Grace. No current text demands that a marker move, quotes the retired messages, or bans
+        // Grace from everything lexically inside a branch body.
+        { @"\bGRACE\s+MUST\s+BE\s+EFFECTIVE\b", "Grace validity worded as effectiveness (F10's wording before Q-16 E)" },
+        { @"\bGrace\s+has\s+no\s+effect\s+on\b", "the retired ineffective-Grace message (before Q-16)" },
+        { @"\bmarker\s+that\s+could\s+reorder\s+nothing\s+is\s+an?\s+error\b", "every non-moving Grace marker as an error (before Q-16 E)" },
+        { @"\bGrace\s+is\s+not\s+allowed\s+in\s+(?:conditional\s+)?(?:clause\s+)?branch\s+bod(?:y|ies)\b", "the lexical branch-body Grace ban (before Q-16 O)" },
+        { @"\bGrace\b[^.]{0,20}\b(?:not\s+permitted|forbidden|not\s+allowed)\s+in\s+(?:both\s+)?(?:branch\s+)?patterns\s+(?:or|and)\s+(?:branch\s+)?bodies\b", "Grace banned from whole branch bodies (before Q-16 O)" },
+        { @"\bno\s+Grace\s+in\s+(?:conditional\s+)?branch\s+bod(?:y|ies)\b", "Grace banned from whole branch bodies (before Q-16 O)" },
     };
 
     [Theory]

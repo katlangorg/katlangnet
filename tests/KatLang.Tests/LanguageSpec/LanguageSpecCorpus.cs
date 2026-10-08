@@ -2950,7 +2950,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("K = a~~.t\nK({a+1}, 7)", "ok raw=8 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is meaningful only on such FREE names: under an explicit parameter list (`K(t, a) = a~.t`) the marker could reorder nothing and is a front-end error.",
+            Explanation = "Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is valid only on such FREE names that the algorithm infers as its own parameters: under an explicit parameter list (`K(t, a) = a~.t`) nothing is inferred, so the marker has no parameter to weight and is a front-end error.",
         },
         new()
         {
@@ -2966,7 +2966,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Obj = {\n    public V = 42\n    0\n}\nRead = o.~V\nRead({x}, Obj)", "ok raw=42 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is effective: `o` becomes Read's implicit parameter), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) could reorder nothing and is rejected instead of being ignored.",
+            Explanation = "`~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is valid: `o` becomes Read's own inferred parameter — as the only one it cannot move, and that saturation is no error), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) has no inferred parameter to weight and is rejected instead of being ignored.",
         },
         new()
         {
@@ -4563,10 +4563,10 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "X = 1\nK = ~X + 2\nK",
             Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "Grace has no effect on 'X' because it already resolves to a property",
+            ExpectedParseDiagnosticFragment = "Grace cannot reorder 'X' because it already resolves to a property",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
             IncludeInGeneratorPrompt = true,
-            Explanation = "Grace is meaningful only on a FREE name that becomes an implicit parameter of the enclosing algorithm — that is the one place its weight is consumed. `X` is a visible property, so `~X` could reorder nothing; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`).",
+            Explanation = "Grace requires an OWN inferred parameter: it is valid only on a FREE name that becomes one of its algorithm's inferred parameters — that is the one place its weight is consumed. `X` is a visible property, so there is no inferred parameter for `~X` to weight; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`). A marker on a free name that the ordering cannot move is NOT an error (`grace-saturation-is-valid`).",
         },
         new()
         {
@@ -4574,10 +4574,10 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "K(b, a) = b, ~a\nK(1, 2)",
             Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "Grace has no effect on 'a' because it already resolves to an explicit parameter",
+            ExpectedParseDiagnosticFragment = "Grace cannot reorder 'a' because it already resolves to an explicit parameter",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
             IncludeInGeneratorPrompt = true,
-            Explanation = "An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there can reorder nothing: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).",
+            Explanation = "An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there has no inferred parameter to weight: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).",
         },
         new()
         {
@@ -4585,16 +4585,87 @@ public static class LanguageSpecCorpus
             Category = "parser-layout",
             Source = "F(0) = 0\nF(n) = {\n    a, b = (~n, 1)\n    a + b\n}\nF(5)",
             Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "Grace is not allowed in conditional branch bodies for 'F'.",
+            ExpectedParseDiagnosticFragment = "Grace cannot reorder 'n' because it is a binder of this clause's head",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
             Probes =
             [
                 new SpecProbe("F(0) = 0\nF(n) = {\n    a, b = (n, 1)\n    a + b\n}\nF(5)", "ok raw=6 n=1"),
                 // A property nested in the branch is a level of its own that infers `(x, y)`.
                 new SpecProbe("F(0) = 0\nF(n) = {\n    P = {\n        a, b = (y, ~x)\n        a / b\n    }\n    P(2, 10) + n\n}\nF(1)", "ok raw=6 n=1"),
+                // So is a brace block nested in the branch, its own deconstruction included (Q-16 G-O).
+                new SpecProbe("Apply(f) = f(2, 10)\nF(0) = 0\nF(n) = Apply({\n    a, b = (y, ~x)\n    a / b\n}) + n\nF(1)", "ok raw=6 n=1"),
             ],
-            Notes = "Constitution PV-49 (September 2026): assignment deconstruction hoists its right-hand side into a synthetic source whose rows are rows of the enclosing body, and the parser's branch Grace scan read only the branch's output rows, so the marker was silently accepted in a family branch while the same body under a single clause was refused. The scan now covers every written row (`AstHelpers.WrittenRows`).",
-            Explanation = "A conditional branch infers nothing — its head is the complete input specification — so Grace can reorder nothing anywhere in the rows the branch writes, and a deconstruction's right-hand side is one of those rows: `a, b = (~n, 1)` in a family branch is rejected exactly like the same marker in a branch output row. Drop the marker. Grace stays valid where a level really infers, such as a property nested in the branch.",
+            Notes = "Constitution PV-49 (September 2026): assignment deconstruction hoists its right-hand side into a synthetic source whose rows are rows of the enclosing body, and the parser's branch Grace scan read only the branch's output rows, so the marker was silently accepted in a family branch while the same body under a single clause was refused; the scan was then extended to every written row (`AstHelpers.WrittenRows`). Q-16 G-O (2026-10-07) deleted that lexical scan: the parameter detector's branch region judges every row the branch writes (a closed level), and a block or property nested in the branch is an owner of its own. The expected fragment changed accordingly (formerly \"Grace is not allowed in conditional branch bodies for 'F'.\"); the verdict did not.",
+            Explanation = "A clause branch's own level infers nothing — its head is the complete input specification — so no marker in any row the branch writes has an inferred parameter to weight, and a deconstruction's right-hand side is one of those rows: `a, b = (~n, 1)` in a family branch is rejected exactly like the same marker in a branch output row (`n` is a binder of the clause head). Drop the marker. Grace stays valid where a level really infers, such as a property or a brace block nested in the branch.",
+        },
+        new()
+        {
+            Id = "grace-in-branch-nested-block-belongs-to-the-block",
+            Category = "name-resolution",
+            Source = "Apply(f) = f(1, 10)\nF(0) = Apply({ y - ~x })\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "9",
+            ExpectedRaw = "9",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Without the marker the block infers `(y, x)`: y = 1, x = 10.
+                new SpecProbe("Apply(f) = f(1, 10)\nF(0) = Apply({ y - x })\nF(0)", "ok raw=-9 n=1"),
+                // The same owner written as a property of the branch agrees.
+                new SpecProbe("Apply(f) = f(1, 10)\nF(0) = {\n    B = y - ~x\n    Apply(B)\n}\nF(0)", "ok raw=9 n=1"),
+                // Adding a sibling clause never changes the nested owner's Grace: a single clause and a family agree.
+                new SpecProbe("Apply(f) = f(1, 10)\nG(k) = Apply({ y - ~x }) + k\nG(1)", "ok raw=10 n=1"),
+                new SpecProbe("Apply(f) = f(1, 10)\nG(0) = 0\nG(k) = Apply({ y - ~x }) + k\nG(1)", "ok raw=10 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-16 G-O (2026-10-07), Q-16(2) O: formerly the inline block was rejected by the parser's lexical branch scan (a representation side effect of the pre-#143 shared `Expr.Block`) while the named property was accepted (X-08). The branch's own level stays closed: `grace-in-branch-deconstruction-rejected`, `grace-on-branch-binder-in-nested-block-rejected`.",
+            Explanation = "Grace belongs to the algorithm whose rows contain the marker. A clause branch's own level infers nothing — its head is its complete input specification — but a brace block nested in the branch is an algorithm of its own: `{ y - ~x }` infers `(x, y)` itself (`(y, x)` without the marker), so `Apply` calls it with `x = 1`, `y = 10` and `F(0)` is `9`. The same block written as the branch's property `B = y - ~x` agrees, adding a sibling clause changes nothing, and the branch never gains a parameter. A marker on the branch's own level — `F(n) = ~n + 1` — is still an error.",
+        },
+        new()
+        {
+            Id = "grace-saturation-is-valid",
+            Category = "parser-layout",
+            Source = "F = ~x + 1\nA = p - q\nG = A - z~\nH = ~a + b * 10\nF(3), G(1, 2, 3), H(1, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "4\n-2\n21",
+            ExpectedRaw = "S[4, -2, 21]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Already last: postfix weight on the last name.
+                new SpecProbe("K = x + y~ * 10\nK(1, 2)", "ok raw=21 n=1"),
+                // Excess weight: two units on a name that is already first.
+                new SpecProbe("K = ~~x + y * 10\nK(1, 2)", "ok raw=21 n=1"),
+                // A tie: an equal weight on the neighbour blocks the move.
+                new SpecProbe("K = ~x + ~y * 10\nK(1, 2)", "ok raw=21 n=1"),
+                // Cancelled weight on one occurrence.
+                new SpecProbe("K = ~x~ + y * 10\nK(1, 2)", "ok raw=21 n=1"),
+                // Cancelled weight across two occurrences of one name.
+                new SpecProbe("K = ~x + y * 10 + 0 * x~\nK(1, 2)", "ok raw=21 n=1"),
+                // The marker that does move: the same rule, applied.
+                new SpecProbe("K = x + ~y * 10\nK(1, 2)", "ok raw=12 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Q-16 G-O (2026-10-07), Q-16(1) E: Grace requires an OWN inferred parameter, never actual movement. The X-39 wording conflict (\"never a silent no-op\" versus \"excess movement is ignored\") is resolved in favour of eligibility.",
+            Explanation = "Grace is an ordering weight on one of its algorithm's OWN inferred parameters, and it is valid whenever the marked name is one — even when the ordering cannot move it (saturation). `F = ~x + 1` has a single inferred parameter; in `H = ~a + b * 10`, `a` is already first; and in `G = A - z~` the own name `z` cannot cross into the names `G` lifts from `A`, because a formula's own names always come before the names it lifts: `G(z, p, q)`, so `G(1, 2, 3)` is `(2 - 3) - 1`. A name already last, excess weight, an equal weight on the neighbour and a cancelled `~x~` are saturation too. None of these is an error; Grace is rejected only where the marked name is not an inferred parameter at all (an explicit parameter, a clause binder, a property, a builtin, an opened name, a structural member).",
+        },
+        new()
+        {
+            Id = "grace-on-branch-binder-in-nested-block-rejected",
+            Category = "name-resolution",
+            Source = "Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ x - ~n })\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Grace cannot reorder 'n' because it already resolves to a parameter of an enclosing algorithm",
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidGraceMarker,
+            Probes =
+            [
+                // Without the marker the block captures the binder and infers only `x`.
+                new SpecProbe("Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ x - n })\nF(1)", "ok raw=0 n=1"),
+                // The block's OWN free name may be graced.
+                new SpecProbe("Apply(f) = f(1)\nF(0) = 0\nF(n) = Apply({ ~x - n })\nF(1)", "ok raw=0 n=1"),
+            ],
+            Notes = "Q-16 G-O (2026-10-07): exactly one report, by the block's own detector region (formerly the parser's lexical branch scan added a second report at the same span).",
+            Explanation = "Inside a block nested in a clause branch, the branch binder `n` is a parameter of the ENCLOSING branch that the block captures — never one of the block's own inferred parameters — so a marker on it has no inferred parameter to weight and is rejected, once, at the marker. The block's own free name `x` is inferred as usual and may carry Grace.",
         },
         new()
         {

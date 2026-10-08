@@ -3,17 +3,19 @@ using KatLang.Semantics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// F10 — the Grace effectiveness boundary. Grace `~` is meaningful on exactly one
-/// kind of occurrence: a FREE bare name that implicit-signature collection promotes
-/// to a parameter of the enclosing algorithm — that is the one place its weight is
-/// consumed (<c>ParameterDetector.CollectFreeParams</c>, then
-/// <c>ApplyGraceReordering</c>). On every other occurrence the marker could reorder
-/// nothing and used to be silently ignored; it is now the front-end error
-/// <see cref="DiagnosticCode.InvalidGraceMarker"/> naming what fixed the binding:
-/// an explicit parameter, a parameter of an enclosing algorithm, a visible
-/// property, a builtin, an opened property, a dot member that always resolves
-/// structurally, or any occurrence under a closed explicit parameter list. Valid
-/// Grace is unchanged (the positive controls at the end).
+/// F10 — the Grace ELIGIBILITY boundary (Q-16 G-O, decided 2026-10-07: "effective" means
+/// eligible, never "moved"). Grace `~` is valid on exactly one kind of occurrence: a FREE
+/// bare name that its owner's implicit-signature collection promotes to one of the owner's
+/// OWN inferred parameters — that is the one place its weight is consumed
+/// (<c>ParameterDetector.CollectFreeParams</c>, then <c>ApplyGraceReordering</c>), whether or
+/// not the weight then moves the name. Every other occurrence has no inferred parameter for
+/// the weight to attach to and is the front-end error
+/// <see cref="DiagnosticCode.InvalidGraceMarker"/> naming what fixed the binding: an explicit
+/// parameter, a parameter of an enclosing algorithm, a visible property, a builtin, an opened
+/// property, a dot member that always resolves structurally, or any occurrence on a closed
+/// level (an explicit parameter list, a clause branch's own rows). Valid Grace is unchanged
+/// (the positive controls at the end); the owner-local law in full is
+/// <see cref="GraceOwnershipSemanticsTests"/>.
 /// </summary>
 public class GraceEffectivenessTests
 {
@@ -23,7 +25,7 @@ public class GraceEffectivenessTests
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.StartsWith(
-            $"Grace has no effect on '{name}' because {reasonFragment}",
+            $"Grace cannot reorder '{name}' because {reasonFragment}",
             diagnostic.Message,
             StringComparison.Ordinal);
         Assert.EndsWith("remove the marker.", diagnostic.Message, StringComparison.Ordinal);
@@ -61,9 +63,9 @@ public class GraceEffectivenessTests
     [Fact]
     public void GraceOnAnExplicitParameter_InsideARedundantGroup_IsRejectedAtTheOccurrence()
     {
-        // `(~a)` keeps the plain name's capture boundary (`(a)` is a capture, never an
-        // unwrapped name — final audit, September 2026), so the marked occurrence inside
-        // the group is what the report locates, exactly as in `(b, ~a)`.
+        // Parentheses group syntax: `(~a)` IS the graced name `~a` (a redundant group is
+        // erased), and a graced name keeps its own exact span, so the report locates the
+        // marked occurrence inside the group, exactly as in `(b, ~a)`.
         AssertIneffective(
             "K(b, a) = b, (~a)\nK(1, 2)", "a", "it already resolves to an explicit parameter", new SourceSpan(1, 15, 1, 17));
     }
@@ -111,15 +113,15 @@ public class GraceEffectivenessTests
     [Fact]
     public void GraceOnAnUndeclaredNameUnderAClosedList_ReportsBothProblems()
     {
-        // The name is undeclared (the closed-list rule) AND the marker cannot reorder
-        // anything (nothing is inferred under an explicit list): both facts are
+        // The name is undeclared (the closed-list rule) AND the marker has no inferred
+        // parameter to weight (nothing is inferred under an explicit list): both facts are
         // reported, once each.
         var diagnostics = SourceProvenance.ExpectFrontEndError("K(b) = b + ~a\nK(1)");
         Assert.Equal(2, diagnostics.Count);
         Assert.Contains(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
         var grace = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.InvalidGraceMarker);
         Assert.Contains(
-            "because the enclosing explicit parameter list fixes the parameter order, so nothing is inferred",
+            "because this algorithm's explicit parameter list fixes its parameters, so nothing is inferred at this level",
             grace.Message,
             StringComparison.Ordinal);
     }
@@ -168,7 +170,7 @@ public class GraceEffectivenessTests
         // report lives in the detector's rewrite pass — and is issued exactly once.
         var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("Need = v\nQ = {\n    X = 1\n    ~X + Need\n}\nQ(1)"));
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.StartsWith("Grace has no effect on 'X' because it already resolves to a property", diagnostic.Message, StringComparison.Ordinal);
+        Assert.StartsWith("Grace cannot reorder 'X' because it already resolves to a property", diagnostic.Message, StringComparison.Ordinal);
         Assert.Equal(new SourceSpan(4, 5, 4, 7), diagnostic.Span);
     }
 
@@ -306,7 +308,7 @@ public class GraceEffectivenessTests
         Assert.Equal(["y", "x"], ParamsOf(declaration));
         Assert.Equal(expected, Display(declaration + "\nK(2, 1)"));
         // The cancelling run survives parsing as a weight-0 Grace node (so the
-        // effectiveness check still sees it); redundant parentheses around it are
+        // eligibility check still sees it); redundant parentheses around it are
         // erased, so `(~x~)` is the very node `~x~` is.
         var syntax = Parser.ParseSyntax("(~x~)");
         Assert.False(syntax.HasErrors);
@@ -354,7 +356,7 @@ public class GraceEffectivenessTests
         Assert.Equal(classification, resolution.Classification);
     }
 
-    // ── Positive controls: effective Grace is unchanged ─────────────────────
+    // ── Positive controls: eligible Grace is unchanged (some saturate) ──────
 
     [Theory]
     [InlineData("Divide = y / ~x\nDivide(2, 10)", "5")]
@@ -405,13 +407,16 @@ public class GraceEffectivenessTests
     }
 
     [Fact]
-    public void GraceInsideAConditionalBranchBody_KeepsTheParsersOneReport()
+    public void GraceOnAClauseBinder_IsTheDetectorsOneReport()
     {
-        // The parser already rejects Grace in conditional branch bodies; the detector
-        // strips it for recovery and never adds a second report.
-        var diagnostics = SourceProvenance.ExpectFrontEndError("F(0) = 0\nF(x) = ~x + 1\nF(2)");
-        var diagnostic = Assert.Single(diagnostics);
-        Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.Contains("conditional branch bodies", diagnostic.Message, StringComparison.Ordinal);
+        // Q-16 G-O: a clause branch's own level is a closed owner, judged by the detector's
+        // branch region (the parser's former lexical branch scan is gone): ONE report, at the
+        // marker, naming the binder — the raw syntax tree carries no Grace verdict at all.
+        Assert.False(Parser.ParseSyntax("F(0) = 0\nF(x) = ~x + 1\nF(2)").HasErrors);
+        AssertIneffective(
+            "F(0) = 0\nF(x) = ~x + 1\nF(2)",
+            "x",
+            "it is a binder of this clause's head",
+            new SourceSpan(2, 8, 2, 10));
     }
 }

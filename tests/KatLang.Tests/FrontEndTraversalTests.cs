@@ -4,14 +4,16 @@ namespace KatLang.Tests;
 /// Traversal-semantics pins for the hand-written <see cref="Expr"/> walks of the
 /// front-end elaboration passes: ParameterDetector, ImplicitArgumentResolver,
 /// PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
-/// together with the parser's Grace scan and the semantic model visitor.
+/// together with the semantic model visitor. (The parser's former branch-body Grace scan,
+/// <c>Parser.ScanPendingForGraceSpan</c>, was deleted by Q-16 G-O, 2026-10-07: Grace
+/// eligibility is the parameter detector's per-owner decision.)
 ///
 /// <para>For expression-shaped dispatch, variant COVERAGE is the compiler's job:
 /// <see cref="Expr"/> is a closed hierarchy, and the full-hierarchy switch expressions
 /// are compiler-exhaustive (a new variant fails the build there).
 /// What remains for tests is behavior the compiler cannot see:</para>
 /// <list type="number">
-///   <item>the four side-effect COLLECTORS, parser scan, semantic visitor, and loader's async twin are switch
+///   <item>the four side-effect COLLECTORS, the semantic visitor, and the loader's async twin are switch
 ///   statements and keep a runtime guard; every current variant is pinned to dispatch
 ///   through them without tripping it;</item>
 ///   <item>representative true leaves are preserved by reference (intentionally
@@ -31,7 +33,7 @@ public class FrontEndTraversalTests
 
     // ── Statement-form traversals: runtime guards pinned per variant ─────────
     //
-    // These seven walks are side-effect switch statements (collectors, visitors, and the loader's
+    // These six walks are side-effect switch statements (collectors, visitors, and the loader's
     // awaiting twin), the one dispatch shape a closed hierarchy cannot make
     // compiler-exhaustive, so each keeps a fail-loud guard. Every current variant must
     // dispatch through each of them without hitting it; the theory fails with a message
@@ -112,26 +114,12 @@ public class FrontEndTraversalTests
             ["ImplicitArgumentResolver.CollectReferenceNames"] = RunImplicitCollectReferenceNames,
             ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyCollectSiblingIndices,
             ["ModuleLoader.ProcessExprAsync"] = RunModuleLoaderAsyncWalkDispatch,
-            ["Parser.ScanPendingForGraceSpan"] = sample =>
-            {
-                Assert.Null(FindGraceSpan(sample));
-                return Task.CompletedTask;
-            },
             ["SemanticModelBuilder.VisitExpr"] = sample =>
             {
                 Assert.NotNull(Semantics.SemanticModelBuilder.Build(EmptyAlgorithm(sample)));
                 return Task.CompletedTask;
             },
         };
-
-    // The parser scan runs before the public parse boundary and must remain iterative;
-    // direct invocation also covers the internal join node the parser never produces.
-    private static SourceSpan? FindGraceSpan(Expr sample)
-    {
-        var scan = typeof(Parser).GetMethod("ScanPendingForGraceSpan",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        return (SourceSpan?)scan.Invoke(null, [new Stack<Expr>([sample])]);
-    }
 
     public static TheoryData<string, string> RuntimeGuardedTraversalMatrix()
     {
@@ -297,26 +285,6 @@ public class FrontEndTraversalTests
         var model = Semantics.SemanticModelBuilder.Build(EmptyAlgorithm(embedded));
 
         Assert.Contains(model.IdentifierOccurrences, occurrence => occurrence.Name == "q" && occurrence.Span == span);
-    }
-
-    [Theory]
-    [MemberData(nameof(RecursiveEmbeddingPositions))]
-    public void Parser_GraceScanVisitsItsChildrenAndHonorsGraceBoundaries(string position)
-    {
-        var span = new SourceSpan(1, 1, 1, 4);
-        var embedded = RecursiveEmbeddings[position](new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span });
-
-        // Even a spanless written Grace is a match boundary: it does not search Inner.
-        Assert.Equal(position == "Grace.Inner" ? null : span, FindGraceSpan(embedded));
-    }
-
-    [Fact]
-    public void Parser_GraceScanVisitsBlockRowsAndStoredDotFallback()
-    {
-        var span = new SourceSpan(1, 1, 1, 4);
-        var grace = new Expr.Grace(new Expr.Resolve("q"), 1) { Span = span };
-        Assert.Equal(span, FindGraceSpan(new Expr.AlgorithmExpr(EmptyAlgorithm(grace))));
-        Assert.Equal(span, FindGraceSpan(new Expr.DotCall(new Expr.Num(1), "q") { LexicalFallback = grace }));
     }
 
     /// <summary>

@@ -670,22 +670,29 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      line never becomes prefix grace on the next line's
                      identifier (`~` newline `~a` reports the first line's
                      lone marker and keeps `~a` intact).
-                     GRACE MUST BE EFFECTIVE (F10): the marker is meaningful
-                     only on a FREE name that parameter detection promotes to
-                     an implicit parameter of the enclosing algorithm — the
-                     one place its weight is consumed. A marker on a name
-                     whose binding is already fixed — an explicit parameter
-                     (`K(b, a) = b, ~a`), a parameter of an enclosing
-                     algorithm, a visible property, a builtin (`~count`), an
-                     opened property, a dot member the receiver is known to
-                     declare (`Obj.~V`), any `.string` edge (a declared
-                     `string` member or the intrinsic — never a lexical
-                     callable, Q-17 S-C), or ANY
-                     occurrence under a closed explicit parameter list — is
-                     the front-end error InvalidGraceMarker ("Grace has no
-                     effect on 'a' because …"), reported by parameter
-                     detection with the reason, never a silent no-op; the
-                     recovery tree strips the marker like every other Grace. *)
+                     GRACE REQUIRES AN OWN INFERRED PARAMETER (F10, Q-16
+                     G-O): the marker belongs to the innermost algorithm
+                     owner whose written rows contain it, and it is valid
+                     exactly when parameter detection promotes the name to
+                     one of that owner's OWN inferred parameters — the one
+                     place its weight is consumed — whether or not the
+                     weight then moves it (saturation is never an error). A
+                     marker on a name whose binding is already fixed — an
+                     explicit parameter (`K(b, a) = b, ~a`) or clause
+                     binder, a parameter of an enclosing algorithm, a
+                     visible property, a builtin (`~count`), an opened
+                     property, a dot member the receiver is known to declare
+                     (`Obj.~V`), any `.string` edge (a declared `string`
+                     member or the intrinsic — never a lexical callable,
+                     Q-17 S-C) — or ANY occurrence on a closed level (under
+                     an explicit parameter list, on a clause branch's own
+                     rows; an algorithm nested in a branch is an owner of its
+                     own) is the front-end error InvalidGraceMarker ("Grace
+                     cannot reorder 'a' because …"), reported by parameter
+                     detection with the reason; the recovery tree strips the
+                     marker like every other Grace. This is semantic
+                     eligibility, not grammar: the production above is the
+                     whole Grace syntax. *)
 ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                   (* PARENTHESES GROUP SYNTAX; THEY DO NOT INTRODUCE A SEMANTIC
                      BOUNDARY. Empty parentheses "()" construct the empty

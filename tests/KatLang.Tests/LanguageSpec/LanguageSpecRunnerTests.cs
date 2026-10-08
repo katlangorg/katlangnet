@@ -242,6 +242,9 @@ public class LanguageSpecRunnerTests
             "open-inline-headed-path-must-resolve",
             "open-after-clause-definition-rejected",
             "grace-in-branch-deconstruction-rejected",
+            // Q-16 G-O (2026-10-07): Grace eligibility is a front-end decision of the marker's
+            // OWNER; a branch binder captured by a nested block is no inferred parameter there.
+            "grace-on-branch-binder-in-nested-block-rejected",
             "ownership-same-owner-parameter-beats-property",
             "ownership-nearer-property-beats-outer-parameter",
             "ownership-same-owner-nested-reference-rejected",

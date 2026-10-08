@@ -149,7 +149,7 @@ public class GraceDotCompositionTests
     /// <summary>
     /// F10: a marker on an occurrence whose binding is already fixed — an explicit
     /// parameter, a visible property, a builtin, a structurally resolved member —
-    /// cannot reorder anything and is the ineffective-Grace error. The recovery tree
+    /// has no inferred parameter to weight and is the ineligible-Grace error. The recovery tree
     /// is still the ordinary ungraced program (the marker is stripped), which the
     /// callers below use to keep the "same executable body" law observable.
     /// </summary>
@@ -157,7 +157,7 @@ public class GraceDotCompositionTests
     {
         var parse = Parser.Parse(source);
         var diagnostic = Assert.Single(parse.Diagnostics, d => d.Code == DiagnosticCode.InvalidGraceMarker);
-        Assert.StartsWith($"Grace has no effect on '{name}' because {reasonFragment}", diagnostic.Message, StringComparison.Ordinal);
+        Assert.StartsWith($"Grace cannot reorder '{name}' because {reasonFragment}", diagnostic.Message, StringComparison.Ordinal);
         Assert.Null(DotCallElaborationInvariant.CheckElaborated(parse.Root));
         return parse;
     }
@@ -249,7 +249,7 @@ public class GraceDotCompositionTests
     {
         // Inference differs only by ordinary Grace; explicit declarations keep
         // their written parameter order — and because an explicit list FIXES the
-        // order, a marker under one is the ineffective-Grace error (F10), never a
+        // order, a marker under one is the ineligible-Grace error (F10), never a
         // silent no-op. Every property body is the same edge.
         AssertResult("K1 = a.t\nK1(7, {x+1})", Atom(8));
         AssertResult("K2(a, t) = a.t\nK2(7, {x+1})", Atom(8));
@@ -421,7 +421,7 @@ public class GraceDotCompositionTests
         // The receiver is ONE expression in ONE dot edge, so a failing
         // receiver surfaces its one failure identically on both paths. (The
         // graced receiver is a free name bound to a failing block at the call;
-        // Grace on a bound property receiver would be the ineffective-Grace error.)
+        // Grace on a bound property receiver would be the ineligible-Grace error.)
         var error = AssertBothEvaluatorsFail("F(x) = x + 1\nK = bad~.F\nK({1/0})");
         Assert.IsType<EvalError.DivByZero>(error);
     }
@@ -432,7 +432,7 @@ public class GraceDotCompositionTests
         // `t` is a visible sibling, so the member occurrence never joins the
         // signature: `K2 = a~.t` graces the FREE receiver (effective, inert at the
         // boundary), while `K3 = a.~t` would grace the bound member — that marker
-        // is the ineffective-Grace error (F10), not a silent no-op.
+        // is the ineligible-Grace error (F10), not a silent no-op.
         AssertResult(
             """
             Outer = {
@@ -468,7 +468,7 @@ public class GraceDotCompositionTests
         // The receiver HAS the member, so the edge uses it. `~` orders parameters;
         // it does not bypass structural lookup — and on THIS edge it can order
         // nothing: `Obj` is a bound property and `V` a member Obj is known to
-        // declare, so both graced spellings are the ineffective-Grace error (F10)
+        // declare, so both graced spellings are the ineligible-Grace error (F10)
         // whose recovery tree is exactly the ordinary edge.
         AssertResult(StructuralSplit + "\nObj.V", Atom(42));
         AssertGraceIneffective(StructuralSplit + "\nObj~.V", "Obj", "it already resolves to a property");
@@ -486,7 +486,7 @@ public class GraceDotCompositionTests
         // spellings agree in BOTH directions — only the argument ORDER of the
         // enclosing signature differs. The graced forms infer their signatures
         // (`V` is then a free name, so the lexical `V` is omitted); under a closed
-        // explicit list the markers are the ineffective-Grace error (F10).
+        // explicit list the markers are the ineligible-Grace error (F10).
         const string objOnly = "Obj = {\n    public V = 42\n    0\n}";
         AssertResult(StructuralSplit + "\nK(o, V) = o.V\nK(Obj, {x + 1})", Atom(42));
         AssertResult(objOnly + "\nK = o~.V\nK({x + 1}, Obj)", Atom(42));
@@ -517,7 +517,7 @@ public class GraceDotCompositionTests
         // `Obj` has no `Inc`, so the edge calls `Inc` lexically with the
         // receiver's own value (its output row `0`). A graced FREE receiver bound
         // to Obj at the call behaves identically; a marker on the bound `Obj`
-        // itself, or on the visible `Inc`, is the ineffective-Grace error (F10).
+        // itself, or on the visible `Inc`, is the ineligible-Grace error (F10).
         const string defs = "Inc(x) = x + 1\nObj = {\n    V = 42\n    0\n}\n";
         AssertResult(defs + "Obj.Inc", Atom(1));
         AssertResult(defs + "K = o~.Inc\nK(Obj)", Atom(1));
@@ -532,7 +532,7 @@ public class GraceDotCompositionTests
     {
         // The receiver's statically known algorithm declares `t`, so the
         // fallback can NEVER be selected: no spurious `t` parameter — and a marker
-        // on either name of that edge could reorder nothing (F10): the graced
+        // on either name of that edge has no inferred parameter to weight (F10): the graced
         // spellings are rejected, their recovery trees keeping the empty signature.
         Assert.Empty(ParamsOf(
             """
@@ -587,7 +587,7 @@ public class GraceDotCompositionTests
     {
         // A member name that resolves lexically is not free, so it never
         // becomes a parameter regardless of fallback certainty — and a marker on
-        // it is the ineffective-Grace error (F10); the graced receiver `a` is free.
+        // it is the ineligible-Grace error (F10); the graced receiver `a` is free.
         Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a.t\nK(7)"));
         Assert.Equal(["a"], ParamsOf("t(x) = x + 1\nK = a~.t\nK(7)"));
         AssertGraceIneffective("t(x) = x + 1\nK = a.~t\nK(7)", "t", "it already resolves to a property");
@@ -601,7 +601,7 @@ public class GraceDotCompositionTests
         // A `.string` edge never selects a lexical callable — on every receiver it is a
         // declared member named `string` or, on a structural miss, the dot-only intrinsic
         // (Q-17 S-C) — so it contributes no fallback parameter, and prefix Grace on it is
-        // the ineffective-Grace error (F10), while postfix Grace on the free receiver stays
+        // the ineligible-Grace error (F10), while postfix Grace on the free receiver stays
         // effective. A runtime receiver may declare the member, so the reason names both
         // routes; a receiver known to lack it names the intrinsic (SpecialForm_* below).
         Assert.Equal(["v"], ParamsOf("K = v.string"));
@@ -638,7 +638,7 @@ public class GraceDotCompositionTests
 
         // And an unresolvable member in a closed list is a RUNTIME miss, not a
         // parse-time undeclared-identifier error. (Under the closed list the
-        // graced spelling `K(a) = a~.t` is the ineffective-Grace error instead —
+        // graced spelling `K(a) = a~.t` is the ineligible-Grace error instead —
         // F10 — while the free-name spelling stays a runtime miss.)
         Assert.IsType<EvalError.UnknownName>(AssertBothEvaluatorsFail("K(a) = a.t\nK(7)"));
         AssertGraceIneffective("K(a) = a~.t\nK(7)", "a", "it already resolves to an explicit parameter");
@@ -665,7 +665,7 @@ public class GraceDotCompositionTests
     {
         // The graced receiver is a FREE name bound at the call; `v = 5` then
         // `v~.string` would grace a bound property and `v.~string` the intrinsic
-        // itself — both the ineffective-Grace error (F10), never a silent no-op.
+        // itself — both the ineligible-Grace error (F10), never a silent no-op.
         AssertResult("v = 5\nv.string", Str("5"));
         AssertResult("K = v~.string\nK(5)", Str("5"));
         AssertGraceIneffective("v = 5\nv~.string", "v", "it already resolves to a property");
@@ -683,7 +683,7 @@ public class GraceDotCompositionTests
     {
         // Graced spellings use a FREE receiver bound at the call (`K = v~.count`,
         // `K(S)`); a marker on the bound property `S` or on the builtin member
-        // (`S.~count`) is the ineffective-Grace error (F10).
+        // (`S.~count`) is the ineligible-Grace error (F10).
         Assert.Equal(["v"], ParamsOf("K = v.count"));
         Assert.Equal(["v", "n"], ParamsOf("K = v.take(n)"));
         Assert.Equal(["v"], ParamsOf("K = v~.count"));
@@ -735,7 +735,7 @@ public class GraceDotCompositionTests
     {
         // Every value kind flows through the graced edge when the receiver is a
         // FREE name bound at the call; on the bound property itself the marker is
-        // the ineffective-Grace error (F10).
+        // the ineligible-Grace error (F10).
         AssertResult("L = [1, 2, 3]\nK = v~.sum\nK(L)", Atom(6));
         AssertResult("E = ()\nK = v~.count\nK(E)", Atom(0));
         AssertResult("S = 1, 2, 3\nK = v~.first\nK(S)", Atom(1));
@@ -792,7 +792,7 @@ public class GraceDotCompositionTests
     {
         // The graced receiver is a FREE name in every slot kind (call argument,
         // list element, callback body, reduce initial); `v = 5` then `v~.Inc`
-        // would grace a bound property — the ineffective-Grace error (F10).
+        // would grace a bound property — the ineligible-Grace error (F10).
         AssertResult("Inc(x) = x + 1\nF(a, b) = a * 10 + b\nK = F(v~.Inc, 2)\nK(5)", Atom(62));
         AssertResult("Inc(x) = x + 1\nK = [v~.Inc, 9]\nK(5)", List(Atom(6), Atom(9)));
         AssertResult("Inc(x) = x + 1\nmap((1, 2, 3), {a~.Inc})", List(Atom(2), Atom(3), Atom(4)));
@@ -874,7 +874,7 @@ public class GraceDotCompositionTests
     {
         // The first edge is an ordinary dot edge; `.string` then applies to
         // its result exactly as after an ungraced edge. (The graced names are
-        // free: under an explicit list the markers are the ineffective-Grace
+        // free: under an explicit list the markers are the ineligible-Grace
         // error, F10.)
         AssertResult("K = a~.t.string\nK({a+1}, 7)", Str("8"));
         AssertResult("K = a.~t.string\nK({a+1}, 7)", Str("8"));
@@ -926,7 +926,7 @@ public class GraceDotCompositionTests
         // Prefix Grace after the dot decorates the bare fallback name, not the
         // compound receiver, and therefore remains eligible — on a FREE member
         // name: base order (x, y, t) becomes (x, t, y). (On a declared `t` the
-        // marker is the ineffective-Grace error, F10.)
+        // marker is the ineligible-Grace error, F10.)
         AssertResult("K = (x + y).~t\nK(1, {v * 2}, 2)", Atom(6));
         AssertGraceIneffective("K(x, y, t) = (x + y).~t\nK(1, 2, {v * 2})", "t", "it already resolves to an explicit parameter");
     }
@@ -952,7 +952,7 @@ public class GraceDotCompositionTests
         // The corresponding prefix-member forms are eligible because the
         // decorated occurrence is the bare member/fallback name — a FREE name
         // that joins the enclosing signature (on a declared `t` the marker is
-        // the ineffective-Grace error, F10).
+        // the ineligible-Grace error, F10).
         AssertResult("K = 5.~t\nK({a + 1})", Atom(6));
         AssertResult("K = [1, 2].~t\nK({a})", List(Atom(1), Atom(2)));
         AssertGraceIneffective("t(a) = a + 1\n5.~t", "t", "it already resolves to a property");
@@ -981,7 +981,7 @@ public class GraceDotCompositionTests
         AssertParseFails("Collect(*items) = items\n[1, 2]*~.Collect", GraceEligibilityFragment);
         // Prefix member Grace on the lowered lexical callee is effective on a FREE
         // callee name (bound by the call); on the declared `Collect` it is the
-        // ineffective-Grace error (F10).
+        // ineligible-Grace error (F10).
         AssertResult("K = [1, 2]*.~F\nK({a + b})", Atom(3));
         AssertGraceIneffective("Collect(*items) = items\n[1, 2]*.~Collect", "Collect", "it already resolves to a property");
         AssertParseFails("K = xs*~.F", GraceEligibilityFragment);
@@ -1125,7 +1125,7 @@ public class GraceDotCompositionTests
     public void Adjacency_LeadingDotContinuation_CanCarryPrefixMemberGrace()
     {
         // The graced member is a FREE name (K infers `(t, a)`); on a declared
-        // `t` the marker would be the ineffective-Grace error (F10).
+        // `t` the marker would be the ineligible-Grace error (F10).
         var source = "K = a\n.~t\nK({a+1}, 7)";
         var root = SourceProvenance.ParseValid(source).Root;
         var k = Assert.Single(root.Properties, p => p.Name == "K").Value;
@@ -1220,7 +1220,7 @@ public class GraceDotCompositionTests
 
         // Every graced spelling graces a FREE name (a marker on a bound receiver,
         // a builtin member, or a member the receiver declares is the
-        // ineffective-Grace error, F10, and never reaches the evaluator).
+        // ineligible-Grace error, F10, and never reaches the evaluator).
         foreach (var (ordinary, graced) in new[]
         {
             ("K = a.t\nK(7, {x + 1})", "K = a~.t\nK({x + 1}, 7)"),
@@ -1254,7 +1254,7 @@ public class GraceDotCompositionTests
         // The dot edge renders the dot diagnostic on a member miss — never
         // call-style wording. A member can only miss at runtime under a CLOSED
         // list (a free member name would join the signature instead), and under a
-        // closed list the graced twin is the ineffective-Grace error (F10) — it
+        // closed list the graced twin is the ineligible-Grace error (F10) — it
         // never reaches the evaluator at all.
         static string MessageOf(string source)
             => KatLangError.FromEvalError(

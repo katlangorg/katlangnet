@@ -1565,21 +1565,12 @@ public sealed class Parser
                 }
             }
 
-            // Validate no Grace operators in true conditional branch bodies: a branch infers
-            // nothing (its head is its complete input specification), so no marker in any row
-            // it WRITES can reorder anything — hoisted deconstruction right-hand sides included
-            // (AstHelpers.WrittenRows, the same rows the detector's branch region rewrites
-            // under GraceEffectPolicy.NotReported, which relies on this scan).
-            foreach (var branch in condAlg.Branches)
-            {
-                if (FindGraceSpan(AstHelpers.WrittenRows(branch.Body)) is { } graceSpan)
-                {
-                    ReportError(
-                        DiagnosticCode.InvalidGraceMarker,
-                        $"Grace is not allowed in conditional branch bodies for '{name}'.",
-                        graceSpan);
-                }
-            }
+            // Grace in a branch body is NOT judged here (Q-16 G-O): Grace legality belongs to
+            // the owner whose written rows contain the marker, decided by the parameter
+            // detector's per-owner rewrite pass (a branch's own level is a closed owner,
+            // ParameterDetector.GraceEffectPolicy.ClosedBranch; an algorithm nested in the
+            // branch is an ordinary owner of its own). The parser keeps only Grace SYNTAX:
+            // attachment, one bare name, and the clause-head pattern grammar.
 
             // Validate uniform top-level pattern arity across conditional branches.
             // Nested internal pattern structure may vary.
@@ -2875,114 +2866,6 @@ public sealed class Parser
     // as source identifiers. Their absent spans keep them out of editor symbols;
     // no downstream consumer classifies recovery by a magic source spelling.
     private Pattern.Bind RecoveryBinder() => new($"$recovery${_recoveryBinderCounter++}") { IsRecoveryPlaceholder = true };
-
-    /// <summary>
-    /// Finds the <see cref="SourceSpan"/> of the first <see cref="Expr.Grace"/> node in the list.
-    /// Used to reject Grace in conditional branch bodies with accurate error location.
-    /// <para>MUST STAY ITERATIVE: this scan runs while clause families are still being
-    /// elaborated, BEFORE the finished root reaches the <see cref="AstStructuralPreflight"/>
-    /// gate in <see cref="ParseSyntax(string, PatternComparisonObservations?, int)"/>, so it
-    /// can receive composed trees (in-budget chains stacked inside in-budget container
-    /// levels) far deeper than any CLR-safe recursion depth.</para>
-    /// </summary>
-    private static SourceSpan? FindGraceSpan(IReadOnlyList<Expr> exprs)
-    {
-        var pending = new Stack<Expr>();
-        for (var i = exprs.Count - 1; i >= 0; i--)
-            pending.Push(exprs[i]);
-        return ScanPendingForGraceSpan(pending);
-    }
-
-    private static SourceSpan? FindGraceSpan(Expr expr)
-    {
-        var pending = new Stack<Expr>();
-        pending.Push(expr);
-        return ScanPendingForGraceSpan(pending);
-    }
-
-    /// <summary>
-    /// Shared iterative core of both <c>FindGraceSpan</c> overloads: a depth-first,
-    /// source-order scan over an explicit heap stack. Children are pushed in reverse
-    /// so the LIFO stack yields them left to right, keeping the original first-match
-    /// span selection. Only the child positions the scan has always inspected are
-    /// pushed — argument/block OUTPUT rows but never opens, properties, or patterns,
-    /// and never a WRITTEN <see cref="Expr.Grace"/> node's Inner (a written grace is
-    /// a match boundary: it either supplies its span or, span-less, contributes
-    /// nothing). DotCall's stored fallback is visited at the member occurrence
-    /// position so prefix member Grace is rejected by the same branch-body rule.
-    /// </summary>
-    private static SourceSpan? ScanPendingForGraceSpan(Stack<Expr> pending)
-    {
-        while (pending.Count > 0)
-        {
-            var expr = pending.Pop();
-            switch (expr)
-            {
-                case Expr.Grace g:
-                    if (g.Span is { } span)
-                        return span;
-                    break;
-                case Expr.Binary(_, var left, var right):
-                    pending.Push(right);
-                    pending.Push(left);
-                    break;
-                case Expr.Comparison(var first, var links):
-                    for (var i = links.Count - 1; i >= 0; i--)
-                        pending.Push(links[i].Operand);
-                    pending.Push(first);
-                    break;
-                case Expr.Unary(_, var operand):
-                    pending.Push(operand);
-                    break;
-                case Expr.Index(var target, var selector):
-                    pending.Push(selector);
-                    pending.Push(target);
-                    break;
-                case Expr.SequenceConstruct(var left, var right):
-                    pending.Push(right);
-                    pending.Push(left);
-                    break;
-                case Expr.SequenceSpread(var operand):
-                    pending.Push(operand);
-                    break;
-                case Expr.ListLiteral(var items):
-                    PushInReverse(pending, items);
-                    break;
-                case Expr.DotCall dotCall:
-                    if (dotCall.Args is { } dotArgs)
-                        PushInReverse(pending, dotArgs);
-                    if (dotCall.LexicalFallback is { } fallback)
-                        pending.Push(fallback);
-                    pending.Push(dotCall.Target);
-                    break;
-                case Expr.Call(var function, var args):
-                    PushInReverse(pending, args);
-                    pending.Push(function);
-                    break;
-                case Expr.AlgorithmExpr(var algorithm):
-                    PushInReverse(pending, algorithm.Output);
-                    break;
-                case Expr.Capture(var body):
-                    PushInReverse(pending, body);
-                    break;
-                case Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
-                    or Expr.EmptySequence or Expr.NativeCall:
-                    break;
-                // Closed hierarchies do not make switch statements exhaustive. Keep
-                // this iterative scan fail-loud when a new expression shape is added.
-                default:
-                    throw new InvalidOperationException(
-                        $"Unhandled Expr variant in {nameof(Parser)}.{nameof(ScanPendingForGraceSpan)}: {expr.GetType().Name}.");
-            }
-        }
-        return null;
-
-        static void PushInReverse(Stack<Expr> pending, IReadOnlyList<Expr> exprs)
-        {
-            for (var i = exprs.Count - 1; i >= 0; i--)
-                pending.Push(exprs[i]);
-        }
-    }
 
     private static bool PatternContainsCollectingParameter(Pattern pattern)
         => pattern switch

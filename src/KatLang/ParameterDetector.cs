@@ -333,10 +333,10 @@ internal static class ParameterDetector
         // Rewrite Resolve → Param for detected parameters. ONE reference memo spans all
         // output rows: they share this exact rewrite context, so a node shared between
         // rows (or reached twice within one row) rewrites once. The memo also carries
-        // this level's Grace-effect policy (F10): under a closed explicit list nothing
-        // is inferred, so no marker can reorder anything; otherwise a marker is
-        // effective exactly on the names this level binds as its own parameters
-        // (paramNames — the inferred signature).
+        // this level's Grace eligibility policy (F10, Q-16 G-O): under a closed explicit
+        // list nothing is inferred, so no marker of this level is eligible; otherwise a
+        // marker is eligible exactly on the names this level binds as its own parameters
+        // (paramNames — the inferred signature), whether or not its weight moves them.
         var rewriteMemo = new RewriteWalkMemo(
             run,
             observations,
@@ -889,7 +889,7 @@ internal static class ParameterDetector
         DetectionRun run,
         FrontEndTraversalObservations? observations,
         DiagnosticBag? diagnostics,
-        GraceEffectPolicy gracePolicy = GraceEffectPolicy.NotReported,
+        GraceEffectPolicy gracePolicy,
         IReadOnlySet<string>? ownParameterNames = null,
         ElaboratedPropertyScope? level = null,
         IReadOnlyDictionary<Expr.DotCall, ImplicitParameterProvenance>? dotMembers = null)
@@ -914,13 +914,14 @@ internal static class ParameterDetector
 
         public readonly DiagnosticBag? Diagnostics = diagnostics;
 
-        /// <summary>How this region reports Grace markers that cannot reorder anything.</summary>
+        /// <summary>Which Grace markers of this region are eligible (Q-16 G-O; see <see cref="GraceEffectPolicy"/>).</summary>
         public readonly GraceEffectPolicy GracePolicy = gracePolicy;
 
         /// <summary>
         /// The names the region's algorithm binds as ITS OWN parameters — for an
-        /// implicit-signature body exactly the names its collection inferred. Grace is effective on precisely
-        /// these occurrences, because they are the ones the collection reordered.
+        /// implicit-signature body exactly the names its collection inferred. Grace is eligible on precisely
+        /// these occurrences, because they are the ones the collection weighted and ordered, whether or not
+        /// the weight then moves them (saturation is no error).
         /// </summary>
         public readonly IReadOnlySet<string>? OwnParameterNames = ownParameterNames;
 
@@ -929,31 +930,37 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Whether a rewrite region reports a Grace marker that cannot reorder anything
-    /// (F10): Grace is meaningful ONLY on a bare-name occurrence that implicit-signature
-    /// collection promoted to a parameter of the enclosing algorithm — that is the one
-    /// place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
-    /// <see cref="ApplyGraceReordering"/>). Every other occurrence is silently inert
-    /// without this report: a name already bound before collection (an explicit or
-    /// captured parameter, a visible property, a builtin, an opened name), a dot member
-    /// that always resolves structurally, and every occurrence under a closed explicit
-    /// parameter list, which infers nothing.
+    /// Grace eligibility of ONE owner region (F10, Q-16 G-O, decided 2026-10-07): Grace belongs
+    /// to the owner whose written rows contain the marked occurrence, and a marker is valid
+    /// exactly when that occurrence becomes one of the owner's OWN inferred parameters — the
+    /// one place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, int}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
+    /// <see cref="ApplyGraceReordering"/>). Eligibility never depends on whether the weight
+    /// moves the name: a single own name, a name already at the boundary it points to, excess
+    /// weight, a tie, a cancelled weight and the own/lifted boundary are saturation, not errors.
+    /// Every other occurrence has no inferred parameter for the weight to attach to and is
+    /// <see cref="DiagnosticCode.InvalidGraceMarker"/>: a name bound before collection (an
+    /// explicit parameter or clause binder, a captured parameter, a visible property, a
+    /// builtin, an opened name), a dot member that always resolves structurally, `.string`,
+    /// and every occurrence on a CLOSED level, which infers nothing. Each region decides only
+    /// its own rows: a nested brace block or property is an owner of its own with its own
+    /// policy, whatever owner (a closed one included) encloses it.
     /// </summary>
     private enum GraceEffectPolicy
     {
-        /// <summary>
-        /// A conditional branch body: the parser already rejects every written Grace in
-        /// the rows it writes — its output rows and its hoisted deconstruction right-hand
-        /// sides alike (<see cref="AstHelpers.WrittenRows"/>, exactly the rows this region
-        /// rewrites) — so the detector strips the marker for recovery without a second report.
-        /// </summary>
-        NotReported,
-
-        /// <summary>A body inferring its implicit signature: effective exactly on the names it inferred.</summary>
+        /// <summary>A body inferring its implicit signature: eligible exactly on the names it inferred.</summary>
         ImplicitSignature,
 
-        /// <summary>A body under a closed explicit parameter list: nothing is inferred, so no Grace is effective.</summary>
+        /// <summary>A body under a closed explicit parameter list: nothing is inferred, so no marker of this level is eligible.</summary>
         ClosedExplicitList,
+
+        /// <summary>
+        /// The own level of a clause branch: its head is the branch's complete input
+        /// specification, so nothing is inferred here and no marker in any row the branch
+        /// WRITES — its output rows and its hoisted deconstruction right-hand sides alike
+        /// (<see cref="AstHelpers.WrittenRows"/>, exactly the rows this region rewrites) — is
+        /// eligible. Algorithms nested in the branch are ordinary owners with their own policy.
+        /// </summary>
+        ClosedBranch,
     }
 
     /// <summary>
@@ -1536,8 +1543,13 @@ internal static class ParameterDetector
 
         // The shared owner walk selects both branch binders and ancestor parameters.
         // Process nested blocks/calls normally for their own parameter detection.
-        // ONE reference memo spans the branch body's rows (constant rewrite context).
-        var rewriteMemo = new RewriteWalkMemo(run, observations, diagnostics);
+        // ONE reference memo spans the branch body's rows (constant rewrite context). The
+        // branch's own level is CLOSED for Grace (Q-16 G-O): its head is the complete input
+        // specification, so a marker in any row it writes is reported here — its binders
+        // owned by THIS level (bodyScope) — while a brace block or property nested in the
+        // branch is an ordinary owner judged by its own region.
+        var rewriteMemo = new RewriteWalkMemo(
+            run, observations, diagnostics, GraceEffectPolicy.ClosedBranch, level: bodyScope);
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
             rewrittenOutput.Add(RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
@@ -2123,21 +2135,24 @@ internal static class ParameterDetector
         }
     }
 
-    // ── F10: a Grace marker that cannot reorder anything ────────────────────
+    // ── F10 / Q-16 G-O: a Grace marker with no own inferred parameter to weight ──
 
     /// <summary>
-    /// Reports a written Grace marker that has no effect (see
-    /// <see cref="GraceEffectPolicy"/>): its bare-name occurrence never contributed a
-    /// weight to this level's implicit-signature collection, so the marker looks
-    /// meaningful and silently does nothing. Consulted from the rewrite pass — once per
-    /// occurrence per region through the rewrite memo, on every detection run — for a
-    /// standalone occurrence (<paramref name="memberEdge"/> null) and for a dot member's
-    /// prefix Grace, whose edge verdict decides whether the fallback occurrence could
-    /// participate at all. The reason names what fixed the binding, derived from the
-    /// SAME owner walk that classifies the occurrence
-    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>), so the report and
-    /// the editor's resolution cannot disagree. A host-built compound operand is not a
-    /// name occurrence and is left to the collection's defensive handling.
+    /// Reports a written Grace marker that is not ELIGIBLE (see <see cref="GraceEffectPolicy"/>):
+    /// its bare-name occurrence is not one of this owner's OWN inferred parameters, so there is
+    /// no inferred parameter for its weight to attach to. Eligibility never asks whether the
+    /// weight moves the name — a saturated marker on an own inferred parameter is valid
+    /// (Q-16(1) E) — and each owner judges only the rows it writes, so a brace block or property
+    /// nested in a closed owner (an explicit list or a clause branch) is judged by its own region
+    /// (Q-16(2) O). Consulted from the rewrite pass — once per occurrence per region through the
+    /// rewrite memo, on every detection run — for a standalone occurrence
+    /// (<paramref name="memberEdge"/> null) and for a dot member's prefix Grace, whose edge
+    /// verdict decides whether the fallback occurrence could participate at all. The reason
+    /// names what fixed the binding, derived from the SAME owner walk that classifies the
+    /// occurrence (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>), so the report and
+    /// the editor's resolution cannot disagree. A provisional walk (no diagnostics sink) reports
+    /// nothing. A host-built compound operand is not a name occurrence and is left to the
+    /// collection's defensive handling.
     /// </summary>
     private static void ReportIneffectiveGrace(
         Expr graceNode,
@@ -2147,12 +2162,11 @@ internal static class ParameterDetector
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
-        if (memo.Diagnostics is null
-            || memo.GracePolicy == GraceEffectPolicy.NotReported
-            || gracedCore is not Expr.Resolve(var name))
+        if (memo.Diagnostics is null || gracedCore is not Expr.Resolve(var name))
             return;
 
         string reason;
+        var guidance = GraceOnlyReordersOwnInferredParameters;
         if (memberEdge is { } edge
             && edge.Edge.LexicalFallbackSelectionOf(edge.MissSelection) == LexicalFallbackSelection.Never)
         {
@@ -2167,13 +2181,13 @@ internal static class ParameterDetector
         else if (memo.GracePolicy == GraceEffectPolicy.ImplicitSignature
             && memo.OwnParameterNames?.Contains(name) == true)
         {
-            // Effective: the occurrence was inferred into this level's own signature and
-            // reordered there. Nothing to report.
+            // Eligible: the occurrence was inferred into this owner's own signature, and its
+            // weight was applied there as far as the ordering allows (saturation included).
             return;
         }
         else
         {
-            reason = DescribeFixedGraceBinding(name, scope, parameters, memo);
+            (reason, guidance) = DescribeFixedGraceBinding(name, scope, parameters, memo);
         }
 
         // A shared marker can be reached as a bare occurrence and through several
@@ -2183,7 +2197,7 @@ internal static class ParameterDetector
             return;
 
         memo.Diagnostics.Add(new Diagnostic(
-            FormatIneffectiveGrace(name, reason),
+            FormatIneffectiveGrace(name, reason, guidance),
             DiagnosticSeverity.Error,
             graceNode.Span ?? gracedCore.Span ?? memo.Run.ImportSite)
         {
@@ -2191,11 +2205,20 @@ internal static class ParameterDetector
         });
     }
 
+    private const string GraceOnlyReordersOwnInferredParameters =
+        "Grace `~` only reorders the parameters an algorithm infers from its own free names";
+
+    private const string NestedAlgorithmsInABranchMayUseGrace =
+        "An algorithm nested inside the branch may use Grace on the parameters it infers itself";
+
     /// <summary>
-    /// Why an occurrence's binding was already fixed before this level's collection ran,
-    /// in KatLang terms, from the owner walk and the open providers.
+    /// Why an occurrence has no own inferred parameter of this owner, in KatLang terms, from
+    /// the owner walk and the open providers: the binding that already fixed it, or — for a
+    /// name nothing binds — the closed level that infers nothing. The reasons never name the
+    /// family, so a branch body shared by several families (a host DAG) reports one accurate
+    /// diagnostic per marker without a per-family replay.
     /// </summary>
-    private static string DescribeFixedGraceBinding(
+    private static (string Reason, string Guidance) DescribeFixedGraceBinding(
         string name,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters,
@@ -2204,27 +2227,50 @@ internal static class ParameterDetector
         var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters);
         if (owned.TryGetParameter(out var parameterOwner))
         {
-            return ReferenceEquals(parameterOwner, memo.Level)
-                ? "it already resolves to an explicit parameter"
-                : "it already resolves to a parameter of an enclosing algorithm";
+            if (!ReferenceEquals(parameterOwner, memo.Level))
+                return ("it already resolves to a parameter of an enclosing algorithm", GraceOnlyReordersOwnInferredParameters);
+
+            return memo.GracePolicy == GraceEffectPolicy.ClosedBranch
+                ? ("it is a binder of this clause's head, which is the complete input specification of the branch",
+                    GraceOnlyReordersOwnInferredParameters)
+                : ("it already resolves to an explicit parameter", GraceOnlyReordersOwnInferredParameters);
         }
 
         if (owned.TryGetProperty(out var propertyOwner, out _))
         {
             // The prelude is the outermost property level of the owner walk.
-            return propertyOwner.Parent is null
+            return (propertyOwner.Parent is null
                 ? $"it already resolves to the builtin '{name}'"
-                : "it already resolves to a property";
+                : "it already resolves to a property", GraceOnlyReordersOwnInferredParameters);
         }
 
         if (ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name).Count > 0)
-            return "it already resolves to an opened property";
+            return ("it already resolves to an opened property", GraceOnlyReordersOwnInferredParameters);
 
-        return "the enclosing explicit parameter list fixes the parameter order, so nothing is inferred";
+        // A name nothing binds: what makes it ineligible is the closed level it stands on.
+        return memo.GracePolicy switch
+        {
+            GraceEffectPolicy.ClosedBranch => (
+                "it stands on a clause branch's own level, where nothing is inferred: the clause head is the complete input specification of the branch",
+                NestedAlgorithmsInABranchMayUseGrace),
+            GraceEffectPolicy.ClosedExplicitList => (
+                "this algorithm's explicit parameter list fixes its parameters, so nothing is inferred at this level",
+                GraceOnlyReordersOwnInferredParameters),
+            // Defensive (ImplicitSignature): an inferring owner promotes every name nothing binds,
+            // so a marker on an unbound name of an inferring owner is always eligible.
+            _ => (
+                "it is not one of the parameters this algorithm infers",
+                GraceOnlyReordersOwnInferredParameters),
+        };
     }
 
-    internal static string FormatIneffectiveGrace(string name, string reason)
-        => $"Grace has no effect on '{name}' because {reason}. Grace `~` only reorders the implicit parameters an algorithm infers from its free names; remove the marker.";
+    /// <summary>
+    /// The ONE wording of an ineligible Grace marker (Q-16 G-O): what keeps the name from being
+    /// an own inferred parameter, then how to fix it. Never "has no effect": a valid saturated
+    /// marker may also leave the order unchanged.
+    /// </summary>
+    internal static string FormatIneffectiveGrace(string name, string reason, string guidance)
+        => $"Grace cannot reorder '{name}' because {reason}. {guidance}; remove the marker.";
 
     /// <summary>
     /// THE parameter-classification decision: whether this bare-name occurrence
@@ -2437,12 +2483,13 @@ internal static class ParameterDetector
 
     /// <summary>
     /// The Grace arm of <see cref="RewriteParamsCore"/>. Ordinary collection consumed the
-    /// weight of an EFFECTIVE marker — one on a bare name this level inferred as its own
-    /// parameter. A marker that could not reorder anything is reported here (F10,
-    /// <see cref="ReportIneffectiveGrace"/>). The wrapper is stripped either way; stacked
-    /// wrappers on the one occurrence are unwrapped together so the occurrence is examined —
-    /// and reported — exactly once. (In a conditional body the parser already diagnosed Grace;
-    /// that region's policy strips it for recovery without a second report.)
+    /// weight of an ELIGIBLE marker — one on a bare name this owner inferred as its own
+    /// parameter, whether or not the weight moved it. A marker with no own inferred parameter
+    /// to weight is reported here (F10, Q-16 G-O, <see cref="ReportIneffectiveGrace"/>) — on
+    /// every closed level too: a clause branch's own rows are rewritten under
+    /// <see cref="GraceEffectPolicy.ClosedBranch"/>, the ONE place a branch-level marker is
+    /// judged. The wrapper is stripped either way; stacked wrappers on the one occurrence are
+    /// unwrapped together so the occurrence is examined — and reported — exactly once.
     /// </summary>
     private static Expr RewriteGrace(
         Expr.Grace grace,
@@ -2483,7 +2530,7 @@ internal static class ParameterDetector
             ResolveDotCallReceiverProvider(dotCall, scope, parameters));
 
         // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
-        // is effective only when that occurrence joined this level's inferred
+        // is eligible only when that occurrence joined this level's inferred
         // signature — which a member that always resolves structurally (or a
         // `.string` edge, never a lexical callable) never does — so it is examined
         // here with the edge's own verdict (F10) and stripped like every other

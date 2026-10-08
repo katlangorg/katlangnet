@@ -7,7 +7,7 @@ namespace KatLang;
 /// <see cref="Algorithm.Alias"/>; see <c>ModuleLoader.ToImportView</c>):
 /// nothing inside it carries a source location, so a diagnostic a front-end pass raises
 /// against imported content — a declaration collision, an undeclared identifier in a closed
-/// list or branch, a refused open provider, an ineffective Grace marker, a parameter-owned
+/// list or branch, a refused open provider, an ineligible Grace marker, a parameter-owned
 /// open head, a refused strict-value forwarding — has no position of its own. Its position is
 /// the IMPORT SITE: the span, in the current document, of the edge through which the pass
 /// reached the view — the <c>load('…')</c> / <c>open '…'</c> directive when the view sits in

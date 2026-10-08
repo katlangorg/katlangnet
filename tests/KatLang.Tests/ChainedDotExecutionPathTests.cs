@@ -60,12 +60,12 @@ public class ChainedDotExecutionPathTests
     public void GracedChainOnBoundNames_IsRejectedAsIneffective(string tail, string gracedName)
     {
         // `Lib` is a root property and `Sub`/`Q` are members the receiver is
-        // known to declare, so no marker on this chain can reorder anything: the
-        // ineffective-Grace error (F10), never a silently ignored annotation.
+        // known to declare, so no marker on this chain is on an inferred parameter:
+        // the ineligible-Grace error (F10), never a silently ignored annotation.
         var parse = Parser.Parse(Lib + tail);
         Assert.Contains(parse.Diagnostics, d =>
             d.Code == DiagnosticCode.InvalidGraceMarker
-            && d.Message.StartsWith($"Grace has no effect on '{gracedName}'", StringComparison.Ordinal));
+            && d.Message.StartsWith($"Grace cannot reorder '{gracedName}'", StringComparison.Ordinal));
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(Lib + tail));
     }
 

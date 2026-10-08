@@ -117,15 +117,17 @@ public enum DiagnosticCode
     /// <summary>
     /// The grace marker <c>~</c> used where it is not defined: on a property
     /// name, on a compound (non-name) occurrence, on a collecting binding, or
-    /// inside clause-head patterns and conditional branch bodies — or written
-    /// detached from the name it decorates (<c>~ x</c>, <c>x ~</c>; the marker
-    /// must be directly attached: <c>~x</c>, <c>x~</c>) — or written on a name
-    /// occurrence whose binding is already fixed, so the marker cannot reorder
-    /// anything: an explicit parameter, a parameter of an enclosing algorithm, a
-    /// visible property, a builtin, an opened name, a dot member that always
-    /// resolves structurally, or any occurrence under a closed explicit
-    /// parameter list. Grace is meaningful only on a free bare-name occurrence
-    /// that becomes an implicit parameter of the enclosing algorithm.
+    /// inside clause-head patterns — or written detached from the name it
+    /// decorates (<c>~ x</c>, <c>x ~</c>; the marker must be directly attached:
+    /// <c>~x</c>, <c>x~</c>) — or written on a name occurrence that is not one of
+    /// its owner's own inferred parameters, so there is no inferred parameter for
+    /// the marker to weight: an explicit parameter or clause binder, a parameter
+    /// of an enclosing algorithm, a visible property, a builtin, an opened name, a
+    /// dot member that always resolves structurally, or any occurrence on a closed
+    /// level (under an explicit parameter list, or on a clause branch's own rows).
+    /// Grace is valid on a free bare-name occurrence that becomes one of the
+    /// inferred parameters of the algorithm whose rows contain it — whether or not
+    /// the weight then moves it.
     /// </summary>
     InvalidGraceMarker = 17,
 

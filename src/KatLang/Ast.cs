@@ -1738,8 +1738,10 @@ public closed record Pattern
 /// Lean: <c>CondBranch</c> structure.
 /// The pattern is the complete input specification of the branch.
 /// Branch bodies receive bindings only from the matched pattern (plus ordinary
-/// lexical resolution). No extra implicit parameters are inferred.
-/// Grace <c>~</c> is not permitted in branch patterns or bodies.
+/// lexical resolution). No extra implicit parameters are inferred at the branch's own
+/// level, and Grace <c>~</c> is not permitted in branch patterns or on that level; an
+/// algorithm nested in the body is an ordinary independent owner whose own inferred
+/// parameters may carry Grace (Q-16 G-O).
 /// </summary>
 public sealed record CondBranch(Pattern Pattern, Algorithm Body)
 {

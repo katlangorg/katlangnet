@@ -129,7 +129,7 @@ public class DotCallFallbackInvariantTests
         // The marker does NOT imply Param: a visible declaration keeps the
         // ordinary Resolve fallback, exactly like the ungraced edge. (The graced
         // receiver `v` is a FREE name — Grace on a bound receiver is the
-        // ineffective-Grace error, see GraceEffectivenessTests.)
+        // ineligible-Grace error, see GraceEffectivenessTests.)
         var root = SourceProvenance.ParseValid("Known(x) = x + 1\nK = v~.Known\nK(5)").Root;
         var k = Assert.Single(root.Properties, property => property.Name == "K").Value;
         Assert.Equal(["v"], k.Params);
@@ -410,7 +410,7 @@ public class DotCallFallbackInvariantTests
         // stored dot-edge facts. Both spellings must survive the load-enabled
         // pipeline as the SAME structural edge — 42 twice. (The graced receiver
         // `o` is a free name of `Read`; Grace on the bound `Obj` itself would be
-        // the ineffective-Grace error.)
+        // the ineligible-Grace error.)
         var run = await KatLangEngine.RunAsync(
             """
             V(x) = 99

@@ -799,14 +799,22 @@ detached collect marker `* items` and the detached spread marker `value *`.
 Never attach it to an expression: `(x + y)~`, `f(x)~`, `x.y~`, `[x]~`,
 and `5~` are parse errors.
 
-Grace is meaningful ONLY on a free name that becomes an implicit parameter of
-the enclosing algorithm. A marker on a name whose binding is already fixed is
-a front-end ERROR, never a silent no-op: an explicit parameter (`K(b, a) = b,
-~a` — the list already fixes the order; write `K(a, b) = b, a` or drop the
-list), a parameter of an enclosing algorithm, a visible property, a builtin
-(`~count(...)`), an opened name, a dot member the receiver is known to declare
-(`Obj.~V`), or ANY occurrence under an explicit parameter list. Never write
-`~` on a declared parameter or on a property/builtin name.
+Grace belongs to the algorithm whose rows contain the marker, and it is valid
+ONLY on a free name that becomes one of THAT algorithm's own inferred
+parameters. A marker on a name whose binding is already fixed is a front-end
+ERROR: an explicit parameter (`K(b, a) = b, ~a` — the list already fixes the
+order; write `K(a, b) = b, a` or drop the list), a clause binder, a parameter
+of an enclosing algorithm, a visible property, a builtin (`~count(...)`), an
+opened name, a dot member the receiver is known to declare (`Obj.~V`), or ANY
+occurrence under an explicit parameter list or on a clause's own level (a
+clause's head is its complete input specification). A marker on an inferred
+parameter that cannot move — the only parameter, a name already at the end the
+marker points to, weight beyond the end, a tie, cancelled markers — is valid,
+not an error, though a generated program has no reason to write one. Inside a
+clause, a nested `{ ... }` block or a local definition is its own algorithm and
+may use Grace on the parameters it infers (`Apply(f) = f(1, 10)` /
+`F(0) = Apply({ y - ~x })` / `F(0)` is `9`). Never write `~` on a declared
+parameter, a clause binder, or a property/builtin name.
 
 - Prefix `~x`: shift `x` one position earlier. `~~x`: two positions earlier.
 - Postfix `x~`: shift `x` one position later. `x~~`: two positions later.
@@ -1100,6 +1108,7 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
 - Non-selected branches are not evaluated.
 - If no branch matches, evaluation fails with explicit error.
 - There is no special implicit-parameter default branch syntax inside conditional algorithms.
+- A branch's own level infers nothing, so grace `~` there is an error (on a binder or any other name); a `{ ... }` block or local definition inside the branch is its own algorithm, infers its own parameters, and may use grace on them — those parameters never become inputs of the branch.
 - A final catch-all branch is just an ordinary branch whose pattern always matches the remaining shape (see Catch-all branches below).
 - Earlier branches may make later branches unreachable if they are too general (see Branch-order hazards below).
 
@@ -1306,7 +1315,7 @@ BETTER — specific branch first:
 - An argumentless member reference `Lib.F` IS the member `F` wherever a callable is used — an argument (`Apply(Lib.F, 5)`), a callback, a loop step, or a call after parentheses (`(Lib.F)(5)` is `Lib.F(5)`; `(Lib.V)()` evaluates `V` afresh like `Lib.V()`). Every other dot expression — an extension-call result such as `5.Inc`, an intrinsic `.string`, a call such as `Lib.F(1)` — is a VALUE and cannot be called: `(5.Inc)()` is an error.
 - CHAINED ACCESS is property-first at EVERY level: a receiver that is itself an argumentless dot access (`Lib.Sub` in `Lib.Sub.Q`) is navigated to that member's algorithm first, so `Lib.Sub.Q` reads `Sub`'s own `Q` whenever `Sub` declares a `Q` — even when a same-named `Q(x)` is visible — and `A.B.C.D` traverses nested declared members (private included) at any depth without evaluating the containers. Only a receiver WITHOUT the member falls back, and the fallbacks compose along the chain (`3.A.B` is `B(A(3))`). A written call such as `Lib.Sub()` is a value, so a member after it is an extension call on that value; an intermediate member that is inaccessible from the site (a local-only member outside its owner's activation) or declared only inside conditional branches is an error at that edge, never a fallback.
 - The fallback resolves `f` exactly like the plain callee in `f(a, args)`, including parameters: with `K(a, t) = a.t`, the member `t` calls the algorithm bound to the parameter `t`, exactly like `t(a)`. The nearest lexical owner declaring the name supplies its parameter or property. An ancestor-owned parameter beats properties of farther owners and all opened providers; a property conflicting with a parameter in the same or an enclosing algorithm is a declaration error. Structural members of the receiver always win before either.
-- GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps `.string`'s own route (a declared `string` member, otherwise the intrinsic — never a lexical callable), `S~.count` (free `S`) keeps the ordinary builtin call, and the receiver stays the ordinary leading argument (dot-call passes a value). A member participates in inference when fallback MAY be selected, but not when structural resolution is certain; under a CLOSED explicit list it is never inferred, and it must be visible when fallback is certain. A marker that could reorder nothing is an ERROR, never a no-op: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list. Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
+- GRACE WITH DOTCALL: `a~.f(args)` is ordinary postfix Grace on the bare receiver name followed by an ORDINARY DOT EDGE; `a.~f(args)` is ordinary dot with prefix Grace on the participating member/fallback occurrence. Base semantic occurrence order is receiver, participating fallback, then written arguments: `K = a.f` infers `(a, f)`, while both graced two-name forms infer `(f, a)` through the ONE general Grace pass. Runtime fallback still invokes `f(a, args)`, but that assembly does not order the enclosing signature. Postfix Grace requires its receiver operand to be one bare name, so `(x + y)~.t`, `f(x)~.t`, `[x, y]~.t`, `5~.t`, and a second `~.` in `a~.t~.u` reject; prefix member Grace remains valid with a compound receiver because it decorates the bare member name. Call arguments are unrestricted (`a~.t(b, c)` and `a.~t(b, c)` infer `(t, a, b, c)`). Grace NEVER changes member selection or any other executable semantics: with a free receiver `o`, `Read = o~.V` then `Read(Obj)` reads Obj's structural `V` exactly like `Obj.V` (write `V(Obj)` to reach a lexical `V`), `x~.string` keeps `.string`'s own route (a declared `string` member, otherwise the intrinsic — never a lexical callable), `S~.count` (free `S`) keeps the ordinary builtin call, and the receiver stays the ordinary leading argument (dot-call passes a value). A member participates in inference when fallback MAY be selected, but not when structural resolution is certain; under a CLOSED explicit list it is never inferred, and it must be visible when fallback is certain. A marker with no inferred parameter to weight is an ERROR: `Obj~.V` on a bound property, `Obj.~V` on a member Obj is known to declare, `x.~string` on the intrinsic, `S.~count` on a builtin, and any marker under an explicit parameter list or on a clause's own level. A marker on a free inferred name is valid even when it cannot move it (the lone `o` in `Read = o~.V`). Grace must attach directly to its bare name: `a ~ .t` and `a.~ t` are attachment errors; use `a~.t` and `a.~t`. A grace-marked `open` target is rejected (`open M~.C`).
 - Ordinary lexical dot-call passes that injected receiver as one ordinary argument value: for the FALLBACK, `A.B(C, D)` IS `B(A, C, D)`, not a call where `A`'s top-level values are spread before `C` and `D` (write `A*.B(C, D)` for that: it is `B(A*, C, D)`). This is not an unconditional rewrite — when `B` is a structural member of `A`, `A.B(C, D)` calls that member with `C` and `D` alone (`Obj = { public B(c) = c + 1 }` makes `Obj.B(5)` return `6` even beside a visible `B(a, c)`). Generate `F(3, 7)` or `(3).F(7)`, not `(3, 7).F`, when a user-defined `F` expects two fixed parameters.
 - A member name the receiver does not declare is NOT an error by itself, and a statically known receiver (`Math`, a block, a module) gets no special treatment: `Math.Ceiling(x)` has no structural `Ceiling`, so it is the lexical fallback `Ceiling(Math, x)` — valid when a `Ceiling(a, b)` is visible, and otherwise an enclosing algorithm with inferred inputs infers `Ceiling` as an implicit parameter (the program then needs an argument for it; the report names the receiver, explains the fallback, and suggests `Math.Ceil`). Under an explicit parameter list or in a conditional branch the fallback is CERTAIN, so `Ceiling` must be visible exactly as in the written call `Ceiling(Math, x)`: otherwise it is an error at `Ceiling` (it is unresolved, and the report suggests `Math.Ceil`). A receiver that MIGHT declare the member — a parameter, as in `Get(obj) = obj.size` — is resolved at run time. Spell members exactly as the receiver declares them (`Math.Ceil`, `Math.Floor`, `Math.Sqrt`) and never rely on a misspelling being rejected as a missing member.
 - A SPREAD receiver is the one way to pass a receiver's items: a fluent chain after a spread passes the spread items as the leading call arguments, resolved lexically. `x.Calculate*.Target` means `Target(x.Calculate*)`, and `Arg*.Scale(10)` means `Scale(Arg*, 10)`. Parentheses around the spread capture it back into ONE value: `(Arg*).Scale(10)` is `Scale((Arg*), 10)`.
@@ -1579,7 +1588,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (144 of the 386-case canonical language specification,
+Verified reference examples (146 of the 389-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2437,7 +2446,7 @@ Regenerate this block from the repo root with:
   Displays:
     8
 
-[grace-dot-higher-order-implicit] Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is meaningful only on such FREE names: under an explicit parameter list (`K(t, a) = a~.t`) the marker could reorder nothing and is a front-end error.
+[grace-dot-higher-order-implicit] Grace composes with ordinary DotCall. Base occurrence order for `a.t` is receiver then participating fallback: `(a, t)`. In `a~.t`, ordinary postfix Grace moves `a` one place later; in `a.~t`, ordinary prefix Grace moves `t` one place earlier. Both infer `(t, a)` — the order the explicit spelling `K(t, a) = a.t` declares — and all three sources elaborate to the same ordinary `a.t` body. Grace is valid only on such FREE names that the algorithm infers as its own parameters: under an explicit parameter list (`K(t, a) = a~.t`) nothing is inferred, so the marker has no parameter to weight and is a front-end error.
 
     K = a~.t
     K({a+1}, 7)
@@ -2445,7 +2454,7 @@ Regenerate this block from the repo root with:
   Displays:
     8
 
-[grace-dot-keeps-structural-precedence] `~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is effective: `o` becomes Read's implicit parameter), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) could reorder nothing and is rejected instead of being ignored.
+[grace-dot-keeps-structural-precedence] `~` changes inferred parameter ORDER only — never member selection. `Read = o~.V` graces the FREE receiver name `o` (the marker is valid: `o` becomes Read's own inferred parameter — as the only one it cannot move, and that saturation is no error), and `Read(Obj)` performs ordinary structural-first DotCall lookup, reading Obj's own `V` even though a lexical `V` exists — exactly like the direct `Obj.V`. With no lexical `V` declaration, prefix member Grace behaves the same way on an opaque receiver: `Read = o.~V` infers `(V, o)`, and `Read({x}, Obj)` still reads Obj's structural `V`. To call the lexical `V` with Obj's value, write the call `V(Obj)`. A marker on the bound `Obj` itself (`Obj~.V`) has no inferred parameter to weight and is rejected instead of being ignored.
 
     V(x) = 99
     Obj = {
@@ -2884,20 +2893,42 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "The spread marker `*` must be directly attached to the expression it spreads ..."
 
-[grace-on-bound-name-rejected] Grace is meaningful only on a FREE name that becomes an implicit parameter of the enclosing algorithm — that is the one place its weight is consumed. `X` is a visible property, so `~X` could reorder nothing; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`).
+[grace-on-bound-name-rejected] Grace requires an OWN inferred parameter: it is valid only on a FREE name that becomes one of its algorithm's inferred parameters — that is the one place its weight is consumed. `X` is a visible property, so there is no inferred parameter for `~X` to weight; instead of being silently ignored the marker is a front-end error naming what fixed the binding. Cancelling markers (`~X~`) still validate this binding. The same rule covers a builtin (`~count`), an opened name, a parameter of an enclosing algorithm, and a dot member the receiver is known to declare (`Obj.~V`). A marker on a free name that the ordering cannot move is NOT an error (`grace-saturation-is-valid`).
 
     X = 1
     K = ~X + 2
     K
 
-  Rejected by the parser: "Grace has no effect on 'X' because it already resolves to a property ..."
+  Rejected by the parser: "Grace cannot reorder 'X' because it already resolves to a property ..."
 
-[grace-under-explicit-list-rejected] An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there can reorder nothing: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).
+[grace-under-explicit-list-rejected] An explicit parameter list fixes the parameter order, so nothing is inferred under it and a Grace marker there has no inferred parameter to weight: `K(b, a) = b, ~a` is rejected rather than silently keeping `(b, a)`. Write the order in the list (`K(a, b) = b, a`) or drop the list and let `~a` reorder the inferred parameters (`K = b, ~a` infers `(a, b)`).
 
     K(b, a) = b, ~a
     K(1, 2)
 
-  Rejected by the parser: "Grace has no effect on 'a' because it already resolves to an explicit parameter ..."
+  Rejected by the parser: "Grace cannot reorder 'a' because it already resolves to an explicit parameter ..."
+
+[grace-in-branch-nested-block-belongs-to-the-block] Grace belongs to the algorithm whose rows contain the marker. A clause branch's own level infers nothing — its head is its complete input specification — but a brace block nested in the branch is an algorithm of its own: `{ y - ~x }` infers `(x, y)` itself (`(y, x)` without the marker), so `Apply` calls it with `x = 1`, `y = 10` and `F(0)` is `9`. The same block written as the branch's property `B = y - ~x` agrees, adding a sibling clause changes nothing, and the branch never gains a parameter. A marker on the branch's own level — `F(n) = ~n + 1` — is still an error.
+
+    Apply(f) = f(1, 10)
+    F(0) = Apply({ y - ~x })
+    F(0)
+
+  Displays:
+    9
+
+[grace-saturation-is-valid] Grace is an ordering weight on one of its algorithm's OWN inferred parameters, and it is valid whenever the marked name is one — even when the ordering cannot move it (saturation). `F = ~x + 1` has a single inferred parameter; in `H = ~a + b * 10`, `a` is already first; and in `G = A - z~` the own name `z` cannot cross into the names `G` lifts from `A`, because a formula's own names always come before the names it lifts: `G(z, p, q)`, so `G(1, 2, 3)` is `(2 - 3) - 1`. A name already last, excess weight, an equal weight on the neighbour and a cancelled `~x~` are saturation too. None of these is an error; Grace is rejected only where the marked name is not an inferred parameter at all (an explicit parameter, a clause binder, a property, a builtin, an opened name, a structural member).
+
+    F = ~x + 1
+    A = p - q
+    G = A - z~
+    H = ~a + b * 10
+    F(3), G(1, 2, 3), H(1, 2)
+
+  Displays:
+    4
+    -2
+    21
 
 [declaration-head-never-spans-lines] A simple definition or deconstruction head stays on one physical line. A clause head's name and `(` share a line, its closing `)` and `=` share a line, and the pattern list inside those parentheses may span lines. A newline never assembles a head: `Foo` on its own line is a closed output row, `(x)` the next row, and the `=` is a stray token reported with the repair. `A` newline `= 1` and `Foo(x)` newline `= x + 1` are rejected the same way (before this rule they silently became `Foo(x) = x + 1`, and `Foo(1)` newline `= 3` even added a clause to an existing family). The body of a recognized head may still begin on the next line: `A =` newline `1` defines `A = 1`, and `F(a,` newline `b) = a + b` keeps its pattern list open across the line.
 

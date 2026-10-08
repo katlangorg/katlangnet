@@ -164,7 +164,7 @@ public class DotCallFallbackExposureTests
 
     /// <summary>
     /// A graced CONTROL whose marker decorates an already-bound name — a captured
-    /// parameter, a sibling property, a builtin — is the ineffective-Grace error
+    /// parameter, a sibling property, a builtin — is the ineligible-Grace error
     /// (F10), so the program is rejected before evaluation. The recovery tree is the
     /// ungraced twin (the marker is stripped), and its exposure classification must
     /// still equal the twin's: Grace never changed classification, and rejecting it
@@ -179,7 +179,7 @@ public class DotCallFallbackExposureTests
         var parse = Parser.Parse(source);
         var diagnostic = Assert.Single(parse.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
-        Assert.StartsWith($"Grace has no effect on '{gracedName}' because", diagnostic.Message, StringComparison.Ordinal);
+        Assert.StartsWith($"Grace cannot reorder '{gracedName}' because", diagnostic.Message, StringComparison.Ordinal);
         Assert.Equal(expectedExposure, FindProperty(parse.Root, propertyPath).Exposure);
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
         return parse.Root;
@@ -203,7 +203,7 @@ public class DotCallFallbackExposureTests
 
     [Fact]
     public void PostfixGraceDot_CapturedParameters_RejectedAndStillLocalOnly()
-        // `a` is a captured parameter of Outer, so the marker is ineffective (F10);
+        // `a` is a captured parameter of Outer, so the marker is ineligible (F10);
         // the recovery tree classifies exactly like the ungraced twin above.
         => AssertGracedControlRejected(
             """
@@ -271,7 +271,7 @@ public class DotCallFallbackExposureTests
             "6",
             "Outer", "P");
 
-        // The graced twin decorates the sibling property `Five`: ineffective (F10),
+        // The graced twin decorates the sibling property `Five`: ineligible (F10),
         // rejected, and still classified exactly like the ungraced edge above.
         AssertGracedControlRejected(
             """
@@ -346,7 +346,7 @@ public class DotCallFallbackExposureTests
     [Fact]
     public void GracedDot_SameShape_ClassifiesExactlyLikeTheOrdinaryEdge()
         // The marker does not bypass structural lookup — and on the bound receiver
-        // `Obj` it could reorder nothing either, so it is the ineffective-Grace error
+        // `Obj` it has no inferred parameter to weight either, so it is the ineligible-Grace error
         // (F10). The recovery tree is the same structural winner as the ungraced
         // twin above: Exported.
         => AssertGracedControlRejected(

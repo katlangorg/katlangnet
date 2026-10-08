@@ -675,6 +675,17 @@ Divide(2, 10)
 
 Without the marker, `y` would be the first parameter. The marker is written directly against the name (`~x`, not `~ x`), and it applies only to inferred parameters: with an explicit parameter list, write the order you want.
 
+Grace is an ordering preference, not a command to move. It is allowed whenever the marked name is a parameter the algorithm infers, even when that parameter cannot move — because it is the only one, or already at the end the marker points to:
+
+```
+Double = ~x * 2
+Double(4)
+```
+
+**Result:** `8`
+
+A marker is an error only where there is no inferred parameter to reorder: on an explicit parameter, a property, or a built-in name such as `~count`.
+
 ### Undefined Names in the Program
 
 The program itself is never called, so nothing can supply a parameter to it, and an undefined name at the top level is an error. This is how KatLang reports a typo:
@@ -2189,6 +2200,19 @@ F(0)
 ```
 
 The error points at the second clause, which takes two parameters where the first takes one. Two clauses whose patterns have the same structure, such as `F(x)` and `F(y)`, are rejected too, as duplicates, even when the names they bind differ. Apart from such duplicates, KatLang does not check whether a clause can ever be chosen: after `F(n)`, a clause `F(0)` is accepted but never used, which is why the catch-all belongs last.
+
+A clause's own inputs come entirely from its head, so Grace cannot reorder them: `F(n) = ~n + 1` is an error. A `{ … }` algorithm written inside a clause is a separate algorithm that infers its own parameters, so it may use Grace on those:
+
+<!-- spec:grace-in-branch-nested-block-belongs-to-the-block -->
+```
+Apply(f) = f(1, 10)
+F(0) = Apply({ y - ~x })
+F(0)
+```
+
+**Result:** `9`
+
+The block's parameters are `(x, y)`, so `Apply` calls it with `x = 1` and `y = 10`. They belong to the block: the clause `F(0)` still takes only the input its head describes.
 
 ---
 
