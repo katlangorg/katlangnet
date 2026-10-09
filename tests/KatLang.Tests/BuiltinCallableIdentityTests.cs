@@ -139,16 +139,17 @@ public class BuiltinCallableIdentityTests
         => AssertEval(source, 31);
 
     /// <summary>
-    /// A shadowing user <c>if</c> is an ordinary callable in every other respect, so
-    /// intrinsic branch laziness goes away with the builtin identity. The failure is
-    /// observed by READING the would-be-unselected branch: an ordinary user call
-    /// binds every parameter eagerly, and a failing value binding is retained on the
-    /// binding rather than raised, so an unread parameter would hide the difference.
-    /// (<see cref="OnlyTheSelectedBranch_RunsItsHostCallback"/> observes the same
-    /// distinction by counting invocations instead, where nothing can be retained.)
+    /// A shadowing user <c>if</c> is an ordinary callable in every other respect, so the
+    /// builtin's branch SELECTION goes away with the builtin identity: the user callable
+    /// demands exactly what its own body reads. Its arguments are still supplied
+    /// computations (Model C), so a parameter the body never reads is never evaluated
+    /// (<see cref="AShadowingUserIf_DemandsOnlyItsSelectedParameter"/>); this body reads
+    /// <c>c</c>, so the would-be-unselected branch is demanded and fails.
+    /// (Renamed 2026-10-09 from <c>UserIf_IsNotLazy_BecauseLazinessBelongsToTheBuiltinIdentity</c>:
+    /// its former comment described the pre-Model-C eager binding of every parameter.)
     /// </summary>
     [Fact]
-    public void UserIf_IsNotLazy_BecauseLazinessBelongsToTheBuiltinIdentity()
+    public void UserIf_DemandsWhatItsBodyReads_BecauseSelectionBelongsToTheBuiltinIdentity()
     {
         AssertEval("Boom = 1 / 0\nif(true, 10, Boom)", 10);
         AssertDivisionByZero("if(a, b, c) = b + c\nBoom = 1 / 0\nif(true, 10, Boom)");
@@ -305,9 +306,10 @@ public class BuiltinCallableIdentityTests
     // ── G. Laziness belongs to the builtin identity ─────────────────────────
 
     /// <summary>
-    /// The builtin does not demand the unselected branch. A user wrapper may already
-    /// have attempted its value evaluation and retained a failing algorithm binding;
-    /// success alone does not prove non-execution. Callback tests below observe that.
+    /// The builtin does not demand the unselected branch, and a user wrapper (<c>MyIf</c>,
+    /// <c>Apply3</c>) passes its parameters on as unevaluated supplied computations, so it
+    /// does not demand it either (Model C, NEED-01/08). Success alone shows only that no
+    /// failure was raised; the host-callback tests below observe that the branch never ran.
     /// </summary>
     [Theory]
     [InlineData("if(true, 10, 1 / 0)", 10)]

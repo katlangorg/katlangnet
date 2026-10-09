@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 401
+- specification surface cases: 405
 - excluded parse-level cases (Lean has no surface parser): 60
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 320
+- Lean-guarded cases: 324
 - probe observations (C#-only by design): 1255
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -185,6 +185,26 @@ def case_need_container_call_checks_cardinality_first : Expr :=
 def case_need_collection_builtin_demands_its_collection_first : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "take") [(.binary .div (.num 1) (.num 0)), (.binary .add (.stringLiteral "a") (.num 1))])])
 #guard obs case_need_collection_builtin_demands_its_collection_first == "err div0"
+
+-- need-dot-receiver-is-a-supplied-computation [variadic-calls]: Second(a, b) = b \n (1 / 0).Second(2)
+def case_need_dot_receiver_is_a_supplied_computation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Second" (alg ["a", "b"] [] [] [.param "b"])] [(.dotCall (.binary .div (.num 1) (.num 0)) "Second" (some [.num 2]))])
+#guard obs case_need_dot_receiver_is_a_supplied_computation == "ok raw=2 n=1"
+
+-- need-dot-receiver-follows-callee-demand-order [variadic-calls]: Flip(a, b) = b + a \n (1 / 0).Flip('a' + 1)
+def case_need_dot_receiver_follows_callee_demand_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Flip" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.param "a"))])] [(.dotCall (.binary .div (.num 1) (.num 0)) "Flip" (some [(.binary .add (.stringLiteral "a") (.num 1))]))])
+#guard obs case_need_dot_receiver_follows_callee_demand_order == "err type"
+
+-- need-family-binder-keeps-the-callable [conditionals]: Inc(x) = x + 1 \n App(f, 0) = 0 \n App(f, n) = f(n) \n R(z) = App(Inc, 5) \n R(0)
+def case_need_family_binder_keeps_the_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "App" (.conditional none [] [⟨.sequenceValue [.bind "f", .litInt 0], (alg [] [] [] [.num 0])⟩, ⟨.sequenceValue [.bind "f", .bind "n"], (alg [] [] [] [(.call (.param "f") [.param "n"])])⟩]), privateProp "R" (alg ["z"] [] [] [(.call (.resolve "App") [.resolve "Inc", .num 5])])] [(.call (.resolve "R") [.num 0])])
+#guard obs case_need_family_binder_keeps_the_callable == "ok raw=6 n=1"
+
+-- need-deconstruction-runs-on-first-target-demand [deconstruction]: p, q = 1 / 0, 2 \n I(f) = 0 \n I(p), I(q)
+def case_need_deconstruction_runs_on_first_target_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.binary .div (.num 1) (.num 0)), .num 2]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p" }, .capture { name := "q" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "q" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p" }, .capture { name := "q" }]] [] [] [.param "q"])) [.resolve "$deconstruct$0"])]), privateProp "I" (alg ["f"] [] [] [.num 0])] [(.call (.resolve "I") [.resolve "p"]), (.call (.resolve "I") [.resolve "q"])])
+#guard obs case_need_deconstruction_runs_on_first_target_demand == "ok raw=S[0, 0] n=2"
 
 -- collected-callable-survives-explicit-respread [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(9) \n Fwd(*fs) = Apply(fs*) \n Fwd(Inc)
 def case_collected_callable_survives_explicit_respread : Expr :=
@@ -1701,7 +1721,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 320 canonical Lean-guarded specification cases.
+-- 324 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1726,6 +1746,10 @@ def specCaseIds : List String := [
   "need-wrapper-keeps-builtin-if-selection",
   "need-container-call-checks-cardinality-first",
   "need-collection-builtin-demands-its-collection-first",
+  "need-dot-receiver-is-a-supplied-computation",
+  "need-dot-receiver-follows-callee-demand-order",
+  "need-family-binder-keeps-the-callable",
+  "need-deconstruction-runs-on-first-target-demand",
   "collected-callable-survives-explicit-respread",
   "first-program",
   "boolean-values-and-equality",
@@ -2030,6 +2054,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 320
+#guard specCaseIds.length == 324
 
 end LanguageSpecCases

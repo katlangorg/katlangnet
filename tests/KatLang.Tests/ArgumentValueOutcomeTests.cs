@@ -395,9 +395,10 @@ public class ArgumentValueOutcomeTests
     // ── 3. Explicit calls stay fresh; the algorithm channel stays usable ─────────────
 
     /// <summary>
-    /// <c>P</c> and <c>P()</c> keep their distinction: the argument slot reads the property
-    /// entry, while an explicit invocation of the forwarded callable runs the body afresh —
-    /// and never replaces the entry.
+    /// <c>P</c> and <c>P()</c> keep their distinction: an explicit invocation of the
+    /// forwarded callable runs the body afresh and never reads or replaces the entry, while a
+    /// VALUE read of the parameter is P's ordinary cached property read (NEED-10) — passing P
+    /// itself performs no access.
     /// </summary>
     [Fact]
     public async Task ExplicitInvocationOfTheParameter_StaysAFreshCall()
@@ -413,10 +414,10 @@ public class ArgumentValueOutcomeTests
     }
 
     /// <summary>
-    /// INVOKING the algorithm is not reconstructing the slot's value. A slot whose value failed
-    /// still carries its algorithm channel, and an explicit call through it is a fresh call
-    /// (<c>f()</c> gives 3 here), while a VALUE read of the same parameter in the same activation
-    /// is still the slot's failure: the invocation never repairs the recorded outcome.
+    /// INVOKING the callable is not demanding the slot's VALUE (NEED-06): <c>Call0(B)</c> never
+    /// reads B through the slot; its explicit call runs B's body afresh, here at its first tick,
+    /// which fails. A later VALUE read of the same parameter demands the cell once and reports
+    /// that outcome; an invocation never reads, repairs or replaces it.
     /// </summary>
     [Fact]
     public async Task CallableInvocation_DoesNotPredemandItsCellValue()

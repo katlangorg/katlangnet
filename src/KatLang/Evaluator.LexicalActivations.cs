@@ -228,11 +228,14 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Whether a parameter's VALUE outcome is established: it has a value (counted or value
-    /// tier), or its written argument slot FAILED its one value evaluation and that failure
-    /// is recorded on its algorithm binding (<see cref="KatLang.Evaluation.NeedCell"/>). Either way a
-    /// value demand of the parameter is the ordinary parameter read, never an evaluation of
-    /// its algorithm channel. Lean: the <c>.param</c> arm of <c>resolveArgAlgExpr</c>.
+    /// Whether a parameter's VALUE outcome is established on the legacy Ready tiers: it has a
+    /// value (counted or value tier), or a failure is recorded on its algorithm binding. Under
+    /// Model C a parameter's outcome is its supplied cell's (<see cref="KatLang.Evaluation.NeedCell"/>),
+    /// demanded by the ordinary parameter read, and no binding path records an algorithm-tier
+    /// failure (the eager writer, <c>SlotAlgorithmBinding</c>, was deleted). Either way a value
+    /// demand of the parameter is the ordinary parameter read, never an evaluation of its
+    /// algorithm channel. Lean: the value tiers the <c>.param</c> arm of <c>evalCounted</c> reads
+    /// (the former <c>resolveArgAlgExpr</c> was removed with Model C).
     /// </summary>
     private static bool ParameterHasValueOutcome(string name, EvalCtx ctx, ValEnv values)
     {
@@ -243,10 +246,12 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The failure a parameter's written argument slot established as its VALUE outcome,
-    /// read in the parameter's own binding context exactly as <see cref="EvalParamCounted"/>
-    /// reads it: <c>null</c> when the parameter has a value (a value binding always wins, as
-    /// in that read) or no failed algorithm-channel binding.
+    /// The failure recorded on a parameter's algorithm binding as its VALUE outcome (the
+    /// legacy Ready tier: no Model-C binding path records one, and a supplied cell's failure
+    /// is read through <see cref="EvalParamCounted"/>), read in the parameter's own binding
+    /// context exactly as that read reaches the tier: <c>null</c> when the parameter has a
+    /// value (a value binding always wins, as in that read) or no failed algorithm-channel
+    /// binding.
     /// Lean: <c>parameterValueFailure?</c>.
     /// </summary>
     private static EvalError? ParameterValueFailure(string name, EvalCtx ctx, ValEnv values)

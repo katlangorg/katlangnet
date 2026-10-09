@@ -166,12 +166,11 @@ internal sealed class EvaluationBudget
     /// framework's fast non-cancellable path.
     ///
     /// <para>Cancellation is HOST DEMAND, not a language outcome. It deliberately throws
-    /// instead of returning an <see cref="EvalError"/>: an ordinary failure of a
-    /// parameter's first-demand failure is memoized on its cell and the run
-    /// continues (only a resource-limit failure is terminal —
-    /// <c>Evaluator.IsDeferrableEvaluationFailure</c>), so a cancellation modeled as an
-    /// error could be deferred like an ordinary failure, or classified into the run's
-    /// verdict, and the cancelled run would keep running. The throw happens BEFORE any counter
+    /// instead of returning an <see cref="EvalError"/>: an error is a language outcome — a
+    /// demanded failure propagates through evaluation, and a supplied computation's cell
+    /// memoizes it as its completed outcome (Model C, NEED-02) — so a cancellation modeled as
+    /// an error could be memoized like an ordinary failure, or classified into the run's
+    /// verdict, instead of ending the run as host demand. The throw happens BEFORE any counter
     /// mutation at every chokepoint, so a cancelled checkpoint is non-mutating exactly
     /// like a rejected enter — the scoped depth protocol stays conserved, admitted
     /// levels unwind through their ordinary <c>finally</c> releases, and an uncancelled
@@ -222,8 +221,9 @@ internal sealed class EvaluationBudget
         // depth (or stack) ceiling refused. (That was once observable as a flipped
         // MaxSteps verdict, because a resource-limit failure of a parameter's eager value
         // evaluation used to be retained and the run continued; every resource-limit
-        // failure is now terminal for the run — Evaluator.IsDeferrableEvaluationFailure —
-        // so the refusal ends the run, and the counters it leaves stay an exact record of
+        // failure is now terminal for the run (Q-02: RetainTerminal and CheckContinuation),
+        // and since Model C an argument is evaluated only when demanded, so the refusal ends
+        // the run, and the counters it leaves stay an exact record of
         // the work actually performed.)
         //
         // The step ceiling is still tested FIRST, so when both are exhausted the reported

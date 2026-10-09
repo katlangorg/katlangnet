@@ -203,12 +203,16 @@ public class DotCallValueBoundaryTests
     // ── Receiver evaluation: once, first, through the ordinary argument path ─
 
     [Fact]
-    public void Receiver_IsEvaluatedOnce_AndBeforeTheWrittenArguments()
+    public void Receiver_IsEvaluatedOnce_InTheCalleesDemandOrder()
     {
         // A host operation that counts its calls and returns the call number:
         // `Tick()` (the explicit call bypasses the property cache) in receiver
-        // position is evaluated exactly once and before the written argument,
-        // in both spellings.
+        // position is evaluated exactly once, in both spellings. The receiver is the
+        // call's first supplied computation (Model C): it is demanded in the callee's
+        // own order, which for these bodies (`(a, b)`, a collector's VALUE, `count`) is
+        // left to right — not because a receiver comes first (ModelCPropagationTests
+        // pins an unused and a later-demanded receiver). Renamed 2026-10-09 from
+        // `Receiver_IsEvaluatedOnce_AndBeforeTheWrittenArguments`.
         foreach (var (source, expectedDisplay) in new[]
         {
             ("Pair(a, b) = (a, b)\nTick().Pair(Tick())", "(1, 2)"),

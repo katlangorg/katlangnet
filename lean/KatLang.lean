@@ -1737,23 +1737,27 @@ def lookupAssoc {A} (k : Ident) : Assoc Ident A -> Option A
 
 abbrev ValEnv := Assoc Ident Result
 
-/-- One parameter's ALGORITHM-channel binding, together with the VALUE outcome
-    its written argument slot established when that outcome is a FAILURE.
+/-- One parameter's ALGORITHM-channel binding, together with a VALUE outcome
+    recorded beside it when that outcome is a FAILURE.
 
     AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): within one
-    call, a written argument slot is evaluated at most once for its value. If
-    that evaluation succeeds, that is its value, held by the value tier
-    (`ValEnv`). If it fails, that is its failure, recorded here beside the
-    algorithm channel the same slot supplies; a slot that fails without an
-    algorithm channel fails the call at assembly (`collectVariadicCallItems`).
-    A value read of the parameter reuses that established outcome and never
-    evaluates `algorithm` again (the `.param` arm of `evalCounted`,
-    `projectNeedCallable`, `evalDotCallCounted`'s `string` arm). The algorithm
-    channel remains what it is for: invocation (`f(x)`, an invoking builtin
-    slot), structural member access, and forwarding. Possessing it never
-    licenses recomputing a value that the slot has already established.
+    call, a written argument slot is evaluated at most once for its value.
+    Under Model C (NEED-01/02, October 2026) that slot is the parameter's
+    supplied need cell (`EvalState.needs`, `supplyNeed`, `demandNeed`): its
+    first VALUE demand evaluates the computation once and stores the completed
+    outcome, which every later demand reuses, and the `.param` arm of
+    `evalCounted` demands the cell before any tier below it. No production
+    binding path writes `valueFailure?` any more: its eager writer — the slot
+    evaluated at assembly, its failure recorded here — survives only in the
+    historical fixture `HistoricalReadyBinding.lean` (`slotAlgorithmBinding`).
+    The field and its readers (the `.param` arm's algorithm-tier fallback,
+    `parameterValueFailure?`, `evalDotCallCounted`'s `string` arm) remain for
+    that legacy Ready tier, and none of them evaluates `algorithm`. The
+    algorithm channel remains what it is for: invocation (`f(x)`, an invoking
+    builtin slot), structural member access, and forwarding.
     `valueFailure?` is `none` exactly when the value tier holds the
-    parameter's value. C#: the `ValueError` element of an `AlgEnv` entry. -/
+    parameter's value or nothing was recorded. C#: the `ValueError` element
+    of an `AlgEnv` entry. -/
 structure AlgBinding where
   algorithm : Algorithm
   valueFailure? : Option Error := none
@@ -1771,8 +1775,9 @@ namespace AlgEnv
   def lookup (env : AlgEnv) (x : Ident) : Option Algorithm :=
     (lookupAssoc x env).map AlgBinding.algorithm
 
-  /-- The complete algorithm-channel binding of a name, including the failure
-      its slot's value evaluation established (`AlgBinding.valueFailure?`). -/
+  /-- The complete algorithm-channel binding of a name, including any failure
+      recorded beside it (`AlgBinding.valueFailure?`; no Model-C binding path
+      records one). -/
   def lookupBinding (env : AlgEnv) (x : Ident) : Option AlgBinding :=
     lookupAssoc x env
 
@@ -3027,12 +3032,15 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
       return address
   allocateNeed (.expression source caller values)
 
-/-- The failure a parameter's written argument slot established as the
-    parameter's VALUE outcome (`AlgBinding.valueFailure?`), read in the
-    parameter's own binding context exactly as the `.param` arm of
-    `evalCounted` reads it: `none` when the parameter has a value (a value
-    binding always wins, as in that read) or no failed algorithm-channel
-    binding. C#: `Evaluator.ParameterValueFailure`. -/
+/-- The failure recorded on a parameter's algorithm binding as its VALUE
+    outcome (`AlgBinding.valueFailure?`), read in the parameter's own binding
+    context exactly as the `.param` arm of `evalCounted` reads that tier:
+    `none` when the parameter has a value (a value binding always wins, as in
+    that read) or no failed algorithm-channel binding. Under Model C no
+    production path records such a failure — a parameter's outcome is its
+    need cell's (`demandNeed`), and the eager writer survives only in
+    `HistoricalReadyBinding.lean` — so for every source program this is
+    `none`. C#: `Evaluator.ParameterValueFailure`. -/
 def parameterValueFailure? (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option Error) := do
   let (parameterCtx, values) <- parameterContext name ctx env
   if (parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome then
@@ -6877,11 +6885,13 @@ mutual
       evalResolvedCallCounted callee combinedArgs ctx env name
 
   /-- The `.string` intrinsic is a ZERO-parameter member. A written argument
-      list is assembled exactly like every call's (each written slot evaluated
-      once, left to right, spreads opened) and then rejected by arity — the
-      same outcome as `Obj.V(1)` for a declared zero-parameter member — so a
-      written bundle is never silently dropped; an EMPTY written list
-      (`x.string()`) stays the intrinsic, as `A()` stays a call of `A`.
+      list is formed exactly like every call's supply (`formNeedSupply`:
+      explicit spreads are opened, every other slot stays a suspended need)
+      and then rejected by its cardinality before any argument, or the
+      receiver, is demanded — the same outcome as `Obj.V(1)` for a declared
+      zero-parameter member — so a written bundle is never silently dropped;
+      an EMPTY written list (`x.string()`), or one whose spreads supply no
+      item, stays the intrinsic, as `A()` stays a call of `A`.
       C#: `RejectDotStringIntrinsicArguments`. -/
   partial def rejectDotStringIntrinsicArguments (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM Unit := do
@@ -7044,11 +7054,11 @@ mutual
               -- The accepted receiver is then READ like a value position reads it
               -- (`evalDotStringReceiverValue`): a named property through its cached
               -- property access, a parameter through its bound value.
-              -- A PARAMETER receiver's value outcome was established at binding, so a
-              -- parameter whose argument slot FAILED its one value evaluation reports
-              -- that failure first, before the law judges its algorithm channel
-              -- (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `parameterValueFailure?`).
-              -- C#: `EvalDotStringReceiverAlgOutput`.
+              -- A PARAMETER receiver with a failure recorded on its algorithm binding
+              -- (the legacy Ready tier: no Model-C binding path records one, so for a
+              -- source program this is `none`) reports that failure first, before the
+              -- law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE
+              -- EVALUATION, `parameterValueFailure?`). C#: `EvalDotStringReceiverAlgOutput`.
               match target with
               | .param x =>
                   match <- parameterValueFailure? x ctx env with
@@ -7351,14 +7361,15 @@ mutual
             | some v => pure (v, Result.valueCount v)
             | none =>
                 -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a
-                -- parameter found only on the algorithm channel is one whose written
-                -- argument slot FAILED its one value evaluation, and that failure is
-                -- the parameter's value outcome for the whole activation. The read
-                -- reuses it and never evaluates the algorithm channel, so a failure
-                -- cannot heal, the argument's work is never repeated, and every read
-                -- of the parameter observes the same outcome. The algorithm channel
-                -- serves invocation and navigation (`resolveAlg (.param x)`), never
-                -- this value read.
+                -- Model-C parameter was read through its need cell above (its first
+                -- demand evaluates the supplied computation once; every later read
+                -- reuses the completed outcome). A parameter found only on the
+                -- algorithm channel belongs to the legacy Ready tier: it reports the
+                -- failure recorded beside its algorithm (`AlgBinding.valueFailure?`,
+                -- which no Model-C path writes) and never evaluates the algorithm
+                -- channel, so a failure cannot heal and the argument's work is never
+                -- repeated. The algorithm channel serves invocation and navigation
+                -- (`resolveAlg (.param x)`), never this value read.
                 match ctx.algEnv.lookupBinding x with
                 | some binding => .error (binding.valueFailure?.getD Error.badArity)
                 | none => .error (Error.unknownName x)

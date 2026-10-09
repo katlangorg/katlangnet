@@ -347,7 +347,8 @@ public class PropertyCacheConsumerTransparencyTests
         Assert.Equal(3, Invocations("sum(P)\nsum(P())\nP().string\nP.string"));
 
         // A callable forwarded through a parameter and INVOKED explicitly is an explicit
-        // call: `Call0(P)` reads P's cached value for the argument and `f()` runs afresh.
+        // call: `Call0(P)` supplies P unevaluated (no property access, Model C) and `f()` runs
+        // afresh; the rows `P` read the one cached entry.
         Assert.Equal(2, Invocations("Call0(f) = f()\nP\nCall0(P)\nP"));
     }
 

@@ -192,9 +192,11 @@ run fail, but a seeded run that succeeds made exactly the draws of the same run
 under no limit. (Before that rule, a limit reached inside an argument the callee
 ignored was absorbed, and the run succeeded with a SHIFTED stream: the canonical
 `G({Deep(100) + randomInt(0, 1000)}, randomInt(0, 1000))` returned the first draw
-instead of the second.) A seed is
+instead of the second; since Model C the ignored argument is never evaluated at all,
+so its unlimited meaning is itself the first draw.) A seed is
 a reproducible stream, not memoization: which calls execute and in what order is
-decided by the ordinary evaluation rules (left-to-right arguments, once-only
+decided by the ordinary evaluation rules (explicit spreads at supply formation,
+then supplied arguments in first-demand order under Model C, at-most-once
 written arguments, lazy `if` branches, the zero-argument property cache, explicit
 `A()` re-evaluation, callbacks in sequence order, output rows before the
 engine's read of the root's `DisplayDecimals` source filter). A host display

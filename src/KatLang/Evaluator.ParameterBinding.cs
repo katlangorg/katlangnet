@@ -512,27 +512,27 @@ public static partial class Evaluator
 
 
     /// <summary>
-    /// RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02 / PV-06, September 2026) — the ONE
-    /// decision of every evaluation site that could otherwise DEFER a failure it actually
-    /// encountered instead of raising it. Such a site may defer an ORDINARY failure under
-    /// its own rule: user-call argument assembly records it beside the slot's algorithm
-    /// channel as the parameter's value outcome (<see cref="FormNeedSupply"/>,
-    /// <see cref="NeedCell"/>), and the builtin argument adapter retains a value
-    /// or surplus item's failure behind the arity verdict until binding demands the slot
-    /// (<see cref="BuildCallableCallItems"/>; the fused filter-count pipeline shares that
-    /// adapter). A resource-limit failure (<see cref="EvalError.IsResourceLimit"/>) is
-    /// never deferrable: the limit is a property of the RUN, not a latent value of one slot,
-    /// so the site returns it at once and nothing after it runs — no later argument, callee
-    /// body, consumer, random draw, or host operation. An unused parameter, a retained
-    /// algorithm channel, a deferred value demand, forwarding, or consumer choice therefore
-    /// cannot absorb it. (Before this rule a limit reached inside an argument the callee
-    /// never read was retained and dropped, so the run SUCCEEDED after partial evaluation,
-    /// with random draws and host effects shifted by where the limit struck: a lower limit
-    /// changed one successful value into another, and the value depended on the route and
-    /// the host stack.) A resource limit may stop a run; it never redefines the value of a
-    /// run that succeeds. Laziness is untouched: an argument the language does not evaluate
-    /// — an unselected <c>if</c> branch, an invoking callback slot — reaches no limit.
-    /// No Lean counterpart: Lean models no resource limits.
+    /// RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02 / PV-06, September 2026): whether a
+    /// failure an evaluation site actually encountered is ORDINARY (<c>true</c>) or a
+    /// resource limit (<see cref="EvalError.IsResourceLimit"/>, <c>false</c>). Since Model C
+    /// (NEED-01..03, 2026-10-02) no site defers a demanded failure: supply formation evaluates
+    /// no ordinary argument (<see cref="FormNeedSupply"/>), a supplied computation runs on its
+    /// first VALUE demand (<see cref="NeedCell"/>) and a demanded failure propagates at once,
+    /// cardinality is checked before any such demand, and a reached resource limit is
+    /// terminal for the run (the cell keeps that completion and the run budget retains it, so
+    /// nothing restarts it or runs after it — no later argument, callee body, consumer, random
+    /// draw, or host operation). The one remaining caller is
+    /// <c>SequenceBuiltinValueDemandError</c>, the report precedence of a builtin value slot's
+    /// demand failure: a limit outranks the zero-argument classification of the slot's
+    /// callable channel. (Until Model C this predicate decided which failures user-call
+    /// argument assembly and the builtin argument adapter
+    /// (<see cref="BuildCallableCallItems"/>) could retain beside a binding or behind an arity
+    /// verdict — ordinary ones — and which ended the run at once; before the Q-02 rule a limit
+    /// reached inside an argument the callee never read was retained and dropped, so the run
+    /// SUCCEEDED after partial evaluation.) A resource limit may stop a run; it never redefines
+    /// the value of a run that succeeds. Laziness is untouched: an argument the language does
+    /// not demand — an unused argument, an unselected <c>if</c> branch, an invoking callback
+    /// slot — reaches no limit. No Lean counterpart: Lean models no resource limits.
     /// </summary>
     internal static bool IsDeferrableEvaluationFailure(EvalError failure) => !failure.IsResourceLimit;
 

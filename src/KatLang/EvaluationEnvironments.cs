@@ -13,14 +13,16 @@ global using ValEnv =
 
 // Lean: abbrev AlgEnv := Assoc Ident AlgBinding
 //
-// ValueError is Lean's AlgBinding.valueFailure?: the ORDINARY failure that the
-// parameter's written argument slot established as its VALUE outcome when its
-// one value evaluation failed, null when the parameter has a value. A value
-// read reports it and never evaluates the algorithm again (AT-MOST-ONCE
-// ARGUMENT VALUE EVALUATION, Evaluator.SlotAlgorithmBinding). It is never a
-// resource limit: a limit the slot's evaluation reaches ends the call and the
-// run at assembly (RESOURCE LIMITS ARE TERMINAL,
-// Evaluator.IsDeferrableEvaluationFailure).
+// ValueError is Lean's AlgBinding.valueFailure?: an ORDINARY failure recorded on the
+// algorithm tier as a parameter's VALUE outcome, null when the parameter has a value
+// or nothing was recorded. Under Model C (NEED-01/02) no binding path writes it: a
+// parameter's VALUE outcome is its NeedCell's completed outcome (NeedEnv), established
+// by the cell's first demand and reused by every later demand (AT-MOST-ONCE ARGUMENT
+// VALUE EVALUATION). The pre-Model-C eager writer, Evaluator.SlotAlgorithmBinding, was
+// deleted; the field and its readers (ParameterValueFailure, ParameterSlotFailure) remain
+// for the legacy Ready tier, as Lean keeps valueFailure? (whose eager writer survives only
+// in lean/HistoricalReadyBinding.lean). A resource limit is never recorded here: a
+// demanded computation that reaches one ends the run (RESOURCE LIMITS ARE TERMINAL).
 global using AlgEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Algorithm Value, KatLang.EvalError? ValueError)>;
 

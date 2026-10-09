@@ -20,40 +20,43 @@ public class PatternBindingErrorPrecedenceTests
     /// </summary>
     public static TheoryData<string, string> OrdinaryCalls => new()
     {
-        // A later nested failure outranks an earlier unequal repeated value.
+        // NEED-04: the second x is compared immediately, so the unequal repeated value is
+        // reported before the later nested group is inspected. (Under the former D1 order a
+        // later nested failure outranked it.)
         { "P((x, x, (a, b))) = a\nP((1, 2, 7))", "BadArity in []" },
         { "P((x, x, (a, b))) = a\nP((1, 2, (7, 8, 9)))", "BadArity in []" },
         { "P(x, x, (a, b)) = a\nP(1, 2, 7)", "BadArity in []" },
         { "P(x, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "BadArity in []" },
-        // ...and so does an argument's retained value error (div0, not arity).
+        // ...and before a later argument is demanded at all: Bad is never evaluated.
         { "P(x, x, (a, b)) = a\nP(1, 2, Bad)", "BadArity in []" },
         // A conflict INSIDE a nested group is part of binding that group.
         { "P((x, x), (a, b)) = a\nP((1, 2), 7)", "BadArity in []" },
-        // Collecting lists: the prefix merges before the suffix binds...
+        // Collecting lists, in written order: a prefix conflict comes before the suffix...
         { "P(x, x, *r, (a, b)) = a\nP(1, 2, 7)", "BadArity in []" },
         { "P(x, x, *r, (a, b)) = a\nP(1, 2, Bad)", "BadArity in []" },
-        // ...the suffix binds before the prefix/suffix merge...
+        // ...a suffix occurrence is compared with the prefix as soon as it is visited...
         { "P(x, *r, x, (a, b)) = a\nP(1, 2, 7)", "BadArity in []" },
         { "P(x, *r, x, (a, b)) = a\nP(1, 2, (7, 8, 9))", "BadArity in []" },
-        // ...and the collector's values are collected before it.
+        // ...and binding a collector demands none of its slice (NEED-07), so neither Bad nor
+        // Inc is reached before the suffix x conflicts.
         { "P(x, *r, x) = x\nP(1, Bad, 2)", "BadArity in []" },
         { "P(x, *r, x) = x\nP(1, Inc, 2)", "BadArity in []" },
-        // Merges run right to left: the rightmost failing merge decides the kind (A and B
-        // are two callables with the equal value 5).
+        // The first conflict in written order decides the kind (A and B are two callables
+        // with the equal value 5). (Under the former D1 order the rightmost merge decided.)
         { Distinct + "P(x, x, f, f) = 0\nP(1, 2, A, B)", "BadArity in []" },
         { Distinct + "P(f, f, x, x) = 0\nP(A, B, 1, 2)", Identity },
         { Distinct + "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), A, B)", "BadArity in []" },
         // A lone conflict is still the ordinary BadArity.
         { "P(x, x) = x\nP(1, 2)", "BadArity in []" },
         { "P(x, *r, x) = x\nP(1, 9, 2)", "BadArity in []" },
-        // The prefix/collector/suffix merge: within ONE merge an unequal value is found before
-        // a callable-identity conflict (both x and f repeat across the collector)...
+        // Across a collector, in written order: f's suffix occurrence is reached first, where
+        // the identities A and B conflict (both x and f repeat across the collector)...
         { Distinct + "P(x, f, *r, f, x) = 0\nP(1, A, B, 2)", Identity },
         // ...and a callable-identity conflict across the collector is the type mismatch.
         { Distinct + "P(f, *r, f) = 0\nP(A, 9, B)", Identity },
         // A repeated name's VALUELESS contribution is a binding failure of its own pattern
-        // (Q-05): the slot's own outcome, before any verdict of that range, wherever the
-        // unequal name stands, and before a later pattern binds.
+        // (Q-05): its own demanded outcome, reported when that occurrence is visited — unless an
+        // earlier occurrence already conflicted in written order (NEED-04).
         { "P(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", "BadArity in []" },
         { "P(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", IncValueDemand },
         { "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), Inc, Inc)", "BadArity in []" },
@@ -97,7 +100,7 @@ public class PatternBindingErrorPrecedenceTests
         { "P((x, x, (a, b))) = true\nfilter([(1, 2, 7)], P)", "BadArity in []" },
         { "R((x, x, (a, b)), acc) = acc\nreduce([(1, 2, 7)], R, 0)", "BadArity in []" },
         { "P((x, x), (a, b)) = [a]\nreduce([(1, 2)], P, 7)", "BadArity in []" },
-        // The counted collecting list: prefix, then suffix, then the cross merge.
+        // The counted collecting list follows the same written-order inspection.
         { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, 7)], P)", "BadArity in []" },
         { "P((x, *m, x, (a, b))) = [a]\nmap([(1, 9, 2, (7, 8, 9))], P)", "BadArity in []" },
         { "P((x, x, *m, (a, b))) = [a]\nmap([(1, 2, 9, 7)], P)", "BadArity in []" },
@@ -105,7 +108,7 @@ public class PatternBindingErrorPrecedenceTests
         // The reducer is an ordinary two-argument callback: a flat reducer needing three
         // items is the ordinary arity failure of `R(1, (9, 2, 7))`, while the reducer's
         // explicit accumulator pattern binds the accumulator's items through the same
-        // order: the suffix (a, b) fails before the unequal x is merged.
+        // order: the suffix x (2) conflicts with the prefix x (9) before (a, b) is visited.
         { "R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))", "ArityMismatch(3, 2) in []" },
         { "R(e, (x, *m, x, (a, b))) = [a]\nreduce([1], R, (9, 3, 2, 7))", "BadArity in []" },
     };
@@ -122,8 +125,8 @@ public class PatternBindingErrorPrecedenceTests
     [Fact]
     public void LoopStateBinding_ReportsTheFailureLeanReports()
     {
-        // Loop state binds through the ordinary binder: the nested (a, b) failure of the third
-        // state slot outranks the unequal x of the first two.
+        // Loop state binds through the ordinary binder: the unequal x of the first two state
+        // slots is reported before the third slot's nested (a, b) is inspected.
         var result = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, 7)");
         Assert.True(result.IsError);
         Assert.Equal("BadArity in []", BindingReason(result.Error));
@@ -151,7 +154,7 @@ public class PatternBindingErrorPrecedenceTests
         Assert.Contains(frames, frame => frame.Contains("while evaluating map transform", StringComparison.Ordinal));
         Assert.Equal(direct.Message, KatLangError.FromEvalError(callback.Error).Message);
 
-        // The retained value error keeps its own location (the division in `Bad`).
+        // The demanded argument's own error keeps its location (the division in `Bad`).
         var retained = KatLangError.FromEvalError(Run(Definitions + "P(x, x, (a, b)) = a\nP(1, 1, Bad)").Error);
         var span = Assert.IsType<SourceSpan>(retained.Span);
         Assert.Equal(1, span.Start.Line);
@@ -177,8 +180,9 @@ public class PatternBindingErrorPrecedenceTests
     [Fact]
     public void RepeatedConflict_DemandsOnlyTheVisitedContributions()
     {
-        // Binding every pattern before merging evaluates nothing new: the arguments were
-        // evaluated (once each, left to right) before any pattern bound.
+        // NEED-04 demands a contribution only when its pattern is visited: the second x
+        // conflicts with the first, so the third argument is never demanded. (Formerly every
+        // argument was evaluated, once each, left to right, before any pattern bound.)
         var ticks = new List<Decimal128>();
         var operations = HostOperations.Create(HostOperation.Create("Tick", (args, _) =>
         {
@@ -268,7 +272,7 @@ public class PatternBindingErrorPrecedenceTests
             Assert.Equal(currentExpected, Outcome(Run($"{definitions}P({captures}) = f\n{call}")));
 
             // The same multiset around a collecting parameter: the name spans the prefix and
-            // the suffix, and is decided once at the cross merge with all of it in hand.
+            // the suffix, and each occurrence is compared when visited, in written order.
             var spread = $"P({permutation[0]}, 9, {string.Join(", ", permutation.Skip(1))})";
             var collecting = $"f, *r, {string.Join(", ", Enumerable.Repeat("f", arguments.Length - 1))}";
             Assert.Equal(currentExpected, Outcome(Run($"{definitions}P({collecting}) = f\n{spread}")));
@@ -297,9 +301,8 @@ public class PatternBindingErrorPrecedenceTests
     [InlineData("P((x, x, *m, x, (a, b))) = [a]\nmap([(1, 1, 9, 2, 7)], P)")]
     public void ThreeOccurrenceName_StopsAtTheFirstConflict(string program)
     {
-        // Which occurrence holds the odd value no longer decides whether the later (a, b)
-        // failure (the scalar 7 is its kind mismatch) is reported first: the name is decided
-        // once, after the suffix has bound.
+        // Wherever the odd value stands, the first unequal occurrence of x is reported before
+        // the later (a, b) — whose scalar 7 would be its kind mismatch — is ever inspected.
         var result = Run(program);
         Assert.True(result.IsError);
         Assert.Equal("BadArity in []", BindingReason(result.Error));

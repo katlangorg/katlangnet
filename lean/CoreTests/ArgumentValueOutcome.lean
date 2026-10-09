@@ -14,9 +14,15 @@ open KatLang (resolve param num)
 -- expression to execute again: argument evaluation uses the proper semantic
 -- route once, and every parameter read reuses its outcome. The algorithm
 -- channel stays available for invocation, structural navigation and
--- forwarding, but it is never a second route to the parameter's value
--- (`AlgBinding.valueFailure?`, `slotAlgorithmBinding`, the `.param` arm of
--- `evalCounted`, `resolveArgAlgExpr`, `parameterValueFailure?`).
+-- forwarding, but it is never a second route to the parameter's value. Since
+-- Model C (October 2026) the one route is the parameter's need cell
+-- (`supplyNeed`, `demandNeed`, `EvalState.needs`; the `.param` arm of
+-- `evalCounted` demands it first). `AlgBinding.valueFailure?` and
+-- `parameterValueFailure?` remain as legacy Ready-tier readers with no
+-- production writer; the former `resolveArgAlgExpr` is gone (builtin argument
+-- resolution now supplies need cells, `resolveArgAlgsWithSequenceSpread`), and
+-- the eager writer `slotAlgorithmBinding` survives only in the historical
+-- fixture `HistoricalReadyBinding.lean`.
 --
 -- Evidence without host operations: `Bad = Id(1) / 0` and `A = Id(5)` open
 -- exactly ONE binding context per evaluation of their bodies (the `Id` call;
@@ -182,8 +188,9 @@ def readOfValuedBinding : Except Error Result :=
 #guard aoContexts [callOf "Fwd" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 2
 
 -- 5. Builtin VALUE slots and the `.string` receiver read a failed parameter through
---    the ordinary parameter read (`resolveArgAlgExpr`, `parameterValueFailure?`): the
---    slot's failure, with no second evaluation of the argument.
+--    the ordinary parameter read (the parameter's need cell, `demandNeed`; formerly
+--    `resolveArgAlgExpr` and `parameterValueFailure?`): the slot's failure, with no
+--    second evaluation of the argument.
 #guard aoFailsWithDivByZero [callOf "Sum" [resolve "Bad"]]
 #guard aoContexts [callOf "Sum" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
 #guard aoFailsWithDivByZero [callOf "If" [resolve "Bad"]]

@@ -492,10 +492,10 @@ public class EvaluationLimitsTests
     [Fact]
     public void UnusedResolveArgument_WithAnOrdinaryFailure_StaysLatentAndCheap()
     {
-        // F never demands its parameter, and the resolve-shaped argument's ORDINARY failure
-        // is retained beside its algorithm channel as the parameter's value outcome, so the
-        // call succeeds. The argument IS evaluated — once, at assembly (CALL-02, CALL-06) —
-        // it is the failure that stays latent.
+        // F never demands its parameter, so its supplied computation `Bad` is never
+        // evaluated and the call succeeds (Model C, NEED-01/03; CALL-02, CALL-06). (Until
+        // Model C the argument WAS evaluated, once, at assembly, and only its failure stayed
+        // latent, retained beside its algorithm channel.)
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Bad = 1 / 0\nF(v) = 0\nF(Bad)").Root),
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });
@@ -506,12 +506,12 @@ public class EvaluationLimitsTests
     [Fact]
     public void UnusedSelfReferentialResolveArgument_DoesNotRecurse()
     {
-        // The same shape whose argument recurses into itself: each level's slot evaluates A
-        // again until MaxDepth refuses it. (The former comment called this argument "never
-        // evaluated"; it was evaluated to the limit, and the limit was absorbed.) RESOURCE
-        // LIMITS ARE TERMINAL (Q-02 / PV-06): the depth failure ends the run, and the work up
-        // to it stays within the linear step budget, so the DEPTH verdict — not the step
-        // verdict — is what fails.
+        // The same shape whose argument would recurse into itself: F never demands it, so
+        // the supplied computation `A` is never evaluated, nothing recurses, no limit is
+        // reached, and the run returns 0 (Model C, NEED-01/03). (Before Model C each level's
+        // slot evaluated A again at assembly until MaxDepth refused it — first absorbed, and
+        // from the Q-02 decision of 2026-09-28 terminal; this comment described that until
+        // 2026-10-09.)
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid("F(v) = 0\nA = F(A)\nA").Root),
             new EvaluationLimits { MaxDepth = 24, MaxSteps = 72 });

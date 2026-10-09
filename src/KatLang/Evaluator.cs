@@ -1151,8 +1151,9 @@ public static partial class Evaluator
 
     /// <summary>
     /// <see cref="BlameWrittenArgumentForMissingOutput"/> for a written call-argument
-    /// SLOT, which is evaluated as an ordinary expression
-    /// (<c>BuildCallArgumentInputs</c>). A NAME occurrence therefore already made its
+    /// SLOT, whose supplied computation is evaluated as an ordinary expression on its first
+    /// VALUE demand (<c>SupplyCell</c>, Model C; until Model C at assembly, by the deleted
+    /// <c>BuildCallArgumentInputs</c>). A NAME occurrence therefore already made its
     /// own blame decision during that evaluation — including the deliberate diagnostic
     /// TRANSPARENCY of the parser's hoisted deconstruction source, whose bare
     /// <see cref="EvalError.MissingOutput"/> must keep bubbling to the written

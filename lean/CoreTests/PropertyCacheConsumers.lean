@@ -16,7 +16,8 @@ open KatLang (resolve param num)
 -- (`sum(A)`, `A.sum`, `if(c, A, B)`, a loop's initial state, `reduce`'s initial
 -- accumulator), the `.string` receiver, a user call, a callback, a selection and
 -- a collection element all receive the value the property access produced
--- (`resolveArgAlgExpr`, `evalDotStringReceiverValue`); none of them can re-run
+-- (`resolveArgAlgsWithSequenceSpread`'s need cells — formerly `resolveArgAlgExpr` —
+-- and `evalDotStringReceiverValue`); none of them can re-run
 -- the property's body.
 --
 -- Evidence without host operations: `A`'s body is the call `Id([1, 2])` and

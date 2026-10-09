@@ -2747,8 +2747,8 @@ public static partial class Evaluator
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
             return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(false));
 
-        // A PARAMETER receiver whose argument slot FAILED its one value evaluation reports
-        // that recorded failure first — see the synchronous twin.
+        // A parameter without a supplied cell reports a failure recorded on its algorithm
+        // binding first — see the synchronous twin.
         if (target is Expr.Param(var paramName)
             && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
         {

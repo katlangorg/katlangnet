@@ -2007,9 +2007,10 @@ public static partial class Evaluator
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
             return ProjectCountedValue(EvalParamCounted(needName, target.Span, ctx, valEnv));
 
-        // A PARAMETER receiver's value outcome was established at binding: a parameter whose
-        // argument slot FAILED its one value evaluation reports that failure first, before the
-        // law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
+        // A parameter without a supplied cell (the legacy Ready tiers; every Model-C parameter
+        // took the cell read above) reports a failure recorded on its algorithm binding first,
+        // before the law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE EVALUATION);
+        // no Model-C binding path records one.
         if (target is Expr.Param(var paramName)
             && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
         {

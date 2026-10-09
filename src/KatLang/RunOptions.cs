@@ -207,7 +207,9 @@ public sealed class RunOptions
     /// order, so the values depend on which random calls execute and in what order —
     /// removing an earlier random call generally changes every later value (a call can
     /// consume a variable number of raw words), and the ordinary evaluation rules
-    /// (left-to-right arguments, lazy <c>if</c> branches, the zero-argument property cache,
+    /// (explicit spreads at supply formation, then supplied arguments in the order they are
+    /// first demanded — an undemanded argument never draws; lazy <c>if</c> branches, the
+    /// zero-argument property cache,
     /// explicit <c>A()</c> re-evaluation) decide which calls execute. Synchronous versus
     /// asynchronous entry points, optimizer strategies, and unrelated
     /// <see cref="EvaluationLimits"/> settings that do not change the program's actual

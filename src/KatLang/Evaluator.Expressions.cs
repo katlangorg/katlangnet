@@ -424,16 +424,20 @@ public static partial class Evaluator
     /// Counted parameter-reference evaluation — the CANONICAL Param dispatch
     /// shared by both dispatcher spellings (the plain <see cref="Eval"/> arm
     /// projects its value, so the dual-view rules exist once).
-    /// Dual-view lookup order (Lean: <c>evalCounted</c> Param(x)):
-    /// 1. Counted callback-param env (the callback item / collecting binding as bound)
+    /// Lookup order (Lean: <c>evalCounted</c> Param(x)):
+    /// 0. NeedEnv (Model C): the parameter's supplied cell (<see cref="NeedCell"/>). The
+    ///    read DEMANDS it: the first VALUE demand evaluates the supplied computation once,
+    ///    and every later read reuses that completed outcome, a failure included.
+    ///    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): the read never
+    ///    evaluates the algorithm channel, so a failure cannot heal, the argument's effects
+    ///    and random draws never repeat, and every read of the parameter in one activation
+    ///    observes the same outcome.
+    /// 1. Counted callback-param env (legacy Ready data: a callback item / collecting
+    ///    binding as bound)
     /// 2. ValEnv (ordinary value meaning)
-    /// 3. AlgEnv: a parameter found only on the algorithm channel is one whose written
-    ///    argument slot FAILED its one value evaluation, and that failure — recorded on
-    ///    the binding (<see cref="NeedCell"/>) — is its value outcome.
-    ///    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): the read reuses
-    ///    the outcome and never evaluates the algorithm channel, so a failure cannot heal,
-    ///    the argument's effects and random draws never repeat, and every read of the
-    ///    parameter in one activation observes the same outcome.
+    /// 3. AlgEnv: a parameter found only on the algorithm channel reports the failure
+    ///    recorded there (<see cref="ParameterSlotFailure"/>); no Model-C binding path
+    ///    records one (Lean keeps the same retained tier, <c>AlgBinding.valueFailure?</c>).
     /// </summary>
     // Frame-size discipline for the two name dispatches of the Eval / EvalCounted spines: the
     // expression's span (a 20-byte value as SourceSpan?) is read in these small non-inlined
@@ -471,8 +475,9 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The value outcome of a parameter whose written argument slot FAILED its one value
-    /// evaluation: that recorded failure (<see cref="NeedCell"/>), reported the
+    /// The value outcome of a parameter whose supplied computation FAILED its one value
+    /// evaluation (its cell's first VALUE demand, <see cref="NeedCell"/>), or that carries a
+    /// failure recorded on the legacy algorithm tier: that failure, reported the
     /// way a value-position read reports a parameter's failure — an output-less argument is
     /// the PARAMETER's failure (<see cref="WithParameterContextOnMissingOutput"/>), and the
     /// read's location is attached only when the failure carries none. This is never an

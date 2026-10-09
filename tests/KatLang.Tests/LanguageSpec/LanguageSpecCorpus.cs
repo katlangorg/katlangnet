@@ -275,6 +275,48 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "need-dot-receiver-is-a-supplied-computation",
+            Category = "variadic-calls",
+            Source = "Second(a, b) = b\n(1 / 0).Second(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Explanation = "A dot call's receiver is the call's first argument, supplied like every argument: it runs only if the callee demands it. `Second` reads only `b`, so the receiver's division by zero never runs, exactly as in the written call `Second(1 / 0, 2)`.",
+        },
+        new()
+        {
+            Id = "need-dot-receiver-follows-callee-demand-order",
+            Category = "variadic-calls",
+            Source = "Flip(a, b) = b + a\n(1 / 0).Flip('a' + 1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "The receiver is not evaluated before the written arguments: the callee demands its cells in its own order. `Flip` demands `b` first, so the type error of `'a' + 1` is the failure reported and the receiver's division by zero never runs, as in the written call `Flip(1 / 0, 'a' + 1)`.",
+        },
+        new()
+        {
+            Id = "need-family-binder-keeps-the-callable",
+            Category = "conditionals",
+            Source = "Inc(x) = x + 1\nApp(f, 0) = 0\nApp(f, n) = f(n)\nR(z) = App(Inc, 5)\nR(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Explanation = "A clause family demands only what its patterns inspect, and a binder keeps its argument's callable identity, so the selected clause can invoke `f` as `Inc`. The closed parameter list of `R` keeps `Inc` a callable argument; in a formula that infers its parameters a family argument is a value position, and a bare callable there would be lifted instead.",
+        },
+        new()
+        {
+            Id = "need-deconstruction-runs-on-first-target-demand",
+            Category = "deconstruction",
+            Source = "p, q = 1 / 0, 2\nI(f) = 0\nI(p), I(q)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0\n0",
+            ExpectedRaw = "S[0, 0]",
+            ExpectedEmittedCount = 2,
+            Explanation = "A deconstruction's right-hand side runs on the first demand of one of its targets. Passing a target to a callee that never reads it is no demand, so the division by zero never runs and the program succeeds.",
+        },
+        new()
+        {
             Id = "collected-callable-survives-explicit-respread",
             Category = "variadic-calls",
             Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(Inc)",
@@ -6926,7 +6968,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("S = 1, 2\nA = 42\nA.string(S*)", "err arity"),
                 new SpecProbe("Obj = {\n    5\n}\nObj.string(1)", "err arity"),
             ],
-            Explanation = "The `.string` intrinsic is a zero-parameter member. A written argument list is assembled exactly like every call's (each slot evaluated once, spreads opened) and then rejected by arity, the outcome `Obj.V(1)` has for a declared zero-parameter member — a written bundle is never silently dropped. An empty written list (`A.string()`) stays the intrinsic, as `A()` stays a call of `A`.",
+            Explanation = "The `.string` intrinsic is a zero-parameter member. A written argument list is formed exactly like every call's supply (explicit spreads opened, every other slot a suspended computation) and then rejected by its cardinality before any argument or the receiver is demanded — the outcome `Obj.V(1)` has for a declared zero-parameter member — so a written bundle is never silently dropped. An empty written list (`A.string()`) stays the intrinsic, as `A()` stays a call of `A`.",
         },
         new()
         {

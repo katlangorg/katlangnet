@@ -11,28 +11,30 @@ namespace KatLang.Tests;
 ///
 /// <para>A resource-limit failure is a property of the run, not a latent argument value.
 /// Once any evaluation that actually occurs reaches a resource limit, the run terminates
-/// with that failure: an unused parameter, a retained algorithm channel, deferred value
-/// demand, call forwarding, a builtin's arity verdict, or a consumer's choice cannot absorb
-/// it, and nothing evaluates after it — no later argument, callee body, random draw, or
-/// host operation. A resource limit may stop a run; it never redefines the value of a run
-/// that succeeds. Laziness is untouched: an argument the language does not evaluate (an
-/// unselected <c>if</c> branch, a builtin callback slot that is never invoked) reaches no
-/// limit. The decision is <c>Evaluator.IsDeferrableEvaluationFailure</c>, consulted by
-/// user-call argument assembly and the builtin argument adapter (which the fused
-/// filter-count pipeline shares), in the synchronous evaluator and its async twin
-/// alike.</para>
+/// with that failure: no later work, consumer choice, forwarding, arity verdict or
+/// earlier ordinary failure can absorb, replace or defer it, and nothing evaluates after
+/// it — no later argument, callee body, random draw, or host operation. A resource limit
+/// may stop a run; it never redefines the value of a run that succeeds. Since Model C
+/// (2026-10-02) a supplied argument is evaluated only on its first VALUE demand, so only an
+/// evaluation that is actually demanded can reach a limit: an unused argument, an
+/// unselected <c>if</c> branch or a never-invoked builtin callback reaches none. A demanded
+/// cell that reaches a limit completes terminally (<c>NeedCell</c> keeps that completion and
+/// the run budget retains the terminal error, so nothing restarts it); the remaining use of
+/// <c>Evaluator.IsDeferrableEvaluationFailure</c> is the report precedence of a builtin value
+/// slot's demand failure (<c>SequenceBuiltinValueDemandError</c>).</para>
 ///
 /// <para>Before the rule, an algorithm-channel argument slot whose evaluation reached a
 /// limit RETAINED the failure beside its algorithm binding and surfaced it only on demand,
 /// so a callee that ignored the parameter let the run SUCCEED after partial evaluation:
 /// <c>G(x, y) = y</c> called as <c>G({Deep(100) + randomInt(0, 1000)}, randomInt(0, 1000))</c>
 /// returned the FIRST seeded draw (209) because the limit struck before the first argument's
-/// draw, while the unlimited meaning is the SECOND draw (711); a lower <c>MaxDepth</c> turned
+/// draw, while the eager model's unlimited meaning was the SECOND draw (711); a lower <c>MaxDepth</c> turned
 /// one success into another, and the host stack, the route, and suspension decided which.
-/// Ordinary failures keep their CALL-06 / CALL-03 semantics (deferred until demanded,
-/// evaluated at most once), and Q-01's at-most-once law is unchanged. Lean has no resource
-/// model; the unlimited Lean meaning is the reference every successful limited run must
-/// equal.</para>
+/// The Q-02 decision made such a limit terminal; Model C then left the ignored argument
+/// unevaluated, so the canonical program now returns its unlimited Model-C meaning, the
+/// FIRST draw (209), whatever the depth limit. Q-01's at-most-once law is unchanged. Lean has
+/// no resource model; the unlimited Lean meaning is the reference every successful limited
+/// run must equal.</para>
 /// </summary>
 public class ResourceLimitTerminalityTests
 {
@@ -341,12 +343,13 @@ public class ResourceLimitTerminalityTests
     // ── 1. The canonical PV-06 reproducer ─────────────────────────────────────────────
 
     /// <summary>
-    /// With seed 3 the stream begins 209, 711. With sufficient resources the first argument
-    /// consumes 209 and the second 711, so the unlimited meaning is 711. Before the rule, the
-    /// depth limit struck inside <c>Deep(100)</c> before the first draw, the callee ignored
-    /// <c>x</c>, the retained failure was dropped, and the second argument drew 209: the run
-    /// SUCCEEDED with a value that exists only because the limit was absorbed. Now the limit
-    /// ends the run, on every route, before either draw.
+    /// With seed 3 the stream begins 209, 711. <c>G</c> ignores <c>x</c>, so under Model C its
+    /// supplied computation is never evaluated: <c>Deep(100)</c> never runs, no limit is reached,
+    /// and <c>y</c> draws the FIRST word, 209, on every route and at every depth limit. A callee
+    /// that demands <c>x</c> first reaches the limit after the first draw, and the limit ends
+    /// the run. (Before the Q-02 rule the eagerly evaluated <c>x</c> struck the limit before its
+    /// draw, the failure was dropped, and <c>y</c> drew 209 as an absorbed-limit success; from
+    /// Q-02 until Model C the limit ended the run before either draw.)
     /// </summary>
     [Fact]
     public async Task CanonicalReproducer_IgnoredArgumentNeverReachesTheLimit()
@@ -362,9 +365,11 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// The sufficient-resource half of the canonical example: when the depth fits, the first
-    /// argument completes, consumes 209, and the ignored parameter changes nothing — the run
-    /// returns the unlimited meaning 711 on every route.
+    /// The sufficient-resource half of the canonical example: whatever the depth, the ignored
+    /// parameter is never evaluated, so the run returns its unlimited meaning — 209, the first
+    /// draw, made by <c>y</c> — on every route. (Until Model C this read "the first argument
+    /// completes, consumes 209 … the run returns the unlimited meaning 711": the eager first
+    /// argument drew first.)
     /// </summary>
     [Fact]
     public async Task CanonicalReproducer_WithSufficientDepth_ReturnsTheUnlimitedMeaning()
@@ -377,11 +382,13 @@ public class ResourceLimitTerminalityTests
             "trace(209)");
 
     /// <summary>
-    /// The explicit <c>MaxDepth</c> sweep of the PV-06 record. Before the rule MaxDepth 10..40
-    /// gave ok 209 and 50..128 gave ok 711. Now every limit either stops the run with a
-    /// resource-limit failure or returns 711, and the successes form one contiguous upper
-    /// range: raising the limit may turn a failure into the success, never one success into
-    /// another.
+    /// The explicit <c>MaxDepth</c> sweep of the PV-06 record. Before the Q-02 rule MaxDepth
+    /// 10..40 gave ok 209 and 50..128 gave ok 711. Under Model C the ignored argument is never
+    /// evaluated, so the only limit the program can reach is the shallow evaluation of the
+    /// call itself: every limit either stops the run with a resource-limit failure or returns
+    /// the unlimited meaning 209, and the successes form one contiguous upper range — raising
+    /// the limit may turn a failure into the success, never one success into another. (Until
+    /// 2026-10-09 this comment named 711, the unlimited meaning of the eager model.)
     /// </summary>
     [Fact]
     public void ExplicitDepthSweep_EveryOutcomeIsTheLimitFailureOrTheUnlimitedMeaning()
@@ -446,9 +453,12 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// The consumer cannot decide whether an encountered limit is terminal: a callee that
-    /// uses the parameter, one that ignores it, one that reads it twice, and one that only
-    /// forwards it all fail identically, after identical effects.
+    /// The consumer decides only WHETHER the argument is demanded, never whether a reached limit
+    /// is terminal: a callee that uses the parameter, reads it twice, converts it or sums it
+    /// demands the argument and fails on its limit at once, before <c>trace(2)</c>; one that
+    /// ignores it, only forwards it to an ignoring callee, or leaves it in an unselected branch
+    /// never evaluates it, reaches no limit and succeeds. (Until Model C every callee here
+    /// failed identically: the argument was evaluated at assembly.)
     /// </summary>
     [Theory]
     [InlineData("Use(x) = x")]
@@ -472,10 +482,13 @@ public class ResourceLimitTerminalityTests
     // ── 3. Every binding shape, every consumer, every spelling ─────────────────────────
 
     /// <summary>
-    /// The hostile-review matrix: every way an argument can reach a callee that does not
-    /// demand its value — fixed, collecting, nested-pattern, clause-family, forwarding,
-    /// alias, opened, structural, higher-order, native wrapper, and dotted spellings, and
-    /// builtin versus user-defined consumers — terminates on the limit the argument reached.
+    /// The hostile-review matrix: every way an argument can reach a callee — fixed, collecting,
+    /// nested-pattern, clause-family, forwarding, alias, opened, structural, higher-order,
+    /// native wrapper, and dotted spellings, and builtin versus user-defined consumers. Under
+    /// Model C only an actual demand evaluates it: an inspecting pattern (a repeated name, a
+    /// structural pattern, a clause literal), a builtin value slot or an explicit spread reaches
+    /// the limit and ends the run; a cardinality rejection comes before any demand; every
+    /// other shape leaves the argument unevaluated and succeeds.
     /// </summary>
     [Theory]
     [InlineData("F(x, y) = y\nF(DeepP, 7)")]
@@ -546,12 +559,12 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// A builtin CALLBACK slot is not an argument slot of a user call: the builtin adapter never
-    /// evaluates a supplied callback for its value (CALL-03 — it is invoked per element, and an
-    /// empty collection invokes it never), so a deep callback reaches no limit, while a
-    /// user-defined consumer evaluates every written argument at assembly (CALL-02) and the
-    /// same argument's limit is terminal there. Before the PV-19 repair the builtin's eager
-    /// attempt reached the limit too, which made the two look alike.
+    /// A builtin CALLBACK slot is never evaluated for its value (CALL-03 — it is projected and
+    /// invoked per element, and an empty collection invokes it never), and an ordinary unused
+    /// argument of a user-defined consumer is never evaluated either (CALL-02, Model C): neither
+    /// reaches a limit, so both succeed. (Until Model C the user-defined consumer evaluated every
+    /// written argument at assembly and reached the limit; before the PV-19 repair the builtin's
+    /// eager attempt reached it too.)
     /// </summary>
     [Theory]
     [InlineData("filter([], {DeepP})", "MyFilter(xs, p) = []\nMyFilter([], {DeepP})", "L[]")]
@@ -564,9 +577,10 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// The builtin adapter no longer evaluates a later slot after an earlier slot's limit, and
-    /// neither its arity verdict nor an earlier slot's retained ORDINARY failure replaces the
-    /// limit: the limit was the first failure RAISED in evaluation order.
+    /// Cardinality is checked before any slot is demanded, so a wrong-arity call reports
+    /// <c>ArityMismatch</c> and never reaches a limit a slot would have reached; with the right
+    /// cardinality the first DEMANDED failure is the call's, and a later slot — however deep —
+    /// is never demanded after it (Model C, NEED-05).
     /// </summary>
     [Fact]
     public async Task CardinalityAndFirstDemand_PrecedeUnreachedLimits()
@@ -600,7 +614,7 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// A source's deferred ORDINARY failure is the pipeline's verdict: the deep predicate is a
+    /// A source's demanded ORDINARY failure is the pipeline's verdict: the deep predicate is a
     /// CALLBACK slot, never evaluated merely because it was supplied, so it reaches no limit and
     /// cannot replace the source's failure (before the PV-19 repair its eager value attempt ran
     /// after the failed source and its limit won).
@@ -663,8 +677,9 @@ public class ResourceLimitTerminalityTests
 
     /// <summary>
     /// Every resource limit an argument's evaluation can deterministically reach under an
-    /// explicit budget is terminal: the ignoring and the using callee fail alike, and the
-    /// second argument's effect never happens. (The two remaining classifications cannot be
+    /// explicit budget is terminal: the using callee fails on it, and the second argument's
+    /// effect never happens, while an ignoring callee never evaluates the argument and
+    /// succeeds (Model C; until Model C the ignoring callee failed alike). (The two remaining classifications cannot be
     /// reached inside an argument: <c>AstDepthLimitExceeded</c> is the pre-evaluation
     /// structural preflight, and <c>DisplayLengthLimitExceeded</c> is rendering state after a
     /// successful run. The host-stack backstop is pinned separately on a controlled stack.)
@@ -799,10 +814,11 @@ public class ResourceLimitTerminalityTests
     // ── 6. Q-01 interaction ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION is intact beside the new rule: an ordinary
-    /// failure is retained once and every read reports it, a successful value is evaluated
-    /// once and read many times, an explicit invocation stays fresh, and a limit reached by
-    /// a slot is terminal at once — never retained for a later read.
+    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION is intact beside the rule: a demanded ordinary
+    /// failure is raised at its first demand (and kept by its cell for any later demand), a
+    /// successful value is evaluated once and read many times, an explicit invocation stays
+    /// fresh, and a limit reached by a demanded slot is terminal at once — its completion never
+    /// restarts and is never a recoverable value.
     /// </summary>
     [Fact]
     public async Task AtMostOnceArgumentValueEvaluation_IsIntact()
@@ -813,8 +829,9 @@ public class ResourceLimitTerminalityTests
             "S[S[1, 1], 1]", "tick#1", "trace(1)");
         AssertOk(await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
             "S[1, 2, 3]", "tick#1", "tick#2", "tick#3");
-        // An ordinary failure beside a later limit: the first slot is evaluated once and
-        // retained, the second slot's limit ends the call.
+        // An ordinary failure beside a demanded limit: G demands only y, so Bad is never
+        // evaluated, and y's limit ends the run after trace(2). (Until Model C the first slot
+        // was evaluated at assembly and its failure retained.)
         AssertTerminal(
             await OnEveryRouteAsync(DeepDefinition + "Bad = trace(1) / 0\nG(x, y) = y\nG(Bad, {trace(2) + Deep(100)})", limits: Shallow),
             KatLangErrorCode.EvaluationDepthExceeded,

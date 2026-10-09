@@ -7,8 +7,9 @@ namespace KatLang.Tests.Randomness;
 /// <summary>
 /// A seed makes draw COUNT and ORDER observable, so these tests pin — with exact
 /// seeded values — that the existing evaluation rules decide which random calls
-/// execute: the zero-argument property cache, left-to-right argument evaluation,
-/// once-only evaluation of written arguments (including the patterned-call
+/// execute: the zero-argument property cache, first-demand order of supplied
+/// arguments after explicit spreads are formed (Model C, NEED-03/07), at-most-once
+/// evaluation of written arguments (including the patterned-call
 /// regression class), lazy <c>if</c> branches, callbacks in sequence order,
 /// deconstruction, and the engine's output-then-<c>DisplayDecimals</c> order.
 ///
@@ -89,7 +90,7 @@ public class SeededEvaluationOrderTests
         Assert.Equal([d[0], d[0], d[0], d[1]], Run("A = R()\nF(x) = A + x\nF(0), F(0), F(0), R()"));
     }
 
-    // ── Written order ─────────────────────────────────────────────────────────
+    // ── Argument demand order (formerly "Written order"; Model C, NEED-03/07) ──
 
     [Fact]
     public void CallArguments_DrawOnFirstDemand()
@@ -116,6 +117,20 @@ public class SeededEvaluationOrderTests
         Assert.Equal([d[0], d[1], d[2]], Run("P((x, y)) = x, y\nP((R(), R())), R()"));
         Assert.Equal([d[1], d[0], d[2]], Run("F(a, b) = b, a\nF((R(), R())*), R()"));
         Assert.Equal([d[1], d[0], d[2]], Run("S = R(), R()\nF(a, b) = b, a\nF(S*), R()"));
+    }
+
+    [Fact]
+    public void UserWrapperOfBuiltinIf_FormsItsSpreadBeforeDemandingTheCondition()
+    {
+        var d = Draws(2);
+
+        // Supply formation opens the spread slot first (draw 0); `if` then demands its condition
+        // (draw 1) and selects the spread's item: the builtin and a user wrapper alike, since every
+        // callee forms its supply the same way (constitution RAND-01, corrected 2026-10-09).
+        Assert.Equal([d[0]], Run("if(R() >= 0, R()*, 0)"));
+        Assert.Equal([d[0]], Run("F(c, a, b) = if(c, a, b)\nF(R() >= 0, R()*, 0)"));
+        // Without the spread the wrapper's cells are demanded in first-demand order: c, then a.
+        Assert.Equal([d[1]], Run("F(c, a, b) = if(c, a, b)\nF(R() >= 0, R(), 0)"));
     }
 
     [Fact]

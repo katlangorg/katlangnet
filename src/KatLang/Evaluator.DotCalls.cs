@@ -422,12 +422,14 @@ public static partial class Evaluator
 
     /// <summary>
     /// The <c>.string</c> intrinsic is a ZERO-parameter member. A written argument list is
-    /// assembled exactly like every call's (each written slot evaluated once, left to
-    /// right, spreads opened — <see cref="FormNeedSupply"/>) and then rejected by
-    /// arity, the same outcome as <c>Obj.V(1)</c> for a declared zero-parameter member, so a
-    /// written bundle is never silently dropped; an EMPTY written list (<c>x.string()</c>)
-    /// stays the intrinsic, as <c>A()</c> stays a call of <c>A</c>. Returns <c>null</c> when
-    /// the intrinsic may proceed. Lean: <c>rejectDotStringIntrinsicArguments</c>.
+    /// formed exactly like every call's supply (<see cref="FormNeedSupply"/>: explicit
+    /// spreads are opened, every other slot stays a suspended need cell) and then rejected
+    /// by its cardinality before any argument, or the receiver, is demanded — the same
+    /// outcome as <c>Obj.V(1)</c> for a declared zero-parameter member — so a written bundle
+    /// is never silently dropped; an EMPTY written list (<c>x.string()</c>), or one whose
+    /// spreads supply no item, stays the intrinsic, as <c>A()</c> stays a call of <c>A</c>.
+    /// Returns <c>null</c> when the intrinsic may proceed. Lean:
+    /// <c>rejectDotStringIntrinsicArguments</c>.
     /// </summary>
     private static EvalError? RejectDotStringIntrinsicArguments(
         OutputBundle? argsOpt,
