@@ -601,11 +601,13 @@ public class ZeroArgumentReferenceLiftingTests
     // ── 8. Collectors: a failed read is that read's failure ──────────────────────────
 
     /// <summary>
-    /// A collecting parameter collects VALUES, and a callable that accepts zero supplied
-    /// arguments is one (found by the Q-03 hostile review): when its evaluation fails, the
-    /// collector surfaces that genuine failure exactly as it does for a zero-parameter
+    /// Reading a collected list demands every element's VALUE, and a callable that accepts
+    /// zero supplied arguments has one (found by the Q-03 hostile review): when its evaluation
+    /// fails, the read surfaces that genuine failure exactly as it does for a zero-parameter
     /// property. Formerly it reported "collects values, but a supplied argument is a
-    /// callable", because the check asked whether the argument DECLARES parameters.
+    /// callable", because the check asked whether the argument DECLARES parameters; that
+    /// collector diagnostic no longer exists at all (VAR-03 as reconciled 2026-10-09: a
+    /// collector preserves the supplied cells — <see cref="CollectingCallableForwardingLawTests"/>).
     /// </summary>
     [Theory]
     [InlineData("Coll(Bad)")]
@@ -624,9 +626,10 @@ public class ZeroArgumentReferenceLiftingTests
     }
 
     /// <summary>
-    /// A callable that REQUIRES a supplied argument, and a builtin, have no value to collect:
+    /// A callable that REQUIRES a supplied argument, and a builtin, have no zero-argument value:
     /// demanding the collected list demands each element, so the callable's own zero-supply
-    /// rejection surfaces.
+    /// rejection surfaces (collecting them alone demands nothing, and re-spreading keeps them
+    /// callable).
     /// </summary>
     [Fact]
     public async Task Collectors_DemandTheCallablesOwnZeroArgumentRejection()

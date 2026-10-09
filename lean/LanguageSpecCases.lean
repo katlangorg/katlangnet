@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 394
-- excluded parse-level cases (Lean has no surface parser): 59
+- specification surface cases: 397
+- excluded parse-level cases (Lean has no surface parser): 60
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 314
-- probe observations (C#-only by design): 1241
+- Lean-guarded cases: 316
+- probe observations (C#-only by design): 1255
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -165,6 +165,11 @@ def case_need_collector_demand_materializes_whole_slice : Expr :=
 def case_need_callable_projection_does_not_force_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 4])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_need_callable_projection_does_not_force_value == "ok raw=5 n=1"
+
+-- collected-callable-survives-explicit-respread [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(9) \n Fwd(*fs) = Apply(fs*) \n Fwd(Inc)
+def case_collected_callable_survives_explicit_respread : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Fwd" (algWithParameters [{ name := "fs", kind := .collecting }] [] [] [(.call (.resolve "Apply") [(.sequenceSpread (.param "fs"))])])] [(.call (.resolve "Fwd") [.resolve "Inc"])])
+#guard obs case_collected_callable_survives_explicit_respread == "ok raw=10 n=1"
 
 -- first-program [arithmetic]: 2 + 3 * 4
 def case_first_program : Expr :=
@@ -755,6 +760,11 @@ def case_conditional_one_element_list_pattern : Expr :=
 def case_conditional_sequence_pattern_matches_sequence_values_only : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "x", .bind "y"]], (alg [] [] [] [(.binary .add (.param "x") (.param "y"))])⟩, ⟨.bind "z", (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.capture [.num 2, .num 3])]), (.call (.resolve "F") [(.listLiteral [.num 2, .num 3])])])
 #guard obs case_conditional_sequence_pattern_matches_sequence_values_only == "ok raw=S[5, 0] n=2"
+
+-- empty-structural-patterns-are-distinct-heads [conditionals]: Kind(()) = 'empty sequence' \n Kind([]) = 'empty list' \n Kind(x) = 'other' \n  \n Kind(()) \n Kind([]) \n Kind(0)
+def case_empty_structural_patterns_are_distinct_heads : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Kind" (.conditional none [] [⟨.sequenceValue [.sequenceValue []], (alg [] [] [] [.stringLiteral "empty sequence"])⟩, ⟨.sequenceValue [.listValue []], (alg [] [] [] [.stringLiteral "empty list"])⟩, ⟨.bind "x", (alg [] [] [] [.stringLiteral "other"])⟩])] [(.call (.resolve "Kind") [(.emptySequence 0)]), (.call (.resolve "Kind") [(.listLiteral [])]), (.call (.resolve "Kind") [.num 0])])
+#guard obs case_empty_structural_patterns_are_distinct_heads == "ok raw=S['empty sequence', 'empty list', 'other'] n=3"
 
 -- conditional-clause-head-rejects-extra-arguments [conditionals]: F(0) = 1 \n F(n) = 2 \n F(1, 2)
 def case_conditional_clause_head_rejects_extra_arguments : Expr :=
@@ -1671,7 +1681,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 314 canonical Lean-guarded specification cases.
+-- 316 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1692,6 +1702,7 @@ def specCaseIds : List String := [
   "need-explicit-spread-precedes-arity",
   "need-collector-demand-materializes-whole-slice",
   "need-callable-projection-does-not-force-value",
+  "collected-callable-survives-explicit-respread",
   "first-program",
   "boolean-values-and-equality",
   "boolean-predicates-and-patterns",
@@ -1810,6 +1821,7 @@ def specCaseIds : List String := [
   "patterned-user-call-is-one-value-boundary",
   "conditional-one-element-list-pattern",
   "conditional-sequence-pattern-matches-sequence-values-only",
+  "empty-structural-patterns-are-distinct-heads",
   "conditional-clause-head-rejects-extra-arguments",
   "call-spread-dispatches-before-clause-selection",
   "call-spread-into-patterned-callee",
@@ -1994,6 +2006,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 314
+#guard specCaseIds.length == 316
 
 end LanguageSpecCases

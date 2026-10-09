@@ -3477,10 +3477,14 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     supplied arguments, a collecting-only one included, are VALUES that merely
     resolved through the dual algorithm channel, so the test is the zero-argument
     law's own `acceptsZeroSuppliedArguments` (the rule the surface pass's
-    `liftsBareValueReference` also reads). Used to decide whether a valueless
-    argument bound by a collecting parameter gets the targeted "collects values,
-    but ... is a callable" diagnostic or surfaces its genuine value-evaluation
-    error. C#: `IsFunctionShapedAlgorithm`. -/
+    `liftsBareValueReference` also reads). HISTORICAL: only the eager, value-only
+    collector of `HistoricalReadyBinding` consults it (its former targeted
+    "collects values, but ... is a callable" diagnostic). The production Model-C
+    binder never does: a collecting parameter binds a lazy slice of the supplied
+    cells, `xs*` re-supplies those cells with their VALUE/CALLABLE channels, and
+    reading the collected list demands each element, which reports its own
+    zero-argument demand failure (NEED-07/08; VAR-03 as reconciled 2026-10-09).
+    The former C# twin `IsFunctionShapedAlgorithm` is deleted. -/
 def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
   !a.acceptsZeroSuppliedArguments
 

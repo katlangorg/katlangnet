@@ -40,3 +40,5 @@ import CoreTests.OpenProviderIdentity
 import CoreTests.ModuleUnits
 import CoreTests.GraceMovement
 import CoreTests.FamilyCallbackCardinality
+import CoreTests.CollectingCallableForwarding
+import CoreTests.EmptyStructuralPatterns

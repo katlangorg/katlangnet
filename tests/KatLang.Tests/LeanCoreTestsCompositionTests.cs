@@ -48,6 +48,8 @@ public class LeanCoreTestsCompositionTests
         "ModuleUnits",
         "GraceMovement",
         "FamilyCallbackCardinality",
+        "CollectingCallableForwarding",
+        "EmptyStructuralPatterns",
     ];
 
     [Fact]

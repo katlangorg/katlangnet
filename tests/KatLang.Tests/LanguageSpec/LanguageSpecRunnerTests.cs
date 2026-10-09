@@ -272,6 +272,10 @@ public class LanguageSpecRunnerTests
             // The singleton rule (structural patterns, September 2026): a one-item sequence
             // pattern is a front-end rejection, parse-level by construction.
             "singleton-sequence-pattern-is-invalid",
+            // PAT-05 (corrected 2026-10-09): an expression is not a pattern; the pattern
+            // grammar rejects it, parse-level by construction (Lean's Pattern has no
+            // expression constructor).
+            "expression-is-not-a-pattern",
             // The same-line separator rule (SYN-07A): surface-lexical,
             // parse-level by construction.
             "same-line-slots-need-comma",

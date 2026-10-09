@@ -1833,10 +1833,14 @@ def restOnlyConsumesItemSupply : Bool :=
 
 #guard restOnlyConsumesItemSupply
 
--- A callable-shaped argument (a builtin here) reaching a collecting binding reports
--- the targeted typeMismatch: a collecting binding collects VALUES and has no dual
--- algorithm channel. C#: `BindParameterPatternList` (same kind; the C#
--- message additionally names the collecting parameter).
+-- A builtin collected by a collecting binding and then READ as the collected list
+-- reports the builtin's OWN zero-argument demand failure (expects 1, received 0):
+-- materializing the collector demands each element's VALUE (NEED-07). There is no
+-- collector-specific type mismatch (VAR-03, reconciled 2026-10-09: a collector
+-- preserves the supplied cells, CALLABLE channels included, and `fs*` re-supplies
+-- them — `CollectingCallableForwarding.lean`). The guard's name predates Model C
+-- and is kept because dated records cite it. C#:
+-- `CallArgumentAssemblyTests.FunctionValuedArgument_InCollectingParameter_ReportsItsOwnValueDemandFailure`.
 def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("G", algWithParameters [{ name := "fs", kind := .collecting }] [] [] [.param "fs"])
@@ -1849,9 +1853,8 @@ def restFunctionShapedArgumentReportsTypeMismatch : Bool :=
 
 #guard restFunctionShapedArgumentReportsTypeMismatch
 
--- A zero-parameter VALUE property whose body fails is NOT callable-shaped
--- (`Algorithm.isFunctionShaped`): the genuine evaluation error surfaces
--- through the collecting binding instead of the callable diagnostic.
+-- A zero-parameter VALUE property whose body fails: reading the collected list
+-- demands it, and its genuine evaluation error surfaces.
 def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("Bad", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
@@ -1866,9 +1869,10 @@ def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
 
 -- Q-03: callable-shaped means "an ordinary zero-argument call cannot bind it" (the
 -- zero-argument law's own `acceptsZeroSuppliedArguments`), never "declares parameters".
--- A collecting-only algorithm is a VALUE like a zero-parameter property (the surface
--- pass reads it by its bare name, `liftsBareValueReference`), so its failed evaluation
--- surfaces its genuine error instead of the callable diagnostic.
+-- (`Algorithm.isFunctionShaped` is consulted only by the historical Ready-input binder
+-- of `HistoricalReadyBinding.lean`; the production collector never asks it.)
+-- A collecting-only algorithm accepts zero supplied arguments, so reading the collected
+-- list evaluates it and its genuine error surfaces.
 #guard (alg [] [] [] [.num 1]).isFunctionShaped == false
 #guard (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 1]).isFunctionShaped == false
 #guard (algWithParameters [{ name := "x" }] [] [] [.num 1]).isFunctionShaped == true
@@ -1886,8 +1890,10 @@ def restErroredCollectingOnlyArgumentSurfacesRealError : Bool :=
 
 #guard restErroredCollectingOnlyArgumentSurfacesRealError
 
--- A callable that REQUIRES a supplied argument stays callable-shaped: the targeted
--- typeMismatch, exactly as for the builtin above.
+-- A callable that REQUIRES a supplied argument, read through the collected list, reports
+-- its OWN zero-argument demand failure (expects 1, received 0), exactly as the builtin
+-- above; re-spread instead (`G(*fs) = Apply(fs*)`), it stays callable (VAR-03). The
+-- guard's name predates Model C and is kept because dated records cite it.
 def restRequiringCallableArgumentReportsTypeMismatch : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("Inc", algWithParameters [{ name := "x" }] [] [] [.binary .add (.param "x") (.num 1)]),

@@ -237,6 +237,32 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "collected-callable-survives-explicit-respread",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(Inc)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The re-spread argument keeps its callable channel in a builtin callback slot too.
+                new SpecProbe("Inc(x) = x + 1\nApplyFirst(*fs) = map([1, 2], fs*)\nApplyFirst(Inc)", "ok raw=L[2, 3] n=1"),
+                // Collecting demands nothing: an unused collected function is never evaluated.
+                new SpecProbe("Inc(x) = x + 1\nIgnore(*xs) = 1\nIgnore(Inc)", "ok raw=1 n=1"),
+                // Reading the collected list evaluates every element: Inc's own zero-argument rejection.
+                new SpecProbe("Inc(x) = x + 1\nCollect(*xs) = xs\nCollect(Inc)", "err arity"),
+                // The unspread collector is one list value, never a function.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs)\nFwd(Inc)", "err notAnAlgorithm"),
+                // An ordinary list built from the collector, then spread: building it evaluates Inc.
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply([fs*]*)\nFwd(Inc)", "err arity"),
+                // A value never becomes callable by passing through a collector.
+                new SpecProbe("Apply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(5)", "err notAnAlgorithm"),
+            ],
+            Explanation = "A collecting parameter keeps the arguments it receives exactly as they were supplied, and re-spreading it with `fs*` hands those same arguments on. A function passed through `Fwd` therefore reaches `Apply` still callable: `Fwd(Inc)` means `Apply(Inc)`, which is 10. Collecting evaluates nothing, so an unused collected function or failing calculation never runs. Reading the collector as a value (`xs`) builds its list, which evaluates every element, so a function that needs an argument reports its own error there. The collected list itself is a value, not a function, and a value never becomes callable by passing through a collector.",
+        },
+        new()
+        {
             Id = "first-program",
             Category = "arithmetic",
             Source = "2 + 3 * 4",
@@ -2650,6 +2676,48 @@ public static class LanguageSpecCorpus
                 new SpecProbe("PairSum((x, y)) = x + y\nPairSum([2, 3])", "err type"),
             ],
             Explanation = "In a clause family a sequence pattern matches sequence values only: an exact list argument does not match `(x, y)` even when its element count fits, so it falls through to a later clause, or fails with no matching branch when none accepts it. The list pattern `[x, y]` is the list twin. An ordinary single-clause definition follows the same kind law, where a wrong-kind value is the pattern's type error instead of a fall-through.",
+        },
+        new()
+        {
+            Id = "empty-structural-patterns-are-distinct-heads",
+            Category = "conditionals",
+            Source = "Kind(()) = 'empty sequence'\nKind([]) = 'empty list'\nKind(x) = 'other'\n\nKind(())\nKind([])\nKind(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "empty sequence\nempty list\nother",
+            ExpectedRaw = "S['empty sequence', 'empty list', 'other']",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Each empty pattern is a valid clause head of its own.
+                new SpecProbe("F(()) = 1\nF(x) = 2\nF(()), F(5)", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("F([]) = 1\nF(x) = 2\nF([]), F(5)", "ok raw=S[1, 2] n=2"),
+                // Neither empty pattern matches the other kind's empty value.
+                new SpecProbe("F(()) = 1\nF(x) = 2\nF([])", "ok raw=2 n=1"),
+                new SpecProbe("G([]) = 1\nG(x) = 2\nG(())", "ok raw=2 n=1"),
+                // Without a catch-all, any other value matches no clause.
+                new SpecProbe("H(()) = 1\nH([]) = 2\nH(0)", "err branch"),
+                // A single clause is an ordinary definition: the wrong kind is its type error.
+                new SpecProbe("E(()) = 1\nE([])", "err type"),
+            ],
+            Explanation = "The empty sequence pattern `()` and the empty list pattern `[]` are ordinary clause heads: `()` matches only the empty sequence and `[]` only the empty list, so one family can tell them apart and send everything else to a catch-all. They are different heads, never duplicates, and neither matches the other kind's empty value. In a single-clause definition a wrong kind is the pattern's type error instead of a fall-through.",
+        },
+        new()
+        {
+            Id = "expression-is-not-a-pattern",
+            Category = "conditionals",
+            Source = "F(1 + 1) = 2\nF(2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Expected ')' but found '+'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            Probes =
+            [
+                // The literal pattern the arithmetic was meant to compute is the valid spelling.
+                new SpecProbe("F(2) = 2\nF(x) = 0\nF(1 + 1), F(3)", "ok raw=S[2, 0] n=2"),
+                // A negative number literal is a literal pattern, not an expression.
+                new SpecProbe("F(-1) = 1\nF(x) = 0\nF(0 - 1), F(1)", "ok raw=S[1, 0] n=2"),
+            ],
+            Notes = "Source-level pattern-grammar diagnostic; no elaborated Lean program exists for a rejected parse, and Lean's Pattern has no expression constructor. EmptyStructuralPatternLawTests pins the other expression shapes (a binder operand, a list pattern, a call, a nested group) with their exact diagnostics.",
+            Explanation = "A clause head is written in the pattern language, not as an expression: a pattern is a name, a number, string or Boolean literal (a number may carry a leading `-`), or a sequence pattern `( … )` or list pattern `[ … ]` of patterns, the empty `()` and `[]` included (an ordinary definition may also have one collecting `*name` per level). Arithmetic such as `1 + 1` is not a pattern and is rejected at the operator; write the value itself, `F(2)`, or bind the argument and compare it in the body.",
         },
         new()
         {

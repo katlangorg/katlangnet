@@ -34,6 +34,13 @@ public class Q06Q27FinalHostileReviewTests
         return new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(builtin)), new OutputBundle(args));
     }
 
+    // Every wait below is bounded, so a consumer that joins the cell's in-flight VALUE (which
+    // cannot complete before `release`, set only in the finally block) fails the test instead
+    // of hanging the suite. The bound is a hang guard, never a latency claim: both consumers
+    // run as thread-pool work, while the timer enforcing the bound is queued ahead of pool work
+    // at high priority, so a tight bound fails spuriously on a loaded CI runner (5 s did).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -58,7 +65,7 @@ public class Q06Q27FinalHostileReviewTests
             () => { Interlocked.Increment(ref projections); return EvalResult<Algorithm?>.Ok(callable); },
             span: originalSpan, token: stop.Token);
         var valueFlight = cell.DemandAsync().AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await entered.Task.WaitAsync(WaitLimit);
         Task<EvalResult<Evaluator.CountedResult>>? sync = null, twin = null;
         try
         {
@@ -71,7 +78,7 @@ public class Q06Q27FinalHostileReviewTests
             }
             sync = Task.Run(() => Evaluator.EvalCounted(Consumer(BuiltinId.@map), first, []));
             twin = Task.Run(async () => await EvaluateTwin(Consumer(BuiltinId.@filter), second));
-            var results = await Task.WhenAll(sync, twin).WaitAsync(TimeSpan.FromSeconds(5));
+            var results = await Task.WhenAll(sync, twin).WaitAsync(WaitLimit);
             Assert.All(results, result => Assert.Equal(hasCallable ? KatLangErrorCode.ArityMismatch : KatLangErrorCode.NotAnAlgorithm, result.Error.Code));
             if (!hasCallable) Assert.All(results, result => Assert.Equal(originalSpan, Inner(result.Error).Span));
             Assert.False(valueFlight.IsCompleted);
@@ -82,9 +89,9 @@ public class Q06Q27FinalHostileReviewTests
         finally
         {
             release.TrySetResult();
-            await valueFlight.WaitAsync(TimeSpan.FromSeconds(5));
-            if (sync is not null) await sync.WaitAsync(TimeSpan.FromSeconds(5));
-            if (twin is not null) await twin.WaitAsync(TimeSpan.FromSeconds(5));
+            await valueFlight.WaitAsync(WaitLimit);
+            if (sync is not null) await sync.WaitAsync(WaitLimit);
+            if (twin is not null) await twin.WaitAsync(WaitLimit);
         }
         var storedValue = await valueFlight;
         Assert.IsType<EvalError.DivByZero>(storedValue.Error);

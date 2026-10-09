@@ -713,6 +713,7 @@ public class LoopPlannedChokepointParityTests
     [Fact]
     public void TempCallMemoIsolation_DoesNotCopyEveryDeclaredTempPerCall()
     {
+        const int extraCalls = 10_000;
         long Measure(int declarationsCount, int iterations)
         {
             var declarations = string.Join("\n", Enumerable.Range(0, declarationsCount).Select(index => $"T{index} = 1"));
@@ -731,18 +732,22 @@ public class LoopPlannedChokepointParityTests
             // Both workloads must have executed before measuring their difference: a
             // first invocation's runtime initialization is not per-call allocation.
             Measure(declarationsCount, 1);
-            Measure(declarationsCount, 1001);
+            Measure(declarationsCount, extraCalls + 1);
             var deltas = Enumerable.Range(0, 3)
-                .Select(_ => Measure(declarationsCount, 1001) - Measure(declarationsCount, 1))
+                .Select(_ => Measure(declarationsCount, extraCalls + 1) - Measure(declarationsCount, 1))
                 .Order().ToArray();
             return deltas[1];
         }
 
         var narrowDelta = WarmedMedianDelta(16);
         var wideDelta = WarmedMedianDelta(2000);
-        Assert.True(wideDelta < 500_000,
-            $"The extra 1000 calls allocated {wideDelta:N0} bytes.");
-        Assert.True(wideDelta - narrowDelta < 64_000,
+        // Fixed run-setup allocations fluctuate even after warmup (the 1000-call window
+        // observed +/-261312-byte offsets). Amortize them over more calls while retaining
+        // the original 500-byte/call and 64-byte/call ceilings. Copying every declared
+        // temp per invocation still exceeds these bounds by orders of magnitude.
+        Assert.True(wideDelta < 500L * extraCalls,
+            $"The extra {extraCalls} calls allocated {wideDelta:N0} bytes.");
+        Assert.True(wideDelta - narrowDelta < 64L * extraCalls,
             $"Adding 1984 unused declarations increased per-call allocation by {wideDelta - narrowDelta:N0} bytes.");
     }
 
