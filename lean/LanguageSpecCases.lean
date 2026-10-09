@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 391
+- specification surface cases: 394
 - excluded parse-level cases (Lean has no surface parser): 59
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 311
-- probe observations (C#-only by design): 1225
+- Lean-guarded cases: 314
+- probe observations (C#-only by design): 1241
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1026,6 +1026,21 @@ def case_map_pair_callback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Swap" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", .param "a"])])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
 #guard obs case_map_pair_callback == "ok raw=L[S[2, 1], S[4, 3]] n=1"
 
+-- clause-family-multirow-callback-rejected [collection-builtins]: F(0) = 1, 2 \n F(n) = n, n \n map([0, 3], F)
+def case_clause_family_multirow_callback_rejected : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1, .num 2])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩])] [(.call (.resolve "map") [(.listLiteral [.num 0, .num 3]), .resolve "F"])])
+#guard obs case_clause_family_multirow_callback_rejected == "err arity"
+
+-- clause-family-multirow-reduce-step-rejected [collection-builtins]: R(e, 0) = e, 0 \n R(e, acc) = e, acc \n reduce([1], R, 0)
+def case_clause_family_multirow_reduce_step_rejected : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (.conditional none [] [⟨.sequenceValue [.bind "e", .litInt 0], (alg [] [] [] [.param "e", .num 0])⟩, ⟨.sequenceValue [.bind "e", .bind "acc"], (alg [] [] [] [.param "e", .param "acc"])⟩])] [(.call (.resolve "reduce") [(.listLiteral [.num 1]), .resolve "R", .num 0])])
+#guard obs case_clause_family_multirow_reduce_step_rejected == "err arity"
+
+-- clause-family-callback-single-value-accepted [collection-builtins]: F(0) = 1, 2 \n P(0) = (1, 2) \n P(n) = (n, n) \n L(0) = [] \n L(n) = [n] \n map([0, 3], P), map([0, 3], L), F(0) == P(0)
+def case_clause_family_callback_single_value_accepted : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1, .num 2])⟩]), privateProp "P" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.capture [.num 1, .num 2])])⟩, ⟨.bind "n", (alg [] [] [] [(.capture [.param "n", .param "n"])])⟩]), privateProp "L" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.listLiteral [])])⟩, ⟨.bind "n", (alg [] [] [] [(.listLiteral [.param "n"])])⟩])] [(.call (.resolve "map") [(.listLiteral [.num 0, .num 3]), .resolve "P"]), (.call (.resolve "map") [(.listLiteral [.num 0, .num 3]), .resolve "L"]), (.comparison (.call (.resolve "F") [.num 0]) [{ op := .eq, operand := (.call (.resolve "P") [.num 0]) }])])
+#guard obs case_clause_family_callback_single_value_accepted == "ok raw=S[L[S[1, 2], S[3, 3]], L[L[], L[3]], true] n=3"
+
 -- callback-variadic-collects [collection-builtins]: Collect(*items) = items \n  \n [7].map(Collect) \n [(1, 2)].map(Collect) \n [[1, 2]].map(Collect)
 def case_callback_variadic_collects : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.dotCall (.listLiteral [.num 7]) "map" (some [.resolve "Collect"])), (.dotCall (.listLiteral [(.capture [.num 1, .num 2])]) "map" (some [.resolve "Collect"])), (.dotCall (.listLiteral [(.listLiteral [.num 1, .num 2])]) "map" (some [.resolve "Collect"]))])
@@ -1656,7 +1671,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 311 canonical Lean-guarded specification cases.
+-- 314 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1849,6 +1864,9 @@ def specCaseIds : List String := [
   "map-transforms-items",
   "map-single-item",
   "map-pair-callback",
+  "clause-family-multirow-callback-rejected",
+  "clause-family-multirow-reduce-step-rejected",
+  "clause-family-callback-single-value-accepted",
   "callback-variadic-collects",
   "callback-mixed-variadic-rows",
   "callback-nested-pattern-binds-like-call",
@@ -1976,6 +1994,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 311
+#guard specCaseIds.length == 314
 
 end LanguageSpecCases

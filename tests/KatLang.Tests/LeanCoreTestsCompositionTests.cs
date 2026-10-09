@@ -47,6 +47,7 @@ public class LeanCoreTestsCompositionTests
         "OpenProviderIdentity",
         "ModuleUnits",
         "GraceMovement",
+        "FamilyCallbackCardinality",
     ];
 
     [Fact]

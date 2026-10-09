@@ -507,6 +507,17 @@ public static partial class Evaluator
         return recount ? ReCountValueBoundary(result) : result;
     }
 
+    /// <summary>
+    /// One callback invocation of a higher-order builtin (the map transform, the filter predicate,
+    /// the reduce step) over already-evaluated values, each ONE Ready cell bound by the callee's own
+    /// ordinary machinery (HO-02). The result is the callee's OWN emitted output, never re-counted at
+    /// the call's value boundary, for a user algorithm and a clause family alike (PAT-11: a family is
+    /// an ordinary callable): the builtin judges that count by its callback-result contract (HO-03: a
+    /// map transform or reduce step emits exactly one non-<c>()</c> value, <see cref="ExpectSingleEmittedValue"/>).
+    /// Only this receiver passes <c>recount: false</c>; every ordinary call of either callable keeps the
+    /// value boundary. A builtin has no written rows: its one result is already a value. Lean:
+    /// <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c> (both <c>recount = false</c>).
+    /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackBody(
         Algorithm callee, IReadOnlyList<CountedResult> arguments, EvalCtx ctx, ValEnv values,
         string name, bool asynchronous)
@@ -519,7 +530,7 @@ public static partial class Evaluator
                 : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values);
         }
         return callee is Algorithm.Conditional
-            ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous).ConfigureAwait(false)
+            ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, recount: false).ConfigureAwait(false)
             : await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, recount: false).ConfigureAwait(false);
     }
 
@@ -529,7 +540,7 @@ public static partial class Evaluator
     {
         var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous).ConfigureAwait(false);
+        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous, recount: true).ConfigureAwait(false);
     }
 
     private readonly record struct NeedFamilyActivation(Algorithm Body, EvalCtx Context, ValEnv Values);
@@ -540,27 +551,33 @@ public static partial class Evaluator
     {
         var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
-        return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, values, name);
+        return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, values, name, recount: true);
     }
 
+    // The family twins of the user drivers above: ONE dispatch (BindNeedFamilySupply*), then the
+    // selected body's counted output; `recount` is the receiver's choice — an ordinary call's value
+    // boundary (true) or a callback's own emitted count (false, EvalNeedCallbackBody). Lean:
+    // evalNeedFamilySupply.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedFamilySupplyCounted(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool recount)
     {
         var matched = BindNeedFamilySupplyCounted(callee, supply, ctx, values, name);
         if (matched.IsError) return matched.Error;
-        return ReCountValueBoundary(EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
+        var result = EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values);
+        return recount ? ReCountValueBoundary(result) : result;
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilySupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous)
+        CallDiagnosticName name, bool asynchronous, bool recount)
     {
         var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name, asynchronous).ConfigureAwait(false);
         if (matched.IsError) return matched.Error;
-        return ReCountValueBoundary(asynchronous
+        var result = asynchronous
             ? await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(false)
-            : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
+            : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values);
+        return recount ? ReCountValueBoundary(result) : result;
     }
 
     private static EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>> PrepareNeedFamilyHeads(

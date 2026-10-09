@@ -3773,6 +3773,65 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "clause-family-multirow-callback-rejected",
+            Category = "collection-builtins",
+            Source = "F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // A lone literal clause is a one-branch family: the same contract.
+                new SpecProbe("F(0) = 1, 2\nmap([0], F)", "err arity"),
+                // Every route to the family is the family: an alias, a forwarded parameter, a dot call.
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nG = F\nmap([3], G)", "err arity"),
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])", "err arity"),
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\n[0, 3].map(F)", "err arity"),
+                // The ordinary call is one value, and so is the η-block that makes it.
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nF(0)", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], { F(x) })", "ok raw=L[S[1, 2], S[3, 3]] n=1"),
+                // `filter` reads its predicate's value: two rows are one sequence, not a Boolean.
+                new SpecProbe("P(0) = true, true\nP(n) = false, false\nfilter([0, 3], P)", "err type"),
+            ],
+            Explanation = "A clause family is an ordinary callable, so as a `map` transform it is judged like every callback: the selected clause must EMIT exactly one value, and `1, 2` emits two rows — the map contract's arity error, exactly as for `D(x) = x, x`. The same family's ordinary call `F(0)` is the one value `(1, 2)`; write `F(0) = (1, 2)`, or the η-block `{ F(x) }`, to map to pairs.",
+        },
+        new()
+        {
+            Id = "clause-family-multirow-reduce-step-rejected",
+            Category = "collection-builtins",
+            Source = "R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([1], R, 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("R(e, 0) = e, 0\nreduce([1], R, 0)", "err arity"),
+                new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\n[1].reduce(R, 0)", "err arity"),
+                new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\nR(1, 0)", "ok raw=S[1, 0] n=1"),
+                new SpecProbe("R(e, 0) = (e, 0)\nR(e, acc) = (e, acc)\nreduce([1], R, 0)", "ok raw=S[1, 0] n=1"),
+                new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([], R, 7)", "ok raw=7 n=1"),
+            ],
+            Explanation = "A `reduce` step must emit exactly one accumulator value. A family step is judged by its selected clause's own rows, so `e, 0` is the reduce contract's arity error, while the ordinary call `R(1, 0)` is the one value `(1, 0)` and `R(e, 0) = (e, 0)` is a valid step.",
+        },
+        new()
+        {
+            Id = "clause-family-callback-single-value-accepted",
+            Category = "collection-builtins",
+            Source = "F(0) = 1, 2\nP(0) = (1, 2)\nP(n) = (n, n)\nL(0) = []\nL(n) = [n]\nmap([0, 3], P), map([0, 3], L), F(0) == P(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(1, 2), (3, 3)]\n[[], [3]]\ntrue",
+            ExpectedRaw = "S[L[S[1, 2], S[3, 3]], L[L[], L[3]], true]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("P(0) = (1, 2)\nmap([0], P)", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("D(x) = x, x\nF(0) = D(0)\nF(n) = D(n)\nmap([0, 3], F)", "ok raw=L[S[0, 0], S[3, 3]] n=1"),
+                new SpecProbe("IsZero(0) = true\nIsZero(n) = false\nfilter([0, 1, 0], IsZero)", "ok raw=L[0, 0] n=1"),
+                // A loop step is no callback: the selected clause's two rows are the next state.
+                new SpecProbe("S(0) = 1, 2\nS(n) = n, n\nrepeat(S, 1, 0)", "ok raw=S[1, 2] n=1"),
+            ],
+            Explanation = "A callback result is judged by its EMITTED rows, not by its elements: a family clause that emits ONE value — a sequence `(1, 2)`, a list, `[]`, or an inner call's one value — is one mapped element, and an ordinary family call is one value too (`F(0) == P(0)`); only a callback whose selected clause writes several rows is rejected. A loop step is no callback: its rows are the next state.",
+        },
+        new()
+        {
             Id = "callback-variadic-collects",
             Category = "collection-builtins",
             Source = "Collect(*items) = items\n\n[7].map(Collect)\n[(1, 2)].map(Collect)\n[[1, 2]].map(Collect)",
