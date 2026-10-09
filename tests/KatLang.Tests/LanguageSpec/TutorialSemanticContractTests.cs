@@ -694,4 +694,39 @@ public class TutorialSemanticContractTests
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, diagnostic.Code);
         Assert.Equal(new SourceSpan(2, 8, 2, 10), diagnostic.Span);
     }
+
+    // ── "Spread or Multiplication?" (Q-33): a line-final star is classified like every star ──
+
+    private const string ClosedSpreadDefinition = "A = (1, 2)\nX = (A*)\n\nX";
+
+    [Fact]
+    public void LineFinalStar_ParenthesesKeepTheSpreadInTheDefinition_WhileWithoutThemTheRowIsMultiplied()
+    {
+        // The tutorial example: the parentheses close X's body, so X captures the spread of A and
+        // the line `X` stays the program's one output row.
+        var closed = SourceProvenance.ParseValid(ClosedSpreadDefinition);
+        Assert.Empty(closed.Diagnostics);
+        var capture = Assert.IsType<Expr.Capture>(Assert.Single(PropertyOf(closed.Root, "X").Value.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(capture.Body));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
+        Assert.Equal("X", Assert.IsType<Expr.Resolve>(Assert.Single(closed.Root.Output)).Name);
+        Assert.Equal("(1, 2)", Display(ClosedSpreadDefinition));
+
+        // The explanation: without the parentheses the star is followed by `X`, which begins an
+        // operand and no declaration, so the body continues as `X = A * X` and no output row is
+        // left. The source is valid — no diagnostic of any kind — and the engine reports the
+        // program's absent output.
+        const string unclosed = "A = (1, 2)\nX = A*\n\nX";
+        var open = SourceProvenance.ParseValid(unclosed);
+        Assert.Empty(open.Diagnostics);
+        var product = Assert.IsType<Expr.Binary>(Assert.Single(PropertyOf(open.Root, "X").Value.Output));
+        Assert.Equal(BinaryOp.Mul, product.Op);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(product.Left).Name);
+        Assert.Equal("X", Assert.IsType<Expr.Resolve>(product.Right).Name);
+        Assert.Empty(open.Root.Output);
+        Assert.Equal(KatLangErrorCode.MissingOutput, Assert.IsType<RunResult.NoProgramOutput>(KatLangEngine.Run(unclosed)).Diagnostic.Code);
+
+        // Braces close the definition the same way ("parentheses (braces work too)").
+        Assert.Equal("(1, 2)", Display("A = (1, 2)\nX = { A* }\n\nX"));
+    }
 }

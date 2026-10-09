@@ -2488,7 +2488,7 @@ Conversely, a new line never continues an expression that is already complete. `
 
 ### Spread or Multiplication?
 
-A star after a value is a multiplication whenever an operand follows it, on the same line or on the next. It is a spread only when nothing can follow: before a comma, a closing bracket, a new definition, or the end of the program. So when another item follows a spread, write a comma:
+A star after a value is a multiplication whenever an operand follows it, on the same line or on a later one (blank lines and comments in between change nothing). It is a spread only when nothing can follow: before a comma, a closing bracket, a new definition, or the end of the program. So when another item follows a spread, write a comma:
 
 ```
 A = 2
@@ -2505,6 +2505,19 @@ A* B
 6
 ```
 
+A star at the end of a line follows the same rule. When the next line of code begins with an operand rather than a new definition, the star is a multiplication and the expression continues on that line, with the usual operator precedence. This matters most at the end of a definition, because the row after it would become part of the definition. Close a definition that ends in a spread with parentheses (braces work too):
+
+```
+A = (1, 2)
+X = (A*)
+
+X
+```
+
+**Result:** `(1, 2)`
+
+Without the parentheses, `X = A*` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. This is not an error: it is a valid multiplication, just not the one intended.
+
 ### Common Mistakes
 
 - **A misspelled name becomes a parameter.** An undefined name is inferred as a parameter, so a typo shows up as a missing argument ([Undefined Names in the Program](#undefined-names-in-the-program)).
@@ -2514,6 +2527,7 @@ A* B
 - **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
+- **A star at the end of a line can continue onto the next line.** When the next line of code begins with an operand rather than a new definition, a line-final `*` is a multiplication and the expression continues there, with the usual operator precedence. End a spread row with a comma (`A*,`), and close a definition that ends in a spread with parentheses (`X = (A*)`) ([Spread or Multiplication?](#spread-or-multiplication)).
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
 - **Parentheses compute, braces define.** `(n + 1)` is a value computed now; `{n + 1}` is an algorithm with the parameter `n`.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.

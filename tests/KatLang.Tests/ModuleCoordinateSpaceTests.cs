@@ -363,7 +363,7 @@ public class ModuleCoordinateSpaceTests
         // Every location-bearing syntax at once: explicit and nested parameter patterns with
         // a collect marker, clause-head binders, a deconstruction, a dot member, a spread
         // marker, list and index syntax, and a nested open.
-        var module = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*\n[H]:0";
+        var module = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*,\n[H]:0";
         var parsed = await Parser.ParseAsync(
             "open '" + Lib + "'\nM = load('" + Lib + "')\n1",
             Options((Lib, module)));
@@ -372,6 +372,32 @@ public class ModuleCoordinateSpaceTests
         var opened = OpenedModule(parsed.Root);
         Assert.True(held.IsModuleElaborated);
         Assert.True(opened.IsModuleElaborated);
+        // The spread marker, list and index syntax are really rows of the module, so the walker
+        // checks them: the trailing comma ends the spread row. Without it the line-final `*`
+        // is followed by `[`, which begins an operand and no declaration, so the star would be
+        // multiplication and the row would continue across the newline (SYN-11, Q-33): the one
+        // row `F(1, (2, 3)) * [H]:0`, with no spread node at all (pinned by LineFinalStarLawTests).
+        foreach (var view in new[] { held, opened })
+        {
+            Assert.Collection(
+                view.Output,
+                row =>
+                {
+                    // Row 1: the spread of the call `F(1, (2, 3))`.
+                    var call = Assert.IsType<Expr.Call>(Assert.IsType<Expr.SequenceSpread>(row).Operand);
+                    Assert.Equal("F", Assert.IsType<Expr.Resolve>(call.Function).Name);
+                    Assert.Equal(2, call.Args.Count);
+                },
+                row =>
+                {
+                    // Row 2, separate: the selection `[H]:0`.
+                    var selection = Assert.IsType<Expr.Index>(row);
+                    var list = Assert.IsType<Expr.ListLiteral>(selection.Target);
+                    Assert.Equal("H", Assert.IsType<Expr.Resolve>(Assert.Single(list.Items)).Name);
+                    Assert.Equal(0, (int)Assert.IsType<Expr.Num>(selection.Selector).Value);
+                });
+        }
+
         LocationlessAssertion.AssertLocationless(held);
         LocationlessAssertion.AssertLocationless(opened);
         // The document's own wrapper of the opened module keeps the local open-target span,

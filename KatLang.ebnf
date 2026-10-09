@@ -412,9 +412,11 @@ SequenceAtom          = Expression ;
                      the postfix spread marker "*", and binary operators all
                      require the same physical line (write a trailing
                      operator, e.g. A - newline 1, to continue arithmetic; a
-                     trailing "*", spaced or not, is multiplication continuing
-                     on the next line whenever an operand starts that line,
-                     and otherwise a spread marker that must be attached:
+                     trailing "*", spaced or not, is multiplication when the
+                     next significant token can begin an operand and does not
+                     begin a declaration (parsing then continues across the
+                     newline with ordinary precedence; Q-33), and otherwise a
+                     spread marker that must be attached:
                      `A*` spreads, `A *` is rejected). Comments are
                      semantically invisible for these decisions: A newline -1
                      and A # note newline -1 parse identically as the expression

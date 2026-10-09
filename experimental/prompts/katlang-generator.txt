@@ -1126,7 +1126,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (147 of the 390-case canonical language specification,
+Verified reference examples (148 of the 391-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2402,7 +2402,7 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "Semicolon is not supported as an expression separator ..."
 
-[star-before-operand-row-is-multiplication] SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — a line-final star continues onto the next line exactly like every trailing binary operator, in a definition body too. To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).
+[star-before-operand-row-is-multiplication] SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — when the next significant token can begin an operand and does not begin a declaration, a line-final star continues across the newline like every trailing binary operator, in a definition body too (Q-33). To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).
 
     A = 4
     B = 6
@@ -2423,6 +2423,16 @@ Regenerate this block from the repo root with:
     1
     2
     5
+
+[line-final-star-in-definition-continues] Q-33 (decided 2026-10-09): a line-final star in a definition body is classified like every star. The next significant token, `3`, can begin an operand and does not begin a declaration, so the star is multiplication and the definition continues across the newline: its body is `A * 3`, so `X` is 6 and the line `3` belongs to the definition instead of being an output row. Operator precedence is unchanged (`X = A*` newline `B + 1` is `X = (A * B) + 1`), and the layout is valid source with no warning or error. A definition meant to end in a spread is closed structurally — `X = (A*)` or `X = { A* }` — and the next line is then its own output row; a following declaration head also ends the body, so `X = A*` newline `Y = 3` keeps `X` the spread of `A`.
+
+    A = 2
+    X = A*
+    3
+    X
+
+  Displays:
+    6
 
 [spread-marker-must-be-attached] The marker attachment law: a structural marker is directly attached to the syntax it modifies (`A*`, `*items`, `~x`, `x~`), while the multiplication operator may be spaced freely. `A *` with nothing that could be a right operand after it is classified as a spread marker (SYN-07B) and then rejected for being detached — whitespace never turns one valid operation into another; it only separates the valid `A*` from this error. Write `A*` to spread, or give the star a right operand to multiply.
 

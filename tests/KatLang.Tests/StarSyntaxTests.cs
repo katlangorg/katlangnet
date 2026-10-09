@@ -355,14 +355,19 @@ public class StarSyntaxTests
     [Fact]
     public void UnclosedSpreadStepBody_AbsorbsTheFollowingCallAsMultiplication()
     {
+        // Q-33 (decided 2026-10-09): a line-final star is classified like every star. `repeat`
+        // begins an operand and no declaration, so the star multiplies and the step body
+        // continues across the newline: `Step(*x) = x.skip(1) * repeat(Step, 1, 7, 8)`.
         const string source = "Step(*x) = x.skip(1)*\nrepeat(Step, 1, 7, 8)";
         var parsed = SourceProvenance.ParseValid(source);
+        Assert.Empty(parsed.Diagnostics);
         Assert.Empty(parsed.Root.Output);
         var body = Assert.IsType<Expr.Binary>(Assert.Single(Assert.Single(parsed.Root.Properties).Value.Output));
         Assert.Equal(BinaryOp.Mul, body.Op);
         Assert.Equal("repeat", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.Call>(body.Right).Function).Name);
-        // This is syntactically valid arithmetic in an unused definition, so
-        // the engine reports no program output, not an invented syntax error.
+        // This is valid arithmetic in an unused definition, and the layout is language law with no
+        // warning or error, so the engine reports no program output — never an invented diagnostic.
+        // The brace body closes the spread-ending step instead.
         Assert.IsType<RunResult.NoProgramOutput>(KatLangEngine.Run(source));
         Assert.Equal("8", Display("Step(*x) = { x.skip(1)* }\nrepeat(Step, 1, 7, 8)"));
     }
@@ -1199,10 +1204,14 @@ public class StarSyntaxTests
     [Fact]
     public void ConsecutiveLineFinalMultiplicationsInDefinition_StillHaveNoProgramOutput()
     {
-        // F13b is a separate language-design question: every star here has a
-        // scalar operand, so the diagnostic-only fix must not reject this source.
+        // F13b, decided as Q-33 (2026-10-09): the current parse is law, with no new diagnostic.
+        // Each line-final star is followed by a token that begins an operand and no declaration,
+        // so both multiply and the definition continues across both newlines:
+        // `X = (A * B) * X`, leaving no output row. The source is valid and reports nothing —
+        // neither the F13a explanation (no spread exists here) nor any warning.
         const string source = "A = 4\nB = 6\nX = A*\nB*\nX";
         var parsed = SourceProvenance.ParseValid(source);
+        Assert.Empty(parsed.Diagnostics);
         Assert.Empty(parsed.Root.Output);
         var body = Assert.Single(parsed.Root.Properties, p => p.Name == "X").Value;
         var outer = Assert.IsType<Expr.Binary>(Assert.Single(body.Output));

@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 390
+- specification surface cases: 391
 - excluded parse-level cases (Lean has no surface parser): 59
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 310
-- probe observations (C#-only by design): 1219
+- Lean-guarded cases: 311
+- probe observations (C#-only by design): 1225
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1231,6 +1231,11 @@ def case_star_before_declaration_or_boundary_is_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
 #guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
 
+-- line-final-star-in-definition-continues [parser-layout]: A = 2 \n X = A* \n 3 \n X
+def case_line_final_star_in_definition_continues : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 2]), privateProp "X" (alg [] [] [] [(.binary .mul (.resolve "A") (.num 3))])] [.resolve "X"])
+#guard obs case_line_final_star_in_definition_continues == "ok raw=6 n=1"
+
 -- grace-in-branch-nested-block-belongs-to-the-block [name-resolution]: Apply(f) = f(1, 10) \n F(0) = Apply({ y - ~x }) \n F(0)
 def case_grace_in_branch_nested_block_belongs_to_the_block : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 1, .num 10])]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "Apply") [(.algorithmExpr (alg ["x", "y"] [] [] [(.binary .sub (.param "y") (.param "x"))]))])])⟩])] [(.call (.resolve "F") [.num 0])])
@@ -1651,7 +1656,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 310 canonical Lean-guarded specification cases.
+-- 311 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1885,6 +1890,7 @@ def specCaseIds : List String := [
   "trailing-comma-continues-line",
   "star-before-operand-row-is-multiplication",
   "star-before-declaration-or-boundary-is-spread",
+  "line-final-star-in-definition-continues",
   "grace-in-branch-nested-block-belongs-to-the-block",
   "grace-saturation-is-valid",
   "grace-weights-accumulate",
@@ -1970,6 +1976,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 310
+#guard specCaseIds.length == 311
 
 end LanguageSpecCases

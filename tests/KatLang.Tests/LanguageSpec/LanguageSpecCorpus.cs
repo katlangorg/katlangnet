@@ -4511,7 +4511,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = (1, 2)\nB = 5\nA*,\nB", "ok raw=S[1, 2, 5] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — a line-final star continues onto the next line exactly like every trailing binary operator, in a definition body too. To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).",
+            Explanation = "SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — when the next significant token can begin an operand and does not begin a declaration, a line-final star continues across the newline like every trailing binary operator, in a definition body too (Q-33). To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).",
         },
         new()
         {
@@ -4535,6 +4535,27 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A declaration head is never a multiplication operand, so a line-final star before `B = 5` is the spread marker — through the same declaration relation that ends an adjacency row. The star is likewise a spread before a comma, a closing delimiter, or the end of the program. A spread marker must be directly attached to its operand (`A*`): the detached `A *` in any of these positions is a parse error, never silently a spread and never silently a multiplication. A definition body that ends in a spread must be closed when an output row follows: `X = (A*)` captures the spread supply, while a bare `X = A*` above the row `B` is the multiplication `X = A * B`.",
+        },
+        new()
+        {
+            Id = "line-final-star-in-definition-continues",
+            Category = "parser-layout",
+            Source = "A = 2\nX = A*\n3\nX",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("A = (1, 2)\nX = (A*)\n3\nX", "ok raw=S[3, S[1, 2]] n=2"),
+                new SpecProbe("A = (1, 2)\nX = { A* }\n3\nX", "ok raw=S[3, S[1, 2]] n=2"),
+                new SpecProbe("A = 2\nX = A *\n3\nX", "ok raw=6 n=1"),
+                new SpecProbe("A = 2\nB = 3\nX = A*\nB + 1\nX", "ok raw=7 n=1"),
+                new SpecProbe("A = 2\nX = A*\n# comment\n\n3\nX", "ok raw=6 n=1"),
+                new SpecProbe("A = (1, 2)\nX = A*\nY = 3\nX", "ok raw=S[1, 2] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Q-33 (decided 2026-10-09): a line-final star in a definition body is classified like every star. The next significant token, `3`, can begin an operand and does not begin a declaration, so the star is multiplication and the definition continues across the newline: its body is `A * 3`, so `X` is 6 and the line `3` belongs to the definition instead of being an output row. Operator precedence is unchanged (`X = A*` newline `B + 1` is `X = (A * B) + 1`), and the layout is valid source with no warning or error. A definition meant to end in a spread is closed structurally — `X = (A*)` or `X = { A* }` — and the next line is then its own output row; a following declaration head also ends the body, so `X = A*` newline `Y = 3` keeps `X` the spread of `A`.",
         },
         new()
         {

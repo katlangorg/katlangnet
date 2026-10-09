@@ -204,6 +204,19 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bneighbours\s+marked\s+the\s+same\s+way\s+move\s+together\b", "the unconditional same-marked-neighbours group claim (X-49 F1)" },
         { @"\bequally\s+marked\s+runs\s+move\s+as\s+a\s+unit\b", "the unconditional equally-marked-run group claim (X-49 F1)" },
         { @"\badjacent\s+names\s+with\s+one\s+common\s+weight\s+move\s+as\s+a\s+unit\b", "the unconditional adjacent-equal-weight group claim (X-49 F1)" },
+        // Q-33 (decided 2026-10-09): a line-final star is classified like every star. It multiplies
+        // only when the next significant token can begin an operand and does not begin a
+        // declaration, and the continuation is ordinary expression parsing with ordinary precedence
+        // (`x, y = V*` newline `x + y` is `(V * x) + y`). The layout is law with no warning or error,
+        // and Q-33 is closed. No current text drops the condition, makes the next line the star's
+        // operand, reopens the question, or carries the rejected prototypes' switches or wording.
+        { @"\bmultipl(?:y|ies|ying)\s+by\s+the\s+(?:next|following)\s+(?:physical\s+)?(?:line|row)\b", "a line-final star multiplying by the next line as such (Q-33 wording correction A)" },
+        { @"\b(?:next|following|that)\s+(?:physical\s+)?line\s+(?:is|becomes|forms)\s+(?:its|the(?:\s+star's)?)\s+(?:whole\s+)?(?:right\s+)?operand\b", "the next line as the star's operand (Q-33 wording correction B)" },
+        { @"\b(?:right\s+operand\s+continues|multiplication\s+continuing)\s+on\s+the\s+next\s+line\s+whenever\b", "unconditional line-final multiplication without the declaration exception (before Q-33)" },
+        { @"\b(?:every|any|each)\s+line-final\s+(?:star|`?\*`?)\s+(?:is\s+(?:a\s+)?multiplication|multiplies)\b|\bline-final\s+(?:star|`?\*`?)\s+(?:is\s+)?always\s+(?:a\s+)?multipl", "every line-final star as multiplication (Q-33: the next significant token decides)" },
+        { @"\b(?:Q-33|F13b)\b[^.]{0,60}\b(?:remains\s+open|is\s+(?:still\s+)?(?:open|undecided|unresolved)|open\s+(?:language-design\s+)?question)\b", "the line-final star layout as an open question (before Q-33)" },
+        { @"\bKATLANG_Q33_POLICY\b|\bQ33(?:Policy|Warn\w*|Forces\w*|StarIsAttached)\b|\btouches\s+its\s+operand\s+(?:and\s+ends\s+the\s+line|at\s+the\s+end\s+of\s+a\s+line)\b", "a rejected Q-33 prototype policy, warning, or error (the owner kept P0)" },
+        { @"\bdetach(?:ed|ing)?\s+the\s+star\b[^.]{0,40}\bto\s+multiply\b|\bto\s+multiply\b[^.]{0,60}\bdetach\s+the\s+star\b", "attached and detached line-final stars as different valid operations (rejected with P2A)" },
     };
 
     [Theory]
@@ -305,6 +318,81 @@ public class MaintainedDocumentationConsistencyTests
         Assert.Contains("K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d", text);
         Assert.Contains("(c, a, d, b)", text);
         Assert.Contains("2413", text);
+    }
+
+    /// <summary>
+    /// Q-33 (decided 2026-10-09): each normative statement of the line-final star law keeps both
+    /// qualifications — the star multiplies only when the next significant token can begin an
+    /// operand and does NOT begin a declaration, and the continuation keeps ordinary precedence —
+    /// says the layout is no warning or error, and names the closing forms. The behavior is pinned
+    /// by <c>LineFinalStarLawTests</c> and the spec corpus; this guards the restatements.
+    /// </summary>
+    [Theory]
+    [InlineData("AGENTS.md", "A LINE-FINAL star is no exception (Q-33, decided 2026-10-09)")]
+    [InlineData("docs/design/language-rules/syntax.md", "THE LINE-FINAL STAR IS NO EXCEPTION (Q-33, decided 2026-10-09")]
+    public void LineFinalStarLaw_IsStatedWithItsConditionPrecedenceAndClosingForms(string relativePath, string anchor)
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath)).ReplaceLineEndings("\n");
+        var statement = Assert.Single(text.Split('\n'), line => line.Contains(anchor, StringComparison.Ordinal));
+        var law = statement[statement.IndexOf(anchor, StringComparison.Ordinal)..];
+
+        Assert.Contains("next significant token", law);
+        Assert.Contains("does not begin a declaration", law);
+        Assert.Matches(@"continues across the newline[^.]*\bordinary (?:operator )?precedence", law);
+        Assert.Matches(@"no warning (?:or|and no) error", law);
+        Assert.Contains("`A*,`", law);
+        Assert.Contains("(A*)", law);
+        Assert.Contains("{ A* }", law);
+    }
+
+    /// <summary>
+    /// The tutorial teaches the same law in user terms: the section on the star states the
+    /// new-definition exception and ordinary precedence and shows a closed spread-ending
+    /// definition, and the list of common mistakes names both repairs.
+    /// </summary>
+    [Fact]
+    public void Tutorial_TeachesTheLineFinalStarCondition_AndBothRepairs()
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), "tutorial.md")).ReplaceLineEndings("\n");
+        var section = MarkdownSection(text, "### Spread or Multiplication?");
+        Assert.Contains("rather than a new definition", section);
+        Assert.Contains("usual operator precedence", section);
+        Assert.Contains("A = (1, 2)\nX = (A*)\n\nX\n```\n\n**Result:** `(1, 2)`", section);
+        Assert.Contains("`X = A * X`", section);
+        Assert.Contains("This is not an error", section);
+
+        var mistake = Assert.Single(
+            MarkdownSection(text, "### Common Mistakes").Split('\n'),
+            line => line.Contains("line-final `*`", StringComparison.Ordinal));
+        Assert.Contains("rather than a new definition", mistake);
+        Assert.Contains("usual operator precedence", mistake);
+        Assert.Contains("`A*,`", mistake);
+        Assert.Contains("`X = (A*)`", mistake);
+    }
+
+    /// <summary>
+    /// The generator guidance keeps the declaration exception and the closing idioms beside its
+    /// statement that a line-final star before an operand multiplies.
+    /// </summary>
+    [Theory]
+    [InlineData(".github/agents/katlang-generator.agent.md")]
+    [InlineData("experimental/prompts/katlang-generator.txt")]
+    public void GeneratorGuidance_KeepsTheDeclarationExceptionAndTheClosingIdioms(string relativePath)
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+        Assert.Matches(@"(?i)\bdefinition head\b|\bbefore a definition\b", text);
+        Assert.Matches(@"`[Aa]\*,` newline `[Bb]`", text);
+        Assert.Contains("y = (A*)", text);
+        Assert.Contains("[line-final-star-in-definition-continues]", text);
+    }
+
+    private static string MarkdownSection(string text, string heading)
+    {
+        var start = text.IndexOf("\n" + heading + "\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Missing section '{heading}'.");
+        start += 1;
+        var end = text.IndexOf("\n### ", start + heading.Length, StringComparison.Ordinal);
+        return end < 0 ? text[start..] : text[start..end];
     }
 
     /// <summary>Loosest first. Prefix <c>-</c> is its own tier, above the multiplicative one.</summary>
