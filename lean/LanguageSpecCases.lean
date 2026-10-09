@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 397
+- specification surface cases: 401
 - excluded parse-level cases (Lean has no surface parser): 60
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 316
+- Lean-guarded cases: 320
 - probe observations (C#-only by design): 1255
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -165,6 +165,26 @@ def case_need_collector_demand_materializes_whole_slice : Expr :=
 def case_need_callable_projection_does_not_force_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 4])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_need_callable_projection_does_not_force_value == "ok raw=5 n=1"
+
+-- need-demand-order-decides-the-first-failure [errors]: F(x, y) = y + x \n F(1 / 0, 'a' + 1)
+def case_need_demand_order_decides_the_first_failure : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x", "y"] [] [] [(.binary .add (.param "y") (.param "x"))])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), (.binary .add (.stringLiteral "a") (.num 1))])])
+#guard obs case_need_demand_order_decides_the_first_failure == "err type"
+
+-- need-wrapper-keeps-builtin-if-selection [conditionals]: MyIf(c, t, e) = if(c, t, e) \n Apply3(f, a, b, c) = f(a, b, c) \n MyIf(true, 1, 1 / 0) \n Apply3(if, false, 1 / 0, 2)
+def case_need_wrapper_keeps_builtin_if_selection : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "MyIf" (alg ["c", "t", "e"] [] [] [(.call (.resolve "if") [.param "c", .param "t", .param "e"])]), privateProp "Apply3" (alg ["f", "a", "b", "c"] [] [] [(.call (.param "f") [.param "a", .param "b", .param "c"])])] [(.call (.resolve "MyIf") [.boolLiteral true, .num 1, (.binary .div (.num 1) (.num 0))]), (.call (.resolve "Apply3") [.resolve "if", .boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
+#guard obs case_need_wrapper_keeps_builtin_if_selection == "ok raw=S[1, 2] n=2"
+
+-- need-container-call-checks-cardinality-first [errors]: A = { \n     public X = 1 \n } \n A(6)
+def case_need_container_call_checks_cardinality_first : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [])] [(.call (.resolve "A") [.num 6])])
+#guard obs case_need_container_call_checks_cardinality_first == "err arity"
+
+-- need-collection-builtin-demands-its-collection-first [collection-builtins]: take(1 / 0, 'a' + 1)
+def case_need_collection_builtin_demands_its_collection_first : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "take") [(.binary .div (.num 1) (.num 0)), (.binary .add (.stringLiteral "a") (.num 1))])])
+#guard obs case_need_collection_builtin_demands_its_collection_first == "err div0"
 
 -- collected-callable-survives-explicit-respread [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(9) \n Fwd(*fs) = Apply(fs*) \n Fwd(Inc)
 def case_collected_callable_survives_explicit_respread : Expr :=
@@ -1681,7 +1701,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 316 canonical Lean-guarded specification cases.
+-- 320 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1702,6 +1722,10 @@ def specCaseIds : List String := [
   "need-explicit-spread-precedes-arity",
   "need-collector-demand-materializes-whole-slice",
   "need-callable-projection-does-not-force-value",
+  "need-demand-order-decides-the-first-failure",
+  "need-wrapper-keeps-builtin-if-selection",
+  "need-container-call-checks-cardinality-first",
+  "need-collection-builtin-demands-its-collection-first",
   "collected-callable-survives-explicit-respread",
   "first-program",
   "boolean-values-and-equality",
@@ -2006,6 +2030,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 316
+#guard specCaseIds.length == 320
 
 end LanguageSpecCases

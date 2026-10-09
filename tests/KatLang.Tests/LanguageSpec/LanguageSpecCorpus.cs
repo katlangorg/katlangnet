@@ -237,6 +237,44 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "need-demand-order-decides-the-first-failure",
+            Category = "errors",
+            Source = "F(x, y) = y + x\nF(1 / 0, 'a' + 1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "Supplied arguments run in the order they are first demanded, not in written order. The body demands y first, so its type error is the failure the call reports, and the division by zero is never evaluated.",
+        },
+        new()
+        {
+            Id = "need-wrapper-keeps-builtin-if-selection",
+            Category = "conditionals",
+            Source = "MyIf(c, t, e) = if(c, t, e)\nApply3(f, a, b, c) = f(a, b, c)\nMyIf(true, 1, 1 / 0)\nApply3(if, false, 1 / 0, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2",
+            ExpectedRaw = "S[1, 2]",
+            ExpectedEmittedCount = 2,
+            Explanation = "A wrapper's parameters are suspended computations that it passes on unevaluated, so builtin `if` reached through a user wrapper or a higher-order parameter still demands only its condition and the selected branch: the unselected `1 / 0` never runs.",
+        },
+        new()
+        {
+            Id = "need-container-call-checks-cardinality-first",
+            Category = "errors",
+            Source = "A = {\n    public X = 1\n}\nA(6)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Explanation = "A container has no parameters, so a call that supplies an argument fails its cardinality check before the body runs: the error is the arity mismatch, not the container's missing output.",
+        },
+        new()
+        {
+            Id = "need-collection-builtin-demands-its-collection-first",
+            Category = "collection-builtins",
+            Source = "take(1 / 0, 'a' + 1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A collection builtin demands its collection first and then its controls, each validated before the next is demanded, so the collection's division by zero is the failure the call reports and the count `'a' + 1` is never evaluated.",
+        },
+        new()
+        {
             Id = "collected-callable-survives-explicit-respread",
             Category = "variadic-calls",
             Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(Inc)",

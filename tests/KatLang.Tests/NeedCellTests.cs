@@ -167,6 +167,41 @@ public class NeedCellTests
         Assert.Equal(0, budget.CurrentDepth);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResourceFailureDuringFirstDemand_IsStickyAndStopsOtherCells(bool asynchronousFirst)
+    {
+        var budget = EvaluationBudget.Create(new EvaluationLimits { MaxSteps = 1 });
+        var span = new SourceSpan(2, 3, 2, 4);
+        var failure = new EvalError.EvaluationStepLimitExceeded(1) { Span = span };
+        var starts = 0;
+        var projections = 0;
+        EvalResult<Evaluator.CountedResult> Fail() { starts++; return failure; }
+        var cell = new NeedCell(Fail, () => new(Fail()),
+            () => { projections++; return EvalResult<Algorithm?>.Ok(new Algorithm.Builtin(BuiltinId.@map)); },
+            span: span, budget: budget);
+
+        var first = asynchronousFirst ? await cell.DemandAsync() : cell.Demand();
+        Assert.Same(failure, first.Error);
+        Assert.Same(failure, cell.Demand().Error);
+        Assert.Same(failure, (await cell.DemandAsync()).Error);
+        var projection = cell.ProjectCallable();
+        Assert.True(projection.IsError);
+        Assert.Same(failure, projection.Error);
+        Assert.Equal(span, first.Error.Span);
+        Assert.Equal(1, starts);
+        Assert.Equal(0, projections);
+
+        var otherStarts = 0;
+        EvalResult<Evaluator.CountedResult> Other() { otherStarts++; return Value(); }
+        var other = new NeedCell(Other, () => new(Other()), budget: budget);
+        Assert.Same(failure, other.Demand().Error);
+        Assert.Same(failure, (await other.DemandAsync()).Error);
+        Assert.Equal(0, otherStarts);
+        Assert.Equal(0, budget.ConsumedSteps);
+    }
+
     [Fact]
     public void OneHundredThousandProductionParameterTransports_ShareOneAddressOnAConstrainedStack()
     {
