@@ -1,4 +1,5 @@
 using KatLang.Evaluation;
+using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Optimizations.Sequences;
 using static KatLang.Tests.StrategyNeutralBudgetParityTests;
@@ -459,16 +460,47 @@ public class LimitConfigurationTransparencyTests
 
         // An UNBOUNDED planned loop under a configured, non-binding step budget: cancellation
         // requested while it runs stops it with the host exception (the planned iterations
-        // observe the token through their step charge).
-        var runaway = Program("Step(s) = s + 1, true\nwhile(Step, 0)", operations: null);
+        // observe the token through their step charge). The request is made from INSIDE a planned
+        // iteration — the step's exported temp `One` is read through the run cache once per
+        // iteration, and the cache cancels on its third read — never by a wall-clock timer, which
+        // could fire before a starved test thread reaches the loop (cancellation is then observed
+        // at an earlier chokepoint and the loop is never entered).
+        var runaway = Program("Step(s) = {\n  One = 1\n  s + One, true\n}\nwhile(Step, 0)", operations: null);
         foreach (var limits in new EvaluationLimits?[] { null, new EvaluationLimits { MaxSteps = long.MaxValue } })
         {
-            using var during = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            using var during = new CancellationTokenSource();
+            var cache = new CancellingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache(), cancelAtAccess: 3, during);
             var diagnostics = new LoopOptimizationDiagnostics();
             var stopped = Assert.ThrowsAny<OperationCanceledException>(
-                () => Evaluator.RunCountedObserved(runaway, limits, loopDiagnostics: diagnostics, cancellationToken: during.Token));
+                () => Evaluator.RunCountedObserved(
+                    runaway, limits, zeroArgPropertyResultCache: cache, loopDiagnostics: diagnostics, cancellationToken: during.Token));
             Assert.Equal(during.Token, stopped.CancellationToken);
             Assert.Equal(1, diagnostics.OptimizedLoopHits);
+            Assert.Equal(3, cache.Accesses);
+            Assert.Equal(3, diagnostics.LoopIterations); // stopped at the first observation after the request
+        }
+    }
+
+    /// <summary>
+    /// Wraps a real cache and CANCELS <paramref name="cts"/> on the k-th zero-argument property
+    /// read, then delegates unchanged, so the run continues until the evaluator's own next
+    /// observation point sees the token (the pattern of <c>EvaluationCancellationTests</c>).
+    /// </summary>
+    private sealed class CancellingZeroArgPropertyResultCache(
+        IZeroArgPropertyResultCache inner,
+        int cancelAtAccess,
+        CancellationTokenSource cts) : IZeroArgPropertyResultCache
+    {
+        public int Accesses { get; private set; }
+
+        public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        {
+            if (++Accesses == cancelAtAccess)
+                cts.Cancel();
+
+            return inner.GetOrEvaluate(execution, evaluate);
         }
     }
 }

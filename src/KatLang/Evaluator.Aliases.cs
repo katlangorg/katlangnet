@@ -206,9 +206,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// An inline block alias in VALUE position: exactly the value demand of its target — the ONE
-    /// zero-argument law judged on the TARGET (a target that requires arguments is the written
-    /// block's rejection), then the target's zero-supply demand. An inline block is no property, so
-    /// nothing is cached. The counterpart of <see cref="EvalAlgorithmExprValue"/>.
+    /// zero-argument law judged on the TARGET and reported as its written target reference reports
+    /// it (<see cref="ZeroArgumentValueDemandError"/>: <c>{ Inc }</c> with <c>Inc(x)</c> is Inc's
+    /// own <see cref="EvalError.ArityMismatch"/>, never the written block's
+    /// <see cref="EvalError.UnresolvedImplicitParams"/>; FA-OQ-1, Option B), then the target's
+    /// zero-supply demand. An inline block is no property, so nothing is cached. The counterpart
+    /// of <see cref="EvalAlgorithmExprValue"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static EvalResult<Result> EvalInlineAliasValue(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
@@ -218,17 +221,17 @@ public static partial class Evaluator
             return AtSpanIfMissing(targetR.Error, expr.Span);
 
         var target = targetR.Value;
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, expr.Span, target) is { } rejection)
+        if (ZeroArgumentValueDemandError(expr, target) is { } rejection)
             return rejection;
         return WithSpan(expr.Span, EvalZeroArgumentDemandOutput(target, ctx, valEnv));
     }
 
     /// <summary>
     /// An inline block alias as a SPREAD operand (<c>{ F }*</c>): the same value demand as
-    /// <see cref="EvalInlineAliasValue"/> — the ONE zero-argument law judged on the TARGET with the
-    /// written block's shape — whose items are spread; an operand without output is the
-    /// spread-specific <see cref="EvalError.SpreadMissingOutput"/>. The counterpart of the block arm of
-    /// <see cref="EvalSequenceSpreadOperandItems"/>.
+    /// <see cref="EvalInlineAliasValue"/> — the ONE zero-argument law judged on the TARGET and
+    /// reported as its written target reference reports it — whose items are spread; an operand
+    /// without output is the spread-specific <see cref="EvalError.SpreadMissingOutput"/>. The
+    /// counterpart of the block arm of <see cref="EvalSequenceSpreadOperandItems"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static EvalResult<IReadOnlyList<Result>> EvalAliasSpreadOperandItems(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
@@ -238,7 +241,7 @@ public static partial class Evaluator
             return AtSpanIfMissing(targetR.Error, expr.Span);
 
         var target = targetR.Value;
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, expr.Span, target) is { } rejection)
+        if (ZeroArgumentValueDemandError(expr, target) is { } rejection)
             return rejection;
 
         var blockR = EvalZeroArgumentDemandOutput(target, ctx, valEnv);
@@ -393,7 +396,7 @@ public static partial class Evaluator
             return AtSpanIfMissing(targetR.Error, expr.Span);
 
         var target = targetR.Value;
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, expr.Span, target) is { } rejection)
+        if (ZeroArgumentValueDemandError(expr, target) is { } rejection)
             return rejection;
         return WithSpan(expr.Span, await EvalZeroArgumentDemandOutputAsync(target, ctx, valEnv).ConfigureAwait(false));
     }
@@ -406,7 +409,7 @@ public static partial class Evaluator
             return AtSpanIfMissing(targetR.Error, expr.Span);
 
         var target = targetR.Value;
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, expr.Span, target) is { } rejection)
+        if (ZeroArgumentValueDemandError(expr, target) is { } rejection)
             return rejection;
 
         var blockR = await EvalZeroArgumentDemandOutputAsync(target, ctx, valEnv).ConfigureAwait(false);

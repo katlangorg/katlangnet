@@ -4069,7 +4069,15 @@ end CtxMsg
     - an algorithm-channel parameter `x` (`.param`) and a structurally navigated
       member `A.M` (an argumentless `.dotMember` receiver): the same conditional
       rule, then the bare `arityMismatch k 0`;
-    - a written brace block (`.algorithmExpr`): `unresolvedImplicitParams`;
+    - a written brace block (`.algorithmExpr`): `unresolvedImplicitParams` — the
+      block's OWN inferred parameters;
+    - an inline CALLABLE ALIAS block (`.algorithmExpr` of an `Algorithm.alias`,
+      `{ F }`): binding indirection with no signature and no report of its own, so
+      the demand is reported exactly as its written target reference `F` reports it
+      — the target's own contract (`{ Inc }` with `Inc(x)` is Inc's property-context
+      `arityMismatch 1 0`, a family `noMatchingBranch`), never the written block's
+      `unresolvedImplicitParams` over the target's parameters (FA-OQ-1, owner
+      decision Option B, 2026-10-10). A builtin target stays `none` here, as above;
     - an anonymous or value-reified argument (`none`): the bare `arityMismatch`.
     `none` means the demand may proceed to the algorithm's zero-argument value
     (`evalZeroArgumentDemandOutputCounted`, which binds the accepted EMPTY supply
@@ -4092,6 +4100,10 @@ def zeroArgumentDemandError? (source? : Option Expr) (a : Algorithm) : Option Er
           (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns a)) 0
       let named (name : Ident) (reject : Error) : Error :=
         (conditionalValueAccessError? name a).getD reject
+      -- An inline callable alias is reported as its written target reference (FA-OQ-1).
+      let source? := match source? with
+        | some (.algorithmExpr (.alias _ _ _ target _)) => some target
+        | other => other
       match source? with
       | some (.resolve n) => some (named n (Error.withContext (CtxMsg.property n) arity))
       | some (.param x) => some (named x arity)
@@ -7130,7 +7142,8 @@ mutual
             else
               .error err
     | .algorithmExpr a => do
-        -- An inline alias block is demanded as its target (C#: `EvalAliasSpreadOperandItems`).
+        -- An inline alias block is demanded as its target, a rejection reported as its written
+        -- target reference (FA-OQ-1; C#: `EvalAliasSpreadOperandItems`).
         let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
         -- A spread operand is demanded for its VALUE with zero arguments, so the
         -- ONE law decides and shapes its report here too: a block whose parameter
@@ -7409,8 +7422,9 @@ mutual
     | .listLiteral elements =>
         evalListLiteralCounted elements ctx env
     | .algorithmExpr a => do
-        -- An inline alias block (`{ F }`) is demanded as its TARGET, judged with the written
-        -- block's shape (C#: `EvalInlineAliasValue`).
+        -- An inline alias block (`{ F }`) is demanded as its TARGET, and a rejected demand is
+        -- reported as its written target reference `F` reports it (`zeroArgumentDemandError?`,
+        -- FA-OQ-1; C#: `EvalInlineAliasValue`).
         let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
         match zeroArgumentDemandError? (some e) wired with
         | some err => .error err

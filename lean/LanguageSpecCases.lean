@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 405
+- specification surface cases: 407
 - excluded parse-level cases (Lean has no surface parser): 60
 - excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 324
-- probe observations (C#-only by design): 1255
+- Lean-guarded cases: 326
+- probe observations (C#-only by design): 1272
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -710,6 +710,16 @@ def case_alias_structural_forwarding_and_written_call : Expr :=
 def case_alias_preserves_the_callee_signature : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B")), privateProp "AP" (.alias none [] [] (.resolve "P")), privateProp "AE" (.alias none [] [] (.resolve "E")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "E" (algWithParameterPatterns [.sequenceValue [], .listValue []] [] [] [.num 1])] [(.call (.resolve "C") [(.listLiteral [.num 7])]), (.call (.resolve "C") [(.listLiteral [(.listLiteral [.num 7])])]), (.call (.resolve "AP") [.num 5, .num 5]), (.call (.resolve "AE") [(.emptySequence 0), (.listLiteral [])])])
 #guard obs case_alias_preserves_the_callee_signature == "ok raw=S[7, L[7], 5, 1] n=4"
+
+-- inline-alias-value-demand-is-the-target-contract [errors]: Inc(x) = x + 1 \n K(z) = count({ Inc }) \n K(1)
+def case_inline_alias_value_demand_is_the_target_contract : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "K" (alg ["z"] [] [] [(.call (.resolve "count") [(.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])] [(.call (.resolve "K") [.num 1])])
+#guard obs case_inline_alias_value_demand_is_the_target_contract == "err arity"
+
+-- inline-formula-block-keeps-unresolved-implicit-params [errors]: Inc(x) = x + 1 \n K(z) = count({ Inc + 0 }) \n K(1)
+def case_inline_formula_block_keeps_unresolved_implicit_params : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "K" (alg ["z"] [] [] [(.call (.resolve "count") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.call (.resolve "Inc") [.param "x"]) (.num 0))]))])])] [(.call (.resolve "K") [.num 1])])
+#guard obs case_inline_formula_block_keeps_unresolved_implicit_params == "err unresolvedImplicitParams"
 
 -- alias-of-a-builtin-is-the-builtin [name-resolution]: C = count \n I = if \n M = map \n Bad(x) = x / 0 \n  \n C([1, 2, 3]) \n I(true, 1, 1 / 0) \n M([], Bad)
 def case_alias_of_a_builtin_is_the_builtin : Expr :=
@@ -1721,7 +1731,7 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 324 canonical Lean-guarded specification cases.
+-- 326 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1851,6 +1861,8 @@ def specCaseIds : List String := [
   "alias-forwarding-and-explicit-call",
   "alias-structural-forwarding-and-written-call",
   "alias-preserves-the-callee-signature",
+  "inline-alias-value-demand-is-the-target-contract",
+  "inline-formula-block-keeps-unresolved-implicit-params",
   "alias-of-a-builtin-is-the-builtin",
   "alias-of-a-clause-family-dispatches-as-the-family",
   "alias-arguments-take-the-targets-roles",
@@ -2054,6 +2066,6 @@ def specCaseIds : List String := [
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
   "grace-in-redundant-group-is-grace-on-the-name"
 ]
-#guard specCaseIds.length == 324
+#guard specCaseIds.length == 326
 
 end LanguageSpecCases

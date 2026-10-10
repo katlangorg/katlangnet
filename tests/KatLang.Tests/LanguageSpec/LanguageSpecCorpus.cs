@@ -2423,6 +2423,53 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "inline-alias-value-demand-is-the-target-contract",
+            Category = "errors",
+            Source = "Inc(x) = x + 1\nK(z) = count({ Inc })\nK(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                // The named alias and the direct reference report the same contract.
+                new SpecProbe("Inc(x) = x + 1\nA = Inc\nK(z) = count(A)\nK(1)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nA = Inc\nK(z) = count({ A })\nK(1)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nK(z) = count(Inc)\nK(1)", "err arity"),
+                // Every value consumer reaches the same law.
+                new SpecProbe("Inc(x) = x + 1\nId(v) = v\nId({ Inc })", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nK(z) = { Inc }.string\nK(1)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nK(z) = [{ Inc }*]\nK(1)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\ncount({ Inc })", "err arity"),
+                // Each target keeps its own contract.
+                new SpecProbe("Add(a, b) = a + b\nK(z) = count({ Add })\nK(1)", "err arity"),
+                new SpecProbe("K(z) = count({ abs })\nK(1)", "err arity"),
+                new SpecProbe("E(0) = 0\nE(n) = n\nK(z) = count({ E })\nK(1)", "err branch"),
+                new SpecProbe("K(z) = count({ count })\nK(1)", "err arity"),
+                // Accepted, unused and invoked aliases are unchanged.
+                new SpecProbe("Only(*xs) = xs\nK(z) = count({ Only })\nK(1)", "ok raw=0 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nIgnore(f) = 0\nIgnore({ Inc })", "ok raw=0 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nK(z) = map([1, 2], { Inc })\nK(1)", "ok raw=L[2, 3] n=1"),
+            ],
+            Notes = "FA-OQ-1, owner decision Option B (2026-10-10). Before it the demand reported the written block's unresolvedImplicitParams over the TARGET's parameters.",
+            Explanation = "An inline block whose one row names a callable that needs arguments — `{ Inc }` — is a callable ALIAS of Inc: it has no parameters of its own. Demanding its value with no arguments therefore fails exactly as demanding `Inc` itself does — Inc needs one argument, so the error is Inc's `ArityMismatch` (\"Property 'Inc' expects 1 parameter\"), reported at the `Inc` inside the block. A clause family reports its `NoMatchingBranch` and a builtin its own arity error; an alias whose target accepts no arguments (`{ Only }` with `Only(*xs)`) simply evaluates, and passing `{ Inc }` where a callable is expected (`map`) calls Inc.",
+        },
+        new()
+        {
+            Id = "inline-formula-block-keeps-unresolved-implicit-params",
+            Category = "errors",
+            Source = "Inc(x) = x + 1\nK(z) = count({ Inc + 0 })\nK(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unresolvedImplicitParams",
+            Probes =
+            [
+                new SpecProbe("K(z) = count({x + 1})\nK(1)", "err unresolvedImplicitParams"),
+                new SpecProbe("Inc(x) = x + 1\nK(z) = count({ Inc, 1 })\nK(1)", "err unresolvedImplicitParams"),
+                new SpecProbe("K(z) = count({ y })\nK(1)", "err unresolvedImplicitParams"),
+            ],
+            Notes = "FA-OQ-1 boundary: only an exact inline alias (a lone bare reference) reports its target's contract.",
+            Explanation = "A block that is not a lone callable reference is an ordinary algorithm with its OWN parameters: `{ Inc + 0 }` is a formula that needs Inc's `x`, so the block infers `x` as its own parameter (as does `{x + 1}`, and an unresolved name such as `{ y }`). Nobody supplies it when `count` demands the block's value, so the error is `UnresolvedImplicitParams`. Compare `inline-alias-value-demand-is-the-target-contract`, where `{ Inc }` alone is an alias with no parameters of its own.",
+        },
+        new()
+        {
             Id = "alias-of-a-builtin-is-the-builtin",
             Category = "name-resolution",
             Source = "C = count\nI = if\nM = map\nBad(x) = x / 0\n\nC([1, 2, 3])\nI(true, 1, 1 / 0)\nM([], Bad)",

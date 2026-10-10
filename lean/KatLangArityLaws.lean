@@ -919,6 +919,55 @@ theorem zero_argument_demand_rejects_group_with_one_required_slot
       = some (Error.withContext (CtxMsg.property propertyName) (Error.arityMismatch 1 0)) := rfl
 
 /-
+## An inline callable alias has no report of its own (FA-OQ-1, owner decision Option B, 2026-10-10)
+
+An inline block whose one row names a parameterized callable (`{ F }`) is a callable
+alias (`Algorithm.alias`): binding indirection, with no signature and no report of its
+own. A zero-argument VALUE demand of it is judged on its normalized target (the demanded
+algorithm `a`) and REPORTED exactly as its written target reference — a name or a declared
+member path, the only alias targets — reports it, whatever the target is: a user
+algorithm's arity, a family's `noMatchingBranch`, a builtin's pass-through. A written
+block that is NOT an alias keeps the block's own `unresolvedImplicitParams`.
+-/
+
+/-- An inline alias of a NAME is demanded exactly as that name is. -/
+theorem inline_alias_demand_reports_as_its_name_reference
+    (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (name : Ident)
+    (id : Option PropertyIdentity) (a : Algorithm) :
+    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id))) a
+      = zeroArgumentDemandError? (some (.resolve name)) a := by
+  cases a <;> rfl
+
+/-- An inline alias of a declared MEMBER PATH is demanded exactly as that path is. -/
+theorem inline_alias_demand_reports_as_its_member_reference
+    (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (receiver fallback : Expr)
+    (member : Ident) (id : Option PropertyIdentity) (a : Algorithm) :
+    zeroArgumentDemandError?
+        (some (.algorithmExpr (.alias p op props (.dotMember receiver member fallback none) id))) a
+      = zeroArgumentDemandError? (some (.dotMember receiver member fallback none)) a := by
+  cases a <;> rfl
+
+/-- The canonical witness: `{ Inc }` with `Inc(x) = x + 1` is Inc's property-context
+cardinality `arityMismatch 1 0` — never the written block's `unresolvedImplicitParams`. -/
+theorem inline_alias_of_a_required_argument_callable_is_its_arity
+    (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (name x : Ident)
+    (id : Option PropertyIdentity) (op' : List Expr) (props' : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id)))
+      (Algorithm.mk none [.capture { name := x }] op' props' out)
+      = some (Error.withContext (CtxMsg.property name) (Error.arityMismatch 1 0)) := rfl
+
+/-- A written block that is NOT an alias reports its OWN inferred parameters (the
+block's `Algorithm.params`; `ParameterPattern.captures` is `partial`, so the list is
+stated through it rather than computed). -/
+theorem written_block_reports_its_own_unresolved_implicit_params
+    (x : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError?
+        (some (.algorithmExpr (Algorithm.mk none [.capture { name := x }] op props out)))
+        (Algorithm.mk none [.capture { name := x }] op props out)
+      = some (Error.unresolvedImplicitParams
+          (Algorithm.params (Algorithm.mk none [.capture { name := x }] op props out))) := rfl
+
+/-
 ## Implicit-lifting eligibility follows zero-argument acceptance (Q-03, September 2026)
 
 The surface pass lifts a bare value-position reference into an implicit

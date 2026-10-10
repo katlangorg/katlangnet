@@ -1992,8 +1992,10 @@ public static partial class Evaluator
     /// (<see cref="ZeroArgumentValueDemandError"/>) decides from the resolved
     /// receiver's signature BEFORE its body is entered: <c>Inc.string</c> with
     /// <c>Inc(x)</c> is the property arity error, a navigated parameterized member
-    /// the bare one, and a written parameterized block
-    /// <see cref="EvalError.UnresolvedImplicitParams"/> — never <c>Unknown name: x</c>
+    /// the bare one, a written parameterized block
+    /// <see cref="EvalError.UnresolvedImplicitParams"/>, and an inline callable alias
+    /// <c>{ Inc }.string</c> its written target reference's report (the property arity
+    /// error, FA-OQ-1) — never <c>Unknown name: x</c>
     /// from inside the receiver. Lean: the <c>string</c> arm of <c>evalDotCallCounted</c>
     /// and <c>evalDotStringReceiverValue</c>.
     /// </summary>

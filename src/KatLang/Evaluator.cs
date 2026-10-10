@@ -1288,7 +1288,11 @@ public static partial class Evaluator
         /// </summary>
         StructuralMember,
 
-        /// <summary>A written brace block (<see cref="Expr.AlgorithmExpr"/>).</summary>
+        /// <summary>
+        /// A written brace block (<see cref="Expr.AlgorithmExpr"/>) that is NOT a callable alias:
+        /// an inline alias <c>{ F }</c> is reported as its written target reference
+        /// (<see cref="ZeroArgumentValueDemandError"/>), never with this shape.
+        /// </summary>
         Block,
 
         /// <summary>An anonymous or value-reified algorithm (no written source).</summary>
@@ -1321,7 +1325,9 @@ public static partial class Evaluator
     /// A conditional that cannot accept zero arguments cannot be accessed as a value
     /// (<see cref="ConditionalValueAccessError"/>); a property reports the
     /// property-context arity mismatch, a parameter or a navigated member the bare one,
-    /// and a written block <see cref="EvalError.UnresolvedImplicitParams"/>. <c>null</c>
+    /// and a written block <see cref="EvalError.UnresolvedImplicitParams"/> — its OWN
+    /// inferred parameters; an inline callable alias has none and is reported as its
+    /// written target reference (<see cref="ZeroArgumentValueDemandError"/>). <c>null</c>
     /// means the demand may proceed to the algorithm's zero-argument value
     /// (<see cref="EvalZeroArgumentDemandOutputCounted"/>, which binds the accepted EMPTY
     /// supply first). The decision is the effective signature's alone — a body that would
@@ -1362,11 +1368,26 @@ public static partial class Evaluator
     /// algorithm-channel parameter, a dot receiver, a written block, or nothing
     /// (a value-reified argument, which carries no parameters). Every other written
     /// shape resolves to a zero-parameter thunk and is never rejected.
+    ///
+    /// <para>An inline CALLABLE ALIAS (<c>{ F }</c>, FWD-02) is binding indirection: it has
+    /// no signature and no report of its own, so its rejected demand is exactly the one its
+    /// written target reference <c>F</c> reports — the target's own contract (a user
+    /// algorithm's arity, a family's <c>NoMatchingBranch</c>, a builtin's own arity error),
+    /// never the written block's <see cref="EvalError.UnresolvedImplicitParams"/>, which would
+    /// present the target's parameters as implicit parameters of the program (FA-OQ-1, owner
+    /// decision Option B, 2026-10-10). The report is located at that reference, or at the
+    /// written block when the reference carries no location (the attach-if-missing law).
+    /// Every demand site judging a written block — value position, a spread operand, a builtin
+    /// value slot, the <c>.string</c> receiver — reaches the alias through this one mapping.</para>
     /// Lean: <c>zeroArgumentDemandError?</c>.
     /// </summary>
     private static EvalError? ZeroArgumentValueDemandError(Expr? source, Algorithm algorithm)
         => source switch
         {
+            Expr.AlgorithmExpr { Algorithm: Algorithm.Alias alias } =>
+                ZeroArgumentValueDemandError(alias.Target, algorithm) is { } rejection
+                    ? AtSpanIfMissing(rejection, source.Span)
+                    : null,
             Expr.Resolve(var name) =>
                 ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, source.Span, algorithm),
             Expr.Param(var name) =>

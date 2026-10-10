@@ -572,4 +572,127 @@ def invokedRejectsLikeDirect (direct forwarded : KatLang.Expr) (expected : Error
   (.call (resolve "ApplyMap") [resolve "A", oneTwo])
   (innermostIsArityMismatch 0 1)
 
+--------------------------------------------------------------------------------
+-- The zero-argument VALUE demand of an inline callable alias (FA-OQ-1, owner
+-- decision Option B, 2026-10-10)
+--------------------------------------------------------------------------------
+-- An inline block whose ONE row names a callable that declares parameterized
+-- structure (`{ Inc }`) is a callable ALIAS (`Algorithm.alias`, FWD-02): binding
+-- indirection with no signature and no report of its own. A rejected
+-- zero-argument VALUE demand of it is therefore reported exactly as its written
+-- target reference reports it — the target's own contract: a user algorithm's
+-- property-context `arityMismatch` (its true minimum), a family's
+-- `noMatchingBranch`, a builtin's own arity error, a navigated member's bare
+-- `arityMismatch` — never the written block's `unresolvedImplicitParams`, which
+-- named the TARGET's parameters as if they were implicit parameters of the
+-- program (the report until this decision). A block with its OWN inferred
+-- parameters keeps `unresolvedImplicitParams`, and accepted, unused and
+-- callback uses of an alias are unchanged. Every demand site reaches the alias
+-- through the one law (`zeroArgumentDemandError?`): value position, a spread
+-- operand, a builtin value slot (re-classified by the sequence builtins too),
+-- the `.string` receiver, and a parameter read. The C# side is
+-- `InlineAliasValueDemandLawTests` and the `inline-alias-*` spec cases.
+
+/-- The elaborated inline alias block `{ target }`. -/
+def inlineAlias (target : KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (.alias none [] [] target)
+
+/-- `Fam(0) = 0` / `Fam(n) = n`: a nameable clause family. -/
+def inlineAliasFamily : Algorithm :=
+  Algorithm.elaborateClauseGroup
+    [ { pattern := .litInt 0, body := alg [] [] [] [.num 0] }
+    , { pattern := .bind "n", body := alg [] [] [] [param "n"] } ]
+
+/-- `Inc(x) = x + 1`, `Pair(a, b) = a + b`, `Id(v) = v`, `Collect(*xs) = xs`, the named
+    alias `IA = Inc`, the family `Fam`, and `Lib = { Sub(x) = x }`. -/
+def inlineAliasRoot (out : List KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] []
+    [ ("Inc", incAlg), ("Pair", alg ["a", "b"] [] [] [.binary .add (param "a") (param "b")])
+    , ("Id", alg ["v"] [] [] [param "v"]), ("Collect", collectingAlg)
+    , ("IA", .alias none [] [] (resolve "Inc")), ("Fam", inlineAliasFamily)
+    , ("Lib", libWithParameterizedMember) ]
+    out)
+
+/-- The run fails, and its error is the TARGET reference's property-context arity
+    report — never `unresolvedImplicitParams`. -/
+def inlineAliasRejectsAsPropertyArity (name : String) (expected : Nat) (row : KatLang.Expr) : Bool :=
+  match runResult (inlineAliasRoot [row]) with
+  | Except.error err =>
+      innermostIsArityMismatch expected 0 err && hasContext s!"while evaluating property {name}" err
+  | _ => false
+
+def inlineAliasFailsWith (check : Error -> Bool) (row : KatLang.Expr) : Bool :=
+  match runResult (inlineAliasRoot [row]) with
+  | Except.error err => check err
+  | _ => false
+
+-- The canonical witness `K(z) = count({ Inc })`: Inc's own cardinality, the same
+-- report as the direct reference `count(Inc)` — formerly `unresolvedImplicitParams [x]`.
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.call (resolve "count") [inlineAlias (resolve "Inc")])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.call (resolve "count") [resolve "Inc"])
+#guard !(inlineAliasFailsWith (innermostIsUnresolvedImplicitParams ["x"])
+  (.call (resolve "count") [inlineAlias (resolve "Inc")]))
+
+-- Every VALUE consumer reaches the same law: a parameter read, an operand, a
+-- list element, a selected `if` branch, the `.string` receiver, a spread operand,
+-- the value position itself.
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.call (resolve "Id") [inlineAlias (resolve "Inc")])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.binary .add (inlineAlias (resolve "Inc")) (.num 1))
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.listLiteral [inlineAlias (resolve "Inc")])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1
+  (.call (resolve "if") [.boolLiteral true, inlineAlias (resolve "Inc"), .num 0])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.dotCall (inlineAlias (resolve "Inc")) "string" none)
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (.listLiteral [.sequenceSpread (inlineAlias (resolve "Inc"))])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1 (inlineAlias (resolve "Inc"))
+
+-- The target's TRUE minimum (`Pair` needs 2), and an inline alias of the named
+-- alias `IA = Inc` reports exactly what `count(IA)` reports: IA's property arity.
+#guard inlineAliasRejectsAsPropertyArity "Pair" 2 (.call (resolve "count") [inlineAlias (resolve "Pair")])
+#guard inlineAliasRejectsAsPropertyArity "IA" 1 (.call (resolve "count") [resolve "IA"])
+#guard inlineAliasRejectsAsPropertyArity "IA" 1 (.call (resolve "count") [inlineAlias (resolve "IA")])
+
+-- Each target category keeps its own contract: a family's `noMatchingBranch`
+-- (named by the written reference, as `count(Fam)` reports it), a builtin's own
+-- arity error (`{ count }` is count's own rejection, as before), a navigated
+-- member's bare arity.
+#guard inlineAliasFailsWith (innermostIsNoMatchingBranch "Fam")
+  (.call (resolve "count") [inlineAlias (resolve "Fam")])
+#guard inlineAliasFailsWith (innermostIsNoMatchingBranch "Fam") (.call (resolve "count") [resolve "Fam"])
+#guard inlineAliasFailsWith (innermostIsArityMismatch 1 0)
+  (.call (resolve "count") [inlineAlias (resolve "count")])
+#guard inlineAliasFailsWith
+  (fun err => innermostIsArityMismatch 1 0 err && !(hasContext "while evaluating property Sub" err))
+  (.call (resolve "count") [inlineAlias (.dotCall (resolve "Lib") "Sub" none)])
+
+-- A written block with its OWN inferred parameter keeps `unresolvedImplicitParams`.
+#guard inlineAliasFailsWith (innermostIsUnresolvedImplicitParams ["x"])
+  (.call (resolve "count") [.algorithmExpr (alg ["x"] [] [] [.binary .add (param "x") (.num 1)])])
+
+-- Accepted, unused and invoked aliases are unchanged: `count({ Collect })` counts
+-- `Collect()`'s empty list, an unselected branch is never demanded, and a
+-- callback slot invokes the target.
+#guard expectFlat (runFlat (inlineAliasRoot [.call (resolve "count") [inlineAlias (resolve "Collect")]])) [0]
+#guard expectFlat (runFlat (inlineAliasRoot
+  [.call (resolve "if") [.boolLiteral false, inlineAlias (resolve "Inc"), .num 7]])) [7]
+#guard expectFlat (runFlat (inlineAliasRoot
+  [.call (resolve "map") [.listLiteral [.num 1, .num 2], inlineAlias (resolve "Inc")]])) [2, 3]
+
+-- Independent final-review seams: local declarations select the target in the alias's own
+-- scope, nested ordinary blocks preserve the innermost alias demand, and transport stays lazy.
+#guard inlineAliasRejectsAsPropertyArity "Local" 1
+  (.call (resolve "count") [.algorithmExpr (.alias none []
+    (Algorithm.props (algPrivate [] [] [("Local", .alias none [] [] (resolve "Inc"))] []))
+    (resolve "Local"))])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 2
+  (.call (resolve "count") [.algorithmExpr (.alias none []
+    (Algorithm.props (algPrivate [] [] [("Inc", alg ["a", "b"] [] []
+      [.binary .add (param "a") (param "b")])] [])) (resolve "Inc"))])
+#guard inlineAliasRejectsAsPropertyArity "Inc" 1
+  (.sequenceSpread (.algorithmExpr (alg [] [] []
+    [.algorithmExpr (alg [] [] [] [inlineAlias (resolve "Inc")])])))
+#guard expectFlat (runFlat (inlineAliasRoot
+  [.call (.algorithmExpr (alg ["v"] [] [] [.num 7])) [inlineAlias (resolve "Inc")]])) [7]
+#guard inlineAliasFailsWith (innermostIsNoMatchingBranch "Fam")
+  (.call (resolve "reduce") [.listLiteral [.num 1], resolve "Pair", inlineAlias (resolve "Fam")])
+
 end KatLangTests
