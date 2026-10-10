@@ -7,7 +7,7 @@ namespace KatLang;
 internal enum LiftingRole
 {
     /// <summary>
-    /// The consumer demands the slot's VALUE — an operand, an index part, a spread operand, a list
+    /// The consumer classifies the slot as a VALUE use — an operand, an index part, a spread operand, a list
     /// or capture element, an output row, the <c>.string</c> receiver, or an argument slot whose
     /// consumer demands its value (a builtin value slot, a Math or host-operation argument, a
     /// clause-family argument). A bare callable reference here is lifted to the call that forwards
@@ -42,7 +42,7 @@ internal enum LiftingCalleeKind
     User,
 
     /// <summary>A clause family: every argument is a VALUE role for lifting (PAR-07); at run time the family
-    /// demands only what its clause patterns inspect (NEED-04, PAT-07).</summary>
+    /// demands only what its clause patterns inspect or its selected body consumes (NEED-04, PAT-07).</summary>
     Family,
 
     /// <summary>A prelude builtin: the registry's slot roles decide.</summary>
@@ -127,7 +127,8 @@ internal static class FormulaLiftingRoles
     /// it (a spread is supply assembly: its item count is known only at run time).
     /// <list type="bullet">
     ///   <item>a clause family, a Math member and a host operation take every argument as a VALUE role (a
-    ///   static classification: at run time a family demands only what its clauses inspect, NEED-04);</item>
+    ///   static classification: at run time a family demands only what its clauses inspect or its
+    ///   selected body consumes, NEED-04);</item>
     ///   <item>a builtin reads its registry role (a callback is invoked; the collection, every value
     ///   control and a surplus slot are values; <c>if</c> takes three values; a loop's step is
     ///   invoked); a position after a spread is a value only if every declared position is;</item>
@@ -212,10 +213,11 @@ internal static class FormulaLiftingRoles
     /// <summary>
     /// A builtin's registry role for supplied position <paramref name="position"/>: only a callback
     /// keeps its callable identity. The collection, every value control, and a SURPLUS position
-    /// beyond the signature are values — a surplus slot is value-evaluated like a value slot before
-    /// the arity verdict (PV-05), exactly as every argument of a Math member, a host operation and
-    /// a clause family is a value whatever the call's arity, so no role depends on how many
-    /// arguments a call supplies. The loops invoke their step (position 0) and take values in every
+    /// beyond the signature are VALUE roles, as is every argument of a Math member, a host operation
+    /// and a clause family, so no role depends on how many arguments a call supplies. This static
+    /// classification does not demand the argument: Model C rejects cardinality before ordinary
+    /// VALUE demand (NEED-05), superseding PV-05's earlier demand-before-arity rule. The loops invoke
+    /// their step (position 0) and take values in every
     /// later position; <c>if</c>, <c>atoms</c> and <c>range</c> take values only.
     /// </summary>
     private static LiftingRole BuiltinSlotRole(BuiltinId builtin, int position)
