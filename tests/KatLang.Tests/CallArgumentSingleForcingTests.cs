@@ -3,7 +3,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// Deterministic exactly-once regression coverage for call-argument
 /// preparation, across every call family: a WRITTEN argument expression is
-/// semantically forced exactly once per call-preparation/binding event.
+/// a supplied computation forced at most once, on its first VALUE demand
+/// (Model C, NEED-01); every probe below demands its argument, so each pins
+/// exactly one forcing per demanded slot.
 ///
 /// <para><b>Mechanism</b>: the run-scoped <c>EvaluationBudget</c> counters
 /// exposed by <c>Evaluator.RunCountedObserved</c> — the same deterministic
@@ -25,7 +27,7 @@ namespace KatLang.Tests;
 /// user-level call from evaluating again.</para>
 ///
 /// <para><b>Algorithm probing is non-forcing</b>: the higher-order case pins
-/// that AlgEnv probing of a callable argument adds no step; the poison-block
+/// that CALLABLE projection of a supplied argument (NEED-06) adds no step; the poison-block
 /// test <c>PatternedCallSingleEvaluationTests.MultiParameterBlock_RemainsLazyOnTheAlgorithmOnlyChannel</c>
 /// additionally proves a probed-but-never-consumed argument is never value-forced
 /// at all (its body divides by zero).</para>

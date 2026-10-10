@@ -179,8 +179,9 @@ def consumerReusesTheRead (consumer : KatLang.Expr) (ownCalls : Nat) : Bool :=
 #guard entriesNamed "A" [.call (resolve "A") [], .call (resolve "A") []] == some 0
 -- An explicit call inside a builtin slot is still an explicit call.
 #guard contextsOpened [resolve "A", .call (resolve "sum") [.call (resolve "A") []]] == some 3
--- Explicitly invoking a FORWARDED callable is an explicit call too: `Call0(A)`
--- reads A's value for the argument (cached) and `f()` runs A's body afresh.
+-- Explicitly invoking a FORWARDED callable is an explicit call too: passing A to
+-- `Call0` demands no VALUE (Model C, NEED-06), and `f()` runs A's body afresh;
+-- the root read of A is the one cached read.
 #guard contextsOpened [resolve "A", .call (resolve "Call0") [resolve "A"]] == some 4
 
 --------------------------------------------------------------------------------

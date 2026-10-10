@@ -505,9 +505,9 @@ public class LoopCardinalityLawTests
 
     /// <summary>
     /// Iterating is not nesting calls: the next state is the step's row SUPPLY, while a call's result
-    /// is ONE value. So <c>repeat(S, 2, s…)</c> equals <c>S(S(s…)*)</c> for a step whose rows each
-    /// supply one item, and <c>S(S(s…))</c> for a step whose one row is a sequence value — and the
-    /// mismatched nestings are arity errors.
+    /// is ONE value. So <c>repeat(S, 2, s…)</c> equals <c>S(S(s…))</c> when the first iteration supplies
+    /// exactly one item (whatever its value), and <c>S(S(s…)*)</c> when it supplies zero or several — and
+    /// the mismatched nestings are arity errors.
     /// </summary>
     [Fact]
     public async Task IteratingIsNotNestingCalls()

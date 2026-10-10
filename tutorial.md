@@ -51,7 +51,7 @@ A program can be a single expression:
 
 ### Several Results
 
-Every line of a program is an output row, and commas separate several outputs on one line:
+Every line of a program like this one is an output row (definition lines, introduced under Properties, are not), and commas separate several outputs on one line:
 
 <!-- spec:supply-three-rows -->
 ```

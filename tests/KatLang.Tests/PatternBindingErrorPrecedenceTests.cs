@@ -503,7 +503,7 @@ public class PatternBindingErrorPrecedenceTests
     }
 
     [Fact]
-    public void RuntimeDotWrappers_AreDistinctButForwardingPreservesOneIdentity()
+    public void StructuralDotMember_SuppliesOneIdentity_DirectAndForwarded()
     {
         AssertDisplay("Obj = { public V = 5 }\nP(f, f) = f\nP(Obj.V, Obj.V)", "5");
         AssertDisplay("Obj = { public V = 5 }\nP(f, f) = f()\nPass(g) = P(g, g)\nPass(Obj.V)", "5");

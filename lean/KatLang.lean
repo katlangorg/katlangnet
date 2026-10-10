@@ -22,7 +22,7 @@
 --   while this core keeps the exact integer. Fractional
 --   results the decimal runtime can represent are another documented Int-core
 --   limitation: `/`-style quotients and the `avg` builtin truncate here
---   (`7 / 2 = 3` and `avg(1, 2) = 1`) but yield decimals in the runtime
+--   (`7 / 2 = 3` and `avg((1, 2)) = 1`) but yield decimals in the runtime
 --   (`3.5` and `1.5`), and negative exponents with
 --   |base| >= 2 raise an explicit error instead of silently truncating the
 --   reciprocal to 0 (see `negativeIntPow`). Zero raised to a negative
@@ -2029,7 +2029,7 @@ namespace EvalCtx
 
   /-- The callee-side context of a parameter binding: the callee's own
       algorithm and counted bindings prepended to the CALLER's tiers with the
-      bound parameter names removed from BOTH inherited tiers (`AlgEnv.shadow`,
+      bound parameter names removed from the inherited need-cell tier (`needEnv`) and from BOTH inherited binding tiers (`AlgEnv.shadow`,
       `CountedParamEnv.shadow`; the value tier is shadowed beside it with
       `ValEnv.shadow`).
 
@@ -4735,8 +4735,8 @@ def evalOrderDescCounted (numbers : List Int) : EvalM CountedResult := do
     `count` processes top-level collection elements from left to right and
     increments once per element.
 
-    Each atom, string, or sequence value counts as one top-level element.
-    Sequence values are not flattened or recursively inspected, and empty
+    Each atom, string, Boolean, sequence value, or list value counts as one
+    top-level element. Sequence and list values are not flattened or recursively inspected, and empty
     collections return `0`. -/
 def evalCountCounted (items : List Result) : EvalM CountedResult := do
   pure (Result.atom (Int.ofNat items.length), 1)
@@ -5326,7 +5326,9 @@ partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   -- Capture is not algorithm identity: the algorithm channel sees only a
   -- zero-parameter value thunk over the bundle, exactly as the pre-split
   -- transparent wrapper behaved. `Apply((Inc, Dec))` therefore never receives
-  -- either callable identity (`f(9)` on the thunk is an arity error), while
+  -- either callable identity: a capture ARGUMENT has no CALLABLE channel at all
+  -- (`projectNeedCallable` declines it through `shouldWrapArgExprAsValue`), so
+  -- `f(9)` is `notAnAlgorithm` (Q-06, NEED-06), while
   -- the redundant group `Apply((Increment))` IS `Apply(Increment)` — the
   -- parser erases it before this node exists (parentheses group syntax).
   -- C#: `CaptureValueThunk`.
@@ -7060,9 +7062,11 @@ mutual
               -- it takes the extension call's place, so a lexical `string` is never
               -- consulted.
               -- The intrinsic is a ZERO-parameter member: a written argument list is
-              -- assembled like every call's (each slot evaluated once, spreads opened)
-              -- and then rejected by arity exactly as `Obj.V(1)` is for a declared
-              -- zero-parameter member; `x.string()` (an empty list) stays the intrinsic.
+              -- formed like every call's supply (explicit spreads opened, every other
+              -- slot a suspended need) and rejected by its cardinality before any
+              -- argument or the receiver is demanded, exactly as `Obj.V(1)` is for a
+              -- declared zero-parameter member; `x.string()` (an empty list) stays the
+              -- intrinsic.
               -- C#: `RejectDotStringIntrinsicArguments`.
               rejectDotStringIntrinsicArguments argsOpt ctx env
               -- A receiver that is a callable alias is demanded as its TARGET, read through the

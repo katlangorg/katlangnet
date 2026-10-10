@@ -22,8 +22,8 @@ namespace KatLang.Evaluation.Caching;
 ///   <item>On a hit, return the stored result without invoking <c>evaluateAsync</c>.</item>
 ///   <item>On a miss, invoke <c>evaluateAsync</c> at most once and store only
 ///   successful results (errors are never stored — a deterministic failure recurs
-///   identically, and a transient resource-limit failure must be free to recur under the
-///   live budget).</item>
+///   identically, and a reached resource limit is already terminal for the run, so nothing
+///   could read a stored one).</item>
 ///   <item>Never swallow exceptions from the callback: in particular a thrown
 ///   <see cref="OperationCanceledException"/> is host cancellation and must propagate
 ///   unchanged (it is never a cacheable outcome).</item>

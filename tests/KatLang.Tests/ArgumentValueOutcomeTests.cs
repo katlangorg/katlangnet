@@ -686,13 +686,12 @@ public class ArgumentValueOutcomeTests
     /// demand (RESOURCE LIMITS ARE TERMINAL, Q-02 / PV-06; NEED-09): the demanded cell keeps the
     /// limit as its terminal completion, so a callee that reads the parameter and one that
     /// forwards it to a reader fail alike, while an argument nothing demands never runs. Only
-    /// ORDINARY failures are the latent, once-established outcomes of this suite. (The method
-    /// name predates Model C, when the limit was raised at argument assembly.)
+    /// ORDINARY failures are the latent, once-established outcomes of this suite.
     /// (The synchronous routes agree on the depth verdict; the async twin's host-stack
     /// headroom is a separate, documented difference, PV-07.)
     /// </summary>
     [Fact]
-    public void ResourceLimitFailureOfASlot_IsTerminalAtAssembly()
+    public void ResourceLimitFailureOfASlot_IsTerminalAtItsFirstValueDemand()
     {
         foreach (var source in new[]
         {

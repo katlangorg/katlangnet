@@ -586,7 +586,7 @@ PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-le
                                    expression list F, (1, 2). Multiline calls open the delimiter
                                    before the newline; the already-open argument list spans
                                    lines normally. Non-callable targets never become calls:
-                                   2 (3) and 2 newline (3) are the expression list 2, 3, never
+                                   2 (3) is the same-line-item error, and 2 newline (3) is the expression list 2, 3, never
                                    multiplication. *)
 
 SpreadMarker    = "*" ;

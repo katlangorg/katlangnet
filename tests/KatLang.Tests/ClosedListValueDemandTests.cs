@@ -4,7 +4,7 @@ namespace KatLang.Tests;
 
 /// <summary>Q-15: closed heads block lifting, and the ordinary VALUE rejection
 /// belongs to the first executed demand. Static roles do not prove execution.</summary>
-public class ClosedListStrictValueDiagnosticTests
+public class ClosedListValueDemandTests
 {
     public static IEnumerable<object[]> Demands()
     {

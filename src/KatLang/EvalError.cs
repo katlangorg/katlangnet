@@ -66,9 +66,9 @@ public closed record EvalError
     /// property of the RUN, not of any one call on the chain,
     /// so the innermost span is preserved and a depth failure does not report one identical
     /// context frame per active invocation. For the same reason every such failure that
-    /// evaluation actually reaches is TERMINAL for the run: evaluation never retains,
-    /// defers, or absorbs it the way an ordinary failure of an argument nobody reads may be
-    /// deferred, so nothing is evaluated after it and a successful run never reached one.
+    /// evaluation actually reaches is TERMINAL for the run: evaluation never defers or
+    /// absorbs it (a demanded cell keeps it as its terminal completion and the run budget
+    /// retains it), so nothing is evaluated after it and a successful run never reached one.
     /// </summary>
     public bool IsResourceLimit => this switch
     {

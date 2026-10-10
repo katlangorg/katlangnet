@@ -2642,7 +2642,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "5",
             ExpectedRaw = "5",
             ExpectedEmittedCount = 1,
-            Explanation = "A dot-result wrapper keeps its runtime callable identity through parameter forwarding. Passing that one wrapper twice is compatible and invokes it as the same callable.",
+            Explanation = "A structural member path supplies that member's own callable identity (a dot expression has one callable identity in every position; no wrapper is involved). Forwarding the parameter keeps that one identity, so both occurrences of `f` receive the same callable and the repeated-name constraint holds; `f()` is the member's ordinary fresh call, giving 5.",
         },
         new()
         {
@@ -5859,7 +5859,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("N = (-2) ^ 0.5\nN != (-3) ^ 0.5", "ok raw=false n=1"),
                 new SpecProbe("N = (-2) ^ 0.5\ncontains((1, N), (-3) ^ 0.5)", "ok raw=true n=1"),
                 new SpecProbe("N = (-2) ^ 0.5\ndistinct((N, (-3) ^ 0.5))", "ok raw=L[NaN] n=1"),
-                // `order`/`orderDesc` use Decimal128's TOTAL order (NaN sorts
+                // `order`/`orderDesc` use Decimal128.CompareTo's total preorder (NaN sorts
                 // before every other value ascending), a third, deliberate
                 // surface distinct from both `==` and the IEEE comparisons.
                 new SpecProbe("N = (-2) ^ 0.5\norder((1, N, -1))", "ok raw=L[NaN, -1, 1] n=1"),

@@ -953,7 +953,7 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
 
 #guard selectionFeedsEveryConsumerAsOneValue
 
--- Independent C-full review: the real flat binder must report the original
+-- Independent C-full review: the historical Ready flat binder (`HistoricalReadyBinding.bindParams`) must report the original
 -- argument supply, just as the counted callback binder and the C# binder do.
 #guard match KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParams ["x", "y"] [seq12]) with
   | .error (.arityMismatch 2 1) => true

@@ -335,7 +335,7 @@ internal sealed class FrontEndTraversalObservations
         => ExposureArgumentBundleRewrites = checked(ExposureArgumentBundleRewrites + 1);
 
     /// <summary>
-    /// User-algorithm regions the exposure pass processed (<c>PropertyExposureResolver.ProcessUserAlgorithm</c>
+    /// User-algorithm regions the exposure pass processed (<c>PropertyExposureResolver.ProcessScopeBody</c>
     /// entries): one count per distinct algorithm body classified under one visible-summary context —
     /// property values, block literals, and conditional branch bodies alike (M4).
     /// </summary>

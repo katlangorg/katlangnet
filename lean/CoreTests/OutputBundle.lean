@@ -151,8 +151,8 @@ def openSurfaceCaptureTargetsAreRejected : Bool :=
 #guard openSurfaceCaptureTargetsAreRejected
 
 /-- Nested host-built grouping suppresses callable identity at every depth:
-    `capture [capture [Increment]]` fails with the same arity error as
-    `capture [Increment]` — the inner identity never crosses any capture layer.
+    `capture [capture [Increment]]` fails with the same `notAnAlgorithm` on the
+    parameter `f` as `capture [Increment]` — the inner identity never crosses any capture layer.
     (Source: `Apply(((Increment)))` IS `Apply(Increment)`.) -/
 def nestedCaptureStillSuppressesCallableIdentity : Bool :=
   let increment := alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]

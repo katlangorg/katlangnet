@@ -47,8 +47,8 @@ internal interface IDeconstructionBindingCache
     /// Returns the ordered per-target demand cells for this deconstruction group and binding
     /// context, computing them via <paramref name="bind"/> only on a miss. Errors are NEVER
     /// stored (consistent with <see cref="IZeroArgPropertyResultCache"/>): a deterministic
-    /// binding failure recurs identically, and a transient resource-limit failure must be free
-    /// to recur under the live budget rather than being pinned for the rest of the run.
+    /// binding failure recurs identically, and a reached resource limit is already terminal for
+    /// the run (`EvaluationBudget.RetainTerminal`), so nothing could read a stored one.
     /// </summary>
     EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,

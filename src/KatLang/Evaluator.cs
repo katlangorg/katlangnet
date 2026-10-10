@@ -332,7 +332,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// The inherited tiers of a callee's context with the callee's parameter
-    /// names shadowed out of BOTH the algorithm environment
+    /// names shadowed out of the Model-C need-cell environment (`NeedEnv`), the algorithm environment
     /// (<see cref="ShadowAlgEnv"/>) and the counted callback-parameter
     /// environment (<see cref="ShadowCountedParamEnv"/>).
     /// <para>A bound parameter owns its name on every channel: a call-position

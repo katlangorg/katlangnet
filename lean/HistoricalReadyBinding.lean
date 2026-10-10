@@ -18,8 +18,9 @@ structure CountedParameterPatternBindings where
 
 /-- Flat fixed binding preserves each supplied value. Check the complete supply
     before zipping, so an arity error reports the original lengths, not the
-    unmatched recursive tails. This agrees with the pattern/callback binders
-    and C# `BindParams`: two parameters and one pair value is `(2, 1)`. -/
+    unmatched recursive tails. This agreed with the historical pattern/callback
+    binders and the former C# `BindParams` (deleted with Model C): two parameters
+    and one pair value is `(2, 1)`. -/
 def bindParams (ps : List Ident) (vs : List Result) : EvalM ValEnv :=
   if ps.length != vs.length then
     .error (Error.arityMismatch ps.length vs.length)
@@ -46,12 +47,12 @@ structure ParameterPatternInput where
 /-- The algorithm-channel binding one written argument slot contributes: its
     algorithm and, when the slot has no value, the failure its ONE value
     evaluation established (`badArity`, the binders' own default, should a
-    valueless slot carry none). Every user-call binder builds its algorithm
-    channel through this function (`bindParameterPattern`,
+    valueless slot carry none). HISTORICAL (pre-Model-C Ready model): every
+    user-call binder of that model built its algorithm channel through this function (`bindParameterPattern`,
     `bindFlatFixedUserCall`), so no binder can drop a slot's failure and leave
     the parameter's value to be re-derived from the algorithm later
     (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `AlgBinding`).
-    C#: `Evaluator.SlotAlgorithmBinding`. -/
+    Former C# twin: `Evaluator.SlotAlgorithmBinding` (deleted with Model C). -/
 def slotAlgorithmBinding (value? : Option Result) (error? : Option Error)
     (algorithm : Algorithm) : AlgBinding :=
   { algorithm := algorithm,

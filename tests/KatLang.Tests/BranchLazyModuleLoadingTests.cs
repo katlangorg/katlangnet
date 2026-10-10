@@ -1,4 +1,5 @@
 using System.Numerics;
+using KatLang.Evaluation;
 using KatLang.Semantics;
 
 namespace KatLang.Tests;
@@ -182,6 +183,90 @@ public class BranchLazyModuleLoadingTests
         Assert.Equal(2, modules[Missing]);
         Assert.Equal(2, region.MaterializationAttempts);
         Assert.False(region.IsMaterialized);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedDownloads_RetainTheParseBudget_WhileEachEvaluationAndEngineParseStartsFresh(bool asyncHost)
+    {
+        // RUN-02 / MOD-10: one parsed tree retains its source-acquisition budget, including
+        // failed downloads. Each evaluation still gets a fresh budget and property cache.
+        var downloads = 0;
+        var ticks = 0;
+        var tick = asyncHost
+            ? HostOperation.CreateAsync("Tick", async (_, _) =>
+            {
+                await Task.Yield();
+                return new Result.Atom(++ticks);
+            })
+            : HostOperation.Create("Tick", (_, _) => new Result.Atom(++ticks));
+        var options = new RunOptions
+        {
+            DownloadCode = async (url, _) =>
+            {
+                Assert.Equal(Missing, url);
+                downloads++;
+                await Task.Yield();
+                throw new InvalidOperationException("deterministic missing module");
+            },
+            HostOperations = HostOperations.Create(tick),
+            SourceProcessingLimits = new SourceProcessingLimits { MaxModuleCount = 2 },
+            EvaluationLimits = new EvaluationLimits { MaxSteps = 100 },
+        };
+        var source = $"P = Tick()\nP, P\nF(0) = 42\nF(1) = {{\n    open '{Missing}'\n    X\n}}\nF(1)";
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal(0, downloads);
+        Assert.Equal(0, ticks);
+        var region = Region(parsed.Root, "F", 1);
+        var program = new Expr.AlgorithmExpr(parsed.Root);
+        EvaluationBudget? previousBudget = null;
+        long? expectedSteps = null;
+
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            var (result, budget) = await Evaluator.RunCountedObservedAsync(
+                program, limits: options.EvaluationLimits, hostOperations: options.HostOperations);
+            Assert.True(result.IsError);
+            Assert.Equal(attempt <= 2 ? KatLangErrorCode.LoadFetchFailed : KatLangErrorCode.ModuleCountExceeded,
+                result.Error.Code);
+            Assert.Equal(Math.Min(attempt, 2), downloads);
+            Assert.Equal(attempt, ticks); // P is read twice: one tick per fresh evaluation.
+            Assert.NotSame(previousBudget, budget);
+            Assert.True(budget.ConsumedSteps > 0);
+            expectedSteps ??= budget.ConsumedSteps;
+            Assert.Equal(expectedSteps.Value, budget.ConsumedSteps);
+            previousBudget = budget;
+            Assert.Equal(attempt, region.MaterializationAttempts);
+            Assert.False(region.IsMaterialized);
+            Assert.Equal(0, region.Loader.CachedModuleCount);
+            Assert.Empty(parsed.Diagnostics);
+        }
+
+        // A new parse owns a new acquisition budget, although the immutable options and
+        // deterministic downloader delegate are the same. The first failed fetch is retried.
+        var fresh = await Parser.ParseAsync(source, options);
+        Assert.Empty(fresh.Diagnostics);
+        Assert.NotSame(region.Loader, Region(fresh.Root, "F", 1).Loader);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(fresh.Root),
+                options.HostOperations, options.EvaluationLimits, randomSeed: null, cancellationToken: default);
+            Assert.True(result.IsError);
+            Assert.Equal(KatLangErrorCode.LoadFetchFailed, result.Error.Code);
+            Assert.Equal(2 + attempt, downloads);
+            Assert.Equal(4 + attempt, ticks);
+        }
+
+        // Engine runs parse independently, so each can make its own first download attempt.
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var result = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source, options));
+            Assert.Equal(KatLangErrorCode.LoadFetchFailed, Assert.Single(result.Errors).Code);
+            Assert.Equal(4 + attempt, downloads);
+            Assert.Equal(6 + attempt, ticks);
+        }
     }
 
     [Fact]

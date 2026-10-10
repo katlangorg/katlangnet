@@ -74,7 +74,7 @@ The real model uses capture = Result.normalize after Result.sequenceValue.
 This alias theorem is intentionally small; capture is the ORDINARY
 value/output construction boundary only. Collecting bindings never use it — the
 binder-path theorems `bindParameterPatternList_single_collecting_binds_collect` and
-the leading/middle/trailing bridge family below connect the real binder to
+the leading/middle/trailing bridge family below connect the historical Ready binder to
 `collectSegment` instead. Capture is not raw grouping: singleton capture
 collapses, while a singleton collected segment stays `[item]`.
 -/
@@ -278,7 +278,8 @@ theorem collectSegment_canonical_of_canonical_elements {xs : List Result}
   rw [collectSegment_normalize_elementwise, map_normalize_id_of_canonical h]
 
 /--
-The real parameter-pattern binder uses `collectSegment` directly for a single
+The historical Ready parameter-pattern binder (`HistoricalReadyBinding.bindParameterPatternList`,
+not the Model-C `bindNeedPatterns`) uses `collectSegment` directly for a single
 top-level variadic capture. This is the binder-path bridge theorem: the
 successful binding records `x` as the exact list of the supplied
 items, with emitted count 1.
@@ -389,7 +390,7 @@ theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
 For every supported flat variadic shape — leading variadic (`Init(*init, last)`),
 middle variadic (`F(x, *y, z)`), trailing variadic (`Tail(first, *rest)`); the
 lone-variadic shape is `bindParameterPatternList_single_collecting_binds_collect` above —
-a successful bind through the REAL shared binder records the collecting parameter's name as
+a successful bind through the historical Ready shared binder (`bindParameterPatternList`) records the collecting parameter's name as
 `collectSegment` of exactly the allocated middle supply. The middle supply `mid`
 is universally quantified, so each theorem covers the empty, singleton, and
 multiple-item segments uniformly, and the fixed captures around the collecting parameter keep
@@ -2725,7 +2726,9 @@ mutual
   termination_by rs => sizeOf rs
 end
 
-/-- Capture canonicity over the real capture expression: a captured item supply
+/-- Capture canonicity over `captureForArityLaw` (the normalizing construction of the
+spread value and the loop state; the written `.capture` arm combines its slots with
+`combineOutputSlots` and agrees with it on canonical items): a captured item supply
 is already canonical, so capture is a fixed point of `Result.normalize`
 (corollary of `normalize_idempotent`, since
 `captureForArityLaw xs = Result.normalize (Result.sequenceValue xs)`). -/
@@ -2733,7 +2736,8 @@ theorem captureForArityLaw_canonical (xs : List Result) :
     (captureForArityLaw xs).normalize = captureForArityLaw xs :=
   normalize_idempotent (Result.sequenceValue xs)
 
-/-- The real capture expression never mints an orphan: every captured value is
+/-- `captureForArityLaw` never mints an orphan (the written `.capture` arm agrees with it
+on canonical items, VAL-03): every captured value is
 orphan-free (corollary of `orphanFree_normalize`). -/
 theorem captureForArityLaw_orphanFree (xs : List Result) :
     orphanFreeResult (captureForArityLaw xs) = true :=
