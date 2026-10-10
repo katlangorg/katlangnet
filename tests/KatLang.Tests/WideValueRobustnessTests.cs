@@ -229,7 +229,7 @@ public class WideValueRobustnessTests
     public void BoundedDisplayStopsWideTraversalWithoutBreadthSizedStack()
     {
         var value = WideList(Wide);
-        var displayOptions = new DisplayOptions(null, 16);
+        var displayOptions = new DisplayOptions(null, null, 16);
 
         // Warm up the renderer and its numeric formatting before measuring.
         for (var i = 0; i < 3; i++)

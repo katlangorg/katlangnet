@@ -474,7 +474,7 @@ public class BoundedDiagnosticValueRenderingTests
         var sink = new BoundedDiagnosticSink(limit);
         ValueTextRenderer.AppendValue(
             List(Atom(1), Atom(2)),
-            new DisplayOptions(null, limit),
+            new DisplayOptions(null, null, limit),
             QuotedDiagnosticStringPolicy.Instance,
             sink);
 

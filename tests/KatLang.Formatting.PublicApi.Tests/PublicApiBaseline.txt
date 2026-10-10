@@ -1891,6 +1891,7 @@ public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   method   public KatLang.DisplayRendering RenderDisplay()
   method   public string ToDisplayString()
   method   public override string ToString()
+  method   public KatLang.RunResult WithHostDisplayDecimals(int? hostDisplayDecimals)
   operator public static bool op_Equality(KatLang.RunResult? left, KatLang.RunResult? right)
   operator public static bool op_Inequality(KatLang.RunResult? left, KatLang.RunResult? right)
 

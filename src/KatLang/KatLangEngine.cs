@@ -6,18 +6,28 @@ using KatLang.Rendering;
 namespace KatLang;
 
 /// <summary>
-/// One completed run's display configuration, carried by its <see cref="RunResult"/> so every
-/// rendering surface of that result reads the same values: <see cref="Decimals"/> is the run's
-/// EFFECTIVE display-decimals count (<c>null</c> for canonical full-precision display), composed
-/// once by the engine from its two presentation filters — the program root's own
-/// <c>DisplayDecimals</c> property (the source filter) and
-/// <see cref="RunOptions.DefaultDisplayDecimals"/> (the host filter) — by
-/// <see cref="KatLangEngine.CombineDisplayDecimals"/>; <see cref="MaxDisplayLength"/> is the
-/// run's display-length bound.
+/// One result's display configuration, carried by its <see cref="RunResult"/> so every rendering
+/// surface of that result reads the same values. It keeps the run's two presentation FILTERS
+/// apart: <see cref="SourceDecimals"/> is the program root's own <c>DisplayDecimals</c> property
+/// exactly as the engine evaluated and validated it (<c>null</c> when the root declares none),
+/// and <see cref="HostDecimals"/> is the host filter — <see cref="RunOptions.DefaultDisplayDecimals"/>,
+/// or the one <see cref="RunResult.WithHostDisplayDecimals"/> re-applied (<c>null</c> for none);
+/// <see cref="MaxDisplayLength"/> is the run's display-length bound. The EFFECTIVE count,
+/// <see cref="Decimals"/>, is never stored: every read derives it from the two filters through
+/// <see cref="KatLangEngine.CombineDisplayDecimals"/>, so replacing the host filter cannot leave
+/// a stale composition behind. The source filter is decided once per run; the host filter is the
+/// one part a host may re-apply to a completed result.
 /// </summary>
-internal readonly record struct DisplayOptions(int? Decimals, int MaxDisplayLength)
+internal readonly record struct DisplayOptions(int? SourceDecimals, int? HostDecimals, int MaxDisplayLength)
 {
-    public static DisplayOptions Default { get; } = new(null, EvaluationLimits.MaxSupportedDisplayLength);
+    public static DisplayOptions Default { get; } = new(null, null, EvaluationLimits.MaxSupportedDisplayLength);
+
+    /// <summary>
+    /// The effective display-decimals count: the minimum of the present filters, or <c>null</c>
+    /// (canonical full-precision display) when neither is present — the ONE composition law,
+    /// <see cref="KatLangEngine.CombineDisplayDecimals"/>, applied on every read.
+    /// </summary>
+    public int? Decimals => KatLangEngine.CombineDisplayDecimals(SourceDecimals, HostDecimals);
 }
 
 /// <summary>
@@ -273,6 +283,80 @@ public closed record RunResult
         EvalFailure e => FormatErrors(e.Errors, e.DisplayOptions.MaxDisplayLength),
     };
 
+    /// <summary>
+    /// Returns this completed run with <paramref name="hostDisplayDecimals"/> as its HOST display
+    /// filter, without evaluating anything again: the one sanctioned re-application of display
+    /// configuration to a finished result. A host whose display setting changes after a run — a
+    /// playground's "display decimals" control, for example — keeps the result and re-renders the
+    /// one this method returns instead of running the program again.
+    /// <para><b>Equivalence.</b> For any source and options, the returned result renders
+    /// identically — through <see cref="ToDisplayString"/>, <see cref="RenderDisplay"/>, and every
+    /// <see cref="Formatting.OutputFormatter"/>, built-in or custom, under any
+    /// <see cref="Formatting.OutputFormattingOptions"/>, overflow
+    /// (<see cref="DisplayRendering.LimitExceeded"/>) included — to the result of the same run made
+    /// with <see cref="RunOptions.DefaultDisplayDecimals"/> set to
+    /// <paramref name="hostDisplayDecimals"/> and every other option unchanged, through
+    /// <see cref="KatLangEngine.Run(string, RunOptions?)"/> and
+    /// <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/> alike. It holds because the host
+    /// filter takes no part in evaluation — it is never evaluated, uses no budget, draws no random
+    /// value, invokes no host operation, and adds no cancellation checkpoint — so both runs
+    /// evaluate identically wherever evaluation is reproducible (an unseeded random draw or a
+    /// nondeterministic host operation can differ between any two runs, whatever their display
+    /// settings).</para>
+    /// <para><b>Per variant.</b> A <see cref="Success"/> returns a NEW <see cref="Success"/> that
+    /// shares this one's <see cref="Success.Root"/>, <see cref="Success.Value"/>,
+    /// <see cref="Success.Atoms"/>, and output rows (<see cref="Success.OutputRows"/>) and differs
+    /// only in its host filter — and so in its effective count. Its source filter — the program
+    /// root's own <c>DisplayDecimals</c>, exactly as the run evaluated and validated it — and its
+    /// display-length bound are kept. The new host filter REPLACES the previous one rather than
+    /// composing with it, so chained calls keep only the last, and re-applying the filter a result
+    /// was produced with changes nothing. A <see cref="NoProgramOutput"/>,
+    /// <see cref="ParseFailure"/>, or <see cref="EvalFailure"/> renders independently of every
+    /// display filter, so it is returned unchanged as this same instance — including the
+    /// <see cref="EvalFailure"/> of an invalid root <c>DisplayDecimals</c>, which no host filter
+    /// excuses.</para>
+    /// <para><b>Purity.</b> Nothing is evaluated, charged, drawn, invoked, or observed for
+    /// cancellation, and this result is never modified, so the method is safe to call
+    /// concurrently on a shared result.</para>
+    /// </summary>
+    /// <param name="hostDisplayDecimals">
+    /// The host display filter: an upper bound from <c>0</c> through
+    /// <see cref="RunOptions.MaxDisplayDecimals"/> on displayed decimal places, or <c>null</c> for no
+    /// host filter, which never means zero places. Validated exactly like
+    /// <see cref="RunOptions.DefaultDisplayDecimals"/>.
+    /// </param>
+    /// <returns>
+    /// A new <see cref="Success"/> carrying the given host filter, or this same instance for every
+    /// other variant.
+    /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="hostDisplayDecimals"/> is negative or greater than
+    /// <see cref="RunOptions.MaxDisplayDecimals"/> — rejected, never clamped, for every variant.
+    /// </exception>
+    public RunResult WithHostDisplayDecimals(int? hostDisplayDecimals)
+    {
+        if (hostDisplayDecimals is < 0 or > RunOptions.MaxDisplayDecimals)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(hostDisplayDecimals),
+                hostDisplayDecimals,
+                $"Host display decimals must be between 0 and {RunOptions.MaxDisplayDecimals}.");
+        }
+
+        // Compiler-exhaustive over the closed hierarchy: a new variant must decide here whether
+        // its rendering depends on the host filter. A record copy shares every payload reference
+        // (root, value, atoms, emitted count) and replaces only the host filter; the source filter
+        // and the display-length bound travel unchanged, and the effective count is derived.
+        return this switch
+        {
+            Success success => success with
+            {
+                DisplayOptions = success.DisplayOptions with { HostDecimals = hostDisplayDecimals },
+            },
+            NoProgramOutput or ParseFailure or EvalFailure => this,
+        };
+    }
+
     private static DisplayRendering FormatSuccess(Success success)
     {
         var writer = new BoundedDisplayWriter(success.DisplayOptions.MaxDisplayLength);
@@ -440,7 +524,7 @@ public static class KatLangEngine
 
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
-        var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
+        var diagnosticDisplayOptions = new DisplayOptions(null, null, limits.EffectiveMaxDisplayLength);
         var frontEndResult = FrontEndPipeline.Process(source, options);
 
         if (frontEndResult.HasErrors)
@@ -534,7 +618,7 @@ public static class KatLangEngine
         var hostOperations = options?.HostOperations;
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
-        var diagnosticDisplayOptions = new DisplayOptions(null, limits.EffectiveMaxDisplayLength);
+        var diagnosticDisplayOptions = new DisplayOptions(null, null, limits.EffectiveMaxDisplayLength);
         var frontEndResult = await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false);
 
         if (frontEndResult.HasErrors)
@@ -791,8 +875,7 @@ public static class KatLangEngine
             sourceFilter = (int)value.Value;
         }
 
-        return EvalResult<DisplayOptions>.Ok(
-            new DisplayOptions(CombineDisplayDecimals(sourceFilter, hostFilter), maxDisplayLength));
+        return EvalResult<DisplayOptions>.Ok(new DisplayOptions(sourceFilter, hostFilter, maxDisplayLength));
     }
 
     /// <summary>

@@ -243,7 +243,8 @@ public class DefaultDisplayDecimalsTests
         {
             var configured = Success(source, Default(decimals));
             AssertSameRawOutcome(baseline, configured);
-            Assert.Equal(baseline.DisplayOptions with { Decimals = decimals }, configured.DisplayOptions);
+            Assert.Equal(baseline.DisplayOptions with { HostDecimals = decimals }, configured.DisplayOptions);
+            Assert.Equal(decimals, configured.DisplayOptions.Decimals);
             Assert.Equal(
                 KatLangEngine.EvaluateToAtoms(source).Select(ValueTextRenderer.FormatNumberInvariant),
                 KatLangEngine.EvaluateToAtoms(source, Default(decimals)).Select(ValueTextRenderer.FormatNumberInvariant));
@@ -320,7 +321,11 @@ public class DefaultDisplayDecimalsTests
 
         AssertSameRawOutcome(baseline, looser);
         AssertSameRawOutcome(baseline, stricter);
-        Assert.Equal(baseline.DisplayOptions, looser.DisplayOptions);
+        // The result keeps the drawn source filter as evaluated beside the host filter; the
+        // looser host filter changes no effective count.
+        Assert.Equal(baseline.DisplayOptions with { HostDecimals = 9 }, looser.DisplayOptions);
+        Assert.Equal(baseline.DisplayOptions with { HostDecimals = 1 }, stricter.DisplayOptions);
+        Assert.Equal(baseline.DisplayOptions.Decimals, looser.DisplayOptions.Decimals);
         Assert.InRange(looser.DisplayOptions.Decimals!.Value, 2, 4);
         Assert.Equal(Display(baseline), Display(looser));
         Assert.Equal(1, stricter.DisplayOptions.Decimals);
@@ -337,7 +342,8 @@ public class DefaultDisplayDecimalsTests
         var configured = Success(source, new RunOptions { RandomSeed = 11, DefaultDisplayDecimals = 8 });
 
         AssertSameRawOutcome(baseline, configured);
-        Assert.Equal(baseline.DisplayOptions, configured.DisplayOptions);
+        Assert.Equal(baseline.DisplayOptions with { HostDecimals = 8 }, configured.DisplayOptions);
+        Assert.Equal(baseline.DisplayOptions.Decimals, configured.DisplayOptions.Decimals);
         Assert.Equal((int)configured.Atoms[0], configured.DisplayOptions.Decimals);
     }
 
@@ -434,7 +440,8 @@ public class DefaultDisplayDecimalsTests
             var smallerAlone = Success(
                 $"DisplayDecimals = {effective.ToString(CultureInfo.InvariantCulture)}\n{program}");
 
-            Assert.Equal(absent.DisplayOptions with { Decimals = effective }, hosted.DisplayOptions);
+            Assert.Equal(absent.DisplayOptions with { HostDecimals = hostFilter }, hosted.DisplayOptions);
+            Assert.Equal(effective, hosted.DisplayOptions.Decimals);
             Assert.Equal(Renderings(smallerAlone), Renderings(hosted));
             if (hostFilter >= declaredDecimals)
                 Assert.Equal(Renderings(absent), Renderings(hosted));
@@ -652,12 +659,10 @@ public class DefaultDisplayDecimalsTests
         AssertSameRawOutcome(success, configuredSuccess);
 
         var declares = success.Root.Properties.Any(static p => p.Name == "DisplayDecimals");
+        Assert.Equal(success.DisplayOptions with { HostDecimals = 7 }, configuredSuccess.DisplayOptions);
         Assert.Equal(
-            success.DisplayOptions with
-            {
-                Decimals = declares ? Math.Min(success.DisplayOptions.Decimals!.Value, 7) : 7,
-            },
-            configuredSuccess.DisplayOptions);
+            declares ? Math.Min(success.DisplayOptions.Decimals!.Value, 7) : 7,
+            configuredSuccess.DisplayOptions.Decimals);
         if (declares && success.DisplayOptions.Decimals <= 7)
             Assert.Equal(Renderings(success), Renderings(configuredSuccess));
     }

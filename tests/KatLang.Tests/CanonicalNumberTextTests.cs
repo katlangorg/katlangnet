@@ -454,7 +454,7 @@ public class CanonicalNumberTextTests
         var atom = new Result.Atom(value);
 
         // 1. Canonical display (no DisplayDecimals).
-        Assert.Equal(expected, ValueTextRenderer.FormatAtom(value, new DisplayOptions(null, int.MaxValue)));
+        Assert.Equal(expected, ValueTextRenderer.FormatAtom(value, new DisplayOptions(null, null, int.MaxValue)));
 
         // 2. The public run-result display surface.
         Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(literal)).ToDisplayString());
@@ -485,7 +485,7 @@ public class CanonicalNumberTextTests
         // `DisplayDecimals` opts into fixed-point presentation, but a whole number
         // carrying an integral quantum stays on the canonical spelling — including the
         // values whose canonical spelling the runtime would have written exponentially.
-        var options = new DisplayOptions(2, int.MaxValue);
+        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
         Assert.Equal("10000000000000000000000000000000000", ValueTextRenderer.FormatAtom(N("1e34"), options));
         Assert.Equal("0", ValueTextRenderer.FormatAtom(N("0e3"), options));
 
@@ -500,7 +500,7 @@ public class CanonicalNumberTextTests
         // must still be spelled by the ONE canonical owner — never by handing NaN or an
         // infinity to the runtime's "F" formatter — so the spelling cannot drift with a
         // runtime's fixed-point conventions for special values.
-        var options = new DisplayOptions(2, int.MaxValue);
+        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
         Assert.Equal("NaN", ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
         Assert.Equal("NaN", ValueTextRenderer.FormatAtom(-Decimal128.NaN, options));
         Assert.Equal("Infinity", ValueTextRenderer.FormatAtom(Decimal128.PositiveInfinity, options));
@@ -529,7 +529,7 @@ public class CanonicalNumberTextTests
         // carries an integral quantum and stays on the whole-number arm, while `-0.0`
         // carries a fractional quantum and respects the selected display precision.
         // `-0.0` is NOT normalized to `-0`.
-        var options = new DisplayOptions(2, int.MaxValue);
+        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
         var value = N(literal);
         Assert.Equal(canonical, ValueTextRenderer.FormatNumberInvariant(value));
         Assert.Equal(fixedPoint, ValueTextRenderer.FormatAtom(value, options));
