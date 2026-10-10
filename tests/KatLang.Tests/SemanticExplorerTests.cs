@@ -466,22 +466,12 @@ public class SemanticExplorerTests
         }
 
         // The identity map callback `M(a) = a` binds each supply item as ONE
-        // selected value (selection is a value boundary): every non-empty item
-        // — scalar, exact list, or nested sequence value — is one bound value
-        // and maps to itself, while an empty `()` item is the documented empty
-        // transform result and fails the strict single-element contract.
+        // selected value (selection is a value boundary) and returns its ordinary
+        // call result (HO-03, Q-25 resolved October 2026): every item — scalar,
+        // exact list, nested sequence value, and `()` alike — maps to itself, so
+        // the identity map reproduces the supply exactly as one list.
         var mapId = Obs("mapId", valueId);
-        var mapIdBindsOneValuePerItem = builtinSupply.All(static i => i is not Result.SequenceValue { Items.Count: 0 });
-        if (mapIdBindsOneValuePerItem)
-        {
-            ExpectExactList(findings, mapId, builtinSupply);
-        }
-        else if (mapId.Outcome != "err")
-        {
-            findings.Add(new Finding(
-                "BuiltinBoundaryMismatch", mapId.CaseId,
-                $"expected single-element contract error, observed {mapId.Neutral}"));
-        }
+        ExpectExactList(findings, mapId, builtinSupply);
 
         // `atoms` recursively collects numeric atoms through BOTH sequence
         // and exact list boundaries (depth-first, left-to-right) and

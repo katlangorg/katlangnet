@@ -1718,8 +1718,8 @@ def sequenceValuePatternScalarArgument : Bool :=
 -- both binders open a nested pattern's value through the ONE kind-specific rule
 -- (`Result.sequencePatternItems?`), so a scalar map element is the sequence
 -- pattern `(first, *tail)`'s kind mismatch exactly as in `F(1)` above, while a
--- sequence element binds. The body is one list value so map's single-value
--- contract cannot mask the binding.
+-- sequence element binds. The body is one list value, so each mapped element
+-- shows the binding directly.
 def deconstructSequenceValueFirstTailListAlg : Algorithm :=
   algWithParameterPatterns [
     .sequenceValue [.capture { name := "first" }, .capture { name := "tail", kind := .collecting }]

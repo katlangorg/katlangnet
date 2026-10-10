@@ -7948,7 +7948,7 @@ def case_mapId__pbt : Expr :=
 -- mapId__pbt_e: M(a) = a \n map((true, ()), M)
 def case_mapId__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [.boolLiteral true, (.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__pbt_e == "err arity"
+#guard obs case_mapId__pbt_e == "ok raw=L[true, S[]] n=1"
 
 -- mapId__pbt_1: M(a) = a \n map((true, 1), M)
 def case_mapId__pbt_1 : Expr :=
@@ -7988,17 +7988,17 @@ def case_mapId__p123 : Expr :=
 -- mapId__pee: M(a) = a \n map(((), ()), M)
 def case_mapId__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.emptySequence 0), (.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__pee == "err arity"
+#guard obs case_mapId__pee == "ok raw=L[S[], S[]] n=1"
 
 -- mapId__pe1: M(a) = a \n map(((), 1), M)
 def case_mapId__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.emptySequence 0), .num 1]), .resolve "M"])])
-#guard obs case_mapId__pe1 == "err arity"
+#guard obs case_mapId__pe1 == "ok raw=L[S[], 1] n=1"
 
 -- mapId__p1e: M(a) = a \n map((1, ()), M)
 def case_mapId__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [.num 1, (.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__p1e == "err arity"
+#guard obs case_mapId__p1e == "ok raw=L[1, S[]] n=1"
 
 -- mapId__p12_3: M(a) = a \n map(((1, 2), 3), M)
 def case_mapId__p12_3 : Expr :=
@@ -8013,7 +8013,7 @@ def case_mapId__p12_34 : Expr :=
 -- mapId__pe_12: M(a) = a \n map(((), (1, 2)), M)
 def case_mapId__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]), .resolve "M"])])
-#guard obs case_mapId__pe_12 == "err arity"
+#guard obs case_mapId__pe_12 == "ok raw=L[S[], S[1, 2]] n=1"
 
 -- mapId__ppe1_2: M(a) = a \n map((((), 1), 2), M)
 def case_mapId__ppe1_2 : Expr :=
@@ -8023,7 +8023,7 @@ def case_mapId__ppe1_2 : Expr :=
 -- mapId__p12_e: M(a) = a \n map(((1, 2), ()), M)
 def case_mapId__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__p12_e == "err arity"
+#guard obs case_mapId__p12_e == "ok raw=L[S[1, 2], S[]] n=1"
 
 -- mapId__ppe: M(a) = a \n map((()), M)
 def case_mapId__ppe : Expr :=
@@ -8068,7 +8068,7 @@ def case_mapId__lle : Expr :=
 -- mapId__l_e: M(a) = a \n map([()], M)
 def case_mapId__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "M"])])
-#guard obs case_mapId__l_e == "err arity"
+#guard obs case_mapId__l_e == "ok raw=L[S[]] n=1"
 
 -- mapId__l_p12: M(a) = a \n map([(1, 2)], M)
 def case_mapId__l_p12 : Expr :=

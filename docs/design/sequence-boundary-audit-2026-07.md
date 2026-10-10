@@ -54,8 +54,12 @@ collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`,
 2. `while`/`repeat` multi-slot loop state. *(October 2026: only the step's own
    row supply — the loop's iteration protocol — remains multi-item; the
    completed loop result is one value, Q-26.)*
-3. The strict single-value `map`/`reduce` callback contract (multi-output or
-   `()`-valued callback results are errors, not grouped values).
+3. *(Superseded, October 2026 — Q-25 resolved, Option B: a `map`/`reduce`
+   callback returns its ORDINARY call result, so a multi-output callback body is
+   one sequence value and `()` an ordinary value, exactly as at every call
+   boundary. Formerly: "The strict single-value `map`/`reduce` callback contract
+   (multi-output or `()`-valued callback results are errors, not grouped
+   values).")*
 
 *(Superseded, July 2026 collecting-binding change: raw variadic parameter
 storage — `variadicSupplyEnv` / `VariadicStreamEnv` with raw item counts —
@@ -285,8 +289,9 @@ documented rules. Candidates examined and resolved as rule-consistent:
   same rule that keeps a non-spread `()` visible.
 
 **Intentional behavior (documented):** singleton-paren transparency;
-call-vs-deconstruction opening asymmetry; strict single-value map/reduce
-callback result contract; string display non-roundtrip.
+call-vs-deconstruction opening asymmetry; string display non-roundtrip.
+*(October 2026, Q-25: the former strict single-value map/reduce callback result
+contract is superseded — a callback returns its ordinary call result.)*
 
 *(Superseded, September 2026 — SYN-01: `()` operator transparency for
 non-equality binary operators and unary `-`/`not` was removed. `()` carries no numeric scalar
@@ -391,7 +396,7 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,532 | 2,210 template cases (65 receiver templates x 34 values) + 322 specials; outcomes 2,012 ok / 475 err / 45 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Surface corpus (= C# semantic report surface section) | 2,532 | 2,210 template cases (65 receiver templates x 34 values) + 322 specials; outcomes 2,019 ok / 468 err / 45 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
 | Lean-representable surface differential | 2,487 | the 2,532 above minus the 45 parse-level cases (34 `indexNeg__*` + eleven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, and the three written open ambiguities since Q-29 A-U, October 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
 | Generated Lean case guards | 2,501 | 2,487 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |

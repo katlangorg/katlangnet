@@ -6,27 +6,26 @@ open KatLang (alg algPrivate runResult Algorithm Error Result)
 open KatLang (resolve)
 
 --------------------------------------------------------------------------------
--- A CLAUSE-FAMILY CALLBACK IS JUDGED BY ITS OWN EMITTED COUNT (HO-03 + PAT-11)
+-- A CLAUSE-FAMILY CALLBACK RETURNS ITS ORDINARY CALL RESULT (HO-03 + PAT-11)
 --------------------------------------------------------------------------------
--- A `map` transform and a `reduce` step must each EMIT exactly one top-level
--- value that is not `()` (`expectSingleMappedElement` /
--- `expectSingleAccumulator`), judged by the callback's OWN emitted count, never
--- re-counted at the call's value boundary (HO-03). A clause family is an ordinary
--- callable (PAT-11), so its callback result is judged exactly like a user
--- algorithm's: `evalResolvedCallbackCallCounted` dispatches a family through
--- `evalConditionalCallbackCallCounted`, which evaluates the selected clause with
--- `recount = false`, while the ORDINARY call (`evalConditionalCallCounted`) keeps
--- the value boundary — so the same family is one value as a call and a rejected
--- two-row result as a callback. A `filter` predicate reads only its result's
--- value, which must be a Boolean. A loop step's rows are its next state
--- (LOOP-03), never this contract.
+-- Q-25 RESOLVED (October 2026, Option B): a `map` transform and a `reduce` step
+-- return the ordinary result of calling the callback — the ONE value the call
+-- boundary delivers (VAL-06): several written rows arrive as one sequence value,
+-- `()` and `[]` are ordinary values, and nothing is spread. A clause family is an
+-- ordinary callable (PAT-11), so its callback result is its ordinary call result,
+-- exactly like a user algorithm's: `evalResolvedCallbackCallCounted` dispatches a
+-- family through `evalConditionalCallbackCallCounted` → `evalNeedFamilySupply`,
+-- the same value boundary as the ordinary call (`evalConditionalCallCounted`) — so
+-- the same family returns the same one value as a call and as a callback. A
+-- `filter` predicate reads only its result's value, which must be a Boolean. A
+-- loop step's rows are its next state (LOOP-03), never a callback result.
 --
--- These guards pin the Lean side of defect D1 of the 2026-10-09 constitution
--- audit, which C# had re-counted (accepting a two-row family callback).
--- C#: `EvalNeedCallbackBody` → `EvalNeedFamilySupply (recount: false)`,
+-- These guards began as the Lean side of defect D1 of the 2026-10-09
+-- constitution audit (family and user callbacks must agree); since Q-25 they pin
+-- the ordinary call-result law for both. C#: `EvalNeedCallbackBody`,
 -- `ClauseFamilyCallbackCardinalityTests` (six routes), and the spec cases
--- `clause-family-multirow-callback-rejected`,
--- `clause-family-multirow-reduce-step-rejected` and
+-- `clause-family-multirow-callback-is-one-value`,
+-- `clause-family-multirow-reduce-step-is-one-value` and
 -- `clause-family-callback-single-value-accepted`.
 
 -- F(0) = 1, 2
@@ -141,43 +140,38 @@ private def fcFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
   | .error e => check e
   | _ => false
 
-private def mapRejected (e : Error) : Bool :=
-  hasContext "map transform must return a single element" e && innermostIsBadArity e
-
-private def reduceRejected (e : Error) : Bool :=
-  hasContext "reduce step must return a single accumulator value" e && innermostIsBadArity e
-
 private def fcPair (a b : Int) : Result := .sequenceValue [.atom a, .atom b]
 
--- The canonical witness (D1-A): a two-row family transform is rejected — through
--- its literal clause and through its binder clause alike.
-#guard fcFails [fcMap [.num 0, .num 3] (resolve "F")] mapRejected
-#guard fcFails [fcMap [.num 3] (resolve "F")] mapRejected
+-- The canonical witness (D1-A): a two-row family transform returns its ordinary
+-- call result, one sequence value per element — through its literal clause and
+-- through its binder clause alike.
+#guard fcOk [fcMap [.num 0, .num 3] (resolve "F")] (.listValue [fcPair 1 2, fcPair 3 3])
+#guard fcOk [fcMap [.num 3] (resolve "F")] (.listValue [fcPair 3 3])
 
 -- A one-branch family is a family too (D1-B).
-#guard fcFails [fcMap [.num 0] (resolve "One")] mapRejected
+#guard fcOk [fcMap [.num 0] (resolve "One")] (.listValue [fcPair 1 2])
 
--- A two-row family reduce step is rejected (D1-C), one-branch or two.
-#guard fcFails [fcReduce [.num 1] (resolve "R") (.num 0)] reduceRejected
-#guard fcFails [fcReduce [.num 1] (resolve "R1") (.num 0)] reduceRejected
+-- A two-row family reduce step's result is the one accumulator (D1-C), one-branch or two.
+#guard fcOk [fcReduce [.num 1] (resolve "R") (.num 0)] (fcPair 1 0)
+#guard fcOk [fcReduce [.num 1] (resolve "R1") (.num 0)] (fcPair 1 0)
 
 -- The user-algorithm controls (D1-D, D1-E) and a family returning `()` (D1-F).
-#guard fcFails [fcMap [.num 1, .num 3] (resolve "D")] mapRejected
-#guard fcFails [fcReduce [.num 1] (resolve "Ru") (.num 0)] reduceRejected
-#guard fcFails [fcMap [.num 0] (resolve "E")] mapRejected
+#guard fcOk [fcMap [.num 1, .num 3] (resolve "D")] (.listValue [fcPair 1 1, fcPair 3 3])
+#guard fcOk [fcReduce [.num 1] (resolve "Ru") (.num 0)] (fcPair 1 0)
+#guard fcOk [fcMap [.num 0] (resolve "E")] (.listValue [.sequenceValue []])
 
 -- An alias is its target's callable, and a forwarded callable is the callable.
-#guard fcFails [fcMap [.num 0] (resolve "G")] mapRejected
-#guard fcFails [.call (resolve "Apply") [resolve "F", .listLiteral [.num 0]]] mapRejected
+#guard fcOk [fcMap [.num 0] (resolve "G")] (.listValue [fcPair 1 2])
+#guard fcOk [.call (resolve "Apply") [resolve "F", .listLiteral [.num 0]]] (.listValue [fcPair 1 2])
 
--- ONE emitted value is accepted however many elements it holds: a sequence, a
+-- ONE value is one result however many elements it holds: a sequence, a
 -- list (`[]` included) and a reduce step's single sequence accumulator.
 #guard fcOk [fcMap [.num 0, .num 3] (resolve "P")] (.listValue [fcPair 1 2, fcPair 3 3])
 #guard fcOk [fcMap [.num 0, .num 3] (resolve "L")] (.listValue [.listValue [], .listValue [.atom 3]])
 #guard fcOk [fcReduce [.num 1, .num 2, .num 3] (resolve "Add") (.num 0)] (.atom 6)
 
--- The η-expanded callback `{ F(x) }` is accepted: its one row is the ORDINARY
--- call, a value boundary (the HO-03 Known tension, unchanged).
+-- The η-expanded callback `{ F(x) }` returns the same value: its one row is the
+-- ORDINARY call, and so is the callback invocation itself (HO-03).
 #guard fcOk [fcMap [.num 0, .num 3] (.algorithmExpr (alg ["x"] [] [] [.call (resolve "F") [.param "x"]]))]
   (.listValue [fcPair 1 2, fcPair 3 3])
 
@@ -205,7 +199,7 @@ private def fcPair (a b : Int) : Result := .sequenceValue [.atom a, .atom b]
 /-- THE CALLBACK-RESULT LAW FOR FAMILIES: a family callback is judged exactly
     like its SELECTED CLAUSE written as a user callback — value for value, and
     failure for failure down to the innermost error (PAT-11: a family is an
-    ordinary callable; HO-03 judges the callee's own emitted count). -/
+    ordinary callable; HO-03: each callback returns its ordinary call result). -/
 def fcFamilyCallbackEqualsItsSelectedClause : Bool :=
   let cases : List (KatLang.Expr × KatLang.Expr) := [
     (fcMap [.num 0] (resolve "F"), fcMap [.num 0] (resolve "U0")),
@@ -249,9 +243,8 @@ private def fcExpected (program : KatLang.Expr) (expected : Result) (count : Nat
 
 #guard fcExpected (fcRepeatedProgram false (fcMap [.capture [.num 1, .num 1], .capture [.num 1, .num 2]] (resolve "F")))
   (.listValue [.atom 10, .atom 20])
-#guard match runResult (fcRepeatedProgram true (fcMap [.capture [.num 1, .num 2]] (resolve "F"))) with
-  | .error e => mapRejected e
-  | _ => false
+#guard fcExpected (fcRepeatedProgram true (fcMap [.capture [.num 1, .num 2]] (resolve "F")))
+  (.listValue [.sequenceValue [.atom 20, .atom 21]])
 #guard fcExpected (fcRepeatedProgram true (.call (resolve "F") [.capture [.num 1, .num 2]]))
   (.sequenceValue [.atom 20, .atom 21])
 
@@ -268,9 +261,8 @@ private def fcHostFlat (repeated oneRow : Bool) : Algorithm :=
 private def fcHostProgram (repeated oneRow : Bool) (row : KatLang.Expr) : KatLang.Expr :=
   .algorithmExpr (algPrivate [] [] [("F", fcHostFlat repeated oneRow)] [row])
 
-#guard match runResult (fcHostProgram false false (fcReduce [.num 1] (resolve "F") (.num 0))) with
-  | .error e => reduceRejected e
-  | _ => false
+#guard fcExpected (fcHostProgram false false (fcReduce [.num 1] (resolve "F") (.num 0)))
+  (.sequenceValue [.atom 1, .atom 0])
 #guard fcExpected (fcHostProgram false true (fcReduce [.num 1] (resolve "F") (.num 0)))
   (.sequenceValue [.atom 1, .atom 0])
 #guard fcExpected (fcHostProgram false false (.call (resolve "F") [.num 1, .num 0]))

@@ -85,7 +85,7 @@ def isSuspended (address : Nat) : EvalM Bool := do
 
 def unusedSupply : EvalM Bool := do
   let address <- supplyNeed bad EvalCtx.empty []
-  let result <- evalNeedUserSupply (alg ["x"] [] [] [.num 7]) [address] EvalCtx.empty [] false
+  let result <- evalNeedUserSupply (alg ["x"] [] [] [.num 7]) [address] EvalCtx.empty []
   pure (result == (.atom 7, 1) && (<- isSuspended address))
 #guard (runEvalM unusedSupply).toOption == some true
 
@@ -136,7 +136,7 @@ def forwardingLeavesSupplySuspended : EvalM Bool := do
   let address <- supplyNeed bad EvalCtx.empty []
   let ctx := { EvalCtx.empty with needEnv := [("x", address)] }
   let supply <- formNeedSupply [.param "x"] ctx []
-  let result <- evalNeedUserSupply (alg ["x"] [] [] [.num 7]) supply ctx [] false
+  let result <- evalNeedUserSupply (alg ["x"] [] [] [.num 7]) supply ctx []
   pure (supply == [address] && result.fst == .atom 7 && (<- isSuspended address))
 #guard (runEvalM forwardingLeavesSupplySuspended).toOption == some true
 

@@ -111,8 +111,8 @@ public enum CountedConsumer
     /// single kept items never erased.</summary>
     CollectionBuiltinResult,
 
-    /// <summary>Higher-order callback contracts: map/reduce callbacks must emit
-    /// exactly one value (Lean <c>expectSingleValueWith</c>); filter predicates one
+    /// <summary>Higher-order callback contracts: a map/reduce callback returns its
+    /// ordinary call result, one value (HO-03, Q-25); filter predicates one
     /// Boolean value; flat multi-parameter callbacks open sequence rows while
     /// list elements stay opaque; collecting callbacks keep the element as one slot.</summary>
     CallbackContract,

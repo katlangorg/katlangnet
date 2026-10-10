@@ -2,8 +2,11 @@ using System.Net;
 using KatLang;
 
 var source = """
-    doNotSin=Math.Sin
-    doNotSin(1.23) #Remember Jesus
+    D(x) = x, x
+    map([1, 2], D)  # [(1, 1), (2, 2)]
+
+    R(x, acc) = x, acc
+    reduce([1, 2, 3, 4], R, 0)  # (2, (1, 0))
     """;
 
 // A host downloader owns the transport policy KatLang cannot see: KatLang validates only the

@@ -5,22 +5,21 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang.Tests;
 
 /// <summary>
-/// D1 (constitution-implementation audit, 2026-10-09): A CLAUSE-FAMILY CALLBACK IS JUDGED BY ITS OWN EMITTED
-/// COUNT. HO-03: a <c>map</c> transform and a <c>reduce</c> step must each EMIT exactly one top-level value that
-/// is not <c>()</c>, judged by the callback's own emitted count and never re-counted at the call's value
-/// boundary; a <c>filter</c> predicate's value must be a Boolean. PAT-11: a clause family is an ordinary
-/// callable, so its callback result is judged exactly like a user algorithm's, while its ORDINARY call keeps
-/// the value boundary (one value). C# had evaluated family callbacks through the ordinary call's re-count and
-/// accepted a two-row family transform (<c>F(0) = 1, 2</c> / <c>map([0], F)</c> gave <c>[(1, 2)]</c>); the
-/// callback receiver now selects <c>recount: false</c> for a family exactly as it does for a user algorithm
-/// (<c>EvalNeedCallbackBody</c>), like Lean's <c>evalConditionalCallbackCallCounted</c>. The source observer
-/// matrix runs on the six established routes, requiring the same value, emitted count, errors
-/// (code, message, span) and host-call log and identical budget counters on the three evaluator routes.
-/// The optimizer instrumentation facts compare generic/optimized execution. The boundary companion covers
-/// deferred sources on four async configurations and host-built trees on three evaluator configurations;
-/// those shapes cannot use the six source routes. Expectations follow the law (host totality is explicitly
-/// labeled). Lean: <c>CoreTests/FamilyCallbackCardinality.lean</c>; spec cases
-/// <c>clause-family-multirow-callback-rejected</c>, <c>clause-family-multirow-reduce-step-rejected</c>,
+/// D1 (2026-10-09) and Q-25 (resolved October 2026, Option B): A CLAUSE-FAMILY CALLBACK RETURNS ITS ORDINARY
+/// CALL RESULT, EXACTLY LIKE A USER ALGORITHM. HO-03: a <c>map</c> transform and a <c>reduce</c> step return the
+/// result of an ordinary call — the ONE value the call boundary delivers (VAL-06): several written rows arrive as
+/// one sequence value, <c>()</c> and <c>[]</c> are ordinary values, and nothing is spread; <c>map</c> stores it as
+/// one element and <c>reduce</c> passes it whole as the next accumulator. A <c>filter</c> predicate's value must
+/// be a Boolean. PAT-11: a clause family is an ordinary callable, so its callback result is its ordinary call
+/// result, exactly like a user algorithm's (D1 first aligned the C# family callback path with the user path;
+/// since Q-25 both use the ordinary call boundary in <c>EvalNeedCallbackBody</c>, like Lean's
+/// <c>evalConditionalCallbackCallCounted</c>). The source observer matrix runs on the six established routes,
+/// requiring the same value, emitted count, errors (code, message, span) and host-call log and identical budget
+/// counters on the three evaluator routes. The optimizer instrumentation facts compare generic/optimized
+/// execution. The boundary companion covers deferred sources on four async configurations and host-built trees
+/// on three evaluator configurations; those shapes cannot use the six source routes. Lean:
+/// <c>CoreTests/FamilyCallbackCardinality.lean</c>, <c>CoreTests/CallbackResultBoundary.lean</c>; spec cases
+/// <c>clause-family-multirow-callback-is-one-value</c>, <c>clause-family-multirow-reduce-step-is-one-value</c>,
 /// <c>clause-family-callback-single-value-accepted</c>.
 /// </summary>
 public sealed partial class ClauseFamilyCallbackCardinalityTests
@@ -29,112 +28,121 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     private const string OneBranch = "F(0) = 1, 2\n";
     private const string Red = "R(e, 0) = e, 0\nR(e, acc) = e, acc\n";
     private const string Pair = "P(0) = (1, 2)\nP(n) = (n, n)\n";
-    private const string MapContract = "map transform must return a single element";
-    private const string ReduceContract = "reduce step must return a single accumulator value";
+    private const string MapTransformFrame =
+        "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter "
+        + "collects supplied values as one exact list and nested sequence and list values stay intact)";
+    private const string ReduceStepFrame =
+        "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one "
+        + "value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)";
 
-    // ── 1. The canonical witnesses (D1-A … D1-F), pinned exactly ────────────────────────────────
+    // ── 1. The canonical witnesses (D1-A … D1-F): the ordinary call result, equal to the explicit calls ──
 
-    public static TheoryData<string, string, string> CanonicalWitnesses() => new()
+    /// <summary>id, the callback program, its value, and the explicit ordinary calls it equals.</summary>
+    public static TheoryData<string, string, string, string> CanonicalWitnesses() => new()
     {
         // D1-A: a two-row multi-branch family transform.
-        { "D1-A", Fam + "map([0, 3], F)", $"ArityMismatch: while evaluating call to map: {MapContract}: Bad arity @ [3:1, 3:15)" },
+        { "D1-A", Fam + "map([0, 3], F)", "L[S[1, 2], S[3, 3]]", Fam + "[F(0), F(3)]" },
         // D1-B: a lone literal clause is a one-branch family.
-        { "D1-B", OneBranch + "map([0], F)", $"ArityMismatch: while evaluating call to map: {MapContract}: Bad arity @ [2:1, 2:12)" },
+        { "D1-B", OneBranch + "map([0], F)", "L[S[1, 2]]", OneBranch + "[F(0)]" },
         // D1-C: a two-row family reduce step.
-        { "D1-C", Red + "reduce([1], R, 0)", $"ArityMismatch: while evaluating call to reduce: {ReduceContract}: Bad arity @ [3:1, 3:18)" },
+        { "D1-C", Red + "reduce([1], R, 0)", "S[1, 0]", Red + "R(1, 0)" },
         // D1-D, D1-E: the ordinary user-algorithm controls.
-        { "D1-D", "D(x) = x, x\nmap([1, 3], D)", $"ArityMismatch: while evaluating call to map: {MapContract}: Bad arity @ [2:1, 2:15)" },
-        { "D1-E", "R(e, acc) = e, acc\nreduce([1], R, 0)", $"ArityMismatch: while evaluating call to reduce: {ReduceContract}: Bad arity @ [2:1, 2:18)" },
-        // D1-F: a family transform emitting one `()`.
-        { "D1-F", "F(0) = ()\nF(n) = n\nmap([0], F)", $"ArityMismatch: while evaluating call to map: {MapContract}: Bad arity @ [3:1, 3:12)" },
+        { "D1-D", "D(x) = x, x\nmap([1, 3], D)", "L[S[1, 1], S[3, 3]]", "D(x) = x, x\n[D(1), D(3)]" },
+        { "D1-E", "R(e, acc) = e, acc\nreduce([1], R, 0)", "S[1, 0]", "R(e, acc) = e, acc\nR(1, 0)" },
+        // D1-F: a family transform returning one `()`.
+        { "D1-F", "F(0) = ()\nF(n) = n\nmap([0], F)", "L[S[]]", "F(0) = ()\nF(n) = n\n[F(0)]" },
     };
 
     [Theory]
     [MemberData(nameof(CanonicalWitnesses))]
-    public async Task CanonicalWitness_IsRejectedByTheCallbackContract(string id, string source, string expected)
+    public async Task CanonicalWitness_ReturnsTheOrdinaryCallResult(string id, string source, string value, string explicitCalls)
     {
         var (observation, _) = await AllRoutesAsync(source);
-        Assert.True(observation.Kind == "err", $"{id}: {observation}");
-        Assert.Equal(expected, Assert.Single(observation.Errors));
+        Assert.True(observation.Kind == "ok", $"{id}: {observation}");
+        Assert.Equal((value, 1), (observation.Value, observation.Count));
         Assert.Empty(observation.HostCalls);
 
-        // The structured error: the contract's context around the innermost bad-arity verdict.
-        var error = GenericError(source);
-        Assert.IsType<EvalError.BadArity>(Innermost(error));
-        Assert.Contains(expected.Contains(MapContract, StringComparison.Ordinal) ? MapContract : ReduceContract, Frames(error));
+        // map(L, F) is [F(L:0), …] and reduce([a], R, i) is R(a, i): the explicit ordinary calls give the same value.
+        var (direct, _) = await AllRoutesAsync(explicitCalls);
+        Assert.Equal(value, direct.Value);
     }
 
-    // ── 2. Multi-row family callbacks are rejected, whatever route reaches the family ──────────────
+    // ── 2. Multi-row family callbacks are ONE sequence value, whatever route reaches the family ──────
 
-    /// <summary>label, source, and the operation whose callback contract rejects the result.</summary>
+    /// <summary>label, source, and the value: every route to the family is the family, and the selected
+    /// clause's rows arrive as one value at the call boundary.</summary>
     public static TheoryData<string, string, string> MultiRowFamilyCallbacks() => new()
     {
-        { "binder clause selected", Fam + "map([3], F)", "map" },
-        { "literal clause selected", Fam + "map([0], F)", "map" },
-        { "a later item's clause emits two items", "F(0) = [0]*\nF(n) = [n, n]*\nZ = 0\nmap([0, 3], F)", "map" },
-        { "the literal clause emits two items after a valid item", "F(0) = [1, 2]*\nF(n) = [n]*\nZ = 0\nmap([3, 0], F)", "map" },
-        { "three rows", "F(0) = 1, 2, 3\nF(n) = n, n, n\nmap([0], F)", "map" },
-        { "structural clauses", "F((a, 0)) = a, 0\nF((a, b)) = a, b\nmap([(1, 2)], F)", "map" },
-        { "list-pattern clauses", "F([0]) = 0, 0\nF([x]) = x, x\nmap([[1]], F)", "map" },
-        { "Boolean literal clauses", "F(true) = 1, 1\nF(false) = 0, 0\nmap([true], F)", "map" },
-        { "a () row beside a value row", "F(0) = (), 1\nF(n) = n, n\nmap([0], F)", "map" },
-        { "a spread row emitting two items", "F(0) = [5, 6]*\nF(n) = n\nmap([0], F)", "map" },
-        { "a spread of a bound sequence element", "F((0, 0)) = (0, 0)*\nF(p) = p*\nZ = 0\nmap([5, (1, 2)], F)", "map" },
-        { "the two-row base clause of a recursive family", "F(0) = [1, 2]*\nF(n) = [F(n - 1)]*\nZ = 0\nmap([0], F)", "map" },
-        { "callable alias", Fam + "G = F\nmap([0], G)", "map" },
-        { "alias chain", Fam + "G = F\nH = G\nmap([0], H)", "map" },
-        { "forwarded through a parameter", Fam + "Apply(f, xs) = map(xs, f)\nApply(F, [0])", "map" },
-        { "lifted formula", Fam + "K = map(xs, F)\nK([0])", "map" },
-        { "qualified member", "Lib = {\n  public F(0) = 1, 2\n  public F(n) = n, n\n}\nmap([0], Lib.F)", "map" },
-        { "opened member", "open Lib\nLib = {\n  public F(0) = 1, 2\n  public F(n) = n, n\n}\nmap([0], F)", "map" },
-        { "dot call", Fam + "[0, 3].map(F)", "map" },
-        { "spread dot receiver", Fam + "[[0]]*.map(F)", "map" },
-        { "nested map", Fam + "map([[0]], { map(x, F) })", "map" },
-        { "after filter", Fam + "map(filter([0, 3], { x > 0 }), F)", "map" },
-        { "inside a loop step", Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "map" },
-        { "reduce, binder clause selected", Red + "reduce([1], R, 5)", "reduce" },
-        { "reduce, one-branch family", "R(e, 0) = e, 0\nreduce([1], R, 0)", "reduce" },
-        { "reduce, the second step", "R(e, 0) = [e + 1]*\nR(e, acc) = [e, acc]*\nZ = 0\nreduce([1, 2], R, 0)", "reduce" },
-        { "reduce, forwarded", Red + "Fold(r, xs) = reduce(xs, r, 0)\nFold(R, [1])", "reduce" },
-        { "reduce, dot call", Red + "[1].reduce(R, 0)", "reduce" },
-        { "reduce, forwarded dot call", Red + "Fold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])", "reduce" },
+        { "binder clause selected", Fam + "map([3], F)", "L[S[3, 3]]" },
+        { "literal clause selected", Fam + "map([0], F)", "L[S[1, 2]]" },
+        { "a later item's clause emits two items", "F(0) = [0]*\nF(n) = [n, n]*\nZ = 0\nmap([0, 3], F)", "L[0, S[3, 3]]" },
+        { "the literal clause emits two items after a one-item result", "F(0) = [1, 2]*\nF(n) = [n]*\nZ = 0\nmap([3, 0], F)", "L[3, S[1, 2]]" },
+        { "three rows", "F(0) = 1, 2, 3\nF(n) = n, n, n\nmap([0], F)", "L[S[1, 2, 3]]" },
+        { "structural clauses", "F((a, 0)) = a, 0\nF((a, b)) = a, b\nmap([(1, 2)], F)", "L[S[1, 2]]" },
+        { "list-pattern clauses", "F([0]) = 0, 0\nF([x]) = x, x\nmap([[1]], F)", "L[S[1, 1]]" },
+        { "Boolean literal clauses", "F(true) = 1, 1\nF(false) = 0, 0\nmap([true], F)", "L[S[1, 1]]" },
+        { "a () row beside a value row", "F(0) = (), 1\nF(n) = n, n\nmap([0], F)", "L[S[S[], 1]]" },
+        { "a spread row emitting two items", "F(0) = [5, 6]*\nF(n) = n\nmap([0], F)", "L[S[5, 6]]" },
+        { "a spread of a bound sequence element", "F((0, 0)) = (0, 0)*\nF(p) = p*\nZ = 0\nmap([5, (1, 2)], F)", "L[5, S[1, 2]]" },
+        { "the two-row base clause of a recursive family", "F(0) = [1, 2]*\nF(n) = [F(n - 1)]*\nZ = 0\nmap([0], F)", "L[S[1, 2]]" },
+        { "callable alias", Fam + "G = F\nmap([0], G)", "L[S[1, 2]]" },
+        { "alias chain", Fam + "G = F\nH = G\nmap([0], H)", "L[S[1, 2]]" },
+        { "forwarded through a parameter", Fam + "Apply(f, xs) = map(xs, f)\nApply(F, [0])", "L[S[1, 2]]" },
+        { "lifted formula", Fam + "K = map(xs, F)\nK([0])", "L[S[1, 2]]" },
+        { "qualified member", "Lib = {\n  public F(0) = 1, 2\n  public F(n) = n, n\n}\nmap([0], Lib.F)", "L[S[1, 2]]" },
+        { "opened member", "open Lib\nLib = {\n  public F(0) = 1, 2\n  public F(n) = n, n\n}\nmap([0], F)", "L[S[1, 2]]" },
+        { "dot call", Fam + "[0, 3].map(F)", "L[S[1, 2], S[3, 3]]" },
+        { "spread dot receiver", Fam + "[[0]]*.map(F)", "L[S[1, 2]]" },
+        { "nested map", Fam + "map([[0]], { map(x, F) })", "L[L[S[1, 2]]]" },
+        { "after filter", Fam + "map(filter([0, 3], { x > 0 }), F)", "L[S[3, 3]]" },
+        { "inside a loop step", Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "L[S[1, 2]]" },
+        { "reduce, binder clause selected", Red + "reduce([1], R, 5)", "S[1, 5]" },
+        { "reduce, one-branch family", "R(e, 0) = e, 0\nreduce([1], R, 0)", "S[1, 0]" },
+        { "reduce, the second step", "R(e, 0) = [e + 1]*\nR(e, acc) = [e, acc]*\nZ = 0\nreduce([1, 2], R, 0)", "S[2, 2]" },
+        { "reduce, forwarded", Red + "Fold(r, xs) = reduce(xs, r, 0)\nFold(R, [1])", "S[1, 0]" },
+        { "reduce, dot call", Red + "[1].reduce(R, 0)", "S[1, 0]" },
+        { "reduce, forwarded dot call", Red + "Fold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])", "S[1, 0]" },
     };
 
     [Theory]
     [MemberData(nameof(MultiRowFamilyCallbacks))]
-    public async Task MultiRowFamilyCallback_IsRejected(string label, string source, string operation)
+    public async Task MultiRowFamilyCallback_IsOneSequenceValue(string label, string source, string expected)
     {
         var (observation, _) = await AllRoutesAsync(source);
-        Assert.True(observation.Kind == "err", $"{label}: {observation}");
-        var error = Assert.Single(observation.Errors);
-        Assert.StartsWith("ArityMismatch: ", error, StringComparison.Ordinal);
-        Assert.Contains($"{(operation == "map" ? MapContract : ReduceContract)}: Bad arity @ ", error, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(GenericError(source)));
+        Assert.True(observation.Kind == "ok", $"{label}: {observation}");
+        Assert.Equal((expected, 1), (observation.Value, observation.Count));
     }
 
-    /// <summary>The frames and positions of the rejection are those of the ordinary user-callback rejection.</summary>
-    public static TheoryData<string, string> RejectionFrames() => new()
+    /// <summary>
+    /// An error raised INSIDE a multi-row callback is the ordinary call's error, reported under the call frames of
+    /// the written callback use and the callback operation's own frame (the frames the former rejection used), and
+    /// the family reports it exactly as its user twin does: family source, user twin, and the family's message.
+    /// </summary>
+    public static TheoryData<string, string, string> FailureFrames() => new()
     {
-        { Fam + "[0, 3].map(F)", $"ArityMismatch: while evaluating dotCall .map of [0, 3]: {MapContract}: Bad arity @ [3:1, 3:14)" },
-        { Fam + "Apply(f, xs) = map(xs, f)\nApply(F, [0])",
-            $"ArityMismatch: while evaluating call to Apply: while evaluating call to map: {MapContract}: Bad arity @ [3:16, 3:26)" },
-        { Red + "Fold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])",
-            $"ArityMismatch: while evaluating call to Fold: while evaluating dotCall .reduce of xs: {ReduceContract}: Bad arity @ [3:15, 3:30)" },
-        { Fam + "map([[0]], { map(x, F) })",
-            "ArityMismatch: while evaluating call to map: while evaluating map transform (map passes each iterated collection item as collected; "
-            + "a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): "
-            + $"while evaluating call to map: {MapContract}: Bad arity @ [3:14, 3:23)" },
+        { "F(0) = 1, 1 / 0\nF(n) = n, n\n[0, 3].map(F)", "U(x) = 1, 1 / 0\n[0, 3].map(U)",
+            $"DivisionByZero: while evaluating dotCall .map of [0, 3]: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
+        { "F(0) = 1, 1 / 0\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])", "U(x) = 1, 1 / 0\nApply(f, xs) = map(xs, f)\nApply(U, [0])",
+            $"DivisionByZero: while evaluating call to Apply: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
+        { "R(e, 0) = e, e / 0\nR(e, acc) = e, acc\nFold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])", "Ru(e, acc) = e, e / 0\nFold(r, xs) = xs.reduce(r, 0)\nFold(Ru, [1])",
+            $"DivisionByZero: while evaluating call to Fold: while evaluating dotCall .reduce of xs: {ReduceStepFrame}: Division by zero @ [1:14, 1:19)" },
+        { "F(0) = 1, 1 / 0\nF(n) = n, n\nmap([[0]], { map(x, F) })", "U(x) = 1, 1 / 0\nmap([[0]], { map(x, U) })",
+            $"DivisionByZero: while evaluating call to map: {MapTransformFrame}: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
     };
 
     [Theory]
-    [MemberData(nameof(RejectionFrames))]
-    public async Task Rejection_IsReportedUnderTheCallFramesOfTheWrittenCallbackUse(string source, string expected)
+    [MemberData(nameof(FailureFrames))]
+    public async Task FailureInsideAMultiRowCallback_IsTheOrdinaryCallsError(string family, string user, string expected)
     {
-        var (observation, _) = await AllRoutesAsync(source);
-        Assert.Equal(expected, Assert.Single(observation.Errors));
+        var (fam, _) = await AllRoutesAsync(family);
+        Assert.Equal(expected, Assert.Single(fam.Errors));
+        Assert.Empty(fam.HostCalls);
+        var (usr, _) = await AllRoutesAsync(user);
+        Assert.Equal(WithoutSpan(expected), WithoutSpan(Assert.Single(usr.Errors)));
+        Assert.IsType<EvalError.DivByZero>(Innermost(GenericError(family)));
     }
 
-    // ── 3. One emitted value is one callback result, however many elements it holds ───────────────
+    // ── 3. One value is one callback result, however many elements it holds ───────────────────────
 
     public static TheoryData<string, string, string> SingleValueFamilyCallbacks() => new()
     {
@@ -179,62 +187,54 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     }
 
     [Fact]
-    public async Task OneEmittedSequence_IsNotSeveralRows()
+    public async Task SeveralRows_AndOneSequence_AreTheSameCallbackResult()
     {
         // As ordinary calls, a two-row clause and a one-row clause holding the pair are the same value ...
         var (direct, _) = await AllRoutesAsync("F(0) = 1, 2\nP(0) = (1, 2)\nF(0) == P(0), F(0), P(0)");
         Assert.Equal("S[true, S[1, 2], S[1, 2]]", direct.Value);
 
-        // ... but only the one-row clause is ONE callback result: the contract counts emitted rows, not elements.
+        // ... and as callbacks too: the callback result is the ordinary call result, never the written row count.
         var (pair, _) = await AllRoutesAsync("P(0) = (1, 2)\nmap([0], P), reduce([1], { (e, a) }, 0)");
         Assert.Equal("S[L[S[1, 2]], S[1, 0]]", pair.Value);
-        var (rows, _) = await AllRoutesAsync("F(0) = 1, 2\nmap([0], F)");
-        Assert.Contains(MapContract, Assert.Single(rows.Errors), StringComparison.Ordinal);
+        var (rows, _) = await AllRoutesAsync("F(0) = 1, 2\nmap([0], F), reduce([1], { e, a }, 0)");
+        Assert.Equal(pair.Value, rows.Value);
     }
 
-    // ── 4. Empty callback results ──────────────────────────────────────────────────────────────────
+    // ── 4. Empty callback results are ordinary values ──────────────────────────────────────────────
 
-    /// <summary>label, source, and the expected outcome: the contract (<c>map</c>/<c>reduce</c>) that
-    /// rejects the result, or <c>ok VALUE</c>.</summary>
+    /// <summary>label, source, and the value. A reduce whose result is <c>()</c> is shown inside a list literal,
+    /// so the observed value names the empty element explicitly.</summary>
     public static TheoryData<string, string, string> EmptyCallbackResults() => new()
     {
-        { "one () row (D1-F)", "F(0) = ()\nF(n) = n\nmap([0], F)", "map" },
-        { "one () row in every clause", "F(0) = ()\nF(n) = ()\nmap([0, 3], F)", "map" },
-        { "zero rows: a spread of []", "F(0) = []*\nF(n) = n\nmap([0], F)", "map" },
-        { "zero rows: a spread of ()", "F(0) = ()*\nF(n) = n\nmap([0], F)", "map" },
-        { "reduce, one () row", "R(e, 0) = ()\nR(e, acc) = acc\nreduce([1], R, 0)", "reduce" },
-        { "reduce, zero rows", "R(e, 0) = []*\nR(e, acc) = acc\nreduce([1], R, 0)", "reduce" },
-        { "user identity of a () element (control)", "Id(x) = x\nmap([(), 1], Id)", "map" },
-        { "one [] is one value", "F(0) = []\nmap([0], F)", "ok L[L[]]" },
-        { "map over [] never invokes", Fam + "map([], F)", "ok L[]" },
-        { "reduce over [] returns the initial value", Red + "reduce([], R, 7)", "ok 7" },
+        { "one () row (D1-F)", "F(0) = ()\nF(n) = n\nmap([0], F)", "L[S[]]" },
+        { "one () row in every clause", "F(0) = ()\nF(n) = ()\nmap([0, 3], F)", "L[S[], S[]]" },
+        { "zero rows: a spread of []", "F(0) = []*\nF(n) = n\nmap([0], F)", "L[S[]]" },
+        { "zero rows: a spread of ()", "F(0) = ()*\nF(n) = n\nmap([0], F)", "L[S[]]" },
+        { "reduce, one () row", "R(e, 0) = ()\nR(e, acc) = acc\n[reduce([1], R, 0)]", "L[S[]]" },
+        { "reduce, zero rows", "R(e, 0) = []*\nR(e, acc) = acc\n[reduce([1], R, 0)]", "L[S[]]" },
+        { "reduce, () is the next accumulator", "R(e, 0) = ()\nR(e, acc) = e\nreduce([1, 2], R, 0)", "2" },
+        { "user identity of a () element", "Id(x) = x\nmap([(), 1], Id)", "L[S[], 1]" },
+        { "one [] is one value", "F(0) = []\nmap([0], F)", "L[L[]]" },
+        { "map over [] never invokes", Fam + "map([], F)", "L[]" },
+        { "reduce over [] returns the initial value", Red + "reduce([], R, 7)", "7" },
     };
 
     [Theory]
     [MemberData(nameof(EmptyCallbackResults))]
-    public async Task EmptyCallbackResult_FollowsTheContract(string label, string source, string expected)
+    public async Task EmptyCallbackResult_IsAnOrdinaryValue(string label, string source, string expected)
     {
         var (observation, _) = await AllRoutesAsync(source);
-        if (expected.StartsWith("ok ", StringComparison.Ordinal))
-        {
-            Assert.True(observation.Kind == "ok", $"{label}: {observation}");
-            Assert.Equal(expected[3..], observation.Value);
-            return;
-        }
-
-        Assert.True(observation.Kind == "err", $"{label}: {observation}");
-        var error = Assert.Single(observation.Errors);
-        Assert.StartsWith("ArityMismatch: ", error, StringComparison.Ordinal);
-        Assert.Contains($"{(expected == "map" ? MapContract : ReduceContract)}: Bad arity @ ", error, StringComparison.Ordinal);
+        Assert.True(observation.Kind == "ok", $"{label}: {observation}");
+        Assert.Equal((expected, 1), (observation.Value, observation.Count));
     }
 
-    // ── 5. The ordinary call keeps its value boundary ──────────────────────────────────────────────
+    // ── 5. The ordinary call and the callback return the same one value ─────────────────────────────
 
     [Theory]
     [InlineData(Fam, "0", "S[1, 2]")]
     [InlineData(Fam, "3", "S[3, 3]")]
     [InlineData(OneBranch, "0", "S[1, 2]")]
-    public async Task OrdinaryCall_IsOneValue_WhileTheSameClauseIsRejectedAsACallback(string definitions, string argument, string value)
+    public async Task OrdinaryCall_AndCallback_ReturnTheSameOneValue(string definitions, string argument, string value)
     {
         // The ordinary call crosses the value boundary: one sequence value, emitted count 1 ...
         var (direct, _) = await AllRoutesAsync(definitions + $"F({argument})");
@@ -244,23 +244,22 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         var (consumers, _) = await AllRoutesAsync(definitions + $"Coll(*xs) = xs\n[F({argument})], Coll(F({argument})), F({argument}).count");
         Assert.Equal($"S[L[{value}], L[{value}], 2]", consumers.Value);
 
-        // ... while the very same clause as a map transform emits two rows, as does the η-block that
-        // spreads the call's one value back into two rows; the η-block of the plain call is one value.
-        var (mapped, _) = await AllRoutesAsync(definitions + $"map([{argument}], F)");
-        Assert.Contains($"{MapContract}: Bad arity", Assert.Single(mapped.Errors), StringComparison.Ordinal);
-        var (spread, _) = await AllRoutesAsync(definitions + $"map([{argument}], {{ F(x)* }})");
-        Assert.Contains($"{MapContract}: Bad arity", Assert.Single(spread.Errors), StringComparison.Ordinal);
-        var (eta, _) = await AllRoutesAsync(definitions + $"map([{argument}], {{ F(x) }})");
-        Assert.Equal($"L[{value}]", eta.Value);
+        // ... and the same one value as a map transform, as the η-block of the call, and as the η-block that spreads
+        // the call's value into two rows, which the call boundary captures again (HO-03).
+        foreach (var callback in new[] { "F", "{ F(x) }", "{ F(x)* }" })
+        {
+            var (mapped, _) = await AllRoutesAsync(definitions + $"map([{argument}], {callback})");
+            Assert.Equal(("ok", $"L[{value}]", 1), (mapped.Kind, mapped.Value, mapped.Count));
+        }
     }
 
     [Fact]
-    public async Task OrdinaryReduceStepCall_IsOneValue_WhileTheReduceCallbackIsRejected()
+    public async Task OrdinaryReduceStepCall_AndReduceStep_ReturnTheSameOneValue()
     {
         var (direct, _) = await AllRoutesAsync(Red + "R(1, 0), R(2, 5)");
         Assert.Equal(("ok", "S[S[1, 0], S[2, 5]]", 2), (direct.Kind, direct.Value, direct.Count));
-        var (reduced, _) = await AllRoutesAsync(Red + "reduce([1], R, 0)");
-        Assert.Contains($"{ReduceContract}: Bad arity", Assert.Single(reduced.Errors), StringComparison.Ordinal);
+        var (reduced, _) = await AllRoutesAsync(Red + "reduce([1], R, 0), reduce([1, 2], R, 0) == R(2, R(1, 0))");
+        Assert.Equal(("ok", "S[S[1, 0], true]", 2), (reduced.Kind, reduced.Value, reduced.Count));
     }
 
     /// <summary>Every ordinary consumer of a family call reads ONE value (VAL-06), unchanged by D1.</summary>
@@ -344,23 +343,25 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
             return;
         }
 
+        // The state protocol's own cardinality: the step's two rows were two state slots.
         var error = Assert.Single(observation.Errors);
         Assert.StartsWith(expected[4..] + ": ", error, StringComparison.Ordinal);
-        Assert.DoesNotContain(MapContract, error, StringComparison.Ordinal);
-        Assert.DoesNotContain(ReduceContract, error, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void PlannedLoop_RunsAFamilyMapCallbackUnderTheSameContract()
+    public void PlannedLoop_RunsAFamilyMapCallbackAsTheOrdinaryCall()
     {
-        var rejected = Observe(Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", optimize: true);
-        Assert.Equal("err ArityMismatch", rejected.Value);
-        Assert.True(rejected.Loops.OptimizedLoopHits > 0, "the optimized route must plan the loop");
-
-        var accepted = Observe(Pair + "Step(xs) = map(xs, P)\nrepeat(Step, 1, [0, 3])", optimize: true);
-        Assert.Equal("L[S[1, 2], S[3, 3]]", accepted.Value);
-        Assert.True(accepted.Loops.OptimizedLoopHits > 0, "the optimized route must plan the loop");
-        Assert.Equal(Observe(Pair + "Step(xs) = map(xs, P)\nrepeat(Step, 1, [0, 3])", optimize: false).Budget, accepted.Budget);
+        foreach (var (source, value) in new[]
+        {
+            (Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "L[S[1, 2]]"),
+            (Pair + "Step(xs) = map(xs, P)\nrepeat(Step, 1, [0, 3])", "L[S[1, 2], S[3, 3]]"),
+        })
+        {
+            var optimized = Observe(source, optimize: true);
+            Assert.Equal(value, optimized.Value);
+            Assert.True(optimized.Loops.OptimizedLoopHits > 0, "the optimized route must plan the loop");
+            Assert.Equal(Observe(source, optimize: false).Budget, optimized.Budget);
+        }
     }
 
     // ── 8. Demand, order and effects ───────────────────────────────────────────────────────────────
@@ -376,27 +377,29 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     }
 
     [Fact]
-    public async Task Map_InvokesItemsInOrder_AndStopsAtTheRejectedResult()
+    public async Task Map_InvokesItemsInOrder_StoringEachResultAsOneElement()
     {
         var (observation, _) = await AllRoutesAsync("F(0) = [trace(0)]*\nF(n) = [trace(n), n]*\nZ = 0\nmap([0, 1, 2], F)");
-        Assert.Equal($"ArityMismatch: while evaluating call to map: {MapContract}: Bad arity @ [4:1, 4:18)", Assert.Single(observation.Errors));
-        Assert.Equal(["trace(0)", "trace(1)"], observation.HostCalls);
+        Assert.Equal(("ok", "L[0, S[1, 1], S[2, 2]]"), (observation.Kind, observation.Value));
+        Assert.Equal(["trace(0)", "trace(1)", "trace(2)"], observation.HostCalls);
     }
 
     [Fact]
-    public async Task Reduce_StopsAtTheRejectedStep()
+    public async Task Reduce_ThreadsEachStepResultWhole()
     {
+        // Step 2's two rows are the one accumulator (2, 1); step 3 receives it whole, fails the literal clause, and
+        // its own rows nest it: (3, (2, 1)).
         var (observation, _) = await AllRoutesAsync("R(e, 0) = [trace(e)]*\nR(e, acc) = [trace(e), acc]*\nZ = 0\nreduce([1, 2, 3], R, 0)");
-        Assert.Equal($"ArityMismatch: while evaluating call to reduce: {ReduceContract}: Bad arity @ [4:1, 4:24)", Assert.Single(observation.Errors));
-        Assert.Equal(["trace(1)", "trace(2)"], observation.HostCalls);
+        Assert.Equal(("ok", "S[3, S[2, 1]]"), (observation.Kind, observation.Value));
+        Assert.Equal(["trace(1)", "trace(2)", "trace(3)"], observation.HostCalls);
     }
 
     [Fact]
-    public async Task RejectedCallback_RanItsWholeBodyExactlyOnce()
+    public async Task MultiRowCallback_RunsItsWholeBodyExactlyOnce()
     {
-        // The contract judges the result: every row of the selected clause ran first, once.
+        // The callback result is the ordinary call's: every row of the selected clause runs once, in order.
         var (observation, _) = await AllRoutesAsync("F(0) = tick(), tick()\nF(n) = n, n\nmap([0], F)");
-        Assert.Contains(MapContract, Assert.Single(observation.Errors), StringComparison.Ordinal);
+        Assert.Equal(("ok", "L[S[1, 2]]"), (observation.Kind, observation.Value));
         Assert.Equal(["tick#1", "tick#2"], observation.HostCalls);
     }
 
@@ -417,6 +420,12 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         var (direct, _) = await AllRoutesAsync("[random(0, 1), random(0, 1)], random(0, 1)", seed);
         Assert.Equal("ok", mapped.Kind);
         Assert.Equal(direct.Value, mapped.Value);
+
+        // A multi-row clause draws its rows in order, exactly as the explicit calls do.
+        var (rows, _) = await AllRoutesAsync("G(0) = random(0, 1), random(0, 1)\nG(n) = n, n\nmap([0], G), random(0, 1)", seed);
+        var (calls, _) = await AllRoutesAsync("G(0) = random(0, 1), random(0, 1)\nG(n) = n, n\n[G(0)], random(0, 1)", seed);
+        Assert.Equal("ok", rows.Kind);
+        Assert.Equal(calls.Value, rows.Value);
     }
 
     [Theory]
@@ -431,13 +440,13 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         Assert.Equal(usr.Semantic, fam.Semantic);
     }
 
-    // ── 9. The law: a family callback is judged exactly like its selected clause as a user callback ──
+    // ── 9. The law: a family callback returns exactly what its selected clause returns as a user callback ──
     //       (Lean `fcFamilyCallbackEqualsItsSelectedClause`)
 
     private const string LawDefinitions =
         Fam + Red + Pair
-        + "One(0) = 1, 2\nE(0) = ()\nE(n) = n\nBoth(0) = true, true\nBoth(n) = false, false\n"
-        + "U0(x) = 1, 2\nD(x) = x, x\nUp0(x) = (1, 2)\nUp(n) = (n, n)\nUe(x) = ()\nRu(e, acc) = e, acc\nQ(x) = true, true\n";
+        + "One(0) = 1, 2\nE(0) = ()\nE(n) = n\nZ0(0) = []*\nZ0(n) = n\nBoth(0) = true, true\nBoth(n) = false, false\n"
+        + "U0(x) = 1, 2\nD(x) = x, x\nUp0(x) = (1, 2)\nUp(n) = (n, n)\nUe(x) = ()\nUz(x) = { []* }\nRu(e, acc) = e, acc\nQ(x) = true, true\n";
 
     public static TheoryData<string, string> SelectedClauseLawCases() => new()
     {
@@ -447,8 +456,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "map([0], P)", "map([0], Up0)" },
         { "map([3], P)", "map([3], Up)" },
         { "map([0], E)", "map([0], Ue)" },
+        { "map([0], Z0)", "map([0], Uz)" },
         { "reduce([1], R, 0)", "reduce([1], Ru, 0)" },
         { "reduce([1], R, 5)", "reduce([1], Ru, 5)" },
+        { "reduce([1, 2], R, 0)", "reduce([1, 2], Ru, 0)" },
         { "filter([0], Both)", "filter([0], Q)" },
     };
 

@@ -456,7 +456,7 @@ public static partial class Evaluator
     {
         var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
-        return EvalNeedUserSupplyCounted(callee, supply.Value, ctx, values, name, recount: true);
+        return EvalNeedUserSupplyCounted(callee, supply.Value, ctx, values, name, variadicArityStyle: true);
     }
 
     private static EvalError NeedCallArityError(Algorithm callee, IReadOnlyList<NeedPattern> patterns, int supplied, CallDiagnosticName name, EvalCtx ctx, bool variadicStyle)
@@ -468,17 +468,21 @@ public static partial class Evaluator
             : new EvalError.ArityMismatch(minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee), InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters) };
     }
 
+    // A call result crosses the call's value boundary (VAL-06: ONE value, counted by ValueCount),
+    // for an ordinary call and a map/filter/reduce callback invocation alike (HO-03, Q-25 resolved
+    // October 2026). `variadicArityStyle` only shapes the CARDINALITY diagnostic: an ordinary call
+    // reports a collecting callee's arity failure as VariadicArityMismatch, while a callback
+    // invocation keeps the plain ArityMismatch shape named by its role. It never changes a result.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedUserSupplyCounted(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool recount)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle)
     {
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
-        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, recount);
+        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
         var bindings = BindNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false).GetAwaiter().GetResult();
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
-        var result = EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, callee.Params), ShadowValEnv(values, callee.Params));
-        return recount ? ReCountValueBoundary(result) : result;
+        return ReCountValueBoundary(EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, callee.Params), ShadowValEnv(values, callee.Params)));
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserBody(
@@ -487,36 +491,36 @@ public static partial class Evaluator
     {
         var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, recount: true).ConfigureAwait(false);
+        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, variadicArityStyle: true).ConfigureAwait(false);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserSupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous, bool recount)
+        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle)
     {
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
-        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, recount);
+        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
         var bindings = await BindNeedPatterns(patterns, supply, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var boundCtx = WithNeedBindings(ctx, bindings.Value!, callee.Params);
         var boundValues = ShadowValEnv(values, callee.Params);
-        var result = asynchronous
+        return ReCountValueBoundary(asynchronous
             ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
-            : EvalAlgOutputCounted(callee, boundCtx, boundValues);
-        return recount ? ReCountValueBoundary(result) : result;
+            : EvalAlgOutputCounted(callee, boundCtx, boundValues));
     }
 
     /// <summary>
     /// One callback invocation of a higher-order builtin (the map transform, the filter predicate,
     /// the reduce step) over already-evaluated values, each ONE Ready cell bound by the callee's own
-    /// ordinary machinery (HO-02). The result is the callee's OWN emitted output, never re-counted at
-    /// the call's value boundary, for a user algorithm and a clause family alike (PAT-11: a family is
-    /// an ordinary callable): the builtin judges that count by its callback-result contract (HO-03: a
-    /// map transform or reduce step emits exactly one non-<c>()</c> value, <see cref="ExpectSingleEmittedValue"/>).
-    /// Only this receiver passes <c>recount: false</c>; every ordinary call of either callable keeps the
-    /// value boundary. A builtin has no written rows: its one result is already a value. Lean:
-    /// <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c> (both <c>recount = false</c>).
+    /// ordinary machinery (HO-02). The invocation IS the ordinary call (HO-03, Q-25 resolved October
+    /// 2026): a user algorithm and a clause family alike (PAT-11: a family is an ordinary callable)
+    /// return their ordinary call result — the ONE value the call boundary delivers, several rows
+    /// arriving as one sequence value — and a builtin's one result is already a value. The receiving
+    /// builtin uses that value whole: map stores it as one element, reduce passes it as the next
+    /// accumulator, filter reads its Boolean. A callback's arity failure keeps the plain
+    /// <c>ArityMismatch</c> shape (<c>variadicArityStyle: false</c>), its only difference from an
+    /// ordinary call. Lean: <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c>.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackBody(
         Algorithm callee, IReadOnlyList<CountedResult> arguments, EvalCtx ctx, ValEnv values,
@@ -530,8 +534,8 @@ public static partial class Evaluator
                 : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values);
         }
         return callee is Algorithm.Conditional
-            ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, recount: false).ConfigureAwait(false)
-            : await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, recount: false).ConfigureAwait(false);
+            ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous).ConfigureAwait(false)
+            : await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, variadicArityStyle: false).ConfigureAwait(false);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilyBody(
@@ -540,7 +544,7 @@ public static partial class Evaluator
     {
         var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous, recount: true).ConfigureAwait(false);
+        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous).ConfigureAwait(false);
     }
 
     private readonly record struct NeedFamilyActivation(Algorithm Body, EvalCtx Context, ValEnv Values);
@@ -551,33 +555,30 @@ public static partial class Evaluator
     {
         var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
-        return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, values, name, recount: true);
+        return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, values, name);
     }
 
     // The family twins of the user drivers above: ONE dispatch (BindNeedFamilySupply*), then the
-    // selected body's counted output; `recount` is the receiver's choice — an ordinary call's value
-    // boundary (true) or a callback's own emitted count (false, EvalNeedCallbackBody). Lean:
-    // evalNeedFamilySupply.
+    // selected body's counted output at the call's value boundary — for an ordinary call and a
+    // callback invocation alike (HO-03, PAT-11). Lean: evalNeedFamilySupply.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedFamilySupplyCounted(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool recount)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var matched = BindNeedFamilySupplyCounted(callee, supply, ctx, values, name);
         if (matched.IsError) return matched.Error;
-        var result = EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values);
-        return recount ? ReCountValueBoundary(result) : result;
+        return ReCountValueBoundary(EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilySupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous, bool recount)
+        CallDiagnosticName name, bool asynchronous)
     {
         var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name, asynchronous).ConfigureAwait(false);
         if (matched.IsError) return matched.Error;
-        var result = asynchronous
+        return ReCountValueBoundary(asynchronous
             ? await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(false)
-            : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values);
-        return recount ? ReCountValueBoundary(result) : result;
+            : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
     }
 
     private static EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>> PrepareNeedFamilyHeads(

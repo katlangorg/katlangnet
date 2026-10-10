@@ -329,7 +329,11 @@ public class TutorialSemanticContractTests
         Assert.Single(empty.OutputRows);
 
         RunFailure("Nothing = {}\nNothing()", KatLangErrorCode.MissingOutput);
-        RunFailure("D(x) = x, x\n[1].map(D)", KatLangErrorCode.ArityMismatch);
+
+        // A map/reduce callback returns the same ordinary call result (HO-03, Q-25 resolved
+        // October 2026): D's two outputs are one sequence value, one element of the list.
+        Assert.Equal("[(1, 1)]", Display("D(x) = x, x\n[1].map(D)"));
+        Assert.Equal("[(1, 1)]", Display("D(x) = x, x\n[D(1)]"));
 
         // A completed loop is a value boundary like every call (Q-26): its multi-slot final state
         // reaches the root as ONE row, exactly like the same loop read through a property ...

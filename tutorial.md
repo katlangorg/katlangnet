@@ -1662,6 +1662,59 @@ map([], Broken)
 
 **Result:** `[]`
 
+### A Callback Returns One Value
+
+A callback's result is exactly what an ordinary call of it returns, so `map(L, F)` is the list `[F(L:0), F(L:1), …]`. When the callback writes several output rows, they become one sequence value — one element of the result, never several:
+
+```
+Twice(x) = x, x
+
+[1, 2].map(Twice)
+```
+
+**Result:** `[(1, 1), (2, 2)]`
+
+`()` and `[]` are ordinary values too, so mapping with an identity callback returns the same list:
+
+<!-- spec:map-identity-preserves-empty-elements -->
+```
+Id(x) = x
+map([(), 1, [], 2], Id)
+```
+
+**Result:** `[(), 1, [], 2]`
+
+A callback that returns `()` therefore keeps an `()` element; `()` does not mean "skip this element". Use `filter` to leave elements out:
+
+```
+Half(n) = if(n mod 2 == 0, n / 2, ())
+
+[4, 5, 6].map(Half)
+[4, 5, 6].filter{n mod 2 == 0}.map(Half)
+```
+
+**Results:**
+```
+[2, (), 3]
+[2, 3]
+```
+
+Because several rows are a valid result, an output row written by mistake is not reported as an error — it silently turns every element into a sequence value:
+
+```
+Total(price) = {
+    Tax = price div 5
+    Tax
+    price + Tax
+}
+
+[100, 50].map(Total)
+```
+
+**Result:** `[(20, 120), (10, 60)]`
+
+The `Tax` row was only meant as a check; without it the result is `[120, 60]`.
+
 ### Folding with `reduce`
 
 `reduce(collection, reducer, initial)` combines the elements into one value. It starts with `initial` and calls `reducer(element, accumulator)` for each element in turn, and each result becomes the next accumulator:
@@ -1681,6 +1734,24 @@ range(1, 5).reduce({x * product}, 1)
 
 The parameters of a brace reducer follow first appearance, so write the element's name first and the accumulator's name second.
 
+Each result of the reducer becomes the next accumulator exactly as an ordinary call returns it: several output rows are one sequence value, and `()` is an ordinary accumulator — it does not mean "keep the previous accumulator":
+
+```
+Pair(x, acc) = x, acc
+Keep(x, acc) = acc
+
+[1, 2].reduce(Pair, 0)
+[1, 2].reduce(Keep, ())
+```
+
+**Results:**
+```
+(2, (1, 0))
+()
+```
+
+The first fold is `Pair(2, Pair(1, 0))`: each pair is passed on whole, never flattened.
+
 `initial` is an ordinary value: `reduce` evaluates it once, before the first element. If that evaluation fails, `reduce` fails with the same error, even for an empty collection:
 
 ```
@@ -1688,6 +1759,8 @@ The parameters of a brace reducer follow first appearance, so write the element'
 ```
 
 **Result:** error — division by zero, in the initial accumulator.
+
+For pure, deterministic, total computations, `reduce([a, b], R, initial)` gives the same result value as `R(b, R(a, initial))`. Reduce processes elements from left to right, using each complete call result as the next accumulator. Nested calls follow Model-C demand order and can skip an unused inner accumulator. The equation does not promise identical effects, argument demand, random draws, resource use or error timing. The analogous map equation, `map(L, F) == [F(L:0), F(L:1), …]`, has the same qualification: map demands the collection, while expanded calls may ignore their indexed arguments.
 
 ### Flattening with `atoms`
 

@@ -1689,9 +1689,9 @@ namespace Result
       including the empty list `[]` — only the empty SEQUENCE value `()` is
       the invisible-able empty result.
 
-      This is used by `reduce` and `map`, where sequence-value accumulator / mapped
-      values are valid as long as the step / transform returns exactly one
-      top-level value. -/
+      It is the emitted count of every value boundary (VAL-06): property reads,
+      call results — `map`/`reduce` callback results included (HO-03) —, builtin
+      results, selection and callback items. -/
   def valueCount : Result -> Nat
     | sequenceValue [] => 0
     | _ => 1
@@ -3427,38 +3427,6 @@ def resultToExpr : Result -> Expr
   -- (a reified `()` element stays one visible list element).
   | .listValue rs => .listLiteral (rs.map resultToExpr)
 
-/-- Validate the output shape required by counted builtins that must emit
-    exactly one top-level value.
-
-    Non-empty sequence values are valid; the empty sequence value `()` and
-    multiple top-level outputs are rejected. (An empty-sequence output is a visible
-    slot at the output boundary, but these builtins require a substantive single
-    element.) -/
-def expectSingleValueWith (msg : String) (out : CountedResult) : EvalM Result :=
-  match out with
-  | (Result.sequenceValue [], 1) => .error (Error.withContext msg Error.badArity)
-  | (value, 1) => pure value
-  | _ => .error (Error.withContext
-    msg
-    Error.badArity)
-
-/-- Validate the output shape required by `reduce`.
-    The step must emit exactly one accumulator value. -/
-def expectSingleAccumulator (out : CountedResult) : EvalM Result :=
-  expectSingleValueWith
-    "reduce step must return a single accumulator value"
-    out
-
-/-- Validate the output shape required by `map`.
-    The transform must emit exactly one mapped element: one atom, one string,
-    one sequence value, or one exact list value is valid (the empty list `[]`
-    counts as one value), while empty-sequence and multi-output results are
-    rejected. -/
-def expectSingleMappedElement (out : CountedResult) : EvalM Result :=
-  expectSingleValueWith
-    "map transform must return a single element"
-    out
-
 /-- Recover the top-level values emitted at one algorithm boundary from a
     counted result.
 
@@ -3562,8 +3530,9 @@ def collectSegment (items : List Result) : Result :=
 
     This re-counts without normalizing or rebuilding the value; ordinary value
     construction has already normalized redundant unary empty structure. It is
-    applied only to public result boundaries — the completed `while`/`repeat`
-    result included (`loopResultCounted`, Q-26) — never to internal
+    applied only to public result boundaries — `map`/`reduce` callback results
+    (HO-03, Q-25) and the completed `while`/`repeat` result
+    (`loopResultCounted`, Q-26) included — never to internal
     body/root output accumulation (`evalAlgOutputCountedCore`) or a loop step's
     own row supply (`evalAlgOutputSlots`), which must keep their multi-item
     counts. (Collecting parameter storage needs no re-count:
@@ -4434,8 +4403,8 @@ def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := 
     value boundary as `S:i` / `first` / `last` (`reCountValueBoundary`): the
     item keeps its stored shape (a nested sequence or list stays one value for
     pattern matching and for every count-sensitive reader inside the body — a
-    bare `x` output row, `x.Coll` on a collecting receiver, the map/reduce
-    single-element checks), a `()` item emits zero values, and only an explicit
+    bare `x` output row, `x.Coll` on a collecting receiver), a `()` item emits
+    zero values, and only an explicit
     spread `x*` opens it. Law: `callback_item_is_a_value_boundary`.
     C#: `CountedSequenceCallbackItem`. -/
 def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
@@ -5772,14 +5741,18 @@ mutual
     let next <- ctx.bindParameters names [] []
     pure { next with needEnv := bindings ++ next.needEnv }
 
+  /-- A user algorithm invoked over an already formed cell supply. Its result is the
+      call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
+      `map`/`filter`/`reduce` callback invocation alike (HO-03, Q-25 resolved October
+      2026: a callback invocation IS the ordinary call). C#: `EvalNeedUserSupply`. -/
   partial def evalNeedUserSupply (callee : Algorithm) (cells : List Nat)
-      (ctx : EvalCtx) (env : ValEnv) (recount : Bool) : EvalM CountedResult := do
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
     let some bindings <- bindNeedPatterns patterns cells | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw Error.missingOutput
     let next <- needBindingContext ctx bindings
     let result <- evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
-    pure (if recount then reCountValueBoundary result else result)
+    pure (reCountValueBoundary result)
 
   /-- The ordinary clause-family dispatcher over an already formed cell supply: the
       duplicate-pattern check, the family's cardinality, then the clauses in WRITTEN
@@ -5809,11 +5782,14 @@ mutual
           pure (body, next, values)
     choose branches
 
+  /-- A clause family invoked over an already formed cell supply: ordinary dispatch, then
+      the selected body's output at the call's value boundary — for an ordinary call and a
+      callback invocation alike (HO-03, PAT-11). C#: `EvalNeedFamilySupply`. -/
   partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (recount : Bool := true) : EvalM CountedResult := do
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
     let (body, next, values) <- selectNeedFamilyBranch callee cells ctx env calleeName
     let result <- evalAlgOutputCounted body next values
-    pure (if recount then reCountValueBoundary result else result)
+    pure (reCountValueBoundary result)
 
   partial def invokeNeed (arg : ResolvedArgumentAlgorithm) : EvalM (Option Algorithm) := do
     if let some address := arg.need? then return (<- projectNeedCallable address)
@@ -5954,13 +5930,14 @@ mutual
         collect (Algorithm.output a) []
 
   /-- Evaluate a higher-order sequence callback on one collected iteration
-      item. -/
+      item (the `filter` predicate). C#: `EvalSequenceCallbackCall`. -/
   partial def evalSequenceCallbackCall (callee : Algorithm) (item : CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM Result :=
     evalResolvedCallbackCall callee [countedSequenceCallbackItem item] ctx env calleeName
 
-  /-- Counted variant of `evalSequenceCallbackCall` used by `map`. -/
+  /-- Counted variant of `evalSequenceCallbackCall` used by `map`: the transform's
+      ordinary call result (HO-03). C#: `EvalSequenceCallbackCallCounted`. -/
   partial def evalSequenceCallbackCallCounted (callee : Algorithm) (item : CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult :=
@@ -5972,9 +5949,9 @@ mutual
       or decomposes that value after singleton erasure and never evaluates an expression twice.
 
       A parenthesized sequence-value expression such as `(a, b)` counts as one emitted value,
-      while multiple top-level output expressions `a, b` count as two. `reduce`
-      uses this to distinguish sequence-value accumulator values from multi-output
-      step results. -/
+      while multiple top-level output expressions `a, b` count as two. Body/root output
+      accumulation and the loop-step row protocol retain this distinction. A map/reduce
+      callback instead returns its ordinary call result at the value boundary (Q-25). -/
   partial def evalAlgOutputPreparedCore
       (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM PreparedAlgorithmOutput := do
@@ -6171,12 +6148,14 @@ mutual
     let counted <- evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env
     pure counted.fst
 
+  /-- A clause-family callback invocation: the ordinary family dispatch over Ready
+      cells, whose result is the ordinary call result (HO-03, PAT-11). -/
   partial def evalConditionalCallbackCallCounted (callee : Algorithm)
       (args : List CountedResult)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
     let cells <- args.mapM readyNeed
-    evalNeedFamilySupply callee cells ctx env calleeName false
+    evalNeedFamilySupply callee cells ctx env calleeName
 
   /-- Bind pre-evaluated callback arguments to a user algorithm through the ONE
       ordinary counted binder and evaluate its output. THE CALLBACK LAW
@@ -6189,12 +6168,14 @@ mutual
       element, a list pattern a list element). There is no callback row
       convention: `map([(1, 2)], Add)` with `Add(x, y)` is the ordinary arity
       error of `Add((1, 2))`, while `AddPair((x, y))` opens the element
-      explicitly. -/
+      explicitly. The RESULT is the ordinary call result too (HO-03, Q-25
+      resolved October 2026): one value at the call's value boundary, several
+      rows arriving as one sequence value. -/
   partial def evalUserCallbackCallCounted (callee : Algorithm)
       (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let cells <- args.mapM readyNeed
-    evalNeedUserSupply callee cells ctx env false
+    evalNeedUserSupply callee cells ctx env
 
   /-- Evaluate a resolved algorithm against pre-evaluated callback arguments
       that preserve their emitted top-level counts.
@@ -6240,8 +6221,9 @@ mutual
       either side collects those argument values exactly and a structured
       accumulator is opened only by the reducer's own explicit pattern
       (`R(x, (a, b))`). The accumulator is always one value: the initial
-      accumulator is reified at the value boundary and every step must return
-      exactly one value (`expectSingleAccumulator`). -/
+      accumulator is reified at the value boundary, and each step's result is
+      its ordinary call result, passed whole as the next accumulator (HO-03).
+      C#: `EvalSequenceReduceStepCounted`. -/
   partial def evalSequenceReduceStepCounted (callee : Algorithm)
       (element : CountedResult) (accumulator : Result)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
@@ -6395,10 +6377,12 @@ mutual
       from the post-binding collection view and the accumulator as ONE value —
       two ordinary callback arguments (THE CALLBACK LAW); nested sequence
       values stay intact, and only the reducer's own explicit pattern opens a
-      structured element or accumulator. The step must
-      return exactly one accumulator value: one atom, one string, one sequence
-      value, or one exact list value is valid (the empty list `[]` counts as
-      one value), while empty-sequence and multi-output results are rejected.
+      structured element or accumulator. Each step's result is its ORDINARY
+      call result (HO-03, Q-25 resolved October 2026) — the one value the call
+      boundary delivers: several rows arrive as one sequence value, `()` and
+      `[]` are ordinary values — passed whole, never spread, as the next
+      accumulator with its value-boundary count (`reCountValueBoundary`), so
+      `reduce([a, b], R, i)` is `R(b, R(a, i))`.
 
       The initial accumulator is an ordinary VALUE slot (HO-04): binding has
       already demanded it ONCE — a failure there is the call's failure and is
@@ -6416,10 +6400,8 @@ mutual
       | item :: rest, (accValue, _) => do
           let stepOut <- withCtx
             "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
-            evalResolvedCallbackCallCounted stepAlg [countedSequenceCallbackItem item, (accValue, Result.valueCount accValue)] ctx env
-              "reduce step"
-          let next <- expectSingleAccumulator stepOut
-          reduceLoop rest (next, 1)
+            evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
+          reduceLoop rest (reCountValueBoundary stepOut)
     -- The initial accumulator occupies ONE written accumulator slot: its value
     -- is reified as one persistent value at the ordinary value boundary
     -- (`Result.valueCount`, what `reCountValueBoundary` computes) BEFORE
@@ -6441,8 +6423,7 @@ mutual
       | _, [] => pure []
       | index, item :: rest => do
         match <- evalAttempt (withCtx (s!"while evaluating filter predicate for item {index}: {resultDiagnosticString item.fst} (filter passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)") <|
-          (Prod.fst <$> evalResolvedCallbackCallCounted predicateAlg [countedSequenceCallbackItem item] ctx env
-            "filter predicate")) with
+          evalSequenceCallbackCall predicateAlg item ctx env "filter predicate") with
           | .error err =>
               .error err
           | .ok pr =>
@@ -6465,15 +6446,12 @@ mutual
       `map` processes top-level collection elements from left to right.
       `transform(element)` receives each item exactly as collected from the
       post-binding collection view; nested sequence values stay intact.
-      It must return exactly one mapped element:
-      one atom, one sequence value, or one exact list value is valid, while
-      empty and multi-output results are rejected.
-
-      Sequence-value and list-value mapped elements are accepted as single
-      output elements. Each captured callback result becomes one element of
-      the list result (mapped elements are never flattened
-      into the outer list), empty collections yield `[]`, and the output
-      preserves the original element order and element count. -/
+      Each transform result is its ORDINARY call result (HO-03, Q-25 resolved
+      October 2026) — the one value the call boundary delivers: several rows
+      arrive as one sequence value, `()` and `[]` are ordinary values — and
+      becomes ONE element of the list result, never flattened into it, so
+      `map(L, F)` is `[F(L:0), …, F(L:n-1)]`. Empty collections yield `[]`, and
+      the output preserves the original element order and element count. -/
   partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec mapLoop : List CountedResult -> EvalM (List Result)
@@ -6481,11 +6459,9 @@ mutual
       | item :: rest => do
           let mappedOut <- withCtx
             "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
-            evalResolvedCallbackCallCounted transformAlg [countedSequenceCallbackItem item] ctx env
-              "map transform"
-          let mapped <- expectSingleMappedElement mappedOut
+            evalSequenceCallbackCallCounted transformAlg item ctx env "map transform"
           let restMapped <- mapLoop rest
-          pure (mapped :: restMapped)
+          pure (mappedOut.fst :: restMapped)
     let mapped <- mapLoop collection
     pure (makeCollectionListResult mapped)
 
@@ -6576,9 +6552,8 @@ mutual
         | _ =>
             .error (builtinArityError b args.length)
 
-  /-- Builtin application with counted output shape.
-      Used by `reduce` to validate that the step emits exactly one accumulator
-      value without flattening sequence values.
+  /-- Builtin application with counted output shape (a builtin callback's one
+      result is already a value, counted by `Result.valueCount`).
       Every VALUE slot (the `if` condition and branches, loop initial state, the
       `repeat` count, `atoms`, `range`) is demanded through
       `evalArgumentValueCounted`, so a parameterized algorithm in a selected slot
@@ -6809,7 +6784,7 @@ mutual
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let cells <- formNeedSupply args ctx env
-    evalNeedUserSupply callee cells ctx env true
+    evalNeedUserSupply callee cells ctx env
 
   /-- Counted conditional call evaluation — the CANONICAL conditional-call
       implementation (`evalConditionalCall` is its value projection).

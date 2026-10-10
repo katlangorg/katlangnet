@@ -217,6 +217,15 @@ public class MaintainedDocumentationConsistencyTests
         { @"\b(?:Q-33|F13b)\b[^.]{0,60}\b(?:remains\s+open|is\s+(?:still\s+)?(?:open|undecided|unresolved)|open\s+(?:language-design\s+)?question)\b", "the line-final star layout as an open question (before Q-33)" },
         { @"\bKATLANG_Q33_POLICY\b|\bQ33(?:Policy|Warn\w*|Forces\w*|StarIsAttached)\b|\btouches\s+its\s+operand\s+(?:and\s+ends\s+the\s+line|at\s+the\s+end\s+of\s+a\s+line)\b", "a rejected Q-33 prototype policy, warning, or error (the owner kept P0)" },
         { @"\bdetach(?:ed|ing)?\s+the\s+star\b[^.]{0,40}\bto\s+multiply\b|\bto\s+multiply\b[^.]{0,60}\bdetach\s+the\s+star\b", "attached and detached line-final stars as different valid operations (rejected with P2A)" },
+        // Q-25 (decided 2026-10-10, Option B): a `map` transform or `reduce` step returns its
+        // ORDINARY call result — several rows are one sequence value, `()` and `[]` are ordinary
+        // values, nothing is spread — so no current text demands that a mapper or reducer emit
+        // exactly one value, calls a multi-row reducer result invalid, or keeps the strict
+        // single-value callback contract.
+        { @"\b(?:mappers?|transforms?|reducers?|steps?)\s+must\s+(?:emit|return)\s+exactly\s+one\b", "a callback result restricted to one emitted value (before Q-25)" },
+        { @"\breducers?\s+emits?\s+exactly\s+one\s+accumulator\b", "a reducer restricted to one emitted accumulator value (before Q-25)" },
+        { @"\binvalid\s+as\s+a\s+reducer\s+result\b", "a multi-row reducer result as invalid (before Q-25)" },
+        { @"\bstrict\s+single-value\s+`?map`?\b|\bsingle-element\s+contract\b", "the strict single-value map/reduce callback contract (before Q-25)" },
     };
 
     [Theory]

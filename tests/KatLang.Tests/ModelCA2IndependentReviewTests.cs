@@ -34,7 +34,8 @@ public class ModelCA2IndependentReviewTests
     [InlineData("I25-string-empty-then-cached", "A = tick()\nA.string(trace(())*), A", "ok S['1', 1]", "trace(S[]) | tick#1")]
     [InlineData("I26-empty-projection-wrapper", "F(f, 0) = reduce([], f, 7)\nF(f, n) = n\nF(tick(), 0)", "ok 7", "")]
     [InlineData("I27-one-item-reduce", "Through(f) = reduce([1], f, 7)\nThrough(tick())", "err NotAnAlgorithm", "")]
-    [InlineData("I28-family-callback-row-boundary", "F(0) = 1, 2\nF(x) = x, x\nmap([0], F)", "err ArityMismatch", "")]
+    // HO-03 (Q-25, Option B): the family callback's two rows are its ordinary call result, one sequence value.
+    [InlineData("I28-family-callback-row-boundary", "F(0) = 1, 2\nF(x) = x, x\nmap([0], F)", "ok L[S[1, 2]]", "")]
     [InlineData("I29-property-invoke-read", "A = tick()\nUse(f) = f() + f + f() + f\nUse(A), A", "ok S[8, 2]", "tick#1 | tick#2 | tick#3")]
     [InlineData("I30-deconstruction-unused", "p, q = tick(), 7\nUse(f) = map([], f)\nUse(p), q, p", "ok S[L[], 7, 1]", "tick#1")]
     [InlineData("I31-ordinary-value-failure", "pow('a', 1 / 0)", "err TypeMismatch", "")]

@@ -357,12 +357,14 @@ public class LoopCardinalityLawTests
         foreach (var call in new[] { "[1, 2, 3].reduce(R, (0, 0))", "[1, 2, 3].reduce({ repeat(Step, 1, x, acc) }, (0, 0))" })
             AssertOk(await OnEveryRouteAsync(reducer + call), "S[6, 3]", 1, "S[6, 3]");
 
-        // The single-element contract itself is unchanged: an explicit spread is still several outputs.
+        // An explicit spread inside the callback body re-opens the loop result into two rows, and
+        // the call boundary captures them again: the callback's ordinary call result is the same one
+        // value (HO-03, Q-25 resolved October 2026; formerly the single-element contract rejected
+        // it). A spread inside a body is local to that body's output (VAL-06), as for a helper.
         var spread = await OnEveryRouteAsync(defs + "[0, 1].map({ repeat(Fib, 2, x, 1)* })");
-        Assert.Equal("err", spread.Kind);
-        Assert.Equal(
-            MessagesOnly(await OnEveryRouteAsync("D(x) = x, x\n[0, 1].map({ D(x)* })")),
-            MessagesOnly(spread));
+        AssertOk(spread, "L[S[1, 2], S[2, 3]]", 1, "L[S[1, 2], S[2, 3]]");
+        var helperSpread = await OnEveryRouteAsync("D(x) = x, x\n[0, 1].map({ D(x)* })");
+        AssertOk(helperSpread, "L[S[0, 0], S[1, 1]]", 1, "L[S[0, 0], S[1, 1]]");
     }
 
     [Fact]

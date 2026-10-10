@@ -305,9 +305,10 @@ def nestedLoopRowIsOneSlot : Bool :=
 #guard nestedLoopRowIsOneSlot
 
 /-- Q-26: a callback body whose row is a multi-slot loop returns ONE value,
-    exactly like a helper returning it — the higher-order single-element
-    contract itself is unchanged (an explicit spread is still a multi-output
-    rejection). -/
+    exactly like a helper returning it. Since Q-25 (Option B, October 2026) an
+    explicit spread of the loop result inside the body re-opens it into rows that
+    the call boundary captures again: the callback's ordinary call result is the
+    same one value (HO-03). -/
 def callbackBodyLoopIsOneValue : Bool :=
   let loop := KatLang.Expr.call (resolve "repeat") [resolve "Fib", .num 2, .param "x", .num 1]
   let helper := alg ["x"] [] [] [loop]
@@ -317,13 +318,10 @@ def callbackBodyLoopIsOneValue : Bool :=
   let run (callback : KatLang.Expr) := runResult (.algorithmExpr (algPrivate [] []
     [("Fib", lcFibAlg), ("H", helper), ("V", viaHelper)]
     [.call (resolve "map") [.listLiteral [.num 0, .num 1], callback]]))
-  [resolve "H", resolve "V", .algorithmExpr helper].all (fun callback =>
+  [resolve "H", resolve "V", .algorithmExpr helper, .algorithmExpr spreadBody].all (fun callback =>
     match run callback with
     | .ok value => value == expected
-    | _ => false) &&
-  match run (.algorithmExpr spreadBody) with
-  | .error _ => true
-  | _ => false
+    | _ => false)
 
 #guard callbackBodyLoopIsOneValue
 

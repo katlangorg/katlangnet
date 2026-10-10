@@ -140,9 +140,8 @@ public static partial class Evaluator
     /// (<see cref="ReCountValueBoundary(CountedResult)"/>): the item keeps its
     /// stored shape (a nested sequence or list stays one value for pattern
     /// matching and for every count-sensitive reader inside the body — a bare
-    /// <c>x</c> output row, <c>x.Coll</c> on a collecting receiver, the
-    /// map/reduce single-element checks), a <c>()</c> item emits zero values,
-    /// and only an explicit spread <c>x*</c> opens it.
+    /// <c>x</c> output row, <c>x.Coll</c> on a collecting receiver), a <c>()</c>
+    /// item emits zero values, and only an explicit spread <c>x*</c> opens it.
     /// Lean: <c>countedSequenceCallbackItem</c>.
     /// </summary>
     private static CountedResult CountedSequenceCallbackItem(CountedResult item)

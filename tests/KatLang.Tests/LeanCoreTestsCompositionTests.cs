@@ -50,6 +50,7 @@ public class LeanCoreTestsCompositionTests
         "FamilyCallbackCardinality",
         "CollectingCallableForwarding",
         "EmptyStructuralPatterns",
+        "CallbackResultBoundary",
     ];
 
     [Fact]

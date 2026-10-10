@@ -296,8 +296,8 @@ public class SelectionValueBoundaryTests
         _ = expectedColl;
         _ = expectedSpreadColl;
         // The literal route is the oracle: a transform returning the written value
-        // (a capture / literal, count valueCount) — `()` is the documented empty
-        // transform rejection, every other value is one mapped element.
+        // (a capture / literal, count valueCount) — every value, `()` included, is one
+        // mapped element (HO-03: the transform's ordinary call result).
         var literalMap = KatLangEngine.Run("H(x) = " + selected + "\nmap((1), H)");
         var literalReduce = KatLangEngine.Run("H(x, acc) = " + selected + "\nreduce((1), H, 0)");
 
@@ -316,41 +316,23 @@ public class SelectionValueBoundaryTests
     {
         // The iterated item of map/filter/reduce is a selection from the collection:
         // inside the callback it is ONE value on every count-sensitive path (a
-        // collecting dotted receiver, a bare output row, the single-element checks),
-        // and only an explicit spread opens it.
+        // collecting dotted receiver, a bare output row), and only an explicit spread
+        // opens it.
         var defs = Coll + "A = (" + selected + ", 9)\nF(x) = x.Coll\nG(x) = (x)*.Coll\nId(x) = x\nR(x, acc) = x\n";
         Assert.Equal("[" + expectedColl + ", [9]]", Display(defs + "map(A, F)"));
         Assert.Equal("[" + expectedSpreadColl + ", [9]]", Display(defs + "map(A, G)"));
 
-        // A reduce step returning the selected item: one accumulator value, except
-        // that `()` is the documented empty-accumulator rejection whatever produced it.
+        // A reduce step returning the selected item: its ordinary call result is the next
+        // accumulator whatever the item is — `()` included (HO-03, Q-25) — so the final
+        // accumulator is the last item.
         var reduced = KatLangEngine.Run(defs + "reduce(A, R, 0)");
-        if (selected == "()")
-        {
-            var reduceFailure = Assert.IsType<RunResult.EvalFailure>(reduced);
-            Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(reduceFailure.Errors).Code);
-            Assert.Contains("reduce step must return a single accumulator value", Assert.Single(reduceFailure.Errors).Message);
-        }
-        else
-        {
-            Assert.Equal("9", Assert.IsType<RunResult.Success>(reduced).ToDisplayString());
-        }
+        Assert.Equal("9", Assert.IsType<RunResult.Success>(reduced).ToDisplayString());
 
-        var identity = KatLangEngine.Run(defs + "map(A, Id)");
-        if (selected == "()")
-        {
-            // `()` is the documented empty transform result, whatever produced it.
-            var failure = Assert.IsType<RunResult.EvalFailure>(identity);
-            Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(failure.Errors).Code);
-            Assert.Contains("map transform must return a single element", Assert.Single(failure.Errors).Message);
-        }
-        else
-        {
-            // The identity transform maps each selected item to itself: one element
-            // per item, nested values intact (`Id(x) = x` and `Wrap(x) = (x)` agree).
-            Assert.Equal(Display("[" + selected + ", 9]"), Display(defs + "map(A, Id)"));
-            Assert.Equal(Display("[" + selected + ", 9]"), Display(defs + "Wrap(x) = (x)\nmap(A, Wrap)"));
-        }
+        // The identity transform maps each selected item to itself: one element per item,
+        // nested values intact and `()` included, so map(A, Id) is A's elements as a list
+        // (`Id(x) = x` and `Wrap(x) = (x)` agree).
+        Assert.Equal(Display("[" + selected + ", 9]"), Display(defs + "map(A, Id)"));
+        Assert.Equal(Display("[" + selected + ", 9]"), Display(defs + "Wrap(x) = (x)\nmap(A, Wrap)"));
     }
 
     // ── first / last ≡ index metamorphic invariant ───────────────────────────

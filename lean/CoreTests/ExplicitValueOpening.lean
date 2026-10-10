@@ -441,10 +441,9 @@ def callbacksPassEachElementAsOneArgument : Bool :=
 
 -- Callback binding IS the ordinary call: for each element `E`, `map([E], F)`
 -- is `[F(E)]` for every callee shape (collecting, prefix + collector, fixed,
--- explicit pattern) and every element kind, and the two fail together. The one
--- independent difference is map's own single-value RESULT contract: a
--- transform returning `()` (here `Id(())`) is no single element, so the map
--- fails where the direct call returns `()`.
+-- explicit pattern) and every element kind, and the two fail together. Since
+-- Q-25 (Option B, October 2026) the RESULT is the ordinary call result too, so
+-- there is no independent difference: `map([()], Id)` is `[Id(())]`, `[()]`.
 def callbackBindingMatchesTheDirectCall : Bool :=
   let rec rootError : Error → Error
     | .withContext _ inner => rootError inner
@@ -462,7 +461,6 @@ def callbackBindingMatchesTheDirectCall : Bool :=
     match run (.call (resolve "map") [.listLiteral [element], resolve callee]),
           run (.call (resolve callee) [element]) with
     | Except.ok (.listValue [mapped]), Except.ok direct => mapped == direct
-    | Except.error error, Except.ok (.sequenceValue []) => innermostIsBadArity error
     | Except.error mapped, Except.error direct => reprStr (rootError mapped) == reprStr (rootError direct)
     | _, _ => false
 

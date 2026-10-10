@@ -251,7 +251,7 @@ def transportedCallableStaysSuspended : EvalM Bool := do
   let forwarded <- formNeedSupply [.sequenceSpread (.param "fs")] { ctx with needEnv := [("fs", outer)] } []
   let inner <- allocateNeed (.collector forwarded)
   let opened <- formNeedSupply [.sequenceSpread (.param "gs")] { ctx with needEnv := [("gs", inner)] } []
-  let result <- evalNeedUserSupply ccfApply opened ctx [] true
+  let result <- evalNeedUserSupply ccfApply opened ctx []
   pure (forwarded == [supplied] && opened == [supplied] && result.fst == .atom 10 &&
     (<- isSuspended supplied) && (<- isSuspended outer) && (<- isSuspended inner))
 #guard (runEvalM transportedCallableStaysSuspended).toOption == some true

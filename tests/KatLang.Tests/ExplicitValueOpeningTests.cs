@@ -300,8 +300,7 @@ public class ExplicitValueOpeningTests
             "[Id([V]*)]:0", "map([V], Id):0", "(Coll([V]*)*)",
         })
         {
-            // map requires one emitted callback value; Id(()) emits zero.
-            if (value == "()" && expression == "map([V], Id):0") continue;
+            // map stores Id's ordinary call result whole, `()` included (HO-03, Q-25).
             Assert.Equal(one, Display(definitions + "Coll(" + expression + ")"));
             Assert.Equal(one, Display(definitions + "(" + expression + ").Coll"));
             Assert.Equal("[" + value + ", 9]", Display(definitions + "Coll(" + expression + ", 9)"));
@@ -506,9 +505,9 @@ public class ExplicitValueOpeningTests
     /// <summary>
     /// THE CALLBACK LAW, metamorphically: for every element `E` and callee `F`,
     /// `map([E], F)` is the list literal `[F(E)]` — the callback binds exactly as the
-    /// direct call — and the two fail together with the same error code. The one
-    /// independent difference is map's own single-value RESULT contract: a transform
-    /// returning `()` is no single element.
+    /// direct call, and its result is the direct call's result (HO-03, Q-25 resolved
+    /// October 2026, `()` included) — so the two succeed together with the same value or
+    /// fail together with the same error code.
     /// </summary>
     [Theory]
     [MemberData(nameof(CallbackCells))]
@@ -516,11 +515,7 @@ public class ExplicitValueOpeningTests
     {
         var mapped = Outcome(CallbackDefinitions + "map([" + element + "], " + callee + ")");
         var direct = Outcome(CallbackDefinitions + "[" + callee + "(" + element + ")]");
-        if (direct == "ok [()]")
-            SourceProvenance.ParseValid(CallbackDefinitions + "map([" + element + "], " + callee + ")")
-                .ExpectEvaluationError<EvalError.BadArity>();
-        else
-            Assert.Equal(direct, mapped);
+        Assert.Equal(direct, mapped);
 
         // filter binds its predicate like the call too: with an always-true predicate
         // shaped like `F`, the element is kept exactly when `F(E)` binds.

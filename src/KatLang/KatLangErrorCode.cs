@@ -103,7 +103,7 @@ public enum KatLangErrorCode
     /// interface — parameter count vs argument count, a variadic callable's fixed-parameter
     /// minimum, a clause family's heads, a loop step's state, a structural pattern's length, a
     /// deconstruction's item count — an operation received the wrong number of emitted slots (a
-    /// <c>map</c> or <c>reduce</c> result, a <c>while</c> step without its flag), or the
+    /// <c>while</c> step without its flag), or the
     /// occurrences of a repeated parameter name received unequal values (NEED-04). Never a value
     /// kind (<see cref="TypeMismatch"/>), a domain (<see cref="IllegalInEval"/>) or a missing
     /// callable (<see cref="NotAnAlgorithm"/>) failure (Q-27). Variants:

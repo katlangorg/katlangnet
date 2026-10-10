@@ -33,48 +33,6 @@ public class EvaluatorSequenceCallbackTests
         Assert.Contains("filter predicate result must be a Boolean value (true or false), but was", mismatch.Message);
     }
 
-    private static void AssertReduceStepShapeFails(string source)
-    {
-        var result = EvalFull(source);
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
-
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("reduce step must return a single accumulator value", formatted);
-
-        var error = result.Error;
-        var contexts = new List<string>();
-        while (error is EvalError.WithContext wc)
-        {
-            contexts.Add(wc.Context);
-            error = wc.Inner;
-        }
-
-        Assert.Contains(contexts, context => context.Contains("reduce step must return a single accumulator value"));
-        Assert.IsType<EvalError.BadArity>(error);
-    }
-
-    private static void AssertMapTransformShapeFails(string source)
-    {
-        var result = EvalFull(source);
-        if (result.IsOk)
-            Assert.Fail($"Expected evaluation failure but got: {result.Value}");
-
-        var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Contains("map transform must return a single element", formatted);
-
-        var error = result.Error;
-        var contexts = new List<string>();
-        while (error is EvalError.WithContext wc)
-        {
-            contexts.Add(wc.Context);
-            error = wc.Inner;
-        }
-
-        Assert.Contains(contexts, context => context.Contains("map transform must return a single element"));
-        Assert.IsType<EvalError.BadArity>(error);
-    }
-
     // ── Filter builtin ───────────────────────────────────────────────────────
 
     [Fact]
@@ -401,18 +359,18 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Map_EmptyTransformResult_FailsWithContext()
+    public void Eval_Map_EmptyTransformResult_IsOneEmptySequenceElementPerItem()
     {
-        // A transform whose body is the truly empty result `()` still fails the
-        // strict single-element contract. (A collection builtin like take(1, 0)
-        // no longer produces this failure — it returns the empty list [], which
-        // is one valid element; see the exact-list acceptance test below.)
-        var source = """
-            Bad(x) = ()
-            map((1, 2, 3), Bad)
-            """;
-
-        AssertMapTransformShapeFails(source);
+        // HO-03 (Q-25, Option B): a transform returns its ordinary call result, and `()`
+        // is an ordinary value — ONE element per item, never dropped (use filter to omit
+        // elements). Compare the exact-list result below.
+        AssertEvalCounted(
+            """
+            Empty(x) = ()
+            map((1, 2, 3), Empty)
+            """,
+            1,
+            ListValue(SequenceValue(), SequenceValue(), SequenceValue()));
     }
 
     [Fact]
@@ -430,14 +388,20 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Map_MultiOutputTransformResult_FailsWithContext()
+    public void Eval_Map_MultiOutputTransformResult_IsOneSequenceElementPerItem()
     {
+        // Two written rows are the ordinary call result `(x, x * x)`: one sequence value,
+        // exactly what the capture spelling `PairWithSquare` above produces (HO-03).
         var source = """
-            Bad(x) = x, x * x
-            map((1, 2, 3), Bad)
+            Pair(x) = x, x * x
+            map((1, 2, 3), Pair)
             """;
 
-        AssertMapTransformShapeFails(source);
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected success but got error: {result.Error}");
+
+        AssertListOfSequenceValueAtoms(result.Value, [1m, 1m], [2m, 4m], [3m, 9m]);
     }
 
     // ── Reduce builtin ───────────────────────────────────────────────────────
@@ -810,18 +774,19 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_EmptyStepResult_FailsWithContext()
+    public void Eval_Reduce_EmptyStepResult_IsTheEmptyAccumulator()
     {
-        // A step whose body is the truly empty result `()` still fails the strict
-        // single-accumulator contract. (A collection builtin like take(1, 0) no
-        // longer produces this failure — it returns the empty list [], which is
-        // one valid accumulator value; see the exact-list acceptance test below.)
-        var source = """
-            Bad(x, acc) = ()
-            reduce((1, 2, 3), Bad, 0)
-            """;
-
-        AssertReduceStepShapeFails(source);
+        // HO-03 (Q-25, Option B): a step returning `()` makes `()` the next accumulator — an
+        // ordinary value, never "keep the previous accumulator". The final result is `()`; as
+        // the program's one root row it is one visible slot (VAL-07). (The reduce result's own
+        // value-boundary count, 0 for `()`, is pinned by CallbackResultBoundaryTests.)
+        AssertEvalCounted(
+            """
+            Empty(x, acc) = ()
+            reduce((1, 2, 3), Empty, 0)
+            """,
+            1,
+            SequenceValue());
     }
 
     [Fact]
@@ -839,14 +804,17 @@ public class EvaluatorSequenceCallbackTests
     }
 
     [Fact]
-    public void Eval_Reduce_MultiOutputStepResult_FailsWithContext()
+    public void Eval_Reduce_MultiOutputStepResult_IsOneSequenceAccumulator()
     {
-        var source = """
-            Bad(x, acc) = acc, x
-            reduce((1, 2, 3), Bad, 0)
-            """;
-
-        AssertReduceStepShapeFails(source);
+        // Two written rows are one sequence value passed whole as the next accumulator, so
+        // the accumulator nests: (((0, 1), 2), 3) — nothing is spread (HO-03).
+        AssertEvalCounted(
+            """
+            Snoc(x, acc) = acc, x
+            reduce((1, 2, 3), Snoc, 0)
+            """,
+            1,
+            SequenceValue(SequenceValue(SequenceValue(Atom(0), Atom(1)), Atom(2)), Atom(3)));
     }
 
     // -- Callback runtime binding characterization -------------------------

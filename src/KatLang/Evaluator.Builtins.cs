@@ -144,7 +144,8 @@ public static partial class Evaluator
     //
     // This re-counts without normalizing or rebuilding the value; ordinary value
     // construction has already normalized redundant unary empty structure.
-    // Selection, callback items and the completed while/repeat result
+    // Selection, callback items, map/reduce callback RESULTS (every callback invocation is
+    // the ordinary call, HO-03/Q-25) and the completed while/repeat result
     // (MakeCheckedLoopStateResult, Q-26) cross this same value boundary. Never apply it
     // to body/root output accumulation (EvalAlgOutputCountedCore) or to a loop step's
     // own row supply (EvalAlgOutputSlots), both of which must keep their multi-item counts.
@@ -401,8 +402,9 @@ public static partial class Evaluator
     /// calls <c>R(E, Acc)</c> — so a collecting parameter on either side collects those
     /// argument values exactly and a structured accumulator is opened only by the
     /// reducer's own explicit pattern (<c>R(x, (a, b))</c>). The accumulator is always one
-    /// value: the initial accumulator is reified at the value boundary and every step must
-    /// return exactly one value. Lean: <c>evalSequenceReduceStepCounted</c>.
+    /// value: the initial accumulator is reified at the value boundary and every step returns
+    /// its ordinary call result — ONE value, whatever rows produced it, <c>()</c> included
+    /// (HO-03, Q-25). Lean: <c>evalSequenceReduceStepCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
         Algorithm callee,
@@ -881,15 +883,20 @@ public static partial class Evaluator
             new EvalError.BadArity());
 
     /// <summary>
-    /// Evaluate <c>reduce(collection, reducer, initial)</c> while
-    /// preserving the accumulator's emitted-value count for the empty-sequence
-    /// case. The fixed <c>collection</c> argument supplies the items through
-    /// the post-binding collection view; the reducer and initial accumulator
-    /// are fixed control arguments.
+    /// Evaluate <c>reduce(collection, reducer, initial)</c>. The fixed <c>collection</c>
+    /// argument supplies the items through the post-binding collection view; the reducer
+    /// and initial accumulator are fixed control arguments.
     /// The current item is passed to the reducer exactly as collected and the
     /// accumulator as ONE value — two ordinary callback arguments (THE CALLBACK
     /// LAW); nested sequence values stay intact, and only the reducer's own
     /// explicit pattern opens a structured element or accumulator.
+    /// Each step's result is its ORDINARY call result (HO-03, Q-25 resolved October 2026):
+    /// the one value the call boundary delivers — several rows arrive as one sequence value,
+    /// <c>()</c> and <c>[]</c> are ordinary values — passed whole as the next accumulator with
+    /// its value-boundary count (<see cref="ReCountValueBoundary(CountedResult)"/>).
+    /// For pure, deterministic, total computations, <c>reduce([a, b], R, i)</c> has the same result value as
+    /// <c>R(b, R(a, i))</c>. Reduction demands the initial value and every step in order;
+    /// nested Model-C calls retain their ordinary demand order. Nothing is spread.
     /// The initial accumulator is an ordinary VALUE slot (HO-04): binding already
     /// demanded it ONCE — a failure there is the call's failure and is never retried —
     /// so this function receives its <paramref name="initial"/> value, never an
@@ -918,10 +925,7 @@ public static partial class Evaluator
                 EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName));
             if (stepR.IsError) return stepR.Error;
 
-            var nextR = ExpectSingleAccumulator(stepR.Value);
-            if (nextR.IsError) return nextR.Error;
-
-            accumulator = new CountedResult(nextR.Value, 1);
+            accumulator = ReCountValueBoundary(stepR.Value);
         }
 
         return EvalResult<CountedResult>.Ok(accumulator);
@@ -991,9 +995,12 @@ public static partial class Evaluator
     /// top-level mapped elements. <c>mapper</c> is a fixed control argument.
     /// Each callback item is passed to the mapper exactly as collected from
     /// the post-binding collection view; nested sequence values and
-    /// nested list values stay intact. Each captured callback result becomes
-    /// one element of the list result (mapped elements are
-    /// never flattened into the outer list).
+    /// nested list values stay intact. Each transform result is its ORDINARY call
+    /// result (HO-03, Q-25 resolved October 2026) — several rows arrive as one sequence
+    /// value, <c>()</c> and <c>[]</c> are ordinary values — and becomes ONE element of the
+    /// list result, never flattened into it. For pure, deterministic, total computations,
+    /// <c>map(L, F)</c> has the same result value as <c>[F(L:0), …]</c>. Map demands its
+    /// collection; expanded Model-C calls may leave indexed arguments undemanded.
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMapCounted(
@@ -1010,10 +1017,7 @@ public static partial class Evaluator
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, MapTransformFrameName));
             if (transformR.IsError) return transformR.Error;
 
-            var mappedElementR = ExpectSingleMappedElement(transformR.Value);
-            if (mappedElementR.IsError) return mappedElementR.Error;
-
-            mapped.Add(mappedElementR.Value);
+            mapped.Add(transformR.Value.Value);
         }
 
         return MakeCollectionListResult(ctx, mapped);

@@ -42,3 +42,4 @@ import CoreTests.GraceMovement
 import CoreTests.FamilyCallbackCardinality
 import CoreTests.CollectingCallableForwarding
 import CoreTests.EmptyStructuralPatterns
+import CoreTests.CallbackResultBoundary

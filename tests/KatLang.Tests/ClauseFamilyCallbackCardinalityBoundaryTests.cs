@@ -10,33 +10,28 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "incompatible binding falls through", "F((x, x)) = 10\nF((x, y)) = 20\nmap([(1, 2)], F)", "L[20]" },
         { "first of two compatible clauses", "F((x, x)) = 10\nF((x, y)) = 20\nmap([(1, 1), (1, 2)], F)", "L[10, 20]" },
         { "literal precedes binder", "F((0, 0)) = 30\nF((x, x)) = 10\nF((x, y)) = 20\nmap([(0, 0), (1, 1), (1, 2)], F)", "L[30, 10, 20]" },
-        { "selected later clause emits two rows", "F((x, x)) = 10, 11\nF((x, y)) = 20, 21\nmap([(1, 2)], F)", "err map" },
+        { "selected later clause emits two rows", "F((x, x)) = 10, 11\nF((x, y)) = 20, 21\nmap([(1, 2)], F)", "L[S[20, 21]]" },
         { "ordinary later clause is one value", "F((x, x)) = 10, 11\nF((x, y)) = 20, 21\nF((1, 2))", "S[20, 21]" },
         { "reduce falls through", "R(x, x) = 10\nR(x, y) = x + y\nreduce([1, 2], R, 0)", "3" },
-        { "reduce later clause emits two rows", "R(x, x) = 10, 11\nR(x, y) = x, y\nreduce([1], R, 0)", "err reduce" },
+        { "reduce later clause emits two rows", "R(x, x) = 10, 11\nR(x, y) = x, y\nreduce([1], R, 0)", "S[1, 0]" },
     };
 
     [Theory]
     [MemberData(nameof(RepeatedBranchCallbacks))]
     public async Task RepeatedNameBranchSelection_PreservesCallbackBoundary(string label, string source, string expected)
     {
+        // The repeated-name verdict selects the clause; the selected clause's rows are the ordinary call result
+        // (HO-03), exactly the ordinary call's one value.
         Assert.False(string.IsNullOrWhiteSpace(label));
         var (observation, _) = await AllRoutesAsync(source);
-        if (expected.StartsWith("err ", StringComparison.Ordinal))
-        {
-            Assert.Equal("err", observation.Kind);
-            Assert.Contains(expected == "err map" ? MapContract : ReduceContract, Assert.Single(observation.Errors));
-            Assert.IsType<EvalError.BadArity>(Innermost(GenericError(source)));
-        }
-        else
-            Assert.Equal(("ok", expected, 1), (observation.Kind, observation.Value, observation.Count));
+        Assert.Equal(("ok", expected, 1), (observation.Kind, observation.Value, observation.Count));
     }
 
     public static TheoryData<string, string> AdditionalCallbackRoutes() => new()
     {
-        { Fam + "Use(f) = map([0], f)\nRelay(*fs) = Use(fs*)\nRelay(F)", "err map" },
-        { Fam + "Use(f) = map([0], f)\nRelay(f) = Use\nRelay(F)", "err map" },
-        { Fam + "Box = { public Apply(f) = map([0], f) }\nBox.Apply(F)", "err map" },
+        { Fam + "Use(f) = map([0], f)\nRelay(*fs) = Use(fs*)\nRelay(F)", "L[S[1, 2]]" },
+        { Fam + "Use(f) = map([0], f)\nRelay(f) = Use\nRelay(F)", "L[S[1, 2]]" },
+        { Fam + "Box = { public Apply(f) = map([0], f) }\nBox.Apply(F)", "L[S[1, 2]]" },
         { Red + "A = R\nB = A\nreduce([1], { B(e, a) }, 0)", "S[1, 0]" },
         { "P(0) = ()\nP(n) = true\nfilter([0], P)", "err filter" },
         { "P(0) = 7\nP(n) = true\nA = P\nB = A\nKeep(p) = filter([0], p)\nKeep(B)", "err filter" },
@@ -52,9 +47,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
             Assert.Equal(("ok", expected, 1), (observation.Kind, observation.Value, observation.Count));
         else
         {
+            Assert.Equal("err filter", expected);
             var error = Assert.Single(observation.Errors);
-            Assert.StartsWith(expected == "err filter" ? "TypeMismatch: " : "ArityMismatch: ", error);
-            Assert.Contains(expected == "err filter" ? "filter predicate result must be a Boolean" : MapContract, error);
+            Assert.StartsWith("TypeMismatch: ", error);
+            Assert.Contains("filter predicate result must be a Boolean", error);
         }
     }
 
@@ -63,21 +59,21 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
 
     public static TheoryData<string, string, string, string[]> DeferredCallbacks() => new()
     {
-        { $"F(0) = {{ open '{DeferredGood}'\ntrace(A), trace(A + 1) }}\nF(n) = n, n\nmap([0], F)", "public A = 1", "err map", ["1", "2"] },
+        { $"F(0) = {{ open '{DeferredGood}'\ntrace(A), trace(A + 1) }}\nF(n) = n, n\nmap([0], F)", "public A = 1", "L[S[1, 2]]", ["1", "2"] },
         { $"F(0) = {{ open '{DeferredGood}'\n(trace(A), trace(A + 1)) }}\nF(n) = (n, n)\nmap([0, 0], F)", "public A = 1", "L[S[1, 2], S[1, 2]]", ["1", "2", "1", "2"] },
-        { $"R(e, 0) = {{ open '{DeferredGood}'\ntrace(A + e), trace(0) }}\nR(e, a) = e, a\nreduce([2], R, 0)", "public A = 1", "err reduce", ["3", "0"] },
+        { $"R(e, 0) = {{ open '{DeferredGood}'\ntrace(A + e), trace(0) }}\nR(e, a) = e, a\nreduce([2], R, 0)", "public A = 1", "S[3, 0]", ["3", "0"] },
         { $"R(e, 0) = {{ open '{DeferredGood}'\n(trace(A + e), trace(0)) }}\nR(e, a) = (e, a)\nreduce([2], R, 0)", "public A = 1", "S[3, 0]", ["3", "0"] },
         { $"F(0) = trace(7)\nF(n) = {{ open '{DeferredMissing}'\nX }}\nA = F\nB = A\nUse(f) = map([0], f)\nUse(B)", "public A = 1", "L[7]", ["7"] },
-        { $"F(0) = {{ open '{DeferredGood}'\ntrace(A), trace(A + 1) }}\nF(n) = n, n\nAlias = F\nUse(f) = map([0], f)\nUse(Alias)", "public A = 1", "err map", ["1", "2"] },
+        { $"F(0) = {{ open '{DeferredGood}'\ntrace(A), trace(A + 1) }}\nF(n) = n, n\nAlias = F\nUse(f) = map([0], f)\nUse(Alias)", "public A = 1", "L[S[1, 2]]", ["1", "2"] },
         { $"F(0) = {{ open '{DeferredGood}'\ntrace(A) / 0 }}\nF(n) = n\nmap([0], F)", "public A = 1", "err div0", ["1"] },
-        { $"open '{DeferredGood}'\nmap([0], F)", "public F(0) = 1, 2\npublic F(n) = n, n", "err map", [] },
-        { $"M = load('{DeferredGood}')\nmap([0], M.F)", "public F(0) = 1, 2\npublic F(n) = n, n", "err map", [] },
-        { $"open '{DeferredGood}'\nGo([0])", "F(0) = 1, 2\nF(n) = n, n\npublic Go(xs) = map(xs, F)", "err map", [] },
+        { $"open '{DeferredGood}'\nmap([0], F)", "public F(0) = 1, 2\npublic F(n) = n, n", "L[S[1, 2]]", [] },
+        { $"M = load('{DeferredGood}')\nmap([0], M.F)", "public F(0) = 1, 2\npublic F(n) = n, n", "L[S[1, 2]]", [] },
+        { $"open '{DeferredGood}'\nGo([0])", "F(0) = 1, 2\nF(n) = n, n\npublic Go(xs) = map(xs, F)", "L[S[1, 2]]", [] },
     };
 
     [Theory]
     [MemberData(nameof(DeferredCallbacks))]
-    public async Task DeferredOrLoadedFamilyCallback_KeepsItsOwnEmittedCount(
+    public async Task DeferredOrLoadedFamilyCallback_ReturnsTheOrdinaryCallResult(
         string source, string moduleSource, string expected, string[] expectedEffects)
     {
         // Deferred trees require async evaluation even with an inline downloader. Use fresh loaders
@@ -129,9 +125,8 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
             Assert.Equal(source.Contains(DeferredGood, StringComparison.Ordinal) ? 1 : 0, fetches.Count);
             if (expected.StartsWith("err ", StringComparison.Ordinal))
             {
-                var error = Assert.Single(observed.Errors);
-                Assert.StartsWith(expected == "err div0" ? "DivisionByZero: " : "ArityMismatch: ", error);
-                if (expected != "err div0") Assert.Contains(expected == "err map" ? MapContract : ReduceContract, error);
+                Assert.Equal("err div0", expected);
+                Assert.StartsWith("DivisionByZero: ", Assert.Single(observed.Errors));
             }
             else Assert.Equal(("ok", expected, 1), (observed.Kind, observed.Value, observed.Count));
             if (oracle is not null) Assert.Equal(oracle, observed);
@@ -168,7 +163,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     }
 
     [Theory]
-    [InlineData(false, false, "reduce", "err contract")]
+    [InlineData(false, false, "reduce", "S[1, 0]")]
     [InlineData(false, true, "reduce", "S[1, 0]")]
     [InlineData(false, false, "call", "S[1, 0]")]
     [InlineData(false, false, "repeat", "S[1, 0]")]
@@ -198,18 +193,11 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
                 : Evaluator.RunCountedObserved(program, enableOptimizations: route == 1);
             if (expected.StartsWith("err ", StringComparison.Ordinal))
             {
+                // FORMAL-08: this host-only core shape differs from Lean's flat user fallback.
+                Assert.Equal("err branch", expected);
                 Assert.True(result.IsError);
-                if (expected == "err branch")
-                {
-                    // FORMAL-08: this host-only core shape differs from Lean's flat user fallback.
-                    var noMatch = Assert.IsType<EvalError.NoMatchingBranch>(Innermost(result.Error));
-                    Assert.Equal("reduce step", noMatch.AlgorithmName);
-                }
-                else
-                {
-                    Assert.IsType<EvalError.BadArity>(Innermost(result.Error));
-                    Assert.Contains(ReduceContract, KatLangError.FromEvalError(result.Error).Message);
-                }
+                var noMatch = Assert.IsType<EvalError.NoMatchingBranch>(Innermost(result.Error));
+                Assert.Equal("reduce step", noMatch.AlgorithmName);
             }
             else
             {
@@ -253,9 +241,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first.WaitAsync(TimeSpan.FromSeconds(15)));
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         var retry = await Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache()).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
-        Assert.True(retry.IsError);
-        Assert.IsType<EvalError.BadArity>(Innermost(retry.Error));
-        Assert.Contains(MapContract, KatLangError.FromEvalError(retry.Error).Message);
+        // The retry acquires the source again (the cancelled acquisition was never cached) and the selected clause's
+        // two rows are its ordinary call result, one element (HO-03).
+        Assert.True(retry.IsOk, retry.IsError ? retry.Error.ToString() : "");
+        Assert.Equal("L[S[1, 2]]", SixRouteAgreement.Neutral(retry.Value.Value));
         Assert.Equal(2, attempts);
     }
 }

@@ -326,33 +326,4 @@ public static partial class Evaluator
 
         public sealed record WholeNumberArg(Decimal128 WholeNumberValue) : PreparedSequenceBuiltinSuffixArg;
     }
-
-    /// <summary>
-    /// Validate the output shape required by counted builtins that must emit
-    /// exactly one top-level value. Non-empty sequence values are valid; the empty
-    /// sequence value <c>()</c> and multiple top-level outputs are rejected. (An
-    /// empty-sequence output is a visible slot at the output boundary, but these
-    /// builtins require a substantive single element.)
-    /// Lean: <c>expectSingleValueWith</c>.
-    /// </summary>
-    private static EvalResult<Result> ExpectSingleEmittedValue(CountedResult output, string errorMessage)
-        => output.EmittedCount == 1 && output.Value is not Result.SequenceValue { Items.Count: 0 }
-            ? EvalResult<Result>.Ok(output.Value)
-            : new EvalError.WithContext(
-                errorMessage,
-                new EvalError.BadArity());
-
-    /// <summary>
-    /// Validate the output shape required by <c>reduce</c>.
-    /// Lean: <c>expectSingleAccumulator</c>.
-    /// </summary>
-    private static EvalResult<Result> ExpectSingleAccumulator(CountedResult output)
-        => ExpectSingleEmittedValue(output, "reduce step must return a single accumulator value");
-
-    /// <summary>
-    /// Validate the output shape required by <c>map</c>.
-    /// Lean: <c>expectSingleMappedElement</c>.
-    /// </summary>
-    private static EvalResult<Result> ExpectSingleMappedElement(CountedResult output)
-        => ExpectSingleEmittedValue(output, "map transform must return a single element");
 }

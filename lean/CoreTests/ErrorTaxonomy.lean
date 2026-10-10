@@ -213,9 +213,11 @@ def case_guard_cardinality__pattern_length : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.call (.resolve "P") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obsFine case_guard_cardinality__pattern_length == "err arityMismatch(2,3)"
 
-def case_guard_cardinality__map_result_rows : Expr :=
+-- HO-03 (Q-25 resolved, Option B, October 2026): a map transform's two rows are its ordinary call
+-- result, one sequence value — no longer a callback-result cardinality failure.
+def case_callback_result__map_result_rows_are_one_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "D" (alg ["x"] [] [] [.param "x", .param "x"])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "D"])])
-#guard obsFine case_guard_cardinality__map_result_rows == "err badArity"
+#guard obsFine case_callback_result__map_result_rows_are_one_value == "ok n=1"
 
 def case_guard_cardinality__while_no_slot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "W" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))])] [(.call (.resolve "while") [.resolve "W", (.emptySequence 0)])])

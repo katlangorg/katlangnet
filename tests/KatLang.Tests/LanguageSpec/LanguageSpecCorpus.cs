@@ -912,8 +912,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Empty = ()\nEmpty()", "ok raw=S[] n=1"),
                 // ... while a body with no output rows has nothing to return: an error, never a silent `()`.
                 new SpecProbe("Nothing = {}\nNothing()", "err missingOutput"),
-                // Higher-order consumers add their own contract: a map callback must return exactly one element.
-                new SpecProbe("D(x) = x, x\n[1].map(D)", "err arity"),
+                // A map callback returns the same ordinary call result (HO-03): D's two rows are ONE element.
+                new SpecProbe("D(x) = x, x\n[1].map(D)", "ok raw=L[S[1, 1]] n=1"),
                 // A completed loop is a value boundary too (Q-26): the finished multi-slot loop is ONE value at the root ...
                 new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)", "ok raw=S[1, 1] n=1"),
                 // ... exactly as through an ordinary property boundary ...
@@ -3964,47 +3964,51 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Swap((a, b)) = (b, a)\nmap([[1, 2]], Swap)", "err type"),
                 new SpecProbe("LSwap([a, b]) = [b, a]\nmap([[1, 2]], LSwap)", "ok raw=L[L[2, 1]] n=1"),
             ],
-            Explanation = "Each callback item is one selected value, passed to the callback as ONE ordinary argument — exactly as the direct call `Swap(item)`. A pair-shaped callback therefore opens the row with an explicit structural pattern of the row's kind — `Swap((a, b))` for a sequence row, `LSwap([a, b])` for a list row; the flat two-parameter `Swap(a, b)` is the ordinary arity error for a one-argument call. Each callback must return exactly one value, preserved as one exact list element.",
+            Explanation = "Each callback item is one selected value, passed to the callback as ONE ordinary argument — exactly as the direct call `Swap(item)`. A pair-shaped callback therefore opens the row with an explicit structural pattern of the row's kind — `Swap((a, b))` for a sequence row, `LSwap([a, b])` for a list row; the flat two-parameter `Swap(a, b)` is the ordinary arity error for a one-argument call. Each callback returns its ordinary call result, preserved as one exact list element.",
         },
         new()
         {
-            Id = "clause-family-multirow-callback-rejected",
+            Id = "clause-family-multirow-callback-is-one-value",
             Category = "collection-builtins",
             Source = "F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "arity",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(1, 2), (3, 3)]",
+            ExpectedRaw = "L[S[1, 2], S[3, 3]]",
+            ExpectedEmittedCount = 1,
             Probes =
             [
-                // A lone literal clause is a one-branch family: the same contract.
-                new SpecProbe("F(0) = 1, 2\nmap([0], F)", "err arity"),
+                // A lone literal clause is a one-branch family: the same ordinary call result.
+                new SpecProbe("F(0) = 1, 2\nmap([0], F)", "ok raw=L[S[1, 2]] n=1"),
                 // Every route to the family is the family: an alias, a forwarded parameter, a dot call.
-                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nG = F\nmap([3], G)", "err arity"),
-                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])", "err arity"),
-                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\n[0, 3].map(F)", "err arity"),
-                // The ordinary call is one value, and so is the η-block that makes it.
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nG = F\nmap([3], G)", "ok raw=L[S[3, 3]] n=1"),
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])", "ok raw=L[S[1, 2]] n=1"),
+                new SpecProbe("F(0) = 1, 2\nF(n) = n, n\n[0, 3].map(F)", "ok raw=L[S[1, 2], S[3, 3]] n=1"),
+                // The ordinary call is the same one value, and so is the η-block that makes it.
                 new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nF(0)", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], { F(x) })", "ok raw=L[S[1, 2], S[3, 3]] n=1"),
                 // `filter` reads its predicate's value: two rows are one sequence, not a Boolean.
                 new SpecProbe("P(0) = true, true\nP(n) = false, false\nfilter([0, 3], P)", "err type"),
             ],
-            Explanation = "A clause family is an ordinary callable, so as a `map` transform it is judged like every callback: the selected clause must EMIT exactly one value, and `1, 2` emits two rows — the map contract's arity error, exactly as for `D(x) = x, x`. The same family's ordinary call `F(0)` is the one value `(1, 2)`; write `F(0) = (1, 2)`, or the η-block `{ F(x) }`, to map to pairs.",
+            Explanation = "A clause family is an ordinary callable, and a `map` transform returns its ordinary call result (HO-03): the selected clause's two rows `1, 2` are the one value `(1, 2)` — exactly the family's ordinary call `F(0)` — and that value is ONE element of the result, never spread. An alias, a forwarded parameter, a dot call and the η-block `{ F(x) }` give the same result; `filter` still requires its predicate's value to be one Boolean.",
         },
         new()
         {
-            Id = "clause-family-multirow-reduce-step-rejected",
+            Id = "clause-family-multirow-reduce-step-is-one-value",
             Category = "collection-builtins",
             Source = "R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([1], R, 0)",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "arity",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 0)",
+            ExpectedRaw = "S[1, 0]",
+            ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("R(e, 0) = e, 0\nreduce([1], R, 0)", "err arity"),
-                new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\n[1].reduce(R, 0)", "err arity"),
+                new SpecProbe("R(e, 0) = e, 0\nreduce([1], R, 0)", "ok raw=S[1, 0] n=1"),
+                new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\n[1].reduce(R, 0)", "ok raw=S[1, 0] n=1"),
                 new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\nR(1, 0)", "ok raw=S[1, 0] n=1"),
                 new SpecProbe("R(e, 0) = (e, 0)\nR(e, acc) = (e, acc)\nreduce([1], R, 0)", "ok raw=S[1, 0] n=1"),
                 new SpecProbe("R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([], R, 7)", "ok raw=7 n=1"),
             ],
-            Explanation = "A `reduce` step must emit exactly one accumulator value. A family step is judged by its selected clause's own rows, so `e, 0` is the reduce contract's arity error, while the ordinary call `R(1, 0)` is the one value `(1, 0)` and `R(e, 0) = (e, 0)` is a valid step.",
+            Explanation = "A `reduce` step returns its ordinary call result (HO-03): a family step's selected clause rows `e, 0` are the one value `(1, 0)` — exactly the ordinary call `R(1, 0)` and the capture spelling `R(e, 0) = (e, 0)` — passed whole as the next accumulator.",
         },
         new()
         {
@@ -4023,7 +4027,114 @@ public static class LanguageSpecCorpus
                 // A loop step is no callback: the selected clause's two rows are the next state.
                 new SpecProbe("S(0) = 1, 2\nS(n) = n, n\nrepeat(S, 1, 0)", "ok raw=S[1, 2] n=1"),
             ],
-            Explanation = "A callback result is judged by its EMITTED rows, not by its elements: a family clause that emits ONE value — a sequence `(1, 2)`, a list, `[]`, or an inner call's one value — is one mapped element, and an ordinary family call is one value too (`F(0) == P(0)`); only a callback whose selected clause writes several rows is rejected. A loop step is no callback: its rows are the next state.",
+            Explanation = "A callback result is its ordinary call result: a family clause's one value — a sequence `(1, 2)`, a list, `[]`, or an inner call's one value — is one mapped element, and the family's ordinary call is that same value (`F(0) == P(0)`). A loop step is no callback: its rows are the next state.",
+        },
+        new()
+        {
+            Id = "callback-result-is-the-ordinary-call-result",
+            Category = "collection-builtins",
+            Source = "D(x) = x, x\nG(x) = D(x)\nH(x) = (x, x)\nmap([1], D), map([1], G), map([1], H), map([1, 2], D) == [D(1), D(2)]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(1, 1)]\n[(1, 1)]\n[(1, 1)]\ntrue",
+            ExpectedRaw = "S[L[S[1, 1]], L[S[1, 1]], L[S[1, 1]], true]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // The two rows are ONE element: the mapped list keeps one element per item, nothing is spread.
+                new SpecProbe("D(x) = x, x\nmap([1, 2, 3], D).count", "ok raw=3 n=1"),
+                // Only an explicit spread inside the body opens a value, and the call boundary captures it again.
+                new SpecProbe("D(x) = x, x\nS(x) = { D(x)* }\nmap([1], S)", "ok raw=L[S[1, 1]] n=1"),
+                // A reduce step is the ordinary call too: its two rows are one accumulator, passed whole.
+                new SpecProbe("R(x, acc) = x, acc\nreduce([1, 2], R, 0) == R(2, R(1, 0))", "ok raw=true n=1"),
+                // An empty collection still invokes nothing.
+                new SpecProbe("D(x) = x, x\nmap([], D)", "ok raw=L[] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A `map` transform or `reduce` step returns the result of an ordinary call (HO-03): several written rows arrive as ONE sequence value, `()` and `[]` are ordinary values, and the result is stored as one element (or passed as one accumulator), never spread. So `map(L, F)` is `[F(L:0), F(L:1), …]`, and two rows `x, x`, the capture `(x, x)` and the wrapper `G(x) = D(x)` all map to the same pairs. An extra output row written by mistake therefore produces a valid but unexpected sequence value.",
+        },
+        new()
+        {
+            Id = "reduce-demands-initial-before-iteration",
+            Category = "collection-builtins",
+            Source = "R(x, acc) = x\nreduce([1, 2], R, 1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes = [new SpecProbe("R(x, acc) = x\nR(2, R(1, 1 / 0))", "ok raw=2 n=1")],
+            Explanation = "Reduce demands its initial value once before iteration, even when the reducer ignores it. Its unfolding equation compares result values for pure, deterministic, total computations; ordinary nested Model-C calls can skip unused computations.",
+        },
+        new()
+        {
+            Id = "nested-reducer-calls-may-skip-unused-initial",
+            Category = "collection-builtins",
+            Source = "R(x, acc) = x\nR(2, R(1, 1 / 0))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Probes = [new SpecProbe("R(x, acc) = x\nreduce([1, 2], R, 1 / 0)", "err div0")],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "An ordinary call may leave an unused accumulator undemanded. Reduce evaluates its initial value and every earlier step. The reduce unfolding equation is a result-structure law for pure, deterministic, total computations, preserving Model-C demand and effect order.",
+        },
+        new()
+        {
+            Id = "map-demands-collection-before-transforms",
+            Category = "collection-builtins",
+            Source = "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L:0), F(L:1)]", "ok raw=L[0, 0] n=1")],
+            Explanation = "Map demands its whole collection before invoking transforms. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations.",
+        },
+        new()
+        {
+            Id = "expanded-map-calls-may-skip-indexed-arguments",
+            Category = "collection-builtins",
+            Source = "L = [1 / 0, 2]\nF(x) = 0\n[F(L:0), F(L:1)]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[0, 0]",
+            ExpectedRaw = "L[0, 0]",
+            ExpectedEmittedCount = 1,
+            Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)", "err div0")],
+            Explanation = "Each ordinary call leaves its unused argument undemanded. Map's collection is a demanded VALUE slot. Q-25 preserves Model-C demand; its unfolding equation promises result-value equivalence only for pure, deterministic, total computations.",
+        },
+        new()
+        {
+            Id = "map-identity-preserves-empty-elements",
+            Category = "collection-builtins",
+            Source = "Id(x) = x\nmap([(), 1, [], 2], Id)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[(), 1, [], 2]",
+            ExpectedRaw = "L[S[], 1, L[], 2]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Id(x) = x\nL = [(), [], (1, ()), 1]\nmap(L, Id) == L", "ok raw=true n=1"),
+                // A transform returning `()` keeps one `()` element per item: `()` is a value, not "skip".
+                new SpecProbe("Empty(x) = ()\nmap([1, 2], Empty)", "ok raw=L[S[], S[]] n=1"),
+                new SpecProbe("Keep(x) = true\nId(x) = x\nmap(filter([(), 1], Keep), Id)", "ok raw=L[S[], 1] n=1"),
+                // To omit elements, filter them.
+                new SpecProbe("Recip(x) = if(x == 0, (), 1 / x)\nNotEmpty(v) = v != ()\nfilter(map([0, 2, 4], Recip), NotEmpty)", "ok raw=L[0.5, 0.25] n=1"),
+            ],
+            Explanation = "The identity transform maps every list element to itself — `()`, `[]` and nested values included — because a callback's result is its ordinary call result (HO-03). A transform that returns `()` keeps a visible `()` element; `filter` is the way to omit elements.",
+        },
+        new()
+        {
+            Id = "reduce-accumulator-may-be-empty",
+            Category = "collection-builtins",
+            Source = "R(x, acc) = acc\nreduce([1], R, ())",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "()",
+            ExpectedRaw = "S[]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("R(x, acc) = acc\n[reduce([], R, ()), reduce([1], R, ())]", "ok raw=L[S[], S[]] n=1"),
+                // A step returning `()` makes `()` the next accumulator; it never means "keep the previous one".
+                new SpecProbe("Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())", "ok raw=3 n=1"),
+                new SpecProbe("R(x, acc) = (acc, x)\nreduce([1, 2], R, ())", "ok raw=S[S[S[], 1], 2] n=1"),
+                new SpecProbe("R(x, acc) = x, acc\nreduce([1, 2], R, 0)", "ok raw=S[2, S[1, 0]] n=1"),
+            ],
+            Explanation = "Every value is a legitimate accumulator: `()` may start a fold, be produced by a step and end it, exactly like `[]` or a number (HO-03). A step's result replaces the accumulator whole — a step returning `()` makes `()` the accumulator, never \"keep the previous value\" — and several rows are one sequence accumulator, so `x, acc` nests.",
         },
         new()
         {

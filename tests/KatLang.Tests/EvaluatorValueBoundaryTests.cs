@@ -169,11 +169,15 @@ public class EvaluatorValueBoundaryTests
     public void Eval_Reduce_StaysOneAccumulatorValue()
         => AssertEvalCounted("Add = x + total\nreduce((1, 2, 3, 4), Add, 0)", 1, Atom(10));
 
-    // Regression: a map transform that emits more than one value is still rejected;
-    // the boundary rule must NOT silently turn it into one sequence-valued element.
+    // HO-03 (Q-25, Option B, October 2026; formerly rejected): a map transform that emits two
+    // rows returns its ORDINARY call result — one sequence value — which becomes ONE element of
+    // the mapped list, exactly as the direct call Pair(1) is the one value (1, 10).
     [Fact]
-    public void Eval_Map_MultiOutputCallback_StillRejected()
-        => AssertEvalFails("Pair = x, x * 10\n(1, 2, 3).map(Pair)");
+    public void Eval_Map_MultiOutputCallback_IsOneSequenceValuePerElement()
+        => AssertEvalCounted(
+            "Pair = x, x * 10\n(1, 2, 3).map(Pair)",
+            1,
+            ListValue(ResultFromAtoms(1, 10), ResultFromAtoms(2, 20), ResultFromAtoms(3, 30)));
 
     // Regression: root output is NOT a call boundary and stays multi-output.
     [Fact]

@@ -983,9 +983,10 @@ public static class ArityDifferentialMatrix
             + "Written-spread interaction with the callback receiver is exercised through the reduce-initial "
             + "written slot (Capture form) and the collection-argument arity diagnostics."),
         new(c => c.Receiver == ReceiverKind.Callback && c.Form == BindingForm.Spread,
-            "The callback result contract is strict single-value (map transform / reduce step must return exactly "
-            + "one value), so no spread-form observation exists at this receiver; spread in a callback body is "
-            + "ordinary body-row behavior covered by the Property and DirectCall receivers."),
+            "A callback result is the ordinary call result (HO-03, Q-25): the body's rows, spread rows included, "
+            + "reach the builtin as ONE value exactly as at a direct call, so no spread-form observation exists at "
+            + "this receiver; spread in a callback body is ordinary body-row behavior covered by the Property and "
+            + "DirectCall receivers."),
     ];
 
     private static IReadOnlyList<ExcludedCombination> AccountForUncoveredCells(HashSet<Cell> covered)

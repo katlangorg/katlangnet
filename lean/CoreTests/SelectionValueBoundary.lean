@@ -14,8 +14,8 @@ open KatLang (resolve param num)
 -- (a sequence value, an exact list, a scalar) emits ONE. The selected value's
 -- origin is forgotten, so every count-sensitive consumer (a lone root row, a
 -- collecting dotted receiver — the ordinary leading argument, since dot-call
--- passes a value — a loop-step output row, the map/reduce single-element
--- checks, a callback parameter) sees exactly what it would see for a property
+-- passes a value — a loop-step output row, a map/reduce callback result, a
+-- callback parameter) sees exactly what it would see for a property
 -- holding the same value. A selection passed unspread is ONE argument, so a
 -- collector collects it exactly as it collects `Coll(V)`: a selected sequence
 -- value, list, scalar, or `()` is ONE collected item (THE EXACT COLLECTOR
@@ -251,8 +251,8 @@ def loopStepOutputRowKeepsTheSelectionAsOneStateSlot : Bool :=
 
 -- The map transform and the reduce step see the selection as ONE value: a
 -- transform returning `selection` behaves exactly like one returning the
--- written literal (a literal `()` is the documented empty-result rejection,
--- and so is a selected `()`).
+-- written literal (a selected `()` is the same ordinary result value as a
+-- literal `()`, HO-03).
 def mapTransformAndReduceStepSeeTheSelectionAsOneValue : Bool :=
   selectionTable.all fun (selected, _, _) =>
     let literalMap := runResult (.algorithmExpr (algPrivate [] []
@@ -275,10 +275,9 @@ def mapTransformAndReduceStepSeeTheSelectionAsOneValue : Bool :=
 
 -- A higher-order callback item is a selected value with the same boundary:
 -- inside the callback it is ONE value on every count-sensitive path (a bare
--- `x` output row, the single-element checks), the collecting dotted receiver
--- `x.Coll` — i.e. `Coll(x)`, one argument — collects it exactly like
--- `Coll(V)` (the table's middle column), and an explicit spread `(x)*` opens
--- it into items.
+-- `x` output row), the collecting dotted receiver `x.Coll` — i.e. `Coll(x)`,
+-- one argument — collects it exactly like `Coll(V)` (the table's middle
+-- column), and an explicit spread `(x)*` opens it into items.
 def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
   selectionTable.all fun (selected, expectedColl, expectedSpreadColl) =>
     let collection := alg [] [] [] [.capture [selected, .num 9]]   -- A = (V, 9)
@@ -289,21 +288,17 @@ def callbackItemIsASelectedValueWithTheSameBoundary : Bool :=
     resultIs (.listValue [expectedSpreadColl, .listValue [.atom 9]])
       (runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "G"])) &&
     -- `Id(x) = x` and `Wrap(x) = (x)` agree: the bare item row is one mapped
-    -- element (a `()` item is the documented empty-result rejection for both).
+    -- element, a `()` item included (HO-03: the ordinary call result).
     sameOutcome
       (runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "Id"]))
       (runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "Wrap"])) &&
-    (match selected with
-     | .emptySequence _ =>
-         (match runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "Id"]) with
-          | Except.error err => hasContext "map transform must return a single element" err
-          | _ => false)
-     | _ =>
-         sameOutcome
-           (runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "Id"]))
-           (runResult (.algorithmExpr (alg [] [] [] [.listLiteral [selected, .num 9]]))) &&
-         resultIs (.atom 9)
-           (runSelectionProgram collection props (.call (resolve "reduce") [resolve "A", resolve "R", .num 0])))
+    -- The identity map reproduces A's elements as a list, and a reduce step returning
+    -- the item threads every item, `()` included, so the last item is the result.
+    sameOutcome
+      (runSelectionProgram collection props (.call (resolve "map") [resolve "A", resolve "Id"]))
+      (runResult (.algorithmExpr (alg [] [] [] [.listLiteral [selected, .num 9]]))) &&
+    resultIs (.atom 9)
+      (runSelectionProgram collection props (.call (resolve "reduce") [resolve "A", resolve "R", .num 0]))
 
 #guard callbackItemIsASelectedValueWithTheSameBoundary
 

@@ -58,9 +58,10 @@ public sealed record ComparisonLink(ComparisonOp Op, Expr Operand);
 /// materialized as one exact list value.
 /// <c>map(collection, mapper)</c> maps top-level sequence items left to right;
 /// each callback item is a selected value under the same value-boundary rule
-/// as <c>S:i</c>, <c>mapper(element)</c> must return exactly one mapped
-/// element, and sequence/list mapped outputs are preserved whole as exact
-/// elements of one list result.
+/// as <c>S:i</c>, and each mapped element is the ordinary call result of
+/// <c>mapper(element)</c> — ONE value whatever rows produced it, <c>()</c> and
+/// <c>[]</c> included (HO-03) — preserved whole as an exact element of one
+/// list result.
 /// <c>count(collection)</c> counts the top-level sequence items exposed by direct
 /// sequence consumption; sequence-value top-level elements still count as one element.
 /// <c>contains(collection, item)</c> returns <c>true</c> when any top-level sequence

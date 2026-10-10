@@ -463,8 +463,8 @@ def addItemCountAlg80c : Algorithm :=
       (.param "acc")
   ]
 
--- A literal `()` body keeps testing the empty-step failure: `take(x, 0)` now
--- returns the exact list `[]`, which is ONE valid accumulator value.
+-- A literal `()` body: its ordinary call result `()` is an ordinary accumulator
+-- value (HO-03, Q-25), as `take(x, 0)`'s exact list `[]` is.
 def reduceEmptyAlg81 : Algorithm :=
   alg ["x", "acc"] [] [] [.emptySequence 0]
 
@@ -647,30 +647,32 @@ def test82 : Bool :=
 
 #guard test82
 
--- Test 83: reduce step must not return an empty result
+-- Test 83: a reduce step returning `()` makes `()` the accumulator (HO-03, Q-25):
+-- an ordinary value, never "keep the previous accumulator".
 def test83 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", reduceEmptyAlg81)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Empty", reduceEmptyAlg81)] [
     .call (resolve "reduce") [
       .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad",
+      .resolve "Empty",
       .num 0
     ]
   ])) with
-  | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
+  | Except.ok (.sequenceValue []) => true
   | _ => false
 
 #guard test83
 
--- Test 84: reduce step must not return multiple top-level outputs
+-- Test 84: a reduce step's two rows are ONE sequence accumulator passed whole, so
+-- `acc, x` nests: (((0, 1), 2), 3) — nothing is spread (HO-03, Q-25).
 def test84 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", reduceMultiAlg82)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Snoc", reduceMultiAlg82)] [
     .call (resolve "reduce") [
       .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad",
+      .resolve "Snoc",
       .num 0
     ]
   ])) with
-  | Except.error err => hasContext "reduce step must return a single accumulator value" err && innermostIsBadArity err
+  | Except.ok (.sequenceValue [.sequenceValue [.sequenceValue [.atom 0, .atom 1], .atom 2], .atom 3]) => true
   | _ => false
 
 #guard test84
@@ -769,8 +771,8 @@ def pairWithSquareAlg90 : Algorithm :=
       ] ⟩
   ]
 
--- A literal `()` body keeps testing the empty-transform failure: `take(x, 0)` now
--- returns the exact list `[]`, which is ONE valid element.
+-- A literal `()` body: its ordinary call result `()` is ONE mapped element
+-- (HO-03, Q-25), as `take(x, 0)`'s exact list `[]` is.
 def mapEmptyAlg91 : Algorithm :=
   alg ["x"] [] [] [.emptySequence 0]
 
@@ -918,28 +920,32 @@ def test90 : Bool :=
 
 #guard test90
 
--- Test 91: map transform must not return an empty result
+-- Test 91: a map transform returning `()` keeps ONE `()` element per item (HO-03, Q-25).
 def test91 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", mapEmptyAlg91)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Empty", mapEmptyAlg91)] [
     .call (resolve "map") [
       .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad"
+      .resolve "Empty"
     ]
   ])) with
-  | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
+  | Except.ok (.listValue [.sequenceValue [], .sequenceValue [], .sequenceValue []]) => true
   | _ => false
 
 #guard test91
 
--- Test 92: map transform must not return multiple top-level outputs
+-- Test 92: a map transform's two rows are ONE sequence element per item (HO-03, Q-25).
 def test92 : Bool :=
-  match runResult (.algorithmExpr (algPrivate [] [] [("Bad", mapMultiAlg92)] [
+  match runResult (.algorithmExpr (algPrivate [] [] [("Pair", mapMultiAlg92)] [
     .call (resolve "map") [
       .call (resolve "range") [.num 1, .num 3],
-      .resolve "Bad"
+      .resolve "Pair"
     ]
   ])) with
-  | Except.error err => hasContext "map transform must return a single element" err && innermostIsBadArity err
+  | Except.ok (.listValue [
+      .sequenceValue [.atom 1, .atom 0],
+      .sequenceValue [.atom 2, .atom 0],
+      .sequenceValue [.atom 3, .atom 0]
+    ]) => true
   | _ => false
 
 #guard test92

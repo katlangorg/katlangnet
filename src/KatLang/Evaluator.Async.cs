@@ -2498,10 +2498,8 @@ public static partial class Evaluator
                 await EvalSequenceReduceStepCountedAsync(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName).ConfigureAwait(false));
             if (stepR.IsError) return stepR.Error;
 
-            var nextR = ExpectSingleAccumulator(stepR.Value);
-            if (nextR.IsError) return nextR.Error;
-
-            accumulator = new CountedResult(nextR.Value, 1);
+            // The step's ordinary call result, whole, with its value-boundary count (HO-03).
+            accumulator = ReCountValueBoundary(stepR.Value);
         }
 
         return EvalResult<CountedResult>.Ok(accumulator);
@@ -2575,10 +2573,8 @@ public static partial class Evaluator
                 await EvalSequenceCallbackCallCountedAsync(transformAlg, item, ctx, valEnv, MapTransformFrameName).ConfigureAwait(false));
             if (transformR.IsError) return transformR.Error;
 
-            var mappedElementR = ExpectSingleMappedElement(transformR.Value);
-            if (mappedElementR.IsError) return mappedElementR.Error;
-
-            mapped.Add(mappedElementR.Value);
+            // The transform's ordinary call result is ONE element (HO-03).
+            mapped.Add(transformR.Value.Value);
         }
 
         return MakeCollectionListResult(ctx, mapped);

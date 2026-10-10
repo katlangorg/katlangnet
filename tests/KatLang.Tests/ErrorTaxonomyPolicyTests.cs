@@ -354,7 +354,7 @@ public class ErrorTaxonomyPolicyTests
     {
         "F(x) = x\nF(1, 2)", "Add(x, y) = x + y\nAdd((1, 2))", "count()", "count([1], [2])", "range(1)",
         "H(x, *rest) = x\nH()", "S(a, b) = a, b\nrepeat(S, 1, 1)", "P((a, b)) = a\nP((1, 2, 3))",
-        "a, b = 1, 2, 3\na", "D(x) = x, x\nmap([1], D)", "R(x, acc) = ()\nreduce([1], R, 0)",
+        "a, b = 1, 2, 3\na",
         "while(W, ())\nW(x) = x*", "Same(x, x) = x\nSame(4, 5)", "5.string(1)",
         "F(g) = g\nInc(x) = x + 1\nF(Inc)",
         // the clause-family supply cardinality witness the investigation's mutation sweep found missing
@@ -365,6 +365,17 @@ public class ErrorTaxonomyPolicyTests
     [MemberData(nameof(GenuineCardinality))]
     public async Task GenuineCardinalityAndBinderAgreement_StayArityMismatch(string source)
         => Assert.Equal("ArityMismatch", CodeOf(await SixRouteAgreement.OnEveryRouteAsync(source)));
+
+    /// <summary>
+    /// HO-03 (Q-25, Option B, October 2026): a <c>map</c>/<c>reduce</c> callback result is the
+    /// ordinary call result, so these two former callback-result "cardinality" rows are successes
+    /// — several rows are one sequence value and <c>()</c> is an ordinary value — not ArityMismatch.
+    /// </summary>
+    [Theory]
+    [InlineData("D(x) = x, x\nmap([1], D)", "ok L[S[1, 1]]")]
+    [InlineData("R(x, acc) = ()\nreduce([1], R, 0)", "ok S[]")]
+    public async Task CallbackResults_AreOrdinaryCallResults_NotCardinalityFailures(string source, string expected)
+        => Assert.Equal(expected, CodeOf(await SixRouteAgreement.OnEveryRouteAsync(source)));
 
     /// <summary>
     /// The builtin arity payload reports the real fixed arity or loop minimum (formerly a placeholder

@@ -695,8 +695,9 @@ public closed record Result
     /// including the empty list <c>[]</c> — only the empty SEQUENCE value
     /// <c>()</c> is the invisible-able empty result.
     ///
-    /// Lean: <c>Result.valueCount</c>. Used by <c>reduce</c> and <c>map</c>
-    /// so sequence-value accumulator / mapped values count as one value.
+    /// Lean: <c>Result.valueCount</c>. The emitted count of every value boundary (VAL-06):
+    /// property reads, call results — <c>map</c>/<c>reduce</c> callback results included —,
+    /// builtin results, selection and callback items.
     /// </summary>
     internal int ValueCount()
     {
