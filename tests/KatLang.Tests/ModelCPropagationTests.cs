@@ -35,12 +35,16 @@ public class ModelCPropagationTests
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 
     [Theory]
+    // Q-45 (decided 2026-10-10): this order is the law — no argument-first or receiver-first rule.
     // The intrinsic's argument list is a supply: a non-spread argument and the receiver never run...
     [InlineData("trace(5).string(trace(6))", "err ArityMismatch", "")]
     // ...an explicit spread is opened before the cardinality check...
     [InlineData("trace(5).string([trace(6)]*)", "err ArityMismatch", "trace(6)")]
     // ...and a zero-item spread leaves the intrinsic, whose receiver is demanded after formation.
     [InlineData("trace(5).string(trace(())*)", "ok '5'", "trace(S[]) | trace(5)")]
+    // No written list and an empty one supply no argument: the receiver is demanded once.
+    [InlineData("trace(5).string", "ok '5'", "trace(5)")]
+    [InlineData("trace(5).string()", "ok '5'", "trace(5)")]
     public async Task StringIntrinsicArguments_AreFormedAndRejectedBeforeAnyDemand(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 

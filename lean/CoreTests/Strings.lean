@@ -434,4 +434,73 @@ def testStringIntrinsicEmptyArgumentList_StaysTheIntrinsic : Bool :=
 #guard testStringIntrinsicRejectsArguments_SpreadCountsOpenedItems
 #guard testStringIntrinsicEmptyArgumentList_StaysTheIntrinsic
 
+-- Q-45 (RESOLVED BY DECISION 2026-10-10: the Model-C order is the law). A written
+-- argument list of the `.string` intrinsic follows the ordinary call steps (NEED-05):
+-- the supply is formed — an explicit spread executes there, and its failure is raised
+-- there — every other slot stays suspended, a supply of one or more items is rejected
+-- by cardinality before the receiver or any ordinary argument is demanded, and only a
+-- supply of zero items reaches the intrinsic, which then demands its receiver. There is
+-- no argument-first or receiver-first rule. Lean models no host effects, so these
+-- trace-free twins observe the order through failures: a computation that is never
+-- demanded cannot fail. C#:
+-- `ModelCPropagationTests.StringIntrinsicArguments_AreFormedAndRejectedBeforeAnyDemand`.
+def q45Fails : KatLang.Expr := .binary .div (.num 1) (.num 0)
+
+def q45StringCall (receiver : KatLang.Expr) (args : List KatLang.Expr) : KatLang.Expr :=
+  .dotCall receiver "string" (some args)
+
+def q45IsTypeMismatch : Error -> Bool
+  | .withContext _ inner => q45IsTypeMismatch inner
+  | .typeMismatch _ => true
+  | _ => false
+
+-- `(1 / 0).string(1 / 0)` and `{ 1 / 0 }.string(1 / 0)`: on both receiver paths the
+-- cardinality rejection demands neither the receiver nor the ordinary argument.
+def testQ45_RejectionDemandsNothing : Bool :=
+  [q45Fails, .algorithmExpr (alg [] [] [] [q45Fails])].all fun receiver =>
+    match runResult (q45StringCall receiver [q45Fails]) with
+    | Except.error err => innermostIsArityMismatch 0 1 err
+    | _ => false
+
+-- `(1 / 0).string([2]*)`: the spread is formed — its one item is counted — and the
+-- receiver is still never demanded.
+def testQ45_FormedSpreadIsCountedWithoutTheReceiver : Bool :=
+  match runResult (q45StringCall q45Fails [.sequenceSpread (.listLiteral [.num 2])]) with
+  | Except.error err => innermostIsArityMismatch 0 1 err
+  | _ => false
+
+-- `42.string([1 / 0]*)`: an explicit spread executes while the supply is formed, so its
+-- failure is raised there, before the cardinality check.
+def testQ45_SpreadFailureIsRaisedAtFormation : Bool :=
+  match runResult (q45StringCall (.num 42) [.sequenceSpread (.listLiteral [q45Fails])]) with
+  | Except.error err => innermostIsDivByZero err
+  | _ => false
+
+-- `(1 / 0).string([not 1]*)`: formation precedes the receiver demand — the spread's own
+-- failure is reported, never the receiver's division.
+def testQ45_FormationPrecedesTheReceiver : Bool :=
+  match runResult (q45StringCall q45Fails [.sequenceSpread (.listLiteral [.unary .not (.num 1)])]) with
+  | Except.error err => q45IsTypeMismatch err && !innermostIsDivByZero err
+  | _ => false
+
+-- `42.string(()*)`, `(1 / 0).string(()*)` and `{ 1 / 0 }.string()`: a supply of zero
+-- items — a spread that supplies none, or an empty written list — is the intrinsic
+-- itself, which demands its receiver after formation.
+def testQ45_ZeroItemSupplyDemandsTheReceiver : Bool :=
+  (match runResult (q45StringCall (.num 42) [.sequenceSpread (.emptySequence 0)]) with
+   | Except.ok (Result.str "42") => true
+   | _ => false) &&
+  (match runResult (q45StringCall q45Fails [.sequenceSpread (.emptySequence 0)]) with
+   | Except.error err => innermostIsDivByZero err
+   | _ => false) &&
+  (match runResult (q45StringCall (.algorithmExpr (alg [] [] [] [q45Fails])) []) with
+   | Except.error err => innermostIsDivByZero err
+   | _ => false)
+
+#guard testQ45_RejectionDemandsNothing
+#guard testQ45_FormedSpreadIsCountedWithoutTheReceiver
+#guard testQ45_SpreadFailureIsRaisedAtFormation
+#guard testQ45_FormationPrecedesTheReceiver
+#guard testQ45_ZeroItemSupplyDemandsTheReceiver
+
 end KatLangTests
