@@ -8,7 +8,7 @@ namespace KatLang;
 /// nothing inside it carries a source location, so a diagnostic a front-end pass raises
 /// against imported content — a declaration collision, an undeclared identifier in a closed
 /// list or branch, a refused open provider, an ineligible Grace marker, a parameter-owned
-/// open head, a refused strict-value forwarding — has no position of its own. Its position is
+/// open head, an unforwardable parameter or callable — has no position of its own. Its position is
 /// the IMPORT SITE: the span, in the current document, of the edge through which the pass
 /// reached the view — the <c>load('…')</c> / <c>open '…'</c> directive when the view sits in
 /// expression position (<see cref="Expr.AlgorithmExpr"/>), or the declaring property's name

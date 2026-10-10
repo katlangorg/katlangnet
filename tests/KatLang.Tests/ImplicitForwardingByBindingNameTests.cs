@@ -348,8 +348,9 @@ public class ImplicitForwardingByBindingNameTests
     /// <summary>
     /// A closed list that does NOT declare the name follows the ordinary closed-list rule, with no
     /// repeated-name special case: exactly what the same position does for a callee whose names are
-    /// distinct. In a neutral-valued position the reference stays the callable's own zero-argument
-    /// demand; in a strict Math position the front end names the missing parameter once.
+    /// distinct: the reference stays the callable's own zero-argument demand in every position, a
+    /// Math argument included (Q-15; formerly a strict Math position named the missing parameter
+    /// once in the front end).
     /// </summary>
     [Theory]
     [InlineData("Q(y) = [@]:0\nQ(7)")]

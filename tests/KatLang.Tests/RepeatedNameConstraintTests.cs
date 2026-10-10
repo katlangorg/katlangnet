@@ -349,8 +349,8 @@ public class RepeatedNameConstraintTests
             $"err ArityMismatch: {Call("P")}Property 'J' expects 1 parameter, but was called with 0 arguments." },
         { "alias-failed", Bad + "AliasBad = Bad\nQ(x, x) = x\nQ(AliasBad, 7)", DivisionByZero(Call("Q")) + BadTraced },
 
-        // Forwarding carries each parameter's established outcome; the failed argument is
-        // evaluated once, at the outer call.
+        // Forwarding transports each parameter's supplied cell (NEED-08); the failed argument
+        // is evaluated once, when the inner binder first demands it.
         { "forward-callable-first", Inc + "P(x, x) = x, x(5)\nFwd(a, b) = P(a, b)\nFwd(Inc, 1)", IncValueDemand(Call("Fwd") + Call("P")) },
         { "forward-callable-second", Inc + "P(x, x) = x, x(5)\nFwd(a, b) = P(a, b)\nFwd(1, Inc)", IncValueDemand(Call("Fwd") + Call("P")) },
         { "forward-failed", Bad + "Q(x, x) = x\nFwd(a, b) = Q(a, b)\nFwd(Bad, 7)", DivisionByZero(Call("Fwd") + Call("Q")) + BadTraced },

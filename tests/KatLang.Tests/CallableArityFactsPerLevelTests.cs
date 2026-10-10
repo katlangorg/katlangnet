@@ -6,8 +6,9 @@ namespace KatLang.Tests;
 /// <see cref="PatternListBindingPlan.MaxSlotCount"/>) describes exactly the supply the
 /// BINDER accepts there —
 /// <c>min = patterns at this level - (1 if this level holds a collecting capture)</c>
-/// (<c>ParameterPattern.MinimumSuppliedSlots</c>, the rule <c>BindParameterPatternList</c>
-/// itself enforces) and <c>max = unbounded iff this level holds a collecting capture</c>.
+/// (<c>ParameterPattern.MinimumSuppliedSlots</c>, the rule the binder itself enforces —
+/// since Model C <c>NeedAcceptsCardinality</c> / <c>NeedMinimumSuppliedSlots</c>, formerly
+/// <c>BindParameterPatternList</c>) and <c>max = unbounded iff this level holds a collecting capture</c>.
 ///
 /// <para>The classification used to be "one collector AND no grouped pattern anywhere at
 /// this level", which disagreed with the binder for every signature mixing a group with a

@@ -216,8 +216,10 @@ namespace ParameterPattern
       | _ => false)
 
   /-- The MINIMUM number of supplied argument slots a parameter-pattern list
-      accepts — the ONE rule `bindParameterPatternList` (and its counted twin)
-      enforces, factored out so no other layer can re-derive it:
+      accepts — the ONE rule the binder enforces, factored out so no other layer can
+      re-derive it (the Model-C binder reads the same count over need patterns,
+      `needMinimumSuppliedSlots` in `bindNeedLevel`, which agrees with this one on
+      every valid signature; formerly `bindParameterPatternList`):
 
       * every pattern consumes exactly ONE supplied slot, whatever it contains —
         a structural pattern (sequence or list) is one slot that the binder
@@ -236,10 +238,11 @@ namespace ParameterPattern
 
   mutual
     /-- Whether a pattern binds `name` at any depth — the STATIC fact the
-        pattern-list binders read to tell whether every contribution of a
-        repeated name at one level is already known (see
-        `settlePatternRange`). Total, so the binder bridge laws can unfold
-        it. C#: `ParameterPatternBindsName`. -/
+        historical Ready binders read to tell whether every contribution of a
+        repeated name at one level is already known (`settlePatternRange`,
+        `HistoricalReadyBinding.lean`). Total, so the binder bridge laws can
+        unfold it. It has no C# twin (the pointer `ParameterPatternBindsName`
+        named a function that never existed). -/
     def bindsName (name : Ident) : ParameterPattern -> Bool
       | .capture parameter => parameter.name == name
       | .sequenceValue items => anyBindsName name items
@@ -256,8 +259,12 @@ namespace ParameterPattern
       TWO OR MORE patterns of one pattern level bind `name` (at any depth inside
       each) — a REPEATED name of that level. Every occurrence of such a name is an
       independent contribution to an equality constraint, so a top-level capture of
-      it must supply its OWN value (`bindParameterPattern`); another occurrence can
-      never stand in for a value it lacks. C#: `Evaluator.RepeatsAtLevel`. -/
+      it must supply its OWN value; another occurrence can never stand in for a
+      value it lacks. Since Model C the binder computes repeated names itself and
+      demands each occurrence's own cell when it visits it (`bindNeedPatterns`,
+      `bindNeedName`); this predicate serves the historical Ready binder
+      (`bindParameterPattern`, `HistoricalReadyBinding.lean`) and the laws. Its C#
+      twin `Evaluator.RepeatsAtLevel` was deleted with Model C. -/
   def repeatsAtLevel (name : Ident) (level : List ParameterPattern) : Bool :=
     2 ≤ (level.filter (bindsName name)).length
 
@@ -553,13 +560,14 @@ def CallableSignature.validate (signature : CallableSignature) : Except Error Un
   | some message => .error (Error.illegalInEval message)
   | none => .ok ()
 
-/-- Variable-middle collecting-parameter binding (mirrors C# `BindCallableArguments`). The fixed
+/-- Variable-middle collecting-parameter binding over completed items, used by the arity laws (no production
+    caller since Model C; its former C# mirror `BindCallableArguments` was deleted with it). The fixed
     prefix binds from the front, the fixed suffix from the back, and the collecting
     captures the remaining middle items (zero or more). The minimum is the FIXED
     (non-collecting) parameter count: like every other collecting binding, the collecting parameter may
     collect ZERO items (an empty collected segment is the exact list `[]`) — the same rule the
-    shared pattern binder applies (`bindParameterPatternList`: required =
-    patterns - 1).
+    shared pattern binder applies (`needMinimumSuppliedSlots`: required =
+    patterns - 1; formerly `bindParameterPatternList`).
     (Collection builtins no longer bind here: they are ordinary fixed-arity
     callables bound in `bindSequenceBuiltinArguments`.) -/
 def bindCallableArguments (signature : CallableSignature) (items : List α)
@@ -1316,9 +1324,13 @@ mutual
         Algorithm
     | builtin : Builtin -> Algorithm
     /-- Conditional algorithm: ordered pattern branches tried at call time.
-        At call time, arguments are evaluated and matched against branch patterns
-        in source order.  The first matching branch body is evaluated.
-        If no branch matches, evaluation fails with noMatchingBranch.
+        At call time the supply is formed (one suspended cell per argument; only
+        explicit spreads are evaluated), a count that no branch head accepts is
+        `arityMismatch` before any branch is tried (NEED-05), and the branches are
+        then tried in source order over the SAME cells, each pattern demanding only
+        the values it inspects (NEED-04; `selectNeedFamilyBranch`).  The first
+        matching branch body is evaluated.  If no branch matches a supply of an
+        accepted count, evaluation fails with noMatchingBranch.
 
         **Full-input-specification invariant**: each branch pattern `Name(...)`
         declares the complete input interface of that branch.  A branch's own
@@ -1649,12 +1661,14 @@ namespace Result
       elements, and nothing for any other value. A list value is NOT opened
       (`[x, y]` is the list pattern) and a scalar is NOT a one-item supply: the
       only pattern that takes a value whole is a bare binder. This is the ONE
-      rule shared by the ordinary binder (`bindParameterPattern`), the counted
-      callback binder (`bindCountedParameterPattern`) and the family matchers
-      (`matchPatternInto`, `matchCountedPatternInto`), so a callback that
+      rule shared by the one Model-C binder (`bindNeedOne`, for direct calls,
+      callbacks, loop steps and clause families alike) and the literal-pattern
+      matchers (`matchPatternInto`, `matchCountedPatternInto`), so a callback that
       supplies one value `V` to a pattern `P` binds exactly as the ordinary call
-      `P(V)` does. A sequence value has 0 or at least 2 elements (there is no
-      one-item sequence), which is why a one-item sequence pattern is invalid.
+      `P(V)` does (formerly also the Ready binders `bindParameterPattern` /
+      `bindCountedParameterPattern`, now in `HistoricalReadyBinding.lean`). A
+      sequence value has 0 or at least 2 elements (there is no one-item
+      sequence), which is why a one-item sequence pattern is invalid.
       C#: `Result.SequencePatternItems`. -/
   def sequencePatternItems? : Result -> Option (List Result)
     | sequenceValue rs => some rs
@@ -3336,8 +3350,8 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
       contributes ZERO required slots; a nested pattern still consumes one, and
       binds ONE supplied value of its own kind, never none;
     * a clause family accepts iff some branch's top-level pattern has arity
-      zero — exactly the branch `matchCallBranches` selects for an empty
-      argument list. A flat multi-binder core equivalent
+      zero — exactly the branch the family dispatcher (`selectNeedFamilyBranch`)
+      selects for an empty supply. A flat multi-binder core equivalent
       (`flatBinderUserEquivalent?`) always has at least two parameters, so it
       never accepts;
     * a BUILTIN never accepts (`sum()` is an arity error). Its rejection stays
@@ -3513,8 +3527,11 @@ def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
     THE EXACT COLLECTOR LAW (September 2026): every collecting binding —
     single collecting parameters, mixed prefix/collecting/suffix parameter
     lists, nested pattern collectors, and deconstruction collecting bindings —
-    binds exactly the items allocated to it through this single helper and
-    never inspects their values. A collector opens nothing: one written
+    binds exactly the items allocated to it and never inspects their values —
+    since Model C (2026-10-02) as a lazy collector cell over the allocated supply
+    cells (`bindNeedLevel`), whose VALUE demand materializes exactly this list
+    through `makeCollectionListResult` (`demandNeed`); this helper remains the
+    value-level definition the laws state. A collector opens nothing: one written
     argument is one item whatever its value, so `Coll((1, 2))` is
     `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`, and
     `Coll([])` is `[[]]` — only the caller's explicit spread turns a value into
@@ -3523,12 +3540,14 @@ def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
     (a sequence pattern a sequence value, a list pattern a list value) open
     their one value BEFORE allocation, as explicit structural syntax, and the
     collector then collects the opened items exactly. The round trip
-    `Result.spreadItems (collectSegment xs) = xs` makes collecting-parameter
-    forwarding ordinary list spread: `Forward(*items) = Target(items*)`
-    re-supplies exactly the collected items with no hidden raw-supply
-    metadata. A collecting value is one visible value, so its emitted count is
-    always 1 (including `[]`). C#: `CollectSegment` (inside
-    `CreateCollectingCapture`). -/
+    `Result.spreadItems (collectSegment xs) = xs` is the value-level face of
+    collecting-parameter forwarding: `Forward(*items) = Target(items*)`
+    re-supplies exactly the collected items — since Model C by transferring the
+    collector's own cells, unforced (FWD-01, NEED-07/08) — with no hidden
+    raw-supply metadata. A collecting value is one visible value, so its emitted count is
+    always 1 (including `[]`). C#: the collector cell `Evaluator.CollectorCell`,
+    materializing through `MakeCollectionListResult` (`CollectSegment` and
+    `CreateCollectingCapture` were deleted by Model C). -/
 def collectSegment (items : List Result) : Result :=
   Result.listValue items
 
@@ -4422,7 +4441,7 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
     whether to lift a bare reference (`liftsBareValueReference`): it never
     rewrites a reference to a callable this accepts into a fresh forwarding
     call, so such a reference reaches this cache in EVERY position — an
-    operand, a list element, a selection target, a strict Math argument — and
+    operand, a list element, a selection target, a Math argument — and
     not only in the neutral ones.
     C#: the zero-argument property access path
     (`GetOrEvaluateZeroArgPropertyResult`), entered by callers only after the
@@ -6219,27 +6238,29 @@ mutual
       ]
       ctx env calleeName
 
-  /-- Collection-builtin argument assembly: the written slots, left to right, each
-      handled by its ROLE (`SequenceBuiltinMetadata.slotRole`), before the arity
-      check and before binding (CALL-03).
-      - A SPREAD slot is supply assembly: its operand is demanded NOW and supplies
+  /-- Collection-builtin argument supply: the written slots, left to right, as the
+      ordinary supply (CALL-02, CALL-03, NEED-01..05), before the arity check and
+      before binding. Each slot's ROLE (`SequenceBuiltinMetadata.slotRole`) decides
+      what the builtin later does with it.
+      - A SPREAD slot is supply formation: its operand is evaluated NOW and supplies
         exactly its spread items, which take the roles of the positions they land
         on. Its failure — of any kind — is the CALL's failure, raised here, before
         any later slot and before the arity check; it is never one phantom supplied
         item (SUP-01, SUP-02, CALL-04). So `take(Bad*)` is `Bad`'s failure, not an
         arity error, and `map([], Bad*)` fails although `map` would never invoke a
         callback: the spread law of every call.
-      - A CALLBACK slot carries its algorithm and is never value-evaluated here:
-        the builtin INVOKES it per element (CALL-03, HO-04). An unused callback runs
-        no body, so it has no effect, cannot fail and cannot recurse
+      - Every other slot is transported as its suspended cell (`need?`) and never
+        evaluated here. A CALLBACK slot is projected on the CALLABLE channel only
+        when the builtin invokes it per element (CALL-03, HO-04): an unused callback
+        runs no body, so it has no effect, cannot fail and cannot recurse
         (`map([], A)` never reads `A`, exactly as `repeat(A, 0, 5)` never runs `A`).
-      - A VALUE slot is demanded ONCE, here, in written order; an ordinary failure
-        is retained on the item as that slot's final outcome — reported when
-        binding reads the slot, after the arity check, and never evaluated again —
-        so no later read retries it (`reduce`'s `initial` included, HO-04).
-      - A SURPLUS slot (beyond the signature) is prepared like a value slot's eager
-        attempt but never demanded through the zero-argument law; the call reports
-        its arity error after every written item was prepared.
+        A VALUE slot is demanded only when the builtin executes it, after the arity
+        check, through its cell and at most once, so no later read retries it
+        (`reduce`'s `initial` included, HO-04). A SURPLUS slot is never demanded:
+        the call reports its arity error first (NEED-05). *(Until Model C,
+        2026-10-02, a value slot was demanded here, before the arity check, its
+        ordinary failure retained on the item, and a surplus slot was prepared like
+        a value slot's eager attempt.)*
       A callable-shaped argument (one that declares parameters, or a clause
       family) is never evaluated standalone: its parameters are unbound at this
       collection point, so evaluating its body would resolve those parameter
@@ -6250,7 +6271,8 @@ mutual
       (`demandSequenceBuiltinCallItemValue`). The shape is the NAMED callable's
       (`invoked`), never its value wrapper's; a named zero-parameter property is
       read through its value side — the ordinary property read, served from the
-      run cache. C#: `BuildCallableCallItems`. -/
+      run cache. C#: `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`, then
+      `BuildCallableCallItems` and `DemandSequenceBuiltinCallItemValue`. -/
     partial def collectSequenceCallableCallItems
       (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
       (metadata : SequenceBuiltinMetadata)
@@ -7767,8 +7789,8 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    exactly as `H = F + G` with `F(x)` and `G(x)` becomes
    `H(x) = F(x) + G(x)`. The evaluator binds `P`'s two slots as it binds any
    call: both read the same caller binding, so nothing is merged — the
-   repeated-name constraint of `bindParameterPattern` (Q-05) concerns
-   independently supplied arguments.
+   repeated-name constraint (Q-05; the binder's `bindNeedName`, formerly
+   `bindParameterPattern`) concerns independently supplied arguments.
 
    THE ALIAS AND BARE-FORWARDING RULES (FWD-02, decided 2026-09-29–30; binding
    indirection 2026-10-01) come first: a body whose ONE written row is a bare

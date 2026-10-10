@@ -41,7 +41,8 @@ internal enum LiftingCalleeKind
     /// <summary>A user algorithm (a property, a block): its binder decides at run time.</summary>
     User,
 
-    /// <summary>A clause family: every argument is value-demanded before any clause is tried (PAT-07).</summary>
+    /// <summary>A clause family: every argument is a VALUE role for lifting (PAR-07); at run time the family
+    /// demands only what its clause patterns inspect (NEED-04, PAT-07).</summary>
     Family,
 
     /// <summary>A prelude builtin: the registry's slot roles decide.</summary>
@@ -125,7 +126,8 @@ internal static class FormulaLiftingRoles
     /// <paramref name="callee"/>; <paramref name="positionKnown"/> is false once a spread slot precedes
     /// it (a spread is supply assembly: its item count is known only at run time).
     /// <list type="bullet">
-    ///   <item>a clause family, a Math member and a host operation demand every argument's value;</item>
+    ///   <item>a clause family, a Math member and a host operation take every argument as a VALUE role (a
+    ///   static classification: at run time a family demands only what its clauses inspect, NEED-04);</item>
     ///   <item>a builtin reads its registry role (a callback is invoked; the collection, every value
     ///   control and a surplus slot are values; <c>if</c> takes three values; a loop's step is
     ///   invoked); a position after a spread is a value only if every declared position is;</item>

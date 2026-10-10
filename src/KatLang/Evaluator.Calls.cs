@@ -58,7 +58,8 @@ public static partial class Evaluator
     /// Lean: evalCallExpr → EvalM Result (Lean also attaches the call-context wrapper there).
     /// 1. Resolve callee.
     /// 2. If builtin: resolve args lazily as algorithms, dispatch to applyBuiltin.
-    /// 3. If user-defined: delegate to EvalUserCall (dual-view argument binding).
+    /// 3. If user-defined: delegate to EvalUserCallCounted (the need supply: cells formed,
+    ///    cardinality checked before any demand, then the one need binder).
     /// </summary>
     /// <summary>
     /// Context-aware call evaluation for expression position with plain

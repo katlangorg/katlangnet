@@ -13,9 +13,10 @@ open KatLang (resolve param num)
 --------------------------------------------------------------------------------
 -- THE RULE: a repeated parameter name is a compatibility constraint over
 -- INDEPENDENTLY supplied arguments. Every occurrence must supply its OWN value
--- (a top-level capture whose name the level repeats needs its slot's value,
--- `bindParameterPattern` / `ParameterPattern.repeatsAtLevel`); the values must be
--- equal; a failed required value propagates as the slot's own recorded outcome;
+-- (the Model-C binder demands each occurrence's own cell when it visits it,
+-- `bindNeedName`; formerly `bindParameterPattern` / `ParameterPattern.repeatsAtLevel`);
+-- the values must be equal; a failed required value propagates as the slot's own
+-- completed outcome;
 -- a callable-only argument cannot satisfy the constraint (its value demand is its
 -- own arity rejection); several callable channels must share one identity; and
 -- channels from different occurrences are never spliced together. Repeated-name
@@ -76,7 +77,8 @@ def rnNAlg : Algorithm :=
 /-- `C(x, *r, x) = x`: `x` repeats across the collector. -/
 def rnCAlg : Algorithm := algWithParameterPatterns [rnCap "x", rnColl "r", rnCap "x"] [] [] [param "x"]
 
-/-- Retained failures still follow D1's prefix, suffix, collector demand order. -/
+/-- Failures follow the NEED-04 inspection order (PAT-10): the collector demands nothing, and
+    the repeated suffix name demands its cells as they are visited. -/
 def rnSuffixAlg : Algorithm :=
   algWithParameterPatterns [rnColl "r", rnCap "x", rnCap "x"] [] [] [param "x"]
 
@@ -214,8 +216,9 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnContexts [rnCall "P" [num 7, resolve "Bad"]] == 1
 
 -- 4. Two failed arguments: the FIRST failure in evaluation order is reported, never an
---    unrelated repeated-name error (formerly the algorithm-only type mismatch). Both
---    arguments were evaluated once each, left to right, before anything bound.
+--    unrelated repeated-name error (formerly the algorithm-only type mismatch). Only the
+--    first failing occurrence is demanded: the binder visits `x` left to right, so the
+--    second argument is never evaluated (one context: Bad's own `Id` call; Model C).
 #guard rnFailsWith innermostIsDivByZero [rnCall "P" [resolve "Bad", resolve "Missing"]]
 #guard rnFailsWith innermostIsBadIndex [rnCall "P" [resolve "Missing", resolve "Bad"]]
 #guard rnFailsWith innermostIsDivByZero [rnCall "P" [resolve "Bad", resolve "Bad"]]
@@ -244,19 +247,24 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnFailsWith innermostIsDivByZero [rnCall "C" [resolve "Bad", num 9, num 7]]
 #guard rnFailsWith rnIncFailure [rnCall "C" [num 7, num 9, resolve "Inc"]]
 
--- "First failure" means the established binding order, not a new global scan
--- for retained failures. A suffix binds before the collector's middle is demanded;
--- a prefix-local verdict settles before the suffix binds (PAT-10).
+-- "First failure" means the ordinary inspection order (NEED-04, PAT-10), not a global
+-- scan: the collector binds its slice without demanding it, the suffix's repeated `x`
+-- demands its cells as they are visited, and a prefix's repeated-name conflict ends
+-- the binding before the suffix is visited.
 #guard rnFailsWith innermostIsBadIndex [rnCall "Suffix" [resolve "Bad", resolve "Missing", num 7]]
 #guard rnFailsWith innermostIsDivByZero [rnCall "Suffix" [resolve "Missing", resolve "Bad", num 7]]
 #guard rnContexts [rnCall "Suffix" [resolve "Bad", resolve "Missing", num 7]] == 1
 #guard rnFailsWith innermostIsBadArity [rnCall "Prefix" [num 1, num 2, resolve "Bad", num 7]]
 #guard rnContexts [rnCall "Prefix" [num 1, num 2, resolve "Bad", num 7]] == 0
 
--- 8. Clause families: every argument's value is required before any clause is tried,
---    so a failed or callable-only argument is its own failure, never a fall-through;
---    equal values select the repeated clause. Family binders carry values only (PAT-07),
---    so two distinct callables with equal values match the repeated clause (PV-43).
+-- 8. Clause families: a clause inspects only what its patterns need, and a repeated name
+--    demands each occurrence when it is visited (NEED-04), so a failed or callable-only
+--    argument a clause inspects is its own failure — it ends dispatch, never a
+--    fall-through; equal values select the repeated clause. Family binders keep both
+--    channels (PAT-07 as restated 2026-10-09), so two distinct callables with equal values
+--    are incompatible identities: a non-match, and the next clause answers (`E(A, B)` is
+--    `false`; before Model C, family binders carried values only and such callables matched
+--    the repeated clause, PV-43).
 #guard rnSucceedsWith [rnCall "E" [num 7, num 7]] (.bool true)
 #guard rnSucceedsWith [rnCall "E" [num 7, num 8]] (.bool false)
 #guard rnFailsWith innermostIsDivByZero [rnCall "E" [resolve "Bad", num 7]]
@@ -272,9 +280,9 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnFailsWith innermostIsBadArity [rnCall "P" [.listLiteral [num 1, num 2], .capture [num 1, num 2]]]
 #guard rnSucceedsWith [rnCall "E" [.listLiteral [num 1], num 1]] (.bool false)
 
--- 10. Forwarding carries each parameter's established outcome into the repeated name:
---     it never reconstructs a combined binding. Bad ran once, Fwd bound (one context),
---     and P never bound.
+-- 10. Forwarding transports each parameter's supplied cell into the repeated name
+--     (NEED-08): it never reconstructs a combined binding. Bad ran once (when P's binder
+--     demanded it), Fwd bound (one context), and P never bound.
 #guard rnFailsWith rnIncFailure [rnCall "Fwd" [resolve "Inc", num 1]]
 #guard rnFailsWith rnIncFailure [rnCall "Fwd" [num 1, resolve "Inc"]]
 #guard rnFailsWith innermostIsDivByZero [rnCall "Fwd" [resolve "Bad", num 7]]
@@ -291,8 +299,11 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnFailsWith rnIncFailure [rnCall "T" [resolve "Inc", resolve "A", num 5]]
 #guard rnSucceedsWith [rnCall "T" [num 5, resolve "A", resolve "A"]] (.atom 5)
 
--- 13. A valueless occurrence is a BINDING failure: it precedes the level's repeated-name
---     verdicts, wherever the unequal name stands (D1's binding-before-verdict order).
+-- 13. Inspection order decides between a valueless occurrence and an unequal repeated
+--     name (NEED-04, PAT-10): the first failure or conflict met in written order is
+--     reported — `Q2(Bad, 7, 1, 2)` is Bad's own failure, while `Q2(1, 2, Bad, 7)` is the
+--     unequal `x` (`badArity`) before `y` is visited. (Formerly D1's binding-before-verdict
+--     order reported a valueless occurrence first wherever the unequal name stood.)
 #guard rnFailsWith innermostIsDivByZero [rnCall "Q2" [resolve "Bad", num 7, num 1, num 2]]
 #guard rnFailsWith innermostIsBadArity [rnCall "Q2" [num 1, num 2, resolve "Bad", num 7]]
 #guard rnFailsWith innermostIsBadArity [rnCall "Q2" [num 1, num 2, resolve "Inc", resolve "Inc"]]

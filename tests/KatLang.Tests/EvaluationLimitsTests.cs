@@ -438,9 +438,9 @@ public class EvaluationLimitsTests
     [Fact]
     public void FailedArgumentForwardedToSeveralRows_IsNeverReentered()
     {
-        // Each of the three G(v) rows forwards the parameter whose slot failed; each reads the
-        // recorded failure (G ignores it), so no row re-enters Bad's body: the depth stays at
-        // the one-call profile and the steps are F, the one property access, and three G calls.
+        // Each of the three G(v) rows forwards the parameter's one supplied cell, and G ignores
+        // it, so Bad is never evaluated (Model C, NEED-01): the depth stays at the one-call
+        // profile and the steps are F and the three G calls.
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
             "Bad = 1 / 0\nG(w) = 0\nF(v) = G(v), G(v), G(v)\nF(Bad)").Root);
         var (result, budget) = Evaluator.RunCountedObserved(
@@ -458,9 +458,9 @@ public class EvaluationLimitsTests
     [InlineData("Bad = 1 / 0\nG(w) = 5\nF(v) = G(v)\nF(Bad)", "5")]
     public void DualChannelFallback_PreservedUnderDemandDepthAccounting(string source, string expected)
     {
-        // Higher-order dispatch, an unused argument whose ORDINARY failure is retained beside
-        // its algorithm channel, and that failure forwarded through an intermediate callee
-        // keep their pre-accounting results.
+        // Higher-order dispatch, an unused argument whose ORDINARY failure never runs (Model C),
+        // and the same argument forwarded through an intermediate callee keep their
+        // pre-accounting results.
         var result = Evaluator.RunFlat(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
         Assert.False(result.IsError);

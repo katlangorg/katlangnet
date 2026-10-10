@@ -672,7 +672,7 @@ public class ArgumentValueOutcomeTests
 
     /// <summary>
     /// Laziness is preserved: an argument whose value is never demanded is not an error, and
-    /// it was evaluated exactly once, at assembly.
+    /// it is never evaluated (Model C, NEED-01).
     /// </summary>
     [Fact]
     public async Task UndemandedFailedSlot_IsNotEvaluated()
@@ -682,10 +682,12 @@ public class ArgumentValueOutcomeTests
     }
 
     /// <summary>
-    /// A resource-limit failure of a slot is NOT a recorded outcome for a later read: it is
-    /// terminal at assembly (RESOURCE LIMITS ARE TERMINAL, Q-02 / PV-06), so a callee that
-    /// reads the parameter and one that ignores or merely forwards it fail alike — before any
-    /// read. Only ORDINARY failures are the latent, once-established outcomes of this suite.
+    /// A resource-limit failure of a slot is terminal for the run at the slot's first VALUE
+    /// demand (RESOURCE LIMITS ARE TERMINAL, Q-02 / PV-06; NEED-09): the demanded cell keeps the
+    /// limit as its terminal completion, so a callee that reads the parameter and one that
+    /// forwards it to a reader fail alike, while an argument nothing demands never runs. Only
+    /// ORDINARY failures are the latent, once-established outcomes of this suite. (The method
+    /// name predates Model C, when the limit was raised at argument assembly.)
     /// (The synchronous routes agree on the depth verdict; the async twin's host-stack
     /// headroom is a separate, documented difference, PV-07.)
     /// </summary>
@@ -696,8 +698,9 @@ public class ArgumentValueOutcomeTests
         {
             "Deep = Deep\nPair(x) = x, x\nPair(Deep)",
             "Deep = Deep\nS(v) = sum(v), v\nS(Deep)",
-            // Unused and forwarded: before Q-02 the limit was retained and dropped, and
-            // this run SUCCEEDED with 5.
+            // Forwarded, then demanded by G. (Model C changed this row from the unused
+            // `G(w) = 5`, which now never runs Deep; before Q-02 that unused form retained and
+            // dropped the limit and SUCCEEDED with 5.)
             "Deep = Deep\nG(w) = w + 5\nF(v) = G(v)\nF(Deep)",
         })
         {

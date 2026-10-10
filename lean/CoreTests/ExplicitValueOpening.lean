@@ -20,12 +20,14 @@ open KatLang (resolve param num)
 -- dot-call, selection, alias, or forwarding mechanism opens a value on the
 -- programmer's behalf.
 --
--- Lean: `collectVariadicCallItems` (one item per non-spread slot),
--- `collectSegment` in `bindParameterPatternList` /
--- `bindCountedParameterPatternList`, `evalUserCallbackCallCounted`; laws in
--- `KatLangArityLaws.lean` ("Exact collector laws"). C#: `BuildCallArgumentInputs`,
--- `CollectSegment`, the ordinary counted callback binder;
--- `ExplicitValueOpeningTests`.
+-- Lean: `formNeedSupply` (one cell per non-spread slot), `bindNeedPatterns` (the
+-- collector cell, materialized by `demandNeed`), `evalUserCallbackCallCounted`;
+-- value-level laws in `KatLangArityLaws.lean` ("Exact collector laws", over the
+-- historical binders of `HistoricalReadyBinding.lean`). C#: `FormNeedSupply`,
+-- `CollectorCell`, `BindNeedPatterns` (the one binder callbacks use too);
+-- `ExplicitValueOpeningTests`. (Formerly `collectVariadicCallItems`,
+-- `bindParameterPatternList` / `bindCountedParameterPatternList`,
+-- `BuildCallArgumentInputs` and `CollectSegment`, deleted or retired by Model C.)
 
 -- Coll(*xs) = xs
 def collAlg : Algorithm :=
@@ -958,8 +960,10 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
   | _ => false
 
 -- The algebra aliases callback binding to ordinary binding. This executable
--- guard checks the TWO real evaluator binders instead, including exact error
--- payloads, empty/structured values, mixed collectors, and repeated names.
+-- guard checks the two HISTORICAL Ready binders of `HistoricalReadyBinding.lean`
+-- (the evaluator's binders until Model C, which replaced both with the one
+-- `bindNeedPatterns`), including exact error payloads, empty/structured values,
+-- mixed collectors, and repeated names.
 -- Count provenance is deliberately varied before the callback value boundary.
 def realCallbackBinderMatchesOrdinaryValueSupply : Bool := Id.run do
   let x : KatLang.ParameterPattern := .capture { name := "x" }

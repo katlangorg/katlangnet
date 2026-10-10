@@ -148,8 +148,8 @@ public static partial class Evaluator
     // (MakeCheckedLoopStateResult, Q-26) cross this same value boundary. Never apply it
     // to body/root output accumulation (EvalAlgOutputCountedCore) or to a loop step's
     // own row supply (EvalAlgOutputSlots), both of which must keep their multi-item counts.
-    // (Collecting bindings need no re-count: CollectSegment stores one exact list with
-    // emitted count 1.) Lexical zero-arg property access (EvalCounted
+    // (Collecting bindings need no re-count: a collector cell's VALUE is one exact list,
+    // materialized by MakeCollectionListResult with emitted count 1 — CollectorCell.) Lexical zero-arg property access (EvalCounted
     // Expr.Resolve) and the `if` builtin already perform this same re-count
     // inline; this helper generalizes it.
     // Lean: reCountValueBoundary.

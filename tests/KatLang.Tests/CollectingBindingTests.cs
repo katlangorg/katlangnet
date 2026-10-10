@@ -6,11 +6,13 @@ namespace KatLang.Tests;
 /// Focused coverage for the collecting-binding model: every collecting binding —
 /// deconstruction collecting bindings, single collecting parameters, and mixed
 /// prefix/collecting/suffix parameter lists — COLLECTS the item slots assigned to it
-/// into ONE list (<c>CollectSegment</c>; Lean <c>collectSegment</c>).
+/// into ONE list (the collector cell, <c>CollectorCell</c>; Lean <c>bindNeedLevel</c> /
+/// <c>demandNeed</c>, with <c>collectSegment</c> its value-level definition).
 /// The three item-supply operations stay distinct: <c>capture</c> (ordinary
 /// normalizing value capture), <c>collect</c> (collecting binding), and
 /// <c>spread</c> (the postfix spread marker <c>*</c>), with the round trip
-/// <c>spread(collect(xs)) = xs</c> making variadic forwarding ordinary spread.
+/// <c>spread(collect(xs)) = xs</c> making collector forwarding re-supply exactly the collected
+/// items (by transferring the collector's own cells, FWD-01).
 /// Lean twins: the "Collecting bindings collect lists" section of
 /// <c>lean/CoreTests.lean</c> and the collect laws in
 /// <c>lean/KatLangArityLaws.lean</c>.
@@ -825,9 +827,10 @@ public class CollectingBindingTests
     // structural row pattern across all evaluation modes. The PRIMARY pin of the counted patterned
     // suffix arithmetic is the dedicated CountedFamily_MapCallback... test below;
     // this one is additional cross-mode coverage. CallableBindingPlanParityTests
-    // routes the same shape through loop-step binding, which reaches
-    // BindCallableArguments (flat collecting layout) and the plain
-    // BindParameterPatternList (patterned steps).
+    // routes the same shape through loop-step binding, which since Model C reaches the
+    // one need binder BindNeedPatterns for every layout (formerly BindCallableArguments
+    // for the flat collecting layout and the plain BindParameterPatternList for patterned
+    // steps).
     [Fact]
     public void MixedCollecting_WithTwoSuffixParameters_BindsEachSuffixByPosition()
     {
@@ -836,9 +839,9 @@ public class CollectingBindingTests
         AssertSemanticallyEqual(Seq(List(Atom(1), Atom(2)), Atom(3), Atom(4)), direct);
 
         // A callback element is ONE argument, so the row form opens each element
-        // through the explicit structural pattern — BindCountedParameterPattern ->
-        // BindCountedParameterPatternList under counted evaluation, where the
-        // counted suffix arithmetic lives. (The flat `F(*mid, a, b)` callee is the
+        // through the explicit structural pattern — since Model C through the one need
+        // binder BindNeedPatterns (formerly BindCountedParameterPattern ->
+        // BindCountedParameterPatternList, where the counted suffix arithmetic lived). (The flat `F(*mid, a, b)` callee is the
         // ordinary arity error: one item cannot fill `a` and `b`.)
         var callback = EvaluateAllModes(
             "Rows = (1, 2, 3, 4), (5, 6, 7, 8)\nF((*mid, a, b)) = (mid, a, b)\nRows.map(F)");
@@ -853,9 +856,9 @@ public class CollectingBindingTests
     // suffix arithmetic — the "3315" Stryker survivor). RunCounted is invoked
     // directly, so the route does not depend on EvaluateAllModes retaining its
     // counted mode: the map callee's explicit structural pattern opens each
-    // iterated row through BindCountedParameterPattern ->
-    // BindCountedParameterPatternList, whose suffix loop must bind a and b by
-    // position AFTER the collector (the callback element itself is ONE argument,
+    // iterated row through the one need binder BindNeedPatterns (formerly
+    // BindCountedParameterPattern -> BindCountedParameterPatternList), which must bind
+    // a and b by position AFTER the collector (the callback element itself is ONE argument,
     // so the pattern is what supplies the four items).
     [Fact]
     public void CountedFamily_MapCallbackCollectingWithTwoSuffixes_BindsBothSuffixesByPosition()

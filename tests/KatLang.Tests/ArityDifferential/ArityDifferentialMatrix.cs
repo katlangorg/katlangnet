@@ -1076,7 +1076,7 @@ public static class ArityDifferentialMatrix
                     AlgebraTrace = trace.Append($"receiver/spread supplies the same leading slots either way; diagnostics must also agree").ToArray(),
                 });
 
-                // R6: collecting-parameter forwarding is ordinary list spread.
+                // R6: collecting-parameter forwarding re-supplies exactly the collected items (FWD-01).
                 cases.Add(new RelationalCase
                 {
                     Id = $"adr-forward-round-trip--{shape.Id}--s{(int)m}",

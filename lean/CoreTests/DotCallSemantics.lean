@@ -715,7 +715,7 @@ def collectingForwardingCountItemsAlg : Algorithm :=
     .dotCall (.param "items") "count" none
   ]
 
--- Collecting-parameter forwarding is ordinary list spread: `Use(*values) =
+-- Collecting-parameter forwarding re-spreads the collector's own cells: `Use(*values) =
 -- CountItems(values*)` re-supplies exactly the collected items
 -- (spread(collect(xs)) = xs). The root call spreads its grouped sequence so the
 -- collecting parameter collects the three items.

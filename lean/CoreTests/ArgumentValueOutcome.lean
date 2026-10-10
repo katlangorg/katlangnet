@@ -181,8 +181,8 @@ def readOfValuedBinding : Except Error Result :=
   | .ok (.atom 7) => true
   | _ => false
 
--- 4. LAW D — forwarding carries the established outcome; it never re-evaluates the
---    source. `Fwd(Bad)` forwards `w` into `One(w)` (its first row fails there): Bad's
+-- 4. LAW D — forwarding transports the one supplied cell (NEED-08); it never
+--    re-evaluates the source. `Fwd(Bad)` forwards `w` into `One(w)` (its first row fails there): Bad's
 --    body runs ONCE, and the only other contexts are the calls to Fwd and One.
 #guard aoFailsWithDivByZero [callOf "Fwd" [resolve "Bad"]]
 #guard aoContexts [callOf "Fwd" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 2
@@ -199,7 +199,7 @@ def readOfValuedBinding : Except Error Result :=
 #guard aoContexts [callOf "Show" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
 
 -- 6. Laziness is preserved: a failed argument nobody demands is not an error, and it
---    was evaluated exactly once (at assembly).
+--    is never evaluated (one context: the call to First; Model C, NEED-01).
 #guard aoSucceedsWith [callOf "First" [num 1, resolve "Bad"]] (.atom 1)
 #guard aoContexts [callOf "First" [num 1, resolve "Bad"]] == 1
 
@@ -224,8 +224,9 @@ def readOfValuedBinding : Except Error Result :=
 #guard aoContexts [callOf "Call0" [resolve "A"]] == aoContexts [callOf "One" [resolve "A"]] + 1
 
 -- 9. Unrelated binding semantics are unchanged: a value-only argument binds its value;
---    a collecting parameter surfaces a failed slot when it collects it (no call context
---    opens), exactly as before.
+--    a collecting parameter binds its slice without demanding it, and reading the
+--    collected list demands every cell, so `Coll(Bad)` fails with Bad's own failure when
+--    the body reads `xs` — after the call's own binding context opened (VAR-03, NEED-07).
 #guard aoSucceedsWith [callOf "Two" [num 3]] (.sequenceValue [.atom 3, .atom 3])
 #guard aoFailsWithDivByZero [callOf "Coll" [resolve "Bad"]]
 #guard aoContexts [callOf "Coll" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1

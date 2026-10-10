@@ -280,11 +280,12 @@ public class EvaluatorErrorDiagnosticTests
     }
 
     /// <summary>
-    /// Final hostile pass (September 2026): the Lean-modeled payload of a flat fixed user
-    /// call with too few slots is the VALUE-tier view (a slot bound only on the algorithm
-    /// channel — an output-less argument — is left out of both numbers), so the MESSAGE
-    /// derives the written count from the signature: `R(Obj)` for `R(a, b)` is "called with
-    /// 1 argument", never 0. The structured payload is unchanged.
+    /// Since Model C (2026-10-02) the payload of a flat fixed user call is the COMPLETE supply
+    /// in both engines — an output-less argument is one supplied cell like any other — so
+    /// `R(Obj)` for `R(a, b)` reports (2, 1) and "called with 1 argument", never 0 (CALL-04).
+    /// (Until Model C the Lean-modeled payload was the VALUE-tier view, which left such a slot
+    /// out of both numbers, and the message repaired the written count: the final hostile
+    /// pass of September 2026.)
     /// </summary>
     [Theory]
     [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj)", 2, 1, "R(a, b)", 2, 1)]

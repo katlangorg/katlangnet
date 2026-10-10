@@ -1629,7 +1629,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("TargetOne(item) = item\nForwardAsOne(*items) = TargetOne(items)\nForwardAsOne(1, 2)", "ok raw=L[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Variadic forwarding is ordinary list spread: spreading a collected list re-supplies exactly its items (`Target(items*)` re-collects the caller's slots, including the empty and singleton cases), while passing the collected list without spread passes ONE list argument (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply forwarding.",
+            Explanation = "Forwarding a collecting parameter re-spreads the collector's own supply: `Target(items*)` re-supplies exactly the items the caller supplied — the same computations, unevaluated until something demands them — so it re-collects the caller's slots, including the empty and singleton cases, while passing the collector without spread passes ONE argument whose value is the list (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply metadata.",
         },
         new()
         {

@@ -386,7 +386,8 @@ public class OutputLessArgumentBlameTests
     [Fact]
     public void ArgumentEvaluation_StaysLeftToRight_AndNothingIsReEvaluatedForTheBlame()
     {
-        // Ordering: the earlier argument ran, the later one still ran (retained failure).
+        // Ordering: reading the collector materializes its cells left to right, so the earlier
+        // argument ran and the failing block stopped the read before the later one (NEED-07).
         var (orderedError, ordered) = RunWithEffects(Collector + "\nColl(effect(1), { }, effect(3))");
         Assert.NotNull(orderedError);
         Assert.Equal(["1"], ordered);
@@ -423,11 +424,10 @@ public class OutputLessArgumentBlameTests
     }
 
     /// <summary>
-    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a FIXED parameter binds
-    /// its argument's algorithm channel together with the failure the slot's one value
-    /// evaluation raised, so the demand inside the callee reports that failure and never
-    /// re-runs the effectful argument body — exactly as the collector and builtin paths,
-    /// which surface the retained failure, always did. (Before Q-01 the fixed path dropped
+    /// AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026; Model C since 2026-10-02):
+    /// a FIXED parameter binds its argument's supplied cell, so the demand inside the callee
+    /// evaluates it once and reports that completed failure, and never re-runs the effectful
+    /// argument body — exactly as the collector and builtin paths do. (Before Q-01 the fixed path dropped
     /// the failure and re-derived it: effects <c>["1", "1"]</c>, pinned here as a
     /// characterization.)
     /// </summary>

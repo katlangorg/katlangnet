@@ -205,9 +205,10 @@ public class NativeArgumentValueDemandTests
 
     /// <summary>
     /// No native-argument failure may name the wrapper's declared parameter as an
-    /// UNKNOWN name — that spelling never appears in the user's program. Sources the
-    /// closed-list strict-value diagnostic now rejects are covered too, evaluated past that
-    /// rejection: the runtime guarantee has to hold for a host that never ran the front end.
+    /// UNKNOWN name — that spelling never appears in the user's program. Sources a front end
+    /// rejects are covered too (formerly including the closed-list strict-value diagnostic's,
+    /// removed by Q-15), evaluated past that rejection: the runtime guarantee has to hold for a
+    /// host that never ran the front end.
     /// </summary>
     [Theory]
     [InlineData("A = q + 1\nMath.Abs(A)")]

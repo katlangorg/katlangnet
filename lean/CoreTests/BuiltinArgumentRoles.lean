@@ -221,13 +221,15 @@ def brSucceedsReadingNothing (out : List KatLang.Expr) (expected : Result) : Boo
 #guard brFails innermostIsDivByZero [brCall "map" [.listLiteral [], .sequenceSpread (resolve "Bad")]]
 #guard brFails innermostIsDivByZero [brCall "reduce" [.listLiteral [], .sequenceSpread (resolve "Bad"), num 0]]
 #guard brFails innermostIsBadIndex [brCall "map" [.listLiteral [], .sequenceSpread (resolve "BadIndex")]]
--- Raised at assembly: no later slot is evaluated (`Id(8)` never runs).
+-- Raised during supply formation: no other slot is evaluated (neither `Id(7)` nor `Id(8)` runs;
+-- NEED-01).
 #guard brFails innermostIsDivByZero
   [brCall "take" [brCall "Id" [num 7], .sequenceSpread (resolve "Bad"), brCall "Id" [num 8]]]
 #guard brContexts
   [brCall "take" [brCall "Id" [num 7], .sequenceSpread (resolve "Bad"), brCall "Id" [num 8]]] == 1
--- An earlier value slot's ORDINARY failure is retained, not raised (CALL-03), so the
--- first failure RAISED is the later spread's own.
+-- An earlier value slot is not evaluated during supply formation (NEED-01; until Model C
+-- its ordinary failure was retained, not raised), so the first failure RAISED is the
+-- later spread's own.
 #guard brFails innermostIsAnyTypeMismatch
   [brCall "take" [resolve "Bad", .sequenceSpread (resolve "BadType")]]
 -- The user-call spelling agrees: the spread fails the same way before `T` is entered.

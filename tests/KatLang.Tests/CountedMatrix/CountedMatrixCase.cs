@@ -39,7 +39,7 @@ public enum CountedConsumer
     /// chained `**` is compositional, never recursive flattening.</summary>
     SpreadSupply,
 
-    /// <summary>Shared call argument-slot assembly (Lean
+    /// <summary>Shared call argument-slot supply (Lean <c>formNeedSupply</c>; formerly
     /// <c>collectVariadicCallItems</c>): every non-spread written slot reifies to ONE
     /// argument, every spread slot expands one value boundary BEFORE arity checking,
     /// for every callable shape.</summary>
@@ -49,18 +49,19 @@ public enum CountedConsumer
     /// must equal parameter count; each parameter binds one slot value.</summary>
     FixedArityBinding,
 
-    /// <summary>Collecting parameter `*items` (Lean <c>collectSegment</c>): collects
+    /// <summary>Collecting parameter `*items` (Lean collector cell; <c>collectSegment</c> its value): collects
     /// exactly the assigned argument slots as ONE exact list (never erased, count 1).</summary>
     CollectingParameter,
 
     /// <summary>Mixed prefix/collecting/suffix parameter lists (Lean
-    /// <c>bindParameterPatternList</c>): fixed ends bind front/back, the collecting
+    /// <c>bindNeedLevel</c>; formerly <c>bindParameterPatternList</c>): fixed ends bind front/back, the collecting
     /// middle takes what remains (possibly zero).</summary>
     MixedParameterList,
 
     /// <summary>Collected-list forwarding: `Fwd(*items) = Target(items*)` re-supplies
-    /// exactly the collected slots (Lean law <c>spreadItems (collectSegment xs) = xs</c>);
-    /// unspread forwarding passes ONE list argument.</summary>
+    /// exactly the collected slots — the collector's own cells, FWD-01 (Lean law
+    /// <c>spreadItems (collectSegment xs) = xs</c>); unspread forwarding passes ONE argument,
+    /// the collector's collection-valued cell.</summary>
     CollectingForwarding,
 
     /// <summary>Assignment deconstruction `x, *y, z = RHS` (Lean

@@ -7,7 +7,7 @@ open KatLang (resolve param num)
 open KatLang (Pattern CondBranch)
 
 --------------------------------------------------------------------------------
--- Collecting bindings collect lists (collectSegment)
+-- Collecting bindings collect lists (a collector cell; `collectSegment` is its value)
 --------------------------------------------------------------------------------
 -- Required matrix for the collect model: capture / collect / open are distinct
 -- operations. C# parity: tests/KatLang.Tests/DeconstructionBindingTests.cs and
@@ -244,7 +244,7 @@ def middleVariadicGroupedAndSpreadDirectCall : Bool :=
 
 #guard middleVariadicGroupedAndSpreadDirectCall
 
--- Variadic forwarding through ordinary list spread:
+-- Collector forwarding re-spreads the collector's own cells (FWD-01, NEED-07/08):
 -- Target(*items) = items; Forward(*items) = Target(items*).
 def collectTargetAlg : Algorithm :=
   algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"]
@@ -407,8 +407,8 @@ def ordinaryCaptureStaysCanonicalSequence : Bool :=
 -- Flat callbacks with collecting parameters bind through the ordinary binder
 --------------------------------------------------------------------------------
 -- THE CALLBACK LAW: a callback element is ONE ordinary argument. A flat callee
--- binds it through the ordinary counted binder (`evalUserCallbackCallCounted`
--- → `bindCountedParameterPatternList`) exactly as the direct call `F(element)`
+-- binds it through the ordinary binder (`evalUserCallbackCallCounted`
+-- → `evalNeedUserSupply` → `bindNeedPatterns`) exactly as the direct call `F(element)`
 -- binds it: a collecting parameter collects the supplied arguments as one
 -- exact list, a fixed parameter binds the element unchanged, and only an
 -- explicit sequence-value pattern opens it. No row convention exists.

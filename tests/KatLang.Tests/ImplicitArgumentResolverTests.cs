@@ -1132,7 +1132,7 @@ public class ImplicitArgumentResolverTests
     public void Resolve_MathArgument_ClosedExplicitParameterList_ReadsAZeroArgumentHelperAsAValue()
     {
         // Q-03 (formerly PV-27): a helper that works with no arguments is never a forwarding
-        // candidate, so a closed list has nothing to refuse — the strict Math position demands
+        // candidate, so a closed list has nothing to refuse — the Math argument position demands
         // its zero-argument value, which is legal, and the front end accepts the program.
         var root = Resolve("""
             CountItems(*items) = items.count

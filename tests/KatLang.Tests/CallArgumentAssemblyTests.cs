@@ -3,17 +3,16 @@ using KatLang.Evaluation.Caching;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Focused coverage for the shared call argument pipeline
-/// (<c>BuildCallArgumentInputs</c>; Lean <c>collectVariadicCallItems</c>):
-/// every callable shape — flat fixed, flat/mixed variadic, patterned
-/// (repeated-name / sequence-value patterns), and multi-clause conditional —
-/// receives its argument supply from ONE assembly stage that evaluates each
-/// written slot exactly once, left to right; reuses that evaluation for any
-/// patterned explicit-item view; reifies every non-spread slot as exactly one argument value;
-/// and expands every explicit spread slot by exactly one value boundary.
-/// Arity checking, clause selection, and pattern binding all happen strictly
-/// AFTER that assembly, so the callee's internal representation never changes
-/// the meaning of caller-side spread. Lean twins: the
+/// Focused coverage for the shared call argument supply (Model C: <c>FormNeedSupply</c>;
+/// Lean <c>formNeedSupply</c>; formerly <c>BuildCallArgumentInputs</c> /
+/// <c>collectVariadicCallItems</c>): every callable shape — flat fixed, flat/mixed
+/// collecting, patterned (repeated-name / sequence-value patterns), and multi-clause
+/// conditional — receives its argument supply from ONE formation stage that reifies every
+/// non-spread slot as exactly one suspended cell, evaluated at most once, when and if it is
+/// first demanded, and expands every explicit spread slot by exactly one value boundary.
+/// Arity checking comes after formation and before any non-spread demand; clause selection
+/// and pattern binding demand only what they inspect, so the callee's internal
+/// representation never changes the meaning of caller-side spread. Lean twins: the
 /// <c>call-spread-into-*</c> LanguageSpec cases.
 /// </summary>
 public class CallArgumentAssemblyTests

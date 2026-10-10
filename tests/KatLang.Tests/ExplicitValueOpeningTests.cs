@@ -20,14 +20,16 @@ namespace KatLang.Tests;
 /// reducer, dot-call, selection, alias, or forwarding mechanism opens a value on the
 /// programmer's behalf.</para>
 ///
-/// <para>Lean: <c>collectVariadicCallItems</c> (one item per non-spread slot),
-/// <c>collectSegment</c> in <c>bindParameterPatternList</c> /
-/// <c>bindCountedParameterPatternList</c>, <c>evalUserCallbackCallCounted</c>; laws
+/// <para>Lean: <c>formNeedSupply</c> (one cell per non-spread slot), <c>bindNeedPatterns</c>
+/// (the collector cell; <c>collectSegment</c> its value-level definition),
+/// <c>evalUserCallbackCallCounted</c> (formerly <c>collectVariadicCallItems</c> and the
+/// Ready binders <c>bindParameterPatternList</c> / <c>bindCountedParameterPatternList</c>); laws
 /// <c>collector_*</c> / <c>explicit_spread_opens_one_level</c> /
 /// <c>forwarding_resupplies_the_collected_items</c> in <c>lean/KatLangArityLaws.lean</c>;
 /// algebra <c>bindArgs</c> / <c>bindCallback</c>; CoreTests <c>ExplicitValueOpening</c>.
-/// C#: <c>Evaluator.BuildCallArgumentInputs</c>, <c>CollectSegment</c>,
-/// <c>EvalResolvedCallbackCallCountedCore</c>.</para>
+/// C#: <c>Evaluator.FormNeedSupply</c>, <c>CollectorCell</c>, <c>BindNeedPatterns</c>,
+/// <c>EvalResolvedCallbackCallCountedCore</c> (formerly <c>BuildCallArgumentInputs</c> and
+/// <c>CollectSegment</c>).</para>
 /// </summary>
 public class ExplicitValueOpeningTests
 {

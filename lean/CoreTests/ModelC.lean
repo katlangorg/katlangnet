@@ -250,4 +250,34 @@ def computedSuppliesHaveNoCallable : EvalM Bool := do
 -- Higher-order inputs and forwarding are unaffected: the INPUT still supplies its callable.
 #guard (runResult (resultRoot [.call (.resolve "Apply") [.resolve "Inc", .num 3]])).toOption == some (.atom 4)
 
+/-! Phase A3 (2026-10-10): the cardinality and payload laws CALL-04, PAT-02 and PAT-03 state since
+    the Model-C reconciliation. -/
+
+-- A clause family rejects a count that no clause head accepts as `arityMismatch`, before any
+-- clause is tried and before any argument is demanded (NEED-05): neither call divides by zero.
+#guard match runResult (selector (.resolve "Choose") [bad, bad]) with
+  | .error err => innermostIsArityMismatch 3 2 err
+  | _ => false
+#guard match runResult (selector (.resolve "Choose") [bad, bad, bad, bad]) with
+  | .error err => innermostIsArityMismatch 3 4 err
+  | _ => false
+
+-- An accepted count that no clause matches is `noMatchingBranch`, and only what a clause
+-- inspects is demanded: the plain binder `y` never demands `bad` (NEED-04).
+def literalTail : Algorithm := .conditional none []
+  [ { pattern := .sequenceValue [.bind "y", .litInt 0], body := alg [] [] [] [.param "y"] }
+  , { pattern := .sequenceValue [.bind "y", .litInt 1], body := alg [] [] [] [.param "y"] } ]
+#guard match runResult (.algorithmExpr (algPrivate [] [] [("Q", literalTail)] [.call (.resolve "Q") [bad, .num 2]])) with
+  | .error err => innermostIsNoMatchingBranch "Q" err
+  | _ => false
+
+-- An algorithm-only slot counts like every other supplied cell in the arity payload:
+-- `F(x, y) = x(y)` with `F(Inc)` is `arityMismatch 2 1`, the complete supply (CALL-04;
+-- until Model C the value-tier payload `(1, 0)`).
+def callXY : Algorithm := alg ["x", "y"] [] [] [.call (.param "x") [.param "y"]]
+#guard match runResult (.algorithmExpr (algPrivate [] [] [("F", callXY), ("Inc", incAlg)]
+    [.call (.resolve "F") [.resolve "Inc"]])) with
+  | .error err => innermostIsArityMismatch 2 1 err
+  | _ => false
+
 end KatLangTests.ModelC

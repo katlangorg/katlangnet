@@ -1476,7 +1476,7 @@ Regenerate this block from the repo root with:
     2
     4
 
-[variadic-forwarding-list-spread] Variadic forwarding is ordinary list spread: spreading a collected list re-supplies exactly its items (`Target(items*)` re-collects the caller's slots, including the empty and singleton cases), while passing the collected list without spread passes ONE list argument (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply forwarding.
+[variadic-forwarding-list-spread] Forwarding a collecting parameter re-spreads the collector's own supply: `Target(items*)` re-supplies exactly the items the caller supplied — the same computations, unevaluated until something demands them — so it re-collects the caller's slots, including the empty and singleton cases, while passing the collector without spread passes ONE argument whose value is the list (`TargetOne(items)` receives `[1, 2]`). There is no hidden raw-supply metadata.
 
     Target(*items) = items
     Forward(*items) = Target(items*)

@@ -766,9 +766,9 @@ public class ResourceLimitTerminalityTests
     // ── 5. Ordinary failures keep their semantics (the controls) ──────────────────────
 
     /// <summary>
-    /// The same shapes with an ORDINARY failure are unchanged: the failure is retained beside
-    /// the algorithm channel (CALL-06), later arguments and the callee still run, an ignoring
-    /// callee succeeds, and a demanding one reports the one retained failure.
+    /// The same shapes with an ORDINARY failure: an argument nothing demands never runs (no
+    /// failure, no effect — an ignoring callee succeeds and its unused arguments' traces never
+    /// appear), and a demanding callee reports the cell's completed failure once (CALL-06, NEED-02).
     /// </summary>
     [Fact]
     public async Task OrdinaryFailures_StayLatent_UntilDemanded()

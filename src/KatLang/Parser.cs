@@ -2172,7 +2172,7 @@ public sealed class Parser
     /// lone-collecting-binding form <c>*items = RHS</c> is also supported. The right-hand side
     /// is evaluated once and its items are bound to the targets by the shared
     /// deconstruction matcher, with one optional movable collecting binding that COLLECTS
-    /// its assigned items as one list (<c>CollectSegment</c>).
+    /// its assigned items as one list (the evaluator's collector cell, <c>Evaluator.CollectorCell</c>).
     /// A malformed marker shape (a gap between the star and its name, or a
     /// repeated star) reports a targeted diagnostic and binds the name as an
     /// ordinary fixed target — malformed recovery never creates a collecting

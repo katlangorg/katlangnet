@@ -622,10 +622,11 @@ public class CallableBindingPlanParityTests
     [Fact]
     public void PatternedVariadicTwoSuffixes_LoopStepBindsBothSuffixesByPosition()
     {
-        // Patterned loop steps bind through the plain BindParameterPatternList
-        // (verified by mutant injection); the COUNTED patterned binder's suffix
-        // arithmetic is pinned by the dedicated CountedFamily_MapCallback...
-        // test in CollectingBindingTests.
+        // Since Model C loop steps, callbacks and direct calls bind through the one need
+        // binder BindNeedPatterns. (Before it, patterned loop steps used the plain
+        // BindParameterPatternList, verified then by mutant injection, and the counted
+        // patterned binder's suffix arithmetic was pinned by the dedicated
+        // CountedFamily_MapCallback... test in CollectingBindingTests.)
         AssertEval(
             """
             Step((first, *middle, a, b)) = first, middle.count, a, b

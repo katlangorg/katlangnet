@@ -162,7 +162,7 @@ public enum ReceiverLaw
     /// <summary>The while step's last output slot is the continue flag; remaining slots are the committed state (pre-check semantics).</summary>
     WHILE_LAST_SLOT_IS_CONTINUE_FLAG,
 
-    /// <summary>spread(collect(xs)) = xs: collecting-parameter forwarding is ordinary list spread.</summary>
+    /// <summary>spread(collect(xs)) = xs: forwarding a collecting parameter re-supplies exactly its items (since Model C by transferring the collector's own cells, FWD-01).</summary>
     COLLECT_SPREAD_ROUND_TRIP,
 
     /// <summary>capture and collect are intentionally different operations on every supply (kind and singleton behavior differ).</summary>
@@ -190,7 +190,7 @@ public static class ReceiverLaws
             "CoreArityAlgebra: capture; CoreArityAlgebraProofs: capture_singleton, capture_items_of_canonical, capture_items_of_list; KatLangArityLaws: capture_spreadItems_of_canonical_non_list, capture_spreadItems_of_list",
         [ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY] =
             "CoreArityAlgebra: collect / bindArgs = bindPats; CoreArityAlgebraProofs: collect_is_list, collect_singleton, bindArgs_eq_bindPats, collector_lone_argument_is_one_item, collector_lone_sequence_is_one_item, collector_lone_list_is_one_item, collector_lone_empty_values_are_one_item, collector_many_items_are_exact, variadic_collect_value_grouped; "
-            + "KatLangArityLaws: collectSegment_eq_listValue, collectSegment_singleton, collector_lone_sequence_is_one_item, collector_lone_list_is_one_item, collector_lone_empty_values_are_one_item, collector_binder_two_written_items_are_exact, selection_origin_does_not_change_collector_binding; C# Evaluator.CollectSegment; CoreTests ExplicitValueOpening; ExplicitValueOpeningTests",
+            + "KatLangArityLaws: collectSegment_eq_listValue, collectSegment_singleton, collector_lone_sequence_is_one_item, collector_lone_list_is_one_item, collector_lone_empty_values_are_one_item, collector_binder_two_written_items_are_exact, selection_origin_does_not_change_collector_binding; C# Evaluator.CollectorCell (formerly CollectSegment); CoreTests ExplicitValueOpening; ExplicitValueOpeningTests",
         [ReceiverLaw.SPREAD_ITEMS_ARE_NEVER_REOPENED] =
             "CoreArityAlgebraProofs: collector_spread_argument_is_its_items, collector_spread_supply_is_collected, collector_spread_opening_is_one_level, variadic_collect_value_spread; KatLangArityLaws: explicit_spread_opens_one_level, collector_collects_spread_items_exactly; CoreTests ExplicitValueOpening spreadItemsAreNeverReopened",
         [ReceiverLaw.COLLECT_SEGMENT_ALLOCATION] =
@@ -198,7 +198,7 @@ public static class ReceiverLaws
         [ReceiverLaw.DOTTED_CALL_EQUALS_DIRECT_REWRITE] =
             "AGENTS.md dot-call passes a value; KatLang.lean prepareLexicalDotCallArgs / callLexicalWithReceiverCounted (the receiver is the ordinary leading argument of the ONE evalResolvedCallCounted funnel); "
             + "KatLangArityLaws: dot_receiver_is_ordinary_leading_argument, argumentless_dot_receiver_is_the_one_argument, dot_receiver_is_one_collected_item, dot_receiver_count_never_satisfies_arity, dot_call_uses_same_collector_binding_as_plain_call; "
-            + "C# Evaluator.BuildLexicalReceiverCallArgs + BuildCallArgumentInputs; DotCallValueBoundaryTests, DotCallCollectingReceiverTests, DottedReceiverEvaluationTests (receiver charged once)",
+            + "C# Evaluator.BuildLexicalReceiverCallArgs + FormNeedSupply (formerly BuildCallArgumentInputs); DotCallValueBoundaryTests, DotCallCollectingReceiverTests, DottedReceiverEvaluationTests (receiver charged once)",
         [ReceiverLaw.FLUENT_SPREAD_RECEIVER_IS_LEXICAL_CALL] =
             "AGENTS.md: operand*.Member(...) lowers to Member(operand*, ...); C# parser fluent dot-chain lowering (spread receiver becomes the leading argument slot); KatLangArityLaws: spread_dot_receiver_is_ordinary_spread_argument",
         [ReceiverLaw.GROUPED_SPREAD_RECEIVER_CAPTURES] =
@@ -214,9 +214,9 @@ public static class ReceiverLaws
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_INVOCATION_VALUE] =
             "KatLang.lean countedSequenceCallbackItem (reCountValueBoundary: a callback item is a selected value, one intact value); tutorial \"Callbacks Receive One Element\" (each element, a nested pair included, is passed whole)",
         [ReceiverLaw.CALLBACK_ELEMENT_IS_ONE_ORDINARY_ARGUMENT] =
-            "KatLang.lean evalUserCallbackCallCounted (the ONE ordinary counted binder bindCountedParameterPatternList over the supplied callback arguments; no row convention); CoreArityAlgebra: bindCallback; CoreArityAlgebraProofs: callback_is_the_ordinary_call, callback_element_is_one_ordinary_argument, callback_two_fixed_rejects_structured_element; CoreTests ExplicitValueOpening callbacksPassEachElementAsOneArgument / callbackBindingMatchesTheDirectCall; ExplicitValueOpeningTests",
+            "KatLang.lean evalUserCallbackCallCounted (the ONE ordinary binder bindNeedPatterns over the supplied callback cells — formerly bindCountedParameterPatternList; no row convention); CoreArityAlgebra: bindCallback; CoreArityAlgebraProofs: callback_is_the_ordinary_call, callback_element_is_one_ordinary_argument, callback_two_fixed_rejects_structured_element; CoreTests ExplicitValueOpening callbacksPassEachElementAsOneArgument / callbackBindingMatchesTheDirectCall; ExplicitValueOpeningTests",
         [ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE] =
-            "KatLang.lean bindCountedParameterPattern .sequenceValue branch (Result.sequencePatternItems?: a SEQUENCE value's elements; a list or any other value is structuralPatternKindMismatch — the SAME rule bindParameterPattern uses for the ordinary call); KatLangArityLaws: sequence_pattern_items_never_open_a_list, sequence_pattern_items_never_open_a_scalar",
+            "KatLang.lean bindNeedOne's .sequence arm (formerly bindCountedParameterPattern .sequenceValue; Result.sequencePatternItems?: a SEQUENCE value's elements; a list or any other value is structuralPatternKindMismatch — the SAME rule for the ordinary call and the callback); KatLangArityLaws: sequence_pattern_items_never_open_a_list, sequence_pattern_items_never_open_a_scalar",
         [ReceiverLaw.REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT] =
             "KatLang.lean reduceLoop (reCountValueBoundary initOut); AGENTS.md written-slot reification incl. reduce initial accumulator",
         [ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS] =

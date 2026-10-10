@@ -124,8 +124,9 @@ internal static class ImplicitArgumentResolver
     {
         /// <summary>
         /// The import site of the module content the walk is currently inside (see
-        /// <see cref="KatLang.ImportSite"/>): where a refused strict-value forwarding inside
-        /// imported content — which carries no source location — is positioned. Null over
+        /// <see cref="KatLang.ImportSite"/>): where a report about imported content — an invalid
+        /// inferred signature, an unforwardable parameter or callable, an unliftable clause family;
+        /// imported content carries no source location — is positioned. Null over
         /// the document's own text; a deferred branch run starts from the site its region
         /// recorded. Walk state only: it decides no rewrite and keys no memo.
         /// </summary>
@@ -184,7 +185,7 @@ internal static class ImplicitArgumentResolver
 
         /// <summary>
         /// Nested algorithms rewritten so far, by <see cref="AlgorithmRegionKey"/>. A family's
-        /// NAME only words a branch body's blocked strict-value diagnostics, so a second
+        /// NAME only words a branch body's family-named diagnostics (unforwardable parameters), so a second
         /// family sharing the body reuses the rewrite and REPLAYS those diagnostics under its
         /// own name (see <see cref="AlgorithmRegion.DiagnosticTemplates"/>).
         /// </summary>
@@ -1051,9 +1052,9 @@ internal static class ImplicitArgumentResolver
 
     /// <summary>
     /// A completed algorithm region: the rewritten algorithm and, for a conditional branch
-    /// body, the diagnostics its own rewrite reported whose wording names the family — blocked
-    /// strict-value forwarding and unforwardable bare-forwarding parameters — as re-issuable
-    /// templates.
+    /// body, the diagnostics its own rewrite reported — unforwardable bare-forwarding parameters
+    /// (worded with the family's name), unforwardable callables and unliftable clause families — as
+    /// re-issuable templates.
     /// </summary>
     private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates);
 
@@ -1269,7 +1270,7 @@ internal static class ImplicitArgumentResolver
     /// <param name="ConditionalBranchName">
     /// Non-null when the closed specification is a conditional BRANCH PATTERN rather than a
     /// written explicit parameter list: the family's property name, used only to word the
-    /// blocked strict-value diagnostic in the branch's own terms.
+    /// branch's own diagnostics (an unforwardable parameter) in the branch's own terms.
     /// </param>
     /// <remarks>
     /// A reference type, allocated EXACTLY ONCE per rewrite region and forwarded by reference
@@ -1387,8 +1388,8 @@ internal static class ImplicitArgumentResolver
 
         /// <summary>
         /// Non-null only for a conditional branch body's own output-rewrite region: the
-        /// templates of the diagnostics it issues that name the branch (blocked strict-value and
-        /// unforwardable-parameter reports), kept on the region so a further family sharing the
+        /// templates of the diagnostics it issues for the branch (unforwardable-parameter and
+        /// -callable and unliftable-family reports), kept on the region so a further family sharing the
         /// body re-issues them under its own name (M4).
         /// </summary>
         public List<BranchDiagnosticTemplate>? BranchDiagnosticTemplates;
@@ -2258,7 +2259,7 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Re-issues a completed region's blocked strict-value reports for a further family that
+    /// Re-issues a completed region's branch reports (see <see cref="AlgorithmRegion"/>) for a further family that
     /// shares the body — same references, same missing names, same spans, worded with THIS
     /// family's name — so per-family diagnostic multiplicity matches a fresh rewrite without
     /// performing one, independent of which family was reached first.
@@ -2437,7 +2438,7 @@ internal static class ImplicitArgumentResolver
     /// <para>A callee that accepts zero supplied arguments — no parameters, or only a top-level
     /// collecting parameter such as <c>Roll(*xs)</c> — is NEVER lifted, whatever position it
     /// stands in (an operator or comparison operand, a list element, an index target, a spread
-    /// operand, a strict Math argument, a block body): declaring a parameter does
+    /// operand, a Math argument, a block body): declaring a parameter does
     /// not by itself make a bare reference a call. The reference stays a property-style value
     /// demand, which the evaluator accepts (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/>
     /// reads the SAME rule, <see cref="ParameterPattern.AcceptsZeroSuppliedSlots"/>) and serves
@@ -4292,8 +4293,7 @@ internal static class ImplicitArgumentResolver
                 Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), paramMap, memos),
             },
 
-            // A capture element is a value (a capture has no algorithm identity to transport); the
-            // Math strict-demand obligation does not reach inside a capture (Q-15).
+            // A capture element is a value (a capture has no algorithm identity to transport).
             Expr.Capture capture => capture with
             {
                 Body = new OutputBundle(capture.Body
@@ -4312,7 +4312,7 @@ internal static class ImplicitArgumentResolver
     /// The bare-reference arm of <see cref="RewriteImplicitCallsCore"/>: a VALUE-role reference whose
     /// resolved callable has a lifting signature that REQUIRES supplied arguments lifts to an
     /// explicit implicit-argument call unless the caller's closed explicit parameter list blocks the
-    /// forwarding (reported only under strict value demand). An unnameable clause family is
+    /// forwarding (the reference then stays bare: its run-time zero-argument demand, PAR-04 / Q-15). An unnameable clause family is
     /// reported (<see cref="DiagnosticCode.UnliftableClauseFamily"/>). Every other reference stays
     /// bare — a callable role, a callable that accepts zero supplied arguments (a cached
     /// property-style value demand, Q-03), or a reference with no lifting signature.
@@ -4339,8 +4339,8 @@ internal static class ImplicitArgumentResolver
     /// <summary>
     /// The forwarding arguments of one value-role reference that lifts, or null when it does not:
     /// an unnameable family (reported in an inferring body), a callable that accepts zero supplied
-    /// arguments (Q-03), or a closed list that cannot supply its parameters (PAR-04; reported under
-    /// strict value demand).
+    /// arguments (Q-03), or a closed list that cannot supply its parameters (PAR-04; never reported
+    /// statically — the bare reference is its run-time demand, Q-15).
     /// </summary>
     private static OutputBundle? TryGetLiftArguments(
         Expr reference,
@@ -4392,7 +4392,7 @@ internal static class ImplicitArgumentResolver
     /// — a user callable's whole argument stays neutral so higher-order references survive
     /// (<c>Twice(A)</c>), while a builtin value slot, a Math or host argument, a family argument, and
     /// every expression NESTED in any argument are values (<c>Twice(A + 0)</c> lifts <c>A</c>).
-    /// A Math member's arguments additionally carry the strict value demand (Q-15).
+    /// A Math member's arguments are VALUE roles like any other (no static strict-value demand since Q-15).
     /// </summary>
     private static Expr RewriteCall(
         Expr.Call call,
@@ -4407,8 +4407,8 @@ internal static class ImplicitArgumentResolver
         for (var i = 0; i < call.Args.Count; i++)
         {
             // A LAZY slot (a branch of `if`) is rewritten exactly like any other — lifting is blind
-            // to laziness — but beneath it the closed-list strict-value diagnostic is not observed
-            // (Q-15). Inline, so the calibrated recursion adds no frame per argument level.
+            // to laziness; whether the lifted call ever runs is the evaluator's demand (Q-15). Inline,
+            // so the calibrated recursion adds no frame per argument level.
             newArgs.Add(RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos));
         }
 
@@ -4423,8 +4423,8 @@ internal static class ImplicitArgumentResolver
     /// intrinsic converts its receiver's value; a selected fallback is the call <c>F(receiver, args)</c>
     /// (dotted-call equivalence holds through elaboration, so <c>R.F(args)</c> and <c>F(R, args)</c>
     /// infer alike); a structural member call's arguments are that member's slots; a runtime receiver
-    /// decides nothing statically. A Math member's receiver and arguments carry the strict value
-    /// demand (Q-15). The stored lexical fallback is a Resolve/Param leaf; <c>with</c> carries it.
+    /// decides nothing statically. A Math member's receiver and arguments are VALUE roles (no static
+    /// strict-value demand since Q-15). The stored lexical fallback is a Resolve/Param leaf; <c>with</c> carries it.
     /// </summary>
     private static Expr RewriteDotCall(
         Expr.DotCall dotCall,

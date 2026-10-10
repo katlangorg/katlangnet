@@ -256,10 +256,11 @@ public class CallableAliasBindingIndirectionTests
         => Assert.Equal(expected, await Outcome(source));
 
     /// <summary>
-    /// X-45's closed-list half: Q-15's strict-value trigger follows the alias target. Under a closed list
-    /// that cannot supply Inc's <c>y</c>, a call through an alias of a Math member is the front-end
-    /// diagnostic the direct spelling is — the same code and message — through a chain, the canonical
-    /// member, a dotted alias member and the must-selected dot fallback <c>Inc.A</c>.
+    /// X-45's closed-list half under Model C (Q-15): under a closed list that cannot supply Inc's
+    /// <c>y</c>, a call through an alias of a Math member is the same run-time demand the direct
+    /// spelling is — the same <c>ArityMismatch</c> payload — through a chain, the canonical member, a
+    /// dotted alias member and the must-selected dot fallback <c>Inc.A</c>. (Until Q-15 was decided,
+    /// 2026-10-02, both spellings were the same front-end diagnostic.)
     /// </summary>
     [Theory]
     [InlineData("A = abs\nK(z) = A(Inc)", "K(z) = abs(Inc)")]
