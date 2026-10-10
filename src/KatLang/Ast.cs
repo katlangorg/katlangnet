@@ -1194,7 +1194,9 @@ public closed record Expr
     /// Algorithm application. <c>Call(f, args)</c> applies <c>f</c> to the
     /// argument slots of <c>args</c> — an ordered <see cref="OutputBundle"/> of
     /// the original written argument expressions. The bundle owns no lexical
-    /// scope: each slot is evaluated transparently in the caller's context, and
+    /// scope: each slot is evaluated transparently in the caller's context — an
+    /// explicit spread while the call's supply is formed, every other slot only
+    /// when the callee first demands its value, and never if it does not — and
     /// each original expression can independently participate in the value
     /// channel and, where permitted, the algorithm channel (dual-view binding).
     /// Lean: <c>call : Expr → OutputBundle → Expr</c>.
@@ -2469,15 +2471,21 @@ public closed record Algorithm
     /// Corresponds to <c>Algorithm.conditional</c> in the Lean specification and owns
     /// exactly its fields: <see cref="Parent"/>, <see cref="Opens"/>, and <see cref="Branches"/>
     /// (a family has no parameter list, properties, or output of its own — its branch bodies do).
-    /// At call time, arguments are evaluated and matched against branch patterns
-    /// in source order. The first matching branch body is evaluated.
+    /// At call time the argument supply is formed like every call's (explicit spreads
+    /// evaluated, every other argument a suspended computation) and its count checked;
+    /// the branch patterns are then tried in source order against those same arguments,
+    /// and an argument is evaluated only when a pattern inspects it (a literal,
+    /// structural or repeated-name position) — a plain binder binds it unevaluated.
+    /// The first matching branch body is evaluated.
     /// If no branch matches, evaluation fails with <c>NoMatchingBranch</c>.
     ///
     /// <para><b>Full-input-specification rule</b>: each branch pattern <c>Name(...)</c>
-    /// is the complete input specification of that branch. Branch bodies do NOT
-    /// infer additional implicit parameters from free identifiers. All branch inputs
+    /// is the complete input specification of that branch. A branch's own level does
+    /// NOT infer additional implicit parameters from free identifiers. All branch inputs
     /// must appear in the pattern. Unused bound names are allowed. Grace <c>~</c> is
-    /// not permitted in branch patterns or bodies.</para>
+    /// not permitted in branch patterns or on the branch's own level; an algorithm
+    /// nested in a branch body is an ordinary independent owner whose own inferred
+    /// parameters may carry Grace and are never added to the branch (Q-16 G-O).</para>
     ///
     /// <para><b>Uniform top-level arity invariant</b>: all branches of the same
     /// conditional algorithm must have the same top-level pattern arity

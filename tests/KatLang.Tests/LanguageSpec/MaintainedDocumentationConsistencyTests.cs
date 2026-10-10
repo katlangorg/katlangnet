@@ -226,6 +226,18 @@ public class MaintainedDocumentationConsistencyTests
         { @"\breducers?\s+emits?\s+exactly\s+one\s+accumulator\b", "a reducer restricted to one emitted accumulator value (before Q-25)" },
         { @"\binvalid\s+as\s+a\s+reducer\s+result\b", "a multi-row reducer result as invalid (before Q-25)" },
         { @"\bstrict\s+single-value\s+`?map`?\b|\bsingle-element\s+contract\b", "the strict single-value map/reduce callback contract (before Q-25)" },
+        // X-18 (closed by the owner 2026-10-10, confirming the Model-C law): supply FORMATION is shared
+        // by every callee, DEMAND is not. An explicit spread runs while the supply is formed, cardinality
+        // is checked before any ordinary argument is demanded, and each callee — a user body and its
+        // inspecting patterns, a builtin through its argument roles — demands only what it uses, in its
+        // own order. So no current text says that every written slot is evaluated exactly once or before
+        // the arity check, that arguments are evaluated left to right, or that a clause family evaluates
+        // its arguments before matching.
+        { @"\b(?:each|every)\s+written\s+(?:argument\s+)?slot\s+(?:is\s+)?evaluated\s+exactly\s+once\b", "every written slot evaluated exactly once (before Model C; X-18)" },
+        { @"\bleft-to-right\s+argument(?:s\b|\s+evaluation\b)", "left-to-right argument evaluation (before Model C; X-18)" },
+        { @"\bevery\s+written\s+(?:argument\s+)?slot\s+is\s+evaluated\s+before\b", "every written slot evaluated before the arity check (before Model C; X-18)" },
+        { @"\barguments\s+are\s+evaluated\s+and\s+matched\b", "a clause family evaluating its arguments before matching (before Model C; X-18)" },
+        { @"\b(?:all|every|each)\s+(?:of\s+(?:the|its)\s+)?(?:call\s+)?arguments?\s+(?:are|is)\s+evaluated\b[^.]{0,40}\bleft[- ]to[- ]right\b", "every argument evaluated left to right (before Model C; X-18)" },
     };
 
     [Theory]

@@ -825,6 +825,8 @@ SafeDivide(1, 0)
 0
 ```
 
+There is one exception: an explicit spread such as `Values*` (see [Sequences](#sequences)) is computed while a call's arguments are being formed, before `if` chooses a branch, so a spread written in the other branch still runs.
+
 The condition must be a Boolean:
 
 ```
@@ -1177,6 +1179,8 @@ Add(Bad*)
 ```
 
 **Result:** error — division by zero, while computing `Bad*` for the call.
+
+This happens before the called algorithm does anything, so not even `if` can skip a spread: with the same `Bad`, `if(false, Bad*, 0)` fails in the same way, while `if(false, Bad, 0)` is `0`, because `if` never evaluates an ordinary argument in the branch it does not choose.
 
 When another item follows a spread, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`: a star followed by an operand always multiplies, even when the operand is on the next line.
 
@@ -2657,7 +2661,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 
 | Operation | Written as | Result |
 |---|---|---|
-| `if` | `if(condition, a, b)` | `a` when the condition is `true`, otherwise `b`; only the chosen branch is evaluated |
+| `if` | `if(condition, a, b)` | `a` when the condition is `true`, otherwise `b`; only the chosen branch is evaluated (a spread argument is computed before `if` chooses) |
 | `range` | `range(start, end)` | The whole numbers from `start` to `end`, counting up or down |
 | `count` | `xs.count` | The number of items |
 | `sum`, `avg` | `xs.sum`, `xs.avg` | The total and the mean of numeric items (the sum of no items is `0`) |
