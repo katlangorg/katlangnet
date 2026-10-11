@@ -147,7 +147,16 @@ public static partial class Evaluator
         Func<T, IReadOnlyList<T>?> children, Func<T, IReadOnlyList<NeedPattern>?, NeedPattern> create) where T : class
     {
         if (source.Count == 0) return [];
-        if (source.Count == 1 && children(source[0]) is null) return [create(source[0], null)];
+        // A flat level translates each pattern on its own. Only a structural host-DAG node needs
+        // the sharing memo below; a repeated capture node translated twice binds the same way.
+        var structural = false;
+        for (var i = 0; i < source.Count && !structural; i++) structural = children(source[i]) is not null;
+        if (!structural)
+        {
+            var level = new NeedPattern[source.Count];
+            for (var i = 0; i < level.Length; i++) level[i] = create(source[i], null);
+            return level;
+        }
         var memo = new Dictionary<T, NeedPattern>(ReferenceEqualityComparer.Instance);
         var pending = new Stack<(T Pattern, bool Expanded)>();
         foreach (var root in source)
@@ -195,21 +204,75 @@ public static partial class Evaluator
     private static IReadOnlyList<NeedPattern> NeedClauseHead(Pattern pattern)
         => NeedClausePatterns(pattern is Pattern.SequenceValue group ? group.Items : [pattern]);
 
+    // The binder reads the language's ONE supplied-slot rule (PatternLevelArity) over a
+    // translated level. Lean keeps a binder-level twin, needMinimumSuppliedSlots /
+    // needAcceptsCardinality, equal to it on every level the X-02 gate admits.
+    private static PatternLevelArity NeedLevelArity(IReadOnlyList<NeedPattern> level)
+    {
+        for (var i = 0; i < level.Count; i++)
+            if (level[i].Collecting) return new(level.Count, HasCollectingCapture: true);
+        return new(level.Count, HasCollectingCapture: false);
+    }
+
     private static int NeedMinimumSuppliedSlots(IReadOnlyList<NeedPattern> patterns)
-        => patterns.Count - patterns.Count(pattern => pattern.Collecting);
+        => NeedLevelArity(patterns).Minimum;
 
     private static bool NeedAcceptsCardinality(IReadOnlyList<NeedPattern> patterns, int supplied)
-        => supplied >= NeedMinimumSuppliedSlots(patterns)
-            && (patterns.Any(pattern => pattern.Collecting) || supplied == patterns.Count);
+        => NeedLevelArity(patterns).Accepts(supplied);
 
-    private static async ValueTask<EvalResult<NeedEnv?>> BindNeedPatterns(
+    /// <summary>
+    /// ALLOCATION of one ACCEPTED pattern level (VAR-02): the supplied cells the pattern at
+    /// <paramref name="index"/> binds. That is ONE cell at <c>Start</c> (<c>Length</c> 1), or,
+    /// for the level's first collecting capture <paramref name="collector"/> (-1 when none), the
+    /// exact slice the fixed prefix and suffix leave over. This is pure index arithmetic. For every
+    /// supply count <see cref="PatternLevelArity.Accepts"/> admits, every range lies inside the
+    /// supply and each supplied cell falls in exactly one range, in written order. That holds
+    /// whatever the level holds: a later collecting capture, which X-02 refuses before
+    /// evaluation, takes one cell. Lean: <c>needSourceAt</c> / <c>needLevelSources</c>.
+    /// </summary>
+    internal static (int Start, int Length) NeedSourceRange(int patternCount, int collector, int supplied, int index)
+    {
+        var collected = supplied - patternCount + 1;
+        return index == collector ? (index, collected)
+            : (collector >= 0 && index > collector ? index + collected - 1 : index, 1);
+    }
+
+    /// <summary>
+    /// THE ONE INSPECTING BINDER (NEED-04, PAT-10) behind its top-level CARDINALITY GATE. An
+    /// unaccepted supply count is a clause family's non-match, and otherwise the binder's own
+    /// <c>ArityMismatch</c> (the level's minimum against the complete supply count), decided before
+    /// any demand. Lean: <c>bindNeedPatterns</c>, whose level runs <c>needCardinalityGate</c> first.
+    /// The zero-supply binding uses it. Every other caller makes that one decision itself and then
+    /// binds through <see cref="BindAcceptedNeedPatterns"/>. These are an ordinary call
+    /// (<see cref="NeedCallArityError"/>), a user loop step (<c>LoopStateArityMismatch</c>) and a
+    /// deconstruction (<see cref="BindNeedDeconstruction"/>), each reporting the rejection in its
+    /// own shape. The family drivers decide per clause too, so no gate frame stays on the stack
+    /// while a pattern demands a recursive argument.
+    /// </summary>
+    private static ValueTask<EvalResult<NeedEnv?>> BindNeedPatterns(
+        IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply,
+        EvalCtx ctx, bool asynchronous, bool family)
+    {
+        var arity = NeedLevelArity(patterns);
+        return arity.Accepts(supply.Count)
+            ? BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family)
+            : new(family ? EvalResult<NeedEnv?>.Ok(null) : new EvalError.ArityMismatch(arity.Minimum, supply.Count));
+    }
+
+    /// <summary>
+    /// The inspecting binder over a supply whose count its top-level patterns ACCEPT. The caller's
+    /// cardinality gate has already decided that count, either <see cref="BindNeedPatterns"/> or a
+    /// caller's own shaped report, so allocation here never re-checks it. Each structural level's
+    /// own gate stays here, exactly once per level. Patterns traverse in written order, depth
+    /// first: a unique plain name transports its cell, a repeated name, a literal or a structural
+    /// pattern demands its cell when reached, and a collecting capture binds a lazy exact slice.
+    /// </summary>
+    private static async ValueTask<EvalResult<NeedEnv?>> BindAcceptedNeedPatterns(
         IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply,
         EvalCtx ctx, bool asynchronous, bool family)
     {
         // Empty and single-name heads need no traversal metadata. These are the same
-        // cardinality and non-inspecting binding rules as the general work-stack path.
-        if (!NeedAcceptsCardinality(patterns, supply.Count))
-            return family ? EvalResult<NeedEnv?>.Ok(null) : new EvalError.ArityMismatch(NeedMinimumSuppliedSlots(patterns), supply.Count);
+        // non-inspecting binding rules as the general work-stack path.
         if (patterns.Count == 0) return EvalResult<NeedEnv?>.Ok([]);
         if (patterns.Count == 1 && patterns[0].Name is { } onlyName)
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
@@ -233,24 +296,28 @@ public static partial class Evaluator
         EvalResult<NeedEnv?> Mismatch(EvalError error)
             => family ? EvalResult<NeedEnv?>.Ok(null) : error;
 
-        EvalError? PushLevel(IReadOnlyList<NeedPattern> level, IReadOnlyList<NeedCell> cells)
+        // Allocation of an ACCEPTED level (NeedSourceRange), pushed last-first so the pop
+        // order is the written left-to-right order.
+        void PushLevel(IReadOnlyList<NeedPattern> level, IReadOnlyList<NeedCell> cells)
         {
-            if (!NeedAcceptsCardinality(level, cells.Count))
-                return new EvalError.ArityMismatch(NeedMinimumSuppliedSlots(level), cells.Count);
             var collector = -1;
             for (var i = 0; i < level.Count; i++) if (level[i].Collecting) { collector = i; break; }
-            var extra = cells.Count - level.Count + 1;
             for (var i = level.Count - 1; i >= 0; i--)
             {
-                var cell = i == collector
-                    ? CollectorCell(cells.Skip(i).Take(extra).ToArray(), ctx)
-                    : cells[collector >= 0 && i > collector ? i + extra - 1 : i];
+                var (start, length) = NeedSourceRange(level.Count, collector, cells.Count, i);
+                NeedCell cell;
+                if (i == collector)
+                {
+                    var slice = new NeedCell[length];
+                    for (var j = 0; j < length; j++) slice[j] = cells[start + j];
+                    cell = CollectorCell(slice, ctx);
+                }
+                else cell = cells[start];
                 pending.Push((level[i], cell));
             }
-            return null;
         }
 
-        if (PushLevel(patterns, supply) is { } cardinality) return Mismatch(cardinality);
+        PushLevel(patterns, supply);
         while (pending.TryPop(out var item))
         {
             var (pattern, cell) = item;
@@ -292,15 +359,15 @@ public static partial class Evaluator
             var items = pattern.Unpacking ? inspected.SpreadItems() : pattern.List ? inspected.ListPatternItems() : inspected.SequencePatternItems();
             if (items is null)
                 return family ? EvalResult<NeedEnv?>.Ok(null) : StructuralPatternKindMismatch(pattern.Original!, inspected);
-            if (!NeedAcceptsCardinality(pattern.Children!, items.Count))
-            {
-                var minimum = NeedMinimumSuppliedSlots(pattern.Children!);
+            // The nested level's ONE cardinality gate (Lean: needCardinalityGate in bindNeedOne).
+            // The unpacking receiver's mismatch stays the plain ArityMismatch its deconstruction
+            // reports; a written structural pattern's mismatch names that pattern.
+            var arity = NeedLevelArity(pattern.Children!);
+            if (!arity.Accepts(items.Count))
                 return family ? EvalResult<NeedEnv?>.Ok(null) : pattern.Unpacking
-                    ? new EvalError.ArityMismatch(minimum, items.Count)
-                    : StructuralPatternArityMismatch(pattern.Original!, minimum, items.Count);
-            }
-            var ready = items.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
-            if (PushLevel(pattern.Children!, ready) is { } nestedCardinality) return Mismatch(nestedCardinality);
+                    ? new EvalError.ArityMismatch(arity.Minimum, items.Count)
+                    : StructuralPatternArityMismatch(pattern.Original!, arity.Minimum, items.Count);
+            PushLevel(pattern.Children!, items.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray());
         }
         return EvalResult<NeedEnv?>.Ok(bound.Select(pair => (pair.Key, pair.Value)).ToArray());
     }
@@ -311,22 +378,33 @@ public static partial class Evaluator
         ctx.Observations?.RecordDeconstructionFullBind();
         var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
+        // The helper's cardinality comes first, before any demand (NEED-05). A parser helper takes
+        // its one right-hand side, so only a host-modified helper can be refused here.
+        var patterns = NeedParameterPatterns(helper.ParameterPatterns);
+        var arity = NeedLevelArity(patterns);
+        if (!arity.Accepts(supply.Value.Count))
+            return DeconstructionArityMismatch(helper, new EvalError.ArityMismatch(arity.Minimum, supply.Value.Count));
+        // The right-hand side's OWN failure belongs to the written right-hand side, never to the
+        // assignment pattern. Demanding the one supplied cell before the binder raises that
+        // failure unwrapped (pinned by DeconstructionBindingTests). For a parser helper, every
+        // ArityMismatch the binder returns afterwards is then its own unpacking-level mismatch:
+        // its demand of the cell is a memo hit, and the targets are names.
         if (supply.Value.Count == 1)
         {
             var inspected = await DemandCell(supply.Value[0], asynchronous).ConfigureAwait(false);
             if (inspected.IsError) return inspected.Error;
         }
-        var bindings = await BindNeedPatterns(NeedParameterPatterns(helper.ParameterPatterns), supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
+        var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError)
-        {
-            if (bindings.Error is EvalError.ArityMismatch shape)
-                return new EvalError.WithContext(new DeconstructionBindingContext(helper.Parameters.Select(parameter => parameter.DisplayName).ToList(),
-                    helper.Parameters.Any(parameter => parameter.Kind == ParameterKind.Collecting)), shape);
-            return bindings.Error;
-        }
+            return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : bindings.Error;
         var index = bindings.Value!.ToDictionary(binding => binding.Name, binding => binding.Cell, StringComparer.Ordinal);
         return EvalResult<IReadOnlyList<NeedCell>>.Ok(helper.Parameters.Select(parameter => index[parameter.Name]).ToArray());
     }
+
+    // A deconstruction's OWN cardinality failure, named by its assignment pattern.
+    private static EvalError DeconstructionArityMismatch(Algorithm.User helper, EvalError.ArityMismatch shape)
+        => new EvalError.WithContext(new DeconstructionBindingContext(helper.Parameters.Select(parameter => parameter.DisplayName).ToList(),
+            helper.Parameters.Any(parameter => parameter.Kind == ParameterKind.Collecting)), shape);
 
     internal static EvalCtx LoopNeedBindingContext(EvalCtx ctx, IReadOnlyList<string> names, IReadOnlyList<NeedCell> cells)
         => WithNeedBindings(ctx, names.Select((name, index) => (name, cells[index])).ToArray(), names);
@@ -378,9 +456,10 @@ public static partial class Evaluator
             case Algorithm.User:
             {
                 var patterns = prepared.NeedPatterns;
-                if (!NeedAcceptsCardinality(patterns, state.Count))
-                    return LoopStateArityMismatch(prepared.BindingContract, patterns.Count - patterns.Count(pattern => pattern.Collecting), state.Count, loopName);
-                var bindings = await BindNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(false);
+                var arity = NeedLevelArity(patterns);
+                if (!arity.Accepts(state.Count))
+                    return LoopStateArityMismatch(prepared.BindingContract, arity.Minimum, state.Count, loopName);
+                var bindings = await BindAcceptedNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(false);
                 if (bindings.IsError) return bindings.Error;
                 var names = prepared.BindingContract.ParameterNames;
                 var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
@@ -462,10 +541,10 @@ public static partial class Evaluator
     private static EvalError NeedCallArityError(Algorithm callee, IReadOnlyList<NeedPattern> patterns, int supplied, CallDiagnosticName name, EvalCtx ctx, bool variadicStyle)
     {
         var renderedName = name.Render(ctx);
-        var minimum = NeedMinimumSuppliedSlots(patterns);
-        return variadicStyle && patterns.Any(pattern => pattern.Collecting) && patterns.All(pattern => pattern.Name is not null)
-            ? new EvalError.VariadicArityMismatch(renderedName, minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee) }
-            : new EvalError.ArityMismatch(minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee), InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters) };
+        var arity = NeedLevelArity(patterns);
+        return variadicStyle && arity.HasCollectingCapture && patterns.All(pattern => pattern.Name is not null)
+            ? new EvalError.VariadicArityMismatch(renderedName, arity.Minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee) }
+            : new EvalError.ArityMismatch(arity.Minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee), InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters) };
     }
 
     // A call result crosses the call's value boundary (VAL-06: ONE value, counted by ValueCount),
@@ -477,12 +556,14 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalNeedUserSupplyCounted(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle)
     {
+        // The call's ONE top-level cardinality decision, reported in the call's own shape.
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = BindNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false).GetAwaiter().GetResult();
+        var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false).GetAwaiter().GetResult();
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
-        return ReCountValueBoundary(EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, callee.Params), ShadowValEnv(values, callee.Params)));
+        var names = callee.Params;
+        return ReCountValueBoundary(EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names)));
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserBody(
@@ -500,11 +581,12 @@ public static partial class Evaluator
     {
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = await BindNeedPatterns(patterns, supply, ctx, asynchronous, family: false).ConfigureAwait(false);
+        var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
-        var boundCtx = WithNeedBindings(ctx, bindings.Value!, callee.Params);
-        var boundValues = ShadowValEnv(values, callee.Params);
+        var names = callee.Params;
+        var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
+        var boundValues = ShadowValEnv(values, names);
         return ReCountValueBoundary(asynchronous
             ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
             : EvalAlgOutputCounted(callee, boundCtx, boundValues));
@@ -581,12 +663,24 @@ public static partial class Evaluator
             : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
     }
 
+    // The FAMILY-level decision before any clause (Lean: selectNeedFamilyBranch). First come the
+    // duplicate heads. Then, if no clause's head accepts the supply count, the call is an
+    // ArityMismatch with the first clause's minimum (0 when there is no clause). Which clause binds
+    // is each clause's own gate afterwards, in written order: the driver's per-clause check, where a
+    // refused count is that clause's non-match, then BindAcceptedNeedPatterns in family mode.
     private static EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>> PrepareNeedFamilyHeads(
         Algorithm callee, int supplied)
     {
         if (callee.HasDuplicateBranchPatterns()) return new EvalError.DuplicateBranchPattern();
-        var heads = callee.Branches.Select(branch => NeedClauseHead(branch.Pattern)).ToArray();
-        return heads.Any(head => NeedAcceptsCardinality(head, supplied))
+        var branches = callee.Branches;
+        var heads = new IReadOnlyList<NeedPattern>[branches.Count];
+        var accepted = false;
+        for (var i = 0; i < heads.Length; i++)
+        {
+            heads[i] = NeedClauseHead(branches[i].Pattern);
+            accepted = accepted || NeedAcceptsCardinality(heads[i], supplied);
+        }
+        return accepted
             ? EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>>.Ok(heads)
             : new EvalError.ArityMismatch(heads.Length == 0 ? 0 : NeedMinimumSuppliedSlots(heads[0]), supplied);
     }
@@ -612,8 +706,11 @@ public static partial class Evaluator
         var heads = prepared.Value;
         for (var i = 0; i < heads.Count; i++)
         {
+            // The clause's ONE cardinality gate, in family mode: a refused count is its non-match.
+            // Decided here rather than in a gated binder frame, so a literal or structural pattern
+            // that demands a recursive argument holds no extra frame (stack headroom per level).
             if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
-            var bindings = BindNeedPatterns(heads[i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+            var bindings = BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
             if (bindings.IsError) return bindings.Error;
             if (bindings.Value is not { } matched) continue;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, SelectedBranchBody(callee.Branches[i]), matched, ctx, values));
@@ -632,7 +729,7 @@ public static partial class Evaluator
         for (var i = 0; i < heads.Count; i++)
         {
             if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
-            var bindings = await BindNeedPatterns(heads[i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            var bindings = await BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
             if (bindings.IsError) return bindings.Error;
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous

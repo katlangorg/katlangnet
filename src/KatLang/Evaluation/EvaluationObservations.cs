@@ -97,12 +97,12 @@ internal sealed class EvaluationObservations
 
     /// <summary>
     /// Number of GENERIC loop-step binding preparations performed during this run: each increment is
-    /// one <c>Evaluator.PrepareGenericLoopStep</c> call — the loop-invariant selection of the step's
-    /// callable signature, binding plan/shape, shadowed counted-parameter environment, and
-    /// spread-boundary policy. The generic loop strategy prepares exactly ONCE per loop invocation
-    /// that runs at least one iteration (sync and async twins alike), never once per iteration, and a
-    /// zero-iteration loop (<c>repeat</c> with count 0, whose entry returns before the generic loop
-    /// body) prepares zero times. Handover from the optimized strategy re-enters the generic loop as
+    /// one <c>Evaluator.PrepareGenericLoopStep</c> call — the loop-invariant snapshot of the step's
+    /// binding contract and its need-pattern view (each iteration then binds the state and shadows
+    /// the inherited environments itself). The generic loop strategy prepares exactly ONCE per loop
+    /// invocation that runs at least one iteration (sync and async twins alike), never once per
+    /// iteration, and a zero-iteration loop (<c>repeat</c> with count 0, whose entry returns before
+    /// the generic loop body) prepares zero times. Handover from the optimized strategy re-enters the generic loop as
     /// a fresh invocation and therefore prepares once more; nested or recursive loops prepare once
     /// per invocation each. Optimized-strategy iterations never touch this counter.
     /// </summary>

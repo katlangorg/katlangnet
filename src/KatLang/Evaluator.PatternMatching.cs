@@ -188,7 +188,8 @@ public static partial class Evaluator
     /// with the same supply — <c>map(xs, F)</c> calls <c>F(E)</c> for each element
     /// <c>E</c>, <c>reduce</c> calls <c>R(E, Acc)</c> — so a user callee (and a clause
     /// family's flat-binder equivalent) binds through the ONE counted binder
-    /// <see cref="BindNeedPatterns"/>: fixed parameters take their values
+    /// (<see cref="BindAcceptedNeedPatterns"/>, after the callee's own cardinality report):
+    /// fixed parameters take their values
     /// unchanged, a collector collects the supplied values exactly, and only the callee's
     /// explicit sequence-value patterns open a value. There is no callback row
     /// convention: <c>map([(1, 2)], Add)</c> with <c>Add(x, y)</c> is the ordinary

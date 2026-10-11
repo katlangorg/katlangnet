@@ -9,7 +9,10 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang;
 
 /// <summary>
-/// Parameter binding: call-argument assembly, flat/collecting/patterned parameter binding, deconstruction binding, and loop-step binding preparation (the "Bind parameters" section).
+/// Parameter binding support (the "Bind parameters" section): the resolved-argument and
+/// variadic-item records, loop-step binding preparation, written-slot sequence items, the
+/// structural-pattern and repeated-name binding diagnostics, and the shared deconstruction
+/// projection. Supply formation and the one inspecting binder live in <c>Evaluator.Needs.cs</c>.
 /// Part of the <see cref="Evaluator"/> partial class; the central state, lookup and open resolution,
 /// the built-in prelude, and the run entry points remain in <c>Evaluator.cs</c>.
 /// </summary>
@@ -136,15 +139,13 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The loop-invariant part of generic loop-step execution, prepared ONCE per loop
-    /// invocation and reused by every iteration (M16). Everything here depends only on
-    /// the step algorithm and the loop's own context — never on iteration state — so
-    /// per-iteration recomputation was pure waste: the snapshot of the step's parameter
-    /// patterns, their need-pattern view, and the shadowed environments would refilter
-    /// the same invariant inputs every iteration.
-    /// Iteration-varying work (state binding, the fresh counted-environment
-    /// concatenation whose list identity is a zero-arg-cache key component, and step
-    /// output evaluation) stays in <see cref="RunStepSlots"/>.
+    /// The loop-invariant part of a USER step's generic execution, prepared ONCE per loop
+    /// invocation and reused by every iteration (M16). It holds the snapshot of the step's
+    /// binding contract, frozen against host mutation, and the contract's need-pattern view.
+    /// Both depend only on the step algorithm, never on iteration state. Each iteration binds
+    /// its state cells through the one binder and shadows the inherited environments by the
+    /// step's names (<see cref="InvokeLoopStepSupply"/>), and the binding's fresh environments
+    /// are part of the zero-arg cache key.
     /// Nothing prepared here is consulted when the step's rows form the next state: the
     /// parameter patterns BIND the incoming state only, and the next state is the step's
     /// row supply (<see cref="EvalAlgOutputSlots"/>) whatever the pattern category
@@ -152,9 +153,7 @@ public static partial class Evaluator
     /// </summary>
     private readonly record struct PreparedGenericLoopStep(
         GenericLoopStepBindingContract BindingContract,
-        IReadOnlyList<NeedPattern> NeedPatterns,
-        AlgEnv ShadowedAlgEnv,
-        CountedParamEnv ShadowedCountedParamEnv);
+        IReadOnlyList<NeedPattern> NeedPatterns);
 
     /// <summary>
     /// Freezes the temporary algorithm-shaped view used to derive the step's binding
@@ -270,19 +269,12 @@ public static partial class Evaluator
     {
         ctx.Observations?.RecordGenericLoopStepBindingPreparation();
         var bindingContract = SnapshotGenericLoopStepBindingContract(step);
-        var parameterNames = bindingContract.Params.ToArray();
-        // Both inherited tiers are shadowed once per loop invocation through the
-        // shared callee-context helper; RunStepSlots prepends the per-iteration
-        // counted bindings on top of the prepared counted tier.
-        var inherited = ShadowInheritedParameterEnvironments(ctx, parameterNames);
         return new PreparedGenericLoopStep(
             new GenericLoopStepBindingContract(
                 bindingContract.Parameters,
                 bindingContract.ParameterPatterns,
-                parameterNames),
-            NeedParameterPatterns(bindingContract.ParameterPatterns),
-            inherited.AlgEnv,
-            inherited.CountedParamEnv);
+                bindingContract.Params.ToArray()),
+            NeedParameterPatterns(bindingContract.ParameterPatterns));
     }
 
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueItems(
@@ -452,10 +444,10 @@ public static partial class Evaluator
         => $"repeated parameter '{name}' requires equal arguments";
 
     /// <summary>
-    /// One bound range of a pattern level: its first-occurrence binding set, the per-pattern
-    /// contributions the cross merges read (for a range of more than one pattern), and whether
-    /// some name repeated inside it — a repeat the range may have left to the cross merges
-    /// because the level binds the name on the other side of the collector too.
+    /// NEED-04's callable-identity agreement between two contributions of one repeated name that
+    /// both carry CALLABLE identity. They must be the same builtin, or the same declaration in the
+    /// same declaring scope with compatible captured activations. Comparing identities evaluates
+    /// neither algorithm and consults no value cache. Lean: <c>sameRepeatedCallableIdentity</c>.
     /// </summary>
     private static bool SameRepeatedCallableIdentity(Algorithm left, Algorithm right)
     {
@@ -470,17 +462,18 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The names one slice of a pattern level binds at any depth (Lean
-    /// <c>ParameterPattern.anyBindsName</c>), plus an extra name (the collector's) — indexed
-    /// lazily, only when a repeated name actually has to be decided.
+    /// One target of an assignment deconstruction, read from the SHARED binding of its right-hand
+    /// side. The helper binds once per execution (<see cref="BindNeedDeconstruction"/>, through the
+    /// run's deconstruction binding cache), and each target projects its own bound cell.
+    /// <c>null</c> when the binding has no such target, which only a host-modified helper can
+    /// produce; the caller then evaluates the helper call as an ordinary call.
     /// </summary>
     private static EvalResult<Result>? TryProjectSharedDeconstructionTarget(
         Algorithm.User helper,
         AssignmentDeconstructionTarget target,
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName calleeName)
+        ValEnv valEnv)
     {
         var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
             ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv, ctx.AlgEnv, ctx.CountedParamEnv);
@@ -490,8 +483,6 @@ public static partial class Evaluator
         if ((uint)target.Index >= (uint)sharedR.Value.Count) return null;
         return ProjectCountedValue(sharedR.Value[target.Index].Demand());
     }
-
-
 
     /// <summary>
     /// Builtin collection-item view of the bound collection argument: opens
@@ -508,8 +499,6 @@ public static partial class Evaluator
     /// </summary>
     private static IReadOnlyList<Result> BuiltinCollectionItems(Result value)
         => value is Result.ListValue(var listItems) ? listItems : value.ToItems();
-
-
 
     /// <summary>
     /// RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02 / PV-06, September 2026): whether a
@@ -535,6 +524,4 @@ public static partial class Evaluator
     /// slot — reaches no limit. No Lean counterpart: Lean models no resource limits.
     /// </summary>
     internal static bool IsDeferrableEvaluationFailure(EvalError failure) => !failure.IsResourceLimit;
-
-
 }

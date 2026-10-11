@@ -106,6 +106,15 @@ internal sealed class EvaluationBudget
         => new(limits ?? EvaluationLimits.Default, hostOperations, randomSeed, cancellationToken);
 
     /// <summary>
+    /// The gate of the run's NEED-CELL WAIT-FOR GRAPH (<see cref="NeedCell"/>). Every suspended
+    /// cell of the run carries this budget, so every dependency edge between two of them lives
+    /// under this one gate, and a cycle the run's demands could close is checked against them
+    /// all at once. No edge ever joins cells of two runs, so independent runs never contend for
+    /// it. It guards only the graph: no counter, the random stream, or a cell's own outcome.
+    /// </summary>
+    internal Lock NeedDependencyGate { get; } = new();
+
+    /// <summary>
     /// The run's random stream — run-scoped MUTABLE state exactly like the counters,
     /// consumed in evaluation order by every <c>Math.Random</c> / <c>Math.RandomInt</c>
     /// (and alias) call of the run through the budget reference every copied

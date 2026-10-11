@@ -104,18 +104,6 @@ public static partial class Evaluator
     }
 
     private static EvalError LoopStateArityMismatch(
-        Algorithm step,
-        int expectedStateValueCount,
-        int actualStateValueCount,
-        string loopName)
-        => LoopStateArityMismatch(
-            step.ParameterPatterns,
-            step.Parameters,
-            expectedStateValueCount,
-            actualStateValueCount,
-            loopName);
-
-    private static EvalError LoopStateArityMismatch(
         GenericLoopStepBindingContract bindingContract,
         int expectedStateValueCount,
         int actualStateValueCount,

@@ -106,8 +106,8 @@ public class ValueChannelParameterShadowingTests
 
     /// <summary>
     /// Generic and planned loop strategies bind the step's state parameters through
-    /// different code (<c>PrepareGenericLoopStep</c> and the planned loop's step
-    /// context); both must shadow the algorithm tier.
+    /// different code (the generic iteration's binding in <c>InvokeLoopStepSupply</c> and the
+    /// planned loop's step context); both must shadow the algorithm tier.
     /// </summary>
     [Theory]
     [InlineData(RepeatBody)]

@@ -17,9 +17,8 @@ internal static class CallableSignatureDiagnostics
 {
     /// <summary>
     /// The arity the BINDER accepts for this signature's top-level parameter list,
-    /// read from that list ALONE. The minimum is the binder's own rule
-    /// (<see cref="ParameterPattern.MinimumSuppliedSlots"/>, which
-    /// <c>BindNeedPatterns</c> itself enforces): every pattern at this level
+    /// read from that list ALONE: its <see cref="PatternLevelArity"/>, the ONE supplied-slot
+    /// rule the binder's own cardinality gate reads. Every pattern at this level
     /// consumes ONE supplied slot whatever it contains — a sequence-value group is one
     /// slot the binder opens afterwards — and a COLLECTING capture at this level consumes
     /// NONE, because it collects whatever the fixed prefix and suffix leave over (an empty
@@ -38,11 +37,12 @@ internal static class CallableSignatureDiagnostics
         var topLevelCollectingCount = parameterPatterns is ImplicitSignatureTemplate template
             ? template.Facts.TopLevelCollectingCount
             : parameterPatterns.Count(IsTopLevelCollectingCapture);
+        var arity = new PatternLevelArity(parameterPatterns.Count, HasCollectingCapture: topLevelCollectingCount > 0);
 
         return new CallableArityFacts(
-            ParameterPattern.MinimumSuppliedSlots(parameterPatterns),
-            MaxTopLevelArgumentCount: topLevelCollectingCount > 0 ? null : parameterPatterns.Count,
-            HasTopLevelCollecting: topLevelCollectingCount > 0,
+            arity.Minimum,
+            MaxTopLevelArgumentCount: arity.Maximum,
+            HasTopLevelCollecting: arity.HasCollectingCapture,
             TopLevelCollectingCount: topLevelCollectingCount);
     }
 

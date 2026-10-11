@@ -92,6 +92,7 @@ internal sealed record CallableBindingPlan
         if (parameters.Count != 0)
             throw new InvalidOperationException($"Callable signature `{signature.DisplayText}` contains capture metadata that is not represented by its parameter patterns.");
 
+        // The signature's facts and the plan's nodes derive the collector facts independently.
         var arityFacts = CallableSignatureDiagnostics.GetArityFacts(signature);
         if (arityFacts != topLevelPatternList.ToTopLevelArityFacts())
             throw new InvalidOperationException($"Callable binding plan arity facts do not match signature `{signature.DisplayText}`.");
@@ -229,34 +230,36 @@ internal sealed record PatternListBindingPlan
             suffix = [];
         }
 
-        // The ONE per-level arity rule, the same one the binder applies at this level
-        // (ParameterPattern.MinimumSuppliedSlots, read by BindNeedPatterns itself):
-        // every pattern here consumes ONE supplied slot whatever it contains — a
-        // structural group (sequence or list) is one slot the binder opens afterwards — and a COLLECTING
-        // capture here consumes NONE and lifts the upper bound. The decision is LEVEL-LOCAL:
-        // `isTopLevel` classifies the collecting NODE, never the arity, nested captures are
-        // never flattened into this level's counts, and a grouped pattern beside a collector
-        // does not make the collector fixed. So `G((a, b), *rest)` is min 1 / unbounded at the
-        // top level, and the nested list of `P((x, *r))` is min 1 / unbounded while `P` itself
-        // stays min 1 / max 1. Collection builtins are flat fixed lists and take the exact arm.
-        var minSlotCount = ParameterPattern.MinimumSuppliedSlots(parameterPatterns);
-        int? maxSlotCount = collectingIndex >= 0 ? null : nodes.Count;
+        // The ONE per-level arity rule, the same one the binder's gate applies at this level
+        // (PatternLevelArity), read from the nodes this plan built: every pattern here consumes
+        // ONE supplied slot whatever it contains — a structural group (sequence or list) is one
+        // slot the binder opens afterwards — and a COLLECTING capture here consumes NONE and
+        // lifts the upper bound. The decision is LEVEL-LOCAL: `isTopLevel` classifies the
+        // collecting NODE, never the arity, nested captures are never flattened into this
+        // level's counts, and a grouped pattern beside a collector does not make the collector
+        // fixed. So `G((a, b), *rest)` is min 1 / unbounded at the top level, and the nested
+        // list of `P((x, *r))` is min 1 / unbounded while `P` itself stays min 1 / max 1.
+        // Collection builtins are flat fixed lists and take the exact arm.
+        var arity = new PatternLevelArity(nodes.Count, HasCollectingCapture: collectingIndex >= 0);
 
         return new PatternListBindingPlan(
             nodes,
             prefix,
             collectingCapture,
             suffix,
-            minSlotCount,
-            maxSlotCount,
+            arity.Minimum,
+            arity.Maximum,
             collectingCount);
     }
 
     /// <summary>
     /// This level's arity facts. Applied by <see cref="CallableBindingPlan.FromSignature"/>
     /// to the TOP-LEVEL list, where it must equal
-    /// <see cref="CallableSignatureDiagnostics.GetArityFacts"/> — both state the same
-    /// per-level binder rule, so a divergence is a defect and fails loudly there.
+    /// <see cref="CallableSignatureDiagnostics.GetArityFacts"/>. Both apply the one
+    /// <see cref="PatternLevelArity"/> rule, but from independently derived collector facts:
+    /// this plan from the nodes it built, the signature from its own patterns or a shared
+    /// template's stored facts (FE-3). A divergence, such as a stale template fact, is a defect
+    /// and fails loudly there.
     /// </summary>
     internal CallableArityFacts ToTopLevelArityFacts()
         => new(

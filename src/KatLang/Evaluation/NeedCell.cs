@@ -6,10 +6,39 @@ namespace KatLang.Evaluation;
 /// <summary>
 /// One invocation's supplied computation. VALUE completion and CALLABLE identity are
 /// independent; transport shares this object. No demand bookkeeping is a language step.
+/// <para><b>Concurrency contract.</b></para>
+/// <list type="bullet">
+///   <item><b>Run-scoped.</b> A cell belongs to the ONE run whose budget it carries. Supported run
+///   entry points export only values through results and host callbacks. Internal cache keys can retain
+///   cells through execution environments, but cache entries include run identity and expose only
+///   values. Internal test adapters must not replay retained evaluation delegates in another run.
+///   The evaluator demands a run's cells
+///   from one logical flow at a time, and an async continuation may resume that flow on another
+///   thread.</item>
+///   <item><b>Thread-safe anyway.</b> Overlapping demands of one cell join a single flight (NEED-09).
+///   The flight starts at most once; success, ordinary failure, host exception and cancellation
+///   are sticky; and the completed outcome is never rewritten.</item>
+///   <item><b>The per-cell gate</b> (<c>_gate</c>) guards the cell's own state. It is held only for
+///   field updates and for the CALLABLE projection, which is identity-only resolution: it
+///   evaluates nothing and demands no VALUE.</item>
+///   <item><b>The wait-for graph</b> (the <c>_dependencies</c> edges, NEED-09) belongs to the run: its
+///   gate is the run budget's <see cref="EvaluationBudget.NeedDependencyGate"/>. A cycle is detected
+///   before its closing edge is awaited, across overlapping async chains too. Independent runs
+///   never contend for one gate. The graph lock is never held while user code runs or a flight is
+///   awaited, and the two gates are never nested.</item>
+///   <item><b>Cleanup.</b> An edge exists exactly while its demand frame is active. It is removed on
+///   every exit: success, failure, exception, cancellation or a cycle.</item>
+///   <item><b>Cells without a budget.</b> A Ready cell carries no budget but never joins a graph: it
+///   is complete before any edge is considered, and it is never a demand's parent. A suspended cell
+///   without a budget, which only a test builds, shares one process-wide fallback graph.</item>
+/// </list>
 /// </summary>
 internal sealed class NeedCell
 {
-    private static readonly object DependencyGate = new();
+    // The graph gate of suspended cells that belong to no run: only a test builds one (see
+    // AddDependency). A Ready cell has no budget either, but it never takes part in an edge.
+    private static readonly Lock UnownedDependencyGate = new();
+    // The cell whose evaluation the current logical flow is running: a demand's parent.
     private static readonly AsyncLocal<NeedCell?> Current = new();
     private readonly object _gate = new();
     private readonly CancellationToken _token;
@@ -55,6 +84,17 @@ internal sealed class NeedCell
     internal SourceSpan? Span { get; }
     internal Expr? Source { get; }
     internal IReadOnlyList<NeedCell>? Slice { get; }
+
+    // The gate of this cell's wait-for graph: its run's (budget identity is graph identity).
+    private Lock DependencyGate => _budget?.NeedDependencyGate ?? UnownedDependencyGate;
+
+    // Test observation only: how many distinct cells this cell's evaluation currently waits on
+    // (its active wait-for edges). Every edge is gone once its demand frame exits.
+    internal int ActiveDependencyCount
+    {
+        get { lock (DependencyGate) return _dependencies?.Count ?? 0; }
+    }
+
     internal static NeedCell Ready(Evaluator.CountedResult value) => new(value);
 
     // Planning may inspect an already-supplied data value. A suspended computation
@@ -203,9 +243,13 @@ internal sealed class NeedCell
 
     // All active edges, including independently started async chains, are checked
     // atomically before waiting. Iteration bounds the host stack independently of depth.
+    // The graph is PER RUN: an edge joins two cells of one budget, under that run's gate, and
+    // a parent of another run records nothing. That parent is the AsyncLocal current cell
+    // flowing into a run a host operation starts inside the outer evaluation; no cell of the
+    // inner run can demand it, so the skipped edge closes no cycle.
     private bool AddDependency(NeedCell? parent)
     {
-        if (parent is null) return true;
+        if (parent is null || parent._budget != _budget) return true;
         lock (DependencyGate)
         {
             if (ReferenceEquals(this, parent)) return false;
@@ -229,7 +273,7 @@ internal sealed class NeedCell
 
     private void RemoveDependency(NeedCell? parent)
     {
-        if (parent is null) return;
+        if (parent is null || parent._budget != _budget) return;
         lock (DependencyGate)
         {
             var count = parent._dependencies![this];

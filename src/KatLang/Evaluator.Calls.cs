@@ -302,7 +302,7 @@ public static partial class Evaluator
         CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
-            && TryProjectSharedDeconstructionTarget(helper, target, args, ctx, valEnv, calleeName) is { } projected)
+            && TryProjectSharedDeconstructionTarget(helper, target, args, ctx, valEnv) is { } projected)
             return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
         return EvalNeedUserBodyCounted(callee, args, ctx, valEnv, calleeName);
     }

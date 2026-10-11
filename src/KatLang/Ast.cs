@@ -327,6 +327,45 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
 }
 
 /// <summary>
+/// THE SUPPLIED-SLOT RULE OF ONE PATTERN LEVEL, written once and read by every layer that
+/// decides or reports a cardinality: the binder's gate at the top level and at every structural
+/// level, the zero-argument demand law, the signature arity facts, the binding plans and the
+/// arity diagnostics.
+/// <list type="bullet">
+///   <item>Every pattern consumes exactly ONE supplied slot, whatever it contains. A structural
+///   pattern (sequence or list) is one slot that the binder opens afterwards, so nested structure
+///   never changes the count at this level.</item>
+///   <item>A collecting capture at THIS level consumes NONE and lifts the upper bound. It collects
+///   whatever slots the fixed prefix and suffix leave, and an empty leftover is the exact empty
+///   list.</item>
+/// </list>
+/// A level with several collecting captures is a signature refused before evaluation (X-02). It
+/// keeps the one-collector minimum, never a lower one, so every supply count this rule accepts
+/// allocates inside the supply whatever the level holds (<c>Evaluator.NeedSourceRange</c>).
+/// Lean: <c>ParameterPattern.minimumSuppliedSlots</c> for a signature, and
+/// <c>needMinimumSuppliedSlots</c> / <c>needAcceptsCardinality</c> for the binder. The theorem
+/// <c>binder_minimum_is_the_signature_minimum</c> proves them equal on every level with at most
+/// one collector.
+/// </summary>
+/// <param name="PatternCount">The number of patterns at this level.</param>
+/// <param name="HasCollectingCapture">Whether a collecting capture stands at this level.</param>
+internal readonly record struct PatternLevelArity(int PatternCount, bool HasCollectingCapture)
+{
+    /// <summary>The fewest supplied slots the level accepts.</summary>
+    public int Minimum => HasCollectingCapture ? PatternCount - 1 : PatternCount;
+
+    /// <summary>The most supplied slots the level accepts; <c>null</c> (unbounded) when it collects.</summary>
+    public int? Maximum => HasCollectingCapture ? null : PatternCount;
+
+    /// <summary>Whether the level binds exactly <paramref name="supplied"/> supplied slots.</summary>
+    public bool Accepts(int supplied) => HasCollectingCapture ? supplied >= Minimum : supplied == PatternCount;
+
+    /// <summary>The arity of a parameter-pattern list's top level.</summary>
+    public static PatternLevelArity Of(IReadOnlyList<ParameterPattern> level)
+        => new(level.Count, ParameterPattern.HasCollectingCaptureAtCurrentLevel(level));
+}
+
+/// <summary>
 /// Recursive explicit parameter pattern for ordinary user-call binding.
 /// Capture nodes bind names; structural nodes preserve one parent-level slot and
 /// destructure that slot's immediate elements, and their delimiter selects the value
@@ -595,49 +634,37 @@ public closed record ParameterPattern
         => patterns is ImplicitSignatureTemplate template
             // A shared implicit-signature template knows its top-level collecting count (FE-3).
             ? template.Facts.TopLevelCollectingCount > 0
-            : patterns.Count(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting }) > 0;
+            : patterns.Any(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting });
 
     /// <summary>
-    /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts —
-    /// the ONE rule <see cref="Evaluator"/>'s <c>BindNeedPatterns</c> enforces (its own
-    /// count <c>NeedMinimumSuppliedSlots</c> equals this one on every signature the X-02
-    /// gate admits, by inspection — mirroring the Lean model's theorem
-    /// <c>binder_minimum_is_the_signature_minimum</c>),
-    /// factored out here so no other layer re-derives it:
-    /// <list type="bullet">
-    ///   <item>every pattern consumes exactly ONE supplied slot, whatever it contains — a
-    ///   structural pattern (sequence or list) is one slot that the binder opens afterwards,
-    ///   so nested structure never changes the count at this level;</item>
-    ///   <item>a collecting capture at THIS level consumes NONE: it collects whatever
-    ///   slots are left after the fixed prefix and suffix bind, and an empty leftover is
-    ///   the exact empty list.</item>
-    /// </list>
-    /// So <c>Only(*xs)</c> accepts zero supplied slots while <c>Head(x, *rest)</c>,
+    /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts: the
+    /// <see cref="PatternLevelArity.Minimum"/> of its top level, the ONE supplied-slot rule
+    /// (see <see cref="PatternLevelArity"/>) that the binder's cardinality gate, the arity
+    /// metadata (<see cref="CallableArityFacts.MinTopLevelArgumentCount"/>,
+    /// <see cref="PatternListBindingPlan.MinSlotCount"/>) and every arity diagnostic read. So
+    /// <c>Only(*xs)</c> accepts zero supplied slots while <c>Head(x, *rest)</c>,
     /// <c>Tail(*rest, z)</c>, <c>P((x, *rest))</c> and <c>Pair(x, y)</c> each require at
-    /// least one. The arity metadata reads THIS rule rather than re-deriving it:
-    /// <see cref="CallableArityFacts.MinTopLevelArgumentCount"/> and
-    /// <see cref="PatternListBindingPlan.MinSlotCount"/> are both computed from it, so the
-    /// binder minimum, the signature facts, and the binding plan agree at every level.
-    /// Lean: <c>ParameterPattern.minimumSuppliedSlots</c>.
+    /// least one. Lean: <c>ParameterPattern.minimumSuppliedSlots</c>.
     /// </summary>
     internal static int MinimumSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)
-        => patterns.Count - (HasCollectingCaptureAtCurrentLevel(patterns) ? 1 : 0);
+        => PatternLevelArity.Of(patterns).Minimum;
 
     /// <summary>
     /// Whether an ORDINARY call supplying ZERO argument slots can bind a parameter-pattern
-    /// list: its <see cref="MinimumSuppliedSlots"/> is zero — no top-level pattern, or only a
-    /// top-level collecting capture. This is the ONE zero-supply rule for a signature, read
-    /// by BOTH halves of the language that must never disagree about it (Q-03, September
-    /// 2026): the evaluator's zero-argument value demand and property-cache eligibility
-    /// (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/> for a user algorithm), and the
-    /// front end's implicit-lifting decision (<see cref="CallableSignature.AcceptsZeroSuppliedArguments"/>,
-    /// read by <see cref="ImplicitArgumentResolver"/>): a bare value reference to a callable
-    /// this accepts is a cached property-style read, never a fresh forwarding call.
+    /// list: its top level <see cref="PatternLevelArity.Accepts">accepts</see> zero supplied
+    /// slots — no top-level pattern, or only a top-level collecting capture. This is the ONE
+    /// zero-supply rule for a signature, read by BOTH halves of the language that must never
+    /// disagree about it (Q-03, September 2026): the evaluator's zero-argument value demand and
+    /// property-cache eligibility (<see cref="Evaluator.AcceptsZeroSuppliedArguments"/> for a
+    /// user algorithm), and the front end's implicit-lifting decision
+    /// (<see cref="CallableSignature.AcceptsZeroSuppliedArguments"/>, read by
+    /// <see cref="ImplicitArgumentResolver"/>): a bare value reference to a callable this
+    /// accepts is a cached property-style read, never a fresh forwarding call.
     /// Lean: <c>ParameterPattern.minimumSuppliedSlots … == 0</c>
     /// (<c>Algorithm.acceptsZeroSuppliedArguments</c>, <c>liftsBareValueReference</c>).
     /// </summary>
     internal static bool AcceptsZeroSuppliedSlots(IReadOnlyList<ParameterPattern> patterns)
-        => MinimumSuppliedSlots(patterns) == 0;
+        => PatternLevelArity.Of(patterns).Accepts(0);
 
     public static bool HasMultipleCollectingCapturesAtAnyLevel(IReadOnlyList<ParameterPattern> patterns)
     {

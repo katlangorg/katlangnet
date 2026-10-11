@@ -1900,7 +1900,7 @@ public static partial class Evaluator
         CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
-            && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv, calleeName).ConfigureAwait(false) is { } projected)
+            && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(false) is { } projected)
             return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
         return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
     }
@@ -1911,8 +1911,7 @@ public static partial class Evaluator
         AssignmentDeconstructionTarget target,
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName calleeName)
+        ValEnv valEnv)
     {
         var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
             ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv, ctx.AlgEnv, ctx.CountedParamEnv);

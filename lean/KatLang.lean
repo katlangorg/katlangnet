@@ -5675,7 +5675,9 @@ cell is: it gives each top-level pattern of one level its ONE supplied cell, or,
 collecting binding, the exact ordered slice allocated to it (VAR-02); `.missing` marks a
 position no supplied cell reaches, which the cardinality gate excludes on every validated
 signature (at most one collector per level, X-02 / `validateAlgorithmTree`). C# keeps the
-same arithmetic inside `Evaluator.BindNeedPatterns`. -/
+same arithmetic in `Evaluator.NeedSourceRange`, behind a gate that reads the signature rule
+`minimumSuppliedSlots` (C# `PatternLevelArity`); on every validated level that gate decides
+exactly as `needAcceptsCardinality` (`binder_minimum_is_the_signature_minimum`). -/
 
 /-- The two capabilities the binder may use on a supplied cell: its VALUE demand
     (`demandNeed`) and its CALLABLE projection (`projectNeedCallable`, which never forces
