@@ -856,6 +856,16 @@ public class ImplicitArgumentResolverTests
             case Expr.SequenceSpread spread:
                 AssertSameLiftingShape(spread.Operand, Assert.IsType<Expr.SequenceSpread>(actual).Operand);
                 break;
+            case Expr.InterpolatedString interpolated:
+                var actualInterpolated = Assert.IsType<Expr.InterpolatedString>(actual);
+                Assert.Equal(interpolated.Head, actualInterpolated.Head);
+                Assert.Equal(interpolated.Links.Count, actualInterpolated.Links.Count);
+                for (var i = 0; i < interpolated.Links.Count; i++)
+                {
+                    Assert.Equal(interpolated.Links[i].Text, actualInterpolated.Links[i].Text);
+                    AssertSameLiftingShape(interpolated.Links[i].Hole, actualInterpolated.Links[i].Hole);
+                }
+                break;
             case Expr.Capture capture:
                 var actualCapture = Assert.IsType<Expr.Capture>(actual);
                 Assert.Equal(capture.Body.Count, actualCapture.Body.Count);

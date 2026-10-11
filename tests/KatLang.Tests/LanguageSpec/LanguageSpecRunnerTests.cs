@@ -328,6 +328,16 @@ public class LanguageSpecRunnerTests
             "open-identical-inline-blocks-two-providers",
             "ambiguous-open-written-use-is-static",
             "inline-headed-open-paths-keep-distinct-providers",
+            // String interpolation (STR-02, October 2026): the hole restrictions, the escape set,
+            // the brace rule, the one-line rule and the literal-only positions are lexer and
+            // parser diagnostics — parse-level by construction (Lean has no surface parser).
+            "string-interpolation-empty-hole-is-an-error",
+            "string-interpolation-hole-level-colon-is-an-error",
+            "string-interpolation-hole-holds-one-expression",
+            "string-unsupported-escape-is-an-error",
+            "string-lone-closing-brace-is-an-error",
+            "string-interpolation-not-a-pattern",
+            "string-interpolation-hole-closes-on-its-line",
         ];
         string[] expectedModelDivergences =
         [
@@ -369,6 +379,10 @@ public class LanguageSpecRunnerTests
             // Decimal128-tier observations; Int has one representation per value.
             "repeated-name-keeps-first-equally-rich-representative",
             "decimal-literal-patterns-match-by-value",
+            // STR-02 (October 2026): the text of a fractional number in a hole is its Decimal128
+            // canonical text, quantum included, whatever DisplayDecimals says; integer hole text
+            // is Lean-guarded.
+            "string-interpolation-decimal-number-text",
         ];
 
         Assert.Equal(
@@ -394,9 +408,9 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void FidelityRatchet_LeanGuardedCoverageCannotSilentlyShrink()
     {
-        const int MinimumEncoderDerivedCases = 297;
+        const int MinimumEncoderDerivedCases = 344;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 21;
+        const int MaximumCSharpOnlyCases = 22;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);
@@ -433,7 +447,7 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void Schema_ProbeNeutralsAreWellFormed()
     {
-        var neutralPattern = new Regex(@"^(ok raw=.+ n=\d+|err [A-Za-z0-9]+)$");
+        var neutralPattern = new Regex(@"^(ok raw=.+ n=\d+|err [A-Za-z0-9]+)$", RegexOptions.Singleline); // a string value may hold a line feed (STR-02)
         foreach (var specCase in Cases)
         {
             var seenProbes = new HashSet<string>(StringComparer.Ordinal);

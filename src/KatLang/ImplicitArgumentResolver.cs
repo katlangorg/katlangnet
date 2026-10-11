@@ -1190,6 +1190,11 @@ internal static class ImplicitArgumentResolver
                     CollectReferenceNames(item, names, visited, run);
                 break;
 
+            case Expr.InterpolatedString(_, var interpolationLinks):
+                foreach (var link in interpolationLinks)
+                    CollectReferenceNames(link.Hole, names, visited, run);
+                break;
+
             case Expr.DotCall dotCall:
                 // The target is read (a bare `Math` receiver is a shadow check, a called
                 // receiver is a name). The stored lexical fallback is never rewritten, but its
@@ -2395,8 +2400,9 @@ internal static class ImplicitArgumentResolver
             // operands like a capture's rows. Their operands are resolved the same
             // way — the transparent walk with a fresh empty signature map — so a
             // block inside `open -{ ... }` is resolved exactly as one inside
-            // `open ({ ... }, 1)`.
-            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index
+            // `open ({ ... }, 1)`. An interpolated string is never an open target either
+            // (the parser refuses one there); a host-built one is walked the same way.
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.InterpolatedString
                 => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
@@ -4129,6 +4135,12 @@ internal static class ImplicitArgumentResolver
                     CollectImplicitDeps(row, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
+            case Expr.InterpolatedString(_, var interpolationLinks):
+                // An interpolation hole is a VALUE use of the enclosing owner (VAL-12).
+                foreach (var link in interpolationLinks)
+                    CollectImplicitDeps(link.Hole, paramMap, seen, deps, LiftingRole.Value, memo);
+                break;
+
             case Expr.DotCall dotCall:
             {
                 var kind = EdgeKindOf(dotCall, paramMap, memo.Walk.Run);
@@ -4282,6 +4294,14 @@ internal static class ImplicitArgumentResolver
             Expr.ListLiteral list => list with
             {
                 Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos)).ToList(),
+            },
+
+            // An interpolation hole is a VALUE use of the enclosing owner (VAL-12).
+            Expr.InterpolatedString interpolated => interpolated with
+            {
+                Links = AstHelpers.RewriteInterpolationLinks(
+                    interpolated.Links,
+                    hole => RewriteImplicitCalls(hole, paramMap, context, LiftingRole.Value, memos)),
             },
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, role, memos),
@@ -4631,6 +4651,10 @@ internal static class ImplicitArgumentResolver
                 Right = ProcessExprNested(construct.Right, paramMap, memos),
             },
             Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessExprNested(item, paramMap, memos)).ToList() },
+            Expr.InterpolatedString interpolated => interpolated with
+            {
+                Links = AstHelpers.RewriteInterpolationLinks(interpolated.Links, hole => ProcessExprNested(hole, paramMap, memos)),
+            },
             // `with` keeps the stored dot-edge facts (member span, lexical fallback).
             Expr.DotCall dotCall => dotCall with
             {

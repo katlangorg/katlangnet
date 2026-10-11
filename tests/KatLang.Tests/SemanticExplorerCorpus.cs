@@ -320,6 +320,16 @@ public static class SemanticExplorerCorpus
             v => $"F(*a) = a\nF({v.Source}**)"),
         new("captureStacked",
             v => $"x = ({v.Source}**)\nx"),
+        // STR-02 interpolation: a hole converts its VALUE to structural text — never spread,
+        // flattened, or quoted — so every corpus value is pinned, on both sides of the
+        // differential, through a hole written directly, through a property read twice, and
+        // through a parameter (VAL-12; Lean `Result.canonicalText`).
+        new("interpolation",
+            v => $"\"<{{{v.Source}}}>\""),
+        new("interpolationViaProp",
+            v => $"x = {v.Source}\n\"{{x}}|{{x}}\""),
+        new("interpolationViaParam",
+            v => $"F(a) = \"[{{a}}]\"\nF({v.Source})"),
     ];
 
     // ----- Specials -----------------------------------------------------------
@@ -333,6 +343,15 @@ public static class SemanticExplorerCorpus
 
     private static readonly IReadOnlyList<(string Id, string Source, string? LeanExclusionReason)> Specials =
     [
+        // STR-02 interpolation specials: nesting, the hole as a value role of the enclosing
+        // owner (inference order, lifting), the first failing hole, and a hole without output.
+        Special("interpolationNested", "x = 1\n\"<{\"[{x + 1}]\"}>\""),
+        Special("interpolationInferenceOrder", "F = \"{b}-{a}-{b}\"\nF(1, 2)"),
+        Special("interpolationLiftsAFormula", "Inc(x) = x + 1\nG = \"v{Inc}\"\nG(4)"),
+        Special("interpolationFirstFailureStops", "\"a{1}b{10 div 0}c{([]:0)}\""),
+        Special("interpolationHoleWithoutOutput", "B = {\n    A = 1\n}\n\"{B}\""),
+        Special("interpolationStringsUnquoted", "\"{['one, two', 'three']} {('a', ['b'])}\""),
+        Special("interpolationHoleFreeIsLiteral", "\"abc\" == 'abc'"),
         Special("multiProp", "P = 1, 2, 3\nP"),
         Special("multiPropCall", "P = 1, 2, 3\nP()"),
         Special("multiPropCount", "P = 1, 2, 3\ncount(P)"),

@@ -320,6 +320,11 @@ public enum KatLang.DiagnosticCode : int
   UnliftableClauseFamily = 50
   UnforwardableCallable = 51
   AmbiguousOpen = 52
+  InvalidStringEscape = 53
+  UnmatchedBraceInString = 54
+  UnterminatedInterpolationHole = 55
+  InvalidInterpolationHole = 56
+  InterpolationNotAllowedHere = 57
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1142,6 +1147,22 @@ public sealed record KatLang.Expr.Index : KatLang.Expr, System.IEquatable<KatLan
   operator public static bool op_Equality(KatLang.Expr.Index? left, KatLang.Expr.Index? right)
   operator public static bool op_Inequality(KatLang.Expr.Index? left, KatLang.Expr.Index? right)
 
+public sealed record KatLang.Expr.InterpolatedString : KatLang.Expr, System.IEquatable<KatLang.Expr.InterpolatedString>
+  ctor     public InterpolatedString(string Head, System.Collections.Generic.IReadOnlyList<KatLang.InterpolationLink> Links)
+  property protected override System.Type EqualityContract { get; }
+  property public string Head { get; init; }
+  property public System.Collections.Generic.IReadOnlyList<KatLang.InterpolationLink> Links { get; init; }
+  method   public virtual KatLang.Expr.InterpolatedString <Clone>$()
+  method   public void Deconstruct(out string Head, out System.Collections.Generic.IReadOnlyList<KatLang.InterpolationLink> Links)
+  method   public bool Equals(KatLang.Expr.InterpolatedString? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Expr? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Expr.InterpolatedString? left, KatLang.Expr.InterpolatedString? right)
+  operator public static bool op_Inequality(KatLang.Expr.InterpolatedString? left, KatLang.Expr.InterpolatedString? right)
+
 public sealed record KatLang.Expr.ListLiteral : KatLang.Expr, System.IEquatable<KatLang.Expr.ListLiteral>
   ctor     public ListLiteral(KatLang.OutputBundle Items)
   property protected override System.Type EqualityContract { get; }
@@ -1355,6 +1376,19 @@ public sealed record KatLang.ImplicitParameterContext : KatLang.ErrorContext, Sy
   operator public static bool op_Equality(KatLang.ImplicitParameterContext? left, KatLang.ImplicitParameterContext? right)
   operator public static bool op_Inequality(KatLang.ImplicitParameterContext? left, KatLang.ImplicitParameterContext? right)
 
+public sealed record KatLang.InterpolationLink : System.IEquatable<KatLang.InterpolationLink>
+  ctor     public InterpolationLink(KatLang.Expr Hole, string Text)
+  property public KatLang.Expr Hole { get; init; }
+  property public string Text { get; init; }
+  method   public KatLang.InterpolationLink <Clone>$()
+  method   public void Deconstruct(out KatLang.Expr Hole, out string Text)
+  method   public bool Equals(KatLang.InterpolationLink? other)
+  method   public override bool Equals(object? obj)
+  method   public override int GetHashCode()
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.InterpolationLink? left, KatLang.InterpolationLink? right)
+  operator public static bool op_Inequality(KatLang.InterpolationLink? left, KatLang.InterpolationLink? right)
+
 public static class KatLang.KatLangEngine
   method   public static System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> EvaluateToAtoms(string source, KatLang.RunOptions? options = null)
   method   public static System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128>> EvaluateToAtomsAsync(string source, KatLang.RunOptions? options = null)
@@ -1446,6 +1480,11 @@ public enum KatLang.KatLangErrorCode : int
   UnliftableClauseFamily = 72
   UnforwardableCallable = 73
   DemandCycle = 74
+  InvalidStringEscape = 75
+  UnmatchedBraceInString = 76
+  UnterminatedInterpolationHole = 77
+  InvalidInterpolationHole = 78
+  InterpolationNotAllowedHere = 79
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -2351,6 +2390,11 @@ public enum KatLang.TokenKind : int
   Comment = 36
   EndOfFile = 37
   Bad = 38
+  InterpolatedStringStart = 39
+  InterpolatedStringText = 40
+  InterpolationHoleOpen = 41
+  InterpolationHoleClose = 42
+  InterpolatedStringEnd = 43
 
 public enum KatLang.UnaryOp : int
   Minus = 0

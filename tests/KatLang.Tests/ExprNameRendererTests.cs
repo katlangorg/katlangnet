@@ -378,7 +378,7 @@ public class ExprNameRendererTests
 
     public static TheoryData<string> DeepShapes => new(
         "join", "spread", "binaryLeft", "binaryRight", "unary", "index",
-        "dotcall", "call", "gracePost", "list", "blockOutput");
+        "dotcall", "call", "gracePost", "list", "blockOutput", "interpolation");
 
     private static Expr BuildDeepShape(string shape, int levels)
     {
@@ -398,6 +398,7 @@ public class ExprNameRendererTests
                 "gracePost" => new Expr.Grace(expr, 1),
                 "list" => new Expr.ListLiteral([expr]),
                 "blockOutput" => new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [expr])),
+                "interpolation" => new Expr.InterpolatedString("<", [new InterpolationLink(expr, ">")]),
                 _ => throw new InvalidOperationException(shape),
             };
         }
@@ -509,6 +510,60 @@ public class ExprNameRendererTests
 
             return false;
         }
+    }
+
+    [Fact]
+    public void Golden_StringsAndInterpolatedStrings_RenderAsKatLangSource()
+    {
+        var a = new Expr.Resolve("a");
+        static Expr Interp(string head, params (Expr Hole, string Text)[] links)
+            => new Expr.InterpolatedString(head, [.. links.Select(l => new InterpolationLink(l.Hole, l.Text))]);
+
+        // A string that can be single-quoted stays single-quoted (raw, braces included); one
+        // with a quote or a line break renders double-quoted with exactly its escapes.
+        Assert.Equal("'{x}'", Open(new Expr.StringLiteral("{x}")));
+        Assert.Equal("\"it's\"", Open(new Expr.StringLiteral("it's")));
+        Assert.Equal("\"a\\nb\"", Open(new Expr.StringLiteral("a\nb")));
+        Assert.Equal("\"it's {{x}}\\t\\\\\"", Open(new Expr.StringLiteral("it's {x}\t\\")));
+
+        // An interpolated string renders as written: text re-escaped, holes in operand shape,
+        // a hole that could show a hole-level `:` parenthesized, a block hole spaced.
+        Assert.Equal("\"x{a}y\"", Open(Interp("x", (a, "y"))));
+        Assert.Equal("\"{{{a}}}\"", Open(Interp("{", (a, "}"))));
+        Assert.Equal("\"{(a:0)}\"", Open(Interp("", (new Expr.Index(a, new Expr.Num(0)), ""))));
+        Assert.Equal("\"{(-a:0)}\"", Open(Interp("", (new Expr.Unary(UnaryOp.Minus, new Expr.Index(a, new Expr.Num(0))), ""))));
+        Assert.Equal("\"{[a:0]}\"", Open(Interp("", (new Expr.ListLiteral([new Expr.Index(a, new Expr.Num(0))]), ""))));
+        var blockWithProperty = new Algorithm.User(null, [], [], [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))], []);
+        Assert.Equal("\"{ {...} }\"", Open(Interp("", (new Expr.AlgorithmExpr(blockWithProperty), ""))));
+        // A plain block renders as its output group (the established diagnostic-name rule), still spaced.
+        Assert.Equal("\"{ (1) }\"", Open(Interp("", (new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [new Expr.Num(1)])), ""))));
+        // Any hole whose name could BEGIN with a brace — a block at the left end of its spine — is
+        // spaced too, so `{{` never reads back as a literal brace; a block further right needs nothing.
+        var block = new Expr.AlgorithmExpr(blockWithProperty);
+        Assert.Equal("\"x{ {...}.X }\"", Open(Interp("x", (new Expr.DotCall(block, "X", null), ""))));
+        Assert.Equal("\"{ {...} + 2 }\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, block, new Expr.Num(2)), ""))));
+        Assert.Equal("\"{ {...} == 1 }\"", Open(Interp("", (EvaluatorTestSupport.Compare(ComparisonOp.Eq, block, new Expr.Num(1)), ""))));
+        Assert.Equal("\"{2 + {...}}}}\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, new Expr.Num(2), block), "}"))));
+        Assert.Equal("\"{a + 1}\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, a, new Expr.Num(1)), ""))));
+        Assert.Equal("\"<{\"[{a}]\"}>\"", Open(Interp("<", (Interp("[", (a, "]")), ">"))));
+        Assert.Equal("\"a\\\"b\\n\"", Open(Interp("a\"b\n")));
+    }
+
+    [Fact]
+    public void WideInterpolations_RenderWithinTheOutputBound()
+    {
+        var links = Enumerable.Range(0, 50_000).Select(i => new InterpolationLink(new Expr.Num(i), "-")).ToArray();
+        var wide = new Expr.InterpolatedString("start", links);
+        foreach (var mode in new[] { ExprNameMode.Open, ExprNameMode.DiagnosticName })
+        {
+            var rendered = ExprNameRenderer.Render(wide, mode);
+            Assert.EndsWith(ExprNameRenderer.TruncationMarker, rendered);
+            Assert.True(rendered.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
+            Assert.StartsWith("\"start{0}-{1}-", rendered);
+        }
+
+        var hugeText = Open(new Expr.InterpolatedString(new string('{', 100_000), []));
+        Assert.True(hugeText.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
     }
 
     [Fact]

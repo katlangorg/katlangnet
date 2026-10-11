@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 414
-- excluded parse-level cases (Lean has no surface parser): 60
-- excluded C#-only cases (each carries an explicit reason in the corpus): 21
-- Lean-guarded cases: 333
-- probe observations (C#-only by design): 1288
+- specification surface cases: 433
+- excluded parse-level cases (Lean has no surface parser): 67
+- excluded C#-only cases (each carries an explicit reason in the corpus): 22
+- Lean-guarded cases: 344
+- probe observations (C#-only by design): 1297
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1766,7 +1766,62 @@ def case_grace_in_redundant_group_is_grace_on_the_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "b") (.dotCall (.param "a") "V" none))]), privateProp "V" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "F") [.num 5, .num 1])])
 #guard obs case_grace_in_redundant_group_is_grace_on_the_name == "ok raw=11 n=1"
 
--- 333 canonical Lean-guarded specification cases.
+-- string-interpolation-basic [strings]: name = 'KatLang' \n version = 2 \n "Hello, {name} {version}!"
+def case_string_interpolation_basic : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "name" (alg [] [] [] [.stringLiteral "KatLang"]), privateProp "version" (alg [] [] [] [.num 2])] [(.interpolatedString "Hello, " [{ hole := (.resolve "name"), text := " " }, { hole := (.resolve "version"), text := "!" }])])
+#guard obs case_string_interpolation_basic == "ok raw='Hello, KatLang 2!' n=1"
+
+-- string-interpolation-structural-text [strings]: "{(1, [2, ()])} {[]} {true} {-5}"
+def case_string_interpolation_structural_text : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "" [{ hole := (.capture [.num 1, (.listLiteral [.num 2, (.emptySequence 0)])]), text := " " }, { hole := (.listLiteral []), text := " " }, { hole := (.boolLiteral true), text := " " }, { hole := (.unary .minus (.num 5)), text := "" }])])
+#guard obs case_string_interpolation_structural_text == "ok raw='(1, [2, ()]) [] true -5' n=1"
+
+-- string-interpolation-strings-unquoted [strings]: "{['one, two', 'three']} {('a', ['b'])}"
+def case_string_interpolation_strings_unquoted : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "" [{ hole := (.listLiteral [.stringLiteral "one, two", .stringLiteral "three"]), text := " " }, { hole := (.capture [.stringLiteral "a", (.listLiteral [.stringLiteral "b"])]), text := "" }])])
+#guard obs case_string_interpolation_strings_unquoted == "ok raw='[one, two, three] (a, [b])' n=1"
+
+-- string-double-quoted-escapes [strings]: "say \"hi\" {{ok}} \\"
+def case_string_double_quoted_escapes : Expr :=
+  .algorithmExpr (alg [] [] [] [.stringLiteral "say \"hi\" {ok} \\"])
+#guard obs case_string_double_quoted_escapes == "ok raw='say \"hi\" {ok} \\' n=1"
+
+-- string-double-quoted-without-holes-is-a-literal [strings]: "abc" == 'abc' \n F("x") = 1 \n F(y) = 2 \n F('x')
+def case_string_double_quoted_without_holes_is_a_literal : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litString "x", (alg [] [] [] [.num 1])⟩, ⟨.bind "y", (alg [] [] [] [.num 2])⟩])] [(.comparison (.stringLiteral "abc") [{ op := .eq, operand := (.stringLiteral "abc") }]), (.call (.resolve "F") [.stringLiteral "x"])])
+#guard obs case_string_double_quoted_without_holes_is_a_literal == "ok raw=S[true, 1] n=2"
+
+-- string-interpolation-nested [strings]: x = 1 \n "<{"[{x + 1}]"}>"
+def case_string_interpolation_nested : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.interpolatedString "<" [{ hole := (.interpolatedString "[" [{ hole := (.binary .add (.resolve "x") (.num 1)), text := "]" }]), text := ">" }])])
+#guard obs case_string_interpolation_nested == "ok raw='<[2]>' n=1"
+
+-- string-interpolation-hole-inference-order [strings]: F = "{b}-{a}-{b}" \n F(1, 2)
+def case_string_interpolation_hole_inference_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "a"] [] [] [(.interpolatedString "" [{ hole := (.param "b"), text := "-" }, { hole := (.param "a"), text := "-" }, { hole := (.param "b"), text := "" }])])] [(.call (.resolve "F") [.num 1, .num 2])])
+#guard obs case_string_interpolation_hole_inference_order == "ok raw='1-2-1' n=1"
+
+-- string-interpolation-hole-lifts-a-formula [strings]: Inc(x) = x + 1 \n G = "v{Inc}" \n G(4)
+def case_string_interpolation_hole_lifts_a_formula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.interpolatedString "v" [{ hole := (.call (.resolve "Inc") [.param "x"]), text := "" }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_string_interpolation_hole_lifts_a_formula == "ok raw='v5' n=1"
+
+-- string-interpolation-selection-in-parentheses [strings]: xs = [10, 20] \n "{(xs:1)} {[xs:0]}"
+def case_string_interpolation_selection_in_parentheses : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "xs" (alg [] [] [] [(.listLiteral [.num 10, .num 20])])] [(.interpolatedString "" [{ hole := (.index (.resolve "xs") (.num 1)), text := " " }, { hole := (.listLiteral [(.index (.resolve "xs") (.num 0))]), text := "" }])])
+#guard obs case_string_interpolation_selection_in_parentheses == "ok raw='20 [10]' n=1"
+
+-- string-interpolation-hole-failure [strings]: "a{1}b{10 div 0}c"
+def case_string_interpolation_hole_failure : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "a" [{ hole := (.num 1), text := "b" }, { hole := (.binary .idiv (.num 10) (.num 0)), text := "c" }])])
+#guard obs case_string_interpolation_hole_failure == "err div0"
+
+-- string-interpolation-hole-without-output [strings]: B = { \n     A = 1 \n } \n "{B}"
+def case_string_interpolation_hole_without_output : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
+#guard obs case_string_interpolation_hole_without_output == "err missingOutput"
+
+-- 344 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2106,8 +2161,19 @@ def specCaseIds : List String := [
   "dot-string-intrinsic-rejects-arguments",
   "ownership-open-provided-captured-member-read-by-sibling-is-local-only",
   "ownership-open-head-between-opener-and-settling-level-charges-the-capture",
-  "grace-in-redundant-group-is-grace-on-the-name"
+  "grace-in-redundant-group-is-grace-on-the-name",
+  "string-interpolation-basic",
+  "string-interpolation-structural-text",
+  "string-interpolation-strings-unquoted",
+  "string-double-quoted-escapes",
+  "string-double-quoted-without-holes-is-a-literal",
+  "string-interpolation-nested",
+  "string-interpolation-hole-inference-order",
+  "string-interpolation-hole-lifts-a-formula",
+  "string-interpolation-selection-in-parentheses",
+  "string-interpolation-hole-failure",
+  "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 333
+#guard specCaseIds.length == 344
 
 end LanguageSpecCases

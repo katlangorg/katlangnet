@@ -7,7 +7,8 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// closed <see cref="Expr"/> hierarchy, mirrored case for case on <c>EvalCounted</c>: a
 /// newly added variant fails the build until it is given an explicit twin case or joins
 /// the enumerated sync-delegable leaf group (<c>Num</c>, <c>StringLiteral</c>, and the
-/// illegal-in-eval <c>Grace</c>). What the compiler cannot prove is that a variant's arm
+/// illegal-in-eval <c>Grace</c>; an interpolated string is recursive — a hole may await a
+/// host operation — and never joins it). What the compiler cannot prove is that a variant's arm
 /// is the RIGHT one: a recursive variant delegated to the synchronous evaluator would
 /// evaluate its children synchronously — bypassing the async twin family — while still
 /// passing outcome-differential tests (the sync oracle produces the same values).</para>
@@ -264,6 +265,8 @@ public class AsyncExpressionDispatchTests
         { "Call.Argument", "P = 5\nF(x) = x + 1\nF(P + 0)" },
         { "DotCall.Target", "P = 5\n(P, 2).count" },
         { "DotCall.Argument", "P = 2\n(7, 8, 9).take(P + 0)" },
+        { "InterpolatedString.Hole", "P = 5\n\"a{P}b\"" },
+        { "InterpolatedString.LaterHole", "P = 5\n\"{1}{P}\"" },
     };
 
     /// <summary>

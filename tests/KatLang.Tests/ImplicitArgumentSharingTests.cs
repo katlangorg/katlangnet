@@ -104,6 +104,7 @@ public class ImplicitArgumentSharingTests
                 case Expr.SequenceConstruct(var left, var right): slots += Walk(left) + Walk(right); break;
                 case Expr.ListLiteral(var items): foreach (var item in items) slots += Walk(item); break;
                 case Expr.Capture(var body): foreach (var row in body) slots += Walk(row); break;
+                case Expr.InterpolatedString(_, var interpolationLinks): foreach (var link in interpolationLinks) slots += Walk(link.Hole); break;
                 case Expr.AlgorithmExpr(var nested): slots += Walk(nested); break;
                 case Expr.Grace(var inner, _): slots += Walk(inner); break;
             }

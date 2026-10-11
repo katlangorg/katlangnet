@@ -513,6 +513,11 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
                     continue; // marker attachment is exact source adjacency
                 if (tokens.Any(t => t.Kind == TokenKind.Comment && t.Position + t.Length == point))
                     continue; // the character would join the comment
+                if (tokens.Any(t =>
+                        (t.Kind is TokenKind.InterpolatedStringStart or TokenKind.InterpolationHoleClose && t.Position + t.Length == point)
+                        || (t.Kind is TokenKind.InterpolationHoleOpen or TokenKind.InterpolatedStringEnd && t.Position == point)
+                        || (t.Kind == TokenKind.InterpolatedStringText && (t.Position == point || t.Position + t.Length == point))))
+                    continue; // the character would be interpolated-string TEXT (a hole's code stays a point)
                 yield return point;
             }
         }

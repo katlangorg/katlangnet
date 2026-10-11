@@ -29,7 +29,13 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
             "(a*)", "(a*, b)", "[a*, b]", "(a.f(b)):0", "(a:0).f(b)", "(~a)(b)",
             // A call after an argument-bearing edge, `(a.f(b))(c)`, is no source shape (SYN-09,
             // Q-18 C-B3): like a call after any call result, only a host-built tree has it.
-            "(a.f)(b)", "(a.f)(b).g", "((a.f)(b)):0"
+            "(a.f)(b)", "(a.f)(b).g", "((a.f)(b)):0",
+            // STR-02: interpolated strings render as written, a hole that could hold a hole-level
+            // `:` in parentheses and a block hole spaced; a string that cannot be single-quoted
+            // renders double-quoted with its escapes.
+            "\"a{x}b\"", "\"{a + b}\"", "\"{(a:0)}\"", "\"{(a:0) + 1}\"", "\"{-(a:0)}\"", "\"{a.f(b)}\"",
+            "\"{{x}} {f(a)} {\"in{b}\"}\"", "\"{ { P = 1 } }\"", "\"q\\\"{a}\\\\\\t\\n\"",
+            "\"it's\"", "\"a\\nb\"", "\"tab\\tquote\\\"\"", "\"{{}}\""
         };
         foreach (var outer in Operators)
         {
@@ -229,6 +235,7 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
         Expr.Num n => $"num({n.Value.ToString(CultureInfo.InvariantCulture)})",
         Expr.BoolLiteral b => $"bool({b.Value})",
         Expr.StringLiteral s => $"string({s.Value})",
+        Expr.InterpolatedString s => $"interpolated({s.Head};{string.Join(';', s.Links.Select(l => $"{Shape(l.Hole)}|{l.Text}"))})",
         Expr.EmptySequence e => $"empty({e.Depth})",
         Expr.Unary u => $"{u.Op}({Shape(u.Operand)})",
         Expr.Binary b => $"{b.Op}({Shape(b.Left)},{Shape(b.Right)})",

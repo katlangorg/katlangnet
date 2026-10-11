@@ -415,6 +415,11 @@ public class KatLangErrorCodeTests
             ["UnliftableClauseFamily"] = 50,
             ["UnforwardableCallable"] = 51,
             ["AmbiguousOpen"] = 52,
+            ["InvalidStringEscape"] = 53,
+            ["UnmatchedBraceInString"] = 54,
+            ["UnterminatedInterpolationHole"] = 55,
+            ["InvalidInterpolationHole"] = 56,
+            ["InterpolationNotAllowedHere"] = 57,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -501,6 +506,11 @@ public class KatLangErrorCodeTests
             ["UnliftableClauseFamily"] = 72,
             ["UnforwardableCallable"] = 73,
             ["DemandCycle"] = 74,
+            ["InvalidStringEscape"] = 75,
+            ["UnmatchedBraceInString"] = 76,
+            ["UnterminatedInterpolationHole"] = 77,
+            ["InvalidInterpolationHole"] = 78,
+            ["InterpolationNotAllowedHere"] = 79,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

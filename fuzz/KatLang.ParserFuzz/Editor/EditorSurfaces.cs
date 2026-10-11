@@ -59,15 +59,21 @@ internal static class EditorSurfaces
     // ── Core invariants ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// No identifier occurrence may overlap a comment or string-literal token: the classifier must
-    /// not report identifier semantics on text the lexer put inside a comment or a string.
+    /// No identifier occurrence may overlap a comment, a string-literal token, or the TEXT and
+    /// delimiters of an interpolated string: the classifier must not report identifier semantics on
+    /// text the lexer put inside a comment or a string. An interpolation HOLE is code, so the
+    /// identifiers inside it are ordinary occurrences and stay allowed.
     /// </summary>
     private static void CheckCommentsAndStringsAreNotIdentifiers(string source, SemanticModel model)
     {
         var (tokens, _) = Lexer.Tokenize(source);
         foreach (var token in tokens)
         {
-            if (token.Kind is not (TokenKind.Comment or TokenKind.StringLiteral) || token.Length <= 0)
+            if (token.Kind is not (TokenKind.Comment or TokenKind.StringLiteral
+                    or TokenKind.InterpolatedStringStart or TokenKind.InterpolatedStringText
+                    or TokenKind.InterpolationHoleOpen or TokenKind.InterpolationHoleClose
+                    or TokenKind.InterpolatedStringEnd)
+                || token.Length <= 0)
                 continue;
 
             var tokenSpan = token.Span;

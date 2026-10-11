@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2532
+- surface corpus cases: 2641
 - excluded parse-level cases (Lean has no surface parser): 45
-- Lean-representable surface cases: 2487
+- Lean-representable surface cases: 2596
 - internal-node cases: 14
-- total generated guards: 2501 case guards + 2 count guards
+- total generated guards: 2610 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -10975,6 +10975,551 @@ def case_captureStacked__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1])))])])] [.resolve "x"])
 #guard obs case_captureStacked__pl1 == "ok raw=1 n=1"
 
+-- interpolation__e: "<{()}>"
+def case_interpolation__e : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.emptySequence 0), text := ">" }])])
+#guard obs case_interpolation__e == "ok raw='<()>' n=1"
+
+-- interpolation__n0: "<{0}>"
+def case_interpolation__n0 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.num 0), text := ">" }])])
+#guard obs case_interpolation__n0 == "ok raw='<0>' n=1"
+
+-- interpolation__n1: "<{1}>"
+def case_interpolation__n1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.num 1), text := ">" }])])
+#guard obs case_interpolation__n1 == "ok raw='<1>' n=1"
+
+-- interpolation__bt: "<{true}>"
+def case_interpolation__bt : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.boolLiteral true), text := ">" }])])
+#guard obs case_interpolation__bt == "ok raw='<true>' n=1"
+
+-- interpolation__bf: "<{false}>"
+def case_interpolation__bf : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.boolLiteral false), text := ">" }])])
+#guard obs case_interpolation__bf == "ok raw='<false>' n=1"
+
+-- interpolation__pbt: "<{(true)}>"
+def case_interpolation__pbt : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.boolLiteral true), text := ">" }])])
+#guard obs case_interpolation__pbt == "ok raw='<true>' n=1"
+
+-- interpolation__pbt_e: "<{(true, ())}>"
+def case_interpolation__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.boolLiteral true, (.emptySequence 0)]), text := ">" }])])
+#guard obs case_interpolation__pbt_e == "ok raw='<(true, ())>' n=1"
+
+-- interpolation__pbt_1: "<{(true, 1)}>"
+def case_interpolation__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.boolLiteral true, .num 1]), text := ">" }])])
+#guard obs case_interpolation__pbt_1 == "ok raw='<(true, 1)>' n=1"
+
+-- interpolation__lbt: "<{[true]}>"
+def case_interpolation__lbt : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [.boolLiteral true]), text := ">" }])])
+#guard obs case_interpolation__lbt == "ok raw='<[true]>' n=1"
+
+-- interpolation__lbt_bf: "<{[true, false]}>"
+def case_interpolation__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [.boolLiteral true, .boolLiteral false]), text := ">" }])])
+#guard obs case_interpolation__lbt_bf == "ok raw='<[true, false]>' n=1"
+
+-- interpolation__lpbt_1: "<{[(true, 1)]}>"
+def case_interpolation__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [(.capture [.boolLiteral true, .num 1])]), text := ">" }])])
+#guard obs case_interpolation__lpbt_1 == "ok raw='<[(true, 1)]>' n=1"
+
+-- interpolation__p1: "<{(1)}>"
+def case_interpolation__p1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.num 1), text := ">" }])])
+#guard obs case_interpolation__p1 == "ok raw='<1>' n=1"
+
+-- interpolation__p12: "<{(1, 2)}>"
+def case_interpolation__p12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.num 1, .num 2]), text := ">" }])])
+#guard obs case_interpolation__p12 == "ok raw='<(1, 2)>' n=1"
+
+-- interpolation__p123: "<{(1, 2, 3)}>"
+def case_interpolation__p123 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.num 1, .num 2, .num 3]), text := ">" }])])
+#guard obs case_interpolation__p123 == "ok raw='<(1, 2, 3)>' n=1"
+
+-- interpolation__pee: "<{((), ())}>"
+def case_interpolation__pee : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.emptySequence 0), (.emptySequence 0)]), text := ">" }])])
+#guard obs case_interpolation__pee == "ok raw='<((), ())>' n=1"
+
+-- interpolation__pe1: "<{((), 1)}>"
+def case_interpolation__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.emptySequence 0), .num 1]), text := ">" }])])
+#guard obs case_interpolation__pe1 == "ok raw='<((), 1)>' n=1"
+
+-- interpolation__p1e: "<{(1, ())}>"
+def case_interpolation__p1e : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.num 1, (.emptySequence 0)]), text := ">" }])])
+#guard obs case_interpolation__p1e == "ok raw='<(1, ())>' n=1"
+
+-- interpolation__p12_3: "<{((1, 2), 3)}>"
+def case_interpolation__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.capture [.num 1, .num 2]), .num 3]), text := ">" }])])
+#guard obs case_interpolation__p12_3 == "ok raw='<((1, 2), 3)>' n=1"
+
+-- interpolation__p12_34: "<{((1, 2), (3, 4))}>"
+def case_interpolation__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), text := ">" }])])
+#guard obs case_interpolation__p12_34 == "ok raw='<((1, 2), (3, 4))>' n=1"
+
+-- interpolation__pe_12: "<{((), (1, 2))}>"
+def case_interpolation__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]), text := ">" }])])
+#guard obs case_interpolation__pe_12 == "ok raw='<((), (1, 2))>' n=1"
+
+-- interpolation__ppe1_2: "<{(((), 1), 2)}>"
+def case_interpolation__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]), text := ">" }])])
+#guard obs case_interpolation__ppe1_2 == "ok raw='<(((), 1), 2)>' n=1"
+
+-- interpolation__p12_e: "<{((1, 2), ())}>"
+def case_interpolation__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]), text := ">" }])])
+#guard obs case_interpolation__p12_e == "ok raw='<((1, 2), ())>' n=1"
+
+-- interpolation__ppe: "<{(())}>"
+def case_interpolation__ppe : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.emptySequence 0), text := ">" }])])
+#guard obs case_interpolation__ppe == "ok raw='<()>' n=1"
+
+-- interpolation__pp1: "<{((1))}>"
+def case_interpolation__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.num 1), text := ">" }])])
+#guard obs case_interpolation__pp1 == "ok raw='<1>' n=1"
+
+-- interpolation__ppp12: "<{(((1, 2)))}>"
+def case_interpolation__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [.num 1, .num 2]), text := ">" }])])
+#guard obs case_interpolation__ppp12 == "ok raw='<(1, 2)>' n=1"
+
+-- interpolation__le: "<{[]}>"
+def case_interpolation__le : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral []), text := ">" }])])
+#guard obs case_interpolation__le == "ok raw='<[]>' n=1"
+
+-- interpolation__l7: "<{[7]}>"
+def case_interpolation__l7 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [.num 7]), text := ">" }])])
+#guard obs case_interpolation__l7 == "ok raw='<[7]>' n=1"
+
+-- interpolation__l12: "<{[1, 2]}>"
+def case_interpolation__l12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [.num 1, .num 2]), text := ">" }])])
+#guard obs case_interpolation__l12 == "ok raw='<[1, 2]>' n=1"
+
+-- interpolation__l12_3: "<{[[1, 2], 3]}>"
+def case_interpolation__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]), text := ">" }])])
+#guard obs case_interpolation__l12_3 == "ok raw='<[[1, 2], 3]>' n=1"
+
+-- interpolation__lle: "<{[[]]}>"
+def case_interpolation__lle : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [(.listLiteral [])]), text := ">" }])])
+#guard obs case_interpolation__lle == "ok raw='<[[]]>' n=1"
+
+-- interpolation__l_e: "<{[()]}>"
+def case_interpolation__l_e : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [(.emptySequence 0)]), text := ">" }])])
+#guard obs case_interpolation__l_e == "ok raw='<[()]>' n=1"
+
+-- interpolation__l_p12: "<{[(1, 2)]}>"
+def case_interpolation__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [(.capture [.num 1, .num 2])]), text := ">" }])])
+#guard obs case_interpolation__l_p12 == "ok raw='<[(1, 2)]>' n=1"
+
+-- interpolation__p_l12: "<{([1, 2], 3)}>"
+def case_interpolation__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.capture [(.listLiteral [.num 1, .num 2]), .num 3]), text := ">" }])])
+#guard obs case_interpolation__p_l12 == "ok raw='<([1, 2], 3)>' n=1"
+
+-- interpolation__pl1: "<{([1])}>"
+def case_interpolation__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "<" [{ hole := (.listLiteral [.num 1]), text := ">" }])])
+#guard obs case_interpolation__pl1 == "ok raw='<[1]>' n=1"
+
+-- interpolationViaProp__e: x = () \n "{x}|{x}"
+def case_interpolationViaProp__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__e == "ok raw='()|()' n=1"
+
+-- interpolationViaProp__n0: x = 0 \n "{x}|{x}"
+def case_interpolationViaProp__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__n0 == "ok raw='0|0' n=1"
+
+-- interpolationViaProp__n1: x = 1 \n "{x}|{x}"
+def case_interpolationViaProp__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__n1 == "ok raw='1|1' n=1"
+
+-- interpolationViaProp__bt: x = true \n "{x}|{x}"
+def case_interpolationViaProp__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__bt == "ok raw='true|true' n=1"
+
+-- interpolationViaProp__bf: x = false \n "{x}|{x}"
+def case_interpolationViaProp__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__bf == "ok raw='false|false' n=1"
+
+-- interpolationViaProp__pbt: x = (true) \n "{x}|{x}"
+def case_interpolationViaProp__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pbt == "ok raw='true|true' n=1"
+
+-- interpolationViaProp__pbt_e: x = (true, ()) \n "{x}|{x}"
+def case_interpolationViaProp__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pbt_e == "ok raw='(true, ())|(true, ())' n=1"
+
+-- interpolationViaProp__pbt_1: x = (true, 1) \n "{x}|{x}"
+def case_interpolationViaProp__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pbt_1 == "ok raw='(true, 1)|(true, 1)' n=1"
+
+-- interpolationViaProp__lbt: x = [true] \n "{x}|{x}"
+def case_interpolationViaProp__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__lbt == "ok raw='[true]|[true]' n=1"
+
+-- interpolationViaProp__lbt_bf: x = [true, false] \n "{x}|{x}"
+def case_interpolationViaProp__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__lbt_bf == "ok raw='[true, false]|[true, false]' n=1"
+
+-- interpolationViaProp__lpbt_1: x = [(true, 1)] \n "{x}|{x}"
+def case_interpolationViaProp__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__lpbt_1 == "ok raw='[(true, 1)]|[(true, 1)]' n=1"
+
+-- interpolationViaProp__p1: x = (1) \n "{x}|{x}"
+def case_interpolationViaProp__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p1 == "ok raw='1|1' n=1"
+
+-- interpolationViaProp__p12: x = (1, 2) \n "{x}|{x}"
+def case_interpolationViaProp__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p12 == "ok raw='(1, 2)|(1, 2)' n=1"
+
+-- interpolationViaProp__p123: x = (1, 2, 3) \n "{x}|{x}"
+def case_interpolationViaProp__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p123 == "ok raw='(1, 2, 3)|(1, 2, 3)' n=1"
+
+-- interpolationViaProp__pee: x = ((), ()) \n "{x}|{x}"
+def case_interpolationViaProp__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pee == "ok raw='((), ())|((), ())' n=1"
+
+-- interpolationViaProp__pe1: x = ((), 1) \n "{x}|{x}"
+def case_interpolationViaProp__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pe1 == "ok raw='((), 1)|((), 1)' n=1"
+
+-- interpolationViaProp__p1e: x = (1, ()) \n "{x}|{x}"
+def case_interpolationViaProp__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p1e == "ok raw='(1, ())|(1, ())' n=1"
+
+-- interpolationViaProp__p12_3: x = ((1, 2), 3) \n "{x}|{x}"
+def case_interpolationViaProp__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p12_3 == "ok raw='((1, 2), 3)|((1, 2), 3)' n=1"
+
+-- interpolationViaProp__p12_34: x = ((1, 2), (3, 4)) \n "{x}|{x}"
+def case_interpolationViaProp__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p12_34 == "ok raw='((1, 2), (3, 4))|((1, 2), (3, 4))' n=1"
+
+-- interpolationViaProp__pe_12: x = ((), (1, 2)) \n "{x}|{x}"
+def case_interpolationViaProp__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pe_12 == "ok raw='((), (1, 2))|((), (1, 2))' n=1"
+
+-- interpolationViaProp__ppe1_2: x = (((), 1), 2) \n "{x}|{x}"
+def case_interpolationViaProp__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__ppe1_2 == "ok raw='(((), 1), 2)|(((), 1), 2)' n=1"
+
+-- interpolationViaProp__p12_e: x = ((1, 2), ()) \n "{x}|{x}"
+def case_interpolationViaProp__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p12_e == "ok raw='((1, 2), ())|((1, 2), ())' n=1"
+
+-- interpolationViaProp__ppe: x = (()) \n "{x}|{x}"
+def case_interpolationViaProp__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__ppe == "ok raw='()|()' n=1"
+
+-- interpolationViaProp__pp1: x = ((1)) \n "{x}|{x}"
+def case_interpolationViaProp__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pp1 == "ok raw='1|1' n=1"
+
+-- interpolationViaProp__ppp12: x = (((1, 2))) \n "{x}|{x}"
+def case_interpolationViaProp__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__ppp12 == "ok raw='(1, 2)|(1, 2)' n=1"
+
+-- interpolationViaProp__le: x = [] \n "{x}|{x}"
+def case_interpolationViaProp__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__le == "ok raw='[]|[]' n=1"
+
+-- interpolationViaProp__l7: x = [7] \n "{x}|{x}"
+def case_interpolationViaProp__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__l7 == "ok raw='[7]|[7]' n=1"
+
+-- interpolationViaProp__l12: x = [1, 2] \n "{x}|{x}"
+def case_interpolationViaProp__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__l12 == "ok raw='[1, 2]|[1, 2]' n=1"
+
+-- interpolationViaProp__l12_3: x = [[1, 2], 3] \n "{x}|{x}"
+def case_interpolationViaProp__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__l12_3 == "ok raw='[[1, 2], 3]|[[1, 2], 3]' n=1"
+
+-- interpolationViaProp__lle: x = [[]] \n "{x}|{x}"
+def case_interpolationViaProp__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__lle == "ok raw='[[]]|[[]]' n=1"
+
+-- interpolationViaProp__l_e: x = [()] \n "{x}|{x}"
+def case_interpolationViaProp__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__l_e == "ok raw='[()]|[()]' n=1"
+
+-- interpolationViaProp__l_p12: x = [(1, 2)] \n "{x}|{x}"
+def case_interpolationViaProp__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__l_p12 == "ok raw='[(1, 2)]|[(1, 2)]' n=1"
+
+-- interpolationViaProp__p_l12: x = ([1, 2], 3) \n "{x}|{x}"
+def case_interpolationViaProp__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__p_l12 == "ok raw='([1, 2], 3)|([1, 2], 3)' n=1"
+
+-- interpolationViaProp__pl1: x = ([1]) \n "{x}|{x}"
+def case_interpolationViaProp__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.interpolatedString "" [{ hole := (.resolve "x"), text := "|" }, { hole := (.resolve "x"), text := "" }])])
+#guard obs case_interpolationViaProp__pl1 == "ok raw='[1]|[1]' n=1"
+
+-- interpolationViaParam__e: F(a) = "[{a}]" \n F(())
+def case_interpolationViaParam__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.emptySequence 0)])])
+#guard obs case_interpolationViaParam__e == "ok raw='[()]' n=1"
+
+-- interpolationViaParam__n0: F(a) = "[{a}]" \n F(0)
+def case_interpolationViaParam__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_interpolationViaParam__n0 == "ok raw='[0]' n=1"
+
+-- interpolationViaParam__n1: F(a) = "[{a}]" \n F(1)
+def case_interpolationViaParam__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_interpolationViaParam__n1 == "ok raw='[1]' n=1"
+
+-- interpolationViaParam__bt: F(a) = "[{a}]" \n F(true)
+def case_interpolationViaParam__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.boolLiteral true])])
+#guard obs case_interpolationViaParam__bt == "ok raw='[true]' n=1"
+
+-- interpolationViaParam__bf: F(a) = "[{a}]" \n F(false)
+def case_interpolationViaParam__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.boolLiteral false])])
+#guard obs case_interpolationViaParam__bf == "ok raw='[false]' n=1"
+
+-- interpolationViaParam__pbt: F(a) = "[{a}]" \n F((true))
+def case_interpolationViaParam__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.boolLiteral true])])
+#guard obs case_interpolationViaParam__pbt == "ok raw='[true]' n=1"
+
+-- interpolationViaParam__pbt_e: F(a) = "[{a}]" \n F((true, ()))
+def case_interpolationViaParam__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.boolLiteral true, (.emptySequence 0)])])])
+#guard obs case_interpolationViaParam__pbt_e == "ok raw='[(true, ())]' n=1"
+
+-- interpolationViaParam__pbt_1: F(a) = "[{a}]" \n F((true, 1))
+def case_interpolationViaParam__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.boolLiteral true, .num 1])])])
+#guard obs case_interpolationViaParam__pbt_1 == "ok raw='[(true, 1)]' n=1"
+
+-- interpolationViaParam__lbt: F(a) = "[{a}]" \n F([true])
+def case_interpolationViaParam__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [.boolLiteral true])])])
+#guard obs case_interpolationViaParam__lbt == "ok raw='[[true]]' n=1"
+
+-- interpolationViaParam__lbt_bf: F(a) = "[{a}]" \n F([true, false])
+def case_interpolationViaParam__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [.boolLiteral true, .boolLiteral false])])])
+#guard obs case_interpolationViaParam__lbt_bf == "ok raw='[[true, false]]' n=1"
+
+-- interpolationViaParam__lpbt_1: F(a) = "[{a}]" \n F([(true, 1)])
+def case_interpolationViaParam__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])])
+#guard obs case_interpolationViaParam__lpbt_1 == "ok raw='[[(true, 1)]]' n=1"
+
+-- interpolationViaParam__p1: F(a) = "[{a}]" \n F((1))
+def case_interpolationViaParam__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_interpolationViaParam__p1 == "ok raw='[1]' n=1"
+
+-- interpolationViaParam__p12: F(a) = "[{a}]" \n F((1, 2))
+def case_interpolationViaParam__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.num 1, .num 2])])])
+#guard obs case_interpolationViaParam__p12 == "ok raw='[(1, 2)]' n=1"
+
+-- interpolationViaParam__p123: F(a) = "[{a}]" \n F((1, 2, 3))
+def case_interpolationViaParam__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.num 1, .num 2, .num 3])])])
+#guard obs case_interpolationViaParam__p123 == "ok raw='[(1, 2, 3)]' n=1"
+
+-- interpolationViaParam__pee: F(a) = "[{a}]" \n F(((), ()))
+def case_interpolationViaParam__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
+#guard obs case_interpolationViaParam__pee == "ok raw='[((), ())]' n=1"
+
+-- interpolationViaParam__pe1: F(a) = "[{a}]" \n F(((), 1))
+def case_interpolationViaParam__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), .num 1])])])
+#guard obs case_interpolationViaParam__pe1 == "ok raw='[((), 1)]' n=1"
+
+-- interpolationViaParam__p1e: F(a) = "[{a}]" \n F((1, ()))
+def case_interpolationViaParam__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.num 1, (.emptySequence 0)])])])
+#guard obs case_interpolationViaParam__p1e == "ok raw='[(1, ())]' n=1"
+
+-- interpolationViaParam__p12_3: F(a) = "[{a}]" \n F(((1, 2), 3))
+def case_interpolationViaParam__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), .num 3])])])
+#guard obs case_interpolationViaParam__p12_3 == "ok raw='[((1, 2), 3)]' n=1"
+
+-- interpolationViaParam__p12_34: F(a) = "[{a}]" \n F(((1, 2), (3, 4)))
+def case_interpolationViaParam__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])])
+#guard obs case_interpolationViaParam__p12_34 == "ok raw='[((1, 2), (3, 4))]' n=1"
+
+-- interpolationViaParam__pe_12: F(a) = "[{a}]" \n F(((), (1, 2)))
+def case_interpolationViaParam__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])])
+#guard obs case_interpolationViaParam__pe_12 == "ok raw='[((), (1, 2))]' n=1"
+
+-- interpolationViaParam__ppe1_2: F(a) = "[{a}]" \n F((((), 1), 2))
+def case_interpolationViaParam__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])])
+#guard obs case_interpolationViaParam__ppe1_2 == "ok raw='[(((), 1), 2)]' n=1"
+
+-- interpolationViaParam__p12_e: F(a) = "[{a}]" \n F(((1, 2), ()))
+def case_interpolationViaParam__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])])
+#guard obs case_interpolationViaParam__p12_e == "ok raw='[((1, 2), ())]' n=1"
+
+-- interpolationViaParam__ppe: F(a) = "[{a}]" \n F((()))
+def case_interpolationViaParam__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.emptySequence 0)])])
+#guard obs case_interpolationViaParam__ppe == "ok raw='[()]' n=1"
+
+-- interpolationViaParam__pp1: F(a) = "[{a}]" \n F(((1)))
+def case_interpolationViaParam__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_interpolationViaParam__pp1 == "ok raw='[1]' n=1"
+
+-- interpolationViaParam__ppp12: F(a) = "[{a}]" \n F((((1, 2))))
+def case_interpolationViaParam__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [.num 1, .num 2])])])
+#guard obs case_interpolationViaParam__ppp12 == "ok raw='[(1, 2)]' n=1"
+
+-- interpolationViaParam__le: F(a) = "[{a}]" \n F([])
+def case_interpolationViaParam__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [])])])
+#guard obs case_interpolationViaParam__le == "ok raw='[[]]' n=1"
+
+-- interpolationViaParam__l7: F(a) = "[{a}]" \n F([7])
+def case_interpolationViaParam__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [.num 7])])])
+#guard obs case_interpolationViaParam__l7 == "ok raw='[[7]]' n=1"
+
+-- interpolationViaParam__l12: F(a) = "[{a}]" \n F([1, 2])
+def case_interpolationViaParam__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [.num 1, .num 2])])])
+#guard obs case_interpolationViaParam__l12 == "ok raw='[[1, 2]]' n=1"
+
+-- interpolationViaParam__l12_3: F(a) = "[{a}]" \n F([[1, 2], 3])
+def case_interpolationViaParam__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_interpolationViaParam__l12_3 == "ok raw='[[[1, 2], 3]]' n=1"
+
+-- interpolationViaParam__lle: F(a) = "[{a}]" \n F([[]])
+def case_interpolationViaParam__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [(.listLiteral [])])])])
+#guard obs case_interpolationViaParam__lle == "ok raw='[[[]]]' n=1"
+
+-- interpolationViaParam__l_e: F(a) = "[{a}]" \n F([()])
+def case_interpolationViaParam__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [(.emptySequence 0)])])])
+#guard obs case_interpolationViaParam__l_e == "ok raw='[[()]]' n=1"
+
+-- interpolationViaParam__l_p12: F(a) = "[{a}]" \n F([(1, 2)])
+def case_interpolationViaParam__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [(.capture [.num 1, .num 2])])])])
+#guard obs case_interpolationViaParam__l_p12 == "ok raw='[[(1, 2)]]' n=1"
+
+-- interpolationViaParam__p_l12: F(a) = "[{a}]" \n F(([1, 2], 3))
+def case_interpolationViaParam__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
+#guard obs case_interpolationViaParam__p_l12 == "ok raw='[([1, 2], 3)]' n=1"
+
+-- interpolationViaParam__pl1: F(a) = "[{a}]" \n F(([1]))
+def case_interpolationViaParam__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [(.interpolatedString "[" [{ hole := (.param "a"), text := "]" }])])] [(.call (.resolve "F") [(.listLiteral [.num 1])])])
+#guard obs case_interpolationViaParam__pl1 == "ok raw='[[1]]' n=1"
+
+-- special__interpolationNested: x = 1 \n "<{"[{x + 1}]"}>"
+def case_special__interpolationNested : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.interpolatedString "<" [{ hole := (.interpolatedString "[" [{ hole := (.binary .add (.resolve "x") (.num 1)), text := "]" }]), text := ">" }])])
+#guard obs case_special__interpolationNested == "ok raw='<[2]>' n=1"
+
+-- special__interpolationInferenceOrder: F = "{b}-{a}-{b}" \n F(1, 2)
+def case_special__interpolationInferenceOrder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "a"] [] [] [(.interpolatedString "" [{ hole := (.param "b"), text := "-" }, { hole := (.param "a"), text := "-" }, { hole := (.param "b"), text := "" }])])] [(.call (.resolve "F") [.num 1, .num 2])])
+#guard obs case_special__interpolationInferenceOrder == "ok raw='1-2-1' n=1"
+
+-- special__interpolationLiftsAFormula: Inc(x) = x + 1 \n G = "v{Inc}" \n G(4)
+def case_special__interpolationLiftsAFormula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.interpolatedString "v" [{ hole := (.call (.resolve "Inc") [.param "x"]), text := "" }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
+#guard obs case_special__interpolationLiftsAFormula == "ok raw='v5' n=1"
+
+-- special__interpolationFirstFailureStops: "a{1}b{10 div 0}c{([]:0)}"
+def case_special__interpolationFirstFailureStops : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "a" [{ hole := (.num 1), text := "b" }, { hole := (.binary .idiv (.num 10) (.num 0)), text := "c" }, { hole := (.index (.listLiteral []) (.num 0)), text := "" }])])
+#guard obs case_special__interpolationFirstFailureStops == "err div0"
+
+-- special__interpolationHoleWithoutOutput: B = { \n     A = 1 \n } \n "{B}"
+def case_special__interpolationHoleWithoutOutput : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
+#guard obs case_special__interpolationHoleWithoutOutput == "err missingOutput"
+
+-- special__interpolationStringsUnquoted: "{['one, two', 'three']} {('a', ['b'])}"
+def case_special__interpolationStringsUnquoted : Expr :=
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "" [{ hole := (.listLiteral [.stringLiteral "one, two", .stringLiteral "three"]), text := " " }, { hole := (.capture [.stringLiteral "a", (.listLiteral [.stringLiteral "b"])]), text := "" }])])
+#guard obs case_special__interpolationStringsUnquoted == "ok raw='[one, two, three] (a, [b])' n=1"
+
+-- special__interpolationHoleFreeIsLiteral: "abc" == 'abc'
+def case_special__interpolationHoleFreeIsLiteral : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.stringLiteral "abc") [{ op := .eq, operand := (.stringLiteral "abc") }])])
+#guard obs case_special__interpolationHoleFreeIsLiteral == "ok raw=true n=1"
+
 -- special__multiProp: P = 1, 2, 3 \n P
 def case_special__multiProp : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [.resolve "P"])
@@ -12530,7 +13075,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2487 differential cases.
+-- 2596 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14714,6 +15259,115 @@ def surfaceCaseIds : List String := [
   "captureStacked__l_p12",
   "captureStacked__p_l12",
   "captureStacked__pl1",
+  "interpolation__e",
+  "interpolation__n0",
+  "interpolation__n1",
+  "interpolation__bt",
+  "interpolation__bf",
+  "interpolation__pbt",
+  "interpolation__pbt_e",
+  "interpolation__pbt_1",
+  "interpolation__lbt",
+  "interpolation__lbt_bf",
+  "interpolation__lpbt_1",
+  "interpolation__p1",
+  "interpolation__p12",
+  "interpolation__p123",
+  "interpolation__pee",
+  "interpolation__pe1",
+  "interpolation__p1e",
+  "interpolation__p12_3",
+  "interpolation__p12_34",
+  "interpolation__pe_12",
+  "interpolation__ppe1_2",
+  "interpolation__p12_e",
+  "interpolation__ppe",
+  "interpolation__pp1",
+  "interpolation__ppp12",
+  "interpolation__le",
+  "interpolation__l7",
+  "interpolation__l12",
+  "interpolation__l12_3",
+  "interpolation__lle",
+  "interpolation__l_e",
+  "interpolation__l_p12",
+  "interpolation__p_l12",
+  "interpolation__pl1",
+  "interpolationViaProp__e",
+  "interpolationViaProp__n0",
+  "interpolationViaProp__n1",
+  "interpolationViaProp__bt",
+  "interpolationViaProp__bf",
+  "interpolationViaProp__pbt",
+  "interpolationViaProp__pbt_e",
+  "interpolationViaProp__pbt_1",
+  "interpolationViaProp__lbt",
+  "interpolationViaProp__lbt_bf",
+  "interpolationViaProp__lpbt_1",
+  "interpolationViaProp__p1",
+  "interpolationViaProp__p12",
+  "interpolationViaProp__p123",
+  "interpolationViaProp__pee",
+  "interpolationViaProp__pe1",
+  "interpolationViaProp__p1e",
+  "interpolationViaProp__p12_3",
+  "interpolationViaProp__p12_34",
+  "interpolationViaProp__pe_12",
+  "interpolationViaProp__ppe1_2",
+  "interpolationViaProp__p12_e",
+  "interpolationViaProp__ppe",
+  "interpolationViaProp__pp1",
+  "interpolationViaProp__ppp12",
+  "interpolationViaProp__le",
+  "interpolationViaProp__l7",
+  "interpolationViaProp__l12",
+  "interpolationViaProp__l12_3",
+  "interpolationViaProp__lle",
+  "interpolationViaProp__l_e",
+  "interpolationViaProp__l_p12",
+  "interpolationViaProp__p_l12",
+  "interpolationViaProp__pl1",
+  "interpolationViaParam__e",
+  "interpolationViaParam__n0",
+  "interpolationViaParam__n1",
+  "interpolationViaParam__bt",
+  "interpolationViaParam__bf",
+  "interpolationViaParam__pbt",
+  "interpolationViaParam__pbt_e",
+  "interpolationViaParam__pbt_1",
+  "interpolationViaParam__lbt",
+  "interpolationViaParam__lbt_bf",
+  "interpolationViaParam__lpbt_1",
+  "interpolationViaParam__p1",
+  "interpolationViaParam__p12",
+  "interpolationViaParam__p123",
+  "interpolationViaParam__pee",
+  "interpolationViaParam__pe1",
+  "interpolationViaParam__p1e",
+  "interpolationViaParam__p12_3",
+  "interpolationViaParam__p12_34",
+  "interpolationViaParam__pe_12",
+  "interpolationViaParam__ppe1_2",
+  "interpolationViaParam__p12_e",
+  "interpolationViaParam__ppe",
+  "interpolationViaParam__pp1",
+  "interpolationViaParam__ppp12",
+  "interpolationViaParam__le",
+  "interpolationViaParam__l7",
+  "interpolationViaParam__l12",
+  "interpolationViaParam__l12_3",
+  "interpolationViaParam__lle",
+  "interpolationViaParam__l_e",
+  "interpolationViaParam__l_p12",
+  "interpolationViaParam__p_l12",
+  "interpolationViaParam__pl1",
+  "special__interpolationNested",
+  "special__interpolationInferenceOrder",
+  "special__interpolationLiftsAFormula",
+  "special__interpolationFirstFailureStops",
+  "special__interpolationHoleWithoutOutput",
+  "special__interpolationStringsUnquoted",
+  "special__interpolationHoleFreeIsLiteral",
   "special__multiProp",
   "special__multiPropCall",
   "special__multiPropCount",
@@ -15026,7 +15680,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2487
+#guard surfaceCaseIds.length == 2596
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -15128,5 +15782,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2501 case guards (2487 surface + 14 internal-node).
+-- Total: 2610 case guards (2596 surface + 14 internal-node).
 end SemanticExplorerCases

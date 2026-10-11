@@ -87,6 +87,9 @@ public class RequiredAncestorRepresentationTests
                 case Expr.Capture(var body):
                     foreach (var row in body) pending.Push(row);
                     break;
+                case Expr.InterpolatedString(_, var interpolationLinks):
+                    foreach (var link in interpolationLinks) pending.Push(link.Hole);
+                    break;
             }
         }
     }

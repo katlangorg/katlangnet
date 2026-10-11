@@ -304,7 +304,8 @@ public class Fe3HostileReviewTests
             e => new Expr.SequenceSpread(e), e => new Expr.ListLiteral([leaf, e]),
             e => new Expr.DotCall(leaf, "F", [e]), e => new Expr.DotCall(e, "F"),
             e => new Expr.Grace(e, 1), e => new Expr.Capture([leaf, e]),
-            e => new Expr.Call(leaf, [e]), e => new Expr.Call(e, [leaf]) };
+            e => new Expr.Call(leaf, [e]), e => new Expr.Call(e, [leaf]),
+            e => new Expr.InterpolatedString("a", [new InterpolationLink(leaf, "b"), new InterpolationLink(e, "c")]) };
         var rng = new Random(17391);
         for (var seed = 0; seed < 40; seed++)
         {

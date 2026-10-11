@@ -2516,6 +2516,10 @@ internal static class PropertyDependencyGraphBuilder
             Expr.ListLiteral(var listItems) => CollectSummarySeed(
                 listItems, localPropertySummaries, ownedHere, memos, inTransparentContext),
 
+            // Holes are expressions of the enclosing algorithm, like list elements (VAL-12).
+            Expr.InterpolatedString(_, var interpolationLinks)
+                => interpolationLinks.Aggregate(new SummarySeed(), (seed, link) => seed.Absorb(Seed(link.Hole))),
+
             Expr.AlgorithmExpr(var algorithm) => CollectSharedAlgorithmSummarySeed(algorithm, memos),
 
             // A capture owns no names: its rows walk with an empty
@@ -3157,6 +3161,12 @@ internal static class PropertyDependencyGraphBuilder
                 // A capture element is a value: the resolver lifts it.
                 foreach (var row in captureBody)
                     CollectSiblingDependencyIndices(row, context, shadow, LiftingRole.Value);
+                break;
+
+            case Expr.InterpolatedString(_, var interpolationLinks):
+                // An interpolation hole is a value: the resolver lifts it (VAL-12).
+                foreach (var link in interpolationLinks)
+                    CollectSiblingDependencyIndices(link.Hole, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.DotCall dotCall:

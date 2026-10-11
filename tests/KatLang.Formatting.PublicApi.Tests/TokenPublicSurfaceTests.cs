@@ -39,11 +39,12 @@ public class TokenPublicSurfaceTests
         ("InitializerColumn", "_ = new Token { Column = 9 };", [("CS1729", "'Token' does not contain a constructor that takes 0 arguments"), ("CS0200", "'Token.Column' cannot be assigned to")]),
         ("InitializerNumValue", "_ = new Token { NumValue = 7 };", [("CS1729", "'Token' does not contain a constructor that takes 0 arguments"), ("CS0200", "'Token.NumValue' cannot be assigned to")]),
         ("InitializerStringValue", "_ = new Token { StringValue = \"forged\" };", [("CS1729", "'Token' does not contain a constructor that takes 0 arguments"), ("CS0200", "'Token.StringValue' cannot be assigned to")]),
-        // Factories: all seven are internal.
+        // Factories: all eight are internal.
         ("FactoryNumber", "_ = Token.CreateNumber(1, 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateNumber'")]),
         ("FactoryIdentifier", "_ = Token.CreateIdentifier(\"a\", 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateIdentifier'")]),
         ("FactoryStringLiteral", "_ = Token.CreateStringLiteral(\"a\", 0, 3, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateStringLiteral'")]),
         ("FactoryComment", "_ = Token.CreateComment(\"a\", 0, 2, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateComment'")]),
+        ("FactoryInterpolatedStringText", "_ = Token.CreateInterpolatedStringText(\"a\", 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateInterpolatedStringText'")]),
         ("FactoryCreate", "_ = Token.Create(TokenKind.Plus, 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'Create'")]),
         ("FactoryEndOfFile", "_ = Token.EndOfFile(0, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'EndOfFile'")]),
         ("FactoryBad", "_ = Token.Bad(0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'Bad'")]),
@@ -254,7 +255,7 @@ public class TokenPublicSurfaceTests
 
         Assert.Empty(type.GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static));
 
-        // No public factory, no Deconstruct at any accessibility; the seven factories are internal.
+        // No public factory, no Deconstruct at any accessibility; the eight factories are internal.
         var publicStatics = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly).Select(m => m.Name).OrderBy(n => n, StringComparer.Ordinal);
         Assert.Equal(["op_Equality", "op_Inequality"], publicStatics);
         Assert.Empty(type.GetMember("Deconstruct", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static));
@@ -262,7 +263,7 @@ public class TokenPublicSurfaceTests
             .Where(m => m.IsAssembly && m.ReturnType == typeof(Token))
             .Select(m => m.Name)
             .OrderBy(n => n, StringComparer.Ordinal);
-        Assert.Equal(["Bad", "Create", "CreateComment", "CreateIdentifier", "CreateNumber", "CreateStringLiteral", "EndOfFile"], factories);
+        Assert.Equal(["Bad", "Create", "CreateComment", "CreateIdentifier", "CreateInterpolatedStringText", "CreateNumber", "CreateStringLiteral", "EndOfFile"], factories);
 
         // The supported source of tokens stays public.
         var tokenize = typeof(Lexer).GetMethod("Tokenize", BindingFlags.Public | BindingFlags.Static, [typeof(string)]);

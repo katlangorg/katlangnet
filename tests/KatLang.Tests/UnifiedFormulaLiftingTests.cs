@@ -85,6 +85,8 @@ public class UnifiedFormulaLiftingTests
         { "fallback-receiver", Inc + "G = Inc.count", "x", "G(4)", "ok 1" },
         { "fallback-argument", Inc + "G = 5.take(Inc)", "x", "G(0)", "ok L[5]" },
         { "deconstruction-source", "Two(x) = x, x + 1\nG = {\n    a, b = Two\n    a * b\n}", "x", "G(3)", "ok 12" },
+        { "interpolation-hole", Inc + "G = \"v{Inc}\"", "x", "G(4)", "ok 'v5'" },
+        { "interpolation-hole-operand", Inc + "G = \"{Inc * 2}|{Inc}\"", "x", "G(4)", "ok '10|5'" },
     };
 
     [Theory]
@@ -314,6 +316,8 @@ public class UnifiedFormulaLiftingTests
         "[5, 6]:({0} mod 2)",
         "trace({0})",
         "{0}.take(2)",
+        "\"<{{{0}}}>\"",
+        "\"{{{0} + 1}}-{{[{0}]}}\"",
     };
 
     [Theory]

@@ -376,6 +376,18 @@ internal sealed class EvaluationBudget
     internal long MaterializedStringChars => _materializedStringChars;
 
     /// <summary>
+    /// The longest string this run could reserve right now, in UTF-16 code units: the per-string
+    /// limit, or the cumulative budget's remaining headroom when that is smaller. A string
+    /// <see cref="TryReserveString"/> would accept is exactly one no longer than this, so a
+    /// producer that builds its text incrementally (an interpolated string, VAL-12) checks each
+    /// piece against it and stops at the first piece that would cross it, instead of building
+    /// oversized text before the one reservation. Reading it commits nothing. Monotone over a
+    /// run: reservations only shrink the headroom.
+    /// </summary>
+    internal long StringConstructionCapacity
+        => Math.Min(_maxStringLength, _maxMaterializedStringChars - _materializedStringChars);
+
+    /// <summary>
     /// RESERVES <paramref name="requestedLength"/> UTF-16 code units for a language string
     /// value that is about to be created. Callers reserve before building the string, and
     /// abandon construction when this returns an error.

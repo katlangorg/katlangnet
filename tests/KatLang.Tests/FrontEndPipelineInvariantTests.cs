@@ -45,6 +45,7 @@ public class FrontEndPipelineInvariantTests
                 case Expr.ListLiteral(var items): foreach (var it in items) WalkExpr(it); break;
                 case Expr.AlgorithmExpr(var alg): Walk(alg); break;
                 case Expr.Capture(var captureBody): foreach (var row in captureBody) WalkExpr(row); break;
+                case Expr.InterpolatedString(_, var interpolationLinks): foreach (var link in interpolationLinks) WalkExpr(link.Hole); break;
                 case Expr.Call(var f, var args): WalkExpr(f); foreach (var a in args) WalkExpr(a); break;
                 case Expr.DotCall dc: WalkExpr(dc.Target); if (dc.Args is { } ar) { foreach (var a in ar) WalkExpr(a); } break;
             }

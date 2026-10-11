@@ -303,7 +303,7 @@ public class SemanticExplorerLeanArtifactTests
             var sourceComment = explorerCase.Source.Replace("\n", " \\n ");
             builder.Append($"-- {explorerCase.Id}: {sourceComment}\n");
             builder.Append($"def case_{explorerCase.Id} : Expr :=\n  {explorerCase.LeanProgram}\n");
-            builder.Append($"#guard obs case_{explorerCase.Id} == \"{observation.Neutral}\"\n\n");
+            builder.Append($"#guard obs case_{explorerCase.Id} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n\n");
             surfaceIds.Add(explorerCase.Id);
         }
 
@@ -340,7 +340,7 @@ public class SemanticExplorerLeanArtifactTests
                 Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [rootOutput]);
             builder.Append($"-- internal__{internalCase.Id}: {internalCase.Description}\n");
             builder.Append($"def case_internal__{internalCase.Id} : Expr :=\n  {LeanAstEncoder.EncodeProgram(root)}\n");
-            builder.Append($"#guard obs case_internal__{internalCase.Id} == \"{observation.Neutral}\"\n\n");
+            builder.Append($"#guard obs case_internal__{internalCase.Id} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n\n");
             internalIds.Add($"internal__{internalCase.Id}");
         }
 

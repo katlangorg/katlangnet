@@ -573,6 +573,10 @@ public class AutomaticForwardingBindingTests
                     foreach (var row in capture.Body)
                         VisitExpr(row, chain, path);
                     break;
+                case Expr.InterpolatedString interpolated:
+                    foreach (var link in interpolated.Links)
+                        VisitExpr(link.Hole, chain, path);
+                    break;
                 case Expr.DotCall dotCall:
                     VisitExpr(dotCall.Target, chain, path);
                     if (dotCall.Args is { } args)

@@ -1146,6 +1146,20 @@ mutual
     | param   : Ident -> Expr
     | num     : Int -> Expr
     | stringLiteral : String -> Expr  -- * string literal: first-class value (evaluates to Result.str)
+    -- * interpolatedString: a double-quoted string WITH interpolation holes,
+    --   `"head{h1}t1…{hn}tn"` (STR-02, VAL-12): the decoded head text and one
+    --   link per hole (the hole and the decoded text written after it). A
+    --   double-quoted string with no hole is an ordinary `stringLiteral`. Each
+    --   hole is ONE ordinary expression of the enclosing algorithm in a VALUE
+    --   role. Evaluation (`interpolateWith`): when the node's value is demanded,
+    --   the holes are evaluated LEFT TO RIGHT, each EXACTLY ONCE, each value
+    --   converted to its structural text (`Result.canonicalText`) as soon as it
+    --   is available, and the first failure ends the node; the result is ONE
+    --   `Result.str`. As a call argument the node is one suspended cell like any
+    --   other expression. No callable identity. The lexing (quotes, escapes,
+    --   `{{`/`}}`) and the hole-level restrictions are C#-only front-end rules.
+    --   C#: `Expr.InterpolatedString`.
+    | interpolatedString : String -> List InterpolationLink -> Expr
     -- * boolLiteral: the reserved Boolean literals `true` / `false`
     --   (evaluates to Result.bool). They are lexer keywords, never
     --   identifiers, so they can be neither declared nor shadowed and never
@@ -1282,6 +1296,14 @@ mutual
   structure ComparisonLink where
     op      : ComparisonOp
     operand : Expr
+    deriving Repr
+
+  /-- One link of an interpolated string: an interpolation `hole` and the
+      already-decoded literal `text` written after it (possibly empty).
+      C#: `InterpolationLink`. -/
+  structure InterpolationLink where
+    hole : Expr
+    text : String
     deriving Repr
 
   /-- Property definition with visibility metadata. -/
@@ -1724,7 +1746,47 @@ namespace Result
       in `KatLangArityLaws.lean`. C#: `Result.Index`. -/
   def select? (r : Result) (i : Nat) : Option Result :=
     r.projectionItems[i]?
+
+  /-- THE structural text of a value (VAL-12): what an interpolation hole writes.
+      A number is its canonical text (the text the `.string` intrinsic writes,
+      `resultToString`; on this integer tier `toString`), a Boolean its keyword
+      (`boolText`), a string ITSELF — verbatim and never quoted, at every nesting
+      level — and a sequence or list its elements' texts separated by `, ` inside
+      parentheses or brackets, so `()` and `[]` stay distinct and nesting is kept.
+      It is TOTAL: every value has a text, so converting a hole never fails.
+      Human-readable text, not a serialization (`[str "a, b"]` and
+      `[str "a", str "b"]` write the same text). Display settings never reach it.
+      C#: `ValueTextRenderer.AppendCanonicalValue` (whose numbers are Decimal128
+      canonical text, a C#-only tier). -/
+  def canonicalText : Result -> String
+    | atom n => toString n
+    | str s => s
+    | bool b => boolText b
+    | sequenceValue rs => "(" ++ ", ".intercalate (rs.map canonicalText) ++ ")"
+    | listValue rs => "[" ++ ", ".intercalate (rs.map canonicalText) ++ "]"
 end Result
+
+/-- INTERPOLATION (VAL-12), the TOTAL combinator the evaluator's
+    `.interpolatedString` arm instantiates with the ordinary value read of each
+    hole (`fun hole => eval hole ctx env`, the read a comparison operand uses).
+    Starting from the accumulated text `acc`, each link's hole is evaluated
+    through `value` — LEFT TO RIGHT, EXACTLY ONCE — its value's structural text
+    (`Result.canonicalText`) is appended at once, then the link's literal text.
+    Because the holes are sequenced by the monad's bind, the first failing hole
+    ends the whole run and no later hole is ever evaluated. Defined above the
+    `partial` evaluator block (the FORMAL-07 pattern), so its laws are theorems
+    for every channel (`KatLangArityLaws.lean` § Interpolation); that the
+    evaluator arm passes the ordinary value read is a source fact, pinned by
+    `#guard`s. C#: the `InterpolatedString` case of `Evaluator.EvalExpressionSpineCounted`
+    and its async twin (an iterative frame machine — an implementation strategy with
+    the same order — which additionally checks the C#-only string limits before each
+    append). -/
+def interpolateWith {m : Type → Type} [Monad m] (value : Expr → m Result) :
+    String → List InterpolationLink → m String
+  | acc, [] => pure acc
+  | acc, link :: rest => do
+      let holeValue ← value link.hole
+      interpolateWith value (acc ++ Result.canonicalText holeValue ++ link.text) rest
 
 /-- Counted evaluation result: the normalized value paired with the number of
   top-level values emitted at the current algorithm boundary.
@@ -2536,6 +2598,7 @@ def Expr.kind : Expr -> String
   | .param _      => "param"
   | .num _        => "num"
   | .stringLiteral _ => "stringLiteral"
+  | .interpolatedString _ _ => "interpolatedString"
   | .boolLiteral _ => "boolLiteral"
   | .unary _ _    => "unary"
   | .binary _ _ _ => "binary"
@@ -2709,6 +2772,7 @@ mutual
     | .sequenceConstruct left right => left.aliasCount + right.aliasCount
     | .sequenceSpread operand => operand.aliasCount
     | .listLiteral items => (items.map Expr.aliasCount).sum
+    | .interpolatedString _ links => (links.map (fun link => link.hole.aliasCount)).sum
     | .capture rows => (rows.map Expr.aliasCount).sum
     | .call fn args => fn.aliasCount + (args.map Expr.aliasCount).sum
     | .dotMember target _ fallback args? =>
@@ -2789,6 +2853,8 @@ mutual
     | .param _ => pure ()
     | .num _ => pure ()
     | .stringLiteral _ => pure ()
+    | .interpolatedString _ links =>
+        links.forM (fun link => validateExprTree link.hole chain aliases)
     | .boolLiteral _ => pure ()
     | .resolve _ => pure ()
     | .unary _ operand =>
@@ -2930,6 +2996,10 @@ mutual
     | .resolve n => .resolve n
     | .num n => .num n
     | .stringLiteral text => .stringLiteral text
+    -- The key keeps the head and every text: two strings with the same holes but different
+    -- literal text are different shapes.
+    | .interpolatedString head links =>
+        .interpolatedString head (links.map (fun link => { link with hole := cacheExprShape link.hole }))
     | .boolLiteral b => .boolLiteral b
     | .emptySequence depth => .emptySequence depth
     | .unary op e => .unary op (cacheExprShape e)
@@ -3883,6 +3953,56 @@ def unaryOperandTier : UnaryOp -> Nat
 def parenthesizeWhenLooser (slotTier : Nat) (operand : Expr) (name : String) : String :=
   if bindingTier operand < slotTier then "(" ++ name ++ ")" else name
 
+/-- Whether a string's text can be written as a single-quoted literal (no quote and no line
+    break). C#: `ExprNameRenderer.CanWriteSingleQuoted`. -/
+def canWriteSingleQuoted (text : String) : Bool :=
+  !(text.any fun c => c == '\'' || c == '\n' || c == '\r')
+
+/-- The text of a double-quoted string as KatLang source spells it: `\`, `"`, a line feed and
+    a tab escaped and braces doubled; a carriage return, which no KatLang string can spell, is
+    shown as `\r`. C#: `ExprNameRenderer.EscapeDoubleQuotedText`. -/
+def escapeDoubleQuotedText (text : String) : String :=
+  String.join (text.toList.map fun c =>
+    match c with
+    | '\\' => "\\\\"
+    | '"' => "\\\""
+    | '\n' => "\\n"
+    | '\t' => "\\t"
+    | '\r' => "\\r"
+    | '{' => "{{"
+    | '}' => "}}"
+    | other => other.toString)
+
+/-- Whether an interpolation hole's operand-shape name could contain a `:` outside every
+    delimiter: an index reachable along the operator and postfix spine, which a hole would
+    refuse. Conservative — the parentheses it asks for are redundant grouping.
+    C#: `ExprNameRenderer.MayRenderHoleLevelColon`. -/
+partial def holeMayRenderTopLevelColon : Expr -> Bool
+  | .index _ _ => true
+  | .unary _ operand => holeMayRenderTopLevelColon operand
+  | .binary _ left right => holeMayRenderTopLevelColon left || holeMayRenderTopLevelColon right
+  | .comparison first links =>
+      holeMayRenderTopLevelColon first || links.any (fun link => holeMayRenderTopLevelColon link.operand)
+  | .dotMember target _ _ _ => holeMayRenderTopLevelColon target
+  | .call fn _ => holeMayRenderTopLevelColon fn
+  | .sequenceSpread operand => holeMayRenderTopLevelColon operand
+  | _ => false
+
+/-- Whether an interpolation hole's operand-shape name could BEGIN with a brace: a block at the
+    left end of the operator and postfix spine (`{...}.X`, `{...} + 2`, the block itself). Such a
+    hole is written with spaces, `"{ {...}.X }"`, so `{{` never reads back as a literal brace.
+    Conservative — a space inside a hole never changes it. C#:
+    `ExprNameRenderer.MayRenderLeadingBrace`. -/
+partial def holeMayRenderLeadingBrace : Expr -> Bool
+  | .algorithmExpr _ => true
+  | .binary _ left _ => holeMayRenderLeadingBrace left
+  | .comparison first _ => holeMayRenderLeadingBrace first
+  | .index target _ => holeMayRenderLeadingBrace target
+  | .dotMember target _ _ _ => holeMayRenderLeadingBrace target
+  | .call fn _ => holeMayRenderLeadingBrace fn
+  | .sequenceSpread operand => holeMayRenderLeadingBrace operand
+  | _ => false
+
 /-- The diagnostic expression name (C#: `ExprNameMode.DiagnosticName`). Operators
   render bare, and every operand keeps parentheses exactly where the precedence
   ladder needs them (`bindingTier` against the slot tiers above), so the text
@@ -3891,7 +4011,25 @@ def parenthesizeWhenLooser (slotTier : Nat) (operand : Expr) (name : String) : S
 partial def exprDiagnosticName : Expr -> String
   | .param name => name
   | .num value => toString value
-  | .stringLiteral value => "'" ++ value ++ "'"
+  -- A string renders as source: single-quoted when its text can be written that way,
+  -- otherwise double-quoted with its escapes (C#: `ExprNameRenderer`).
+  | .stringLiteral value =>
+      if canWriteSingleQuoted value then "'" ++ value ++ "'"
+      else "\"" ++ escapeDoubleQuotedText value ++ "\""
+  -- An interpolated string renders as written: each text run re-escaped, each hole in
+  -- operand shape, parenthesized when it could render a hole-level `:` (redundant grouping
+  -- never changes a hole) and spaced when its name could begin with a brace. C#:
+  -- `PushInterpolationLink`.
+  | .interpolatedString head links =>
+      "\"" ++ escapeDoubleQuotedText head
+        ++ String.join (links.map (fun link =>
+            let holeName := exprDiagnosticName link.hole
+            let hole :=
+              if holeMayRenderTopLevelColon link.hole then "{(" ++ holeName ++ ")}"
+              else if holeMayRenderLeadingBrace link.hole then "{ " ++ holeName ++ " }"
+              else "{" ++ holeName ++ "}"
+            hole ++ escapeDoubleQuotedText link.text))
+        ++ "\""
   | .boolLiteral value => Result.boolText value
   -- A prefix operator's operand is parenthesized when it binds looser than the
   -- operator's slot (`unaryOperandTier`): `-(a + b)`, `-(not a)`, `-(-a)`,
@@ -5369,6 +5507,7 @@ partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .index _ _ => .error (Error.notAnAlgorithm "index expression")
   | .call _ _ => .error (Error.notAnAlgorithm "call expression")
   | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
+  | .interpolatedString _ _ => .error (Error.notAnAlgorithm "interpolated string")
   | .boolLiteral _ => .error (Error.notAnAlgorithm "Boolean literal")
 
 /-- Project identity without a VALUE demand or an invocation. -/
@@ -7599,6 +7738,12 @@ mutual
         evalCallCountedExpr f args ctx env
     | .num n => pure (Result.atom n, 1)
     | .stringLiteral s => pure (Result.str s, 1)
+    | .interpolatedString head links => do
+        -- VAL-12: the holes left to right, each once through the ordinary value read
+        -- (the read a comparison operand uses), each converted at once; the first failure
+        -- ends the node; ONE string value.
+        let text <- interpolateWith (fun hole => eval hole ctx env) head links
+        pure (Result.str text, 1)
     | .boolLiteral b => pure (Result.bool b, 1)
     | .unary op operand =>
         evalUnaryCounted op operand ctx env
@@ -8742,6 +8887,10 @@ mutual
     | .param n => pure (.param n)
     | .num n => pure (.num n)
     | .stringLiteral s => pure (.stringLiteral s)
+    | .interpolatedString head links =>
+        return .interpolatedString head
+          (<- links.mapM (fun link => do
+            return { link with hole := (<- identifyPropertyExpr link.hole) }))
     | .boolLiteral b => pure (.boolLiteral b)
     | .resolve n => pure (.resolve n)
     | .emptySequence n => pure (.emptySequence n)
@@ -8920,7 +9069,7 @@ inductive LoadPosition where
      - Property definition RHS: `Lib = load('https://katlang.org/lib.kat')`
      - Open declarations: `open load('https://katlang.org/lib.kat')`
      load in runtime positions (binary expressions, call arguments, if/while
-     branches, etc.) is rejected.
+     branches, interpolation holes, etc.) is rejected.
 
   3. **Domain allowlist**: The URL's host must be in `LoadCtx.allowedHosts`
      (default: ["katlang.org"]). Subdomains are permitted.
@@ -8956,6 +9105,9 @@ mutual
     An AST satisfying this predicate is ready for semantic evaluation. -/
 partial def postElabInvariant : Expr -> Bool
   | .stringLiteral _ => true
+  -- Holes are ordinary expressions: a `load` call or an incoherent dot edge inside one
+  -- violates the invariant like anywhere else (the wildcard below would hide them).
+  | .interpolatedString _ links => links.all (fun link => postElabInvariant link.hole)
   | .boolLiteral _   => true
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b

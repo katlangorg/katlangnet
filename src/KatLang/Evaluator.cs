@@ -787,6 +787,7 @@ public static partial class Evaluator
         Expr.Param => "param",
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
+        Expr.InterpolatedString => "interpolatedString",
         Expr.BoolLiteral => "boolLiteral",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
@@ -2190,15 +2191,13 @@ public static partial class Evaluator
 
     /// <summary>
     /// The single construction point for language string values created by source
-    /// evaluation. Every producer routes through here so the length ceiling and the
-    /// cumulative string budget cannot be forgotten at a scattered site, and so a
-    /// future concatenating operation inherits both automatically.
-    ///
-    /// <para>The reservation happens BEFORE the value is created. In practice a source
-    /// program cannot approach the ceiling — KatLang has no concatenation operator, so
-    /// strings only come from source literals and roughly 30-unit numeric conversions —
-    /// but a hand-built AST passed to the public evaluator API can, and that is the path
-    /// this closes.</para>
+    /// evaluation from one finished text: string literals, the <c>.string</c> intrinsic, and
+    /// the planned loop's string constant. Every producer charges the length ceiling and the
+    /// cumulative string budget through the one reservation
+    /// (<see cref="Evaluation.EvaluationBudget.TryReserveString"/>) BEFORE the value is
+    /// created. An interpolated string builds its text from parts, so it checks each piece
+    /// against the same budget before appending it and then makes the same one reservation
+    /// (<c>InterpolatedTextBuilder</c>).
     /// </summary>
     internal static EvalResult<Result> MakeStringResult(EvalCtx ctx, string text, SourceSpan? span = null)
         => ctx.Budget.TryReserveString(text.Length) is { } limitError
@@ -2365,6 +2364,7 @@ public static partial class Evaluator
             Expr.NativeCall => new EvalError.NotAnAlgorithm("native call") { Span = expr.Span },
             Expr.Grace => new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span },
             Expr.StringLiteral => new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span },
+            Expr.InterpolatedString => new EvalError.NotAnAlgorithm("interpolated string") { Span = expr.Span },
             Expr.BoolLiteral => new EvalError.NotAnAlgorithm("Boolean literal") { Span = expr.Span },
         };
     }

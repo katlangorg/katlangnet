@@ -54,6 +54,18 @@ public class AstStructuralDepthTests
         return expr;
     }
 
+    /// <summary>
+    /// Nested interpolated strings <c>"{"{…{leaf}…}"}"</c>: an interpolated string weighs two
+    /// units (STR-02), so 2 counted units per level plus the leaf.
+    /// </summary>
+    internal static Expr InterpolationSpine(int levels, Expr? leaf = null)
+    {
+        Expr expr = leaf ?? new Expr.Num(1);
+        for (var i = 0; i < levels; i++)
+            expr = new Expr.InterpolatedString("", [new InterpolationLink(expr, "")]);
+        return expr;
+    }
+
     /// <summary>Block(User { Output = [inner] }) nesting: 2 counted nodes per level plus the leaf.</summary>
     internal static Expr BlockSpine(int levels, Expr? leaf = null)
     {
@@ -1152,6 +1164,10 @@ public class AstStructuralDepthTests
             // both are enumerated by TryGetChild (PickComparisonChild).
             ["Comparison"] = ["First", "Links"],
             [nameof(ComparisonLink)] = ["Operand"],
+            // Links carries an interpolated string's holes through InterpolationLink.Hole (the
+            // decoded texts are strings); enumerated by TryGetChild (PickInterpolationChild).
+            ["InterpolatedString"] = ["Links"],
+            [nameof(InterpolationLink)] = ["Hole"],
             ["Index"] = ["Target", "Selector"],
             ["SequenceConstruct"] = ["Left", "Right"],
             ["SequenceSpread"] = ["Operand"],
@@ -1180,7 +1196,7 @@ public class AstStructuralDepthTests
         {
             typeof(Expr), typeof(Algorithm), typeof(Pattern), typeof(ParameterPattern),
             typeof(Property), typeof(CondBranch), typeof(ScopeCtx), typeof(OutputBundle),
-            typeof(ComparisonLink),
+            typeof(ComparisonLink), typeof(InterpolationLink),
         };
 
         static bool CarriesAstNodes(Type type, Type[] astBases)
@@ -1944,6 +1960,14 @@ public class AstStructuralDepthProcessTests
             Assert.Equal(1, countedBlock.Value.EmittedCount);
             Assert.True(Result.ValueComparer.Equals(new Result.Atom(-1), countedBlock.Value.Value));
 
+            // ── Nested interpolated strings (STR-02): the counted dispatch plus the hole
+            // helper per level, on the sync route and the async twin alike.
+            AssertStringValue(AstStructuralDepthTests.InterpolationSpine((max - 1) / 2), "1");          // depth max - 1
+            AssertStringValue(
+                AstStructuralDepthTests.InterpolationSpine((max - 1) / 2, new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))),
+                "-1");                                                                                 // depth max
+            AssertDepthRejected(AstStructuralDepthTests.InterpolationSpine((max + 1) / 2));             // depth max + 1
+
             // ── Nested calls (invocation machinery; frame cost differs from blocks)
             // At and below the limit the outcome is the value on roomy stacks or the
             // ESTABLISHED structured invocation backstop on constrained ones — never
@@ -2081,9 +2105,25 @@ public class AstStructuralDepthProcessTests
             AssertFlatValue(AstStructuralDepthTests.BinarySpine(max, leftDeep: false), max);
             AssertFlatValue(IndexSpine(max), 1m);
             AssertFlatValue(AstStructuralDepthTests.ListSpine(max), 1m);
+            // STR-02 must neither enlarge ordinary validation frames nor recurse
+            // through its evaluator machine, on both routes at the exact ceiling.
+            AssertStringValue(
+                AstStructuralDepthTests.InterpolationSpine((max - 1) / 2, new Expr.Unary(UnaryOp.Minus, new Expr.Num(1))),
+                "-1");
         });
 
         WriteProbeMarker();
+
+        static void AssertStringValue(Expr expr, string expected)
+        {
+            var sync = Evaluator.Run(expr);
+            Assert.False(sync.IsError, sync.IsError ? sync.Error.ToString() : null);
+            Assert.Equal(expected, Assert.IsType<Result.Str>(sync.Value).Value);
+            var cache = new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache();
+            var asynchronous = Evaluator.RunAsync(expr, cache).AsTask().GetAwaiter().GetResult();
+            Assert.False(asynchronous.IsError, asynchronous.IsError ? asynchronous.Error.ToString() : null);
+            Assert.Equal(expected, Assert.IsType<Result.Str>(asynchronous.Value).Value);
+        }
 
         static decimal UnaryValue(int totalNodes) => (totalNodes - 1) % 2 == 0 ? 1m : -1m;
 
@@ -2500,6 +2540,12 @@ public class AstStructuralDepthProcessTests
             // shape a per-mechanism budget would wrongly admit.
             AssertBoundary(n => Rep("([{", n) + "1" + Rep("}])", n), 34);
 
+            // Interpolation holes (STR-02): the base expression units plus the hole surcharge,
+            // 4 units/level like groups -> 95 levels; alternating with groups, 8 units per
+            // `("{` cycle -> 47 cycles.
+            AssertBoundary(n => Rep("\"{", n) + "1" + Rep("}\"", n), 95);
+            AssertBoundary(n => Rep("(\"{", n) + "1" + Rep("}\")", n), 47);
+
             // Binary chains INSIDE every container level (the previously
             // composable-budget shape): chains parse iteratively, so the bracket
             // levels alone set the budget — 12-operator chains at each of 49
@@ -2523,6 +2569,10 @@ public class AstStructuralDepthProcessTests
             // (296 unary + Num + the two relevant engine wrapping nodes = 299).
             var unaryValue = KatLangEngine.Run(Rep("-", 296) + "1");
             Assert.Equal(new Decimal128[] { 1m }, Assert.IsType<RunResult.Success>(unaryValue).Atoms);
+            // The deepest interpolation the parser admits runs through the whole front end and
+            // the evaluator on this thread too.
+            var interpolationValue = KatLangEngine.Run(Rep("\"{", 95) + "7" + Rep("}\"", 95));
+            Assert.Equal("7", Assert.IsType<RunResult.Success>(interpolationValue).ToDisplayString());
 
             // The same budget protects every public parse surface: the raw
             // boundary, the elaborating front-end, and the engine.

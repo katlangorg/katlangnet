@@ -46,6 +46,13 @@ public static class LeanAstEncoder
     public static string EncodeExpr(Expr expression) => new LeanAstEncoding(expression).EncodeExpr(expression);
     public static string EncodeProperty(Property property) => new LeanAstEncoding(property.Value).EncodeProperty(property);
     public static string EncodePattern(Pattern pattern) => LeanAstEncoding.EncodePattern(pattern);
+
+    /// <summary>
+    /// A Lean string literal with exactly <paramref name="value"/>'s text (the encoder's own
+    /// spelling): how a generated <c>#guard</c> embeds an expected neutral observation, so a
+    /// string result holding a quote, a backslash, a line feed or a tab stays faithful.
+    /// </summary>
+    public static string QuoteString(string value) => LeanAstEncoding.Quote(value);
 }
 
 internal sealed class LeanAstEncoding
@@ -162,6 +169,10 @@ internal sealed class LeanAstEncoding
         // `{ op, operand }` link per written comparison, never nested binaries.
         Expr.Comparison(var first, var links) =>
             $"(.comparison {Arg(first)} [{EncodeList(links, EncodeComparisonLink)}])",
+        // An interpolated string encodes as the alternating form it is: the decoded head text
+        // and one `{ hole, text }` link per hole, in written order.
+        Expr.InterpolatedString(var head, var links) =>
+            $"(.interpolatedString {Quote(head)} [{EncodeList(links, EncodeInterpolationLink)}])",
         Expr.Index(var target, var selector) => $"(.index {Arg(target)} {Arg(selector)})",
         // INTERNAL node: the parser never produces it, but the internal-node
         // differential cases hand-construct it, and their Lean text is derived
@@ -409,6 +420,9 @@ internal sealed class LeanAstEncoding
     private string EncodeComparisonLink(ComparisonLink link)
         => $"{{ op := .{EncodeComparisonOp(link.Op)}, operand := {Arg(link.Operand)} }}";
 
+    private string EncodeInterpolationLink(InterpolationLink link)
+        => $"{{ hole := {Arg(link.Hole)}, text := {Quote(link.Text)} }}";
+
     private static string EncodeComparisonOp(ComparisonOp op) => op switch
     {
         ComparisonOp.Lt => "lt",
@@ -507,16 +521,30 @@ internal sealed class LeanAstEncoding
 
     /// <summary>
     /// Lean string-literal spelling for names and string values. Backslash and
-    /// quote are escaped; a control character has no reviewed spelling here and
-    /// is refused (no corpus name or literal contains one).
+    /// quote are escaped, and a line feed and a tab take Lean's <c>\n</c> / <c>\t</c>
+    /// (a double-quoted KatLang string can hold them through its escapes); every other
+    /// control character has no reviewed spelling here and is refused. Also the
+    /// spelling of the expected neutral text embedded in a generated <c>#guard</c>.
     /// </summary>
-    private static string Quote(string value)
+    internal static string Quote(string value)
     {
         var builder = new StringBuilder(value.Length + 2);
         builder.Append('"');
         for (var i = 0; i < value.Length; i++)
         {
             var ch = value[i];
+            if (ch == '\n')
+            {
+                builder.Append("\\n");
+                continue;
+            }
+
+            if (ch == '\t')
+            {
+                builder.Append("\\t");
+                continue;
+            }
+
             if (char.IsControl(ch))
             {
                 throw new NotSupportedException(

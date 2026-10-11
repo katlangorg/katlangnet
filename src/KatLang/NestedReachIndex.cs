@@ -58,6 +58,7 @@ internal sealed class NestedReachIndex(Func<Expr, bool>? isExtraTarget = null)
             Expr.SequenceConstruct construct => Reaches(construct.Left) || Reaches(construct.Right),
             Expr.SequenceSpread spread => Reaches(spread.Operand),
             Expr.ListLiteral list => Reaches(list.Items),
+            Expr.InterpolatedString interpolated => interpolated.Links.Any(link => Reaches(link.Hole)),
             Expr.DotCall dotCall => Reaches(dotCall.Target)
                 || (dotCall.LexicalFallback is { } fallback && Reaches(fallback))
                 || (dotCall.Args is { } args && Reaches(args)),

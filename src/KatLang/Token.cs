@@ -61,6 +61,32 @@ public enum TokenKind
 
     // Error recovery
     Bad,
+
+    // Double-quoted strings with interpolation holes (STR-02). A double-quoted string with
+    // no hole is ONE StringLiteral token; a string with at least one hole is the sequence
+    //   InterpolatedStringStart  { InterpolatedStringText | InterpolationHoleOpen
+    //   <the hole's ordinary tokens> InterpolationHoleClose }  InterpolatedStringEnd
+    // on one physical line, with every Start matched by its End and every HoleOpen by its
+    // HoleClose (an unterminated interpolated string is instead one unterminated
+    // StringLiteral token). Appended after Bad: the numeric values are stable public API.
+
+    /// <summary>The opening <c>"</c> of a double-quoted string that contains an interpolation hole.</summary>
+    InterpolatedStringStart,
+
+    /// <summary>
+    /// A non-empty run of text in an interpolated string; <see cref="Token.StringValue"/> is the
+    /// DECODED text (escapes and doubled braces replaced), the token's extent the raw source run.
+    /// </summary>
+    InterpolatedStringText,
+
+    /// <summary>The <c>{</c> that opens an interpolation hole.</summary>
+    InterpolationHoleOpen,
+
+    /// <summary>The <c>}</c> that closes an interpolation hole.</summary>
+    InterpolationHoleClose,
+
+    /// <summary>The closing <c>"</c> of an interpolated string.</summary>
+    InterpolatedStringEnd,
 }
 
 /// <summary>
@@ -77,8 +103,13 @@ public enum TokenKind
 /// <see cref="TokenKind.Number"/> (an invalid or too-large literal is reported as a
 /// diagnostic and carries <c>0</c>). <see cref="StringValue"/> is non-null exactly for
 /// <see cref="TokenKind.Identifier"/> (the name), <see cref="TokenKind.StringLiteral"/>
-/// (the text between the quotes), and <see cref="TokenKind.Comment"/> (the text after
-/// <c>#</c>); keywords, operators, delimiters, <see cref="TokenKind.EndOfFile"/>, and
+/// (the string's text: for a single-quoted literal exactly the source text between the
+/// quotes, which has no escapes; for a double-quoted literal its DECODED text — <c>\"</c>,
+/// <c>\\</c>, <c>\n</c>, <c>\t</c>, <c>{{</c> and <c>}}</c> replaced by the characters they
+/// denote; for an unterminated double-quoted literal the raw source text after the opening
+/// quote), <see cref="TokenKind.InterpolatedStringText"/> (the decoded text of the run), and
+/// <see cref="TokenKind.Comment"/> (the text after <c>#</c>); keywords, operators, delimiters,
+/// the other interpolated-string tokens, <see cref="TokenKind.EndOfFile"/>, and
 /// <see cref="TokenKind.Bad"/> carry no payload — their spelling is the source slice at
 /// <see cref="Position"/>/<see cref="Length"/>. The end-of-file token is always the last
 /// token, sits at the source length, and has length 0. An empty <c>with { }</c> copy
@@ -140,8 +171,9 @@ public sealed record Token
     public Decimal128 NumValue { get; internal init; }
 
     /// <summary>
-    /// The text payload of an identifier, string literal, or comment token (see the type
-    /// remarks); <see langword="null"/> for every other kind.
+    /// The text payload of an identifier, string literal, interpolated-string text run
+    /// (<see cref="TokenKind.InterpolatedStringText"/>, its decoded text), or comment token (see the
+    /// type remarks); <see langword="null"/> for every other kind.
     /// </summary>
     public string? StringValue { get; internal init; }
 
@@ -159,6 +191,9 @@ public sealed record Token
 
     internal static Token CreateStringLiteral(string value, int position, int length, int line, int column)
         => new(TokenKind.StringLiteral, position, length, line, column, stringValue: value);
+
+    internal static Token CreateInterpolatedStringText(string decoded, int position, int length, int line, int column)
+        => new(TokenKind.InterpolatedStringText, position, length, line, column, stringValue: decoded);
 
     internal static Token CreateComment(string text, int position, int length, int line, int column)
         => new(TokenKind.Comment, position, length, line, column, stringValue: text);

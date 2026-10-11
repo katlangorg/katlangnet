@@ -1199,6 +1199,14 @@ public static class SemanticModelBuilder
                         VisitExpr(item, scope);
                     break;
 
+                case Expr.InterpolatedString(_, var interpolationLinks):
+                    // Holes are transparent: each classifies in the enclosing scope, so names in
+                    // a hole get ordinary hover, references, and completion. The decoded text
+                    // runs are string content and record nothing.
+                    foreach (var link in interpolationLinks)
+                        VisitExpr(link.Hole, scope);
+                    break;
+
                 case Expr.DotCall dotCall:
                     VisitExpr(dotCall.Target, scope);
                     var (classification, declaration, propertyInfo) = ResolveDotMember(dotCall, scope);
@@ -1282,6 +1290,7 @@ public static class SemanticModelBuilder
                 Expr.SequenceSpread spread => spread.SpreadMarkerSpan is null && IsSemanticallyInert(spread.Operand),
                 Expr.SequenceConstruct construct => IsSemanticallyInert(construct.Left) && IsSemanticallyInert(construct.Right),
                 Expr.ListLiteral list => IsSemanticallyInert(list.Items),
+                Expr.InterpolatedString interpolated => interpolated.Links.All(link => IsSemanticallyInert(link.Hole)),
                 Expr.Capture capture => IsSemanticallyInert(capture.Body),
                 Expr.Grace grace => IsSemanticallyInert(grace.Inner),
                 // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is the one

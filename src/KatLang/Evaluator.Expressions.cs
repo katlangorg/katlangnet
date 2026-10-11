@@ -20,12 +20,14 @@ public static partial class Evaluator
     /// <summary>
     /// The pure-expression composite node kinds whose evaluation is driven by the
     /// iterative spine machine (<see cref="EvalExpressionSpineCounted"/>) instead of
-    /// CLR recursion: unary and binary operators, index selection, and list literals.
-    /// These are the shapes whose recursive evaluation frames were measured to
-    /// exhaust a 1 MiB stack within the structural depth ceiling (binary/unary spines
-    /// at ~330-340 nodes, index spines at ~270-285, list spines at ~290-300 in Debug),
-    /// so within-ceiling safety REQUIRES that their nesting consume no proportional
-    /// call stack. Algorithm-carrying kinds (blocks, calls, dot-calls) stay on their
+    /// CLR recursion: unary and binary operators, comparison chains, index selection,
+    /// list literals, and interpolated strings (STR-02). These are the shapes whose
+    /// recursive evaluation frames were measured to exhaust a 1 MiB stack within the
+    /// structural depth ceiling (binary/unary spines at ~330-340 nodes, index spines at
+    /// ~270-285, list spines at ~290-300 in Debug; a recursive interpolated string costs
+    /// ~6.8 KB per level on the async twin, so a ceiling-depth nesting would overflow
+    /// with no stack probe on its path), so within-ceiling safety REQUIRES that their
+    /// nesting consume no proportional call stack. Algorithm-carrying kinds (blocks, calls, dot-calls) stay on their
     /// recursive paths and are bounded by the structural ceiling instead; the internal
     /// sequence-join kinds already have their own iterative handling
     /// (<see cref="EvalSequenceConstructCounted"/>, <see cref="EvalSequenceSpreadCounted"/>).
@@ -36,7 +38,7 @@ public static partial class Evaluator
     /// (<c>LoopOptimizer.EvalLoopExprPlan</c>).</para>
     /// </summary>
     internal static bool IsExpressionSpineNode(Expr expr)
-        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
+        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString;
 
     /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>
     private struct ExpressionSpineFrame(Expr node)
@@ -46,7 +48,8 @@ public static partial class Evaluator
         /// <summary>
         /// Unary/Binary/Index: completed child count. ListLiteral: next element index.
         /// Comparison: the index of the operand being evaluated (0 = the first operand,
-        /// k = the operand of link k-1).
+        /// k = the operand of link k-1). InterpolatedString: the index of the link whose hole
+        /// is being evaluated.
         /// </summary>
         public int Phase;
 
@@ -61,6 +64,9 @@ public static partial class Evaluator
 
         /// <summary>ListLiteral element accumulator (exact written slots, spread already expanded).</summary>
         public List<Result>? ListItems;
+
+        /// <summary>InterpolatedString text accumulator; created on the frame's first visit.</summary>
+        public InterpolatedTextBuilder? Text;
     }
 
     /// <summary>
@@ -99,6 +105,16 @@ public static partial class Evaluator
     ///   the collection reservation happens before the persistent list is built, and a
     ///   list literal always emits one value. Lean: <c>evalListLiteralCounted</c>;
     ///   plain <c>Eval</c> is this function's value projection on both sides.</item>
+    ///   <item><b>InterpolatedString</b> (VAL-12): the head text, then the holes LEFT TO
+    ///   RIGHT, each EXACTLY ONCE, each converted to its structural value text as soon as it
+    ///   is available (<see cref="InterpolatedTextBuilder.AppendValue"/>) and followed by its
+    ///   link's text; the first failure ends the node — a hole's failure (gaining the hole's
+    ///   span, else the node's, when it has none) or a string limit — and no later hole is
+    ///   evaluated. A hole is read exactly like any other machine child (a pushed spine frame,
+    ///   or one delegated <c>Eval</c>): a parameter demands its supplied cell, a property goes
+    ///   through the zero-argument cache, an output-less algorithm is its
+    ///   <see cref="EvalError.MissingOutput"/>. The node emits ONE string value. Lean: the
+    ///   <c>.interpolatedString</c> arm of <c>evalCounted</c> (<c>interpolateWith</c>).</item>
     /// </list>
     /// </summary>
     private static EvalResult<CountedResult> EvalExpressionSpineCounted(
@@ -341,6 +357,40 @@ public static partial class Evaluator
                     break;
                 }
 
+                case Expr.InterpolatedString(var head, var links):
+                {
+                    if (frame.Text is null)
+                    {
+                        frame.Text = new InterpolatedTextBuilder(ctx.Budget);
+                        if (!frame.Text.Append(head))
+                        {
+                            completed = frame.Text.LimitError(frame.Node.Span);
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        // The hole of link Phase just arrived: its text, then the link's text.
+                        hasPendingChild = false;
+                        if (!frame.Text.AppendValue(pendingChild.Value) || !frame.Text.Append(links[frame.Phase].Text))
+                        {
+                            completed = frame.Text.LimitError(frame.Node.Span);
+                            break;
+                        }
+
+                        frame.Phase++;
+                    }
+
+                    if (frame.Phase < links.Count)
+                    {
+                        requestedChild = links[frame.Phase].Hole;
+                        break;
+                    }
+
+                    completed = frame.Text.Complete(frame.Node.Span);
+                    break;
+                }
+
                 default:
                     throw new InvalidOperationException(
                         $"EvalExpressionSpineCounted received the non-spine node kind '{frame.Node.GetType()}'.");
@@ -379,17 +429,17 @@ public static partial class Evaluator
             if (completedResult.IsError)
             {
                 // Unwind exactly like the recursive returns: the frame whose child
-                // failed applies its child-error decoration (only Index attaches its
-                // span), then returns the error to ITS parent, which decorates in
-                // turn. An error produced by a frame's own apply step starts at that
-                // frame's parent.
+                // failed applies its child-error decoration (an Index attaches its own
+                // span; an InterpolatedString the failed hole's span, else its own),
+                // then returns the error to ITS parent, which decorates in turn. An error
+                // produced by a frame's own apply step starts at that frame's parent.
                 var error = completedResult.Error;
                 var decorateTopFrame = requestedChild is not null;
                 while (frameCount > 0)
                 {
                     ref var unwound = ref frames[frameCount - 1];
-                    if (decorateTopFrame && unwound.Node is Expr.Index)
-                        error = AtSpanIfMissing(error, unwound.Node.Span);
+                    if (decorateTopFrame)
+                        error = DecorateSpineChildError(error, unwound);
 
                     decorateTopFrame = true;
                     frameCount--;
@@ -406,6 +456,22 @@ public static partial class Evaluator
             hasPendingChild = true;
         }
     }
+
+    /// <summary>
+    /// The decoration a spine frame applies to the error of its FAILED CHILD, shared by both
+    /// machines: an <see cref="Expr.Index"/> attaches its own span, an
+    /// <see cref="Expr.InterpolatedString"/> the span of the hole in flight (link
+    /// <see cref="ExpressionSpineFrame.Phase"/>), else its own — each only when the error has
+    /// no location yet. Every other spine kind passes its child's error on untouched.
+    /// </summary>
+    private static EvalError DecorateSpineChildError(EvalError error, in ExpressionSpineFrame frame)
+        => frame.Node switch
+        {
+            Expr.Index => AtSpanIfMissing(error, frame.Node.Span),
+            Expr.InterpolatedString interpolation
+                => AtSpanIfMissing(error, interpolation.Links[frame.Phase].Hole.Span ?? interpolation.Span),
+            _ => error,
+        };
 
     // ── Main eval ───────────────────────────────────────────────────────────
 
@@ -601,18 +667,21 @@ public static partial class Evaluator
             // (dual-view lookup order documented on EvalParamCounted).
             Expr.Param(var name) => ProjectCountedValue(EvalParamCountedOf(expr, name, ctx, valEnv)),
 
-            // Unary, binary, and comparison-chain spines evaluate iteratively; the
-            // machine preserves operand validation, error propagation, and spans
-            // through the shared unary, binary, and comparison applications.
-            Expr.Unary or Expr.Binary or Expr.Comparison => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
+            // Unary, binary, comparison-chain, index, list-literal, and interpolated-string
+            // spines evaluate iteratively; the machine preserves operand validation, error
+            // propagation, and spans through the shared unary, binary, and comparison
+            // applications, and owns the index-expression span. ONE arm for every spine
+            // kind: in a Debug frame each call site holds its own struct return
+            // temporaries, and this frame recurs once per algorithm boundary (frame-size
+            // discipline).
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString
+                => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
             Expr.SequenceConstruct => ProjectCountedValue(EvalSequenceConstructCounted(expr, ctx, valEnv)),
 
             Expr.EmptySequence(var depth) => EvalResult<Result>.Ok(BuildEmptySequenceValue(depth)),
 
             Expr.SequenceSpread => ProjectCountedValue(EvalSequenceSpreadCounted(expr, ctx, valEnv)),
-
-            Expr.ListLiteral => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
             Expr.AlgorithmExpr(var alg) => EvalAlgorithmExprValue(expr, alg, ctx, valEnv),
 
@@ -629,9 +698,6 @@ public static partial class Evaluator
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallExpr(func, callArgs, ctx, valEnv)),
-
-            // The spine machine owns the index-expression span.
-            Expr.Index => ProjectCountedValue(EvalExpressionSpineCounted(expr, ctx, valEnv)),
 
             Expr.NativeCall(var fnName, var argNames) => EvalNativeCall(fnName, argNames, ctx, valEnv),
 
@@ -697,7 +763,11 @@ public static partial class Evaluator
 
             Expr.SequenceConstruct => EvalSequenceConstructCounted(expr, ctx, valEnv),
 
-            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.ListLiteral => EvalExpressionSpineCounted(expr, ctx, valEnv),
+            // The spine kinds share ONE arm (one call site in this recursive frame); the
+            // spine machine owns the index-expression span and evaluates an interpolated
+            // string's holes left to right, each once (VAL-12).
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString
+                => EvalExpressionSpineCounted(expr, ctx, valEnv),
 
             Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
@@ -716,9 +786,6 @@ public static partial class Evaluator
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallCountedExpr(func, callArgs, ctx, valEnv)),
-
-            // The spine machine owns the index-expression span.
-            Expr.Index => EvalExpressionSpineCounted(expr, ctx, valEnv),
 
             // This head already charged the dispatch checkpoint. Enter the shared
             // implementations directly, never through the charging plain Eval head.

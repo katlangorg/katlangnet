@@ -143,6 +143,13 @@ public sealed class Parser
     private int _openBrackets;
     private int _openBraces;
 
+    // Interpolation holes currently open (STR-02). A hole's extent is fixed by the lexer
+    // (every InterpolationHoleOpen has its InterpolationHoleClose on the same line), so a hole
+    // is an OWNERSHIP BARRIER: entering one saves and zeroes the three counters above — a
+    // closer written inside a hole can never close a construct opened outside it — and the
+    // hole's own close is the one closer it is owed (see EnterInterpolationHole).
+    private int _openInterpolationHoles;
+
     // Per-level surcharges for the heavy productions, calibrated by the same probes:
     // a parenthesized group or brace block runs the block/algorithm machinery each
     // level (~4.7 KB Debug ⇒ 4 total units with the two base charges), a call
@@ -156,6 +163,12 @@ public sealed class Parser
     private const int BlockNestingSurcharge = 2;
     private const int CallArgsNestingSurcharge = 1;
     private const int ListNestingSurcharge = 1;
+
+    // An interpolated string and its hole run the string/hole machinery on top of the hole's
+    // expression levels (ParseInterpolatedString → ParseInterpolationHole → ParseExpression),
+    // so each hole level carries a surcharge on the same cumulative budget, calibrated by the
+    // same 1 MiB probes (ParserNestingDepthTests' interpolation shape).
+    private const int InterpolationHoleNestingSurcharge = 2;
 
     /// <summary>
     /// The stable prefix of the parser recursion-budget diagnostic. The module
@@ -292,14 +305,76 @@ public sealed class Parser
         TokenKind.RParen => _openParens > 0,
         TokenKind.RBracket => _openBrackets > 0,
         TokenKind.RBrace => _openBraces > 0,
+        TokenKind.InterpolationHoleClose => _openInterpolationHoles > 0,
         _ => false,
     };
 
     private static bool IsClosingDelimiter(TokenKind kind)
-        => kind is TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace;
+        => kind is TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace or TokenKind.InterpolationHoleClose;
 
-    /// <summary>Whether any delimited construct (group, call arguments, list, brace body) is open.</summary>
-    private bool IsInsideDelimitedConstruct => _openParens + _openBrackets + _openBraces > 0;
+    /// <summary>Whether any delimited construct (group, call arguments, list, brace body, interpolation hole) is open.</summary>
+    private bool IsInsideDelimitedConstruct
+        => _openParens + _openBrackets + _openBraces + _openInterpolationHoles > 0;
+
+    /// <summary>
+    /// Whether the parser is at HOLE LEVEL: directly inside an interpolation hole, with no
+    /// group, list, call argument list or brace body opened since the hole began (the hole's
+    /// ownership barrier zeroed their counters). The hole-level restrictions apply only here:
+    /// a hole holds ONE expression, so a hole-level <c>:</c> is not taken as indexing (STR-02
+    /// makes no commitment about <c>:</c> inside holes; a selection is written in parentheses,
+    /// <c>"{(xs:0)}"</c>), and the hole reports it.
+    /// </summary>
+    private bool IsAtInterpolationHoleLevel
+        => _openInterpolationHoles > 0 && _openParens + _openBrackets + _openBraces == 0;
+
+    /// <summary>
+    /// One admitted interpolation hole: charges <see cref="InterpolationHoleNestingSurcharge"/>
+    /// on the shared recursion budget, registers the hole's close as owed, and raises the hole's
+    /// OWNERSHIP BARRIER — the enclosing constructs' owed-closer counters are saved and zeroed,
+    /// so a closer written inside the hole is never taken for an enclosing construct's closer
+    /// (<c>F("{ ) }")</c> reports the <c>)</c> inside the hole and leaves <c>F(</c> open on its
+    /// own terms). <see cref="Dispose"/> restores exactly those changes, once, from a
+    /// <c>using</c>. The default value restores nothing.
+    /// </summary>
+    private readonly struct InterpolationHoleProduction(
+        Parser parser,
+        int openParens,
+        int openBrackets,
+        int openBraces,
+        StateScopeStack.Ticket ticket) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (parser is null)
+                return;
+
+            parser._stateScopes.Exit(ticket);
+            parser._nestingDepth -= InterpolationHoleNestingSurcharge;
+            parser._openInterpolationHoles--;
+            parser._openParens = openParens;
+            parser._openBrackets = openBrackets;
+            parser._openBraces = openBraces;
+        }
+    }
+
+    /// <summary>
+    /// Enters an interpolation hole (<see cref="InterpolationHoleProduction"/>). A refused enter
+    /// mutates nothing: admission precedes every change.
+    /// </summary>
+    private InterpolationHoleProduction EnterInterpolationHole()
+    {
+        if (InterpolationHoleNestingSurcharge > MaxNestingDepth - _nestingDepth)
+            ThrowNestingTooDeep();
+
+        var ticket = _stateScopes.Enter();
+        var production = new InterpolationHoleProduction(this, _openParens, _openBrackets, _openBraces, ticket);
+        _openParens = 0;
+        _openBrackets = 0;
+        _openBraces = 0;
+        _openInterpolationHoles++;
+        _nestingDepth += InterpolationHoleNestingSurcharge;
+        return production;
+    }
 
     // ── Delimiter ownership (the #9 recovery law) ───────────────────────────
     // A closing delimiter is resolved by exactly one owner, never consumed as junk
@@ -780,6 +855,11 @@ public sealed class Parser
         TokenKind.Comment => includeArticle ? "a comment" : "comment",
         TokenKind.EndOfFile => "end of input",
         TokenKind.Bad => includeArticle ? "an unrecognized character" : "unrecognized character",
+        TokenKind.InterpolatedStringStart => includeArticle ? "a string" : "string",
+        TokenKind.InterpolatedStringText => "string text",
+        TokenKind.InterpolationHoleOpen => "'{'",
+        TokenKind.InterpolationHoleClose => "'}'",
+        TokenKind.InterpolatedStringEnd => "'\"'",
         _ => throw new InvalidOperationException($"Unhandled token kind in diagnostic rendering: {kind}"),
     };
 
@@ -987,7 +1067,11 @@ public sealed class Parser
     private Expr.Num PlaceholderFrom(Token start) => new(0) { Span = MakeSpan(start) };
 
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private static Expr.StringLiteral StringLiteralAt(Token token) => new(token.StringValue ?? "") { Span = token.Span };
+    private Expr.StringLiteral StringLiteralAt(Token token) => new(token.StringValue ?? "")
+    {
+        Span = token.Span,
+        IsRecoveryLiteral = HasLexicalErrorInHead(token, token),
+    };
 
     /// <summary>The Boolean literal node of a <c>true</c> / <c>false</c> keyword token; the kind carries the value.</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
@@ -1887,8 +1971,9 @@ public sealed class Parser
                 includeCommaSpanningBindingPatterns: !IsSamePhysicalLineAsPreviousToken());
 
     /// <summary>
-    /// Parses exactly one open target atom: a single-quoted string target
-    /// (desugared through <see cref="CreateLoadOpenTarget"/>), or one plain
+    /// Parses exactly one open target atom: a string-literal target of either quote kind
+    /// (desugared through <see cref="CreateLoadOpenTarget"/>; an interpolated string is
+    /// <see cref="DiagnosticCode.InterpolationNotAllowedHere"/>), or one plain
     /// expression (resolve, argumentless dotted path, or parenthesized block —
     /// anything else is rejected by open-form validation). A spread-marked
     /// open target (`open A*`) parses to a SequenceSpread expression and is
@@ -1898,9 +1983,27 @@ public sealed class Parser
     {
         if (Current.Kind == TokenKind.StringLiteral)
         {
-            // String literal sugar: open 'url' → open load('url').
+            // String literal sugar: open 'url' → open load('url'). A double-quoted URL
+            // with no hole is the same string literal token (its decoded text).
             var token = Advance();
             return CreateLoadOpenTarget(token);
+        }
+
+        if (Current.Kind == TokenKind.InterpolatedStringStart)
+        {
+            // An open target is a literal module URL; a string with a hole is computed. The
+            // rejected target's same-line member path (`open "a{b}".X`) belongs to it: it is
+            // consumed with it, so it neither needs a separating comma nor becomes a row.
+            RejectInterpolatedStringHere(InterpolatedOpenTargetDiagnostic);
+            while (Current.Kind == TokenKind.Dot && IsSamePhysicalLineAsPreviousToken())
+            {
+                Advance(); // '.'
+                if (Current.Kind == TokenKind.Identifier && IsSamePhysicalLineAsPreviousToken())
+                    Advance();
+            }
+
+            OwnSameLineItem(Current);
+            return null;
         }
 
         // One plain expression: resolve, dotted path (a leading '.' may
@@ -1911,10 +2014,10 @@ public sealed class Parser
     }
 
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private static Expr CreateLoadOpenTarget(Token urlToken)
+    private Expr CreateLoadOpenTarget(Token urlToken)
     {
         SourceSpan? span = urlToken.Span;
-        var urlExpr = new Expr.StringLiteral(urlToken.StringValue ?? "") { Span = span };
+        var urlExpr = StringLiteralAt(urlToken);
         OutputBundle loadArgs = [urlExpr];
         // This synthetic load has no identifier token in source, so it must
         // stay spanless. Borrowing the quoted URL span would make downstream
@@ -2840,6 +2943,18 @@ public sealed class Parser
                     if (closers.Count != 0)
                         continue;
                     break;
+                case TokenKind.InterpolatedStringStart:
+                    // A whole interpolated string is ONE atom of the region: its holes may
+                    // hold delimiters that never balance against the head's (`"{ ) }"`).
+                    next = InterpolationPartner(next);
+                    continue;
+                case TokenKind.InterpolationHoleClose
+                    or TokenKind.InterpolatedStringEnd
+                    or TokenKind.InterpolatedStringText
+                    or TokenKind.InterpolationHoleOpen:
+                    // A string or hole boundary: the scan started inside an interpolation
+                    // hole, and a head can never extend past the hole that contains it.
+                    return false;
                 default:
                     continue;
             }
@@ -3097,6 +3212,7 @@ public sealed class Parser
         or TokenKind.Number
         or TokenKind.Minus      // negative literal
         or TokenKind.StringLiteral
+        or TokenKind.InterpolatedStringStart // rejected: a pattern needs fixed text
         or TokenKind.KeywordTrue   // Boolean literal pattern
         or TokenKind.KeywordFalse
         or TokenKind.Identifier
@@ -3287,9 +3403,16 @@ public sealed class Parser
 
             case TokenKind.StringLiteral:
                 {
+                    // A single-quoted literal, or a double-quoted one with no hole (its
+                    // payload is the decoded text): the same literal pattern either way.
                     var token = Advance();
                     return new Pattern.LitString(token.StringValue ?? "");
                 }
+
+            case TokenKind.InterpolatedStringStart:
+                // A pattern is fixed text; a string with a hole is computed when evaluated.
+                RejectInterpolatedStringHere(InterpolatedPatternDiagnostic);
+                return RecoveryBinder();
 
             case TokenKind.KeywordTrue:
             case TokenKind.KeywordFalse:
@@ -3430,6 +3553,17 @@ public sealed class Parser
             var depth = 0;
             do
             {
+                // An interpolation hole's close belongs to the hole that holds this pattern,
+                // never to the skipped group; and a whole interpolated string is one
+                // depth-neutral unit, whatever delimiters its holes hold.
+                if (Current.Kind == TokenKind.InterpolationHoleClose)
+                    break;
+                if (Current.Kind == TokenKind.InterpolatedStringStart)
+                {
+                    AdvancePastInterpolatedString();
+                    continue;
+                }
+
                 if (Current.Kind is TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace)
                     depth++;
                 else if (IsClosingDelimiter(Current.Kind))
@@ -3638,6 +3772,7 @@ public sealed class Parser
     {
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
+        Expr.InterpolatedString => "interpolatedString",
         Expr.BoolLiteral => "boolLiteral",
         Expr.Param => "param",
         Expr.Unary => "unary",
@@ -3858,6 +3993,8 @@ public sealed class Parser
     {
         TokenKind.Number
         or TokenKind.StringLiteral
+        // The opening quote of a double-quoted string with a hole: an operand like any string.
+        or TokenKind.InterpolatedStringStart
         or TokenKind.KeywordTrue
         or TokenKind.KeywordFalse
         or TokenKind.Identifier
@@ -4284,7 +4421,8 @@ public sealed class Parser
                     lhs = ParseSpreadMarkerContinuation(lhs);
                     break;
 
-                case TokenKind.Colon when MayContinueClosedExpression(TokenKind.Colon):
+                case TokenKind.Colon when MayContinueClosedExpression(TokenKind.Colon)
+                    && !IsAtInterpolationHoleLevel:
                     // Index: expr : selector. Same-physical-line only — a
                     // newline never continues a closed expression into
                     // postfix indexing, mirroring the call-delimiter rule. A
@@ -4293,7 +4431,9 @@ public sealed class Parser
                     // indexing target or selector (`A*:0` reports
                     // SpreadSelectionDiagnostic, which distinguishes
                     // select-then-spread `(A:0)*` from capture-then-select
-                    // `(A*):0`).
+                    // `(A*):0`). A ':' at interpolation-hole level is never
+                    // indexing: the expression ends there and the hole reports
+                    // it (a selection in a hole is written `"{(xs:0)}"`).
                     var colonToken = Advance(); // consume ':'
                     lhs = ParseIndexContinuation(lhs, colonToken);
                     break;
@@ -4792,6 +4932,9 @@ public sealed class Parser
                     return StringLiteralAt(token);
                 }
 
+            case TokenKind.InterpolatedStringStart:
+                return ParseInterpolatedString();
+
             case TokenKind.KeywordTrue:
             case TokenKind.KeywordFalse:
                 {
@@ -5077,6 +5220,213 @@ public sealed class Parser
         return new Expr.Num(0) { Span = new SourceSpan(dangling.Span.End, dangling.Span.End) };
     }
 
+    // ── Interpolated strings (STR-02) ───────────────────────────────────────
+    // The lexer fixes the structure of every double-quoted string with a hole — its Start
+    // token, alternating text runs and holes, its End token, all on one physical line, and
+    // every hole closed (an unterminated string is one unterminated StringLiteral token
+    // instead) — so the parser only ever recovers INSIDE a hole, whose extent is known.
+
+    private const string EmptyInterpolationHoleDiagnostic =
+        "An interpolation hole cannot be empty: write one expression between '{' and '}', or write '{{' and '}}' for literal braces.";
+
+    private const string InterpolationSpreadDiagnostic =
+        "An interpolation hole holds one value, and a spread supplies items rather than one value. To write the items as one sequence value, capture them, as in \"{(xs*)}\".";
+
+    private const string InterpolatedPatternDiagnostic =
+        "A clause-head pattern needs fixed text, so it cannot contain an interpolated string. Write the text itself: a double-quoted string without holes is a literal pattern, with '{{' and '}}' for literal braces.";
+
+    private const string InterpolatedOpenTargetDiagnostic =
+        "An open target must be a literal module URL, so it cannot be an interpolated string. Write the URL itself, in single quotes or in double quotes without holes.";
+
+    /// <summary>
+    /// Parses an interpolated string — the current token is its
+    /// <see cref="TokenKind.InterpolatedStringStart"/> — through its closing quote: the decoded
+    /// head text, then each hole with the decoded text written after it
+    /// (<see cref="Expr.InterpolatedString"/>). Kept out of <see cref="ParsePrimary"/> so its
+    /// locals never enlarge that hot recursive frame.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParseInterpolatedString()
+    {
+        var start = Advance(); // the opening quote
+        var head = TakeInterpolatedText();
+        var links = new List<InterpolationLink>();
+        while (Current.Kind == TokenKind.InterpolationHoleOpen)
+        {
+            var hole = ParseInterpolationHole();
+            links.Add(new InterpolationLink(hole, TakeInterpolatedText()));
+        }
+
+        if (Current.Kind != TokenKind.InterpolatedStringEnd)
+            throw new InvalidOperationException("The lexer produced an interpolated string without its closing quote.");
+        Advance(); // the closing quote
+        return InterpolatedStringFrom(head, links, start);
+    }
+
+    private string TakeInterpolatedText()
+        => Current.Kind == TokenKind.InterpolatedStringText ? Advance().StringValue! : "";
+
+    // Partner index of every interpolated-string boundary token — Start↔End and
+    // HoleOpen↔HoleClose — built in one pass the first time a scan needs to step over a whole
+    // string (most parses never do). The lexer guarantees the pairing.
+    private int[]? _interpolationPartners;
+
+    /// <summary>
+    /// The index of the token paired with the interpolated-string boundary token at
+    /// <paramref name="index"/>: an <see cref="TokenKind.InterpolatedStringStart"/>'s
+    /// <see cref="TokenKind.InterpolatedStringEnd"/> and back, a hole's open and close. Lets a
+    /// token-level scan treat a whole string as one atom in O(1).
+    /// </summary>
+    private int InterpolationPartner(int index)
+        => (_interpolationPartners ??= BuildInterpolationPartners(_tokens))[index];
+
+    private static int[] BuildInterpolationPartners(IReadOnlyList<Token> tokens)
+    {
+        var partners = new int[tokens.Count];
+        var open = new Stack<int>();
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            switch (tokens[index].Kind)
+            {
+                case TokenKind.InterpolatedStringStart or TokenKind.InterpolationHoleOpen:
+                    open.Push(index);
+                    break;
+                case TokenKind.InterpolatedStringEnd or TokenKind.InterpolationHoleClose:
+                    if (!open.TryPop(out var opener)
+                        || (tokens[opener].Kind == TokenKind.InterpolatedStringStart)
+                            != (tokens[index].Kind == TokenKind.InterpolatedStringEnd))
+                    {
+                        throw new InvalidOperationException("The lexer produced unpaired interpolated-string tokens.");
+                    }
+
+                    partners[opener] = index;
+                    partners[index] = opener;
+                    break;
+            }
+        }
+
+        if (open.Count != 0)
+            throw new InvalidOperationException("The lexer produced unpaired interpolated-string tokens.");
+        return partners;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Expr.InterpolatedString InterpolatedStringFrom(string head, List<InterpolationLink> links, Token start)
+        => new(head, links.ToArray()) { Span = MakeSpan(start) };
+
+    /// <summary>
+    /// Parses one interpolation hole — the current token is its
+    /// <see cref="TokenKind.InterpolationHoleOpen"/> — through its
+    /// <see cref="TokenKind.InterpolationHoleClose"/>, and returns the hole's expression. A hole
+    /// is ONE ordinary expression of the enclosing algorithm (never a scope, a slot list or a
+    /// declaration site), parsed inside the hole's owned production with its ownership barrier
+    /// (<see cref="EnterInterpolationHole"/>). A bare spread is the ordinary misplaced-spread
+    /// error. Anything that keeps the hole from being exactly one expression — an empty hole, a
+    /// hole-level <c>,</c>, <c>:</c> or <c>=</c>, a trailing token, a stray closer — is
+    /// <see cref="DiagnosticCode.InvalidInterpolationHole"/>, reported once and recovered by
+    /// skipping to the hole's own close (<see cref="RecoverInterpolationHoleTail"/>).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParseInterpolationHole()
+    {
+        var open = Advance(); // '{'
+        Expr hole;
+        using (EnterInterpolationHole())
+        {
+            if (Current.Kind == TokenKind.InterpolationHoleClose)
+            {
+                // A hole holding only a character the lexer reported (`"{#}"`) is explained.
+                if (!HasLexicalErrorInHead(open, Current))
+                    ReportErrorAcross(DiagnosticCode.InvalidInterpolationHole, EmptyInterpolationHoleDiagnostic, open, Current);
+                hole = PlaceholderAt(open);
+            }
+            else if (!CanStartExpression(Current.Kind))
+            {
+                // A hole that begins with `,`, `:`, `=`, `;` or a stray closer holds no
+                // expression at all: the hole reports it, never the primary-expression path.
+                hole = PlaceholderAt(open);
+                RecoverInterpolationHoleTail(open, reportedSince: _diagnostics.ReportedCount, leading: true);
+            }
+            else
+            {
+                var reportedBefore = _diagnostics.ReportedCount;
+                hole = RejectMisplacedSpreadOperand(ParseExpression(), InterpolationSpreadDiagnostic);
+                if (Current.Kind != TokenKind.InterpolationHoleClose)
+                    RecoverInterpolationHoleTail(open, reportedSince: reportedBefore, leading: false);
+            }
+        }
+
+        if (Current.Kind != TokenKind.InterpolationHoleClose)
+            throw new InvalidOperationException("The lexer produced an interpolation hole without its closing brace.");
+        Advance(); // '}'
+        return hole;
+    }
+
+    /// <summary>
+    /// Recovery for a hole whose expression ended before the hole's close: reports the first
+    /// token that keeps the hole from being one expression and skips the rest of the hole,
+    /// unparsed. The report is skipped when the hole already explained itself — the lexer
+    /// reported a character inside it (a <c>#</c>, an unexpected character), or its expression
+    /// parse reported a diagnostic — so a malformed hole is reported once.
+    /// </summary>
+    private void RecoverInterpolationHoleTail(Token open, long reportedSince, bool leading)
+    {
+        var offending = Current;
+        var depth = 0;
+        while (!(Current.Kind == TokenKind.InterpolationHoleClose && depth == 0))
+        {
+            if (Current.Kind == TokenKind.EndOfFile)
+                throw new InvalidOperationException("The lexer produced an interpolation hole without its closing brace.");
+            if (Current.Kind == TokenKind.InterpolationHoleOpen)
+                depth++;
+            else if (Current.Kind == TokenKind.InterpolationHoleClose)
+                depth--;
+            Advance();
+        }
+
+        if (_diagnostics.ReportedCount == reportedSince && !HasLexicalErrorInHead(open, Current))
+            ReportErrorAt(DiagnosticCode.InvalidInterpolationHole, InterpolationHoleTailDiagnostic(offending.Kind, leading), offending);
+    }
+
+    private static string InterpolationHoleTailDiagnostic(TokenKind kind, bool leading) => kind switch
+    {
+        TokenKind.Comma =>
+            "An interpolation hole holds one expression, so ',' cannot separate several. Write one hole per value, as in \"{a}, {b}\", or one sequence value in parentheses, as in \"{(a, b)}\".",
+        TokenKind.Colon =>
+            "':' is not available at the top level of an interpolation hole, and interpolation has no format specifiers. To select an item, write the selection in parentheses, as in \"{(xs:0)}\".",
+        TokenKind.Equals =>
+            "An interpolation hole holds one expression, never a declaration, so it cannot contain '='. To compare values, use '=='.",
+        _ when leading =>
+            $"An interpolation hole holds exactly one expression, and {DescribeTokenKind(kind)} cannot begin one.",
+        _ =>
+            $"An interpolation hole holds exactly one expression, but {DescribeTokenKind(kind)} follows it.",
+    };
+
+    /// <summary>
+    /// Consumes, unparsed, the interpolated string that begins at the current
+    /// <see cref="TokenKind.InterpolatedStringStart"/> through its matching end, and reports
+    /// <see cref="DiagnosticCode.InterpolationNotAllowedHere"/> over it: recovery for a position
+    /// whose grammar needs fixed text (a clause-head literal pattern, an <c>open</c> target).
+    /// </summary>
+    private void RejectInterpolatedStringHere(string diagnostic)
+    {
+        var start = Current;
+        AdvancePastInterpolatedString();
+        ReportErrorFrom(DiagnosticCode.InterpolationNotAllowedHere, diagnostic, start);
+        OwnSameLineItem(Current);
+    }
+
+    /// <summary>
+    /// Consumes, unparsed, the whole interpolated string that begins at the current
+    /// <see cref="TokenKind.InterpolatedStringStart"/>, through its matching end.
+    /// </summary>
+    private void AdvancePastInterpolatedString()
+    {
+        var end = InterpolationPartner(NextSignificantIndex(_pos));
+        while (NextSignificantIndex(_pos) <= end)
+            Advance();
+    }
+
     /// <summary>
     /// The stray-'=' diagnostic: the one report for a '=' that no declaration head on
     /// its own physical line precedes (the declaration-head line rule, see
@@ -5125,6 +5475,18 @@ public sealed class Parser
         for (var index = before; index >= 0 && _tokens[index].Line == line; index = PreviousSignificantIndex(index))
         {
             var kind = _tokens[index].Kind;
+            if (kind == TokenKind.InterpolatedStringEnd)
+            {
+                // A whole interpolated string is one atom: the delimiters and `=` inside its
+                // holes are not this line's.
+                index = InterpolationPartner(index);
+                continue;
+            }
+
+            // The scan started inside a hole, which no head line extends past.
+            if (kind is TokenKind.InterpolationHoleOpen or TokenKind.InterpolatedStringText or TokenKind.InterpolatedStringStart)
+                return false;
+
             if (kind == TokenKind.Equals)
                 return false;
             if (kind == TokenKind.RParen)

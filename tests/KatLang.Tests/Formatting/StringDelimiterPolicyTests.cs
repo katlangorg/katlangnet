@@ -5,8 +5,9 @@ namespace KatLang.Tests.Formatting;
 /// <summary>
 /// String-delimiter policies for the layout formatters. Delimiters are
 /// presentation syntax around the value: adding them never modifies the
-/// string's content, and strings that cannot be quoted faithfully (KatLang has
-/// no escape syntax) fall back to canonical raw rendering.
+/// string's content, and strings that cannot be quoted faithfully in the
+/// formatters' single-quote delimiters (a single-quoted string has no escapes)
+/// fall back to canonical raw rendering.
 /// </summary>
 public class StringDelimiterPolicyTests
 {
@@ -92,7 +93,7 @@ public class StringDelimiterPolicyTests
     [InlineData("cr\rhere")]
     public void UnquotableHostStrings_FallBackToRawUnderEveryPolicy(string value)
     {
-        // No escape syntax exists, so quoting would be unfaithful; the
+        // A single-quoted string has no escapes, so quoting would be unfaithful; the
         // documented conservative fallback renders the raw content unchanged.
         foreach (var mode in new[] { StringDelimiterMode.Never, StringDelimiterMode.WhenNeeded, StringDelimiterMode.Always })
             Assert.Equal(value, FormatValue(value, mode));

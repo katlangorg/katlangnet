@@ -879,7 +879,10 @@ public static partial class Evaluator
 
             Expr.SequenceConstruct => await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
-            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.ListLiteral => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
+            // An interpolated string's hole may await an asynchronous host operation, so it is
+            // driven by the machine twin like every spine kind (never a sync-delegable leaf).
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString
+                => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
             Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
@@ -896,8 +899,6 @@ public static partial class Evaluator
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false)),
-
-            Expr.Index => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
 
             // THE Phase 3 await site: an ASYNCHRONOUS host operation completes by
             // suspending the spine here. Every other native — a synchronous host
@@ -1220,6 +1221,41 @@ public static partial class Evaluator
                         break;
                     }
 
+                case Expr.InterpolatedString(var head, var links):
+                    {
+                        if (frames[top].Text is null)
+                        {
+                            frames[top].Text = new InterpolatedTextBuilder(ctx.Budget);
+                            if (!frames[top].Text!.Append(head))
+                            {
+                                completed = frames[top].Text!.LimitError(frames[top].Node.Span);
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            // The hole of link Phase just arrived: its text, then the link's text.
+                            hasPendingChild = false;
+                            if (!frames[top].Text!.AppendValue(pendingChild.Value)
+                                || !frames[top].Text!.Append(links[frames[top].Phase].Text))
+                            {
+                                completed = frames[top].Text!.LimitError(frames[top].Node.Span);
+                                break;
+                            }
+
+                            frames[top].Phase++;
+                        }
+
+                        if (frames[top].Phase < links.Count)
+                        {
+                            requestedChild = links[frames[top].Phase].Hole;
+                            break;
+                        }
+
+                        completed = frames[top].Text!.Complete(frames[top].Node.Span);
+                        break;
+                    }
+
                 default:
                     throw new InvalidOperationException(
                         $"EvalExpressionSpineCountedAsync received the non-spine node kind '{frames[top].Node.GetType()}'.");
@@ -1260,8 +1296,8 @@ public static partial class Evaluator
                 var decorateTopFrame = requestedChild is not null;
                 while (frameCount > 0)
                 {
-                    if (decorateTopFrame && frames[frameCount - 1].Node is Expr.Index)
-                        error = AtSpanIfMissing(error, frames[frameCount - 1].Node.Span);
+                    if (decorateTopFrame)
+                        error = DecorateSpineChildError(error, frames[frameCount - 1]);
 
                     decorateTopFrame = true;
                     frameCount--;

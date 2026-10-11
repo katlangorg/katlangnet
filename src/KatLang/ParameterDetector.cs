@@ -1097,8 +1097,8 @@ internal static class ParameterDetector
                 // open-form validation reject the illegal ones with their own diagnostics.
                 Expr.AlgorithmExpr or Expr.Capture or Expr.DotCall or Expr.SequenceSpread
                     or Expr.SequenceConstruct or Expr.ListLiteral or Expr.Call or Expr.Num
-                    or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall
-                    or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.Grace => null,
+                    or Expr.StringLiteral or Expr.InterpolatedString or Expr.BoolLiteral or Expr.EmptySequence
+                    or Expr.NativeCall or Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.Grace => null,
             };
 
             var rewritten = open;
@@ -1295,8 +1295,10 @@ internal static class ParameterDetector
             // (the rejection is unchanged) while every written Grace is consumed,
             // nested blocks are elaborated, and dot-call fallbacks are normalized —
             // the post-elaboration contract (DotCallElaborationInvariant) holds for
-            // recovery trees too.
-            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index => ProcessExprCore(expr, openParentScope, memo),
+            // recovery trees too. An interpolated string is never an open target either (the
+            // parser refuses one there); a host-built one's holes are walked the same way.
+            Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.InterpolatedString
+                => ProcessExprCore(expr, openParentScope, memo),
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form).
@@ -1953,6 +1955,14 @@ internal static class ParameterDetector
                 CollectFreeParams(captureBody, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
+            case Expr.InterpolatedString(_, var interpolationLinks):
+                // Interpolation holes are transparent, like capture rows: each hole is an
+                // expression of the enclosing algorithm, so its free names are the owner's own
+                // occurrences, in written order across the holes (VAL-12).
+                foreach (var link in interpolationLinks)
+                    CollectFreeParams(link.Hole, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                break;
+
             case Expr.AlgorithmExpr:
                 // Scope-owning algorithm expressions own their names — don't collect.
                 break;
@@ -2279,6 +2289,12 @@ internal static class ParameterDetector
 
             Expr.ListLiteral list => list with { Items = RewriteParams(list.Items, scope, parameters, memo) },
 
+            // Holes own no scope: they rewrite in the enclosing param scope, like capture rows.
+            Expr.InterpolatedString interpolated => interpolated with
+            {
+                Links = AstHelpers.RewriteInterpolationLinks(interpolated.Links, hole => RewriteParams(hole, scope, parameters, memo)),
+            },
+
             Expr.DotCall dotCall => RewriteDotCall(dotCall, scope, parameters, memo),
 
             Expr.AlgorithmExpr block => block with
@@ -2578,6 +2594,10 @@ internal static class ParameterDetector
                 Right = ProcessExpr(construct.Right, scope, memo),
             },
             Expr.ListLiteral list => list with { Items = list.Items.Select(item => ProcessExpr(item, scope, memo)).ToList() },
+            Expr.InterpolatedString interpolated => interpolated with
+            {
+                Links = AstHelpers.RewriteInterpolationLinks(interpolated.Links, hole => ProcessExpr(hole, scope, memo)),
+            },
             // The detector is the normalization owner: every DotCall it emits
             // carries an EXPLICIT fallback identity (null is only a
             // host-construction shorthand for Resolve(Name)).
@@ -2721,6 +2741,7 @@ internal static class ParameterDetector
         Expr.SequenceConstruct construct => [construct.Left, construct.Right],
         Expr.SequenceSpread spread => [spread.Operand],
         Expr.ListLiteral list => list.Items,
+        Expr.InterpolatedString interpolated => [.. interpolated.Links.Select(static link => link.Hole)],
         Expr.DotCall dotCall => dotCall.Args is { } args ? [dotCall.Target, .. args] : [dotCall.Target],
         // A scope-owning block owns its names (CollectFreeParams never enters it): an
         // occurrence inside it is bound there — by its own property, parameter, or open —

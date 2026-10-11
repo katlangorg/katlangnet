@@ -770,8 +770,22 @@ public class SameLineSeparatorTests
             [TokenKind.Comment] = ("# note", false),
             [TokenKind.Bad] = ("@", false),
             [TokenKind.EndOfFile] = ("", false),
+            // A string with a hole starts a pattern item only to be refused there
+            // (InterpolationNotAllowedHere): a pattern needs fixed text.
+            [TokenKind.InterpolatedStringStart] = ("\"a{b}\"", true),
         };
-        Assert.Equal(Enum.GetValues<TokenKind>().Order(), samples.Keys.Order());
+
+        // The four kinds that only ever occur INSIDE an interpolated string can never be a
+        // source's first token: the lexer emits them after an InterpolatedStringStart. They
+        // are no pattern starters, and the atom grammar refuses each one like any non-starter.
+        var innerOnly = new[]
+        {
+            TokenKind.InterpolatedStringText,
+            TokenKind.InterpolationHoleOpen,
+            TokenKind.InterpolationHoleClose,
+            TokenKind.InterpolatedStringEnd,
+        };
+        Assert.Equal(Enum.GetValues<TokenKind>().Order(), samples.Keys.Concat(innerOnly).Order());
 
         // Exercise the actual atom dispatch independently of declaration
         // lookahead and the separator predicate. Otherwise a missing starter
@@ -814,6 +828,19 @@ public class SameLineSeparatorTests
             Assert.Equal(DiagnosticCode.UnseparatedSameLineItem, report.Code);
             Assert.Equal((1, 5), (Assert.NotNull(report.Span).Start.Line, Assert.NotNull(report.Span).Start.Column));
             Assert.Equal(report, syntax.Diagnostics[0]);
+        }
+
+        foreach (var kind in innerOnly)
+        {
+            Assert.False(Assert.IsType<bool>(classify.Invoke(null, [kind])));
+            var token = kind == TokenKind.InterpolatedStringText
+                ? Token.CreateInterpolatedStringText("t", 0, 1, 1, 1)
+                : Token.Create(kind, 0, 1, 1, 1);
+            var atomDiagnostics = new DiagnosticBag();
+            var parser = constructor.Invoke([new[] { token, Token.EndOfFile(1, 1, 2) }, atomDiagnostics, Array.Empty<SourcePosition>(), null]);
+            Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
+            Assert.Contains(atomDiagnostics, d => d.Message ==
+                $"Unexpected {Parser.DescribeTokenKind(kind, includeArticle: false)} in a pattern.");
         }
     }
 

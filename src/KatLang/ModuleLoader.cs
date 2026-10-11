@@ -1217,6 +1217,48 @@ internal sealed partial class ModuleLoader
         return comparison with { First = first, Links = rewritten ?? links };
     }
 
+    /// <summary>
+    /// The interpolated-string arm of <see cref="ProcessExpr"/>, kept out of that calibrated
+    /// frame: every hole is a RUNTIME expression — a value computed when the string is
+    /// evaluated, never a position a <c>load</c> directive may stand in, so a <c>load</c> written
+    /// in a hole is refused exactly like one in an operator operand — rewritten one level down,
+    /// the link list keeping its instance when no hole changed.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ProcessInterpolation(Expr.InterpolatedString interpolated, int depth)
+        => interpolated with
+        {
+            Links = AstHelpers.RewriteInterpolationLinks(
+                interpolated.Links,
+                hole => ProcessExpr(hole, LoadContext.RuntimeExpr, depth + 1)),
+        };
+
+    /// <summary>
+    /// MIRROR OF <see cref="ProcessInterpolation"/> for the async walk (the hole loop awaits,
+    /// so it lives in its own state machine); like the synchronous helper it keeps the link
+    /// list instance when no hole changed.
+    /// </summary>
+    private async ValueTask<Expr> RouteInterpolationAsync(Expr.InterpolatedString interpolated, int depth)
+    {
+        List<InterpolationLink>? rewritten = null;
+        var links = interpolated.Links;
+        for (var index = 0; index < links.Count; index++)
+        {
+            var link = links[index];
+            var hole = await RouteExprAsync(link.Hole, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
+            if (rewritten is null && !ReferenceEquals(hole, link.Hole))
+            {
+                rewritten = new List<InterpolationLink>(links.Count);
+                for (var copied = 0; copied < index; copied++)
+                    rewritten.Add(links[copied]);
+            }
+
+            rewritten?.Add(ReferenceEquals(hole, link.Hole) ? link : link with { Hole = hole });
+        }
+
+        return rewritten is null ? interpolated : interpolated with { Links = rewritten };
+    }
+
     private Expr ProcessExpr(Expr expr, LoadContext context, int depth)
     {
         ThrowIfInsufficientStack();
@@ -1281,6 +1323,9 @@ internal sealed partial class ModuleLoader
 
             // The link loop lives in its own helper so this calibrated frame keeps its size.
             Expr.Comparison comparison => ProcessComparison(comparison, depth),
+
+            // Holes are runtime expressions (never load-directive positions), in their own helper.
+            Expr.InterpolatedString interpolated => ProcessInterpolation(interpolated, depth),
 
             Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, LoadContext.RuntimeExpr, depth + 1) },
 
@@ -1422,6 +1467,11 @@ internal sealed partial class ModuleLoader
                 // The link loop lives in its own twin so this calibrated frame keeps its
                 // size (the loop's list and cursor would otherwise be hoisted here).
                 result = await RouteComparisonAsync(comparison, depth).ConfigureAwait(false);
+                break;
+
+            case Expr.InterpolatedString interpolated:
+                // Holes are runtime expressions; the hole loop lives in its own twin.
+                result = await RouteInterpolationAsync(interpolated, depth).ConfigureAwait(false);
                 break;
 
             case Expr.Unary unary:
@@ -1620,6 +1670,12 @@ internal sealed partial class ModuleLoader
         }
 
         var urlExpr = args[0];
+
+        // Recovery text is retained for analysis, never authorization to acquire source.
+        // The lexer already reported the exact defect (even if the diagnostic list is
+        // full); refuse this directive without adding a second report or calling the host.
+        if (urlExpr is Expr.StringLiteral { IsRecoveryLiteral: true })
+            return null;
 
         // Must be a string literal
         if (urlExpr is Expr.StringLiteral(var url))

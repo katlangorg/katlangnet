@@ -230,6 +230,9 @@ public abstract class AstWalker
                 foreach (var item in items)
                     VisitExpr(item);
                 break;
+            case Expr.InterpolatedString:
+                VisitInterpolationHoles(expr);
+                break;
             case Expr.DotCall(var target, _, var args):
                 VisitExpr(target);
                 if (expr is Expr.DotCall dotCall)
@@ -284,6 +287,15 @@ public abstract class AstWalker
                     $"Unhandled Expr variant in {nameof(AstWalker)}.{nameof(VisitExpr)}: {expr.GetType().Name}. " +
                     "Add the new variant to the switch so its children are walked.");
         }
+    }
+
+    // Keep interpolation's deconstruction/enumerator locals out of the recursive
+    // dispatch frame: even unrelated unary spines must fit the calibrated stack.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void VisitInterpolationHoles(Expr expr)
+    {
+        foreach (var link in ((Expr.InterpolatedString)expr).Links)
+            VisitExpr(link.Hole);
     }
 
     /// <summary>

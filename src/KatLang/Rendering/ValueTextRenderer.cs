@@ -31,6 +31,20 @@ internal sealed class RawStringTextPolicy : IStringTextPolicy
 /// </summary>
 internal static class ValueTextRenderer
 {
+    /// <summary>
+    /// THE structural text of a value, with no presentation applied: a number's canonical text
+    /// (<see cref="FormatNumberInvariant"/> — never display decimals), a Boolean as
+    /// <c>true</c>/<c>false</c>, a string VERBATIM (never quoted, at any nesting level), a
+    /// sequence as <c>(a, b)</c> and a list as <c>[a, b]</c> (<c>()</c> and <c>[]</c> when empty),
+    /// nesting preserved. It is canonical display's value text and the text an interpolation
+    /// hole writes (VAL-12): interpolation builds a string VALUE from it, so no display filter,
+    /// formatter, or host display setting may reach it. Human-readable text, not a serialization:
+    /// <c>['a, b']</c> and <c>['a', 'b']</c> write the same text. Iterative, and it stops at the
+    /// first append the sink refuses (returning false).
+    /// </summary>
+    internal static bool AppendCanonicalValue(Result value, IDisplaySink sink)
+        => AppendValue(value, DisplayOptions.Default, RawStringTextPolicy.Instance, sink);
+
     internal static bool AppendValue(
         Result value,
         DisplayOptions displayOptions,

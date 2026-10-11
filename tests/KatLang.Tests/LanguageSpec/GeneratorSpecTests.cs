@@ -127,6 +127,25 @@ public class LanguageSpecArtifactsGeneratorPromptTests
         Assert.DoesNotContain("implicit output", content, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [MemberData(nameof(PromptFilePaths))]
+    public void PromptFile_TeachesStringInterpolation_AndNoLongerForbidsDoubleQuotes(string relativePath)
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+
+        // STR-02: double-quoted strings, their escapes and interpolation are taught...
+        Assert.Contains("interpolation hole", content, StringComparison.Ordinal);
+        Assert.Contains("\"Hello, {name}!\"", content, StringComparison.Ordinal);
+        Assert.Contains("{{", content, StringComparison.Ordinal);
+        Assert.Contains("no format specifiers", content, StringComparison.Ordinal);
+
+        // ...and the superseded claims (STR-01's single-quote-only strings, concatenation as the
+        // unsupported exemplar) are gone.
+        Assert.DoesNotContain("there are no double-quoted strings", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Do not invent double-quoted strings", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("string concatenation is not available", content, StringComparison.Ordinal);
+    }
+
     private static string ReplaceOrAppendBlock(string content, string block)
     {
         var begin = content.IndexOf(BeginMarker, StringComparison.Ordinal);

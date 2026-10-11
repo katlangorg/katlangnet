@@ -9,11 +9,12 @@ namespace KatLang.Tests;
 /// <para>Lengths are UTF-16 code units throughout, matching <see cref="string.Length"/>,
 /// the source-span column model, and CLR string storage.</para>
 ///
-/// <para>Note that KatLang has no string concatenation operator, so a source program
-/// cannot grow a string: the per-string ceiling is defence in depth (and guards
-/// hand-built ASTs), while the RENDERED-output limit is the one that closes a real
-/// compact-source path — display flattens a value recursively, so a value that is legal
-/// under every evaluation limit can still render enormously.</para>
+/// <para>String INTERPOLATION (STR-02) is the one way source builds a longer string —
+/// <c>'a' + 'b'</c> is still a type error — and it makes the per-string ceiling a real
+/// compact-source boundary (<c>D(s) = "{s}{s}"</c> doubles per call); its running checks
+/// and single reservation are pinned by <c>InterpolationLimitsTests</c>. The RENDERED-output
+/// limit closes the other compact-source path: display flattens a value recursively, so a
+/// value that is legal under every evaluation limit can still render enormously.</para>
 /// </summary>
 public class StringAndDisplayLimitsTests
 {
@@ -236,12 +237,13 @@ public class StringAndDisplayLimitsTests
     }
 
     [Fact]
-    public void KatLangHasNoStringConcatenation_SoStringsCannotGrow()
+    public void StringPlusStringIsStillATypeMismatch_InterpolationIsTheOnlyConcatenation()
     {
-        // The reason the per-string ceiling is defence in depth rather than the closure of
-        // a compact-source path: there is no operation that makes a longer string.
+        // `+` never concatenates: building text from parts is interpolation (STR-02), whose
+        // growth the per-string ceiling and the cumulative budget bound (InterpolationLimitsTests).
         var error = ErrorOf("'ab' + 'cd'");
         Assert.Contains("Strings only support", Assert.IsType<EvalError.TypeMismatch>(error).Message);
+        Assert.Equal("abcd", Assert.IsType<Result.Str>(Eval("\"{'ab'}{'cd'}\"").Value).Value);
     }
 
     // ── Unicode ──────────────────────────────────────────────────────────────

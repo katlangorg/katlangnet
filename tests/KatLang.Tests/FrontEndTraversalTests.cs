@@ -266,6 +266,10 @@ public class FrontEndTraversalTests
             ["DotCall.Target"] = child => new Expr.DotCall(child, "M", new OutputBundle([new Expr.Num(1)])),
             ["DotCall.Argument"] = child => new Expr.DotCall(new Expr.Num(1), "M", new OutputBundle([child])),
             ["Grace.Inner"] = child => new Expr.Grace(child, 1),
+            ["InterpolatedString.Hole"] = child => new Expr.InterpolatedString("a", [new InterpolationLink(child, "b")]),
+            // A LATER hole, so the walk is proven to reach every hole rather than only the first.
+            ["InterpolatedString.LaterHole"] = child => new Expr.InterpolatedString(
+                "a", [new InterpolationLink(new Expr.Num(1), "b"), new InterpolationLink(child, "c")]),
         };
 
     public static TheoryData<string> RecursiveEmbeddingPositions()
@@ -357,6 +361,8 @@ public class FrontEndTraversalTests
         { "Index.Selector", "F(x) = x + 1\n(1, 2):F" },
         { "SequenceSpread.Operand", "F(x) = x + 1\nF*" },
         { "ListLiteral.Item", "F(x) = x + 1\n[F]" },
+        { "InterpolatedString.Hole", "F(x) = x + 1\n\"a{F}b\"" },
+        { "InterpolatedString.LaterHole", "F(x) = x + 1\n\"a{1}b{F}c\"" },
     };
 
     private sealed class LiftedCallFinder : AstWalker
@@ -480,6 +486,8 @@ public class FrontEndTraversalTests
             "SequenceSpread.Operand",
             "ListLiteral.Item",
             "Grace.Inner",
+            "InterpolatedString.Hole",
+            "InterpolatedString.LaterHole",
         })
         {
             data.Add(position);
@@ -605,6 +613,10 @@ public class FrontEndTraversalTests
         { "Call.Argument", true },
         { "DotCall.Target", true },
         { "DotCall.Argument", true },
+        // An interpolation hole is a runtime expression: a load written there is refused,
+        // never spliced as a module.
+        { "InterpolatedString.Hole", true },
+        { "InterpolatedString.LaterHole", true },
         // Context-inheriting children inside a property definition: the load
         // elaborates to the stub module.
         { "SequenceConstruct.Left", false },

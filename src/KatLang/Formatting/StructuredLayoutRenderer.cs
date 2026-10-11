@@ -661,8 +661,9 @@ internal static class StructuredLayoutRenderer
         /// comma-separated pair line within width. Token safety is not
         /// required here — the retained commas and parentheses delimit the
         /// items exactly like any other delimited content. Line-break
-        /// characters ARE excluded: CR and LF can never be quoted (KatLang
-        /// has no escapes), and the Unicode layout separators NEL, LINE
+        /// characters ARE excluded: CR and LF can never be quoted in the
+        /// formatters' single-quote delimiters (a single-quoted string has no
+        /// escapes), and the Unicode layout separators NEL, LINE
         /// SEPARATOR, and PARAGRAPH SEPARATOR break the rendered line even
         /// inside quotes — either way the pair line would split into several
         /// physical lines, breaking the one-line-per-pair shape.

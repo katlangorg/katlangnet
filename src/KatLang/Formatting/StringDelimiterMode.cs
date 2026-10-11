@@ -10,10 +10,11 @@ namespace KatLang.Formatting;
 /// <para>The <c>exact</c> formatter ignores this policy: canonical KatLang
 /// display renders strings as their raw content without quotes.</para>
 ///
-/// <para>KatLang has no escape syntax, so a string containing a single quote,
-/// a line feed, or a carriage return cannot be quoted faithfully. Such
-/// host-built strings fall back to the canonical raw rendering under every
-/// policy.</para>
+/// <para>The formatters delimit strings with single quotes only, and a single-quoted
+/// KatLang string has no escapes, so a string containing a single quote, a line
+/// feed, or a carriage return cannot be quoted faithfully in that form. Such
+/// strings fall back to the canonical raw rendering under every policy (the
+/// formatters never emit the escaped double-quoted spelling).</para>
 /// </summary>
 public enum StringDelimiterMode
 {

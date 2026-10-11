@@ -81,6 +81,8 @@ public class CommentSyntaxTests
     [InlineData("(1,2)#comment", "(1, 2)")]                 // after a closing paren
     [InlineData("Call(x) = x\nCall(1)#comment", "1")]       // after a call's closing paren
     [InlineData("text = 'a'#comment\ntext", "a")]           // after a string literal
+    [InlineData("text = \"a\"#comment\ntext", "a")]         // after a double-quoted string
+    [InlineData("n = 1\ntext = \"{n}\"#comment\ntext", "1")] // after an interpolated string
     [InlineData("Pair = 1, 2\nPair:0#comment", "1")]        // after an indexing selector
     public void CommentStartsAfterAnyTokenKind(string source, string expected)
     {
@@ -182,6 +184,8 @@ public class CommentSyntaxTests
     [InlineData("text = 'a#b'\ntext", "a#b")]
     [InlineData("text = 'value=6#7'\ntext", "value=6#7")]
     [InlineData("text = 'not # a comment'\ntext", "not # a comment")]
+    [InlineData("text = \"not # a comment\"\ntext", "not # a comment")]
+    [InlineData("n = 1\ntext = \"#{n} # {n}#\"\ntext", "#1 # 1#")]
     public void HashInsideStringLiteral_IsOrdinaryContent(string source, string expected)
     {
         Assert.Equal(expected, Display(source));

@@ -230,6 +230,7 @@ internal static class PropertyExposureResolver
                 Expr.SequenceSpread spread => IsRewriteInvariant(spread.Operand),
                 Expr.SequenceConstruct construct => IsRewriteInvariant(construct.Left) && IsRewriteInvariant(construct.Right),
                 Expr.ListLiteral list => IsRewriteInvariant(list.Items),
+                Expr.InterpolatedString interpolated => interpolated.Links.All(link => IsRewriteInvariant(link.Hole)),
                 Expr.Capture capture => IsRewriteInvariant(capture.Body),
                 Expr.Call call => IsRewriteInvariant(call.Function) && IsRewriteInvariant(call.Args),
                 Expr.Resolve or Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
@@ -1233,6 +1234,11 @@ internal static class PropertyExposureResolver
             },
 
             Expr.ListLiteral list => list with { Items = RewriteExprList(list.Items, memos) },
+
+            Expr.InterpolatedString interpolated => interpolated with
+            {
+                Links = AstHelpers.RewriteInterpolationLinks(interpolated.Links, hole => RewriteExpr(hole, memos)),
+            },
 
             Expr.AlgorithmExpr block => block with { Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, memos) },
 

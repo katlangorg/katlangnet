@@ -122,6 +122,35 @@ internal static class AstHelpers
     }
 
     /// <summary>
+    /// Rewrites every hole of an interpolated string through <paramref name="rewriteHole"/>,
+    /// keeping each link's text: the ONE shape every rewriting front-end pass uses for
+    /// <see cref="Expr.InterpolatedString.Links"/>, so a pass can never drop, reorder, or
+    /// re-text a hole. Returns the SAME list instance when no hole changed, so
+    /// identity-preserving passes keep their sharing.
+    /// </summary>
+    internal static IReadOnlyList<InterpolationLink> RewriteInterpolationLinks(
+        IReadOnlyList<InterpolationLink> links,
+        Func<Expr, Expr> rewriteHole)
+    {
+        List<InterpolationLink>? rewritten = null;
+        for (var index = 0; index < links.Count; index++)
+        {
+            var link = links[index];
+            var hole = rewriteHole(link.Hole);
+            if (rewritten is null && !ReferenceEquals(hole, link.Hole))
+            {
+                rewritten = new List<InterpolationLink>(links.Count);
+                for (var copied = 0; copied < index; copied++)
+                    rewritten.Add(links[copied]);
+            }
+
+            rewritten?.Add(ReferenceEquals(hole, link.Hole) ? link : link with { Hole = hole });
+        }
+
+        return rewritten ?? links;
+    }
+
+    /// <summary>
     /// Output rows and hoisted deconstruction RHS rows in written order: each hoisted
     /// source's rows come before the output row whose index the parser recorded on it
     /// (<see cref="Algorithm.User.AssignmentDeconstructionRowIndex"/>), sources of one index
@@ -521,6 +550,7 @@ internal static class AstHelpers
                 or Expr.DotCall
                 or Expr.Num
                 or Expr.StringLiteral
+                or Expr.InterpolatedString
                 or Expr.BoolLiteral
                 or Expr.Unary
                 or Expr.Binary

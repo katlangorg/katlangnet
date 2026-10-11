@@ -239,6 +239,11 @@ public class FrontEndSpanPreservationTests
                 foreach (var item in body)
                     foreach (var nested in CompositeNodes(item)) yield return nested;
                 break;
+            case Expr.InterpolatedString(_, var interpolationLinks):
+                yield return expr;
+                foreach (var link in interpolationLinks)
+                    foreach (var nested in CompositeNodes(link.Hole)) yield return nested;
+                break;
             case Expr.Call(var function, var args):
                 yield return expr;
                 foreach (var nested in CompositeNodes(function)) yield return nested;

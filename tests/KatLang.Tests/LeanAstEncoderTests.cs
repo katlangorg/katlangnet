@@ -593,15 +593,18 @@ public class LeanAstEncoderTests
         Assert.Equal(
             ".stringLiteral \"say \\\"hi\\\" and a back\\\\slash\"",
             LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("say \"hi\" and a back\\slash")));
-        Assert.Throws<NotSupportedException>(
-            () => LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("line\nbreak")));
+        // A double-quoted KatLang string can hold a line feed and a tab through its escapes
+        // (STR-02), so those two take Lean's own escapes; every other control character —
+        // the carriage return included, which no KatLang string can spell — stays refused.
+        Assert.Equal(".stringLiteral \"line\\nbreak\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("line\nbreak")));
+        Assert.Equal(".stringLiteral \"a\\tb\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("a\tb")));
 
         Assert.Equal(".stringLiteral \"\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("")));
         Assert.Equal(".stringLiteral \"café\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("café")));
         Assert.Equal(".stringLiteral \"e\u0301\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("e\u0301")));
         Assert.Equal(".stringLiteral \"😺\"", LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("😺")));
 
-        foreach (var control in new[] { '\t', '\r', '\n', '\u0000', '\u001f', '\u007f' })
+        foreach (var control in new[] { '\r', '\u0000', '\u001f', '\u007f' })
         {
             var ex = Assert.Throws<NotSupportedException>(
                 () => LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("a" + control + "b")));
@@ -612,6 +615,27 @@ public class LeanAstEncoderTests
             () => LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("\uD800")));
         Assert.Throws<NotSupportedException>(
             () => LeanAstEncoder.EncodeExpr(new Expr.StringLiteral("\uDC00")));
+    }
+
+    /// <summary>
+    /// An interpolated string encodes as the alternating form it is — the decoded head and one
+    /// <c>{ hole, text }</c> link per hole, in written order — matching the Lean structure
+    /// <c>InterpolationLink</c> field for field (manually reviewed golden).
+    /// </summary>
+    [Fact]
+    public void InterpolatedString_EncodesAsHeadAndLinks()
+    {
+        var interpolated = new Expr.InterpolatedString(
+            "n=",
+            [new InterpolationLink(new Expr.Num(1), ", "), new InterpolationLink(new Expr.Param("x"), "")]);
+
+        Assert.Equal(
+            "(.interpolatedString \"n=\" [{ hole := (.num 1), text := \", \" }, { hole := (.param \"x\"), text := \"\" }])",
+            LeanAstEncoder.EncodeExpr(interpolated));
+        Assert.Equal(
+            "(.interpolatedString \"say \\\"{{\" [{ hole := (.stringLiteral \"a\\nb\"), text := \"\\t\" }])",
+            LeanAstEncoder.EncodeExpr(new Expr.InterpolatedString(
+                "say \"{{", [new InterpolationLink(new Expr.StringLiteral("a\nb"), "\t")])));
     }
 
     [Fact]
@@ -703,6 +727,7 @@ public class LeanAstEncoderTests
             [nameof(Expr.Param)] = new Expr.Param("a"),
             [nameof(Expr.Num)] = new Expr.Num(1),
             [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
+            [nameof(Expr.InterpolatedString)] = new Expr.InterpolatedString("a", [new InterpolationLink(new Expr.Num(1), "b")]),
             [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, new Expr.Num(1)),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Num(2)),

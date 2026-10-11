@@ -33,6 +33,11 @@ ExpressionAlgorithm = { OutputLine } ;
                      declaration, property/clause definition, or
                      deconstruction binding — is rejected with a targeted
                      parser diagnostic directing it to a `{ ... }` block.
+                     The braces of an interpolation hole are NOT this brace:
+                     they are their own tokens (InterpolationHoleOpen /
+                     InterpolationHoleClose), a hole creates no scope and admits
+                     no declaration, and it is an ownership barrier — a closer
+                     inside a hole never closes a construct opened outside it.
                      Brace blocks work anywhere an expression-valued
                      algorithm is allowed, including as a call argument. *)
 
@@ -40,8 +45,10 @@ OpenDeclaration = "open" OpenTargetList ;
 OpenTargetList  = OpenTarget { "," OpenTarget } ;
                   (* `open` is a declaration/import directive, not an output
                      expression: its target list is comma-separated only.
-                     open A, B, C opens three targets; string targets use
-                     single quotes (open 'url', A). Each algorithm allows at
+                     open A, B, C opens three targets; a string target is a
+                     hole-free string literal of either quote kind (open 'url', A
+                     or open "url", A), and an interpolated string target is the
+                     InterpolationNotAllowedHere error. Each algorithm allows at
                      most one open declaration. The first target must begin
                      on the same physical line as "open". Comma keeps its
                      normal explicit line-continuation behavior — open A,
@@ -57,7 +64,9 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
                      validation: spread is not an open form. The parser
                      validates each target as an individual Lean-compatible
                      open form. *)
-OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url') *)
+OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url'); either quote
+                                                kind without holes — an InterpolatedString target is
+                                                InterpolationNotAllowedHere *)
                 | ValidatedOpenExpression ;
 ValidatedOpenExpression = ? an Expression not starting with a string token and satisfying the open-form constraints below ? ;
                   (* Open targets use the ordinary Expression parser, followed
@@ -185,7 +194,9 @@ PatternAtom        = BindingIdentifier             (* fixed bind *)
                                                       a binding name is spread syntax and is a
                                                       targeted error in a binding pattern. *)
                    | [ "-" ] NumberLiteral         (* litInt    *)
-                   | StringLiteral                 (* litString *)
+                   | StringLiteral                 (* litString: either quote kind without holes, matched
+                                                      by its decoded text; an InterpolatedString at any
+                                                      depth of a pattern is InterpolationNotAllowedHere *)
                    | BooleanLiteral                (* litBool: matches only the Boolean value *)
                    | SequencePattern
                    | ListPattern ;
@@ -258,7 +269,8 @@ SequenceAtom          = Expression ;
                         significant token after the star decides, never
                         whitespace and never the physical newline. When an
                         operand-start token follows (identifier, number,
-                        string, "(", "[", "{", "-", "~"; "not" starts an
+                        string of either quote kind, an interpolated string
+                        included, "(", "[", "{", "-", "~"; "not" starts an
                         expression but never a multiplication operand, since
                         it binds below the comparisons, so a star followed by
                         "not" is the spread marker) — on the same
@@ -640,6 +652,7 @@ ParenArgs       = "(" ExpressionAlgorithm ")" ;
 
 Primary         = NumberLiteral
                 | StringLiteral
+                | InterpolatedString
                 | BooleanLiteral
                 | GraceIdentifier
                 | ParenBundleExpr
@@ -813,9 +826,59 @@ BooleanLiteral  = "true" | "false" ;
                      not numbers (no conversion in either direction), not
                      ordered, and the only values with a truth value. Displayed
                      as lowercase `true` / `false`. *)
-StringLiteral   = /'([^'\r\n])*'/ ;
+StringLiteral   = RawStringLiteral | PlainDoubleQuotedString ;
+                  (* ONE token kind (StringLiteral) carrying the literal's text:
+                     both spellings are the same string literal to every later
+                     stage, `"abc" == 'abc'` (STR-02). *)
+RawStringLiteral = /'([^'\r\n])*'/ ;
+                  (* Single-quoted: RAW and unchanged — the text is exactly the
+                     code units between the quotes; no escapes and no holes, so
+                     `'a\nb'` keeps its backslash and `'{x}'` is the text {x}. *)
+PlainDoubleQuotedString = /"([^"\\{}\r\n]|\\["\\nt]|\{\{|\}\})*"/ ;
+                  (* Double-quoted WITHOUT holes: the token carries the DECODED
+                     text. The six escapes are \" (double quote), \\ (backslash),
+                     \n (line feed), \t (tab), and the doubled braces {{ and }}
+                     (literal braces). Every other backslash sequence — \r, \u, \x,
+                     \0, \{, \' and the rest — is the InvalidStringEscape error at
+                     the two-character escape (never a silent backslash), and a
+                     lone "}" in the text is UnmatchedBraceInString. *)
+InterpolatedString = DoubleQuote { DoubleQuotedText } InterpolationHole
+                     { InterpolationHole | DoubleQuotedText } DoubleQuote ;
+                  (* A double-quoted string WITH holes (Expr.InterpolatedString:
+                     the decoded head text, then one link per hole — the hole's
+                     expression and the decoded text after it). Lexically it is a
+                     paired token structure on ONE physical line:
+                     InterpolatedStringStart, InterpolatedStringText runs (an
+                     empty run is no token), InterpolationHoleOpen, the ordinary
+                     tokens of the hole's expression, InterpolationHoleClose, and
+                     InterpolatedStringEnd. There is no prefix form ($"...",
+                     f"...") and no multiline string: a string or hole that does
+                     not close on its line is ONE StringLiteral token from the
+                     opening quote to the line end with ONE diagnostic
+                     (UnterminatedStringLiteral, or UnterminatedInterpolationHole
+                     naming the hole still open). Inside a hole, braces nest as
+                     ordinary braces and strings of either quote kind are ordinary
+                     string tokens, so interpolation nests. Interpolated strings
+                     are refused where fixed text is required: a clause-head
+                     pattern and an open target (InterpolationNotAllowedHere),
+                     and a load URL (InvalidLoadDirective); a load written in a
+                     hole is a runtime position. *)
+InterpolationHole = "{" Expression "}" ;
+                  (* ONE ordinary Expression of the ENCLOSING algorithm — never a
+                     scope, a slot list, or a declaration site. Each of these is
+                     the InvalidInterpolationHole error, reported once and
+                     recovered at the hole's own close: an empty hole; a
+                     hole-level "," (write "{a}, {b}" or "{(a, b)}"), ":"
+                     (interpolation has no format specifiers; a selection is
+                     written "{(xs:0)}"), or "="; a token after the expression;
+                     and a "#" (a hole cannot hold a comment). A bare spread
+                     hole ("{xs*}") is MisplacedSpread; "{(xs*)}" captures. *)
+DoubleQuotedText = /([^"\\{}\r\n]|\\["\\nt]|\{\{|\}\})+/ ;
+DoubleQuote     = /"/ ;
 Comment         = /#[^\r\n]*/ ;
                   (* a "#" outside a string literal starts a comment that runs
+                     (a "#" in the text of either string kind is text; one inside
+                     an interpolation hole is the InvalidInterpolationHole error)
                      to the next physical newline or end of source; whitespace
                      before "#" is not required. Comments are semantically
                      invisible: they never extend or break a physical-line
@@ -823,7 +886,8 @@ Comment         = /#[^\r\n]*/ ;
                      line feed alone: "\r\n" breaks the line through its
                      "\n", while a lone "\r" is ordinary whitespace that
                      advances no line and no column — it ends a comment or
-                     string literal (the character classes above) but never
+                     a string of either quote kind, any open hole included (the
+                     character classes above) but never
                      separates rows or expression-list slots, so "A = 1\rB = 2"
                      is ONE physical line and the same-line separator rule
                      applies to it. Pinned by LexerTests.

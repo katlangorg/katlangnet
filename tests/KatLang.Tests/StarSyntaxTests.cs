@@ -159,6 +159,8 @@ public class StarSyntaxTests
 
     [Theory]
     [InlineData("a = 2\na*\n'x'")]
+    [InlineData("a = 2\na*\n\"x\"")]
+    [InlineData("a = 2\na*\n\"{a}\"")]
     [InlineData("a = 2\na*\n[1]")]
     public void StringOrListOnTheNextLine_IsAMultiplicationOperand_AndFailsAtRuntime(string source)
         => Assert.NotEmpty(FailureErrors(source));
@@ -412,7 +414,7 @@ public class StarSyntaxTests
         // marker, the same-line `not B` is an unseparated item (SYN-07A), and
         // the next-line `not B` is the following row.
         const string preamble = "A = 4\nB = 6\n";
-        foreach (var follower in new[] { "B", "6", "'x'", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B = 1", "F(x) = x", "x, y = 1, 2", "open B", "public B = 1" })
+        foreach (var follower in new[] { "B", "6", "'x'", "\"x\"", "\"{B}\"", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B = 1", "F(x) = x", "x, y = 1, 2", "open B", "public B = 1" })
         {
             var sameLine = Parser.ParseSyntax(preamble + "A* " + follower);
             var nextLine = Parser.ParseSyntax(preamble + "A*\n" + follower);
@@ -503,6 +505,8 @@ public class StarSyntaxTests
         // multiplication by a string — a runtime type error, never a spread of
         // `a` followed by an adjacent string item.
         Assert.NotEmpty(FailureErrors("a = 2\na* 'x'"));
+        Assert.NotEmpty(FailureErrors("a = 2\na* \"x\""));
+        Assert.NotEmpty(FailureErrors("a = 2\na* \"{a}\""));
     }
 
     [Fact]

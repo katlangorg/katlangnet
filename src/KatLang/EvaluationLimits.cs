@@ -365,14 +365,15 @@ public sealed record EvaluationLimits
     /// (<see cref="Result.Str"/>) created by source evaluation, in UTF-16 code units.
     /// <see cref="MaxStringLength"/> can only request a lower limit.
     ///
-    /// <para>KatLang has no string concatenation operator — <c>"a" + "b"</c> is a type
-    /// error — so a source program cannot grow a string: the only producers are string
-    /// literals (bounded by the source text) and <c>.string</c> on a number (about 30
-    /// units). This ceiling therefore exists as defence in depth rather than to close a
-    /// known compact-source path, and its practical effect is on hand-built ASTs supplied
-    /// through the public <see cref="Evaluator"/> API, where an arbitrarily long
-    /// <c>Expr.StringLiteral</c> is reachable. If a concatenating operation is ever added
-    /// to the language, this is the ceiling it must charge against.</para>
+    /// <para>String INTERPOLATION (<c>"{a}{b}"</c>, VAL-12) is KatLang's one way to build a
+    /// string from parts — <c>'a' + 'b'</c> stays a type error — and it makes this ceiling a
+    /// real compact-source boundary: <c>D(s) = "{s}{s}"</c> doubles a string per call, so
+    /// twenty calls exceed a million units. The other producers are string literals (bounded by
+    /// the source text), <c>.string</c> on a number (at most about 6,200 units), and host
+    /// operations. An interpolated string checks every piece of its text against this ceiling
+    /// and the cumulative <see cref="MaxMaterializedStringChars"/> budget BEFORE appending it
+    /// (no oversized intermediate text is built, and no later hole is evaluated once the text
+    /// has crossed a limit), then reserves its finished length once.</para>
     /// </summary>
     public const int MaxSupportedStringLength = 1_000_000;
 

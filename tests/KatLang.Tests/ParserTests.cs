@@ -1953,7 +1953,7 @@ public class ParserTests
         // dedicated comma-list model regressed into output-precedence parsing.
         var source = ReadParserSource();
         var start = source.IndexOf("private List<Expr> ParseOpenTargetList", StringComparison.Ordinal);
-        var end = source.IndexOf("private static Expr CreateLoadOpenTarget", StringComparison.Ordinal);
+        var end = source.IndexOf("private Expr CreateLoadOpenTarget", StringComparison.Ordinal);
         Assert.True(
             start >= 0 && end > start,
             "Expected the ParseOpenTargetList .. CreateLoadOpenTarget region in Parser.cs.");

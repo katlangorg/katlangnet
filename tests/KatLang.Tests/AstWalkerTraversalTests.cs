@@ -52,6 +52,8 @@ public class AstWalkerTraversalTests
             { nameof(Expr.Num), leaf, [] },
             { nameof(Expr.BoolLiteral), new Expr.BoolLiteral(true), [] },
             { nameof(Expr.StringLiteral), new Expr.StringLiteral("s"), [] },
+            // An interpolated string visits its holes in written order; its texts are not nodes.
+            { nameof(Expr.InterpolatedString), new Expr.InterpolatedString("a", [new InterpolationLink(leaf, "b"), new InterpolationLink(second, "c")]), [leaf, second] },
             { nameof(Expr.Unary), new Expr.Unary(UnaryOp.Minus, leaf), [leaf] },
             { nameof(Expr.Binary), new Expr.Binary(BinaryOp.Add, leaf, second), [leaf, second] },
             // A chain visits its first operand and then every link operand in chain order.
@@ -112,6 +114,7 @@ public class AstWalkerTraversalTests
             G(*items) = items.count
             H((x, y)) = [x, y]:0
             F(7), G(1, 2), H((3, 4)), 'text', (), A.X, X, if(true, 2, 3), Math.Abs(-1)
+            "t{F(7)}u{'s'}", "{"{1}"}"
             """);
         Assert.False(
             parsed.HasErrors,

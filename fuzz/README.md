@@ -994,7 +994,7 @@ The contract this target rests on — written down in `Utf16LexerContractTests`,
 | U+200B, U+200D, U+FEFF | Category `Cf`, **not** whitespace: they become bad tokens. A BOM mid-file is a diagnostic, not trivia. |
 | Non-ASCII letters | Identifier characters (Latvian, Greek, Cyrillic, ideographic, and letter-like symbols). |
 | Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `Decimal128.TryParse` then rejects under the invariant culture. |
-| String literals | Single quotes, **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. |
+| String literals | Single quotes: **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. Double quotes (STR-02): the escapes `\"` `\\` `\n` `\t` and the doubled braces `{{` `}}`, a single `{` opening an interpolation hole of ordinary code; ended by `\"`, or unterminated at `'\n'`, `'\r'` or end of input as ONE string token. A hole-free double-quoted string is a `StringLiteral` token carrying its DECODED text; one with a hole is `InterpolatedStringStart` … `InterpolatedStringEnd` with decoded `InterpolatedStringText` runs. |
 | Comments | `#` to `'\n'` or `'\r'`. There is no block-comment form. |
 
 ### Invariants
@@ -1012,9 +1012,11 @@ adds is all about the code-unit model:
    from its offset by `SourceSpanValidator.LineColumnAt` — the lexer tracks them incrementally while
    scanning, this derives them from the source, and they must agree. One shared helper, one model,
    used by the raw, frontend and UTF-16 layers alike.
-4. **Exact source slices.** Identifier, comment and string-literal token text must be the exact
-   source slice (minus `#` or the quotes). This is what catches a normalization or a replacement
-   character introduced anywhere on the path.
+4. **Exact source slices.** Identifier, comment and single-quoted string-literal token text must be
+   the exact source slice (minus `#` or the quotes); a double-quoted literal and an interpolated
+   text run must be the exact DECODED slice (an independent decoder of `\"` `\\` `\n` `\t` `{{` `}}`;
+   an unterminated double-quoted string keeps the raw slice after its quote). This is what catches a
+   normalization or a replacement character introduced anywhere on the path.
 5. **Bounded diagnostics.** Total diagnostics are bounded linearly in source length, and the number
    sharing one `(line, column)` is bounded by `Parser.MaxNestingDepth`.
 6. **Determinism and isolation.** A/A and A/B/A on every input, plus a reversed-order sweep in the
@@ -1043,7 +1045,7 @@ false relation, not a stronger test.
 | `cr-transparency` | LF and CRLF give identical tokens (kind, line, column, length, text), identical diagnostics, and an identical syntax tree. Offsets shift and are deliberately not compared. | The LF encoding contains no CR of the case's own. |
 | `lone-cr-not-a-line-break` | Re-encoding every break as a lone CR collapses the source to one line: every token and every span stays on line 1. | Same, plus the source has a line break to re-encode. |
 | `trailing-newline-neutral` | Appending a newline to a closed, diagnostic-free program leaves the syntax tree — spans included — unchanged. | The template is a closed program and the case parses cleanly. Never applied to unterminated constructs or a comment running to EOF. |
-| `exact-string-preservation` | A valid string literal reaches the evaluator as exactly the code units between the quotes, with `Length` counting code units. | A closed, diagnostic-free single-literal program whose content cannot end the literal. |
+| `exact-string-preservation` | A valid single-quoted string literal reaches the evaluator as exactly the code units between the quotes, with `Length` counting code units. | A closed, diagnostic-free single-literal program whose content cannot end the literal. |
 
 `cr-transparency` is a strong claim rather than a structural one *because* `'\r'` advances neither
 line nor column and every token scan already stops at `'\n'`: inserting a CR immediately before each
@@ -1208,7 +1210,7 @@ a bounded edit. Nothing grows with an encoded integer; bytes past the prefix are
 Layered, and Lean is deliberately not among them:
 
 * **Lexer** — token spans and (line, column), and comment/string token regions the classifier must
-  not overlap.
+  not overlap (an interpolated string's text runs and delimiters included; its holes are code).
 * **Parser / front end** — the AST the model is built from; the model must not invent an occurrence,
   and every occurrence's source slice must equal its reported name.
 * **Runtime metadata** — `BuiltinRegistry` supplies the allowed builtin names and fixed-arity plain

@@ -733,4 +733,47 @@ public class TutorialSemanticContractTests
         // Braces close the definition the same way ("parentheses (braces work too)").
         Assert.Equal("(1, 2)", Display("A = (1, 2)\nX = { A* }\n\nX"));
     }
+
+    // ── "Building Text with Interpolation" (STR-02) ──
+
+    private const string InterpolatedReport =
+        "Report = \"{name}: {points} points, {if(points >= 5, 'pass', 'fail')}\"\n\nReport('Ada', 9)\nReport('Bob', 3)";
+
+    [Fact]
+    public void HoleNames_AreTheEnclosingAlgorithmsInferredParameters_InFirstOccurrenceOrder()
+    {
+        var parsed = SourceProvenance.ParseValid(InterpolatedReport);
+        var report = PropertyOf(parsed.Root, "Report").Value;
+        Assert.Equal(["name", "points"], report.Params);
+
+        // The `points` in the third hole is Report's own inferred parameter, not a scope of the hole.
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        var column = InterpolatedReport.IndexOf("points >=", StringComparison.Ordinal) + 1;
+        var reference = model.FindResolutionAt(new SourcePosition(1, column));
+        Assert.NotNull(reference);
+        Assert.Equal("points", reference.Occurrence.Name);
+        Assert.Equal(IdentifierClassification.ImplicitParameterReference, reference.Classification);
+
+        Assert.Equal("Ada: 9 points, pass\nBob: 3 points, fail", Display(InterpolatedReport));
+    }
+
+    [Fact]
+    public void InterpolationTextIsExactDigits_TheHoleRestrictionsAreParseErrors_AndTextHasNoPlus()
+    {
+        // "A number appears with exactly its digits ... DisplayDecimals never change the text."
+        Assert.Equal("1.50\n1.500", Display("DisplayDecimals = 3\n\"{1.50}\"\n1.5"));
+
+        // "A hole holds one expression ... a `:` directly inside a hole is an error."
+        foreach (var source in new[] { "a = 1\nb = 2\n\"{a, b}\"", "xs = [1]\n\"{xs:0}\"" })
+        {
+            var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+            Assert.Contains(failure.Errors, e => e.Code == KatLangErrorCode.InvalidInterpolationHole);
+        }
+
+        Assert.Equal("1", Display("xs = [1]\n\"{(xs:0)}\""));
+
+        // "There is still no `+` for text."
+        RunFailure("'a' + 'b'", KatLangErrorCode.TypeMismatch);
+        Assert.Equal("ab", Display("x = 'a'\ny = 'b'\n\"{x}{y}\""));
+    }
 }

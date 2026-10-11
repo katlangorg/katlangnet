@@ -19,9 +19,11 @@ value operations. Historical binder theorems describe completed inputs only;
 they do not prove Model-C acquisition, demand order, or failure precedence.
 The PRODUCTION binder's own laws — its top-level cardinality gate before every effect,
 its allocation of a level's supply (any lengths), plain binding demanding nothing, and
-the arity algebra as its allocation — are proved in the final section, § Model-C
-production binder laws (FORMAL-07, October 2026); its demand order, failure precedence and
-repeated-name binding are executed by the `bindNeedPatterns` guards in CoreTests.ModelC.
+the arity algebra as its allocation — are proved in § Model-C production binder laws
+(FORMAL-07, October 2026); its demand order, failure precedence and repeated-name binding are
+executed by the `bindNeedPatterns` guards in CoreTests.ModelC. The final section, § String
+interpolation (STR-02), proves the interpolation combinator's laws — left to right, each hole
+once, the first failure stops — for every hole channel, and the structural value text.
 -/
 
 /--
@@ -4217,3 +4219,138 @@ theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.
     demanded. -/
 theorem collector_materialization_is_collect_segment (items : List Result) :
     makeCollectionListResult items = (collectSegment items, 1) := rfl
+
+/-! ## String interpolation (STR-02, VAL-12)
+
+`interpolateWith` is the TOTAL combinator that the evaluator's `.interpolatedString` arm
+instantiates with the ordinary value read of each hole (`fun hole => eval hole ctx env`). It is
+defined above the `partial` evaluator block, so the laws below are theorems for EVERY hole
+channel. That the evaluator arm passes exactly that read is a source fact, pinned by the
+`#guard`s of `CoreTests.Strings` and the `ParityGuards` evaluation-projection probes — the
+FORMAL-07 caveat: no theorem here unfolds `evalCounted`. The number text is this model's
+integer tier (`toString`); the Decimal128 canonical text, the string limits and the lexical
+grammar (quotes, escapes, `{{`/`}}`, hole-level restrictions) are C#-only. -/
+
+/-- A HOLE-FREE interpolation is its text: nothing is evaluated. -/
+theorem interpolate_hole_free_is_its_text {m : Type → Type} [Monad m] (value : Expr → m Result)
+    (head : String) :
+    interpolateWith value head [] = pure head := rfl
+
+/-- One step: the FIRST hole is evaluated through the channel, its structural text and then its
+    link's literal text are appended, and only then do the remaining links run. -/
+theorem interpolate_step {m : Type → Type} [Monad m] (value : Expr → m Result) (acc : String)
+    (link : InterpolationLink) (rest : List InterpolationLink) :
+    interpolateWith value acc (link :: rest)
+      = (value link.hole >>= fun holeValue =>
+          interpolateWith value (acc ++ Result.canonicalText holeValue ++ link.text) rest) := rfl
+
+/-- With a pure (effect-free, total) hole channel the result is the left-to-right
+    concatenation of the head, each hole's structural text and each link's text. -/
+theorem interpolate_pure_holes_concatenate (f : Expr → Result) (acc : String)
+    (links : List InterpolationLink) :
+    interpolateWith (m := Id) (fun hole => pure (f hole)) acc links
+      = links.foldl (fun text link => text ++ Result.canonicalText (f link.hole) ++ link.text) acc := by
+  induction links generalizing acc with
+  | nil => rfl
+  | cons link rest ih => exact ih _
+
+/-- THE FIRST FAILURE ENDS IT (`EvalM`): a hole whose evaluation fails ends the whole
+    interpolation with that hole's error and the state that hole left — no later hole runs. -/
+theorem interpolate_failing_hole_ends_it (value : Expr → EvalM Result) (acc : String)
+    (link : InterpolationLink) (rest : List InterpolationLink) (err : Error) (state state' : EvalState)
+    (h : (value link.hole).runState state = (.error err, state')) :
+    (interpolateWith value acc (link :: rest)).runState state = (.error err, state') := by
+  show ((value link.hole).runState >>= fun a => (interpolateWith value _ rest).runState) state = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, h]
+  rfl
+
+/-- A hole that succeeds hands its text and the state it left to the rest of the run. -/
+theorem interpolate_successful_hole_continues (value : Expr → EvalM Result) (acc : String)
+    (link : InterpolationLink) (rest : List InterpolationLink) (holeValue : Result) (state state' : EvalState)
+    (h : (value link.hole).runState state = (.ok holeValue, state')) :
+    (interpolateWith value acc (link :: rest)).runState state
+      = (interpolateWith value (acc ++ Result.canonicalText holeValue ++ link.text) rest).runState state' := by
+  show ((value link.hole).runState >>= fun a => (interpolateWith value _ rest).runState) state = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, h]
+
+/-- The explicit trace of an interpolation run in `EvalM`: each hole's channel runs ONCE, in
+    written order, from the state its predecessor left; a successful hole's text is appended at
+    once; the first error ends the run with that hole's error and state. -/
+def interpolationTrace (value : Expr → EvalM Result) :
+    String → List InterpolationLink → EvalState → Except Error String × EvalState
+  | acc, [], state => (.ok acc, state)
+  | acc, link :: rest, state =>
+      match (value link.hole).runState state with
+      | (.ok holeValue, state') =>
+          interpolationTrace value (acc ++ Result.canonicalText holeValue ++ link.text) rest state'
+      | (.error err, state') => (.error err, state')
+
+/-- LEFT TO RIGHT, EACH HOLE EXACTLY ONCE, FIRST FAILURE STOPS (`EvalM`, VAL-12): running the
+    combinator IS its explicit trace (`interpolationTrace`), for every hole channel. -/
+theorem interpolate_runs_as_its_trace (value : Expr → EvalM Result) (acc : String)
+    (links : List InterpolationLink) (state : EvalState) :
+    (interpolateWith value acc links).runState state = interpolationTrace value acc links state := by
+  induction links generalizing acc state with
+  | nil => rfl
+  | cons link rest ih =>
+      cases h : (value link.hole).runState state with
+      | mk result state' =>
+          cases result with
+          | ok holeValue =>
+              rw [interpolate_successful_hole_continues value acc link rest holeValue state state' h, ih]
+              simp [interpolationTrace, h]
+          | error err =>
+              rw [interpolate_failing_hole_ends_it value acc link rest err state state' h]
+              simp [interpolationTrace, h]
+
+/-- A hole channel that records every hole it is asked to evaluate. -/
+def recordingHole (f : Expr → Result) (hole : Expr) : StateM (List Expr) Result := do
+  modify (· ++ [hole])
+  pure (f hole)
+
+/-- EACH HOLE EXACTLY ONCE, IN WRITTEN ORDER: with a recording channel the record of evaluated
+    holes is exactly the holes as written, each once, and the text is their concatenation. -/
+theorem interpolate_evaluates_each_hole_once_in_order (f : Expr → Result) (acc : String)
+    (links : List InterpolationLink) (log : List Expr) :
+    (interpolateWith (recordingHole f) acc links).run log
+      = (links.foldl (fun text link => text ++ Result.canonicalText (f link.hole) ++ link.text) acc,
+         log ++ links.map InterpolationLink.hole) := by
+  induction links generalizing acc log with
+  | nil => simp [interpolateWith]; rfl
+  | cons link rest ih =>
+      simp [interpolateWith, recordingHole, ih]
+
+/-! ### The structural text of a hole value (`Result.canonicalText`) -/
+
+/-- A string is inserted VERBATIM: never quoted, never re-scanned for holes. -/
+theorem canonical_text_of_a_string_is_the_string (s : String) :
+    Result.canonicalText (.str s) = s := by
+  simp [Result.canonicalText]
+
+/-- A Boolean is its keyword, the spelling of the literal. -/
+theorem canonical_text_of_a_boolean_is_its_keyword (b : Bool) :
+    Result.canonicalText (.bool b) = Result.boolText b := by
+  simp [Result.canonicalText]
+
+/-- A number is the text the `.string` intrinsic writes for it (this model's integer tier). -/
+theorem canonical_text_of_a_number_is_the_string_intrinsic_text (n : Int) :
+    resultToString (.atom n) = pure (.str (Result.canonicalText (.atom n))) := by
+  simp [resultToString, Result.canonicalText]
+
+/-- The empty sequence is `()` and the empty list `[]`: two different texts, never empty
+    text — an empty value is a value, not missing output. -/
+theorem canonical_text_of_the_empty_sequence : Result.canonicalText (.sequenceValue []) = "()" := by
+  simp [Result.canonicalText]
+
+theorem canonical_text_of_the_empty_list : Result.canonicalText (.listValue []) = "[]" := by
+  simp [Result.canonicalText]
+
+/-- A sequence keeps its parentheses and a list its brackets, elements separated by `, `, at
+    every nesting level (nothing is spread, flattened or quoted). -/
+theorem canonical_text_of_a_sequence (rs : List Result) :
+    Result.canonicalText (.sequenceValue rs) = "(" ++ ", ".intercalate (rs.map Result.canonicalText) ++ ")" := by
+  simp [Result.canonicalText]
+
+theorem canonical_text_of_a_list (rs : List Result) :
+    Result.canonicalText (.listValue rs) = "[" ++ ", ".intercalate (rs.map Result.canonicalText) ++ "]" := by
+  simp [Result.canonicalText]

@@ -171,6 +171,11 @@ public sealed class KatLangError
             DiagnosticCode.UnliftableClauseFamily => KatLangErrorCode.UnliftableClauseFamily,
             DiagnosticCode.UnforwardableCallable => KatLangErrorCode.UnforwardableCallable,
             DiagnosticCode.AmbiguousOpen => KatLangErrorCode.AmbiguousOpen,
+            DiagnosticCode.InvalidStringEscape => KatLangErrorCode.InvalidStringEscape,
+            DiagnosticCode.UnmatchedBraceInString => KatLangErrorCode.UnmatchedBraceInString,
+            DiagnosticCode.UnterminatedInterpolationHole => KatLangErrorCode.UnterminatedInterpolationHole,
+            DiagnosticCode.InvalidInterpolationHole => KatLangErrorCode.InvalidInterpolationHole,
+            DiagnosticCode.InterpolationNotAllowedHere => KatLangErrorCode.InterpolationNotAllowedHere,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

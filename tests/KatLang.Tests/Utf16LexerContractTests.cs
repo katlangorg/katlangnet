@@ -263,9 +263,10 @@ public class Utf16LexerContractTests
     // ── String literals ──────────────────────────────────────────────────────
 
     [Fact]
-    public void StringLiteralsHaveNoEscapeSequences()
+    public void SingleQuotedStringLiteralsHaveNoEscapeSequences()
     {
-        // A backslash inside a literal is an ordinary code unit; there is no escaping at all.
+        // A backslash inside a single-quoted literal is an ordinary code unit; there is no
+        // escaping at all (double-quoted strings have their own escapes, below).
         var (tokens, diagnostics) = Lexer.Tokenize(@"'a\nb'");
         Assert.Empty(diagnostics);
         Assert.Equal("a\\nb", Assert.Single(tokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
@@ -276,7 +277,7 @@ public class Utf16LexerContractTests
     }
 
     [Fact]
-    public void StringLiteralsEndAtAQuote_ALineFeed_OrACarriageReturn()
+    public void SingleQuotedStringLiteralsEndAtAQuote_ALineFeed_OrACarriageReturn()
     {
         Assert.Equal("ab", ValueOf("'ab'"));
         Assert.Equal("ab", ValueOf("'ab"));            // unterminated at end of file
@@ -292,7 +293,7 @@ public class Utf16LexerContractTests
     }
 
     [Fact]
-    public void StringLiteralsCarryTheirCodeUnitsThroughToTheEvaluatedValue()
+    public void SingleQuotedStringLiteralsCarryTheirCodeUnitsThroughToTheEvaluatedValue()
     {
         // Isolated surrogates included: nothing on the path validates or replaces a code unit, and
         // the string's Length is its UTF-16 code-unit count.
@@ -309,6 +310,62 @@ public class Utf16LexerContractTests
         Assert.Equal(1, Evaluate("'\u00E9'").Length);
         Assert.Equal(2, Evaluate("'e\u0301'").Length);
         Assert.NotEqual(Evaluate("'\u00E9'"), Evaluate("'e\u0301'"));
+    }
+
+    // ── Double-quoted strings (STR-02) ───────────────────────────────────────
+
+    [Fact]
+    public void DoubleQuotedStrings_DecodeExactlyTheirEscapes_AndReportEveryOtherBackslash()
+    {
+        var (tokens, diagnostics) = Lexer.Tokenize("\"q\\\" b\\\\ n\\n t\\t {{x}}\"");
+        Assert.Empty(diagnostics);
+        Assert.Equal("q\" b\\ n\n t\t {x}", Assert.Single(tokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
+
+        // `\r` and every other escape are diagnostics, never a silent backslash; the token
+        // keeps the written characters for recovery.
+        foreach (var escape in new[] { "\\r", "\\q", "\\0", "\\u", "\\x", "\\{", "\\'" })
+        {
+            var (escapeTokens, escapeDiagnostics) = Lexer.Tokenize($"\"a{escape}b\"");
+            var diagnostic = Assert.Single(escapeDiagnostics);
+            Assert.Equal(DiagnosticCode.InvalidStringEscape, diagnostic.Code);
+            Assert.Equal(new SourceSpan(1, 3, 1, 5), diagnostic.Span);
+            Assert.Equal($"a{escape}b", Assert.Single(escapeTokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
+        }
+    }
+
+    [Fact]
+    public void DoubleQuotedStrings_EndAtTheirQuote_OrAreOneUnterminatedTokenToTheLineEnd()
+    {
+        foreach (var source in new[] { "\"ab", "\"ab\ncd\"", "\"ab\rcd\"", "\"a{x", "\"a{x}b", "\"a{\"in", "\"a\\\"" })
+        {
+            var (tokens, diagnostics) = Lexer.Tokenize(source);
+            var lineEnd = source.IndexOfAny(['\n', '\r']) is var at and >= 0 ? at : source.Length;
+            var token = tokens[0];
+            Assert.Equal(TokenKind.StringLiteral, token.Kind);
+            Assert.Equal((0, lineEnd), (token.Position, token.Length));
+            // A quote after the line end opens a string of its own (exactly like a single quote),
+            // so only the diagnostics inside the first token's extent belong to it.
+            var diagnostic = Assert.Single(diagnostics, d =>
+                Assert.NotNull(d.Span).Start.Line == 1 && d.Span.Value.Start.Column <= lineEnd + 1);
+            Assert.True(
+                diagnostic.Code is DiagnosticCode.UnterminatedStringLiteral or DiagnosticCode.UnterminatedInterpolationHole,
+                $"{source}: {diagnostic.Code}");
+            Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Line);
+            Assert.Equal(lineEnd + 1, diagnostic.Span.Value.End.Column);
+        }
+    }
+
+    [Fact]
+    public void DoubleQuotedStrings_CarryTheirCodeUnitsThroughTextAndHoles()
+    {
+        // Isolated surrogates, NUL and a no-break space are ordinary text in a double-quoted
+        // string, and a hole's string value is inserted verbatim: nothing validates or replaces a
+        // code unit on the way to the value, and Length counts UTF-16 code units.
+        Assert.Equal("\uD83D\uDE00", Evaluate("\"\uD83D\uDE00\""));
+        Assert.Equal("\uD83D|\uDE00", Evaluate("\"\uD83D|{'\uDE00'}\""));
+        Assert.Equal("\u0000\u00A0", Evaluate("\"\u0000\u00A0\""));
+        Assert.Equal(4, Evaluate("\"{'\uD83D\uDE00'}{'\uD83D\uDE00'}\"").Length);
+        Assert.Equal(2, Evaluate("\"e\u0301\"").Length);
     }
 
     // ── Comments ─────────────────────────────────────────────────────────────

@@ -86,6 +86,8 @@ public class SequenceConstructContainmentTests
         "A = [1, 2]\n(A*, 99)",
         "x, y = [1, 2]\nx",
         "F(*a) = a\nF([1, 2]*, 3)",
+        "A = (1, 2)\n\"{(A*, 3)}{()}{(())}\"",
+        "\"{(1, 2)}{[(), 3]}\"",
     };
 
     [Theory]

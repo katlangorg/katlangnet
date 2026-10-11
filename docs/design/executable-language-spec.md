@@ -62,7 +62,8 @@ Every case is in exactly one of three partitions (identity enforced by
   has no surface parser.
 - **C#-only** — evaluates/errs but has no Lean program; requires an explicit
   `LeanExclusionReason` naming the reviewed model divergence (the
-  Decimal128-vs-Lean-Int numeric family, or the unmodeled Math-native
+  Decimal128-vs-Lean-Int numeric family — fractional number text in an
+  interpolation hole included (STR-02) — or the unmodeled Math-native
   surface; the numeric boundary itself is defined by the "Core numeric
   semantics" row in `src/KatLang/SEMANTIC-ALIGNMENT.md`). An integer-looking
   source is not automatically Lean-comparable: Decimal128 precision/range can
@@ -243,10 +244,11 @@ against a test-side oracle instead (`docs/design/seeded-randomness-2026-09.md`).
 Blank lines inside a fenced Results block remain presentation-only grouping
 and are removed before comparison, matching the pre-M13 marker convention.
 Consequently that form cannot encode an empty-string row among other output
-rows; no current claim needs that shape. KatLang string literals cannot span
-physical lines, so multiline string values are not another ambiguity. If a
-future tutorial example needs to distinguish an empty row or zero emitted rows
-structurally, give it a marker-linked canonical case (raw value + emitted-count
+rows; no current claim needs that shape. A string LITERAL cannot span physical
+lines, but a double-quoted string can hold a line feed (`\n`, STR-02), and a
+fenced Results block cannot tell such a multi-line string row from several
+rows. If a tutorial example's output contains such a line feed, or the example
+needs to distinguish an empty row or zero emitted rows structurally, give it a marker-linked canonical case (raw value + emitted-count
 pin) instead of relying on the display-only fenced form.
 
 ## 7. Running all validation

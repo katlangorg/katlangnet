@@ -112,6 +112,7 @@ internal static class ExprNameRenderer
         public readonly Expr? Node;
         public readonly IReadOnlyList<Expr>? Items;
         public readonly IReadOnlyList<ComparisonLink>? Links;
+        public readonly IReadOnlyList<InterpolationLink>? InterpolationLinks;
         public readonly int ItemIndex;
         public readonly ExprNameMode Mode;
 
@@ -121,6 +122,7 @@ internal static class ExprNameRenderer
             Node = null;
             Items = null;
             Links = null;
+            InterpolationLinks = null;
             ItemIndex = 0;
             Mode = default;
         }
@@ -131,6 +133,7 @@ internal static class ExprNameRenderer
             Node = node;
             Items = null;
             Links = null;
+            InterpolationLinks = null;
             ItemIndex = 0;
             Mode = mode;
         }
@@ -141,6 +144,7 @@ internal static class ExprNameRenderer
             Node = null;
             Items = items;
             Links = null;
+            InterpolationLinks = null;
             ItemIndex = itemIndex;
             Mode = mode;
         }
@@ -152,8 +156,21 @@ internal static class ExprNameRenderer
             Node = null;
             Items = null;
             Links = links;
+            InterpolationLinks = null;
             ItemIndex = linkIndex;
             Mode = mode;
+        }
+
+        /// <summary>An interpolated-string link cursor: the hole at <paramref name="linkIndex"/> and its text are rendered next.</summary>
+        public Piece(IReadOnlyList<InterpolationLink> links, int linkIndex)
+        {
+            Text = null;
+            Node = null;
+            Items = null;
+            Links = null;
+            InterpolationLinks = links;
+            ItemIndex = linkIndex;
+            Mode = default;
         }
     }
 
@@ -481,6 +498,16 @@ internal static class ExprNameRenderer
                 continue;
             }
 
+            if (piece.InterpolationLinks is { } interpolationLinks)
+            {
+                // Schedule exactly one hole and its text, for the same reason as one list item.
+                if (piece.ItemIndex >= interpolationLinks.Count)
+                    continue;
+
+                PushInterpolationLink(pending, interpolationLinks, piece.ItemIndex);
+                continue;
+            }
+
             if (!Expand(builder, pending, piece.Node!, piece.Mode))
                 return Truncated(builder);
         }
@@ -633,8 +660,8 @@ internal static class ExprNameRenderer
                 break;
 
             case ExprNameMode.UnaryOperand:
-                if (node is not (Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral
-                    or Expr.DotCall or Expr.Index))
+                if (node is not (Expr.Param or Expr.Resolve or Expr.Num or Expr.StringLiteral or Expr.InterpolatedString
+                    or Expr.BoolLiteral or Expr.DotCall or Expr.Index))
                 {
                     return PushParenthesized(pending, node);
                 }
@@ -671,8 +698,24 @@ internal static class ExprNameRenderer
                 return Append(builder, name);
             case Expr.Num(var value):
                 return Append(builder, Rendering.ValueTextRenderer.FormatNumberInvariant(value));
+            // A string renders as KatLang source: single-quoted when its text can be
+            // written that way (no quote and no line break), otherwise double-quoted with
+            // its escapes, so the name reads back as the same literal.
             case Expr.StringLiteral(var value):
-                return Append(builder, "'") && Append(builder, value) && Append(builder, "'");
+                return CanWriteSingleQuoted(value)
+                    ? Append(builder, "'") && Append(builder, value) && Append(builder, "'")
+                    : Append(builder, "\"") && Append(builder, EscapeDoubleQuotedText(value)) && Append(builder, "\"");
+
+            // An interpolated string renders as written, `"head{hole}text…"`: each text run
+            // re-escaped, each hole in operand shape through a link cursor (bounded like a
+            // wide list; see PushInterpolationLink).
+            case Expr.InterpolatedString(var head, var interpolationLinks):
+                pending.Push(new Piece("\""));
+                pending.Push(new Piece(interpolationLinks, 0));
+                pending.Push(new Piece(EscapeDoubleQuotedText(head)));
+                pending.Push(new Piece("\""));
+                return true;
+
             case Expr.BoolLiteral(var value):
                 return Append(builder, Rendering.ValueTextRenderer.FormatBool(value));
 
@@ -824,6 +867,172 @@ internal static class ExprNameRenderer
         pending.Push(new Piece(node, ExprNameMode.Open));
         pending.Push(new Piece("("));
         return true;
+    }
+
+    /// <summary>
+    /// Schedules the interpolation hole at <paramref name="index"/>: <c>{</c>, the hole in
+    /// operand shape, <c>}</c>, its re-escaped text, then the cursor for the next link. A hole is
+    /// written in parentheses when its operand-shape name could contain a hole-level <c>:</c>
+    /// (<see cref="MayRenderHoleLevelColon"/>; parentheses never change a hole's meaning, since a
+    /// redundant group is its content), and with spaces when it would begin with a brace, so
+    /// <c>{{</c> never reads back as a literal brace. Lean: the <c>.interpolatedString</c> arm of
+    /// <c>exprDiagnosticName</c>.
+    /// </summary>
+    private static void PushInterpolationLink(Stack<Piece> pending, IReadOnlyList<InterpolationLink> links, int index)
+    {
+        var link = links[index];
+        pending.Push(new Piece(links, index + 1));
+        pending.Push(new Piece(EscapeDoubleQuotedText(link.Text)));
+        if (MayRenderHoleLevelColon(link.Hole))
+        {
+            pending.Push(new Piece(")}"));
+            pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
+            pending.Push(new Piece("{("));
+        }
+        else if (MayRenderLeadingBrace(link.Hole))
+        {
+            pending.Push(new Piece(" }"));
+            pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
+            pending.Push(new Piece("{ "));
+        }
+        else
+        {
+            pending.Push(new Piece("}"));
+            pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
+            pending.Push(new Piece("{"));
+        }
+    }
+
+    /// <summary>
+    /// Whether a hole's operand-shape name could contain a <c>:</c> outside every delimiter —
+    /// an index reachable along the operator and postfix spine, which a hole would refuse as a
+    /// hole-level <c>:</c>. Conservative (it may parenthesize a hole the renderer already
+    /// delimits), never wrong: the parentheses it adds are redundant grouping. Lean:
+    /// <c>holeMayRenderTopLevelColon</c>.
+    /// </summary>
+    private static bool MayRenderHoleLevelColon(Expr hole)
+    {
+        var pending = new Stack<Expr>();
+        pending.Push(hole);
+        var visited = 0;
+        while (pending.Count > 0)
+        {
+            // Bounded like every rendering walk: a hostile spine is simply parenthesized.
+            if (++visited > MaxWorkItems)
+                return true;
+
+            switch (pending.Pop())
+            {
+                case Expr.Index:
+                    return true;
+                case Expr.Unary(_, var operand):
+                    pending.Push(operand);
+                    break;
+                case Expr.Binary(_, var left, var right):
+                    pending.Push(right);
+                    pending.Push(left);
+                    break;
+                case Expr.Comparison(var first, var comparisonLinks):
+                    // Count scheduled work too: eagerly queuing a wide chain before
+                    // the visit cap runs would read and allocate for every sibling.
+                    // When the remaining walk cannot fit, redundant grouping is safe.
+                    if (comparisonLinks.Count >= MaxWorkItems - visited - pending.Count)
+                        return true;
+                    foreach (var link in comparisonLinks)
+                        pending.Push(link.Operand);
+                    pending.Push(first);
+                    break;
+                case Expr.DotCall dotCall:
+                    pending.Push(dotCall.Target);
+                    break;
+                case Expr.Call call:
+                    pending.Push(call.Function);
+                    break;
+                case Expr.SequenceSpread spread:
+                    pending.Push(spread.Operand);
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether a hole's operand-shape name could BEGIN with a brace: a block at the left end of the
+    /// operator and postfix spine (<c>{...}.X</c>, <c>{...} + 2</c>, the block itself). Such a hole
+    /// is written with spaces so <c>{{</c> never reads back as a literal brace. Conservative — a
+    /// space inside a hole never changes it — and bounded like every rendering walk. Lean:
+    /// <c>holeMayRenderLeadingBrace</c>.
+    /// </summary>
+    private static bool MayRenderLeadingBrace(Expr hole)
+    {
+        var current = hole;
+        for (var visited = 0; visited <= MaxWorkItems; visited++)
+        {
+            switch (current)
+            {
+                case Expr.AlgorithmExpr:
+                    return true;
+                case Expr.Binary(_, var left, _):
+                    current = left;
+                    break;
+                case Expr.Comparison(var first, _):
+                    current = first;
+                    break;
+                case Expr.Index(var target, _):
+                    current = target;
+                    break;
+                case Expr.DotCall dotCall:
+                    current = dotCall.Target;
+                    break;
+                case Expr.Call call:
+                    current = call.Function;
+                    break;
+                case Expr.SequenceSpread spread:
+                    current = spread.Operand;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Whether <paramref name="text"/> can be written as a single-quoted literal (no quote and no line break).</summary>
+    internal static bool CanWriteSingleQuoted(string text)
+        => text.AsSpan().IndexOfAny('\'', '\n', '\r') < 0;
+
+    /// <summary>
+    /// The text of a double-quoted string as KatLang source spells it: <c>\</c>, <c>"</c>, a line
+    /// feed and a tab escaped, and braces doubled. A carriage return, which no KatLang string can
+    /// spell, is shown as <c>\r</c> so the name stays one line. Only the first
+    /// <see cref="MaxRenderedNameLength"/> units are escaped: the rendered name is bounded anyway.
+    /// </summary>
+    internal static string EscapeDoubleQuotedText(string text)
+    {
+        var length = Math.Min(text.Length, MaxRenderedNameLength + 1);
+        var span = text.AsSpan(0, length);
+        if (span.IndexOfAny("\\\"\n\t{}\r") < 0)
+            return length == text.Length ? text : text[..length];
+
+        var escaped = new System.Text.StringBuilder(length + 8);
+        foreach (var ch in span)
+        {
+            switch (ch)
+            {
+                case '\\': escaped.Append("\\\\"); break;
+                case '"': escaped.Append("\\\""); break;
+                case '\n': escaped.Append("\\n"); break;
+                case '\t': escaped.Append("\\t"); break;
+                case '\r': escaped.Append("\\r"); break;
+                case '{': escaped.Append("{{"); break;
+                case '}': escaped.Append("}}"); break;
+                default: escaped.Append(ch); break;
+            }
+        }
+
+        return escaped.ToString();
     }
 
     /// <summary>Bare source spelling of a binary operator for diagnostics.</summary>

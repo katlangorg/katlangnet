@@ -81,6 +81,10 @@ public class GraceOwnershipSemanticsTests
                     foreach (var item in body)
                         Collect(item);
                     break;
+                case Expr.InterpolatedString(_, var interpolationLinks):
+                    foreach (var link in interpolationLinks)
+                        Collect(link.Hole);
+                    break;
                 case Expr.Call(var function, var args):
                     Collect(function);
                     foreach (var arg in args)
@@ -189,8 +193,19 @@ public class GraceOwnershipSemanticsTests
     [InlineData("F = a + 10 * b + 100 * ~c + ~c", new[] { "c", "a", "b" })]
     [InlineData("F = y * 10 + ~~x", new[] { "x", "y" })]
     [InlineData("F = x~~~ * 10 + y", new[] { "y", "x" })]
+    // a hole is an operand of the enclosing owner, so a marker in it weights that owner's names
+    [InlineData("F = \"{y}-{~x}\"", new[] { "x", "y" })]
+    [InlineData("F = \"{y~}-{x}\"", new[] { "x", "y" })]
+    [InlineData("F = \"{a}{b}{~c}\"", new[] { "a", "c", "b" })]
     public void MovingMarker_ReordersTheOwnSignature(string definition, string[] expected)
         => Assert.Equal(expected, Params(definition, "F"));
+
+    [Fact]
+    public void AMarkerInAHole_OnAClosedList_IsInvalidGrace()
+    {
+        var diagnostics = SourceProvenance.ExpectFrontEndError("F(x, y) = \"{~x}{y}\"\nF(1, 2)");
+        Assert.Contains(diagnostics, d => d.Code == DiagnosticCode.InvalidGraceMarker);
+    }
 
     [Fact]
     public void LiftedTail_IsNeverCrossed_InEitherDirection()

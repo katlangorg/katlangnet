@@ -147,6 +147,10 @@ internal static class FrontEndFingerprint
             case Expr.Param p: sb.Append("Param{").Append(p.Name).Append('}'); break;
             case Expr.Num n: sb.Append("Num{").Append(n.Value.ToString(CultureInfo.InvariantCulture)).Append('}'); break;
             case Expr.StringLiteral s: sb.Append("Str{").Append(s.Value).Append('}'); break;
+            case Expr.InterpolatedString(var head, var interpolationLinks):
+                sb.Append("IStr{").Append(head).Append('}').Append('[');
+                foreach (var link in interpolationLinks) { Expr(sb, link.Hole); sb.Append("Txt{").Append(link.Text).Append('}'); }
+                sb.Append(']'); break;
             case Expr.BoolLiteral b: sb.Append(b.Value ? "Bool{true}" : "Bool{false}"); break;
             case Expr.Resolve r: sb.Append("Res{").Append(r.Name).Append('}'); break;
             case Expr.Unary(var op, var o): sb.Append("Un{").Append(op).Append("}("); Expr(sb, o); sb.Append(')'); break;

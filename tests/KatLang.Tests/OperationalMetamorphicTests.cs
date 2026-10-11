@@ -477,6 +477,7 @@ public class OperationalMetamorphicTests
                 case Expr.ListLiteral(var items): foreach (var it in items) Ex(it); break;
                 case Expr.AlgorithmExpr(var alg): Alg(alg); break;
                 case Expr.Capture(var captureBody): foreach (var row in captureBody) Ex(row); break;
+                case Expr.InterpolatedString(_, var interpolationLinks): foreach (var link in interpolationLinks) Ex(link.Hole); break;
                 case Expr.Call(var fn, var args): Ex(fn); foreach (var a in args) Ex(a); break;
                 case Expr.DotCall dc: Ex(dc.Target); if (dc.Args is { } a2) { foreach (var a in a2) Ex(a); } break;
             }

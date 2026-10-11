@@ -27,54 +27,85 @@ public class ParserScopedStateTests
         => (Parser)typeof(Parser).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
             .Invoke([Lexer.Tokenize("1").Tokens, new DiagnosticBag(), Array.Empty<SourcePosition>(), null]);
 
-    private static IDisposable Enter(Parser parser, bool delimited)
-        => (IDisposable)typeof(Parser).GetMethod(
-            delimited ? "EnterDelimitedProduction" : "EnterNestingLevel", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(parser, delimited ? [TokenKind.RParen, 1] : null)!;
+    // The three scoped protocols: a base nesting level, a heavy delimited production, and an
+    // interpolation hole (STR-02), whose ownership barrier saves and zeroes the enclosing
+    // owed-closer counters and must restore them exactly.
+    private const int NestingScope = 0, DelimitedScope = 1, HoleScope = 2;
 
-    private static (int Depth, int Parens, int Brackets, int Braces) State(Parser parser)
+    private static IDisposable Enter(Parser parser, int scope)
+        => (IDisposable)typeof(Parser).GetMethod(
+            scope switch { DelimitedScope => "EnterDelimitedProduction", HoleScope => "EnterInterpolationHole", _ => "EnterNestingLevel" },
+            BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(parser, scope == DelimitedScope ? [TokenKind.RParen, 1] : null)!;
+
+    private static (int Depth, int Parens, int Brackets, int Braces, int Holes) State(Parser parser)
     {
         int Field(string name) => (int)typeof(Parser).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(parser)!;
-        return (Field("_nestingDepth"), Field("_openParens"), Field("_openBrackets"), Field("_openBraces"));
+        return (Field("_nestingDepth"), Field("_openParens"), Field("_openBrackets"), Field("_openBraces"), Field("_openInterpolationHoles"));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Scopes_RejectCopiedAndOutOfOrderDisposal_WithoutRestoringAnotherScope(bool delimited)
+    [InlineData(NestingScope)]
+    [InlineData(DelimitedScope)]
+    [InlineData(HoleScope)]
+    public void Scopes_RejectCopiedAndOutOfOrderDisposal_WithoutRestoringAnotherScope(int scope)
     {
         var parser = NewParser();
-        var outer = Enter(parser, delimited);
+        var outer = Enter(parser, scope);
         var copied = (IDisposable)RuntimeHelpers.GetObjectValue(outer);
         var outerState = State(parser);
-        var inner = Enter(parser, !delimited);
+        var inner = Enter(parser, (scope + 1) % 3);
         var innerState = State(parser);
         Assert.Throws<InvalidOperationException>(() => copied.Dispose());
         Assert.Equal(innerState, State(parser));
         inner.Dispose();
         Assert.Equal(outerState, State(parser));
         outer.Dispose();
-        using (Enter(parser, delimited))
+        using (Enter(parser, scope))
         {
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(outerState, State(parser));
         }
         ((IDisposable)Activator.CreateInstance(outer.GetType())!).Dispose();
-        Assert.Equal((0, 0, 0, 0), State(parser));
+        Assert.Equal((0, 0, 0, 0, 0), State(parser));
+    }
+
+    [Fact]
+    public void HoleScope_ZeroesTheEnclosingOwedClosers_AndRestoresThemExactly()
+    {
+        // The ownership barrier: inside a hole no enclosing construct is waiting for a closer,
+        // and leaving the hole gives every enclosing construct its owed closers back.
+        var parser = NewParser();
+        using (Enter(parser, DelimitedScope))
+        {
+            var outerState = State(parser);
+            Assert.Equal(1, outerState.Parens);
+            using (Enter(parser, HoleScope))
+            {
+                var holeState = State(parser);
+                Assert.Equal((0, 0, 0, 1), (holeState.Parens, holeState.Brackets, holeState.Braces, holeState.Holes));
+                using (Enter(parser, DelimitedScope))
+                    Assert.Equal(1, State(parser).Parens);
+                Assert.Equal(holeState, State(parser));
+            }
+
+            Assert.Equal(outerState, State(parser));
+        }
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RejectedEntry_AndExceptionalUnwind_RestoreTheExactParserState(bool delimited)
+    [InlineData(NestingScope)]
+    [InlineData(DelimitedScope)]
+    [InlineData(HoleScope)]
+    public void RejectedEntry_AndExceptionalUnwind_RestoreTheExactParserState(int scope)
     {
         var parser = NewParser();
-        using (Enter(parser, !delimited))
+        using (Enter(parser, (scope + 1) % 3))
         {
             var outerState = State(parser);
             Assert.Throws<OperationCanceledException>((Action)(() =>
             {
-                using var inner = Enter(parser, delimited);
+                using var inner = Enter(parser, scope);
                 throw new OperationCanceledException();
             }));
             Assert.Equal(outerState, State(parser));
@@ -83,7 +114,7 @@ public class ParserScopedStateTests
         var depth = typeof(Parser).GetField("_nestingDepth", BindingFlags.NonPublic | BindingFlags.Instance)!;
         depth.SetValue(parser, Parser.MaxNestingDepth);
         var before = State(parser);
-        var failure = Assert.Throws<TargetInvocationException>(() => Enter(parser, delimited));
+        var failure = Assert.Throws<TargetInvocationException>(() => Enter(parser, scope));
         Assert.Equal("NestingLimitExceededException", failure.InnerException!.GetType().Name);
         Assert.Equal(before, State(parser));
     }
@@ -120,7 +151,9 @@ public class ParserScopedStateTests
     /// <summary>
     /// One recovered instance of each heavy delimited production (the five
     /// <c>EnterDelimitedProduction</c> sites: group, call argument list, trailing-brace call
-    /// argument, brace block, list literal), each exited through the owed-closer recovery.
+    /// argument, brace block, list literal), each exited through the owed-closer recovery,
+    /// plus the interpolation hole (<c>EnterInterpolationHole</c>), exited through recovery of
+    /// its own expression and through a group the hole's close recovers.
     /// </summary>
     public static TheoryData<string> RecoveredProductions => new()
     {
@@ -129,6 +162,8 @@ public class ParserScopedStateTests
         "F(a) = a\nA = F{1, }",
         "A = {1, }",
         "A = [1, ]",
+        "A = \"{1 + }\"",
+        "A = \"{(1, }\"",
     };
 
     /// <summary>

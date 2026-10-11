@@ -828,7 +828,13 @@ def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
     ("sequence-spread", .sequenceSpread (resolve "Pair"), true),
     ("algorithm-expr", .algorithmExpr (alg [] [] [] [.num 9]), true),
     ("dot-call", KatLang.Expr.dotCall (resolve "Pair") "count" none, true),
-    ("call", .call (resolve "Double") [.num 4], true) ]
+    ("call", .call (resolve "Double") [.num 4], true),
+    -- STR-02: an interpolated string with number, property and sequence holes, and one whose
+    -- first hole fails (the later hole is never evaluated on either side).
+    ("interpolated-string", .interpolatedString "v=" [{ hole := .num 1, text := ", " },
+        { hole := resolve "Value", text := " " }, { hole := resolve "Pair", text := "" }], true),
+    ("interpolated-string-first-failure", .interpolatedString "" [{ hole := .binary .div (.num 1) (.num 0), text := "" },
+        { hole := resolve "Value", text := "" }], false) ]
 
 def evalProjectionParityAt (e : KatLang.Expr) (expectOk : Bool) : Bool :=
   let ctx := dotCallParityCtx dotCallParityProg

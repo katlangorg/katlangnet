@@ -114,7 +114,7 @@ public class LanguageSpecArtifactsTests
             var sourceComment = specCase.Source.Replace("\n", " \\n ");
             builder.Append($"-- {specCase.Id} [{specCase.Category}]: {sourceComment}\n");
             builder.Append($"def case_{leanName} : Expr :=\n  {specCase.LeanProgram}\n");
-            builder.Append($"#guard obs case_{leanName} == \"{specCase.CanonicalNeutral}\"\n\n");
+            builder.Append($"#guard obs case_{leanName} == {LeanAstEncoder.QuoteString(specCase.CanonicalNeutral ?? "")}\n\n");
             emittedIds.Add(specCase.Id);
         }
 

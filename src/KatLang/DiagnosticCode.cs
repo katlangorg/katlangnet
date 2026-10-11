@@ -430,4 +430,49 @@ public enum DiagnosticCode
     /// <see cref="KatLangErrorCode.AmbiguousOpen"/>.
     /// </summary>
     AmbiguousOpen = 52,
+
+    // ── Double-quoted strings and interpolation (STR-02) ────────────────────
+
+    /// <summary>
+    /// A backslash in the text of a double-quoted string that does not begin one of the
+    /// supported escapes: <c>\"</c> (a double quote), <c>\\</c> (a backslash), <c>\n</c> (a line
+    /// feed) and <c>\t</c> (a tab). Every other escape — <c>\r</c> included — is an error, never
+    /// a silent literal backslash, so a future escape can be added without changing the meaning
+    /// of a valid program. Single-quoted strings have no escapes at all, so a backslash is
+    /// ordinary text there. Reported over the backslash and the character after it.
+    /// </summary>
+    InvalidStringEscape = 53,
+
+    /// <summary>
+    /// A lone <c>}</c> in the text of a double-quoted string. In that text <c>{</c> opens an
+    /// interpolation hole and <c>}</c> closes one, so a literal brace is written doubled:
+    /// <c>{{</c> for <c>{</c> and <c>}}</c> for <c>}</c>. Reported over the brace.
+    /// </summary>
+    UnmatchedBraceInString = 54,
+
+    /// <summary>
+    /// An interpolation hole opened with <c>{</c> inside a double-quoted string is not closed
+    /// before the end of its line. A string and every hole in it lie on one physical line, so
+    /// the hole needs its <c>}</c> and the string its closing <c>"</c> on the same line.
+    /// Reported from the hole's <c>{</c> to the end of the line; the whole unterminated string
+    /// is then one string token, and nothing inside it is reported again.
+    /// </summary>
+    UnterminatedInterpolationHole = 55,
+
+    /// <summary>
+    /// An interpolation hole that is not exactly one expression: an empty hole (<c>"{}"</c>),
+    /// a hole holding several expressions or a trailing token (<c>"{a, b}"</c>, <c>"{a b}"</c>),
+    /// a hole-level <c>:</c> (interpolation has no format specifiers; a selection is written in
+    /// parentheses, <c>"{(xs:0)}"</c>) or <c>=</c>, or a <c>#</c> inside a hole (a comment would
+    /// swallow the rest of the line). Reported at the offending token.
+    /// </summary>
+    InvalidInterpolationHole = 56,
+
+    /// <summary>
+    /// A double-quoted string WITH an interpolation hole stands where the grammar needs fixed
+    /// text: a clause-head literal pattern or an <c>open</c> target. Such a string is computed
+    /// when it is evaluated, so it is an expression only. A double-quoted string with no hole
+    /// is an ordinary string literal and is valid in both positions. Reported over the string.
+    /// </summary>
+    InterpolationNotAllowedHere = 57,
 }

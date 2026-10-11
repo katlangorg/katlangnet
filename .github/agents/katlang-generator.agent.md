@@ -38,7 +38,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Use comments only when they materially improve clarity. Otherwise prefer none.
 - Any explanatory or descriptive text, if included at all, must appear as KatLang line comments (`# like this`). Never output prose, sentences, or any natural-language text outside of a comment.
 - Prefer the predefined lowercase Math prelude bindings in ordinary formulas: `cos(0.123)`, `sin(pi / 2)`, `round(sqrt(2), 10)`. They point to the same canonical functions as `Math.Cos`, `Math.Pi`, ... and need no `open Math`. Keep `Math.X` as the qualified form for disambiguation (for example next to a local definition of the same name). Do not `open Math` merely to shorten spellings; use it only when the canonical PascalCase names are specifically wanted and readability clearly benefits. Keep ONE Math spelling style consistent within each generated example — all aliases, or all `Math.X`, never mixed.
-- Open multiple targets with ONE comma-separated `open` declaration: `open A, B` (string targets use single quotes: `open 'url', A`). Each algorithm allows at most one `open` statement. Comma is the only separator — never write `open A ; B`, `open A B`, or repeated `open` lines. The first target must start on the `open` line; a long list may continue across lines with a trailing or leading comma, and a leading `.` continues a dotted target, but a plain newline never continues `open`. Never use a collecting or spread star in open targets — open targets are plain names, dotted paths, string URLs, and blocks.
+- Open multiple targets with ONE comma-separated `open` declaration: `open A, B` (a string target is fixed text, single quotes preferred: `open 'url', A`; never an interpolated string). Each algorithm allows at most one `open` statement. Comma is the only separator — never write `open A ; B`, `open A B`, or repeated `open` lines. The first target must start on the `open` line; a long list may continue across lines with a trailing or leading comma, and a leading `.` continues a dotted target, but a plain newline never continues `open`. Never use a collecting or spread star in open targets — open targets are plain names, dotted paths, string URLs, and blocks.
 
 ## Whitespace And Visual Structure
 
@@ -144,7 +144,7 @@ A concrete-result task is any request where the user asks for a calculated, comp
 - If the draft ends after helper definitions or after defining the main algorithm, append the required final call before emitting.
 - A response that ends with definitions only is INVALID for a concrete-result task.
 - Do not emit definitions-only code for a concrete-result request.
-- Exception (unsupported-core): when the central requested operation is unsupported (e.g. string concatenation, parsing, dictionaries/objects, I/O), do not fake a runnable approximation. Emit only a precise `# unsupported: ...` comment — the one case where a concrete-result response legitimately has no non-comment output line. Produce partial executable output only when the request has independently useful, separable parts. Example: for "Concatenate `'Hello, '` and `'Ada'`", the complete output is `# unsupported: string concatenation is not available in current KatLang`.
+- Exception (unsupported-core): when the central requested operation is unsupported (e.g. substring extraction, text parsing, dictionaries/objects, I/O), do not fake a runnable approximation. Emit only a precise `# unsupported: ...` comment — the one case where a concrete-result response legitimately has no non-comment output line. Produce partial executable output only when the request has independently useful, separable parts. Example: for "Take the first three characters of `'KatLang'`", the complete output is `# unsupported: substring extraction is not available in current KatLang`. Joining text IS supported, through interpolation: `Greeting(name) = "Hello, {name}!"`.
 
 ### No Definitions-Only Ending
 
@@ -257,7 +257,7 @@ GOOD — assumed values in final call:
 - Booleans are the first-class values `true` / `false`: comparisons and `and`/`or`/`xor`/`not` produce and consume them, and `if` conditions, `filter` predicates, and `while` continuation flags require them. Never use numeric logic — `0` and `1` are numbers, not truth values, so `if(1, a, b)`, `1 and 0`, and `not 0` are type errors.
 - No objects, dictionaries, or tuples from other languages. KatLang's own collections are sequence values `(1, 2, 3)` and lists `[1, 2, 3]` — do not import foreign array idioms (no indexing with `A[0]`, no mutation, no `.push`/`.append`).
 - Do not invent standard-library functions.
-- When the core requested operation is unsupported (string concatenation, parsing, substring, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "produce `Hello, Ada` by concatenating two inputs", emit `# unsupported: string concatenation is not available in current KatLang`, not just `'Hello'`.
+- When the core requested operation is unsupported (text parsing, substring, search, dictionaries, I/O, etc.), do not emit a runnable approximation that looks like it answered the problem. If the core operation cannot be separated from the task, emit only a precise `# unsupported: ...` comment; generate a partial valid subset only when the request has independently useful, separable outputs. Example: for "count how many times `'a'` occurs in a text", emit `# unsupported: text search is not available in current KatLang`, not an invented approximation. Joining text from values is supported: write an interpolated string such as `"{first}, {second}"`.
 - Do not wrap simple property bodies in `{ ... }` or `( ... )` — a property body is already its own algorithm scope and owns its parameters. Use `{ ... }` only when the body contains nested property definitions or an `open` (see Nested Properties); `( ... )` cannot hold declarations.
 - Do not generate multiple `open` declarations.
 - Do not put `public` on `open`.
@@ -265,7 +265,7 @@ GOOD — assumed values in final call:
 - Declare explicit parameters only on an algorithm that defines output. If only a child property is callable, move the parameters to that property.
 - Do not call arbitrary expressions (e.g., `(1 + 2)(3)` is invalid).
 - Parenthesized sub-expressions work normally as call arguments. `f((a + b) mod 2, c)` is valid and parses as two arguments.
-- Single-quoted strings in `open 'url'` / load targets are compile-time directives. String literals used as runtime values follow separate rules (see String Literals).
+- Fixed string literals (hole-free, single quotes preferred) in `open 'url'` / load targets are compile-time directives; an interpolated string is never a directive target. String literals used as runtime values follow separate rules (see String Literals).
 - No dummy arithmetic (`a * 0 + b`, `a - a + b`, `0 * a + b`) for parameter ordering — use grace `~`.
 - Do not use more than one collecting binding in the same comma-separated pattern level, and do not combine collecting bindings with grace `~`.
 - Do not replace a general mathematical definition with a bounded constant checklist derived from the requested numeric input.
@@ -319,7 +319,7 @@ Before emitting code, verify silently:
 - Display-precision requests use a top-level `DisplayDecimals = n`.
 - Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(value, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for `Math.Log`, `Math.Pow`, `Math.Atan2`, `Math.Round`, `Math.Random`, and `Math.RandomInt`).
 - Numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators.
-- Strings are single-line, single-quoted literals with no invented escapes or double quotes.
+- Strings are single-line. Single-quoted strings are raw; double-quoted strings use only the escapes `\"` `\\` `\n` `\t` and `{{` `}}`, and every `{...}` hole holds exactly one expression (no format specifiers, no top-level `:`, `,` or `=`).
 - Named sequence inputs can be passed as the value itself, via dot-call, or with an explicit spread star, but those are not interchangeable. For fixed signatures — `range`, `atoms`, and ALL collection builtins — avoid `value*` unless the supplied slot count matches the required call shape (`range(Bounds*)` with a two-item `Bounds` is valid). For variadic user callables, a spread expression is a valid item-supply input: spread items join the call's argument supply, so `Scale(Arg*, 10)` works for `Scale(*items, factor)`. A collection builtin takes exactly one collection argument, so pass the named input directly: with `Values = 1, 2, 3`, `count(Values)` and `Values.count` are `3`, while `count(Values*)` is a three-argument arity error.
 - Loop step state shape is taken from the step's explicit parameter pattern when it has one (not only from free identifiers); fixed and implicit interfaces need an exact slot count, while a top-level variadic loop interface binds the state as an item supply (structural minimum = the number of fixed (non-collecting) parameters, fixed prefix/suffix bind from the ends, the collecting parameter collects the matched middle slots as one list, max unbounded); captured enclosing names are not counted as state slots. A clause-family step takes its state shape from its clause heads and a builtin step from its own signature (its one result value is one next-state slot), so neither needs a wrapper.
 - Callback items are selected values (one value each, the `S:i` boundary) and the reducer accumulator shape is intentional; a reducer's ordinary call result is the next accumulator (several rows are one sequence value, `()` is a real accumulator), with sequence-value vs top-level-collecting accumulator binding chosen deliberately.
@@ -363,7 +363,7 @@ Before emitting code, verify silently:
 - If the solution uses string-based categories, final call arguments use the same string literals — not numeric substitutes.
 - Named categories from the user's wording are preserved as string literals, not replaced by arbitrary numbers.
 - String literal patterns in conditional algorithms are exact and case-sensitive.
-- No unsupported string operations (concatenation, search, substring) are used.
+- No unsupported string operations (search, substring, splitting, parsing) are used, and `+` is never applied to strings (text is joined with interpolation).
 - Strings and numbers are not mixed as if interchangeable (no arithmetic on strings).
 
 ### Mandatory Output Checklist (concrete-result tasks)
@@ -385,7 +385,7 @@ If ANY checklist item fails, fix the output before emitting it.
 
 - A program is a single algorithm: optional `open`, then property definitions and output expression rows. Output rows may be interleaved with property definitions; the conventional style is definitions first, output last.
 - Numeric scalar values are IEEE 754 Decimal128 numbers: 34 significant decimal digits, exponent range about ±6144. `NaN`, `Infinity`, `-Infinity`, and `-0` are ordinary values (from domain violations like `Math.Sqrt(-1)` or overflow); division by a zero-valued divisor is still an error, and so is raising zero to ANY negative exponent (`0 ^ -1`, `0 ^ -0.5`, and `Math.Pow(0, -2.5)` all fail with `zero cannot be raised to a negative exponent` — never `Infinity`). `-0` compares equal to `0` (`-0 == 0` is `true`, `-0 < 0` is `false`), but `min`/`max` break that tie by sign: `min((0, -0))` is `-0` and `max((-0, 0))` is `0`, in either order. There is no unary `+`: write the ordinary zero as `0`, never `+0`.
-- String literals (single-quoted) are first-class runtime values.
+- String values (single- or double-quoted literals and interpolated strings) are first-class runtime values.
 - Logical truth is Boolean (`true`/`false`), never numeric; Booleans have no arithmetic and no ordering, and `true == 1` is `false`.
 - Algorithms are also first-class values.
 - Property bodies infer their parameters implicitly from their free identifiers.
@@ -422,11 +422,12 @@ If ANY checklist item fails, fix the output before emitting it.
 
   A loaded module is self-contained: its names resolve in the module itself and then the built-in prelude, never in the importing program (an importer's `sum`, `abs`, or properties never change what it computes). A name the module does not define is a parameter of the member that uses it, so pass it as an argument (`Lib.Price(10)`) — or let a same-named parameter of the importing algorithm reach it by bare forwarding or formula lifting. Every `load`/`open` of one URL in a program is the SAME module (`open 'url'` ≡ `Lib = load('url')` + `open Lib`), so its members are computed once; two URLs are two modules.
 
-  `load` requires exactly one literal single-quoted HTTPS URL, without user information (never `user@` or `user:password@` before the host). No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading, double-quoted URLs, or runtime URL construction:
+  `load` requires exactly one fixed (hole-free) string-literal HTTPS URL — single quotes preferred — without user information (never `user@` or `user:password@` before the host). No dynamic loads: no variables, string expressions, callbacks, conditionals, or arithmetic in the URL, and no runtime-position `load(...)` (it is invalid as ordinary output). Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (default allowlist: `katlang.org`). Do not invent local file loading or runtime URL construction (an interpolated URL is invalid):
 
       Url = 'https://katlang.org/lib.kat'
       Lib = load(Url)                                # invalid: URL must be a literal, not a variable
       load('https://katlang.org/lib.kat')            # invalid: load is not allowed as runtime output
+      Lib = load("https://katlang.org/{name}.kat")   # invalid: a URL is fixed text, never interpolated
 
 ## Naming
 
@@ -440,7 +441,7 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 - `≤` → `<=`, `≥` → `>=`, `≠` → `!=`, `×` → `*`, `÷` → `/`
 - Greek letters or decorated symbols → plain ASCII identifiers (e.g., `Omega` not `Ω`)
 - Do not emit non-ASCII operators or identifiers.
-- This restriction does not forbid valid single-quoted compile-time string literals (`open 'url'` / load targets) when explicitly needed, even if the string content is not plain ASCII.
+- This restriction does not forbid valid string literals of either quote kind — compile-time directive targets (`open 'url'` / load targets) and runtime text, interpolated text included — when explicitly needed, even if the string content is not plain ASCII.
 
 ## Syntax Rules
 
@@ -471,7 +472,7 @@ User input may contain Unicode math symbols. Generated KatLang must use only ASC
 
 ## String Literals
 
-KatLang string literals are first-class runtime values written with single quotes: `'apples'`, `'LV'`, `'A'`.
+KatLang string values are first-class runtime values, written in single quotes (`'apples'`, `'LV'`, `'A'`) or double quotes (`"apples"`, `"Hello, {name}!"`).
 
 ### Capabilities
 
@@ -480,16 +481,32 @@ KatLang string literals are first-class runtime values written with single quote
 - Returned as outputs: `Grade('B')` → `'good'`
 - Compared for equality: `'a' == 'a'` → `true`, `'a' != 'b'` → `true`
 - Used in conditional algorithm branch patterns (exact match)
+- Built from values with interpolation: `Greeting(name) = "Hello, {name}!"`
+
+### Quote Kinds
+
+- Single quotes are RAW: the text is exactly what is between the quotes — no escapes and no holes, so `'C:\temp'` and `'{x}'` are plain text. A single-quoted string cannot contain `'` or a line break.
+- Double quotes support exactly these escapes: `\"` (double quote), `\\` (backslash), `\n` (line feed), `\t` (tab), and `{{` / `}}` for literal braces. Every other backslash sequence (`\r`, `\u0041`, `\x41`, `\'`, ...) is an error: never invent other escapes.
+- A double-quoted string WITHOUT holes is exactly the same literal as its single-quoted spelling: `"abc" == 'abc'`.
+- Prefer single quotes for plain labels, codes, URLs and pattern literals; use double quotes when the text needs an escape or interpolation.
+- Every string is written on one line. There are no multiline strings and no prefixed forms (`$"..."`, `f"..."` do not exist).
+
+### Interpolation
+
+- Inside double quotes, `{expression}` is an interpolation hole: the expression is evaluated and its value is inserted as text — `"Total: {a + b}"`, `"{name} scored {points}"`, `"{if(points >= 5, 'pass', 'fail')}"`.
+- A hole holds exactly ONE ordinary expression of the enclosing algorithm, and its names are that algorithm's names: a name the algorithm does not define becomes an inferred parameter in order of first appearance, exactly as in an operand (`Report = "{name}: {points}"` is `Report(name, points)`).
+- Holes are evaluated left to right, each once, and the result is one string value.
+- Value text: a number appears with exactly its digits (`"{1.50}"` is `1.50`; `DisplayDecimals` never affects interpolation), `true` / `false` as words, a string without quotes, a sequence as `(a, b)`, a list as `[a, b]`, and `()` / `[]` as written. The text is for reading, never for parsing back.
+- Hole restrictions: no empty hole (`"{}"`); no comma in a hole (write `"{a}, {b}"`, or `"{(a, b)}"` for one sequence value); no `:` at the top level of a hole and no format specifiers (`"{x:F2}"` is invalid; write a selection as `"{(xs:0)}"`); no `=` in a hole; no bare spread (`"{xs*}"` is invalid, `"{(xs*)}"` is allowed); no comment in a hole.
+- A literal brace in double quotes is `{{` or `}}`; a lone `}` is an error. In single quotes, braces are plain text.
+- An interpolated string is never a pattern, an `open` target or a `load` URL — those need fixed text.
 
 ### Constraints
 
-- Single quotes only; there are no double-quoted strings.
-- The empty string `''` is valid.
-- There are no escape sequences; a string literal cannot contain an embedded single quote and cannot span multiple lines.
-- Do not invent double-quoted strings or backslash escapes.
+- The empty string `''` (or `""`) is valid.
 - String matching is exact and case-sensitive: `'Apple'` does not match `'apple'`.
-- No implicit conversion between strings and numbers. Arithmetic on strings is a type error.
-- No string concatenation, substring, or search operations exist in KatLang.
+- No implicit conversion between strings and numbers. Arithmetic on strings is a type error: `+` never joins text — build text with interpolation.
+- No substring, search, splitting, case-folding, or parsing operations exist in KatLang.
 - Do not assume case-insensitive matching.
 - Do not invent string-processing features that do not exist.
 
@@ -1122,7 +1139,7 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
 - Repeated binder names impose structural equality constraints: in `Equal(x, x)` or `SamePair((x, x))`, the first occurrence binds and later occurrences compare without overwriting it. Every occurrence must supply its own value (a bare callable such as `Inc` passed to `Equal(Inc, 1)` is an error, not a match). Do not repeat a name when any occurrence is a collecting binding.
 - Binder / variable pattern: `a` — matches any value at that position and binds it for that branch body. A binder may be unused in the body; this is the preferred way to intentionally ignore parameters.
 - Integer literal pattern: `0`, `1`, `-1` — matches only that exact integer at that position.
-- String literal pattern: `'apples'`, `'LV'` — matches only that exact string (case-sensitive) at that position.
+- String literal pattern: `'apples'`, `'LV'` — matches only that exact string (case-sensitive) at that position. A double-quoted literal without holes is the same pattern (`"apples"`); an interpolated string is never a pattern.
 - Nested sequence pattern: `(1, (a, b))` — matches a SEQUENCE value of that shape recursively, requiring the correct nesting structure, kind, and any literal sub-positions; it never matches a list or a scalar.
 - List pattern: `[]`, `[x]`, `[x, y]` — matches a LIST value of that shape only (lists have every cardinality, so `[x]` is the one-element pattern); a list argument never matches a sequence pattern. Collecting forms such as `[x, *rest]` are valid only in ordinary definitions, not true clause families. Example: `Kind([]) = 0`, `Kind([x]) = 1`, `Kind(xs) = 2` gives `Kind([5])` = 1.
 - There is no one-item sequence pattern: `(a)` / `((a))` as a pattern is a front-end error; write `a` or `[a]`.
@@ -1593,7 +1610,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (150 of the 414-case canonical language specification,
+Verified reference examples (155 of the 433-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3341,5 +3358,43 @@ Regenerate this block from the repo root with:
     0
     0
     0
+
+[string-interpolation-basic] A double-quoted string may contain interpolation holes: `{expression}` is replaced by the text of the expression's value, so `"Hello, {name}!"` builds one string value. Each hole holds one ordinary expression of the enclosing algorithm.
+
+    name = 'KatLang'
+    version = 2
+    "Hello, {name} {version}!"
+
+  Displays:
+    Hello, KatLang 2!
+
+[string-interpolation-structural-text] Every value kind has a structural text: a number its canonical digits, a Boolean `true` or `false`, a sequence `(a, b)`, a list `[a, b]`, and the empty sequence `()` and empty list `[]` stay distinct. A hole is never spread or flattened: a list stays one bracketed value.
+
+    "{(1, [2, ()])} {[]} {true} {-5}"
+
+  Displays:
+    (1, [2, ()]) [] true -5
+
+[string-interpolation-strings-unquoted] Sequences and lists are valid interpolation results, and string values remain unquoted at every nesting level, so the text is meant for people, not a serialization: `['one, two', 'three']` shows as `[one, two, three]`. An inserted string is never re-read as source, so braces it contains stay text.
+
+    "{['one, two', 'three']} {('a', ['b'])}"
+
+  Displays:
+    [one, two, three] (a, [b])
+
+[string-double-quoted-escapes] A double-quoted string has exactly six escapes: `\"` (a double quote), `\\` (a backslash), `\n` (a line feed), `\t` (a tab), `{{` and `}}` (literal braces). A single-quoted string is unchanged: no escapes and no holes, so `'a\nb'` keeps its backslash.
+
+    "say \"hi\" {{ok}} \\"
+
+  Displays:
+    say "hi" {ok} \
+
+[string-interpolation-hole-inference-order] A hole is an ordinary operand of the enclosing algorithm, never a scope of its own: its free names become that algorithm's implicit parameters in order of first occurrence, and Grace in a hole reorders them as anywhere else.
+
+    F = "{b}-{a}-{b}"
+    F(1, 2)
+
+  Displays:
+    1-2-1
 
 === END GENERATED: katlang-spec-examples ===

@@ -192,7 +192,8 @@ public class TokenTests
         + "A(x) = x ^ 2 + 1 - 3 * 4 / 5\n"
         + "B = 'text' <= 2 and not (3 >= 4) or 5 != 6 xor 7 == 8 < 9 > 0 == true != false\n"
         + "public C = [10 div 3, 10 mod 3]; {open Math}, B:1, A~.t\n"
-        + "@ \U0001F600 D = 1.5e3\n";
+        + "@ \U0001F600 D = 1.5e3\n"
+        + "E = \"say \\\"hi\\\" {{x}}\\n\", \"a{B}b\\t{{\"\n";
 
     [Fact]
     public void EveryTokenKind_IsProducedByTheMatrixSource()
@@ -217,6 +218,7 @@ public class TokenTests
                     break;
                 case TokenKind.Identifier:
                 case TokenKind.StringLiteral:
+                case TokenKind.InterpolatedStringText:
                 case TokenKind.Comment:
                     Assert.NotNull(token.StringValue);
                     Assert.Equal(default, token.NumValue);
@@ -231,8 +233,17 @@ public class TokenTests
         // The text payloads are the documented slices of the source.
         Assert.All(tokens.Where(t => t.Kind == TokenKind.Identifier), t =>
             Assert.Equal(EveryKindSource.Substring(t.Position, t.Length), t.StringValue));
+        // A single-quoted literal's payload is the raw text between its quotes; a
+        // double-quoted literal's and an interpolated text run's is the DECODED text.
         Assert.All(tokens.Where(t => t.Kind == TokenKind.StringLiteral), t =>
-            Assert.Equal(EveryKindSource.Substring(t.Position + 1, t.Length - 2), t.StringValue));
+            Assert.Equal(
+                EveryKindSource[t.Position] == '"'
+                    ? DecodeDoubleQuotedText(EveryKindSource.Substring(t.Position + 1, t.Length - 2))
+                    : EveryKindSource.Substring(t.Position + 1, t.Length - 2),
+                t.StringValue));
+        Assert.All(tokens.Where(t => t.Kind == TokenKind.InterpolatedStringText), t =>
+            Assert.Equal(DecodeDoubleQuotedText(EveryKindSource.Substring(t.Position, t.Length)), t.StringValue));
+        Assert.Contains(tokens, t => t.Kind == TokenKind.StringLiteral && t.StringValue == "say \"hi\" {x}\n");
         Assert.All(tokens.Where(t => t.Kind == TokenKind.Comment), t =>
             Assert.Equal(EveryKindSource.Substring(t.Position + 1, t.Length - 1), t.StringValue));
 
@@ -240,6 +251,32 @@ public class TokenTests
         var keywords = tokens.Where(t => t.Kind is >= TokenKind.KeywordDiv and <= TokenKind.KeywordFalse).ToList();
         Assert.Equal(Lexer.KeywordNames.Count, keywords.Select(t => t.Kind).Distinct().Count());
         Assert.All(keywords, t => Assert.Contains(EveryKindSource.Substring(t.Position, t.Length), Lexer.KeywordNames));
+    }
+
+    /// <summary>
+    /// An independent decoder of double-quoted string text (STR-02): the four backslash escapes
+    /// and the doubled braces, nothing else.
+    /// </summary>
+    private static string DecodeDoubleQuotedText(string raw)
+    {
+        var decoded = new System.Text.StringBuilder();
+        for (var i = 0; i < raw.Length; i++)
+        {
+            var two = i + 1 < raw.Length ? raw.Substring(i, 2) : "";
+            switch (two)
+            {
+                case "\\\"": decoded.Append('"'); i++; continue;
+                case "\\\\": decoded.Append('\\'); i++; continue;
+                case "\\n": decoded.Append('\n'); i++; continue;
+                case "\\t": decoded.Append('\t'); i++; continue;
+                case "{{": decoded.Append('{'); i++; continue;
+                case "}}": decoded.Append('}'); i++; continue;
+            }
+
+            decoded.Append(raw[i]);
+        }
+
+        return decoded.ToString();
     }
 
     [Fact]

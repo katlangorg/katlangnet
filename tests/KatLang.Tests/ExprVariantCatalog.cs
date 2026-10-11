@@ -55,6 +55,7 @@ internal static class ExprVariantCatalog
             [nameof(Expr.Param)] = new Expr.Param("p"),
             [nameof(Expr.Num)] = leaf,
             [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
+            [nameof(Expr.InterpolatedString)] = new Expr.InterpolatedString("a", [new InterpolationLink(leaf, "b")]),
             [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
@@ -129,11 +130,25 @@ internal static class ExprVariantCatalog
             .GetProperties(System.Reflection.BindingFlags.Public
                 | System.Reflection.BindingFlags.Instance
                 | System.Reflection.BindingFlags.DeclaredOnly)
-            .Any(property =>
-                typeof(Expr).IsAssignableFrom(property.PropertyType)
-                || typeof(Algorithm).IsAssignableFrom(property.PropertyType)
-                || typeof(OutputBundle).IsAssignableFrom(property.PropertyType)
-                || typeof(IEnumerable<Expr>).IsAssignableFrom(property.PropertyType));
+            .Any(property => CarriesExpressionChildren(property.PropertyType));
+
+    /// <summary>
+    /// An expression, algorithm, or bundle child — directly, as a list of expressions, or as a
+    /// list of LINK records that themselves carry an expression (a comparison chain's links,
+    /// an interpolated string's holes), so a variant whose children sit inside link records is
+    /// never mistaken for a leaf.
+    /// </summary>
+    private static bool CarriesExpressionChildren(Type type)
+        => typeof(Expr).IsAssignableFrom(type)
+            || typeof(Algorithm).IsAssignableFrom(type)
+            || typeof(OutputBundle).IsAssignableFrom(type)
+            || typeof(IEnumerable<Expr>).IsAssignableFrom(type)
+            || (type.IsGenericType
+                && type.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)
+                && type.GetGenericArguments()[0] is var element
+                && !typeof(Expr).IsAssignableFrom(element)
+                && element.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                    .Any(link => typeof(Expr).IsAssignableFrom(link.PropertyType)));
 }
 
 /// <summary>The catalog's own consistency: its sample table is complete and every sample is the variant it claims.</summary>
@@ -166,7 +181,8 @@ public class ExprVariantCatalogTests
             new[]
             {
                 nameof(Expr.AlgorithmExpr), nameof(Expr.Binary), nameof(Expr.Call), nameof(Expr.Capture),
-                nameof(Expr.Comparison), nameof(Expr.DotCall), nameof(Expr.Grace), nameof(Expr.Index), nameof(Expr.ListLiteral),
+                nameof(Expr.Comparison), nameof(Expr.DotCall), nameof(Expr.Grace), nameof(Expr.Index),
+                nameof(Expr.InterpolatedString), nameof(Expr.ListLiteral),
                 nameof(Expr.SequenceConstruct), nameof(Expr.SequenceSpread), nameof(Expr.Unary),
             },
             ExprVariantCatalog.StructurallyCompositeVariantNames);
