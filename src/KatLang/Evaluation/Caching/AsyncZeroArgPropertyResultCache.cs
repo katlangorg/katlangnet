@@ -23,7 +23,9 @@ namespace KatLang.Evaluation.Caching;
 ///   <item>On a miss, invoke <c>evaluateAsync</c> at most once and store only
 ///   successful results (errors are never stored — a deterministic failure recurs
 ///   identically, and a reached resource limit is already terminal for the run, so nothing
-///   could read a stored one).</item>
+///   could read a stored one) — and only the result of the key's OUTERMOST evaluation: a
+///   miss while an evaluation of the same key is still running is re-entrant and must not
+///   store (the publication law, <see cref="ZeroArgPropertyPublications"/>, Q-37).</item>
 ///   <item>Never swallow exceptions from the callback: in particular a thrown
 ///   <see cref="OperationCanceledException"/> is host cancellation and must propagate
 ///   unchanged (it is never a cacheable outcome).</item>
@@ -53,8 +55,9 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
 /// <summary>
 /// Run-scoped async-capable zero-argument property cache: the reference implementation
 /// of <see cref="IAsyncZeroArgPropertyResultCache"/>, with exactly the store semantics of
-/// <see cref="RunScopedZeroArgPropertyResultCache"/> (same keys, same comparer, errors
-/// never stored) minus that class's snapshot statistics. Supplying one to an async
+/// <see cref="RunScopedZeroArgPropertyResultCache"/> (same keys, same comparer, the same
+/// <see cref="ZeroArgPropertyPublications"/> law shared by both members, errors never
+/// stored) minus that class's snapshot statistics. Supplying one to an async
 /// evaluator entry point routes the run through the async twin family; a run uses one of
 /// the two members throughout (sync entry points use the synchronous member, the async
 /// twin path awaits the asynchronous one), and within the async family each access is
@@ -62,40 +65,31 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
 /// </summary>
 internal sealed class RunScopedAsyncZeroArgPropertyResultCache : IAsyncZeroArgPropertyResultCache
 {
-    private readonly Dictionary<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _results =
-        new(ZeroArgPropertyCacheKeyComparer.Instance);
+    private readonly ZeroArgPropertyPublications _results = new();
+
+    /// <summary>Number of published entries.</summary>
+    internal int PublishedCount => _results.Count;
+
+    /// <summary>Keys whose owning evaluation is still running (zero between accesses).</summary>
+    internal int ActiveOwnerCount => _results.ActiveOwnerCount;
 
     public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate)
     {
         var key = ZeroArgPropertyCacheKey.FromExecution(execution);
-        if (_results.TryGetValue(key, out var cached))
-            return EvalResult<ZeroArgPropertyResult>.Ok(cached);
-
-        var result = evaluate();
-        if (result.IsError)
-            return result.Error;
-
-        // A nested read may have stored its first successful result already.
-        _results.TryAdd(key, result.Value);
-        return result;
+        return _results.TryGetPublished(key, out var cached)
+            ? EvalResult<ZeroArgPropertyResult>.Ok(cached)
+            : _results.EvaluateMiss(key, evaluate, out _);
     }
 
-    public async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
         ZeroArgPropertyExecution execution,
         Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
     {
         var key = ZeroArgPropertyCacheKey.FromExecution(execution);
-        if (_results.TryGetValue(key, out var cached))
-            return EvalResult<ZeroArgPropertyResult>.Ok(cached);
-
-        var result = await evaluateAsync().ConfigureAwait(false);
-        if (result.IsError)
-            return result.Error;
-
-        // A nested read may have stored its first successful result already.
-        _results.TryAdd(key, result.Value);
-        return result;
+        return _results.TryGetPublished(key, out var cached)
+            ? new ValueTask<EvalResult<ZeroArgPropertyResult>>(EvalResult<ZeroArgPropertyResult>.Ok(cached))
+            : _results.EvaluateMissAsync(key, evaluateAsync);
     }
 }

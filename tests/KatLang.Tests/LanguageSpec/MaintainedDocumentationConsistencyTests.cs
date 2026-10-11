@@ -238,6 +238,13 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bevery\s+written\s+(?:argument\s+)?slot\s+is\s+evaluated\s+before\b", "every written slot evaluated before the arity check (before Model C; X-18)" },
         { @"\barguments\s+are\s+evaluated\s+and\s+matched\b", "a clause family evaluating its arguments before matching (before Model C; X-18)" },
         { @"\b(?:all|every|each)\s+(?:of\s+(?:the|its)\s+)?(?:call\s+)?arguments?\s+(?:are|is)\s+evaluated\b[^.]{0,40}\bleft[- ]to[- ]right\b", "every argument evaluated left to right (before Model C; X-18)" },
+        // Q-37 (owner decision 2026-10-11): the OUTERMOST successful property-style evaluation of a cache
+        // key owns its entry; a re-entrant read of an active key evaluates but never publishes. So no current
+        // text says that the first successful completion owns the entry or that re-entrant/recursive reads
+        // merely fail to replace a first entry.
+        { @"\bfirst\s+successful\s+completion\s+owns\b", "the first successful completion owning the cache entry (before Q-37)" },
+        { @"\bre-?entrant\s+reads?\b[^.]{0,80}\bnever\s+replaces?\b", "re-entrant reads that merely never replace the first entry (before Q-37)" },
+        { @"\bnot\s+replace\s+the\s+first\s+successful\s+entry\b", "recursive reads that do not replace the first successful entry (before Q-37)" },
     };
 
     [Theory]

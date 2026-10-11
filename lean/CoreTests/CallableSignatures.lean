@@ -417,10 +417,11 @@ def zeroArgLocalOnlyAlgorithmArgumentReads : Bool :=
 
 #guard zeroArgLocalOnlyAlgorithmArgumentReads
 
--- Recursive reads can finish before an earlier read of the same property.
--- The insertion law preserves that first completion, even when the pending
--- outer evaluation eventually produces a different result.
-def zeroArgFirstSuccessfulStoreWins : Bool :=
+-- `insert` never replaces an existing entry. Under the publication law (Q-37,
+-- `CoreTests/PropertyCachePublication.lean`) only a key's OUTERMOST successful
+-- property-style evaluation publishes, so no completion ever reaches an entry
+-- that already exists; this guard pins the insertion primitive itself.
+def zeroArgInsertNeverReplaces : Bool :=
   let binding := privateProp "A" (alg [] [] [] [.num 7])
   let key := KatLang.zeroArgPropertyCacheKey .lexical
     (alg [] [] [binding] []) binding KatLang.EvalCtx.empty []
@@ -428,7 +429,7 @@ def zeroArgFirstSuccessfulStoreWins : Bool :=
   let cache := KatLang.ZeroArgPropertyCache.insert cache key (Result.atom 8, 1)
   KatLang.ZeroArgPropertyCache.lookup cache key == some (Result.atom 7, 1)
 
-#guard zeroArgFirstSuccessfulStoreWins
+#guard zeroArgInsertNeverReplaces
 
 -- An open and a structural edge select the same declaration, in either order.
 def zeroArgMixedAccessSpellings (structuralFirst : Bool) : Bool :=

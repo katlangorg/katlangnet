@@ -127,10 +127,41 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
         => bind();
 }
 
+/// <summary>
+/// The run-scoped shared-bind memo. It adds no semantics only while every bind it serves was computed
+/// from the hoisted source's PUBLISHED value. Since Q-37 (the outermost property-style evaluation owns
+/// the cache entry, <see cref="ZeroArgPropertyPublications"/>) a re-entrant read of the source — a
+/// target of the group read again while the source's owning evaluation is still running — evaluates
+/// an INTERMEDIATE source value that is never published, and such a read always happens inside
+/// another, still-running bind of the SAME group (only the group's target helpers read its source).
+/// So a bind that starts while another bind of its group is running is not stored, and a stored bind
+/// is never replaced: a re-entrant target read gets its own bind, exactly as the reference semantics
+/// (one bind per target read; Lean has no such memo) requires. Programs that never re-enter a
+/// deconstruction keep every hit they had before.
+/// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
     private readonly Dictionary<DeconstructionBindingCacheKey, IReadOnlyList<NeedCell>> _results =
         new(DeconstructionBindingCacheKeyComparer.Instance);
+
+    // Group identity -> number of its binds currently running (absent when none).
+    private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);
+
+    private bool EnterBind(object group)
+    {
+        _runningBinds.TryGetValue(group, out var running);
+        _runningBinds[group] = running + 1;
+        return running > 0;
+    }
+
+    private void ExitBind(object group)
+    {
+        var running = _runningBinds[group] - 1;
+        if (running == 0)
+            _runningBinds.Remove(group);
+        else
+            _runningBinds[group] = running;
+    }
 
     public EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
@@ -146,17 +177,29 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         if (_results.TryGetValue(key, out var cached))
             return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
 
-        var result = bind();
+        var nested = EnterBind(execution.GroupIdentity);
+        EvalResult<IReadOnlyList<NeedCell>> result;
+        try
+        {
+            result = bind();
+        }
+        finally
+        {
+            ExitBind(execution.GroupIdentity);
+        }
+
         if (result.IsError)
             return result.Error;
 
-        _results[key] = result.Value;
+        // A bind nested in a running bind of its group may have read an intermediate source (Q-37).
+        if (!nested)
+            _results.TryAdd(key, result.Value);
         return result;
     }
 
     /// <summary>
-    /// Async twin of <see cref="GetOrBind"/>: same key derivation, same store, same
-    /// never-store-errors rule. One run drives evaluation through exactly one of the
+    /// MIRROR OF <see cref="GetOrBind"/> — keep in lock-step: same key derivation, same store,
+    /// same nested-bind rule, same never-store-errors rule. One run drives evaluation through exactly one of the
     /// sync/async evaluator families, and within the async family each bind is awaited
     /// before evaluation continues, so the dictionary is never touched concurrently.
     /// </summary>
@@ -174,11 +217,22 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         if (_results.TryGetValue(key, out var cached))
             return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
 
-        var result = await bind().ConfigureAwait(false);
+        var nested = EnterBind(execution.GroupIdentity);
+        EvalResult<IReadOnlyList<NeedCell>> result;
+        try
+        {
+            result = await bind().ConfigureAwait(false);
+        }
+        finally
+        {
+            ExitBind(execution.GroupIdentity);
+        }
+
         if (result.IsError)
             return result.Error;
 
-        _results[key] = result.Value;
+        if (!nested)
+            _results.TryAdd(key, result.Value);
         return result;
     }
 }

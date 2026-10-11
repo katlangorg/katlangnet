@@ -51,6 +51,7 @@ public class LeanCoreTestsCompositionTests
         "CollectingCallableForwarding",
         "EmptyStructuralPatterns",
         "CallbackResultBoundary",
+        "PropertyCachePublication",
     ];
 
     [Fact]

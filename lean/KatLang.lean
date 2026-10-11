@@ -1874,9 +1874,11 @@ inductive ZeroArgPropertyAccessKind where
     The owner is its `asScopeCtx` (including parent chain), and exported
     lexical/structural spellings have one key. Explicit calls neither read
     nor replace their own cache entry. Only successful results are stored, and
-    an enclosing failure never rolls back a successful nested store. Recursive
-    reads entered before the first store still evaluate, but their later
-    completions do not replace the first successful entry. -/
+    an enclosing failure never rolls back another key's successful nested
+    store. WHICH completion is stored is the publication law of
+    `evalZeroArgPropertyAccessCounted` (Q-37): the OUTERMOST successful
+    property-style evaluation of the key; a re-entrant read of a key whose
+    owner is still active evaluates but never publishes. -/
 structure ZeroArgPropertyCacheKey where
   accessKind : ZeroArgPropertyAccessKind
   owner      : String
@@ -1955,10 +1957,13 @@ structure ParameterActivation where
     Lean semantics because property-style `A` and explicit `A()` now have
     distinct observable call shapes. The state is created fresh for each
     top-level `runResult`; it is not general memoization and does not cache
-    arbitrary calls or expression results. -/
+    arbitrary calls or expression results. `activeZeroArgProperties` holds the
+    cache keys whose OWNING property-style evaluation is still running (Q-37,
+    `evalZeroArgPropertyAccessCounted`); it is empty between accesses. -/
 structure EvalState where
   needs : Array NeedCell := #[]
   zeroArgPropertyCache : ZeroArgPropertyCache := []
+  activeZeroArgProperties : List ZeroArgPropertyCacheKey := []
   nextBindingContext : Nat := 1
   lexicalActivations : Array ParameterActivation := #[]
   nextRuntimeDeclaration : Nat := 0
@@ -1969,9 +1974,10 @@ namespace EvalState
 end EvalState
 
 /-- Errors retain completed evaluator state. A failed value probe may be
-    accepted through its algorithm channel; successful nested properties keep
-    their first run result even when that enclosing probe fails. The wrapper's
-    `run` projection preserves the public Except-shaped result API. -/
+    accepted through its algorithm channel; nested properties whose own owning
+    evaluation completed keep their published result even when that enclosing
+    probe fails. The wrapper's `run` projection preserves the public
+    Except-shaped result API. -/
 structure EvalM (α : Type) where
   runState : ExceptT Error (StateM EvalState) α
 
@@ -6120,7 +6126,20 @@ mutual
 
   /-- Property-style zero-parameter access may reuse the per-run cache.
       Explicit calls do not use this helper, so `A()` bypasses only `A`'s
-      direct cache entry and does not change nested property references. -/
+      direct cache entry and does not change nested property references.
+
+      THE PUBLICATION LAW (Q-37, owner decision October 11 2026, superseding the
+      first-successful-completion rule): the OUTERMOST successful property-style
+      evaluation of a key owns its entry. A miss on a key that is not active makes
+      this access the key's OWNER: the key is active while the body runs and is
+      released on success and failure alike, and only a successful owner publishes.
+      A miss on an ACTIVE key — the same binding reached again, directly or through
+      other properties and calls, before its owner finished — is RE-ENTRANT: it
+      evaluates the body and returns its own (possibly intermediate) result but
+      publishes nothing. A failed owner publishes nothing for its key; entries other
+      keys' owners published meanwhile stay (`EvalM` retains state). `insert` never
+      replaces an entry, and under this law no completion can reach an active key's
+      entry. C#: `ZeroArgPropertyPublications`. -/
   partial def evalZeroArgPropertyAccessCounted
       (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm)
       (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx)
@@ -6132,12 +6151,24 @@ mutual
       match ZeroArgPropertyCache.lookup state.zeroArgPropertyCache key with
       | some cached => pure cached
       | none =>
-          let counted <- evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
-          let nextState <- get
-          set { nextState with
-            zeroArgPropertyCache :=
-              ZeroArgPropertyCache.insert nextState.zeroArgPropertyCache key counted }
-          pure counted
+          if state.activeZeroArgProperties.contains key then
+            -- Re-entrant: an enclosing evaluation of this key owns publication.
+            evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
+          else
+            let active := state.activeZeroArgProperties
+            set { state with activeZeroArgProperties := key :: active }
+            let outcome <- evalAttempt (evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env)
+            let nextState <- get
+            match outcome with
+            | .ok counted =>
+                set { nextState with
+                  activeZeroArgProperties := active,
+                  zeroArgPropertyCache :=
+                    ZeroArgPropertyCache.insert nextState.zeroArgPropertyCache key counted }
+                pure counted
+            | .error err =>
+                set { nextState with activeZeroArgProperties := active }
+                throw err
     else
       evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
 

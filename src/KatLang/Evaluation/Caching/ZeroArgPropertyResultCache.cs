@@ -58,8 +58,8 @@ internal interface IZeroArgPropertyResultCache
 /// </list>
 /// Explicit calls (<c>A()</c>) never consult the cache on either side, and the run
 /// identity keeps entries from crossing runs even on a host-shared cache instance.
-/// Recursive reads entered before a result is stored still evaluate; the first
-/// successful completion owns the entry, and later completions never replace it.
+/// WHICH completion creates the entry is <see cref="ZeroArgPropertyPublications"/>'s law
+/// (Q-37): the outermost successful property-style evaluation of the key.
 /// </summary>
 internal readonly record struct ZeroArgPropertyCacheKey(
     ZeroArgPropertyCacheAccessShape AccessShape,
@@ -140,11 +140,15 @@ internal sealed class StructuralOwnerIdentity
 {
     private readonly ScopeComponent[] _scopeChain;
     private readonly object? _declaration;
+    private readonly int _hashCode;
 
     private StructuralOwnerIdentity(ScopeComponent[] scopeChain, object? declaration = null)
     {
         _scopeChain = scopeChain;
         _declaration = declaration;
+        // Immutable, and hashed on every cache operation of a key (lookup, the Q-37 active-owner
+        // set, publication, statistics): compute the chain walk once.
+        _hashCode = ComputeHashCode(scopeChain, declaration);
     }
 
     public static StructuralOwnerIdentity FromOwner(Algorithm owner, bool includeDeclaration = false)
@@ -212,12 +216,14 @@ internal sealed class StructuralOwnerIdentity
     private static int ComponentHash<T>(IReadOnlyList<T> component)
         => component.Count == 0 ? 0 : RuntimeHelpers.GetHashCode(component);
 
-    public override int GetHashCode()
+    public override int GetHashCode() => _hashCode;
+
+    private static int ComputeHashCode(ScopeComponent[] scopeChain, object? declaration)
     {
         var hash = new HashCode();
-        hash.Add(_declaration is null ? 0 : RuntimeHelpers.GetHashCode(_declaration));
-        hash.Add(_scopeChain.Length);
-        foreach (var component in _scopeChain)
+        hash.Add(declaration is null ? 0 : RuntimeHelpers.GetHashCode(declaration));
+        hash.Add(scopeChain.Length);
+        foreach (var component in scopeChain)
         {
             hash.Add(ComponentHash(component.Opens));
             hash.Add(ComponentHash(component.Properties));
@@ -271,6 +277,100 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
         hash.Add(RuntimeHelpers.GetHashCode(obj.CountedParamEnvironmentIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.RunIdentity));
         return hash.ToHashCode();
+    }
+}
+
+/// <summary>
+/// THE PUBLICATION LAW of the zero-argument property cache (Q-37, owner decision October 11
+/// 2026, superseding the first-successful-completion rule; Lean
+/// <c>evalZeroArgPropertyAccessCounted</c> over <c>EvalState.activeZeroArgProperties</c>):
+/// the OUTERMOST successful property-style evaluation of a key owns its entry.
+/// <list type="bullet">
+///   <item>A miss on a key no evaluation is currently executing makes that access the key's
+///   OWNER: the key is ACTIVE while the owner's body runs and stops being active on every exit
+///   (success, ordinary failure, resource limit, host exception, cancellation).</item>
+///   <item>A miss on an ACTIVE key is RE-ENTRANT — the same binding reached again, directly
+///   (<c>A → A</c>) or indirectly (<c>A → B → A</c>), before its owner finished: it evaluates
+///   the body and returns its own (possibly intermediate) result, but publishes NOTHING. It
+///   never waits on the owner, so there is no self-await and no deadlock.</item>
+///   <item>Only the owner's SUCCESS is published, so every later property-style read reuses the
+///   owner's result. A failed owner publishes nothing for its key; entries that OTHER keys'
+///   owners published meanwhile stay (there is no rollback).</item>
+///   <item>Publication never replaces an entry (under the law no other completion can reach an
+///   active key's entry; <see cref="Dictionary{TKey, TValue}.TryAdd"/> keeps that guarantee
+///   unconditional).</item>
+/// </list>
+/// Within one run evaluation is serial — the async twin awaits every access before
+/// continuing — so the active set is exactly the owners on the current evaluation chain.
+/// The set is keyed by the full cache key, run identity included, so a nested run sharing a
+/// cache instance never sees another run's owners. Ordinary hits pay nothing extra; a miss
+/// adds one set insertion and removal around the body. Not thread-safe, like the caches
+/// that use it (run-scoped, sequential access).
+/// </summary>
+internal sealed class ZeroArgPropertyPublications
+{
+    private readonly Dictionary<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _published =
+        new(ZeroArgPropertyCacheKeyComparer.Instance);
+    private readonly HashSet<ZeroArgPropertyCacheKey> _active = new(ZeroArgPropertyCacheKeyComparer.Instance);
+
+    /// <summary>Number of published entries.</summary>
+    internal int Count => _published.Count;
+
+    /// <summary>Number of keys whose owner is still evaluating (zero between accesses).</summary>
+    internal int ActiveOwnerCount => _active.Count;
+
+    internal bool TryGetPublished(ZeroArgPropertyCacheKey key, out ZeroArgPropertyResult result)
+        => _published.TryGetValue(key, out result);
+
+    /// <summary>
+    /// Evaluates a MISS of <paramref name="key"/> under the publication law;
+    /// <paramref name="published"/> reports whether this access published its result.
+    /// </summary>
+    internal EvalResult<ZeroArgPropertyResult> EvaluateMiss(
+        ZeroArgPropertyCacheKey key,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate,
+        out bool published)
+    {
+        published = false;
+        if (!_active.Add(key))
+            return evaluate();
+
+        EvalResult<ZeroArgPropertyResult> result;
+        try
+        {
+            result = evaluate();
+        }
+        finally
+        {
+            _active.Remove(key);
+        }
+
+        if (!result.IsError)
+            published = _published.TryAdd(key, result.Value);
+        return result;
+    }
+
+    /// <summary>MIRROR OF <see cref="EvaluateMiss"/> — keep in lock-step.</summary>
+    internal async ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateMissAsync(
+        ZeroArgPropertyCacheKey key,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+    {
+        if (!_active.Add(key))
+            return await evaluateAsync().ConfigureAwait(false);
+
+        EvalResult<ZeroArgPropertyResult> result;
+        try
+        {
+            result = await evaluateAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _active.Remove(key);
+        }
+
+        if (!result.IsError)
+            _published.TryAdd(key, result.Value);
+        return result;
     }
 }
 
@@ -329,8 +429,7 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
 
 internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResultCache
 {
-    private readonly Dictionary<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _results =
-        new(ZeroArgPropertyCacheKeyComparer.Instance);
+    private readonly ZeroArgPropertyPublications _results = new();
     private readonly HashSet<ZeroArgPropertyCacheKey> _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance);
     private readonly HashSet<ZeroArgPropertyCacheKey> _missedKeysWithoutStore = new(ZeroArgPropertyCacheKeyComparer.Instance);
     private readonly ZeroArgPropertyResultCacheStatsCollector _stats = new();
@@ -345,7 +444,7 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
         _stats.RecordRequest(execution.AccessKind);
         _seenKeys.Add(key);
 
-        if (_results.TryGetValue(key, out var cached))
+        if (_results.TryGetPublished(key, out var cached))
         {
             _stats.RecordHit(execution.AccessKind);
             return EvalResult<ZeroArgPropertyResult>.Ok(cached);
@@ -355,19 +454,25 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
         if (!_missedKeysWithoutStore.Add(key))
             _repeatedMissRequests++;
 
-        var result = evaluate();
+        // A re-entrant miss (an outer evaluation of this key is still running) evaluates
+        // but never publishes; the outermost successful evaluation publishes (Q-37).
+        var result = _results.EvaluateMiss(key, evaluate, out var published);
         if (result.IsError)
             return result.Error;
 
-        // A recursive read may already have completed and stored this key while
-        // evaluate() was pending. Its first successful result owns the entry.
-        if (_results.TryAdd(key, result.Value))
+        if (published)
+        {
             _stats.RecordStore(execution.AccessKind);
-        _missedKeysWithoutStore.Remove(key);
-        if (_results.Count > _maxCacheSize)
-            _maxCacheSize = _results.Count;
+            _missedKeysWithoutStore.Remove(key);
+            if (_results.Count > _maxCacheSize)
+                _maxCacheSize = _results.Count;
+        }
+
         return result;
     }
+
+    /// <summary>Keys whose owning evaluation is still running (zero between accesses).</summary>
+    internal int ActiveOwnerCount => _results.ActiveOwnerCount;
 
     public ZeroArgPropertyResultCacheSnapshot GetSnapshot()
         => _stats.CreateSnapshot(

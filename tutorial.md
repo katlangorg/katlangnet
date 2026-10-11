@@ -315,6 +315,8 @@ Roll == Roll
 
 `Roll() == Roll()`, by contrast, rolls twice and is `true` only when the two rolls happen to agree.
 
+A property may also read itself, directly or through other properties. Each such inner read is evaluated afresh while the outer read is still being computed and gives its own result, and the value the OUTERMOST read computes is the one later reads reuse. With `A = if(Roll() < 4, A + 1, 0)`, the first read of `A` counts how many rolls in a row were below 4, and every later read of `A` in the run gives that same count.
+
 The same rule covers an algorithm that has parameters but still works with no arguments: its name alone reads its cached value, and only `A()` evaluates it again (see [Using the Name Alone](#using-the-name-alone)).
 
 ### Displayed Decimal Places

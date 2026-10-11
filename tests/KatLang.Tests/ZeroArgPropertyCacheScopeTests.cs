@@ -10,8 +10,8 @@ namespace KatLang.Tests;
 ///
 /// <list type="bullet">
 ///   <item>An EXPORTED property is self-contained — its value depends on no input that
-///   an enclosing owner's call binds — so its first successful property-style result
-///   is cached per run per declaring scope. Every activation of a caller, every callback invocation,
+///   an enclosing owner's call binds — so its outermost successful property-style
+///   evaluation's result is cached per run per declaring scope (Q-37). Every activation of a caller, every callback invocation,
 ///   every loop iteration, every open-provided or structural spelling, and every
 ///   explicit call of an OUTER property reuses that one value.</item>
 ///   <item>A LOCAL-ONLY property reads such an input through the dynamically threaded
@@ -475,14 +475,16 @@ public class ZeroArgPropertyCacheScopeTests
     }
 
     [Fact]
-    public async Task ReentrantPropertyRead_KeepsTheFirstCompletedCacheEntry()
+    public async Task ReentrantPropertyRead_PublishesTheOutermostEvaluation()
     {
-        // The inner read completes with 10 while the outer read is still computing
-        // 11. Finishing that pending read must not replace the first stored result.
+        // The inner (re-entrant) read completes with 10 while the outer read — the key's
+        // owner — is still computing 11. The re-entrant completion publishes nothing; the
+        // owner's 11 is the entry every later read reuses (Q-37, October 11 2026; before it
+        // the inner 10 was stored first and this pinned "11,10").
         const string source = "A = if(Data() < 200, A + 1, 10)\nA, A";
-        await AssertHostCounterPaths(source, "11,10", 2);
+        await AssertHostCounterPaths(source, "11,11", 2);
 
-        // The synchronous cache additionally reports only one successful store.
+        // The synchronous cache additionally reports exactly one successful store: the owner's.
         var counter = new Counter();
         var options = HostData(counter);
         var expr = new Expr.AlgorithmExpr((await SourceProvenance.ParseValidAsync(source, options)).Root);
@@ -490,9 +492,12 @@ public class ZeroArgPropertyCacheScopeTests
         var observed = Evaluator.RunCountedObserved(expr,
             zeroArgPropertyResultCache: cache, hostOperations: options.HostOperations);
         Assert.False(observed.Result.IsError);
-        Assert.Equal([11m, 10m], observed.Result.Value.Value.ToAtoms());
+        Assert.Equal([11m, 11m], observed.Result.Value.Value.ToAtoms());
         Assert.Equal(2, counter.Count);
-        Assert.Equal(1, cache.GetSnapshot().Stores);
+        var snapshot = cache.GetSnapshot();
+        Assert.Equal(1, snapshot.Stores);
+        Assert.Equal(1, snapshot.Hits);
+        Assert.Equal(0, cache.ActiveOwnerCount);
     }
 
     [Theory]

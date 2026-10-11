@@ -92,14 +92,24 @@ internal static class SixRouteAgreement
     /// Observes <paramref name="source"/> on <paramref name="route"/>. Values are rendered by
     /// <paramref name="render"/> when given (a suite that compares representation exactly, such
     /// as <see cref="NumericRepresentativeSelectionTests"/>), otherwise by <see cref="Neutral"/>.
+    /// <paramref name="randomSeed"/> and <paramref name="limits"/> configure every route alike
+    /// (<see cref="RunOptions.RandomSeed"/> / <see cref="RunOptions.EvaluationLimits"/> on the
+    /// engines, the matching evaluator arguments elsewhere).
     /// </summary>
-    internal static async Task<Observation> ObserveAsync(Route route, string source, Func<Result, string>? render = null)
+    internal static async Task<Observation> ObserveAsync(
+        Route route,
+        string source,
+        Func<Result, string>? render = null,
+        long? randomSeed = null,
+        EvaluationLimits? limits = null)
     {
         render ??= Neutral;
         var log = new HostLog();
         var options = new RunOptions
         {
             HostOperations = OperationsFor(log, route is Route.EngineAsyncTwin or Route.ForcedTwin),
+            RandomSeed = randomSeed,
+            EvaluationLimits = limits,
         };
 
         switch (route)
@@ -124,12 +134,16 @@ internal static class SixRouteAgreement
         var program = new Expr.AlgorithmExpr(parsed.Root);
         var (result, _) = route switch
         {
-            Route.Generic => Evaluator.RunCountedObserved(program, enableOptimizations: false, hostOperations: options.HostOperations),
-            Route.Optimized => Evaluator.RunCountedObserved(program, enableOptimizations: true, hostOperations: options.HostOperations),
+            Route.Generic => Evaluator.RunCountedObserved(
+                program, limits: limits, enableOptimizations: false, hostOperations: options.HostOperations, randomSeed: randomSeed),
+            Route.Optimized => Evaluator.RunCountedObserved(
+                program, limits: limits, enableOptimizations: true, hostOperations: options.HostOperations, randomSeed: randomSeed),
             Route.ForcedTwin => await Evaluator.RunCountedObservedAsync(
                 program,
+                limits: limits,
                 zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(),
-                hostOperations: options.HostOperations),
+                hostOperations: options.HostOperations,
+                randomSeed: randomSeed),
             _ => throw new ArgumentOutOfRangeException(nameof(route), route, null),
         };
 
@@ -143,12 +157,16 @@ internal static class SixRouteAgreement
     /// engine — outcome kind, value, every error's code, message and position, and the exact host-call
     /// log. Returns the oracle.
     /// </summary>
-    internal static async Task<Observation> OnEveryRouteAsync(string source, Func<Result, string>? render = null)
+    internal static async Task<Observation> OnEveryRouteAsync(
+        string source,
+        Func<Result, string>? render = null,
+        long? randomSeed = null,
+        EvaluationLimits? limits = null)
     {
-        var oracle = await ObserveAsync(Route.EngineSync, source, render);
+        var oracle = await ObserveAsync(Route.EngineSync, source, render, randomSeed, limits);
         foreach (var route in Routes.Skip(1))
         {
-            var observation = await ObserveAsync(route, source, render);
+            var observation = await ObserveAsync(route, source, render, randomSeed, limits);
             Assert.True(oracle.AgreesWith(observation), $"{route}: expected {oracle}, got {observation}\nsource:\n{source}");
         }
 
