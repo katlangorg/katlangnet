@@ -16,6 +16,23 @@ namespace KatLang.Tests;
 /// </summary>
 public class LeanAstEncoderTests
 {
+    [Theory]
+    [InlineData("bare")]
+    [InlineData("sequence")]
+    [InlineData("list")]
+    public void CollectingClauseBinder_CannotSilentlyLoseItsKind(string shape)
+    {
+        var collecting = new Pattern.Bind("xs") { ParameterKind = ParameterKind.Collecting };
+        Pattern pattern = shape switch
+        {
+            "bare" => collecting,
+            "sequence" => new Pattern.SequenceValue([new Pattern.Bind("x"), collecting]),
+            "list" => new Pattern.ListValue([collecting]),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+        Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodePattern(pattern));
+    }
+
     private static string EncodeSource(string source)
         => LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(source).Root);
 

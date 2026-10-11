@@ -1560,7 +1560,7 @@ public sealed class Parser
                 {
                     ReportError(
                         DiagnosticCode.InvalidCollectingBinding,
-                        $"Collecting bindings are only supported in ordinary explicit parameter lists for '{name}'.",
+                        $"{CollectingClauseBinderDiagnosticStem} for '{name}'.",
                         spans[i]);
                 }
             }
@@ -1995,6 +1995,22 @@ public sealed class Parser
     /// </summary>
     internal const string MultipleCollectingBindingsPerLevelDiagnostic =
         "Only one collecting binding is allowed per pattern level.";
+
+    internal const string RepeatedNameIncludesCollectingDiagnostic =
+        "Repeated parameter names cannot include collecting bindings.";
+
+    /// <summary>
+    /// The pre-evaluation rejection of a host-built clause-family head holding a collecting
+    /// binder (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>): the wording of the
+    /// parser's <see cref="DiagnosticCode.InvalidCollectingBinding"/> report for a written clause
+    /// family, without the family name. C#-only: Lean clause binders never collect.
+    /// </summary>
+    internal const string CollectingClauseBinderDiagnostic = CollectingClauseBinderDiagnosticStem + ".";
+
+    /// <summary>The one wording of a collecting clause binder report, shared by the parser
+    /// (which appends the family name) and the pre-evaluation rejection.</summary>
+    internal const string CollectingClauseBinderDiagnosticStem =
+        "Collecting bindings are only supported in ordinary explicit parameter lists";
 
     /// <summary>
     /// <see cref="DiagnosticCode.SingletonSequencePattern"/>: a structural pattern restriction,
@@ -2931,7 +2947,7 @@ public sealed class Parser
         {
             ReportErrorAt(
                 DiagnosticCode.InvalidCollectingBinding,
-                "Repeated parameter names cannot include collecting bindings.",
+                RepeatedNameIncludesCollectingDiagnostic,
                 nameToken);
         }
 

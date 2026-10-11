@@ -1,3 +1,4 @@
+import CoreArityAlgebra
 import HistoricalReadyBinding
 import KatLang
 
@@ -16,7 +17,11 @@ This file is the bridge: it proves the load-bearing laws over real KatLang
 `Result` constructors, normalization, lone-structure item-supply opening, and
 value operations. Historical binder theorems describe completed inputs only;
 they do not prove Model-C acquisition, demand order, or failure precedence.
-Those superseding production laws execute `bindNeedPatterns` in CoreTests.ModelC.
+The PRODUCTION binder's own laws — its top-level cardinality gate before every effect,
+its allocation of a level's supply (any lengths), plain binding demanding nothing, and
+the arity algebra as its allocation — are proved in the final section, § Model-C
+production binder laws (FORMAL-07, October 2026); its demand order, failure precedence and
+repeated-name binding are executed by the `bindNeedPatterns` guards in CoreTests.ModelC.
 -/
 
 /--
@@ -401,7 +406,10 @@ side (the general shape families), not arbitrary-length name-generic capture
 lists — a fully name-generic theorem would need induction through the
 duplicate-name merge machinery disproportionate to what it would pin. The
 wider-arity content is carried by the executable matrices in `CoreTests.lean`
-and the generated differential corpora.
+and the generated differential corpora. (The PRODUCTION allocation is proved for
+arbitrary lengths — it is position-only, so names play no part; repeated-name binding is not
+covered: `need_level_sources_around_the_collector` and
+`need_level_sources_conserve_the_supply`, final section.)
 -/
 
 /-- Trailing variadic (`Tail(first, *rest)`): for EVERY middle supply — empty,
@@ -3548,3 +3556,664 @@ theorem nameable_family_reference_lifts :
     (familyLiftingSignature? [lawBranch (.litInt 0), lawBranch (.bind "n")]).map liftsBareValueReference
       = some true := by
   rfl
+
+/-
+## Model-C production binder laws (FORMAL-07, October 2026)
+
+Since October 2026 the Model-C binder is a TOTAL definition of `KatLang.lean` —
+`bindNeedName`, `bindNeedOne`/`bindNeedSources` (structural over the written patterns),
+`bindNeedLevel`, `bindNeedPatterns` and the clause-family dispatcher `selectNeedFamilyBranch`
+— parametrized by the two capabilities of a supplied cell (`NeedChannels`: VALUE demand and
+CALLABLE projection). The evaluator recursion core instantiates every one of them with
+`⟨demandNeed, projectNeedCallable⟩`. The laws below are stated for ALL channels, so they
+hold of whatever channels a caller passes — in particular of that instantiation: they are
+theorems about the binder definitions the evaluator calls, not about a historical or an
+abstract copy.
+
+What they do NOT establish:
+* that the evaluator calls these definitions with `⟨demandNeed, projectNeedCallable⟩` — the
+  call sites are bodies of `partial` defs, so that link is a fact of the source (and of every
+  guard that runs a call), not of the kernel;
+* anything about `demandNeed` itself (still `partial`: the collector cell's VALUE is
+  `makeCollectionListResult` of its slice, left to right, by its definition and the
+  `CoreTests.ModelC` guards — not by a theorem), or supply formation (`formNeedSupply`,
+  `partial`), which runs BEFORE the top-level gate;
+* the order or effects of the VALUE demands made by inspecting occurrences (repeated names,
+  literals, structural patterns), and the nested levels' gates (they run after the
+  container's VALUE demand and after its item cells are allocated; `nested_*_level_*` below
+  only identify them with `bindNeedLevel`);
+* outcomes decided by helpers that call `partial` definitions and are therefore opaque:
+  literal matching (`matchPattern`), repeated callable identity
+  (`sameRepeatedCallableIdentity`), the kind-mismatch payload
+  (`structuralPatternKindMismatch`) and the duplicate-clause check
+  (`Algorithm.hasDuplicateBranchPatterns`);
+* the bound ENVIRONMENT for repeated names (allocation is position-only), or anything about C#.
+
+The precondition "at most one collecting binding per pattern level" is the pre-evaluation
+gate `validateAlgorithmTree` (X-02); that every binder input passed that gate is an
+executable invariant, not a theorem.
+-/
+
+/-! ### Minimum supply: the binder's count is the signature's count -/
+
+private theorem collecting_count_is_binder_collector_count (ps : List ParameterPattern) :
+    ParameterPattern.collectingCaptureCountAtCurrentLevel ps
+      = ((ps.map NeedPattern.ofParameter).filter NeedPattern.isCollecting).length := by
+  induction ps with
+  | nil => rfl
+  | cons p rest ih =>
+      cases p with
+      | capture parameter =>
+          cases h : parameter.kind <;>
+            simp [ParameterPattern.collectingCaptureCountAtCurrentLevel, NeedPattern.ofParameter,
+              NeedPattern.isCollecting, List.filter_cons, h, ih] <;> omega
+      | sequenceValue items =>
+          simpa [ParameterPattern.collectingCaptureCountAtCurrentLevel, NeedPattern.ofParameter,
+            NeedPattern.isCollecting, List.filter_cons] using ih
+      | listValue items =>
+          simpa [ParameterPattern.collectingCaptureCountAtCurrentLevel, NeedPattern.ofParameter,
+            NeedPattern.isCollecting, List.filter_cons] using ih
+      | unpacking items =>
+          simpa [ParameterPattern.collectingCaptureCountAtCurrentLevel, NeedPattern.ofParameter,
+            NeedPattern.isCollecting, List.filter_cons] using ih
+
+private theorem has_collecting_iff_count_pos (ps : List ParameterPattern) :
+    ParameterPattern.hasCollectingCaptureAtCurrentLevel ps = true
+      ↔ 0 < ParameterPattern.collectingCaptureCountAtCurrentLevel ps := by
+  induction ps with
+  | nil =>
+      simp [ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+        ParameterPattern.collectingCaptureCountAtCurrentLevel]
+  | cons p rest ih =>
+      cases p with
+      | capture parameter =>
+          cases h : parameter.kind <;>
+            simp_all [ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+              ParameterPattern.collectingCaptureCountAtCurrentLevel] <;> omega
+      | sequenceValue items =>
+          simpa [ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+            ParameterPattern.collectingCaptureCountAtCurrentLevel] using ih
+      | listValue items =>
+          simpa [ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+            ParameterPattern.collectingCaptureCountAtCurrentLevel] using ih
+      | unpacking items =>
+          simpa [ParameterPattern.hasCollectingCaptureAtCurrentLevel,
+            ParameterPattern.collectingCaptureCountAtCurrentLevel] using ih
+
+/-- The pre-evaluation gate's own predicate (`Algorithm.hasMultipleCollectingCaptures`,
+    checked by `validateAlgorithmTree`) bounds a signature's TOP level to one collector. -/
+theorem collector_gate_bounds_the_top_level (ps : List ParameterPattern)
+    (h : ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel ps = false) :
+    ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1 := by
+  simp only [ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel, Bool.or_eq_false_iff,
+    decide_eq_false_iff_not] at h
+  omega
+
+/-- THE ONE MINIMUM (the docstring claim of `ParameterPattern.minimumSuppliedSlots`, now a
+    theorem): on a signature with at most one top-level collector, the production binder's
+    own count `needMinimumSuppliedSlots` — its arity payload and its acceptance bound — IS
+    the signature-level `minimumSuppliedSlots` that the zero-argument demand law, Q-03
+    lifting and the property cache read. -/
+theorem binder_minimum_is_the_signature_minimum (ps : List ParameterPattern)
+    (h : ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1) :
+    needMinimumSuppliedSlots (ps.map NeedPattern.ofParameter)
+      = ParameterPattern.minimumSuppliedSlots ps := by
+  have hc := collecting_count_is_binder_collector_count ps
+  have hp := has_collecting_iff_count_pos ps
+  unfold needMinimumSuppliedSlots ParameterPattern.minimumSuppliedSlots
+  rw [List.length_map, ← hc]
+  by_cases hh : ParameterPattern.hasCollectingCaptureAtCurrentLevel ps = true
+  · have := hp.mp hh
+    simp [hh]; omega
+  · have : ParameterPattern.collectingCaptureCountAtCurrentLevel ps = 0 := by
+      have := mt hp.mpr hh; omega
+    simp [hh, this]
+
+/-- The precondition is necessary: with two collectors at one level the two counts differ
+    (such a signature is refused before evaluation, X-02). -/
+theorem binder_minimum_differs_on_two_collectors :
+    needMinimumSuppliedSlots
+        ([.capture { name := "a", kind := .collecting }, .capture { name := "b", kind := .collecting }]
+          |>.map NeedPattern.ofParameter) = 0
+    ∧ ParameterPattern.minimumSuppliedSlots
+        [.capture { name := "a", kind := .collecting }, .capture { name := "b", kind := .collecting }]
+      = 1 := by
+  simp [needMinimumSuppliedSlots, NeedPattern.ofParameter, NeedPattern.isCollecting, List.filter_cons,
+    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel]
+
+/-- The binder accepts the EMPTY supply exactly when its minimum is zero. -/
+theorem binder_accepts_empty_supply_iff_minimum_zero (ps : List NeedPattern) :
+    needAcceptsCardinality ps 0 = true ↔ needMinimumSuppliedSlots ps = 0 := by
+  unfold needAcceptsCardinality needMinimumSuppliedSlots
+  constructor
+  · intro h; simp at h; omega
+  · intro h
+    simp
+    constructor
+    · omega
+    · by_cases hany : ps.any NeedPattern.isCollecting = true
+      · exact Or.inl (by simpa using hany)
+      · right
+        have hall : ∀ p ∈ ps, NeedPattern.isCollecting p = false := by
+          intro p hp; have := hany; simp at this; simpa using this p hp
+        have : (ps.filter NeedPattern.isCollecting) = [] := by
+          rw [List.filter_eq_nil_iff]; intro p hp; simp [hall p hp]
+        rw [this] at h; simp at h; simp [h]
+
+/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, user algorithms: the acceptance
+    rule `Algorithm.acceptsZeroSuppliedArguments` (zero-argument demand, Q-03, the cache) is
+    exactly the production binder's cardinality gate on the empty supply — the gate
+    `evalZeroArgumentDemandOutputCounted` then runs. -/
+theorem zero_argument_acceptance_is_the_binder_gate (parent : Option ScopeCtx)
+    (ps : List ParameterPattern) (opens : List Expr) (props : List PropDef) (out : OutputBundle)
+    (identity : Option PropertyIdentity)
+    (h : ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1) :
+    Algorithm.acceptsZeroSuppliedArguments (.mk parent ps opens props out identity)
+      = needAcceptsCardinality (ps.map NeedPattern.ofParameter) 0 := by
+  have hacc := binder_accepts_empty_supply_iff_minimum_zero (ps.map NeedPattern.ofParameter)
+  rw [binder_minimum_is_the_signature_minimum ps h] at hacc
+  simp only [Algorithm.acceptsZeroSuppliedArguments, Algorithm.parameterPatterns]
+  cases hb : needAcceptsCardinality (ps.map NeedPattern.ofParameter) 0
+  · have : ParameterPattern.minimumSuppliedSlots ps ≠ 0 := fun hz => by
+      have := hacc.mpr hz; rw [hb] at this; exact Bool.false_ne_true this
+    simp [this]
+  · have := hacc.mp hb
+    simp [this]
+
+private theorem single_head_accepts_one (q : NeedPattern) (n : Nat) (hq : q.isCollecting = false) :
+    needAcceptsCardinality [q] n = (1 == n) := by
+  simp only [needAcceptsCardinality, needMinimumSuppliedSlots, List.filter_cons, hq,
+    List.filter_nil, List.any_cons, List.any_nil, List.length_singleton]
+  rw [Bool.eq_iff_iff]
+  simp
+  omega
+
+/-- A clause head's cardinality gate is its top-level arity: clause binders never collect. -/
+theorem clause_head_accepts_exactly_its_top_level_arity (p : Pattern) (n : Nat) :
+    needAcceptsCardinality (needClauseHead p) n = (Pattern.topLevelArity p == n) := by
+  have hcoll : ∀ q : Pattern, NeedPattern.isCollecting (NeedPattern.ofClause q) = false := by
+    intro q; cases q <;> simp [NeedPattern.ofClause, NeedPattern.isCollecting]
+  cases p with
+  | sequenceValue ps =>
+      have hf : (ps.map NeedPattern.ofClause).filter NeedPattern.isCollecting = [] := by
+        rw [List.filter_eq_nil_iff]; intro q hq
+        obtain ⟨r, _, rfl⟩ := List.mem_map.mp hq
+        simp [hcoll r]
+      have hany : (ps.map NeedPattern.ofClause).any NeedPattern.isCollecting = false := by
+        rw [List.any_eq_false]; intro q hq
+        obtain ⟨r, _, rfl⟩ := List.mem_map.mp hq
+        simp [hcoll r]
+      simp only [needAcceptsCardinality, needMinimumSuppliedSlots, needClauseHead, hf, hany,
+        Pattern.topLevelArity, List.length_map, List.length_nil, Nat.sub_zero, Bool.false_or]
+      cases hn : (n == ps.length) <;> cases hm : (ps.length == n) <;> simp_all <;> omega
+  | bind x =>
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+  | litInt i =>
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+  | litString str =>
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+  | litBool b =>
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+  | listValue ps =>
+      simp only [needClauseHead, Pattern.topLevelArity]; exact single_head_accepts_one _ n (hcoll _)
+
+/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, clause families: a family accepts
+    the zero-argument demand exactly when the production dispatcher's gate
+    (`selectNeedFamilyBranch`: some head accepts the supply count) accepts zero cells. -/
+theorem family_zero_argument_acceptance_is_the_dispatch_gate (parent : Option ScopeCtx)
+    (opens : List Expr) (branches : List CondBranch) (identity : Option PropertyIdentity) :
+    Algorithm.acceptsZeroSuppliedArguments (.conditional parent opens branches identity)
+      = branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) 0) := by
+  simp only [Algorithm.acceptsZeroSuppliedArguments, clause_head_accepts_exactly_its_top_level_arity]
+
+/-! ### The cardinality gate precedes every effect -/
+
+/-- CARDINALITY PRECEDES DEMAND (NEED-05, CALL-04, PAT-10(1)), production binder, the TOP
+    LEVEL of an ordinary call (`bindNeedPatterns` calls `bindNeedLevel`; supply formation has
+    already run): an unaccepted supply count is the arity error whose payload is the level's
+    minimum and the COMPLETE supply count, and the binder has done NOTHING — whatever the
+    channels are, no cell was demanded or projected, nothing was allocated, the run state is
+    unchanged. A nested level's gate is the same `bindNeedLevel`
+    (`nested_sequence_level_is_bind_need_level`), reached after the container's VALUE demand
+    and the allocation of its item cells. -/
+theorem binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)
+    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedEnv)
+    (h : needAcceptsCardinality ps cells.length = false) (state : EvalState) :
+    (bindNeedLevel channels ps cells repeated bound false).runState state
+      = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) := by
+  simp [bindNeedLevel, needCardinalityGate, h]
+  rfl
+
+/-- In a clause attempt the same unaccepted count is a NON-MATCH, again before any effect. -/
+theorem family_binder_treats_unaccepted_supply_as_a_non_match (channels : NeedChannels)
+    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedEnv)
+    (h : needAcceptsCardinality ps cells.length = false) :
+    bindNeedLevel channels ps cells repeated bound true = pure none := by
+  simp [bindNeedLevel, needCardinalityGate, h]
+
+/-- The top-level entry point the evaluator calls. -/
+theorem call_binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)
+    (ps : List NeedPattern) (cells : List Nat) (h : needAcceptsCardinality ps cells.length = false)
+    (state : EvalState) :
+    (bindNeedPatterns channels ps cells).runState state
+      = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) :=
+  binder_rejects_unaccepted_supply_before_any_effect channels ps cells _ [] h state
+
+/-- A FAMILY REPORTS `NoMatchingBranch` ONLY FOR AN ACCEPTED COUNT (NEED-05, CALL-04): when
+    no clause head accepts the supply count, production dispatch fails before any clause is
+    attempted and before any effect — with the duplicate-clause error if the family has
+    duplicate heads (checked first; the check calls `partial` definitions, so it is opaque), and
+    otherwise with the arity error whose payload is the first clause's minimum and the
+    complete supply count. Never `noMatchingBranch`. -/
+theorem family_dispatch_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)
+    (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) (name : String)
+    (hnone : (Algorithm.branches callee).any
+      (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) = false)
+    (state : EvalState) :
+    (selectNeedFamilyBranch channels callee cells ctx env name).runState state
+      = (.error (if callee.hasDuplicateBranchPatterns then Error.duplicateBranchPattern
+          else Error.arityMismatch
+            (((Algorithm.branches callee).head?.map
+              (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0)
+            cells.length), state) := by
+  cases hdup : callee.hasDuplicateBranchPatterns
+  · simp [selectNeedFamilyBranch, hdup, hnone]; rfl
+  · simp [selectNeedFamilyBranch, hdup]; rfl
+
+/-- The nested level a SEQUENCE pattern opens is bound by the same `bindNeedLevel` — gate,
+    allocation and patterns — after its container's VALUE demand and kind check, over fresh
+    ready cells holding the opened items. -/
+theorem nested_sequence_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
+    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne channels (.sequence ps) address repeated bound family = (do
+      let (value, _) <- channels.value address
+      match Result.sequencePatternItems? value with
+      | none =>
+          if family then pure none else throw (structuralPatternKindMismatch (NeedPattern.sequence ps).toParameter value)
+      | some items => do
+          let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
+          bindNeedLevel channels ps cells repeated bound family) := by
+  simp only [bindNeedOne, bindNeedLevel]
+  congr 1
+
+/-- The LIST pattern's twin of `nested_sequence_level_is_bind_need_level`. -/
+theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
+    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne channels (.list ps) address repeated bound family = (do
+      let (value, _) <- channels.value address
+      match Result.listPatternItems? value with
+      | none =>
+          if family then pure none else throw (structuralPatternKindMismatch (NeedPattern.list ps).toParameter value)
+      | some items => do
+          let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
+          bindNeedLevel channels ps cells repeated bound family) := by
+  simp only [bindNeedOne, bindNeedLevel]
+  congr 1
+
+/-- The deconstruction UNPACKING receiver's level: the demanded value's one-level items
+    (`Result.spreadItems`, never a kind mismatch) bound by `bindNeedLevel`. -/
+theorem nested_unpack_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
+    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne channels (.unpack ps) address repeated bound family = (do
+      let (value, _) <- channels.value address
+      let cells <- (Result.spreadItems value).mapM (fun item => readyNeed (item, Result.valueCount item))
+      bindNeedLevel channels ps cells repeated bound family) := by
+  simp only [bindNeedOne, bindNeedLevel]
+
+/-! ### Allocation: each pattern its cell, the collector its exact slice -/
+
+theorem need_level_sources_length {α : Type} (ps : List NeedPattern) (cells : List α) :
+    (needLevelSources ps cells).length = ps.length := by
+  simp [needLevelSources]
+
+/-- Without a collector, pattern `i` is bound from supplied cell `i`. -/
+theorem need_level_sources_without_collector {α : Type} (ps : List NeedPattern) (cells : List α)
+    (hnone : ps.findIdx? NeedPattern.isCollecting = none) (hlen : cells.length = ps.length) :
+    needLevelSources ps cells = cells.map NeedSource.cell := by
+  apply List.ext_getElem
+  · simp [needLevelSources, hlen]
+  · intro i h1 h2
+    simp only [needLevelSources, hnone, List.getElem_map, List.getElem_range, needSourceAt]
+    simp at h2
+    simp [h2]
+
+/-- AROUND THE COLLECTOR (VAR-02, any lengths — the general form of the historical
+    one-capture-per-side bridge laws): with the level's first collector at `c` and enough
+    cells, the patterns before it take the leading `c` cells, the collector takes the exact
+    slice of `n + 1 - L` cells after them, and the patterns after it take the remaining
+    trailing cells, in order. -/
+theorem need_level_sources_around_the_collector {α : Type} (ps : List NeedPattern)
+    (cells : List α) (c : Nat) (hc : ps.findIdx? NeedPattern.isCollecting = some c)
+    (hlen : ps.length ≤ cells.length + 1) :
+    needLevelSources ps cells
+      = (cells.take c).map NeedSource.cell
+          ++ NeedSource.collector ((cells.drop c).take (cells.length + 1 - ps.length))
+          :: (cells.drop (c + (cells.length + 1 - ps.length))).map NeedSource.cell := by
+  have hcl : c < ps.length := (List.findIdx?_eq_some_iff_getElem.mp hc).1
+  apply List.ext_getElem
+  · simp [needLevelSources]; omega
+  · intro i h1 h2
+    simp only [needLevelSources, hc, List.getElem_map, List.getElem_range, needSourceAt]
+    simp only [needLevelSources, List.length_map, List.length_range] at h1
+    by_cases hlt : i < c
+    · rw [List.getElem_append_left (by simp; omega)]
+      have hne : (some c == some i) = false := by simp; omega
+      have hnot : ¬ c < i := by omega
+      have hi : i < cells.length := by omega
+      simp [hne, hnot, List.getElem?_eq_getElem hi]
+    · have htake : (List.map NeedSource.cell (List.take c cells)).length = c := by simp; omega
+      by_cases heq : i = c
+      · subst heq
+        rw [List.getElem_append_right (by omega)]
+        simp only [htake, Nat.sub_self, List.getElem_cons_zero]
+        simp
+      · have hgt : c < i := by omega
+        have hne : (some c == some i) = false := by simp; omega
+        rw [List.getElem_append_right (by omega)]
+        have hk : i - (List.map NeedSource.cell (List.take c cells)).length = (i - c - 1) + 1 := by
+          rw [htake]; omega
+        have hidx : i + (cells.length + 1 - ps.length) - 1 < cells.length := by omega
+        simp only [hk, List.getElem_cons_succ, List.getElem_map, List.getElem_drop]
+        simp [hne, hgt, List.getElem?_eq_getElem hidx]
+        congr 1
+        omega
+
+/-- Reading the cells of a source through `f`. -/
+def KatLang.NeedSource.map {α β : Type} (f : α -> β) : NeedSource α -> NeedSource β
+  | .cell value => .cell (f value)
+  | .collector slice => .collector (slice.map f)
+  | .missing => .missing
+
+private theorem need_source_at_map {α β : Type} (f : α -> β) (col : Option Nat) (extra : Nat)
+    (cells : List α) (i : Nat) :
+    needSourceAt col extra (cells.map f) i = (needSourceAt col extra cells i).map f := by
+  unfold needSourceAt
+  by_cases hc : (col == some i) = true
+  · simp [hc, NeedSource.map, List.map_drop, List.map_take]
+  · simp only [hc, Bool.false_eq_true, if_false]
+    generalize (if (Option.map (fun j => decide (i > j)) col).getD false = true
+      then i + extra - 1 else i) = k
+    rw [List.getElem?_map]
+    cases cells[k]? <;> rfl
+
+/-- ALLOCATION IS PARAMETRIC: it depends only on positions, never on what a cell holds, so
+    allocating need addresses and then reading what they hold equals allocating the held
+    values directly. -/
+theorem need_level_sources_are_parametric {α β : Type} (f : α -> β) (ps : List NeedPattern)
+    (cells : List α) :
+    needLevelSources ps (cells.map f) = (needLevelSources ps cells).map (NeedSource.map f) := by
+  simp only [needLevelSources, List.length_map, List.map_map]
+  congr 1
+  funext i
+  simp [need_source_at_map]
+
+private theorem cell_sources_cover_their_cells {α : Type} (xs : List α) :
+    (xs.map NeedSource.cell).flatMap NeedSource.items = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [NeedSource.items] at ih ⊢; exact ih
+
+/-- SUPPLY CONSERVATION (CALL-04, VAR-01/02, NEED-07): on an accepted supply of a level with
+    at most one collector, the allocated sources cover EXACTLY the supplied cells, each once,
+    in written order — no cell dropped, duplicated or reordered — and no position is missing. -/
+theorem need_level_sources_conserve_the_supply {α : Type} (ps : List NeedPattern)
+    (cells : List α) (hgate : (ps.filter NeedPattern.isCollecting).length ≤ 1)
+    (haccept : needAcceptsCardinality ps cells.length = true) :
+    (needLevelSources ps cells).flatMap NeedSource.items = cells
+    ∧ NeedSource.missing ∉ needLevelSources ps cells := by
+  unfold needAcceptsCardinality needMinimumSuppliedSlots at haccept
+  simp at haccept
+  cases hc : ps.findIdx? NeedPattern.isCollecting with
+  | none =>
+      have hall : ∀ p ∈ ps, NeedPattern.isCollecting p = false := List.findIdx?_eq_none_iff.mp hc
+      have hany : ¬ ∃ x ∈ ps, NeedPattern.isCollecting x = true := by
+        intro ⟨x, hx, hxc⟩; simp [hall x hx] at hxc
+      have hlen : cells.length = ps.length := by
+        rcases haccept with ⟨_, h | h⟩
+        · exact absurd h hany
+        · exact h
+      rw [need_level_sources_without_collector ps cells hc hlen]
+      exact ⟨cell_sources_cover_their_cells cells, by simp⟩
+  | some c =>
+      have hpos : 0 < (ps.filter NeedPattern.isCollecting).length := by
+        obtain ⟨hcl, hcoll, _⟩ := List.findIdx?_eq_some_iff_getElem.mp hc
+        apply List.length_pos_of_mem
+        exact List.mem_filter.mpr ⟨List.getElem_mem hcl, hcoll⟩
+      have hlen : ps.length ≤ cells.length + 1 := by omega
+      rw [need_level_sources_around_the_collector ps cells c hc hlen]
+      refine ⟨?_, ?_⟩
+      · simp only [List.flatMap_append, List.flatMap_cons, NeedSource.items,
+          cell_sources_cover_their_cells]
+        have hsplit : (cells.drop c).take (cells.length + 1 - ps.length)
+            ++ cells.drop (c + (cells.length + 1 - ps.length)) = cells.drop c := by
+          rw [← List.drop_drop, List.take_append_drop]
+        rw [hsplit, List.take_append_drop]
+      · intro hmem
+        simp only [List.mem_append, List.mem_cons, List.mem_map] at hmem
+        rcases hmem with ⟨a, _, ha⟩ | hcol | ⟨a, _, ha⟩
+        · cases ha
+        · cases hcol
+        · cases ha
+
+/-- The gate is load-bearing: two collectors at one level pass the binder's own cardinality
+    check, yet the second collector receives ONE raw cell (never a list), or no cell at all
+    (`badArity`). The pre-evaluation gate (X-02, `validateAlgorithmTree`) refuses such a
+    signature before evaluation. -/
+theorem two_collectors_misallocate :
+    needAcceptsCardinality [.bind "a" true, .bind "b" true] 3 = true
+    ∧ needLevelSources [.bind "a" true, .bind "b" true] [10, 11, 12]
+        = [NeedSource.collector [10, 11], NeedSource.cell 12]
+    ∧ needAcceptsCardinality [.bind "a" true, .bind "b" true] 0 = true
+    ∧ needLevelSources [.bind "a" true, .bind "b" true] ([] : List Nat)
+        = [NeedSource.collector [], NeedSource.missing] := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
+
+/-! ### Plain binding transports cells and demands nothing -/
+
+/-- A non-repeated name TRANSPORTS its cell: no VALUE demand, no CALLABLE projection,
+    whatever the channels and in either mode (NEED-01, NEED-03). -/
+theorem binder_name_transports_a_non_repeated_cell (channels : NeedChannels) (name : Ident)
+    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (h : repeated.contains name = false) :
+    bindNeedName channels name address repeated bound family
+      = pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) := by
+  have h' : name ∉ repeated := by simpa using h
+  simp [bindNeedName, h']
+
+/-- The name a plain binder pattern binds (a collecting binding included). -/
+def KatLang.NeedPattern.plainName? : NeedPattern -> Option Ident
+  | .bind name _ => some name
+  | _ => none
+
+/-- The program a level of plain binders runs: each name receives the address of its source
+    (`needSourceAddress`: a supplied cell is transported, a collector slice gets one fresh
+    suspended collector cell). Neither channel appears. -/
+def plainNeedBinding : List Ident -> List (NeedSource Nat) -> NeedEnv -> EvalM (Option NeedEnv)
+  | [], _, current => pure (some current)
+  | name :: rest, sources, current => do
+      let address <- needSourceAddress (sources.headD .missing)
+      plainNeedBinding rest sources.tail
+        (current.filter (fun entry => entry.fst != name) ++ [(name, address)])
+
+/-- PLAIN BINDING DEMANDS NOTHING (NEED-01, NEED-03, CALL-06, VAR-03), production binder: a
+    level of plain, non-repeated binders — fixed or collecting — runs `plainNeedBinding`,
+    whatever the channels and whatever the mode. -/
+theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : List NeedPattern)
+    (names : List Ident) (hnames : ps.map NeedPattern.plainName? = names.map some)
+    (repeated : List Ident) (hrepeated : ∀ name ∈ names, repeated.contains name = false)
+    (sources : List (NeedSource Nat)) (current : NeedEnv) (family : Bool) :
+    bindNeedSources channels ps sources repeated current family
+      = plainNeedBinding names sources current := by
+  induction ps generalizing names sources current with
+  | nil =>
+      cases names with
+      | nil => simp [bindNeedSources, plainNeedBinding]
+      | cons _ _ => simp at hnames
+  | cons p rest ih =>
+      cases names with
+      | nil => simp at hnames
+      | cons n names' =>
+          simp only [List.map_cons, List.cons.injEq] at hnames
+          obtain ⟨hp, hrest⟩ := hnames
+          cases p with
+          | bind name c =>
+              simp [NeedPattern.plainName?] at hp
+              subst hp
+              have hn : repeated.contains name = false := hrepeated name (by simp)
+              have hr' : ∀ m ∈ names', repeated.contains m = false :=
+                fun m hm => hrepeated m (by simp [hm])
+              simp only [bindNeedSources, plainNeedBinding, bindNeedOne,
+                binder_name_transports_a_non_repeated_cell channels _ _ _ _ _ hn]
+              congr 1
+              funext address
+              simp [ih names' hrest hr']
+          | sequence _ => simp [NeedPattern.plainName?] at hp
+          | list _ => simp [NeedPattern.plainName?] at hp
+          | unpack _ => simp [NeedPattern.plainName?] at hp
+          | literal _ => simp [NeedPattern.plainName?] at hp
+
+/-- Corollary at the entry point the evaluator calls: a head of plain binders binding no name
+    twice gives the same outcome AND the same run state under any two channel pairs — so the
+    production instantiation `⟨demandNeed, projectNeedCallable⟩` demands and projects
+    nothing while binding it. -/
+theorem plain_head_binding_is_channel_independent (first second : NeedChannels)
+    (ps : List NeedPattern) (names : List Ident)
+    (hnames : ps.map NeedPattern.plainName? = names.map some)
+    (hdistinct : needRepeatedNames ps = []) (cells : List Nat) (family : Bool) :
+    bindNeedPatterns first ps cells family = bindNeedPatterns second ps cells family := by
+  have hr : ∀ name ∈ names, ([] : List Ident).contains name = false := by simp
+  simp only [bindNeedPatterns, bindNeedLevel, hdistinct,
+    plain_patterns_bind_without_any_channel first ps names hnames [] hr,
+    plain_patterns_bind_without_any_channel second ps names hnames [] hr]
+
+/-! ### The arity algebra IS the production allocation -/
+
+/-- The algebra's binder patterns as production binder patterns. -/
+def needPatternOfAlgebra : CoreArityAlgebra.Pat -> NeedPattern
+  | .name s => .bind s false
+  | .collecting s => .bind s true
+
+/-- What an algebra-level source denotes: a fixed item, or the exact collected list. -/
+def KatLang.NeedSource.algebraValue : NeedSource CoreArityAlgebra.Val -> CoreArityAlgebra.Val
+  | .cell value => value
+  | .collector slice => CoreArityAlgebra.collect slice
+  | .missing => CoreArityAlgebra.Val.seq []
+
+private theorem need_pattern_of_algebra_is_collecting (p : CoreArityAlgebra.Pat) :
+    NeedPattern.isCollecting (needPatternOfAlgebra p) = CoreArityAlgebra.Pat.isCollecting p := by
+  cases p <;> rfl
+
+private theorem need_pattern_of_algebra_collector_count (ps : List CoreArityAlgebra.Pat) :
+    ((ps.map needPatternOfAlgebra).filter NeedPattern.isCollecting).length
+      = (ps.filter CoreArityAlgebra.Pat.isCollecting).length := by
+  induction ps with
+  | nil => rfl
+  | cons p rest ih =>
+      cases p <;> simp_all [List.filter_cons, needPatternOfAlgebra, NeedPattern.isCollecting,
+        CoreArityAlgebra.Pat.isCollecting]
+
+private theorem need_pattern_of_algebra_first_collector (ps : List CoreArityAlgebra.Pat) :
+    (ps.map needPatternOfAlgebra).findIdx? NeedPattern.isCollecting
+      = ps.findIdx? CoreArityAlgebra.Pat.isCollecting := by
+  rw [List.findIdx?_map]
+  congr 1
+  funext p
+  exact need_pattern_of_algebra_is_collecting p
+
+/-- REFINEMENT FROM THE ALGEBRA (Q-66 "refinement from `bindArgs`"; FORMAL-07): the paper
+    algebra's binder `CoreArityAlgebra.bindPats` — hence `bindArgs` and `bindCallback`, which
+    are it by definition — is EXACTLY the production ALLOCATION `needLevelSources` read at
+    algebra values (`NeedSource.algebraValue`: a fixed pattern its item, the collector
+    `collect` of its slice), and it is defined EXACTLY when the level has at most one collector
+    (the X-02 condition) and the production cardinality gate accepts. So a `bindPats` theorem
+    of `CoreArityAlgebraProofs.lean` is a theorem about this allocation under that guard. It is
+    NOT a theorem about the production binder's result: the algebra models no repeated-name
+    constraint (on a head that repeats a name `bindPats` binds every occurrence positionally,
+    while the production binder compares them, NEED-04), no structural or literal pattern, and
+    no `demandNeed`; with two collectors the production allocation misallocates
+    (`two_collectors_misallocate`) and only the pre-evaluation gate rejects. -/
+theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.Pat)
+    (xs : CoreArityAlgebra.Supply) :
+    CoreArityAlgebra.bindPats ps xs =
+      if (ps.filter CoreArityAlgebra.Pat.isCollecting).length ≤ 1
+          ∧ needAcceptsCardinality (ps.map needPatternOfAlgebra) xs.length = true then
+        some (List.zipWith (fun p source => (p.key, NeedSource.algebraValue source)) ps
+          (needLevelSources (ps.map needPatternOfAlgebra) xs))
+      else none := by
+  have hfl := need_pattern_of_algebra_collector_count ps
+  unfold CoreArityAlgebra.bindPats
+  unfold needAcceptsCardinality needMinimumSuppliedSlots
+  rw [hfl]
+  split
+  · rename_i hnil
+    have hnone : ps.findIdx? CoreArityAlgebra.Pat.isCollecting = none := by
+      rw [List.findIdx?_eq_none_iff]
+      intro p hp
+      have : p ∉ ps.filter CoreArityAlgebra.Pat.isCollecting := by rw [hnil]; simp
+      simpa [List.mem_filter, hp] using this
+    have hany : (ps.map needPatternOfAlgebra).any NeedPattern.isCollecting = false := by
+      have := List.findIdx?_eq_none_iff.mp
+        (by rw [need_pattern_of_algebra_first_collector]; exact hnone)
+      simpa using this
+    simp only [hnil, List.length_nil, hany, List.length_map]
+    by_cases hlen : ps.length = xs.length
+    · have hsrc := need_level_sources_without_collector (ps.map needPatternOfAlgebra) xs
+        (by rw [need_pattern_of_algebra_first_collector]; exact hnone) (by simp [hlen])
+      simp [hlen, hsrc, CoreArityAlgebra.bindFixed, List.zipWith_map_right,
+        NeedSource.algebraValue]
+    · simp [hlen]
+      omega
+  · rename_i cp hcp
+    obtain ⟨i, hi⟩ : ∃ i, ps.findIdx? CoreArityAlgebra.Pat.isCollecting = some i := by
+      cases h : ps.findIdx? CoreArityAlgebra.Pat.isCollecting with
+      | some i => exact ⟨i, rfl⟩
+      | none =>
+        exfalso
+        have hall := List.findIdx?_eq_none_iff.mp h
+        have hmem : cp ∈ ps.filter CoreArityAlgebra.Pat.isCollecting := by rw [hcp]; simp
+        rw [List.mem_filter] at hmem
+        simp [hall cp hmem.1] at hmem
+    obtain ⟨hil, hicoll, _⟩ := List.findIdx?_eq_some_iff_getElem.mp hi
+    have hkey : ps[i] = cp := by
+      have hmem : ps[i] ∈ ps.filter CoreArityAlgebra.Pat.isCollecting :=
+        List.mem_filter.mpr ⟨List.getElem_mem hil, hicoll⟩
+      rw [hcp] at hmem; simpa using hmem
+    have hany : (ps.map needPatternOfAlgebra).any NeedPattern.isCollecting = true := by
+      rw [List.any_eq_true]
+      exact ⟨needPatternOfAlgebra ps[i], List.mem_map.mpr ⟨ps[i], List.getElem_mem hil, rfl⟩,
+        by rw [need_pattern_of_algebra_is_collecting]; exact hicoll⟩
+    simp only [hi]
+    by_cases hshort : xs.length < ps.length - 1
+    · rw [if_pos hshort, if_neg (by rw [hcp]; simp [hany]; omega)]
+    · have hlen : ps.length ≤ xs.length + 1 := by omega
+      rw [if_neg hshort, if_pos (by rw [hcp]; simp [hany]; omega)]
+      congr 1
+      rw [need_level_sources_around_the_collector (ps.map needPatternOfAlgebra) xs i
+        (by rw [need_pattern_of_algebra_first_collector]; exact hi) (by simp; omega)]
+      simp only [List.length_map]
+      conv => rhs; rw [← List.take_append_drop i ps, List.drop_eq_getElem_cons hil]
+      rw [List.zipWith_append (by simp; omega)]
+      simp only [List.zipWith_cons_cons, hkey, NeedSource.algebraValue, CoreArityAlgebra.bindFixed,
+        List.zipWith_map_right, List.length_drop]
+      have e1 : xs.length - (ps.length - (i + 1)) = i + (xs.length + 1 - ps.length) := by omega
+      have e3 : (List.take i ps ++ cp :: List.drop (i + 1) ps).length = ps.length := by
+        simp; omega
+      have e4 : i + (xs.length + 1 - ps.length) - i = xs.length + 1 - ps.length := by omega
+      rw [e1, e3, e4]
+  · rename_i hne0 hne1
+    have hge : 2 ≤ (ps.filter CoreArityAlgebra.Pat.isCollecting).length := by
+      cases h : ps.filter CoreArityAlgebra.Pat.isCollecting with
+      | nil => exact absurd h hne0
+      | cons a t =>
+          cases t with
+          | nil => exact absurd h (hne1 a)
+          | cons b u => simp
+    have : ¬ (ps.filter CoreArityAlgebra.Pat.isCollecting).length ≤ 1 := by omega
+    simp [this]
+
+/-- The collector cell's VALUE materializer (`demandNeed`'s `.collector` arm) is the
+    value-level collector `collectSegment` at emitted count 1, so every `collectSegment` law of
+    this file speaks about what a production collector cell yields once its slice values are
+    demanded. -/
+theorem collector_materialization_is_collect_segment (items : List Result) :
+    makeCollectionListResult items = (collectSegment items, 1) := rfl

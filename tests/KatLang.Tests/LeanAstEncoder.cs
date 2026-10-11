@@ -384,6 +384,8 @@ internal sealed class LeanAstEncoding
     /// </summary>
     public static string EncodePattern(Pattern pattern) => pattern switch
     {
+        Pattern.Bind { ParameterKind: ParameterKind.Collecting } =>
+            throw new NotSupportedException("Lean clause binders cannot represent collecting bindings."),
         Pattern.Bind(var name) => $".bind {Quote(name)}",
         Pattern.LitInt(var value) => $".litInt {EncodeNumber(value)}",
         Pattern.LitString(var value) => $".litString {Quote(value)}",

@@ -66,17 +66,23 @@ openLoneStructure               deconstruction receiver opening of a lone
                                 bound `collection` argument
 loneStructure                   artifact-local characterization of the one
                                 supply shape openLoneStructure rewrites
-Pat / bindArgs / bindDeconstruct / bindPats
-                                bindParameterPatternList fixed/collecting-binding model
-                                over the item supply collectVariadicCallItems
-                                assembles (one item per non-spread argument,
-                                the spread operand's items per spread slot);
-                                bindArgs binds that supply as it is,
-                                bindDeconstruct adds the deconstruction-receiver
-                                lone-structure opening
-bindCallback                    evalUserCallbackCallCounted: the ordinary counted
-                                binder over the callback's supplied arguments
-                                (one per element, plus the reducer accumulator)
+Pat / bindArgs / bindPats       the Model-C binder's ALLOCATION needLevelSources
+                                (bindNeedLevel) over the supply formNeedSupply
+                                forms (one cell per non-spread argument, the
+                                spread operand's items per spread slot) —
+                                PROVED for bindPats/bindArgs/bindCallback
+                                allocation: KatLangArityLaws
+                                algebra_binder_is_the_production_allocation
+                                (formerly the Ready binder
+                                bindParameterPatternList, now in
+                                HistoricalReadyBinding.lean); bindArgs binds
+                                that supply as it is
+bindDeconstruct                 the unpacking arm of bindNeedOne (spreadItems of
+                                the demanded value, then bindNeedLevel) —
+                                cross-checked, not proved
+bindCallback                    evalUserCallbackCallCounted: the ordinary binder
+                                bindNeedPatterns over ready cells, one per
+                                element (plus the reducer accumulator)
 
 This file is not a full semantics of KatLang. It isolates only the arity
 machinery used by the paper.

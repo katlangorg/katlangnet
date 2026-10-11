@@ -316,6 +316,99 @@ public class InferredSignatureValidityTests
         Assert.IsType<EvalError.IllegalInEval>(result.Error);
     }
 
+    // A host-built CLAUSE HEAD never collects (FORMAL-07 research, October 2026): the parser
+    // refuses a collecting binder in a clause family, and Lean's clause binders cannot collect
+    // (`NeedPattern.ofClause`), so the pre-evaluation gate refuses such a head before the one
+    // binder sees it. Formerly only user algorithms were checked: two collecting binders at one
+    // level made a short supply (`F()`, `F(1, [])`) index out of range — a raw
+    // ArgumentOutOfRangeException escaped Evaluator.Run — and otherwise silently bound the
+    // second collector to ONE raw item (`F(1, 2, 3)` bound `a = [1, 2]`, `b = 3`); a single
+    // collecting binder collected in a two-clause family but lost its kind in a single-clause
+    // one, and zero-argument acceptance ignored it.
+    [Theory]
+    [InlineData("two-top", "F()")]
+    [InlineData("two-top", "F(1, 2, 3)")]
+    [InlineData("two-nested", "F(1, [])")]
+    [InlineData("one-top", "F(5, 6, 7)")]
+    [InlineData("one-nested-sequence", "F(1, (2, 3))")]
+    [InlineData("one-nested-list", "F(1, [2])")]
+    public void HostBuiltClauseHeadWithACollectingBinder_IsIllegalBeforeEvaluation_NeverAHostException(string shape, string call)
+    {
+        Pattern head = shape switch
+        {
+            "two-top" => new Pattern.SequenceValue([CollectingBinder("a"), CollectingBinder("b")]),
+            "two-nested" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([CollectingBinder("p"), CollectingBinder("q")])]),
+            "one-top" => new Pattern.SequenceValue([new Pattern.Bind("a"), CollectingBinder("b")]),
+            "one-nested-sequence" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.SequenceValue([new Pattern.Bind("p"), CollectingBinder("q")])]),
+            "one-nested-list" => new Pattern.SequenceValue([new Pattern.LitInt(1), new Pattern.ListValue([CollectingBinder("q")])]),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+
+        var illegal = Assert.IsType<EvalError.IllegalInEval>(RunHostBuiltFamily(call, head).Error);
+        Assert.Equal("Collecting bindings are only supported in ordinary explicit parameter lists.", illegal.Reason);
+    }
+
+    // `flat` is the single-clause flattened route (`TryGetFlatBinderUserEquivalent`), which
+    // formerly DROPPED the collecting kind: `F(5, 6, 7)` was `ArityMismatch(2, 3)`.
+    [Theory]
+    [InlineData("bare")]
+    [InlineData("flat")]
+    public void HostBuiltSingleClauseFamilyWithACollectingBinder_IsIllegalBeforeEvaluation(string shape)
+    {
+        var body = new Algorithm.User(
+            Parent: null,
+            ParameterPatterns: [],
+            Opens: [],
+            Properties: [],
+            Output: OutputBundle.From([new Expr.Num(0)]));
+        Pattern head = shape == "bare"
+            ? CollectingBinder("xs")
+            : new Pattern.SequenceValue([new Pattern.Bind("a"), CollectingBinder("b")]);
+        Expr[] arguments = shape == "bare" ? [new Expr.Num(5)] : [new Expr.Num(5), new Expr.Num(6), new Expr.Num(7)];
+        var root = new Algorithm.User(
+            Parent: null,
+            ParameterPatterns: [],
+            Opens: [],
+            Properties: [new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(head, body)]))],
+            Output: OutputBundle.From([new Expr.Call(new Expr.Resolve("F"), OutputBundle.From(arguments))]));
+
+        var illegal = Assert.IsType<EvalError.IllegalInEval>(Evaluator.Run(new Expr.AlgorithmExpr(root)).Error);
+        Assert.Equal("Collecting bindings are only supported in ordinary explicit parameter lists.", illegal.Reason);
+    }
+
+    [Fact]
+    public void HostBuiltClauseHeadWithoutACollectingBinder_StillEvaluates()
+    {
+        var head = new Pattern.SequenceValue([new Pattern.Bind("a"), new Pattern.Bind("b")]);
+
+        var result = RunHostBuiltFamily("F(5, 6)", head);
+
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal(new Result.Atom(5), result.Value);
+    }
+
+    private static Pattern.Bind CollectingBinder(string name) => new(name) { ParameterKind = ParameterKind.Collecting };
+
+    // `F` is a two-clause family: the host-built head under test (with the body `a` of the
+    // written clause `F(a, b) = a`) and an ordinary literal clause `(0, y)` (body `1`), so the
+    // duplicate-clause check never fires.
+    private static EvalResult<Result> RunHostBuiltFamily(string call, Pattern head)
+    {
+        var parsed = SourceProvenance.ParseValid("F(0, y) = 1\nF(a, b) = a\n" + call).Root;
+        var family = Assert.IsType<Algorithm.Conditional>(parsed.Properties.Single(property => property.Name == "F").Value);
+        var literalClause = family.Branches.Single(branch => branch.Pattern is Pattern.SequenceValue([Pattern.LitInt, _]));
+        var otherClause = family.Branches.Single(branch => !ReferenceEquals(branch, literalClause));
+        var root = parsed with
+        {
+            Properties =
+            [
+                .. parsed.Properties.Where(property => property.Name != "F"),
+                new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(head, otherClause.Body), literalClause])),
+            ],
+        };
+        return Evaluator.Run(new Expr.AlgorithmExpr(root));
+    }
+
     private static CaptureParameterPattern Capture(string name) => new(name);
 
     private static CaptureParameterPattern Collecting(string name) => new(name, Kind: ParameterKind.Collecting);

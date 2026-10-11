@@ -420,8 +420,36 @@ never of the value itself.
 
 ## Faithfulness
 
-Every behaviour encoded as a theorem was cross-checked against the real evaluator
-in `KatLang.lean`, including the subtle points:
+**Proved correspondence (FORMAL-07, October 2026).** The binder half of the
+algebra is no longer only cross-checked: `KatLangArityLaws.lean`
+(§ Model-C production binder laws) proves
+`algebra_binder_is_the_production_allocation`, which states that
+`bindPats ps xs` — hence `bindArgs` and `bindCallback`, which are it by
+definition — equals the production Model-C allocation `needLevelSources`
+read at algebra values (a fixed pattern its item, the collector `collect` of
+its slice), and that it is defined exactly when the production cardinality
+gate accepts and the level has at most one collector. The production binder
+that consumes that allocation is a total definition of `KatLang.lean` since
+the same change, so this is a theorem about the ALLOCATION step of the binder
+the evaluator calls — not about the binder's result. The algebra models no
+repeated-name constraint (a `Pat` list may repeat a name, and `bindPats` then
+binds every occurrence positionally, while the production binder compares the
+occurrences, NEED-04, so on such a head `bindPats` success says nothing about
+production success), no structural or literal pattern, and no `demandNeed`
+(the collector cell's VALUE is `collect` of its slice by definition and
+executable guards, not by a theorem). `bindDeconstruct`'s
+`openLoneStructure` is not covered either: production deconstruction is the
+unpacking arm of `bindNeedOne` (`Result.spreadItems` of the demanded value),
+cross-checked only.
+
+Every other behaviour encoded as a theorem was cross-checked against the real
+evaluator in `KatLang.lean`, including the subtle points (the C# names and the
+Ready binders mentioned below are historical: Model C deleted `CollectSegment`,
+`CreateCollectingCapture`, `BuildCallArgumentInputs` and
+`collectVariadicCallItems`; the Ready binders survive only in
+`HistoricalReadyBinding.lean`; production collectors materialize through
+`makeCollectionListResult`, which is `(collectSegment ·, 1)` by
+`collector_materialization_is_collect_segment`):
 
 * `collect` is exact: a collecting parameter that collects exactly one item binds the
   one-element list (`H(x, *rest) = rest` on `H(1, 2)` gives `rest = [2]`),

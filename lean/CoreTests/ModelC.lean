@@ -111,9 +111,9 @@ def attemptsShareCompletion : EvalM Bool := do
   let source := Expr.call (.algorithmExpr (alg [] [] [] [.num 1])) []
   let inspected <- supplyNeed source EvalCtx.empty []
   let ignored <- supplyNeed bad EvalCtx.empty []
-  let first <- bindNeedPatterns [.literal (.litInt 0), .bind "x"] [inspected, ignored] true
+  let first <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ [.literal (.litInt 0), .bind "x"] [inspected, ignored] true
   let afterFirst := (<- get).nextBindingContext
-  let second <- bindNeedPatterns [.literal (.litInt 1), .bind "x"] [inspected, ignored] true
+  let second <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ [.literal (.litInt 1), .bind "x"] [inspected, ignored] true
   pure (first.isNone && second.isSome && (<- get).nextBindingContext == afterFirst && (<- isSuspended ignored))
 #guard (runEvalM attemptsShareCompletion).toOption == some true
 
@@ -191,7 +191,7 @@ def propertyCacheIsSeparate : EvalM Bool := do
 def readyBindingUsesCanonicalPath : EvalM Bool := do
   let first <- readyNeed (.atom 3, 1)
   let second <- readyNeed (.atom 4, 1)
-  let some binding <- bindNeedPatterns [.bind "x", .bind "xs" true] [first, second] | return false
+  let some binding <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ [.bind "x", .bind "xs" true] [first, second] | return false
   let some x := lookupAssoc "x" binding | return false
   let some xs := lookupAssoc "xs" binding | return false
   let collected <- demandNeed xs
@@ -279,5 +279,55 @@ def callXY : Algorithm := alg ["x", "y"] [] [] [.call (.param "x") [.param "y"]]
     [.call (.resolve "F") [.resolve "Inc"]])) with
   | .error err => innermostIsArityMismatch 2 1 err
   | _ => false
+
+-- FORMAL-07: direct production channels, successful callable projection and
+-- nonempty binding contexts. These inspect cells and contexts, not only values.
+def repeatedBindingKeepsTheCallableContribution : EvalM Bool := do
+  let a := Algorithm.withDeclarationId (some (.shared 701)) (alg [] [] [] [.num 1])
+  let ctx := { EvalCtx.empty with callStack := [algPrivate [] [] [("A", a)] []] }
+  let data <- readyNeed (.atom 1, 1)
+  let callable <- supplyNeed (.resolve "A") ctx []
+  let bound <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ [.bind "x", .bind "x"] [data, callable]
+  pure (bound == some [("x", callable)] && (<- projectNeedCallable callable).isSome)
+#guard (runEvalM repeatedBindingKeepsTheCallableContribution).toOption == some true
+
+def differentCallablePairStopsBeforeTheLaterFailure : EvalM Bool := do
+  let a := Algorithm.withDeclarationId (some (.shared 702)) (alg [] [] [] [.num 1])
+  let b := Algorithm.withDeclarationId (some (.shared 703)) (alg [] [] [] [.num 1])
+  let ctx := { EvalCtx.empty with callStack := [algPrivate [] [] [("A", a), ("B", b)] []] }
+  let first <- supplyNeed (.resolve "A") ctx []
+  let second <- supplyNeed (.resolve "B") ctx []
+  let last <- supplyNeed bad ctx []
+  let outcome <- evalAttempt (bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
+    [.bind "x", .bind "x", .bind "x"] [first, second, last])
+  pure ((match outcome with | .error (.typeMismatch _) => true | _ => false) && (<- isSuspended last))
+#guard (runEvalM differentCallablePairStopsBeforeTheLaterFailure).toOption == some true
+
+def needContextShadowsEveryInheritedChannel : EvalM Bool := do
+  let a := alg [] [] [] [.num 1]
+  let old <- readyNeed (.atom 99, 1)
+  let fresh <- readyNeed (.atom 7, 1)
+  let ctx := { EvalCtx.empty with
+    needEnv := [("x", old), ("keep", old)]
+    algEnv := [("x", { algorithm := a }), ("keep", { algorithm := a })]
+    countedParamEnv := [("x", (.atom 99, 1)), ("keep", (.atom 99, 1))] }
+  let outer <- needBindingContext ctx [("outer", old)]
+  let nested <- needBindingContext outer [("x", fresh)]
+  pure (nested.needEnv == [("x", fresh), ("outer", old), ("keep", old)]
+    && (nested.algEnv.lookup "x").isNone && (nested.algEnv.lookup "keep").isSome
+    && (nested.countedParamEnv.lookup "x").isNone && (nested.countedParamEnv.lookup "keep").isSome
+    && nested.bindingContext != outer.bindingContext && (<- get).nextBindingContext == 3)
+#guard (runEvalM needContextShadowsEveryInheritedChannel).toOption == some true
+
+def valueFailureDoesNotEraseCallableIdentity : EvalM Bool := do
+  let a := Algorithm.withDeclarationId (some (.shared 704)) (alg [] [] [] [bad])
+  let ctx := { EvalCtx.empty with callStack := [algPrivate [] [] [("Bad", a)] []] }
+  let cell <- supplyNeed (.resolve "Bad") ctx []
+  let value <- evalAttempt (demandNeed cell)
+  let afterValue := (<- get).nextBindingContext
+  let callable <- projectNeedCallable cell
+  pure ((match value with | .error _ => true | _ => false) && callable.isSome
+    && (<- get).nextBindingContext == afterValue)
+#guard (runEvalM valueFailureDoesNotEraseCallableIdentity).toOption == some true
 
 end KatLangTests.ModelC

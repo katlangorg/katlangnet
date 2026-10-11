@@ -2714,8 +2714,9 @@ public static partial class Evaluator
     /// <summary>
     /// Shared pre-evaluation validation gate for every prebuilt-AST entry point.
     /// Lean: the validation pass <c>runResultM</c> runs before any evaluation
-    /// (<c>validateExplicitParamOutputInvariantExpr</c>). The violation kinds map
-    /// 1:1 onto Lean's validation errors, so a malformed hand-built tree — for
+    /// (<c>validateExplicitParamOutputInvariantExpr</c>). Representable violations map
+    /// onto Lean's validation errors; C# also rejects collecting clause binders,
+    /// whose kind Lean's clause AST cannot express. A malformed hand-built tree — for
     /// example a conditional with mismatched branch arities — is rejected here,
     /// before branch matching, optimizer planning, or any evaluation, exactly
     /// where Lean rejects it. Runs after <see cref="StructuralPreflight"/> because
@@ -2733,6 +2734,10 @@ public static partial class Evaluator
                 new EvalError.IllegalInEval(Parser.SingletonSequencePatternDiagnostic),
             PreEvaluationAstViolation.MultipleCollectingCaptures =>
                 new EvalError.IllegalInEval(Parser.MultipleCollectingBindingsPerLevelDiagnostic),
+            PreEvaluationAstViolation.RepeatedNameIncludesCollecting =>
+                new EvalError.IllegalInEval(Parser.RepeatedNameIncludesCollectingDiagnostic),
+            PreEvaluationAstViolation.CollectingClauseBinder =>
+                new EvalError.IllegalInEval(Parser.CollectingClauseBinderDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
             PreEvaluationAstViolation.AliasTargetNotStaticPath v =>

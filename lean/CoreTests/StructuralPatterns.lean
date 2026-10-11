@@ -317,4 +317,29 @@ def twoCollectorSignatureIsIllegalBeforeEvaluation : Bool :=
 
 #guard twoCollectorSignatureIsIllegalBeforeEvaluation
 
+-- The third X-02 rule is also a pre-evaluation invariant, including names
+-- repeated across different pattern levels. The unused definition wins over
+-- the failing output row; fixed repeated names remain ordinary constraints.
+def repeatedCollectorSignatureIsIllegalBeforeEvaluation : Bool :=
+  ([[spCap "x", spColl "x"],
+    [.listValue [spCap "x", spColl "x"]],
+    [.sequenceValue [spCap "x", spColl "x"]],
+    [.unpacking [spCap "x", spColl "x"]],
+    [spCap "x", .listValue [spColl "x"]]] : List (List KatLang.ParameterPattern)).all fun ps =>
+      let k := algWithParameterPatterns ps [] [] [num 7]
+      match runResult (.algorithmExpr (algPrivate [] [] [("K", k)] [.binary .div (num 1) (num 0)])) with
+      | .error (.illegalInEval message) => message == KatLang.repeatedNameIncludesCollectingMessage
+      | _ => false
+#guard repeatedCollectorSignatureIsIllegalBeforeEvaluation
+
+def invalidSignatureOrderPrecedesMissingOutput : Bool :=
+  ([([.sequenceValue [spCap "x"], spColl "x", spColl "x"], KatLang.singletonSequencePatternMessage),
+    ([spColl "x", spColl "x"], KatLang.multipleCollectingBindingsPerLevelMessage),
+    ([spCap "x", spColl "x"], KatLang.repeatedNameIncludesCollectingMessage)]
+    : List (List KatLang.ParameterPattern × String)).all fun (ps, expected) =>
+      match runResult (.algorithmExpr (algWithParameterPatterns ps [] [] [])) with
+      | .error (.illegalInEval message) => message == expected
+      | _ => false
+#guard invalidSignatureOrderPrecedesMissingOutput
+
 end KatLangTests

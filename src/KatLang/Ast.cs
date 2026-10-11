@@ -599,7 +599,10 @@ public closed record ParameterPattern
 
     /// <summary>
     /// The MINIMUM number of supplied argument slots a parameter-pattern list accepts —
-    /// the ONE rule <see cref="Evaluator"/>'s <c>BindNeedPatterns</c> enforces,
+    /// the ONE rule <see cref="Evaluator"/>'s <c>BindNeedPatterns</c> enforces (its own
+    /// count <c>NeedMinimumSuppliedSlots</c> equals this one on every signature the X-02
+    /// gate admits, by inspection — mirroring the Lean model's theorem
+    /// <c>binder_minimum_is_the_signature_minimum</c>),
     /// factored out here so no other layer re-derives it:
     /// <list type="bullet">
     ///   <item>every pattern consumes exactly ONE supplied slot, whatever it contains — a
@@ -1366,6 +1369,42 @@ public closed record Pattern
                 case ListValue(var items):
                     for (var i = items.Count - 1; i >= 0; i--)
                         pending.Push(items[i]);
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether this branch head holds a collecting binder (a host-built <see cref="Bind"/>
+    /// whose <see cref="Bind.ParameterKind"/> is collecting) at any depth. Clause binders never
+    /// collect — the parser refuses them in a clause family and Lean's clause binders cannot
+    /// collect — so the pre-evaluation gate refuses such a head
+    /// (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>). Iterative, and linear in
+    /// the distinct pattern nodes of a host-built head that shares subtrees.
+    /// </summary>
+    internal bool HeadHasCollectingBinder()
+    {
+        var pending = new Stack<Pattern>();
+        var visited = new HashSet<Pattern>(ReferenceEqualityComparer.Instance);
+        pending.Push(this);
+        while (pending.Count > 0)
+        {
+            var pattern = pending.Pop();
+            if (!visited.Add(pattern))
+                continue;
+            switch (pattern)
+            {
+                case Bind { ParameterKind: ParameterKind.Collecting }:
+                    return true;
+                case SequenceValue(var items):
+                    foreach (var item in items)
+                        pending.Push(item);
+                    break;
+                case ListValue(var items):
+                    foreach (var item in items)
+                        pending.Push(item);
                     break;
             }
         }
@@ -2743,6 +2782,21 @@ internal closed record PreEvaluationAstViolation
     /// </summary>
     internal sealed record MultipleCollectingCaptures() : PreEvaluationAstViolation;
 
+    /// <summary>A repeated capture name including a collecting binding (X-02).</summary>
+    internal sealed record RepeatedNameIncludesCollecting() : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A clause-family branch head holding a collecting binder (a host-built
+    /// <see cref="Pattern.Bind"/> whose <see cref="Pattern.Bind.ParameterKind"/> is collecting).
+    /// The parser reports <see cref="DiagnosticCode.InvalidCollectingBinding"/> for a written
+    /// clause family and elaborates a single binder clause into a user algorithm, so only a
+    /// host-built tree reaches this. C#-only: Lean clause binders never collect
+    /// (<c>NeedPattern.ofClause</c>), so the gate refuses exactly the heads Lean cannot express —
+    /// shapes outside the source-reachable core (constitution FORMAL-08; FORMAL-07 research,
+    /// October 2026).
+    /// </summary>
+    internal sealed record CollectingClauseBinder() : PreEvaluationAstViolation;
+
     /// <summary>
     /// A callable alias whose written target is not a STATIC PATH — a name, or an argumentless
     /// structural dot path whose head is a name or a block (the front end only forms an alias over
@@ -3236,11 +3290,14 @@ internal static class AlgorithmValidation
             if (checkConditionalBranchArities && _visited.Add(algorithm.ParameterPatterns))
             {
                 PreEvaluationAstViolation? patternViolation =
-                    ParameterPattern.HasSingletonSequenceGroup(algorithm.ParameterPatterns)
-                        ? new PreEvaluationAstViolation.SingletonSequencePattern()
-                        : ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel(algorithm.ParameterPatterns)
-                            ? new PreEvaluationAstViolation.MultipleCollectingCaptures()
-                            : null;
+                    ParameterPattern.FindSignatureViolation(algorithm.ParameterPatterns) switch
+                    {
+                        ParameterSignatureViolation.SingletonSequencePattern => new PreEvaluationAstViolation.SingletonSequencePattern(),
+                        ParameterSignatureViolation.MultipleCollectingAtOneLevel => new PreEvaluationAstViolation.MultipleCollectingCaptures(),
+                        ParameterSignatureViolation.RepeatedNameIncludesCollecting => new PreEvaluationAstViolation.RepeatedNameIncludesCollecting(),
+                        null => null,
+                        _ => throw new InvalidOperationException("Unknown parameter signature violation."),
+                    };
                 if (patternViolation is not null)
                 {
                     Violations.Add(patternViolation);
@@ -3300,6 +3357,23 @@ internal static class AlgorithmValidation
                 && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasSingletonSequenceGroup()))
             {
                 Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern());
+                if (stopAfterFirst)
+                    return;
+            }
+
+            // A clause binder never collects: the parser refuses a collecting binder in a
+            // clause family, and Lean's clause binders cannot collect (`NeedPattern.ofClause`),
+            // so a host-built head with one is refused here, before the one binder sees it
+            // (FORMAL-07 research, October 2026). Formerly it reached the binder: two collecting
+            // binders at one level made a short supply index out of range — a raw
+            // ArgumentOutOfRangeException escaped Evaluator.Run — and silently bound the second
+            // collector to ONE raw item otherwise; a single collecting binder lost its kind in
+            // the single-clause flat-binder conversion and was ignored by zero-argument
+            // acceptance while the binder accepted an empty supply.
+            if (checkConditionalBranchArities
+                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasCollectingBinder()))
+            {
+                Violations.Add(new PreEvaluationAstViolation.CollectingClauseBinder());
                 if (stopAfterFirst)
                     return;
             }

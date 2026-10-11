@@ -218,8 +218,10 @@ namespace ParameterPattern
   /-- The MINIMUM number of supplied argument slots a parameter-pattern list
       accepts — the ONE rule the binder enforces, factored out so no other layer can
       re-derive it (the Model-C binder reads the same count over need patterns,
-      `needMinimumSuppliedSlots` in `bindNeedLevel`, which agrees with this one on
-      every valid signature; formerly `bindParameterPatternList`):
+      `needMinimumSuppliedSlots` in `bindNeedLevel`, which EQUALS this one whenever a
+      level holds at most one collector — every signature the X-02 gate admits —
+      by the theorem `binder_minimum_is_the_signature_minimum`, `KatLangArityLaws.lean`;
+      formerly `bindParameterPatternList`):
 
       * every pattern consumes exactly ONE supplied slot, whatever it contains —
         a structural pattern (sequence or list) is one slot that the binder
@@ -2517,6 +2519,10 @@ def Algorithm.hasSingletonSequencePattern : Algorithm -> Bool
 def multipleCollectingBindingsPerLevelMessage : String :=
   "Only one collecting binding is allowed per pattern level."
 
+/-- The third X-02 rule, shared by written/inferred signatures and host-built preflight. -/
+def repeatedNameIncludesCollectingMessage : String :=
+  "Repeated parameter names cannot include collecting bindings."
+
 /-- The collector rule over an algorithm's OWN parameter patterns (X-02): some
     pattern level holds more than one collecting capture. -/
 def Algorithm.hasMultipleCollectingCaptures : Algorithm -> Bool
@@ -2748,6 +2754,8 @@ mutual
     let inner := chain ++ [a]
     match a with
     | .mk _ parameters op pr out _ =>
+        if let some .repeatedNameIncludesCollecting := ParameterPattern.signatureViolation? parameters then
+          .error (Error.illegalInEval repeatedNameIncludesCollectingMessage)
         if !parameters.isEmpty && out.isEmpty then
           .error Error.explicitParamsRequireOutput
         for openExpr in op do
@@ -5559,8 +5567,10 @@ def resolveArgAlgsWithSequenceSpread (args : OutputBundle) (ctx : EvalCtx) (env 
 /-
 Evaluator recursion core.
 
-Everything above this point is helper logic that never re-enters evaluation:
-validation, name/open/lexical resolution, parameter-pattern binding,
+Everything above the `mutual` block below is helper logic that never re-enters
+evaluation by itself: validation, name/open/lexical resolution, parameter-pattern
+binding (the Model-C binder core, which reaches evaluation only through the
+`NeedChannels` the block passes it),
 argument-shape preparation, cache-key construction, and pure builtin
 computations — checked as ordinary total definitions wherever Lean can see
 termination.
@@ -5639,6 +5649,212 @@ def needClauseHead : Pattern -> List NeedPattern
   | .sequenceValue ps => ps.map NeedPattern.ofClause
   | pattern => [NeedPattern.ofClause pattern]
 
+/-! ### The Model-C binder core (FORMAL-07, October 2026)
+
+The ONE inspecting binder (NEED-04, PAT-10) and the clause-family dispatcher are
+TOTAL definitions over the two runtime capabilities of a supplied cell, passed in as
+`NeedChannels`: its VALUE demand and its CALLABLE projection. Their own recursion is
+structural over the written patterns (never over runtime values), so they live here,
+above the evaluator recursion core, and the kernel checks their termination; the core
+instantiates them with `⟨demandNeed, projectNeedCallable⟩` at every binding site
+(`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepSlots` — twice —,
+`evalZeroArgumentDemandOutputCounted`). Every theorem stated for ALL channels
+(`KatLangArityLaws.lean` § Model-C production binder laws) therefore holds for the
+definitions the evaluator calls (that the `partial` call sites pass these channels is a fact
+of their source, not of the kernel). Until October 2026 these functions were `partial`
+members of the evaluator block — only because they call `demandNeed` — so no theorem could
+say anything about their behaviour (a `partial def` is an opaque constant). They still call
+a few helpers that call `partial` definitions, so their
+outcomes stay opaque to proofs: `matchPattern` (literals, via `matchPatternInto`),
+`sameRepeatedCallableIdentity` (via `sameDeclaringScope`/`compatibleActivations`),
+`structuralPatternKindMismatch` (via `ParameterPattern.displayName`) and
+`Algorithm.hasDuplicateBranchPatterns` (via `matchEquivalentWithRenaming`).
+
+ALLOCATION is a separate pure function, `needLevelSources`, generic in what a supplied
+cell is: it gives each top-level pattern of one level its ONE supplied cell, or, for the
+collecting binding, the exact ordered slice allocated to it (VAR-02); `.missing` marks a
+position no supplied cell reaches, which the cardinality gate excludes on every validated
+signature (at most one collector per level, X-02 / `validateAlgorithmTree`). C# keeps the
+same arithmetic inside `Evaluator.BindNeedPatterns`. -/
+
+/-- The two capabilities the binder may use on a supplied cell: its VALUE demand
+    (`demandNeed`) and its CALLABLE projection (`projectNeedCallable`, which never forces
+    VALUE, NEED-06). Plain binding uses neither (NEED-01, NEED-03). -/
+structure NeedChannels where
+  value : Nat -> EvalM CountedResult
+  callable : Nat -> EvalM (Option Algorithm)
+
+/-- What one top-level pattern of a level is bound from: one supplied cell, the exact slice
+    a collecting binding collects, or nothing (an unreachable position, `badArity`). -/
+inductive NeedSource (α : Type) where
+  | cell (value : α)
+  | collector (slice : List α)
+  | missing
+  deriving Repr, BEq
+
+/-- The supplied cells a source covers, in order. -/
+def NeedSource.items {α : Type} : NeedSource α -> List α
+  | .cell value => [value]
+  | .collector slice => slice
+  | .missing => []
+
+/-- The source of the pattern at `index`, around the level's FIRST collector `collector?`;
+    `extra` is the number of supplied cells the collector collects. -/
+def needSourceAt {α : Type} (collector? : Option Nat) (extra : Nat) (cells : List α)
+    (index : Nat) : NeedSource α :=
+  if collector? == some index then .collector ((cells.drop index).take extra)
+  else
+    match cells[if (collector?.map (fun i => decide (index > i))).getD false then index + extra - 1 else index]? with
+    | some cell => .cell cell
+    | none => .missing
+
+/-- ALLOCATION of one level's supply to its top-level patterns, position by position: the
+    patterns before the collector take the leading cells, the patterns after it the
+    trailing cells, and the collector the exact slice between them (VAR-02); without a
+    collector pattern `i` takes cell `i`. Pure and generic in the cell type, so the same
+    function serves need addresses in the evaluator and values in the laws. -/
+def needLevelSources {α : Type} (patterns : List NeedPattern) (cells : List α) : List (NeedSource α) :=
+  let collector? := patterns.findIdx? NeedPattern.isCollecting
+  let extra := cells.length + 1 - patterns.length
+  (List.range patterns.length).map (needSourceAt collector? extra cells)
+
+/-- The address one pattern binds: a supplied cell is TRANSPORTED (no new cell, nothing
+    evaluated), a collecting binding gets ONE fresh suspended collector cell over its slice. -/
+def needSourceAddress (source : NeedSource Nat) : EvalM Nat :=
+  match source with
+  | .cell address => pure address
+  | .collector slice => allocateNeed (.collector slice)
+  | .missing => throw Error.badArity
+
+/-- THE CARDINALITY GATE of one pattern level (NEED-05, CALL-04, PAT-10(1)): an unaccepted
+    supply count is rejected — a family's non-match, otherwise the arity error whose payload
+    is the level's minimum and the COMPLETE supply count — before `accepted` runs. -/
+def needCardinalityGate (patterns : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : EvalM (Option NeedEnv)) : EvalM (Option NeedEnv) :=
+  if !needAcceptsCardinality patterns count then
+    if family then pure none
+    else throw (Error.arityMismatch (needMinimumSuppliedSlots patterns) count)
+  else accepted
+
+/-- One occurrence of a binder name. A non-repeated name transports its cell and demands
+    nothing. Every occurrence of a REPEATED name, the first included, demands its own VALUE
+    when visited and is compared at once with the binding so far: VALUE and count first,
+    then callable identity; the binding keeps the earlier contribution unless the later one
+    is strictly richer (NEED-04, Q-28). C#: `Evaluator.BindNeedPatterns`. -/
+def bindNeedName (channels : NeedChannels) (name : Ident) (address : Nat) (repeated : List Ident)
+    (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) := do
+  if repeated.contains name then
+    let value <- channels.value address
+    if let some previous := lookupAssoc name bound then
+      let before <- channels.value previous
+      if !(before == value) then
+        if family then return none
+        else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
+      let first <- channels.callable previous
+      let second <- channels.callable address
+      if let some a := first then
+        if let some b := second then
+          if !sameRepeatedCallableIdentity a b then
+            if family then return none
+            else throw (Error.typeMismatch "Repeated bind equality requires the same callable identity")
+      if first.isSome || second.isNone then return some bound
+  pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]))
+
+mutual
+  /-- One pattern against one supplied cell: a name is `bindNeedName`; a literal, a
+      structural pattern and the unpacking receiver demand the cell's VALUE first, then a
+      structural pattern opens ONLY its own kind and binds the opened items as a nested
+      level through the same gate and allocation — written out here because `bindNeedLevel`
+      is defined after this block, and identified with it by the theorems
+      `nested_*_level_is_bind_need_level` (`KatLangArityLaws.lean`); change both together. -/
+  def bindNeedOne (channels : NeedChannels) (pattern : NeedPattern) (address : Nat)
+      (repeated : List Ident) (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) := do
+    match pattern with
+    | .bind name _ => bindNeedName channels name address repeated bound family
+    | .literal literal => do
+        let (value, _) <- channels.value address
+        pure (if (matchPattern literal value).isSome then some bound else none)
+    | .sequence ps | .list ps | .unpack ps => do
+        let (value, _) <- channels.value address
+        let items? := match pattern with
+          | .list _ => Result.listPatternItems? value
+          | .sequence _ => Result.sequencePatternItems? value
+          | _ => some (Result.spreadItems value)
+        match items? with
+        | none => if family then pure none else throw (structuralPatternKindMismatch pattern.toParameter value)
+        | some items => do
+            let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
+            needCardinalityGate ps cells.length family
+              (bindNeedSources channels ps (needLevelSources ps cells) repeated bound family)
+
+  /-- The patterns of one level, left to right, each from its allocated source; the first
+      failure or non-match ends binding. -/
+  def bindNeedSources (channels : NeedChannels) (patterns : List NeedPattern)
+      (sources : List (NeedSource Nat)) (repeated : List Ident) (current : NeedEnv)
+      (family : Bool) : EvalM (Option NeedEnv) :=
+    match patterns with
+    | [] => pure (some current)
+    | pattern :: rest => do
+        let address <- needSourceAddress (sources.headD .missing)
+        match <- bindNeedOne channels pattern address repeated current family with
+        | none => pure none
+        | some next => bindNeedSources channels rest sources.tail repeated next family
+end
+
+/-- One pattern level over its supplied cells: the cardinality gate, then the patterns
+    left to right over their allocated sources. -/
+def bindNeedLevel (channels : NeedChannels) (patterns : List NeedPattern) (cells : List Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) :=
+  needCardinalityGate patterns cells.length family
+    (bindNeedSources channels patterns (needLevelSources patterns cells) repeated bound family)
+
+/-- The names a head binds more than once, at any depth: every occurrence of one of them
+    is an inspecting occurrence (NEED-04). -/
+def needRepeatedNames (patterns : List NeedPattern) : List Ident :=
+  let names := patterns.flatMap NeedPattern.names
+  names.eraseDups.filter (fun name => (names.filter (· == name)).length > 1)
+
+/-- THE ONE INSPECTING BINDER of Model C (NEED-04, PAT-10): ordinary calls (`family =
+    false`), clause attempts (`family = true`: an incompatibility is a non-match, a runtime
+    failure is not), callbacks and loop steps alike. C#: `Evaluator.BindNeedPatterns`. -/
+def bindNeedPatterns (channels : NeedChannels) (patterns : List NeedPattern) (cells : List Nat)
+    (family : Bool := false) : EvalM (Option NeedEnv) :=
+  bindNeedLevel channels patterns cells (needRepeatedNames patterns) [] family
+
+/-- The callee-side context of a completed need binding. -/
+def needBindingContext (ctx : EvalCtx) (bindings : NeedEnv) : EvalM EvalCtx := do
+  let names := bindings.map Prod.fst
+  let next <- ctx.bindParameters names [] []
+  pure { next with needEnv := bindings ++ next.needEnv }
+
+/-- The ordinary clause-family dispatcher over an already formed cell supply: the
+    duplicate-pattern check, the family's cardinality, then the clauses in WRITTEN
+    order, each attempt inspecting the SAME cells through the one binder in family
+    mode (a successful mismatch tries the next clause; a runtime failure during
+    inspection aborts dispatch; no clause is `noMatchingBranch`), and finally the
+    selected branch's activation. It returns the activated body, its context and
+    its values WITHOUT evaluating it, so each receiver reads the body its own way:
+    the ordinary call as one value (`evalNeedFamilySupply`), a loop step as its
+    row supply (`runNeedStepSlots`, LOOP-08). C#: `BindNeedFamilySupply`. -/
+def selectNeedFamilyBranch (channels : NeedChannels) (callee : Algorithm) (cells : List Nat)
+    (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM (Algorithm × EvalCtx × ValEnv) := do
+  if callee.hasDuplicateBranchPatterns then throw Error.duplicateBranchPattern
+  let branches := Algorithm.branches callee
+  if !branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) then
+    throw (Error.arityMismatch ((branches.head?.map (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0) cells.length)
+  let rec choose : List CondBranch -> EvalM (Algorithm × EvalCtx × ValEnv)
+    | [] => throw (Error.noMatchingBranch calleeName)
+    | branch :: rest => do
+      match <- bindNeedPatterns channels (needClauseHead branch.pattern) cells true with
+      | none => choose rest
+      | some bindings => do
+        let names := bindings.map Prod.fst
+        let next <- needBindingContext (ctx.push callee) bindings
+        let values := ValEnv.shadow env names
+        let body <- wireSelectedBranchBody callee branch.body names next values
+        pure (body, next, values)
+  choose branches
+
 mutual
 
   /-- First VALUE demand evaluates once and stores success or ordinary failure.
@@ -5678,75 +5894,6 @@ mutual
         pure (head ++ tail)
     go args
 
-  partial def bindNeedName (name : Ident) (address : Nat) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) := do
-    if repeated.contains name then
-      let value <- demandNeed address
-      if let some previous := lookupAssoc name bound then
-        let before <- demandNeed previous
-        if !(before == value) then
-          if family then return none
-          else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
-        let first <- projectNeedCallable previous
-        let second <- projectNeedCallable address
-        if let some a := first then
-          if let some b := second then
-            if !sameRepeatedCallableIdentity a b then
-              if family then return none
-              else throw (Error.typeMismatch "Repeated bind equality requires the same callable identity")
-        if first.isSome || second.isNone then return some bound
-    pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]))
-
-  partial def bindNeedOne (pattern : NeedPattern) (address : Nat) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) := do
-    if let .bind name _ := pattern then return <- bindNeedName name address repeated bound family
-    let (value, _) <- demandNeed address
-    match pattern with
-    | .bind _ _ => throw Error.badArity
-    | .literal literal => pure (if (matchPattern literal value).isSome then some bound else none)
-    | .sequence ps | .list ps | .unpack ps =>
-      let items? := match pattern with
-        | .list _ => Result.listPatternItems? value
-        | .sequence _ => Result.sequencePatternItems? value
-        | _ => some (Result.spreadItems value)
-      match items? with
-      | none => if family then pure none else throw (structuralPatternKindMismatch pattern.toParameter value)
-      | some items => do
-        let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
-        bindNeedLevel ps cells repeated bound family
-
-  partial def bindNeedLevel (patterns : List NeedPattern) (cells : List Nat)
-      (repeated : List Ident) (bound : NeedEnv) (family : Bool) : EvalM (Option NeedEnv) := do
-    if !needAcceptsCardinality patterns cells.length then
-      if family then return none
-      else throw (Error.arityMismatch (needMinimumSuppliedSlots patterns) cells.length)
-    let collector? := patterns.findIdx? NeedPattern.isCollecting
-    let extra := cells.length + 1 - patterns.length
-    let rec go : List NeedPattern -> Nat -> NeedEnv -> EvalM (Option NeedEnv)
-      | [], _, current => pure (some current)
-      | pattern :: rest, index, current => do
-        let address <- if collector? == some index then
-          allocateNeed (.collector ((cells.drop index).take extra))
-        else
-          match cells[if (collector?.map (fun i => decide (index > i))).getD false then index + extra - 1 else index]? with
-          | some address => pure address
-          | none => throw Error.badArity
-        match <- bindNeedOne pattern address repeated current family with
-        | none => pure none
-        | some next => go rest (index + 1) next
-    go patterns 0 bound
-
-  partial def bindNeedPatterns (patterns : List NeedPattern) (cells : List Nat)
-      (family : Bool := false) : EvalM (Option NeedEnv) := do
-    let names := patterns.flatMap NeedPattern.names
-    let repeated := names.eraseDups.filter (fun name => (names.filter (· == name)).length > 1)
-    bindNeedLevel patterns cells repeated [] family
-
-  partial def needBindingContext (ctx : EvalCtx) (bindings : NeedEnv) : EvalM EvalCtx := do
-    let names := bindings.map Prod.fst
-    let next <- ctx.bindParameters names [] []
-    pure { next with needEnv := bindings ++ next.needEnv }
-
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
       `map`/`filter`/`reduce` callback invocation alike (HO-03, Q-25 resolved October
@@ -5754,46 +5901,18 @@ mutual
   partial def evalNeedUserSupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
-    let some bindings <- bindNeedPatterns patterns cells | throw Error.badArity
+    let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ patterns cells | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw Error.missingOutput
     let next <- needBindingContext ctx bindings
     let result <- evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
     pure (reCountValueBoundary result)
-
-  /-- The ordinary clause-family dispatcher over an already formed cell supply: the
-      duplicate-pattern check, the family's cardinality, then the clauses in WRITTEN
-      order, each attempt inspecting the SAME cells through the one binder in family
-      mode (a successful mismatch tries the next clause; a runtime failure during
-      inspection aborts dispatch; no clause is `noMatchingBranch`), and finally the
-      selected branch's activation. It returns the activated body, its context and
-      its values WITHOUT evaluating it, so each receiver reads the body its own way:
-      the ordinary call as one value (`evalNeedFamilySupply`), a loop step as its
-      row supply (`runNeedStepSlots`, LOOP-08). C#: `BindNeedFamilySupply`. -/
-  partial def selectNeedFamilyBranch (callee : Algorithm) (cells : List Nat)
-      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM (Algorithm × EvalCtx × ValEnv) := do
-    if callee.hasDuplicateBranchPatterns then throw Error.duplicateBranchPattern
-    let branches := Algorithm.branches callee
-    if !branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) then
-      throw (Error.arityMismatch ((branches.head?.map (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0) cells.length)
-    let rec choose : List CondBranch -> EvalM (Algorithm × EvalCtx × ValEnv)
-      | [] => throw (Error.noMatchingBranch calleeName)
-      | branch :: rest => do
-        match <- bindNeedPatterns (needClauseHead branch.pattern) cells true with
-        | none => choose rest
-        | some bindings => do
-          let names := bindings.map Prod.fst
-          let next <- needBindingContext (ctx.push callee) bindings
-          let values := ValEnv.shadow env names
-          let body <- wireSelectedBranchBody callee branch.body names next values
-          pure (body, next, values)
-    choose branches
 
   /-- A clause family invoked over an already formed cell supply: ordinary dispatch, then
       the selected body's output at the call's value boundary — for an ordinary call and a
       callback invocation alike (HO-03, PAT-11). C#: `EvalNeedFamilySupply`. -/
   partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
-    let (body, next, values) <- selectNeedFamilyBranch callee cells ctx env calleeName
+    let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeed, projectNeedCallable⟩ callee cells ctx env calleeName
     let result <- evalAlgOutputCounted body next values
     pure (reCountValueBoundary result)
 
@@ -5823,7 +5942,8 @@ mutual
       supply two slots). A family's or builtin's failure is its ordinary
       invocation failure under the step's own call frame (`stepName`, the written
       step as the ordinary call names its callee — `loopStepName`); a user step's
-      supplied-cardinality failure keeps its loop-state report, while pattern
+      supplied-cardinality failure is the binder's own `arityMismatch` (C# wraps it
+      in its loop-state report, the same innermost kind, FORMAL-06), and pattern
       inspection retains the ordinary binder's error. C#: `Evaluator.InvokeLoopStepSupply`. -/
   partial def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       (cells : List Nat) (stepName : String) : EvalM (List Result) := do
@@ -5836,13 +5956,14 @@ mutual
           pure (loopStepBuiltinRows out)
     | .conditional _ _ _ _ =>
         withCtx s!"while evaluating call to {stepName}" do
-          let (body, next, values) <- selectNeedFamilyBranch step cells ctx env stepName
+          let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeed, projectNeedCallable⟩ step cells ctx env stepName
           evalAlgOutputSlots body next values
     | .alias _ _ _ _ _ => do
         let target <- resolveAliasTarget step ctx
         runNeedStepSlots target ctx env cells stepName
     | .mk _ _ _ _ _ _ => do
-        let some bindings <- bindNeedPatterns ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
+        let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
+            ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
         evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step))
@@ -6082,7 +6203,8 @@ mutual
       if (Algorithm.parameterPatterns a).isEmpty then
         evalAlgOutputCounted a ctx env
       else do
-        let some bindings <- bindNeedPatterns ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) []
+        let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
+            ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) []
           | throw Error.badArity
         let newCtx <- needBindingContext ctx bindings
         evalAlgOutputCounted a newCtx (ValEnv.shadow env (Algorithm.params a))
