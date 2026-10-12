@@ -1013,10 +1013,25 @@ public sealed class KatLangError
     /// the order the reader needs them. Several unresolved names keep the
     /// enumerating message and get their receiver-aware notes appended per name
     /// (<see cref="AppendInferredImplicitParameterNotes"/>).
+    ///
+    /// <para>An EMPTY name list has no identifier to blame and no count to expect: it is a
+    /// host-built root or block that requires a supplied argument but binds no name for it — a
+    /// clause family without a zero-arity clause, or a nameless pattern such as <c>()</c> (Lean
+    /// <c>runResultM</c> and the written-block arm of <c>zeroArgumentDemandError?</c> report
+    /// <c>unresolvedImplicitParams []</c> for the same trees). It gets its own sentence, so the
+    /// facade stays total.</para>
     /// </summary>
     private static string FormatUnresolvedImplicitParams(EvalError.UnresolvedImplicitParams e, int providedArgumentCount = 0)
     {
         var count = e.ParamNames.Count;
+        if (count == 0)
+        {
+            var provided = providedArgumentCount == 0
+                ? "No arguments were provided"
+                : $"Only {providedArgumentCount} {(providedArgumentCount == 1 ? "argument was" : "arguments were")} provided";
+            return $"The algorithm being evaluated requires supplied arguments, but it names no implicit parameter for them. {provided}, so the program cannot be executed.";
+        }
+
         var dotMemberNote = count == 1 ? SingleDotMemberOriginNote(e) : null;
         var nameVerb = count == 1 ? "does" : "do";
         var resolutionTarget = count == 1
