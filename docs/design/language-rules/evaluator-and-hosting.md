@@ -8,6 +8,8 @@ The individual elaboration passes are INTERNAL implementation stages: `Parameter
 
 ## Source loading and deferred modules
 
+A deferred placeholder's body is provisional and is validated at materialization. A complete host-built `ScopeCtx` attached as its parent is still covered by the whole-tree pre-evaluation gate, even when the body is undemanded. Alias reachability and target-head metadata observe the same boundary: skip provisional body content, include the attached parent scopes (`FourFixInteractionReviewTests`).
+
 Deferred source is loaded only when KatLang needs that source to continue the computation or resolve required program information. Host source limits are applied when that source is loaded; unused deferred source is not loaded.
 
 Source-size and acquisition limits are host admission policy, applied when the language's source-processing contract requires a source unit, before its contents are used. A deferred unit is processed only when an operation requires its compilation, including required identity information; refusal stops that operation and its run, while an undemanded deferred computation performs no source work.

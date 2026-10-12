@@ -15,9 +15,22 @@ internal enum LoopKind
     Repeat,
 }
 
+/// <summary>
+/// A planned loop, built once per loop invocation (<c>LoopOptimizer.TryBuildLoopPlanTemplate</c>).
+/// <para><see cref="AdmittedHead"/> is the step's ADMITTED head: one snapshot of its caller-owned
+/// top-level parameter patterns, taken when the plan is built. It holds one plain fixed capture per
+/// state slot, with distinct names (<see cref="StateNames"/>). Everything that binds the state reads
+/// this snapshot, never the step's live head: the compiled plans, every iteration's binding context
+/// and activated head scope, the pending initial-state reads, and a handover's generic continuation.
+/// The generic route likewise binds the snapshot it prepares once per loop invocation
+/// (<c>Evaluator.PrepareGenericLoopStep</c>). A host that rewrites the step's head during the loop
+/// therefore changes neither route.</para>
+/// </summary>
 internal sealed record LoopPlanTemplate(
     LoopKind Kind,
     Algorithm.User Step,
+    IReadOnlyList<ParameterPattern> AdmittedHead,
+    IReadOnlyList<string> StateNames,
     int StateArity,
     IReadOnlyList<LoopTempPlan> TempPlans,
     IReadOnlyList<LoopExprPlan> NextStateOutputs,
@@ -155,7 +168,11 @@ internal sealed class LoopRunFrame
         if (Template.RequiresPerIterationCacheIdentity)
         {
             _valueEnvironment.BeginIteration();
-            IterationCtx = Evaluator.EnterAlgorithmBody(Template.Step, Evaluator.LoopNeedBindingContext(Template.ParentCtx, Template.Step.Params, CurrentCells()), _valueEnvironment);
+            IterationCtx = Evaluator.EnterAlgorithmBody(
+                Template.Step,
+                Evaluator.LoopNeedBindingContext(Template.ParentCtx, Template.StateNames, CurrentCells()),
+                _valueEnvironment,
+                Template.StateNames);
         }
     }
 
@@ -173,7 +190,7 @@ internal sealed class LoopRunFrame
     {
         if (_pendingState is null) return EvalResult<Result>.Ok(_stateSlots[index]);
         var demanded = parameterUse
-            ? Evaluator.DemandPlannedParameter(_pendingState[index], Template.Step.Params[index], readSpan)
+            ? Evaluator.DemandPlannedParameter(_pendingState[index], Template.StateNames[index], readSpan)
             : _pendingState[index].Demand();
         if (demanded.IsError) return demanded.Error;
         _stateSlots[index] = demanded.Value.Value;

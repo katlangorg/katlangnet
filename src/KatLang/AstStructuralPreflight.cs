@@ -145,9 +145,9 @@ internal static class AstStructuralPreflight
         stack.Push(root);
         while (stack.TryPop(out var node))
         {
-            if (!visited.Add(node) || node is Algorithm { DeferredRegion: not null })
+            if (!visited.Add(node))
                 continue;
-            if (node is Algorithm.Alias alias)
+            if (node is Algorithm.Alias { DeferredRegion: null } alias)
             {
                 var head = alias.Target;
                 while (head is Expr.DotCall { Args: null } edge)
@@ -156,7 +156,7 @@ internal static class AstStructuralPreflight
                     heads.Add(resolve.Name);
             }
 
-            for (var index = 0; TryGetChild(node, index, out var child); index++)
+            for (var index = 0; TryGetAliasValidationChild(node, index, out var child); index++)
                 stack.Push(child);
         }
 
@@ -174,17 +174,12 @@ internal static class AstStructuralPreflight
         {
             if (memo.ContainsKey(frame.Node))
                 continue;
-            if (frame.Node is Algorithm { DeferredRegion: not null })
-            {
-                memo[frame.Node] = false;
-                continue;
-            }
-            if (frame.Node is Algorithm.Alias)
+            if (frame.Node is Algorithm.Alias { DeferredRegion: null })
             {
                 memo[frame.Node] = true;
                 continue;
             }
-            if (!TryGetChild(frame.Node, frame.NextChild, out var child))
+            if (!TryGetAliasValidationChild(frame.Node, frame.NextChild, out var child))
             {
                 memo[frame.Node] = false;
                 continue;
@@ -205,6 +200,26 @@ internal static class AstStructuralPreflight
         }
 
         return memo[root];
+    }
+
+    // Alias metadata follows the validation walk: a deferred body's provisional content is opaque,
+    // but its host parent is complete and validated now. The structural-safety walk below still
+    // enumerates every child through TryGetChild, including provisional content.
+    private static bool TryGetAliasValidationChild(object node, int index, out object child)
+    {
+        if (node is Algorithm { DeferredRegion: not null } deferred)
+        {
+            if (index == 0 && deferred.Parent is { } parent)
+            {
+                child = parent;
+                return true;
+            }
+
+            child = null!;
+            return false;
+        }
+
+        return TryGetChild(node, index, out child);
     }
 
     /// <summary>

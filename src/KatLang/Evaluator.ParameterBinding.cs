@@ -101,14 +101,28 @@ public static partial class Evaluator
         IReadOnlyList<ParameterPattern> ParameterPatterns,
         IReadOnlyList<string> ParameterNames);
 
-    private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm step)
+    /// <summary>
+    /// The binding plan of a USER loop step for the planner's shape gate
+    /// (<see cref="IsOptimizedLoopShapeEligible"/>), or <c>null</c> when the plan cannot be built. A
+    /// step that is not a user algorithm never reaches this method, so <c>null</c> has exactly one
+    /// meaning here: a refused construction (F7-D6).
+    /// <para><see cref="CallableBindingPlan.FromSignature"/> refuses, with an
+    /// <see cref="InvalidOperationException"/>, a head it cannot represent. That includes two
+    /// collecting captures at one pattern level, and signature facts that disagree with the patterns.
+    /// The pre-evaluation gate refuses the two-collector head (X-02). Such a head therefore reaches a
+    /// loop only through a host-built head a host operation rewrote after the gate. Host-built
+    /// parent scopes are covered by that gate (owner decision, 2026-10-12).</para>
+    /// <para>The catch is meant for those refusals. Any other <see cref="InvalidOperationException"/>
+    /// raised while the head is read, for example by a host's own list, also takes the generic
+    /// route, which then reads the same head itself. Construction runs no KatLang code: it evaluates
+    /// nothing, charges no budget and observes no cancellation. So the catch never sees an evaluation
+    /// failure, a resource limit or a cancellation.</para>
+    /// </summary>
+    private static CallableBindingPlan? TryCreateUserLoopStepBindingPlan(Algorithm.User step)
     {
-        if (step is not Algorithm.User userStep)
-            return null;
-
         try
         {
-            var signature = CallableSignature.FromUserAlgorithm("loop step", userStep);
+            var signature = CallableSignature.FromUserAlgorithm("loop step", step);
             return CallableBindingPlan.FromSignature(signature);
         }
         catch (InvalidOperationException)
@@ -117,15 +131,28 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// The planned loop's step-shape gate. It FAILS CLOSED (F7-D6): a USER step is eligible only
+    /// when its binding plan is BUILT and shows flat fixed captures with distinct names, the one
+    /// shape the planned frame binds by position. A plan that cannot be built is no evidence of
+    /// eligibility, so the loop runs the generic route, as a patterned or collecting step does.
+    /// Every other callable shape has no binding plan: it passes this gate, and the planner refuses
+    /// it as an unsupported step shape (Q-23).
+    /// </summary>
     private static bool IsOptimizedLoopShapeEligible(
         Algorithm step,
         out string? fallbackReason)
     {
-        var plan = TryCreateUserLoopStepBindingPlan(step);
-        if (plan is null)
+        if (step is not Algorithm.User userStep)
         {
             fallbackReason = null;
             return true;
+        }
+
+        if (TryCreateUserLoopStepBindingPlan(userStep) is not { } plan)
+        {
+            fallbackReason = "loop step binding plan unavailable";
+            return false;
         }
 
         if (plan.RequiresPatternedBinding || plan.HasTopLevelCollecting)

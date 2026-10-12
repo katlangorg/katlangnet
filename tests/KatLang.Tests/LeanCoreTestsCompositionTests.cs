@@ -53,6 +53,7 @@ public class LeanCoreTestsCompositionTests
         "CallbackResultBoundary",
         "PropertyCachePublication",
         "VariadicSelection",
+        "ParentScopeValidation",
     ];
 
     [Fact]

@@ -347,9 +347,10 @@ public sealed class BinderCardinalityGateTests
     }
 
     /// <summary>
-    /// The pre-evaluation gate refuses a level with two collecting captures (X-02). Such a level
-    /// reaches the binder only if a host mutates a caller-owned pattern list after the gate, which
-    /// the AST contract forbids. Even then the binder reads the one supplied-slot rule, which keeps the
+    /// The pre-evaluation gate refuses a level with two collecting captures (X-02), wherever the tree
+    /// holds it: since 2026-10-12 that includes a host-built parent scope. Such a level reaches the
+    /// binder only if a host mutates a caller-owned pattern list after the gate, which the AST
+    /// contract forbids. Even then the binder reads the one supplied-slot rule, which keeps the
     /// one-collector minimum, so it never allocates outside the supply. It refuses <c>F()</c> as a
     /// language error and binds <c>F(1)</c>. Until the October 2026 cleanup the binder's own
     /// minimum dropped every collector: <c>F()</c> was accepted and indexed the supply at -1, and a

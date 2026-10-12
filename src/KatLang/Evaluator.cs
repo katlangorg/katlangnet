@@ -2414,10 +2414,11 @@ public static partial class Evaluator
     /// the public <see cref="Parser"/> always stay within the hard ceiling.</para>
     /// <para><b>Pre-evaluation validation:</b> after the structural preflight, the
     /// validation pass Lean's <c>runResultM</c> runs before evaluation is applied to
-    /// the whole tree: an algorithm with explicit parameters but no output is rejected
-    /// with <see cref="EvalError.ExplicitParametersRequireOutput"/>, and a conditional
-    /// whose branches disagree on top-level pattern arity or top-level output arity is
-    /// rejected with <see cref="EvalError.BranchArityMismatch"/> /
+    /// the whole tree, every host-built parent <see cref="ScopeCtx"/> included (its
+    /// <c>open</c> targets and properties): an algorithm with explicit parameters but
+    /// no output is rejected with <see cref="EvalError.ExplicitParametersRequireOutput"/>,
+    /// and a conditional whose branches disagree on top-level pattern arity or top-level
+    /// output arity is rejected with <see cref="EvalError.BranchArityMismatch"/> /
     /// <see cref="EvalError.BranchOutputArityMismatch"/> before any branch matching or
     /// evaluation — even when the malformed conditional is never referenced. Parsed
     /// surface programs never contain such conditionals (clause elaboration rejects

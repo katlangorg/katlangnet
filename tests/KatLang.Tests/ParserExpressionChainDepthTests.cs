@@ -11,6 +11,19 @@ public class ParserExpressionChainDepthTests
 {
     private const string ChainMessage = "Expression operator or postfix chain is too deep";
     private const string ProbeChildEnvironment = "KATLANG_EXPRESSION_CHAIN_PROBE_CHILD";
+    private const string ProbeMarkerFileEnvironment = "KATLANG_EXPRESSION_CHAIN_PROBE_MARKER_FILE";
+    private const string ProbeSuccessMarker = "katlang-expression-chain-probe-ok";
+
+    /// <summary>
+    /// The probe child's whole-process budget. The child's own work takes about a second. Before
+    /// running it, though, a fresh <c>dotnet vstest</c> host discovers every test in the assembly
+    /// (about 35,000, so about 12 s on an idle 16-core machine), and that discovery slows several
+    /// times over under the full suite's parallel load. Measured in October 2026: 63–77 s with the
+    /// cores oversubscribed twice, where the former 30 s budget failed a full-suite run. 120 s is the
+    /// budget of the other heavy probe tests (<c>StructuralNestingStackBackstopProcessTests</c>,
+    /// <c>AstGraphFuzzProcessTests</c>). A real hang still fails, within that bound.
+    /// </summary>
+    private static readonly TimeSpan ProbeChildBudget = TimeSpan.FromSeconds(120);
 
     private static string BinaryChain(string op, int operatorCount)
         => string.Join(
@@ -210,12 +223,26 @@ public class ParserExpressionChainDepthTests
         Assert.False(Parser.Parse("(" + items + ")").HasErrors);
     }
 
+    /// <summary>
+    /// Runs <see cref="ExtremeOperatorChains_ProbeChild"/> in a fresh process. It follows the
+    /// established probe protocol of <c>EvaluationLimitsProcessTests</c>:
+    /// <list type="bullet">
+    /// <item>a bounded budget (<see cref="ProbeChildBudget"/>);</item>
+    /// <item>no stack overflow, and exit code 0;</item>
+    /// <item>a success marker that the child writes after its last assertion.</item>
+    /// </list>
+    /// The marker matters because <c>dotnet vstest</c> exits 0 when no test matches its filter.
+    /// Without it, a probe that never ran, for example after a rename, would still pass.
+    /// </summary>
     [Fact]
     public async Task ExtremeOperatorChains_AreControlledInSubprocess()
     {
         var assemblyPath = typeof(ParserExpressionChainDepthTests).Assembly.Location;
         var testName = typeof(ParserExpressionChainDepthTests).FullName
-            + ".ExtremeOperatorChains_ProbeChild";
+            + "." + nameof(ExtremeOperatorChains_ProbeChild);
+        var markerFile = Path.Combine(
+            Path.GetTempPath(),
+            $"katlang-expression-chain-probe-{Guid.NewGuid():N}.txt");
         var startInfo = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
@@ -227,37 +254,53 @@ public class ParserExpressionChainDepthTests
         startInfo.ArgumentList.Add(assemblyPath);
         startInfo.ArgumentList.Add("--Tests:" + testName);
         startInfo.Environment[ProbeChildEnvironment] = "1";
+        startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
 
-        using var process = new Process { StartInfo = startInfo };
-        process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-
-        var exited = true;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            using var process = new Process { StartInfo = startInfo };
+            process.Start();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            var exited = true;
+            using var timeout = new CancellationTokenSource(ProbeChildBudget);
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                exited = false;
+                try { process.Kill(entireProcessTree: true); }
+                catch { /* process already exited */ }
+                await process.WaitForExitAsync();
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            var combined = stdout + Environment.NewLine + stderr;
+
+            Assert.True(
+                exited,
+                $"Expression-chain probe subprocess did not exit within {ProbeChildBudget.TotalSeconds} seconds."
+                    + Environment.NewLine + combined);
+            Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
+            Assert.True(
+                process.ExitCode == 0,
+                $"Expression-chain probe subprocess exited with {process.ExitCode}.{Environment.NewLine}{combined}");
+            Assert.True(
+                File.Exists(markerFile),
+                $"Expression-chain probe child did not write its success marker.{Environment.NewLine}{combined}");
+            Assert.Equal(ProbeSuccessMarker, (await File.ReadAllTextAsync(markerFile)).Trim());
         }
-        catch (OperationCanceledException)
+        finally
         {
-            exited = false;
-            try { process.Kill(entireProcessTree: true); }
-            catch { /* process already exited */ }
-            await process.WaitForExitAsync();
+            try { File.Delete(markerFile); }
+            catch { /* best-effort cleanup */ }
         }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        var combined = stdout + Environment.NewLine + stderr;
-
-        Assert.True(exited, "Expression-chain probe subprocess did not exit within 30 seconds.");
-        Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
-        Assert.True(
-            process.ExitCode == 0,
-            $"Expression-chain probe subprocess exited with {process.ExitCode}.{Environment.NewLine}{combined}");
     }
 
     [Fact]
@@ -310,5 +353,15 @@ public class ParserExpressionChainDepthTests
         AssertControlledNestingFailure(
             Rep("G(F(", 5_000) + "1" + Rep("))", 5_000));
         AssertControlledNestingFailure(Rep("F(", 5_000) + "1");
+
+        WriteProbeMarker();
+    }
+
+    /// <summary>The child's last act: the success marker its parent requires.</summary>
+    private static void WriteProbeMarker()
+    {
+        var markerFile = Environment.GetEnvironmentVariable(ProbeMarkerFileEnvironment);
+        Assert.False(string.IsNullOrWhiteSpace(markerFile));
+        File.WriteAllText(markerFile!, ProbeSuccessMarker);
     }
 }

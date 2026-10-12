@@ -569,6 +569,17 @@ public static partial class Evaluator
         => step is Algorithm.User ? PrepareGenericLoopStep(step, ctx) : default;
 
     /// <summary>
+    /// The prepared loop binding of a planned loop's generic continuation after a handover: the
+    /// ordinary preparation (<see cref="PrepareGenericLoopStep"/>) of the head the planner ADMITTED
+    /// (<c>LoopPlanTemplate.AdmittedHead</c>), never of the step's caller-owned head as it is now.
+    /// The view only derives the binding; the step itself is still what the iterations evaluate.
+    /// Only a user step is ever planned.
+    /// </summary>
+    private static PreparedGenericLoopStep PrepareAdmittedLoopStep(
+        Algorithm step, IReadOnlyList<ParameterPattern> admittedHead, EvalCtx ctx)
+        => step is Algorithm.User user ? PrepareGenericLoopStep(user with { ParameterPatterns = admittedHead }, ctx) : default;
+
+    /// <summary>
     /// The name of a loop step's own call frame (and of a family step's <c>NoMatchingBranch</c>): the written
     /// expression its SUPPLY CELL retains — the step argument as written or, for a cell transported through a
     /// parameter, the argument originally written for it (<see cref="SupplyCell"/>) — named as the ordinary call
@@ -846,9 +857,9 @@ public static partial class Evaluator
                     EvalResult<CountedResult> optimized;
                     var taken = repeat
                         ? LoopOptimizer.TryEvaluateRepeat(step, remaining, state, ctx, values,
-                            (count, slots) => RepeatLoopGenericCounted(step, count, slots, ctx, values, stepName), out optimized)
+                            (admittedHead, count, slots) => RepeatLoopGenericCounted(step, admittedHead, count, slots, ctx, values, stepName), out optimized)
                         : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
-                            slots => WhileLoopGenericCounted(step, slots, ctx, values, stepName), out optimized);
+                            (admittedHead, slots) => WhileLoopGenericCounted(step, admittedHead, slots, ctx, values, stepName), out optimized);
                     if (taken) return optimized;
                 }
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");

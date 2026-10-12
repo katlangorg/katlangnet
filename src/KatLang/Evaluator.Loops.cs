@@ -399,8 +399,16 @@ public static partial class Evaluator
     // `applyBuiltinResolved` because CoreTests guards address it directly;
     // the C# equivalent would have no caller at all.)
 
+    /// <summary>
+    /// The generic continuation of a planned <c>while</c> after a handover (its only caller). It
+    /// binds the step head the planner ADMITTED (<paramref name="admittedHead"/>), never a fresh read
+    /// of the step's caller-owned head, so the continued iterations bind exactly as the planned ones
+    /// did. A host that rewrote the head during the planned iterations therefore changes nothing,
+    /// just as on the generic route, which binds its once-per-invocation snapshot.
+    /// </summary>
     private static EvalResult<CountedResult> WhileLoopGenericCounted(
         Algorithm step,
+        IReadOnlyList<ParameterPattern> admittedHead,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
         ValEnv valEnv,
@@ -409,7 +417,7 @@ public static partial class Evaluator
         // `while` always runs its step at least once, so the loop-invariant step
         // binding is prepared unconditionally — once per loop invocation, not per
         // iteration.
-        var prepared = PrepareUserLoopStep(step, ctx);
+        var prepared = PrepareAdmittedLoopStep(step, admittedHead, ctx);
         var stateSlots = initialStateSlots.ToList();
         while (true)
         {
@@ -423,8 +431,14 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// The generic continuation of a planned <c>repeat</c> after a handover (its only caller). It
+    /// binds the step head the planner ADMITTED (<paramref name="admittedHead"/>), as
+    /// <see cref="WhileLoopGenericCounted"/> does.
+    /// </summary>
     private static EvalResult<CountedResult> RepeatLoopGenericCounted(
         Algorithm step,
+        IReadOnlyList<ParameterPattern> admittedHead,
         long count,
         IReadOnlyList<Result> initialStateSlots,
         EvalCtx ctx,
@@ -438,7 +452,7 @@ public static partial class Evaluator
         if (count <= 0)
             return MakeCheckedLoopStateResult(ctx, stateSlots);
 
-        var prepared = PrepareUserLoopStep(step, ctx);
+        var prepared = PrepareAdmittedLoopStep(step, admittedHead, ctx);
         // The counter is a LONG like `count` itself. An `int` counter silently wraps past
         // int.MaxValue and never satisfies `k < count` again, so a repeat count above
         // 2^31 - 1 (legal: the count is narrowed from Decimal128 to long) would spin

@@ -249,15 +249,21 @@ public class LoopStrategyPreparationTests
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
     }
 
-    [Fact]
-    public void HostOwnedCallableMetadata_IsSnapshottedBeforeCallbackCanMutateItsSourceLists()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HostOwnedCallableMetadata_IsSnapshottedBeforeCallbackCanMutateItsSourceLists(bool optimize)
     {
         // Algorithm is a public host-AST boundary. Retaining the constructor's pattern list —
         // the ONE parameter channel, from which Parameters and Params derive live — lets this
         // callback change Step from flat-one-parameter to patterned-two-capture between
         // iterations. The loop-invocation snapshot prevents M16 from mixing the old prepared
         // classification with the newly mutated pattern list; the public AST keeps its
-        // established caller-owned collection behavior outside that invocation.
+        // established caller-owned collection behavior outside that invocation. With
+        // optimization on, the admitted flat step is planned; its first iteration emits the
+        // pair as one value, which hands over to the generic continuation, and that
+        // continuation binds the ADMITTED head too (PlannedLoopAdmittedSnapshotTests covers
+        // the planned frame's own rebinding).
         var patterns = new List<ParameterPattern> { new CaptureParameterPattern("state") };
         var calls = 0;
         var operation = HostOperation.Create("ChangeShape", (_, _) =>
@@ -283,10 +289,12 @@ public class LoopStrategyPreparationTests
             new Expr.Resolve("repeat"),
             [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Num(0)]);
         var observations = new EvaluationObservations();
+        var loops = new LoopOptimizationDiagnostics();
 
         var (result, _) = Evaluator.RunCountedObserved(
             expression,
-            enableOptimizations: false,
+            enableOptimizations: optimize,
+            loopDiagnostics: loops,
             observations: observations,
             hostOperations: HostOperations.Create(operation));
 
@@ -296,10 +304,19 @@ public class LoopStrategyPreparationTests
         Assert.Equal(["left", "right"], step.Params);
         Assert.IsType<SequenceValueParameterPattern>(Assert.Single(step.ParameterPatterns));
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
+        Assert.Equal(optimize ? 1 : 0, loops.OptimizedLoopHits);
+        Assert.Equal(optimize ? 1 : 0, observations.OptimizedLoopHandoverMaterializationCount);
     }
 
-    [Fact]
-    public void NestedPatternMembership_IsSnapshottedForOneLoopInvocation()
+    /// <summary>
+    /// A list-pattern head is not a flat fixed head, so the shape gate keeps it on the generic
+    /// route ("variadic loop step") with optimization on as well; both settings bind the same
+    /// once-per-invocation snapshot.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NestedPatternMembership_IsSnapshottedForOneLoopInvocation(bool optimize)
     {
         var nestedItems = new List<ParameterPattern>
         {
@@ -336,10 +353,12 @@ public class LoopStrategyPreparationTests
             new Expr.Resolve("repeat"),
             [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.ListLiteral([new Expr.Num(0)])]);
         var observations = new EvaluationObservations();
+        var loops = new LoopOptimizationDiagnostics();
 
         var (result, _) = Evaluator.RunCountedObserved(
             expression,
-            enableOptimizations: false,
+            enableOptimizations: optimize,
+            loopDiagnostics: loops,
             observations: observations,
             hostOperations: HostOperations.Create(operation));
 
@@ -348,6 +367,8 @@ public class LoopStrategyPreparationTests
         Assert.Equal(2, calls);
         Assert.Equal(2, pattern.Items.Count);
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
+        Assert.Equal(0, loops.OptimizedLoopHits);
+        Assert.Equal(optimize ? "variadic loop step" : "loop optimization disabled", Assert.Single(loops.FallbackReasons).Key);
     }
 
     // ── Async generic twins: identical preparation policy, shared helper ───────

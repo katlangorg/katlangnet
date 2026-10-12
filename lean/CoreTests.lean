@@ -45,3 +45,4 @@ import CoreTests.EmptyStructuralPatterns
 import CoreTests.CallbackResultBoundary
 import CoreTests.PropertyCachePublication
 import CoreTests.VariadicSelection
+import CoreTests.ParentScopeValidation

@@ -22,6 +22,11 @@ namespace KatLang.Tests;
 public sealed class NeedCellConcurrencyContractTests
 {
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+    // The 16-worker integration stress run shares CPU and continuation scheduling with the full
+    // suite. October 2026 V3 timed out its former 30 s worker budget (42 s including the sequential
+    // controls), while the unchanged check took about 1 s alone. Keep the cell-level hang guards
+    // above at 30 s; give this whole workload the heavy probe tests' 120 s budget.
+    private static readonly TimeSpan ParallelRunBudget = TimeSpan.FromSeconds(120);
 
     private static EvalResult<Evaluator.CountedResult> Value(int number = 7)
         => EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom((Decimal128)number), 1));
@@ -326,9 +331,17 @@ public sealed class NeedCellConcurrencyContractTests
     public async Task IndependentRunsInParallel_AgreeWithTheirSequentialResults()
     {
         var expected = Programs.Select(program => Render(KatLangEngine.Run(program.Synchronous))).ToArray();
+        using var workerCancellation = new CancellationTokenSource();
+        var synchronousOptions = new RunOptions
+        {
+            SourceProcessingCancellationToken = workerCancellation.Token,
+            EvaluationCancellationToken = workerCancellation.Token,
+        };
         var suspending = new RunOptions
         {
             HostOperations = HostOperations.Create(HostOperation.CreateAsync("id", async (args, _) => { await Task.Yield(); return args[0]; }, "x")),
+            SourceProcessingCancellationToken = workerCancellation.Token,
+            EvaluationCancellationToken = workerCancellation.Token,
         };
         var asyncExpected = new string[Programs.Length];
         for (var index = 0; index < Programs.Length; index++)
@@ -340,20 +353,33 @@ public sealed class NeedCellConcurrencyContractTests
         var failures = new ConcurrentQueue<string>();
         var workers = Enumerable.Range(0, threads).Select(worker => Task.Factory.StartNew(() =>
         {
-            start.SignalAndWait();
-            for (var iteration = 0; iteration < iterations; iteration++)
+            try
             {
-                var index = (worker + iteration) % Programs.Length;
-                var synchronous = worker % 2 == 0;
-                var actual = synchronous
-                    ? Render(KatLangEngine.Run(Programs[index].Synchronous))
-                    : Render(KatLangEngine.RunAsync(Programs[index].Suspending, suspending).GetAwaiter().GetResult());
-                var wanted = synchronous ? expected[index] : asyncExpected[index];
-                if (actual != wanted) failures.Enqueue($"{Programs[index]}: expected {wanted}, got {actual}");
+                start.SignalAndWait(workerCancellation.Token);
+                for (var iteration = 0; iteration < iterations; iteration++)
+                {
+                    workerCancellation.Token.ThrowIfCancellationRequested();
+                    var index = (worker + iteration) % Programs.Length;
+                    var synchronous = worker % 2 == 0;
+                    var actual = synchronous
+                        ? Render(KatLangEngine.Run(Programs[index].Synchronous, synchronousOptions))
+                        : Render(KatLangEngine.RunAsync(Programs[index].Suspending, suspending).GetAwaiter().GetResult());
+                    var wanted = synchronous ? expected[index] : asyncExpected[index];
+                    if (actual != wanted) failures.Enqueue($"{Programs[index]}: expected {wanted}, got {actual}");
+                }
             }
+            catch (OperationCanceledException) when (workerCancellation.IsCancellationRequested) { }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
 
-        await Task.WhenAll(workers).WaitAsync(WaitLimit);
+        var completedWorkers = Task.WhenAll(workers);
+        try { await completedWorkers.WaitAsync(ParallelRunBudget); }
+        catch (TimeoutException)
+        {
+            // A failed guard must not leave independent runs executing behind later tests.
+            workerCancellation.Cancel();
+            await completedWorkers.WaitAsync(WaitLimit);
+            throw;
+        }
         Assert.Empty(failures);
     }
 

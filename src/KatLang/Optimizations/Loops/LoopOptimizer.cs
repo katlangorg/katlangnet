@@ -10,16 +10,22 @@ internal static partial class LoopOptimizer
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
-        Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        Func<IReadOnlyList<ParameterPattern>, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
         => TryEvaluateWhile(step, stateValues.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray(), ctx, valEnv, genericContinuation, out result);
 
+    /// <summary>
+    /// The planned <c>while</c>. A handover continues generically through
+    /// <paramref name="genericContinuation"/>, which receives the step's ADMITTED head
+    /// (<see cref="LoopPlanTemplate.AdmittedHead"/>) with the next state, so it binds the head these
+    /// planned iterations bound, never a fresh read of the step's live head.
+    /// </summary>
     internal static bool TryEvaluateWhile(
         Algorithm step,
         IReadOnlyList<NeedCell> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
-        Func<IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        Func<IReadOnlyList<ParameterPattern>, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
         var plan = TryBuildLoopPlanTemplate(LoopKind.While, step, stateValues.Count, ctx, valEnv);
@@ -112,7 +118,7 @@ internal static partial class LoopOptimizer
 
                 var (nextStateSlots, continueValue) = splitR.Value;
                 result = continueValue
-                    ? genericContinuation(nextStateSlots)
+                    ? genericContinuation(plan.AdmittedHead, nextStateSlots)
                     : frame.CurrentStateResult();
                 return true;
             }
@@ -139,7 +145,7 @@ internal static partial class LoopOptimizer
                 // Every output emitted exactly one value on this branch, so the
                 // state-only materialization equals the historical full list minus its
                 // final continuation slot.
-                result = genericContinuation(MaterializeGenericHandoverSlots(frame, includeContinuation: false));
+                result = genericContinuation(plan.AdmittedHead, MaterializeGenericHandoverSlots(frame, includeContinuation: false));
                 return true;
             }
         }
@@ -151,17 +157,24 @@ internal static partial class LoopOptimizer
         IReadOnlyList<Result> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
-        Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        Func<IReadOnlyList<ParameterPattern>, long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
         => TryEvaluateRepeat(step, count, stateValues.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray(), ctx, valEnv, genericContinuation, out result);
 
+    /// <summary>
+    /// The planned <c>repeat</c>. A handover continues generically through
+    /// <paramref name="genericContinuation"/>, which receives the step's ADMITTED head
+    /// (<see cref="LoopPlanTemplate.AdmittedHead"/>) with the remaining count and the next state,
+    /// so it binds the head these planned iterations bound, never a fresh read of the step's live
+    /// head.
+    /// </summary>
     internal static bool TryEvaluateRepeat(
         Algorithm step,
         long count,
         IReadOnlyList<NeedCell> stateValues,
         Evaluator.EvalCtx ctx,
         ValEnv valEnv,
-        Func<long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
+        Func<IReadOnlyList<ParameterPattern>, long, IReadOnlyList<Result>, EvalResult<Evaluator.CountedResult>> genericContinuation,
         out EvalResult<Evaluator.CountedResult> result)
     {
         var plan = TryBuildLoopPlanTemplate(LoopKind.Repeat, step, stateValues.Count, ctx, valEnv);
@@ -220,7 +233,7 @@ internal static partial class LoopOptimizer
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
-                    : genericContinuation(remainingCount, outputSlots);
+                    : genericContinuation(plan.AdmittedHead, remainingCount, outputSlots);
                 return true;
             }
 
@@ -237,7 +250,7 @@ internal static partial class LoopOptimizer
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
-                    : genericContinuation(remainingCount, outputSlots);
+                    : genericContinuation(plan.AdmittedHead, remainingCount, outputSlots);
                 return true;
             }
         }
@@ -321,7 +334,13 @@ internal static partial class LoopOptimizer
             return null;
         }
 
-        if (userStep.FindDuplicatePropName() is not null || userStep.ParameterCount != stateArity)
+        // The step's ADMITTED head (LoopPlanTemplate.AdmittedHead): ONE snapshot of its caller-owned
+        // top-level patterns, read here and nowhere else in the planned run. The planned frame binds
+        // one plain fixed capture per state slot by position. The shape gate admitted the head as
+        // exactly that (Evaluator.IsOptimizedLoopShapeEligible); a snapshot that is not exactly that is
+        // refused here too, so the planner never binds a head it cannot represent.
+        var admittedHead = userStep.ParameterPatterns.ToArray();
+        if (userStep.FindDuplicatePropName() is not null || AdmittedStateNames(admittedHead, stateArity) is not { } stateNames)
         {
             RecordLoopPlanFallbackDiagnostic(kind, step, stateArity, ctx, "loop plan parameter/property shape mismatch");
             return null;
@@ -334,9 +353,9 @@ internal static partial class LoopOptimizer
             return null;
         }
 
-        // One immutable state-name projection and bundle-facts memo for this construction.
-        // Output rows keep separate expression memos (including stack-sensitive fallbacks).
-        var stateNames = userStep.Params;
+        // One immutable state-name list (the admitted head's) and bundle-facts memo for this
+        // construction. Output rows keep separate expression memos (including stack-sensitive
+        // fallbacks).
         var loopCtx = ShadowLoopStepParameterEnvironments(ctx, stateNames);
         var iterationCtx = loopCtx.Push(userStep);
         var argumentMemo = new LoopTempCallArgumentMemo();
@@ -407,6 +426,8 @@ internal static partial class LoopOptimizer
         return new LoopPlanTemplate(
             kind,
             userStep,
+            admittedHead,
+            stateNames,
             stateArity,
             tempPlans,
             nextStateOutputs,
@@ -414,6 +435,33 @@ internal static partial class LoopOptimizer
             requiresPerIterationCacheIdentity,
             loopCtx,
             diagnosticKey);
+    }
+
+    /// <summary>
+    /// The state names of an admitted head, in slot order: one plain fixed capture per state slot,
+    /// with distinct names. Null for any other head. A small head is scanned for a repeated name and
+    /// a large one hashed, so the check stays linear.
+    /// </summary>
+    private static string[]? AdmittedStateNames(ParameterPattern[] head, int stateArity)
+    {
+        if (head.Length != stateArity)
+            return null;
+
+        const int ScannedHeadLength = 8;
+        var names = new string[head.Length];
+        var seen = head.Length > ScannedHeadLength ? new HashSet<string>(StringComparer.Ordinal) : null;
+        for (var index = 0; index < head.Length; index++)
+        {
+            if (head[index] is not CaptureParameterPattern { Kind: ParameterKind.Normal } capture)
+                return null;
+
+            var name = capture.Name;
+            if (seen is null ? Array.IndexOf(names, name, 0, index) >= 0 : !seen.Add(name))
+                return null;
+            names[index] = name;
+        }
+
+        return names;
     }
 
     /// <summary>

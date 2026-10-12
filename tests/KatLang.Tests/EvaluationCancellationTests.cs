@@ -418,7 +418,7 @@ public class EvaluationCancellationTests
                 [new Result.Atom(0)],
                 cancelledCtx,
                 [],
-                (_, _) => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
+                (_, _, _) => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
                 out _));
         Assert.Equal(cancelled.Token, thrown.CancellationToken);
 
@@ -435,7 +435,7 @@ public class EvaluationCancellationTests
             [new Result.Atom(0)],
             liveCtx,
             [],
-            (_, _) => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
+            (_, _, _) => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
             out var result);
         Assert.True(handled);
         Assert.False(result.IsError);
@@ -461,7 +461,7 @@ public class EvaluationCancellationTests
                 [new Result.Atom(0)],
                 ctx,
                 [],
-                _ => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
+                (_, _) => throw new Xunit.Sdk.XunitException("generic continuation must not run"),
                 out _));
         Assert.Equal(cancelled.Token, thrown.CancellationToken);
     }

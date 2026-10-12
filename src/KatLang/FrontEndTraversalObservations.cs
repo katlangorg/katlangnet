@@ -589,6 +589,32 @@ internal sealed class FrontEndTraversalObservations
     public long WalkerSteps
         => checked(WalkerAlgorithmExpansions + WalkerExpressionExpansions + WalkerParameterDeclarationVisits);
 
+    // ── Pre-evaluation validation: host-built parent scopes ───────────────────
+    // Recorded by the pre-evaluation validation walker's own parent-scope walk
+    // (PreEvaluationValidationWalker.VisitParentScopes), which the base-walker counters
+    // above do not see. A scope's member algorithms are counted there as usual; these
+    // count the scopes themselves.
+
+    /// <summary>
+    /// Parent scopes the pre-evaluation walk validated (walked their <c>open</c> targets and
+    /// properties). A scope is validated once, whatever it parents.
+    /// </summary>
+    public long PreEvaluationParentScopeExpansions { get; private set; }
+
+    internal void RecordPreEvaluationParentScopeExpansion()
+        => PreEvaluationParentScopeExpansions = checked(PreEvaluationParentScopeExpansions + 1);
+
+    /// <summary>
+    /// Parent scopes the pre-evaluation walk reached along <c>Parent</c> links, including the
+    /// already-validated scope at which a walk stops. A walk ends at the first scope already
+    /// validated, so K inner scopes over one shared chain of N outer scopes reach N + 2K - 1
+    /// scopes, never K × N.
+    /// </summary>
+    public long PreEvaluationParentScopeLinks { get; private set; }
+
+    internal void RecordPreEvaluationParentScopeLink()
+        => PreEvaluationParentScopeLinks = checked(PreEvaluationParentScopeLinks + 1);
+
     // ── Semantic model construction (editor) ──────────────────────────────────
 
     /// <summary>

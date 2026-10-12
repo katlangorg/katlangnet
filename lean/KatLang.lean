@@ -2766,15 +2766,28 @@ def staticAliasTarget? : Nat -> List Algorithm -> Algorithm -> Option Algorithm
 
 mutual
   /-- The number of callable aliases in an algorithm tree — the fuel of the static alias chase
-      (`staticAliasCycle`): a chase landing on more aliases than the tree holds has revisited one. -/
+      (`staticAliasCycle`): a chase landing on more aliases than the tree holds has revisited one.
+      A host-built parent scope is part of the tree the pre-evaluation pass validates
+      (`validateScopeTree`), so its aliases are counted too. -/
   partial def Algorithm.aliasCount : Algorithm -> Nat
-    | .mk _ _ op pr out _ =>
-        (op.map Expr.aliasCount).sum + (pr.map (fun prop => prop.alg.aliasCount)).sum + (out.map Expr.aliasCount).sum
+    | .mk p _ op pr out _ =>
+        ScopeCtx.parentAliasCount p + (op.map Expr.aliasCount).sum
+          + (pr.map (fun prop => prop.alg.aliasCount)).sum + (out.map Expr.aliasCount).sum
     | .builtin _ => 0
-    | .conditional _ op branches _ =>
-        (op.map Expr.aliasCount).sum + (branches.map (fun branch => branch.body.aliasCount)).sum
-    | .alias _ op pr target _ =>
-        1 + (op.map Expr.aliasCount).sum + (pr.map (fun prop => prop.alg.aliasCount)).sum + target.aliasCount
+    | .conditional p op branches _ =>
+        ScopeCtx.parentAliasCount p + (op.map Expr.aliasCount).sum
+          + (branches.map (fun branch => branch.body.aliasCount)).sum
+    | .alias p op pr target _ =>
+        1 + ScopeCtx.parentAliasCount p + (op.map Expr.aliasCount).sum
+          + (pr.map (fun prop => prop.alg.aliasCount)).sum + target.aliasCount
+
+  /-- The callable aliases in a parent scope chain: in each scope's opens and properties, the
+      parts the pre-evaluation pass validates (`validateScopeTree`). -/
+  partial def ScopeCtx.parentAliasCount : Option ScopeCtx -> Nat
+    | none => 0
+    | some (.mk parent? _ op pr _ _ _ _) =>
+        ScopeCtx.parentAliasCount parent? + (op.map Expr.aliasCount).sum
+          + (pr.map (fun prop => prop.alg.aliasCount)).sum
 
   /-- The callable aliases inside an expression (in its blocks). -/
   partial def Expr.aliasCount : Expr -> Nat
@@ -2793,6 +2806,15 @@ mutual
         target.aliasCount + fallback.aliasCount + ((args?.getD []).map Expr.aliasCount).sum
     | _ => 0
 end
+
+/-- A host-built parent scope chain as the STATIC chain its members are declared in, outermost
+    first: each scope a plain algorithm holding its opens and properties. A member of a parent
+    scope resolves names through that scope chain, never through the algorithm the scope parents,
+    so the alias check (`staticAliasCycle`) chases a member's target through this chain exactly as
+    through enclosing algorithms. -/
+partial def ScopeCtx.staticChain : ScopeCtx -> List Algorithm
+  | .mk parent? _ op pr _ _ _ _ =>
+      ((parent?.map ScopeCtx.staticChain).getD []) ++ [Algorithm.mk none [] op pr [] none]
 
 mutual
   /-- Pre-evaluation structural validation over a whole algorithm tree:
@@ -2815,6 +2837,13 @@ mutual
         (`staticAliasCycle`; `illegalInEval` `aliasCycleMessage`) — only a host-built
         tree can violate either, the surface pass never forms one
 
+      The walk covers the WHOLE tree, including every host-built parent scope an
+      algorithm carries (`validateScopeTree`, after the algorithm's own content). The
+      evaluator keeps such a scope for an `open` block target
+      (`wireOpenBlockToGlobalScope`), so its members are reachable at run time. Owner
+      decision, 2026-10-12: they are held to these rules like every other algorithm.
+      Formerly the walk never entered a parent scope.
+
       `name` labels conditional arity diagnostics with the nearest enclosing
       property name; anonymous algorithms report the placeholder
       `conditional`. `chain` is the static scope chain around `a` (outermost
@@ -2831,7 +2860,7 @@ mutual
       .error (Error.illegalInEval multipleCollectingBindingsPerLevelMessage)
     let inner := chain ++ [a]
     match a with
-    | .mk _ parameters op pr out _ =>
+    | .mk parent? parameters op pr out _ =>
         if let some .repeatedNameIncludesCollecting := ParameterPattern.signatureViolation? parameters then
           .error (Error.illegalInEval repeatedNameIncludesCollectingMessage)
         if !parameters.isEmpty && out.isEmpty then
@@ -2842,14 +2871,18 @@ mutual
           validateAlgorithmTree prop.alg prop.name inner aliases
         for expr in out do
           validateExprTree expr inner aliases
+        if let some scope := parent? then
+          validateScopeTree scope aliases
     | .builtin _ => pure ()
-    | .conditional _ op branches _ =>
+    | .conditional parent? op branches _ =>
         validateConditionalBranchArities name a
         for openExpr in op do
           validateExprTree openExpr inner aliases
         for branch in branches do
           validateAlgorithmTree branch.body name inner aliases
-    | .alias _ op pr target _ =>
+        if let some scope := parent? then
+          validateScopeTree scope aliases
+    | .alias parent? op pr target _ =>
         if !target.isStaticAliasPath then
           .error (Error.illegalInEval (aliasTargetNotStaticPathMessage (openExprName target)))
         if staticAliasCycle aliases chain a then
@@ -2859,6 +2892,25 @@ mutual
         for prop in pr do
           validateAlgorithmTree prop.alg prop.name inner aliases
         validateExprTree target inner aliases
+        if let some scope := parent? then
+          validateScopeTree scope aliases
+
+  /-- The pre-evaluation validation of a host-built PARENT scope, and of its own parent:
+      its `open` targets and its property algorithms, the parts lexical lookup and `open`
+      resolution read at run time. The scope's `output` and `branches` are identity data
+      that nothing evaluates, so they are not walked. The members are validated against the
+      scope chain (`ScopeCtx.staticChain`), the chain they resolve names in. No front end
+      builds such a scope; a host may. C#: `PreEvaluationValidationWalker.VisitParentScopes`. -/
+  partial def validateScopeTree (s : ScopeCtx) (aliases : Nat) : EvalM Unit := do
+    let chain := s.staticChain
+    match s with
+    | .mk parent? _ op pr _ _ _ _ =>
+        for openExpr in op do
+          validateExprTree openExpr chain aliases
+        for prop in pr do
+          validateAlgorithmTree prop.alg prop.name chain aliases
+        if let some outer := parent? then
+          validateScopeTree outer aliases
 
   /-- Traverse expressions so nested block literals and call-argument
       algorithms also satisfy the same pre-evaluation invariants. -/

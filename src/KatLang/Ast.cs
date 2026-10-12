@@ -3155,7 +3155,8 @@ internal static class AlgorithmValidation
     /// (<c>validateExplicitParamOutputInvariantExpr</c>): one depth-first walk in
     /// Lean's traversal order that checks, at each node and in Lean's precedence,
     /// the explicit-parameters-require-output invariant and the uniform conditional
-    /// branch input/output arity invariants. Returns the first violation, or
+    /// branch input/output arity invariants. The walk covers the whole tree, every
+    /// host-built parent scope included. Returns the first violation, or
     /// <c>null</c> for a valid tree.
     /// </summary>
     public static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(Expr expr)
@@ -3231,8 +3232,14 @@ internal static class AlgorithmValidation
             // written code for a module that is merely not loaded yet — the very verdict provisional
             // elaboration withholds. The body is validated when it materializes (the parser checked
             // its written parameter lists; the front-end validators check the completed ones).
+            // Its host-built parent is already a complete scope, however, and remains subject to
+            // the whole-tree gate even when this provisional body is never demanded.
             if (algorithm.DeferredRegion is not null)
+            {
+                if (algorithm.Parent is { } deferredParent)
+                    VisitParentScopes(deferredParent);
                 return;
+            }
 
             // A loaded module is a source unit rooted at the prelude (Q-31 H-P): the static chain
             // its aliases resolve in restarts at the module, whatever holds it (Lean: the `.module`
@@ -3253,6 +3260,9 @@ internal static class AlgorithmValidation
                 _chain.Add(algorithm);
                 try { base.VisitAlgorithm(algorithm); }
                 finally { _chain.RemoveAt(_chain.Count - 1); }
+
+                if (algorithm.Parent is { } parent)
+                    VisitParentScopes(parent);
             }
             finally
             {
@@ -3264,8 +3274,76 @@ internal static class AlgorithmValidation
             }
         }
 
-        private readonly List<Algorithm> _chain = [];
+        private List<Algorithm> _chain = [];
         private StaticAliasTargets? _aliasTargets;
+
+        /// <summary>
+        /// The host-built PARENT scope chain of an algorithm, after the algorithm's own content (Lean:
+        /// <c>validateScopeTree</c>, which ends each arm of <c>validateAlgorithmTree</c>). The
+        /// evaluator keeps such a scope for an <c>open</c> block target
+        /// (<c>Evaluator.WireOpenBlockToGlobalScope</c>), so its members are reachable at run time, and
+        /// the whole tree is held to the same rules wherever a scope sits (owner decision, 2026-10-12;
+        /// formerly the walk never entered one). Each scope's <c>open</c> targets and property
+        /// algorithms — what lexical lookup and <c>open</c> resolution read — are validated against
+        /// the scope chain they resolve names in, innermost scope first, then its own parent. A scope
+        /// is validated once, whatever it parents: its members' chain is its own. No front end builds
+        /// one; a host may.
+        /// </summary>
+        private void VisitParentScopes(ScopeCtx scope)
+        {
+            if (stopAfterFirst && Violations.Count > 0)
+                return;
+
+            // A scope is marked only when its own content is entered. Marking an entire pending
+            // chain here would hide an outer scope reached through an earlier inner property,
+            // changing Lean's depth-first error precedence on a shared acyclic graph.
+            if (_visited.Contains(scope))
+            {
+                TraversalObservations?.RecordPreEvaluationParentScopeLink();
+                return;
+            }
+
+            // The members' static chain, outermost first: each scope as a plain algorithm holding its
+            // opens and properties (Lean: `ScopeCtx.staticChain`). Only the alias check reads a chain,
+            // so one is built only for a scope chain that reaches an alias; each step outward drops the
+            // innermost level.
+            var held = _chain;
+            _chain = [];
+            if (checkConditionalBranchArities && AstStructuralPreflight.ReachesAlias(scope, _aliasReach))
+            {
+                var levels = new Stack<ScopeCtx>();
+                for (var current = scope; current is not null; current = current.Parent)
+                    levels.Push(current);
+                while (levels.TryPop(out var level))
+                {
+                    _chain.Add(new Algorithm.User(
+                        Parent: null, ParameterPatterns: [], Opens: level.Opens, Properties: level.Properties, Output: []));
+                }
+            }
+
+            try
+            {
+                for (var current = scope; current is not null; current = current.Parent)
+                {
+                    TraversalObservations?.RecordPreEvaluationParentScopeLink();
+                    if (!_visited.Add(current))
+                        break;
+                    TraversalObservations?.RecordPreEvaluationParentScopeExpansion();
+                    foreach (var open in current.Opens)
+                        VisitOpenExpression(open);
+                    foreach (var property in current.Properties)
+                        VisitProperty(property);
+                    if (stopAfterFirst && Violations.Count > 0)
+                        return;
+                    if (_chain.Count > 0)
+                        _chain.RemoveAt(_chain.Count - 1);
+                }
+            }
+            finally
+            {
+                _chain = held;
+            }
+        }
 
         /// <summary>
         /// A callable alias (FWD-02): its written target must be a STATIC PATH, and the static chase
