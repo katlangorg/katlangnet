@@ -543,23 +543,44 @@ jobs:
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8NoBOM
 
           $assets = $expected | ForEach-Object { Join-Path ./dist $_ }
-          & gh release create $env:TAG `
+          $draftUrl = (& gh release create $env:TAG `
               --repo $env:REPOSITORY `
               --target $env:SOURCE_SHA `
               --title "KatLang.CLI $env:VERSION" `
               --notes-file $notesPath `
               --draft `
-              @assets
+              @assets | Select-Object -Last 1).Trim()
           if ($LASTEXITCODE -ne 0) {
               throw 'Creating the draft release or uploading its complete asset set failed. Inspect the draft before retrying.'
           }
 
-          $draft = (& gh release view $env:TAG --repo $env:REPOSITORY --json tagName,isDraft,targetCommitish,assets) | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $draft.isDraft -or $draft.tagName -cne $env:TAG) {
+          if ($draftUrl -notmatch '^https://github\.com/[^/]+/[^/]+/releases/tag/[^/?#]+$') {
+              throw "GitHub CLI returned an unexpected draft release URL: '$draftUrl'."
+          }
+          $releaseJson = (& gh api --paginate --slurp `
+              "repos/$env:REPOSITORY/releases?per_page=100") -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not inspect the draft release.'
+          }
+          $releasePages = ConvertFrom-Json -InputObject $releaseJson -NoEnumerate
+          $draftMatches = @(
+              foreach ($page in $releasePages) {
+                  foreach ($release in $page) {
+                      if ($release.draft -and
+                          $release.html_url -ceq $draftUrl -and
+                          $release.name -ceq "KatLang.CLI $env:VERSION" -and
+                          $release.target_commitish -ceq $env:SOURCE_SHA) {
+                          $release
+                      }
+                  }
+              }
+          )
+          if ($draftMatches.Count -ne 1) {
               throw 'The uploaded release is not the expected draft.'
           }
-          if ($draft.targetCommitish -cne $env:SOURCE_SHA) {
-              throw "Draft target '$($draft.targetCommitish)' does not match validated commit '$env:SOURCE_SHA'."
+          $draft = $draftMatches[0]
+          if ($draft.target_commitish -cne $env:SOURCE_SHA) {
+              throw "Draft target '$($draft.target_commitish)' does not match validated commit '$env:SOURCE_SHA'."
           }
           $uploaded = @($draft.assets | ForEach-Object name)
           $assetDifference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $uploaded)
@@ -567,13 +588,16 @@ jobs:
               throw "Draft assets are incomplete; leaving the draft unpublished for inspection: $($assetDifference | Out-String)"
           }
 
-          & gh release edit $env:TAG --repo $env:REPOSITORY --draft=false
-          if ($LASTEXITCODE -ne 0) {
+          $published = (& gh api --method PATCH `
+              "repos/$env:REPOSITORY/releases/$($draft.id)" `
+              -F "tag_name=$env:TAG" `
+              -F draft=false) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $published.draft -or $published.tag_name -cne $env:TAG) {
               throw 'All assets were uploaded, but publishing the draft failed. Inspect the draft before retrying.'
           }
 
-          $published = (& gh release view $env:TAG --repo $env:REPOSITORY --json isDraft) | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $published.isDraft) {
+          $published = (& gh release view $env:TAG --repo $env:REPOSITORY --json isDraft,tagName) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $published.isDraft -or $published.tagName -cne $env:TAG) {
               throw 'GitHub did not confirm the release as published.'
           }
 
