@@ -268,13 +268,19 @@ public class ContinuousIntegrationPolicyTests
     public void ReleaseWorkflow_UsesADraftAsThePublicVisibilityGate()
     {
         var source = Text(ReleasePath);
-        var create = source.IndexOf("gh release create", StringComparison.Ordinal);
+        var create = source.IndexOf("$draftUrl = (& gh release create", StringComparison.Ordinal);
+        var lookup = source.IndexOf("gh api --paginate --slurp", create, StringComparison.Ordinal);
         var verifyAssets = source.IndexOf("$assetDifference", create, StringComparison.Ordinal);
-        var publish = source.IndexOf("gh release edit", verifyAssets, StringComparison.Ordinal);
-        Assert.True(create >= 0 && verifyAssets > create && publish > verifyAssets,
-            "release must be created as a draft, asset-verified, and only then published");
+        var publish = source.IndexOf("gh api --method PATCH", verifyAssets, StringComparison.Ordinal);
+        Assert.True(create >= 0 && lookup > create && verifyAssets > lookup && publish > verifyAssets,
+            "release must be created as a draft, resolved from the release list, asset-verified, and only then published");
         Assert.Contains("--draft `", source, StringComparison.Ordinal);
-        Assert.Contains("--draft=false", source, StringComparison.Ordinal);
+        Assert.Contains("releases/tag/[^/?#]+$", source, StringComparison.Ordinal);
+        Assert.Contains("$release.html_url -ceq $draftUrl", source, StringComparison.Ordinal);
+        Assert.Contains("\"repos/$env:REPOSITORY/releases/$($draft.id)\"", source, StringComparison.Ordinal);
+        Assert.Contains("-F \"tag_name=$env:TAG\"", source, StringComparison.Ordinal);
+        Assert.Contains("-F draft=false", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("gh release edit $env:TAG --draft=false", source, StringComparison.Ordinal);
     }
 
     [Fact]
