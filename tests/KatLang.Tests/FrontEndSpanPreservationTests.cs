@@ -10,7 +10,7 @@ public class FrontEndSpanPreservationTests
     [Fact]
     public void ParameterDetection_PreservesCompositeSpansAcrossImplicitRewriting()
     {
-        const string source = "K = [-x, x:0, x + 1, x*, (x, 1), {x}, H(x)]\nK";
+        const string source = "K = [-x, x[0], x + 1, x*, (x, 1), {x}, H(x)]\nK";
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
 
@@ -211,10 +211,11 @@ public class FrontEndSpanPreservationTests
                 foreach (var link in links)
                     foreach (var nested in CompositeNodes(link.Operand)) yield return nested;
                 break;
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
                 yield return expr;
                 foreach (var nested in CompositeNodes(target)) yield return nested;
-                foreach (var nested in CompositeNodes(selector)) yield return nested;
+                foreach (var selector in selectors)
+                    foreach (var nested in CompositeNodes(selector)) yield return nested;
                 break;
             case Expr.SequenceConstruct(var left, var right):
                 yield return expr;

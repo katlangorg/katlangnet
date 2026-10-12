@@ -953,7 +953,7 @@ public class DotCallFallbackExposureTests
             "(1, 2)",
             "[1, 2]",
             "(1 + 2)",
-            "(1, 2):0",
+            "(1, 2)[0]",
             "Id(3)",
         ];
         foreach (var receiver in certainMissReceivers)
@@ -1095,7 +1095,7 @@ public class DotCallFallbackExposureTests
             [typeof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [typeof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
             [typeof(Expr.Comparison)] = new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, leaf)]),
-            [typeof(Expr.Index)] = new Expr.Index(leaf, leaf),
+            [typeof(Expr.Index)] = new Expr.Index(leaf, [leaf]),
             [typeof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
             [typeof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
             [typeof(Expr.SequenceSpread)] = new Expr.SequenceSpread(leaf),

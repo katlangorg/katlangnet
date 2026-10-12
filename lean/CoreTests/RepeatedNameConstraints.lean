@@ -29,7 +29,7 @@ open KatLang (resolve param num)
 -- 7, and `P(Bad, Bad)` masked the division by zero with a type mismatch.
 --
 -- Evaluation-count evidence without host operations (as in
--- `ArgumentValueOutcome.lean`): `Bad = Id(1) / 0`, `Missing = [Id(1)]:5`,
+-- `ArgumentValueOutcome.lean`): `Bad = Id(1) / 0`, `Missing = [Id(1)][5]`,
 -- `A = Id(5)` and `B = Id(5) + 0` each open exactly ONE binding context per
 -- evaluation of their bodies, and every user call whose parameters BIND opens
 -- one more (`EvalCtx.bindParameters`). A call whose binding fails opens none.
@@ -40,9 +40,9 @@ def rnIdAlg : Algorithm := alg ["y"] [] [] [param "y"]
 /-- `Bad = Id(1) / 0`: one context, then `divByZero`. -/
 def rnBadAlg : Algorithm := alg [] [] [] [.binary .div (.call (resolve "Id") [num 1]) (num 0)]
 
-/-- `Missing = [Id(1)]:5`: one context, then `badIndex` — a second failure KIND. -/
+/-- `Missing = [Id(1)][5]`: one context, then `badIndex` — a second failure KIND. -/
 def rnMissingAlg : Algorithm :=
-  alg [] [] [] [.index (.listLiteral [.call (resolve "Id") [num 1]]) (num 5)]
+  alg [] [] [] [.index (.listLiteral [.call (resolve "Id") [num 1]]) [num 5]]
 
 /-- `A = Id(5)` and `B = Id(5) + 0`: equal values, two distinct callables. -/
 def rnAAlg : Algorithm := alg [] [] [] [.call (resolve "Id") [num 5]]
@@ -111,14 +111,14 @@ def rnSomeNAlg : Algorithm := rnAlias "N"
 
 def rnSomeCAlg : Algorithm := rnAlias "C"
 
-/-- `Lifted = [P]:0`, as the front end elaborates it: a FORMULA forwards by binding name, so
-    the ONE caller binding `x` is supplied to both occurrences, `Lifted(x) = [P(x, x)]:0` —
+/-- `Lifted = [P][0]`, as the front end elaborates it: a FORMULA forwards by binding name, so
+    the ONE caller binding `x` is supplied to both occurrences, `Lifted(x) = [P(x, x)][0]` —
     the call of the written `Same`. -/
-def rnLifted (call : KatLang.Expr) : List KatLang.Expr := [.index (.listLiteral [call]) (num 0)]
+def rnLifted (call : KatLang.Expr) : List KatLang.Expr := [.index (.listLiteral [call]) [num 0]]
 
 def rnLiftedAlg : Algorithm := alg ["x"] [] [] (rnLifted (.call (resolve "P") [param "x", param "x"]))
 
-/-- `LiftedN = [N]:0`, elaborated: `LiftedN(x, y) = [N(x, (x, y))]:0` — one binding per name;
+/-- `LiftedN = [N][0]`, elaborated: `LiftedN(x, y) = [N(x, (x, y))][0]` — one binding per name;
     the group keeps its kind for the names that are new there, and a SEQUENCE group left with
     one non-collecting item is that item (there is no one-item sequence), so `y` is a plain
     parameter. The callee's sequence group is rebuilt as a sequence (FWD-02). -/
@@ -126,14 +126,14 @@ def rnLiftedNAlg : Algorithm :=
   algWithParameterPatterns [rnCap "x", rnCap "y"] [] []
     (rnLifted (.call (resolve "N") [param "x", .capture [param "x", param "y"]]))
 
-/-- `LiftedC = [C]:0`, elaborated: `LiftedC(x, *r) = [C(x, r*, x)]:0` — the repeated `x`
+/-- `LiftedC = [C][0]`, elaborated: `LiftedC(x, *r) = [C(x, r*, x)][0]` — the repeated `x`
     supplied from one binding, the collector re-spread because its SOURCE binding collects. -/
 def rnLiftedCAlg : Algorithm :=
   algWithParameterPatterns [rnCap "x", rnColl "r"] [] []
     (rnLifted (.call (resolve "C") [param "x", .sequenceSpread (param "r"), param "x"]))
 
 /-- `G((x, x)) = x`, its callable alias `SomeG = G` (which IS G, with its one sequence parameter
-    `(x, x)`), and the formula `LiftedG = [G]:0`, elaborated `LiftedG(x) = [G((x, x))]:0`:
+    `(x, x)`), and the formula `LiftedG = [G][0]`, elaborated `LiftedG(x) = [G((x, x))][0]`:
     deduplicating names leaves the caller's sequence group ONE non-collecting item, and a
     one-item sequence group does not exist (the singleton rule), so the lifted parameter is the
     name itself and the callee's group is rebuilt as the sequence `(x, x)` from the one binding. -/
@@ -407,7 +407,7 @@ def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Boo
 #guard rnFailsWith innermostIsBadArity [rnCall "NW" [num 6, .capture [num 7, num 8]]]
 
 -- 18. The one-name group lifts as its one name in a FORMULA (September 2026,
---     structural patterns): `LiftedG(x) = [G((x, x))]:0` binds its argument WHOLE,
+--     structural patterns): `LiftedG(x) = [G((x, x))][0]` binds its argument WHOLE,
 --     whatever its kind, exactly like the written `Same`-style explicit call, and G's
 --     pattern then checks the two occurrences it was given. (The former lifted `(x)`
 --     opened lists and took scalars; a one-item sequence pattern no longer exists.)

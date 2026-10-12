@@ -134,11 +134,11 @@ def case_guard_kind__unary_list : Expr :=
 #guard obsFine case_guard_kind__unary_list == "err typeMismatch"
 
 def case_guard_kind__selector_list : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2])] [(.index (.resolve "A") (.listLiteral [.num 0]))])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2])] [(.index (.resolve "A") [.listLiteral [.num 0]])])
 #guard obsFine case_guard_kind__selector_list == "err typeMismatch"
 
 def case_guard_kind__selector_empty : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2])] [(.index (.resolve "A") (.emptySequence 0))])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2])] [(.index (.resolve "A") [.emptySequence 0])])
 #guard obsFine case_guard_kind__selector_empty == "err typeMismatch"
 
 def case_guard_kind__range_list : Expr :=
@@ -190,7 +190,7 @@ def case_guard_domain__avg_empty_list : Expr :=
 #guard obsFine case_guard_domain__avg_empty_list == "err illegalInEval"
 
 def case_guard_domain__index_empty : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.emptySequence 0) (.num 0))])
+  .algorithmExpr (alg [] [] [] [(.index (.emptySequence 0) [.num 0])])
 #guard obsFine case_guard_domain__index_empty == "err badIndex"
 
 def case_guard_domain__repeat_negative : Expr :=

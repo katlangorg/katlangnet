@@ -146,7 +146,7 @@ public class SemanticExplorerLeanArtifactTests
         var excluded = allCases.Where(c => c.LeanProgram is null).Select(c => c.Id)
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();
-        var expected = SemanticExplorerCorpus.Values.Select(v => $"indexNeg__{v.Id}")
+        var expected = Enumerable.Empty<string>()
             .Concat(
             [
                 "special__semicolonSeparator",

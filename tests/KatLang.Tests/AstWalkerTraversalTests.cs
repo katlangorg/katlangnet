@@ -58,7 +58,7 @@ public class AstWalkerTraversalTests
             { nameof(Expr.Binary), new Expr.Binary(BinaryOp.Add, leaf, second), [leaf, second] },
             // A chain visits its first operand and then every link operand in chain order.
             { nameof(Expr.Comparison), new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, second), new ComparisonLink(ComparisonOp.Eq, third)]), [leaf, second, third] },
-            { nameof(Expr.Index), new Expr.Index(leaf, second), [leaf, second] },
+            { nameof(Expr.Index), new Expr.Index(leaf, [second]), [leaf, second] },
             { nameof(Expr.SequenceConstruct), new Expr.SequenceConstruct(leaf, second), [leaf, second] },
             { nameof(Expr.EmptySequence), new Expr.EmptySequence(0), [] },
             { nameof(Expr.SequenceSpread), new Expr.SequenceSpread(leaf), [leaf] },
@@ -112,7 +112,7 @@ public class AstWalkerTraversalTests
             }
             F(a) = -a + 1
             G(*items) = items.count
-            H((x, y)) = [x, y]:0
+            H((x, y)) = [x, y][0]
             F(7), G(1, 2), H((3, 4)), 'text', (), A.X, X, if(true, 2, 3), Math.Abs(-1)
             "t{F(7)}u{'s'}", "{"{1}"}"
             """);

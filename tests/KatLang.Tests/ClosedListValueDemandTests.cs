@@ -14,7 +14,7 @@ public class ClosedListValueDemandTests
             "Math.Abs(Math.Abs(A))", "Math.Pow(A, 2)", "Math.Round(A, 2)",
             "Math.Sin(A)", "sqrt(A)", "A.abs", "(A).abs",
             "Id(Math.Abs(A))", "Alias(A)", "M.Abs(A)", "sum(A)", "A + 0",
-            "[A]:0", "(A, A):0", "A.string",
+            "[A][0]", "(A, A)[0]", "A.string",
         }) yield return [expression];
     }
 

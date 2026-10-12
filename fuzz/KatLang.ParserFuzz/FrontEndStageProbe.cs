@@ -159,7 +159,7 @@ internal static class FrontEndStageProbe
                     case Expr.Unary(_, var o): exprs.Push(o); break;
                     case Expr.Binary(_, var l, var r): exprs.Push(l); exprs.Push(r); break;
                     case Expr.Comparison(var first, var links): exprs.Push(first); foreach (var link in links) exprs.Push(link.Operand); break;
-                    case Expr.Index(var t, var s): exprs.Push(t); exprs.Push(s); break;
+                    case Expr.Index(var t, var s): exprs.Push(t); foreach (var it in s) exprs.Push(it); break;
                     case Expr.SequenceSpread(var o): exprs.Push(o); break;
                     case Expr.SequenceConstruct(var l, var r): exprs.Push(l); exprs.Push(r); break;
                     case Expr.Grace(var i, _): exprs.Push(i); break;
@@ -203,7 +203,7 @@ internal static class FrontEndStageProbe
                 case Expr.Unary(_, var o): Ex(o); break;
                 case Expr.Binary(_, var l, var r): Ex(l); Ex(r); break;
                 case Expr.Comparison(var first, var links): Ex(first); foreach (var link in links) Ex(link.Operand); break;
-                case Expr.Index(var t, var s): Ex(t); Ex(s); break;
+                case Expr.Index(var t, var s): Ex(t); foreach (var it in s) Ex(it); break;
                 case Expr.SequenceSpread(var o): Ex(o); break;
                 case Expr.SequenceConstruct(var l, var r): Ex(l); Ex(r); break;
                 case Expr.Grace(var i, _): Ex(i); break;

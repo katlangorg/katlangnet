@@ -8,7 +8,7 @@ open KatLang (resolve param num)
 --------------------------------------------------------------------------------
 -- SELECTION IS A VALUE BOUNDARY (September 2026)
 --------------------------------------------------------------------------------
--- `A:i`, `first(A)`, and `last(A)` CHOOSE a value: the selected element is
+-- `A[i]`, `first(A)`, and `last(A)` CHOOSE a value: the selected element is
 -- returned exactly as stored and re-counted through the ordinary value
 -- boundary (`Result.valueCount`) — `()` emits zero values, everything else
 -- (a sequence value, an exact list, a scalar) emits ONE. The selected value's
@@ -110,12 +110,12 @@ def selectionForms (selected : KatLang.Expr) : List (Algorithm × KatLang.Expr) 
   let back := alg [] [] [] [.capture [.num 9, selected]]           -- A = (9, V)
   let frontList := alg [] [] [] [.listLiteral [selected, .num 9]]  -- A = [V, 9]
   let backList := alg [] [] [] [.listLiteral [.num 9, selected]]   -- A = [9, V]
-  [ (front, .index (resolve "A") (.num 0)),
+  [ (front, .index (resolve "A") [.num 0]),
     (front, .call (resolve "first") [resolve "A"]),
-    (back, .index (resolve "A") (.num 1)),
+    (back, .index (resolve "A") [.num 1]),
     (back, .call (resolve "last") [resolve "A"]),
-    (back, .index (resolve "A") (.binary .sub (.dotCall (resolve "A") "count" none) (.num 1))),
-    (frontList, .index (resolve "A") (.num 0)),
+    (back, .index (resolve "A") [.binary .sub (.dotCall (resolve "A") "count" none) (.num 1)]),
+    (frontList, .index (resolve "A") [.num 0]),
     (frontList, .call (resolve "first") [resolve "A"]),
     (backList, .call (resolve "last") [resolve "A"]) ]
 
@@ -321,39 +321,39 @@ def emptySelectedThroughAnyRouteIsPlainEmpty : Bool :=
   let coll (receiver : KatLang.Expr) := run (.dotCall receiver "Coll" none)
   let written (argument : KatLang.Expr) := run (.call (resolve "Coll") [argument])
   let beside (argument : KatLang.Expr) := run (.call (resolve "Coll") [argument, .num 1])
-  [ coll (.index (resolve "A") (.num 0)),
+  [ coll (.index (resolve "A") [.num 0]),
     coll (.call (resolve "first") [resolve "A"]),
-    coll (.index (resolve "B") (.num 1)),
+    coll (.index (resolve "B") [.num 1]),
     coll (.call (resolve "last") [resolve "B"]),
     coll (resolve "E"),
     coll (.call (resolve "Fz") [.num 1]),
     coll (.call (resolve "if") [.boolLiteral true, .emptySequence 0, .num 1]),
     coll (.emptySequence 0),
-    written (.index (resolve "A") (.num 0)),
+    written (.index (resolve "A") [.num 0]),
     written (.call (resolve "first") [resolve "A"]),
     written (resolve "E"),
     written (.call (resolve "Fz") [.num 1]),
     written (.emptySequence 0) ].all (resultIs (.listValue [.sequenceValue []])) &&
-  [ beside (.index (resolve "A") (.num 0)),
+  [ beside (.index (resolve "A") [.num 0]),
     beside (.call (resolve "first") [resolve "A"]),
     beside (resolve "E"),
     beside (.call (resolve "Fz") [.num 1]),
     beside (.call (resolve "if") [.boolLiteral true, .emptySequence 0, .num 1]),
     beside (.emptySequence 0) ].all (resultIs (.listValue [.sequenceValue [], .atom 1])) &&
-  [ written (.sequenceSpread (.index (resolve "A") (.num 0))),
+  [ written (.sequenceSpread (.index (resolve "A") [.num 0])),
     written (.sequenceSpread (.call (resolve "first") [resolve "A"])),
     written (.sequenceSpread (resolve "E")),
     written (.sequenceSpread (.emptySequence 0)),
-    coll (.sequenceSpread (.index (resolve "A") (.num 0))),
+    coll (.sequenceSpread (.index (resolve "A") [.num 0])),
     coll (.sequenceSpread (resolve "E")),
-    written (.sequenceSpread (.index (resolve "L") (.num 0))) ].all (resultIs (.listValue [])) &&
-  [ coll (.index (resolve "L") (.num 0)),
+    written (.sequenceSpread (.index (resolve "L") [.num 0])) ].all (resultIs (.listValue [])) &&
+  [ coll (.index (resolve "L") [.num 0]),
     coll (.call (resolve "first") [resolve "L"]),
-    written (.index (resolve "L") (.num 0)) ].all (resultIs (.listValue [.listValue []]))
+    written (.index (resolve "L") [.num 0]) ].all (resultIs (.listValue [.listValue []]))
 
 #guard emptySelectedThroughAnyRouteIsPlainEmpty
 
--- first(A) ≡ A:0 and last(A) ≡ A:(A.count - 1), counted, for representative
+-- first(A) ≡ A[0] and last(A) ≡ A[A.count - 1], counted, for representative
 -- non-empty collections including nested and empty structures.
 def firstLastCollections : List KatLang.Expr :=
   [ .capture [.num 1, .num 2],
@@ -381,9 +381,9 @@ def firstIsSelectionAtZeroAndLastIsSelectionAtCountMinusOne : Bool :=
     let counted (out : KatLang.Expr) := runCountedProgram (.algorithmExpr (algPrivate [] [] props [out]))
     let firstCall := KatLang.Expr.call (resolve "first") [resolve "A"]
     let lastCall := KatLang.Expr.call (resolve "last") [resolve "A"]
-    let indexZero := KatLang.Expr.index (resolve "A") (.num 0)
+    let indexZero := KatLang.Expr.index (resolve "A") [.num 0]
     let indexLast := KatLang.Expr.index (resolve "A")
-      (.binary .sub (.dotCall (resolve "A") "count" none) (.num 1))
+      [.binary .sub (.dotCall (resolve "A") "count" none) (.num 1)]
     let observers : List (KatLang.Expr -> KatLang.Expr) :=
       [ fun e => e,
         fun e => .dotCall e "Coll" none,
@@ -396,7 +396,7 @@ def firstIsSelectionAtZeroAndLastIsSelectionAtCountMinusOne : Bool :=
 
 #guard firstIsSelectionAtZeroAndLastIsSelectionAtCountMinusOne
 
--- An empty target has no valid selection: `first`, `last` and `:` all report
+-- An empty target has no valid selection: `first`, `last` and postfix selection all report
 -- the one missing-position rejection, `badIndex` (SEQ-04, Q-27) — the
 -- selection laws hold for every target, errors included.
 def selectionFromAnEmptyCollectionFailsInEveryForm : Bool :=
@@ -407,7 +407,7 @@ def selectionFromAnEmptyCollectionFailsInEveryForm : Bool :=
      | Except.error err => innermostIsBadIndex err | _ => false) &&
     (match run (.call (resolve "last") [resolve "A"]) with
      | Except.error err => innermostIsBadIndex err | _ => false) &&
-    (match run (.index (resolve "A") (.num 0)) with
+    (match run (.index (resolve "A") [.num 0]) with
      | Except.error err => innermostIsBadIndex err | _ => false)
 
 #guard selectionFromAnEmptyCollectionFailsInEveryForm
@@ -420,14 +420,14 @@ def spreadOfASelectionOpensExactlyOneBoundary : Bool :=
                 ("B", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]])]
   let run (out : KatLang.Expr) := runResult (.algorithmExpr (algPrivate [] [] props [out]))
   let oneLevel : Result := .listValue [.sequenceValue [.atom 1, .atom 2], .listValue [.atom 3, .atom 4]]
-  resultIs oneLevel (run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "A") (.num 0))])) &&
+  resultIs oneLevel (run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "A") [.num 0])])) &&
   resultIs oneLevel (run (.call (resolve "Coll") [.sequenceSpread (.call (resolve "first") [resolve "A"])])) &&
   resultIs (.listValue [.atom 1, .atom 2])
-    (run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "B") (.num 0))])) &&
+    (run (.call (resolve "Coll") [.sequenceSpread (.index (resolve "B") [.num 0])])) &&
   resultIs (.listValue [.listValue [.atom 1, .atom 2]])
-    (run (.dotCall (.index (.capture [.sequenceSpread (resolve "B")]) (.num 0)) "Coll" none)) &&
+    (run (.dotCall (.index (.capture [.sequenceSpread (resolve "B")]) [.num 0]) "Coll" none)) &&
   (match runCountedProgram (.algorithmExpr (algPrivate [] [] props
-      [.sequenceSpread (.index (resolve "A") (.num 0))])) with
+      [.sequenceSpread (.index (resolve "A") [.num 0])])) with
    | .ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .listValue [.atom 3, .atom 4]], 2) => true
    | _ => false)
 
@@ -438,7 +438,7 @@ def spreadOfASelectionOpensExactlyOneBoundary : Bool :=
 def selectionCountBeforeRootDecoration : Bool :=
   selectionTable.all fun (selected, _, _) =>
     let collection := KatLang.Expr.listLiteral [selected]
-    let selectors := [KatLang.Expr.index collection (.num 0),
+    let selectors := [KatLang.Expr.index collection [.num 0],
       .call (resolve "first") [collection], .call (resolve "last") [collection]]
     selectors.all fun selection =>
       sameOutcome (runCountedProgram selection) (runCountedProgram selected) &&

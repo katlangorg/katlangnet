@@ -215,9 +215,10 @@ public abstract class AstWalker
                 foreach (var link in links)
                     VisitExpr(link.Operand);
                 break;
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
                 VisitExpr(target);
-                VisitExpr(selector);
+                foreach (var selector in selectors)
+                    VisitExpr(selector);
                 break;
             case Expr.SequenceConstruct(var left, var right):
                 VisitExpr(left);

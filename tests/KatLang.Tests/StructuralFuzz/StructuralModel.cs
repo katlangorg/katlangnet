@@ -57,7 +57,7 @@ public abstract record MExpr
     /// lexical scope form.</summary>
     public sealed record Brace(MScope Scope) : MExpr;
 
-    /// <summary>Front-end-valid runtime tripwire: <c>(1, 2):9</c> (err index).</summary>
+    /// <summary>Front-end-valid runtime tripwire: <c>(1, 2)[9]</c> (err index).</summary>
     public sealed record IndexErr : MExpr;
 }
 
@@ -644,7 +644,7 @@ public static class StructuralRenderer
                 sb.Append('\n').Append(new string(' ', indent * 2)).Append('}');
                 return;
             case MExpr.IndexErr:
-                sb.Append("(1, 2):9");
+                sb.Append("(1, 2)[9]");
                 return;
             default:
                 throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}");

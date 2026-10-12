@@ -54,7 +54,7 @@ internal sealed class NestedReachIndex(Func<Expr, bool>? isExtraTarget = null)
             Expr.Unary unary => Reaches(unary.Operand),
             Expr.Binary binary => Reaches(binary.Left) || Reaches(binary.Right),
             Expr.Comparison comparison => Reaches(comparison.First) || comparison.Links.Any(link => Reaches(link.Operand)),
-            Expr.Index index => Reaches(index.Target) || Reaches(index.Selector),
+            Expr.Index index => Reaches(index.Target) || Reaches(index.Selectors),
             Expr.SequenceConstruct construct => Reaches(construct.Left) || Reaches(construct.Right),
             Expr.SequenceSpread spread => Reaches(spread.Operand),
             Expr.ListLiteral list => Reaches(list.Items),

@@ -376,8 +376,8 @@ public class LeanAstEncoderTests
     {
         Assert.Equal(
             ".algorithmExpr (alg [] [] [privateProp \"x\" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] "
-            + "[(.index (.resolve \"x\") (.num 0))])",
-            EncodeSource("x = [1, 2]\nx:0"));
+            + "[(.index (.resolve \"x\") [.num 0])])",
+            EncodeSource("x = [1, 2]\nx[0]"));
 
         Assert.Equal(
             ".algorithmExpr (alg [] [] [] [(.comparison (.stringLiteral \"ab\") [{ op := .eq, operand := (.stringLiteral \"ab\") }])])",
@@ -732,7 +732,7 @@ public class LeanAstEncoderTests
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, new Expr.Num(1)),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Num(2)),
             [nameof(Expr.Comparison)] = new Expr.Comparison(new Expr.Num(1), [new ComparisonLink(ComparisonOp.Lt, new Expr.Num(2))]),
-            [nameof(Expr.Index)] = new Expr.Index(new Expr.Resolve("x"), new Expr.Num(0)),
+            [nameof(Expr.Index)] = new Expr.Index(new Expr.Resolve("x"), [new Expr.Num(0)]),
             [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(new Expr.Num(1), new Expr.Num(2)),
             [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
             [nameof(Expr.SequenceSpread)] = new Expr.SequenceSpread(new Expr.Resolve("x")),

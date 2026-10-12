@@ -412,49 +412,49 @@ def builtinSpreadListFollowsFixedArity : Bool :=
 def indexingPreservesSelectedList : Bool :=
   match runResult (.algorithmExpr (algPrivate [] []
     [("A", alg [] [] [] [.capture [.num 0, .listLiteral [.num 1, .num 2]]])]
-    [.index (.resolve "A") (.num 1)])) with
+    [.index (.resolve "A") [.num 1]])) with
   | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
   | _ => false
 
 #guard indexingPreservesSelectedList
 
--- Indexing `:` opens a LIST TARGET to its immediate elements exactly like a
--- sequence target (`Result.projectionItems`): `[1, 2, 3]:0` is `1`, `[7]:0`
+-- Postfix selection opens a LIST TARGET to its immediate elements exactly like a
+-- sequence target (`Result.projectionItems`): `[1, 2, 3][0]` is `1`, `[7][0]`
 -- is `7`, and the selected element keeps its exact kind.
 def listIndexingSelectsElement : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 0)])) with
+      [.index (.listLiteral [.num 1, .num 2, .num 3]) [.num 0]])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 1)])) with
+      [.index (.listLiteral [.num 1, .num 2, .num 3]) [.num 1]])) with
    | Except.ok (Result.atom 2) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 2)])) with
+      [.index (.listLiteral [.num 1, .num 2, .num 3]) [.num 2]])) with
    | Except.ok (Result.atom 3) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 7]) (.num 0)])) with
+      [.index (.listLiteral [.num 7]) [.num 0]])) with
    | Except.ok (Result.atom 7) => true | _ => false)
 
 #guard listIndexingSelectsElement
 
 -- A selected LIST element stays one exact opaque list (no flattening, no
--- sequence conversion): `[[1, 2], [3, 4]]:0` is `[1, 2]` and `[[]]:0` is `[]`.
+-- sequence conversion): `[[1, 2], [3, 4]][0]` is `[1, 2]` and `[[]][0]` is `[]`.
 def listIndexingNestedElementStaysList : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
       [.index (.listLiteral
-        [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) (.num 0)])) with
+        [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) [.num 0]])) with
    | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.listLiteral []]) (.num 0)])) with
+      [.index (.listLiteral [.listLiteral []]) [.num 0]])) with
    | Except.ok (Result.listValue []) => true | _ => false)
 
 #guard listIndexingNestedElementStaysList
 
--- Chained selection peels one boundary per `:`: `[[1, 2], [3, 4]]:1:0` is `3`.
+-- Chained selection peels one boundary per bracket: `[[1, 2], [3, 4]][1][0]` is `3`.
 def listIndexingChainedSelectsOneLevelAtATime : Bool :=
   match runResult (.algorithmExpr (alg [] [] []
     [.index (.index (.listLiteral
-      [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) (.num 1)) (.num 0)])) with
+      [.listLiteral [.num 1, .num 2], .listLiteral [.num 3, .num 4]]) [.num 1]) [.num 0]])) with
   | Except.ok (Result.atom 3) => true
   | _ => false
 
@@ -468,48 +468,48 @@ def listIndexingSequenceElementIsOneValue : Bool :=
   (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.listLiteral
         [.capture [.num 1, .num 2],
-         .capture [.num 3, .num 4]]) (.num 0)])) with
+         .capture [.num 3, .num 4]]) [.num 0]])) with
    | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 1) => true | _ => false) &&
   (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.index (.capture
         [.capture [.num 1, .num 2],
-         .capture [.num 3, .num 4]]) (.num 0)])) with
+         .capture [.num 3, .num 4]]) [.num 0]])) with
    | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 1) => true | _ => false) &&
   (match runCountedProgram (.algorithmExpr (alg [] [] []
       [.sequenceSpread (.index (.listLiteral
         [.capture [.num 1, .num 2],
-         .capture [.num 3, .num 4]]) (.num 0))])) with
+         .capture [.num 3, .num 4]]) [.num 0])])) with
    | .ok (Result.sequenceValue [Result.atom 1, Result.atom 2], 2) => true | _ => false) &&
   (match runCountedProgram (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.emptySequence 0]) (.num 0)])) with
+      [.index (.listLiteral [.emptySequence 0]) [.num 0]])) with
    | .ok (Result.sequenceValue [], 1) => true | _ => false)
 
 #guard listIndexingSequenceElementIsOneValue
 
 -- Empty and out-of-range list selection is the existing out-of-range
--- index error: `[]:0`, `[1, 2]:2`, and `[1, 2]:100` are badIndex, and a
+-- index error: `[][0]`, `[1, 2][2]`, and `[1, 2][100]` are badIndex, and a
 -- negative selector stays badIndex for list targets too. A selector beyond
 -- the C# host int range (3000000000) is an ordinary out-of-range badIndex in
 -- the unbounded-Int model — the twin of the C# int-cast guard — for both
 -- target kinds.
 def listIndexingOutOfRangeIsBadIndex : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral []) (.num 0)])) with
+      [.index (.listLiteral []) [.num 0]])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2]) (.num 2)])) with
+      [.index (.listLiteral [.num 1, .num 2]) [.num 2]])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2]) (.num 100)])) with
+      [.index (.listLiteral [.num 1, .num 2]) [.num 100]])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2]) (.num (-1))])) with
+      [.index (.listLiteral [.num 1, .num 2]) [.num (-1)]])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 3000000000)])) with
+      [.index (.listLiteral [.num 1, .num 2, .num 3]) [.num 3000000000]])) with
    | Except.error err => innermostIsBadIndex err | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.capture [.num 1, .num 2, .num 3]) (.num 3000000000)])) with
+      [.index (.capture [.num 1, .num 2, .num 3]) [.num 3000000000]])) with
    | Except.error err => innermostIsBadIndex err | _ => false)
 
 #guard listIndexingOutOfRangeIsBadIndex
@@ -520,50 +520,56 @@ def listIndexingOutOfRangeIsBadIndex : Bool :=
 -- sequence targets.
 def listIndexingSelectorValidationUnchanged : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2]) (.listLiteral [.num 0])])) with
+      [.index (.listLiteral [.num 1, .num 2]) [.listLiteral [.num 0]]])) with
    | Except.error err => innermostIsTypeMismatch "Expected a number, got a list value with 1 element: [0]" err
    | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.listLiteral [.num 1, .num 2]) (.stringLiteral "0")])) with
+      [.index (.listLiteral [.num 1, .num 2]) [.stringLiteral "0"]])) with
    | Except.error err => innermostIsTypeMismatch "Expected a number, got a string" err | _ => false)
 
 #guard listIndexingSelectorValidationUnchanged
 
--- Diagnostic expression names use KatLang SOURCE syntax: an index renders as
--- `target:selector`, never `target[selector]` (`[...]` is exact list literal
--- syntax, so `Rows[0]` would be a missing-separator error, never an index).
--- These pin the exact text C# produces; C#:
--- `Eval_Index_DiagnosticName_RendersSourceFaithfulColonSyntax` and
+-- Diagnostic expression names use KatLang SOURCE syntax: a selection renders as
+-- postfix `target[s1, …, sn]` (October 2026; the colon form is retired). These
+-- pin the exact text C# produces; C#:
+-- `Eval_Index_DiagnosticName_RendersSourceFaithfulBracketSyntax` and
 -- `Eval_Index_ChainedDiagnosticName_RendersEachSelector`.
 def indexDiagnosticNameIsSourceFaithful : Bool :=
-  (KatLang.exprDiagnosticName (.index (.resolve "Rows") (.num 0)) == "Rows:0") &&
-  -- Chained projection is left-associative, so each selector renders in turn
+  (KatLang.exprDiagnosticName (.index (.resolve "Rows") [.num 0]) == "Rows[0]") &&
+  -- Chained selection is left-associative, so each bracket renders in turn
   -- and the target needs no parentheses.
-  (KatLang.exprDiagnosticName (.index (.index (.resolve "Rows") (.num 0)) (.num 1)) == "Rows:0:1") &&
+  (KatLang.exprDiagnosticName (.index (.index (.resolve "Rows") [.num 0]) [.num 1]) == "Rows[0][1]") &&
   -- The renderer is syntax-based, so a list target renders the same way.
-  (KatLang.exprDiagnosticName (.index (.listLiteral [.num 1, .num 2]) (.num 0)) == "[1, 2]:0")
+  (KatLang.exprDiagnosticName (.index (.listLiteral [.num 1, .num 2]) [.num 0]) == "[1, 2][0]") &&
+  -- Several selectors, none, and a spread selector render as the written list.
+  (KatLang.exprDiagnosticName (.index (.resolve "Rows") [.num 2, .num 0, .num 2]) == "Rows[2, 0, 2]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "Rows") []) == "Rows[]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "Rows") [.sequenceSpread (.resolve "Is")]) == "Rows[Is*]")
 
 #guard indexDiagnosticNameIsSourceFaithful
 
--- Operands that would rebind under the real precedence are parenthesized.
+-- A target that would rebind under the real precedence is parenthesized; the
+-- selectors sit inside the brackets' own expression list and never are.
 -- C#: `Eval_Index_DiagnosticName_ParenthesizesOperandsThatWouldRebind`.
 def indexDiagnosticNameParenthesizesRebindingOperands : Bool :=
-  -- Indexing binds tighter than unary and every binary operator.
-  (KatLang.exprDiagnosticName (.index (.binary .add (.resolve "A") (.resolve "B")) (.num 0))
-    == "(A + B):0") &&
-  (KatLang.exprDiagnosticName (.index (.unary .minus (.resolve "A")) (.num 0)) == "(-A):0") &&
-  (KatLang.exprDiagnosticName (.index (.resolve "Rows") (.binary .add (.resolve "i") (.num 1)))
-    == "Rows:(i + 1)") &&
-  -- The selector is a primary in source syntax, so anything that would continue
-  -- the postfix chain (`.`, `:`, a call) rebinds to the target without parens.
-  (KatLang.exprDiagnosticName (.index (.resolve "A") (.dotCall (.resolve "B") "C" none)) == "A:(B.C)") &&
-  (KatLang.exprDiagnosticName (.index (.resolve "A") (.index (.resolve "B") (.resolve "C")))
-    == "A:(B:C)") &&
-  (KatLang.exprDiagnosticName (.index (.resolve "A") (.call (.resolve "f") [.num 0]))
-    == "A:(f(...))") &&
-  -- A bare negative literal is not selector syntax at all (`A:-1` is a parse
-  -- error), so it keeps parentheses.
-  (KatLang.exprDiagnosticName (.index (.resolve "A") (.num (-1))) == "A:(-1)")
+  -- Selection binds tighter than unary and every binary operator.
+  (KatLang.exprDiagnosticName (.index (.binary .add (.resolve "A") (.resolve "B")) [.num 0])
+    == "(A + B)[0]") &&
+  (KatLang.exprDiagnosticName (.index (.unary .minus (.resolve "A")) [.num 0]) == "(-A)[0]") &&
+  (KatLang.exprDiagnosticName (.index (.num (-2)) [.num 0]) == "(-2)[0]") &&
+  -- `A*[0]` would read back as multiplication, so a spread target keeps parentheses.
+  (KatLang.exprDiagnosticName (.index (.sequenceSpread (.resolve "A")) [.num 0]) == "(A*)[0]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "Rows") [.binary .add (.resolve "i") (.num 1)])
+    == "Rows[i + 1]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "A") [.dotCall (.resolve "B") "C" none]) == "A[B.C]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "A") [.index (.resolve "B") [.resolve "C"]])
+    == "A[B[C]]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "A") [.call (.resolve "f") [.num 0]])
+    == "A[f(...)]") &&
+  (KatLang.exprDiagnosticName (.index (.resolve "A") [.num (-1)]) == "A[-1]") &&
+  -- Postfix targets render bare.
+  (KatLang.exprDiagnosticName (.index (.dotCall (.resolve "A") "B" none) [.num 0]) == "A.B[0]") &&
+  (KatLang.exprDiagnosticName (.dotCall (.index (.resolve "A") [.num 0]) "B" none) == "A[0].B")
 
 #guard indexDiagnosticNameParenthesizesRebindingOperands
 
@@ -649,41 +655,41 @@ def notOperandDiagnosticNameParenthesizesRebindingOperands : Bool :=
 
 #guard notOperandDiagnosticNameParenthesizesRebindingOperands
 
--- `openExprName` renders an index with source-faithful `:` rather than falling
--- back to the generic `(index)` kind word. Leaf kinds this minimal renderer
--- does not model still print as `(kind)` — a PRE-EXISTING divergence from C#'s
--- merged `OpenExprName`, uniform across `.dotCall`, `.sequenceSpread`, and
--- `.index` alike, and independent of indexing.
+-- `openExprName` renders a selection with source-faithful brackets rather than
+-- falling back to the generic `(index)` kind word. Leaf kinds this minimal
+-- renderer does not model still print as `(kind)` — a PRE-EXISTING divergence
+-- from C#'s merged `OpenExprName`, uniform across `.dotCall`, `.sequenceSpread`,
+-- and `.index` alike, and independent of selection.
 def openExprNameRendersIndexSourceFaithfully : Bool :=
-  (KatLang.openExprName (.index (.resolve "Rows") (.resolve "i")) == "Rows:i") &&
-  (KatLang.openExprName (.index (.index (.resolve "Rows") (.resolve "i")) (.resolve "j"))
-    == "Rows:i:j") &&
-  -- A selector this renderer prints BARE and that would continue the postfix
-  -- chain is still parenthesized.
-  (KatLang.openExprName (.index (.resolve "A") (.dotCall (.resolve "B") "C" none)) == "A:(B.C)") &&
-  (KatLang.openExprName (.index (.resolve "A") (.index (.resolve "B") (.resolve "C")))
-    == "A:(B:C)") &&
+  (KatLang.openExprName (.index (.resolve "Rows") [.resolve "i"]) == "Rows[i]") &&
+  (KatLang.openExprName (.index (.index (.resolve "Rows") [.resolve "i"]) [.resolve "j"])
+    == "Rows[i][j]") &&
+  -- Selectors sit inside the brackets and are never parenthesized.
+  (KatLang.openExprName (.index (.resolve "A") [.dotCall (.resolve "B") "C" none]) == "A[B.C]") &&
+  (KatLang.openExprName (.index (.resolve "A") [.index (.resolve "B") [.resolve "C"]])
+    == "A[B[C]]") &&
+  (KatLang.openExprName (.index (.resolve "A") [.resolve "i", .resolve "j"]) == "A[i, j]") &&
+  (KatLang.openExprName (.index (.resolve "A") []) == "A[]") &&
   -- Unmodelled leaf: the `(num)` fallback, not `(index)`.
-  (KatLang.openExprName (.index (.resolve "Rows") (.num 0)) == "Rows:(num)") &&
-  -- An unmodelled kind is ALREADY self-delimiting as `(kind)`, so it must not
-  -- be parenthesized a second time into `A:((binary))`.
-  (KatLang.openExprName (.index (.resolve "A") (.binary .add (.resolve "i") (.num 1)))
-    == "A:(binary)") &&
-  (KatLang.openExprName (.index (.resolve "A") (.num (-1))) == "A:(num)")
+  (KatLang.openExprName (.index (.resolve "Rows") [.num 0]) == "Rows[(num)]") &&
+  (KatLang.openExprName (.index (.resolve "A") [.binary .add (.resolve "i") (.num 1)])
+    == "A[(binary)]") &&
+  -- A spread target keeps parentheses (`A*[0]` reads back as multiplication).
+  (KatLang.openExprName (.index (.sequenceSpread (.resolve "A")) [.resolve "i"]) == "(A*)[i]")
 
 #guard openExprNameRendersIndexSourceFaithfully
 
 -- Collection-producing builtin results are directly indexable:
--- `range(1, 3):2` is `3` and `[3, 1, 2].order:0` is `1`.
+-- `range(1, 3)[2]` is `3` and `[3, 1, 2].order[0]` is `1`.
 def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.call (.resolve "range") [.num 1, .num 3]) (.num 2)])) with
+      [.index (.call (.resolve "range") [.num 1, .num 3]) [.num 2]])) with
    | Except.ok (Result.atom 3) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) (.num 0)])) with
+      [.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) [.num 0]])) with
    | Except.ok (Result.atom 1) => true | _ => false) &&
   (match runResult (.algorithmExpr (alg [] [] []
-      [.index (.call (.resolve "take") [.listLiteral [.num 1, .num 2, .num 3], .num 2]) (.num 1)])) with
+      [.index (.call (.resolve "take") [.listLiteral [.num 1, .num 2, .num 3], .num 2]) [.num 1]])) with
    | Except.ok (Result.atom 2) => true | _ => false)
 
 #guard listIndexingBuiltinResultsDirectlyIndexable

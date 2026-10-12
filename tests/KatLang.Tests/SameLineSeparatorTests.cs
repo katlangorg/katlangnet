@@ -122,7 +122,8 @@ public class SameLineSeparatorTests
     [InlineData("2 (3)", "1:3")]
     [InlineData("(1 + 2) (3)", "1:9")]
     [InlineData("[1, 2](3)", "1:7")]
-    [InlineData("A = [10, 20]\nA[1]", "2:2")]
+    [InlineData("A = [10, 20]\nA[0](1)", "2:5")]
+    [InlineData("A = [10, 20]\nA[0] {1}", "2:6")]
     [InlineData("m = 5\n2m", "2:2")]
     [InlineData("2pi", "1:2")]
     [InlineData("F = 2x\nF(3)", "1:6")]
@@ -271,7 +272,11 @@ public class SameLineSeparatorTests
     [InlineData("A = { public B(x) = x + 1 }\nA.B (1)", "2")]
     [InlineData("A = { public B(x, y) = x + y }\nA.B (1, 2)", "3")]
     [InlineData("V = (1, 2, 3)\nV.map { n * 2 }", "[2, 4, 6]")]
-    [InlineData("Pair = (1, 2)\nPair :0", "1")]
+    [InlineData("Pair = (1, 2)\nPair [0]", "1")]
+    // Postfix selection: a same-line '[' after a completed expression.
+    [InlineData("A = [10, 20]\nA[1]", "20")]
+    [InlineData("A = [10, 20]\nA [1]", "20")]
+    [InlineData("A = [10, 20]\nA\t[0, 1]", "(10, 20)")]
     // Grace on free names (the graced forms infer (t, a); under an explicit
     // parameter list Grace is an error — see GraceEffectivenessTests).
     [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
@@ -382,7 +387,7 @@ public class SameLineSeparatorTests
     [InlineData("~ 5", "InvalidGraceMarker")]
     [InlineData("Divide = y ~ / x\nDivide(2, 10)", "InvalidGraceMarker")]
     [InlineData("A = 1\nA = 1 ) 2\nA", "DuplicateProperty;UnexpectedToken")]
-    [InlineData("x = (1, 2)\nx:-1", "UnexpectedToken")]
+    [InlineData("x = (1, 2)\nx:-1", "RetiredColonSelection")]
     [InlineData("= 1", "UnexpectedToken")]
     [InlineData("1 ; 2", "UnsupportedSemicolon")]
     [InlineData("open Math Physics\n1", "InvalidOpenTargetList")]

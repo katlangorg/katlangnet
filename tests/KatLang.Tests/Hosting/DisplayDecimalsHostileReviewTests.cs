@@ -169,7 +169,7 @@ public class DisplayDecimalsHostileReviewTests
 
     [Theory]
     [InlineData("if(0.125, 1, 0)", KatLangErrorCode.TypeMismatch)]
-    [InlineData("(0.125, 0.375):2", KatLangErrorCode.BadIndex)]
+    [InlineData("(0.125, 0.375)[2]", KatLangErrorCode.BadIndex)]
     [InlineData("DisplayDecimals(1) = 2\nDisplayDecimals(2) = 3\n1 / 7", KatLangErrorCode.NoMatchingBranch)]
     public async Task NumericAndConditionalDiagnostics_KeepCanonicalTextAndSpans(string source, KatLangErrorCode code)
     {

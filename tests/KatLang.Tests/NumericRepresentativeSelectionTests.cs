@@ -380,6 +380,6 @@ public sealed class NumericRepresentativeSelectionTests
         // representation unchanged.
         Assert.Equal(
             "ok S[1.50, -0, 1.50, L[-0, 1.50], 1.50, L[-0.0, 1.50]]",
-            await AgreedAsync("A = 1.50\nB = -0\nId(v) = v\nColl(*xs) = xs\nA, Id(B), (A, B):0, Coll(B, A), [A, 2]:0, order((1.50, -0.0))"));
+            await AgreedAsync("A = 1.50\nB = -0\nId(v) = v\nColl(*xs) = xs\nA, Id(B), (A, B)[0], Coll(B, A), [A, 2][0], order((1.50, -0.0))"));
     }
 }

@@ -29,28 +29,28 @@ public class EvaluatorIndexingTests
 
     [Fact]
     public void Eval_Index_ReturnsElement()
-        => AssertEval("(1, 2, 3):1", 2);
+        => AssertEval("(1, 2, 3)[1]", 2);
 
     [Fact]
     public void Eval_Index_FirstElement()
-        => AssertEval("(1, 2, 3):0", 1);
+        => AssertEval("(1, 2, 3)[0]", 1);
 
     [Fact]
     public void Eval_Index_NamedAtomicSelection_ReturnsAtom()
         => AssertEval(
             """
             A = 7, 8
-            A:0
+            A[0]
             """,
             7);
 
     [Fact]
     public void Eval_Index_LastElement()
-        => AssertEval("(1, 2, 3):2", 3);
+        => AssertEval("(1, 2, 3)[2]", 3);
 
     [Fact]
     public void Eval_Index_OutOfBounds_Fails()
-        => AssertEvalFails("(1, 2, 3):5");
+        => AssertEvalFails("(1, 2, 3)[5]");
 
     [Fact]
     public void Eval_Index_NegativeIndex_Fails()
@@ -58,18 +58,18 @@ public class EvaluatorIndexingTests
         var source = """
             X = 1, 2, 3
             i = 0 - 1
-            X:i
+            X[i]
             """;
         AssertEvalFails(source);
     }
 
     [Fact]
     public void Eval_Index_SingleAtom()
-        => AssertEval("5:0", 5);
+        => AssertEval("5[0]", 5);
 
     [Fact]
     public void Eval_Index_ChainedIndex()
-        => AssertEval("((1, 2), (3, 4)):1:0", 3);
+        => AssertEval("((1, 2), (3, 4))[1][0]", 3);
 
     [Fact]
     public void Eval_Index_SequenceValueSelection_ReturnsStoredValue()
@@ -77,7 +77,7 @@ public class EvaluatorIndexingTests
         var result = EvalFull(
             """
             A = (1, 2), (3, 4)
-            A:0
+            A[0]
             """);
 
         if (result.IsError)
@@ -91,8 +91,8 @@ public class EvaluatorIndexingTests
         => AssertEval(
             """
             A = (1, 2), (3, 4)
-            count(A:0)
-            (A:0).count
+            count(A[0])
+            (A[0]).count
             """,
             2,
             2);
@@ -103,7 +103,7 @@ public class EvaluatorIndexingTests
         var result = EvalFull(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
-            A:0
+            A[0]
             """);
 
         if (result.IsError)
@@ -117,8 +117,8 @@ public class EvaluatorIndexingTests
         => AssertEval(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
-            count(A:0)
-            count(A:0:1)
+            count(A[0])
+            count(A[0][1])
             """,
             2,
             2);
@@ -129,7 +129,7 @@ public class EvaluatorIndexingTests
         var result = EvalFull(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
-            A:0:1
+            A[0][1]
             """);
 
         if (result.IsError)
@@ -152,44 +152,44 @@ public class EvaluatorIndexingTests
     // exact list target.
 
     [Theory]
-    [InlineData("():0")]
-    [InlineData("[]:0")]
-    [InlineData("(1, 2):2")]
-    [InlineData("[1, 2]:2")]
-    [InlineData("[1, 2]:100")]
-    [InlineData("A = []\nA:0")]
+    [InlineData("()[0]")]
+    [InlineData("[][0]")]
+    [InlineData("(1, 2)[2]")]
+    [InlineData("[1, 2][2]")]
+    [InlineData("[1, 2][100]")]
+    [InlineData("A = []\nA[0]")]
     public void Eval_Index_EmptyOrOutOfRangeTarget_FailsWithBadIndex(string source)
         => AssertEvalFailsWithBadIndex(source);
 
     [Theory]
-    [InlineData("X = 1, 2, 3\ni = 0 - 1\nX:i")]
-    [InlineData("X = [1, 2, 3]\ni = 0 - 1\nX:i")]
-    [InlineData("(1, 2, 3):1.5")]
-    [InlineData("[1, 2, 3]:1.5")]
+    [InlineData("X = 1, 2, 3\ni = 0 - 1\nX[i]")]
+    [InlineData("X = [1, 2, 3]\ni = 0 - 1\nX[i]")]
+    [InlineData("(1, 2, 3)[1.5]")]
+    [InlineData("[1, 2, 3][1.5]")]
     public void Eval_Index_NegativeOrNonIntegralSelector_FailsWithBadIndex(string source)
         => AssertEvalFailsWithBadIndex(source);
 
     [Theory]
-    [InlineData("(1, 2, 3):3000000000")]
-    [InlineData("[1, 2, 3]:3000000000")]
+    [InlineData("(1, 2, 3)[3000000000]")]
+    [InlineData("[1, 2, 3][3000000000]")]
     public void Eval_Index_SelectorBeyondIntRange_FailsWithBadIndex(string source)
         // C#-only guard for the host int cast; Lean's unbounded integer
         // selector reaches the same out-of-range badIndex through select?.
         => AssertEvalFailsWithBadIndex(source);
 
     [Theory]
-    [InlineData("(1, 2, 3):'1'")]
-    [InlineData("[1, 2, 3]:'1'")]
+    [InlineData("(1, 2, 3)['1']")]
+    [InlineData("[1, 2, 3]['1']")]
     public void Eval_Index_StringSelector_FailsWithTypeMismatch(string source)
         => AssertEvalFailsWithTypeMismatch(source, "Expected a number, got a string");
 
     [Theory]
-    [InlineData("(1, 2, 3):(0, 1)")]
-    [InlineData("[1, 2, 3]:(0, 1)")]
-    [InlineData("(1, 2, 3):[0]")]
-    [InlineData("[1, 2, 3]:[0]")]
-    [InlineData("(1, 2, 3):()")]
-    [InlineData("[1, 2, 3]:()")]
+    [InlineData("(1, 2, 3)[(0, 1)]")]
+    [InlineData("[1, 2, 3][(0, 1)]")]
+    [InlineData("(1, 2, 3)[[0]]")]
+    [InlineData("[1, 2, 3][[0]]")]
+    [InlineData("(1, 2, 3)[()]")]
+    [InlineData("[1, 2, 3][()]")]
     public void Eval_Index_NonNumericStructuredSelector_FailsWithTypeMismatch(string source)
     {
         // A structured selector is a present value of the wrong KIND (Q-27), exactly like a
@@ -203,18 +203,18 @@ public class EvaluatorIndexingTests
     }
 
     [Theory]
-    [InlineData("(1, 2, 3):(1 div 0)")]
-    [InlineData("[1, 2, 3]:(1 div 0)")]
+    [InlineData("(1, 2, 3)[1 div 0]")]
+    [InlineData("[1, 2, 3][1 div 0]")]
     public void Eval_Index_FailedSelectorExpression_PropagatesError(string source)
         => AssertEvalFails(source);
 
     [Fact]
     public void Eval_Index_OutOfRangeError_SpanAgreesAcrossTargetKinds()
     {
-        // `(1, 2):9` and `[1, 2]:9` occupy the same source columns, so the
+        // `(1, 2)[9]` and `[1, 2][9]` occupy the same source columns, so the
         // out-of-range projection error must carry the identical span.
-        var sequenceError = AssertEvalFailsWithBadIndex("(1, 2):9");
-        var listError = AssertEvalFailsWithBadIndex("[1, 2]:9");
+        var sequenceError = AssertEvalFailsWithBadIndex("(1, 2)[9]");
+        var listError = AssertEvalFailsWithBadIndex("[1, 2][9]");
 
         Assert.NotNull(sequenceError.Span);
         Assert.NotNull(listError.Span);
@@ -225,12 +225,11 @@ public class EvaluatorIndexingTests
     // ── Index diagnostics: source-faithful names and selector-error spans ────
 
     /// <summary>
-    /// Diagnostic expression names use KatLang source syntax, so an index must
-    /// render as `target:selector`. Bracket text would be actively misleading:
-    /// `[...]` is exact list literal syntax, so `Rows[0]` is a
-    /// missing-separator error, never an index. <paramref name="forbiddenBracketName"/> is the
-    /// pre-fix rendering; a bracket selector such as `Rows:[0]` is legitimate
-    /// syntax, so only the bracket form of this specific index is banned.
+    /// Diagnostic expression names use KatLang source syntax, so a selection must
+    /// render as postfix brackets `target[selector]` (October 2026). The retired
+    /// colon spelling would be actively misleading — `:` is not KatLang syntax —
+    /// so <paramref name="forbiddenColonName"/>, the former rendering of this
+    /// selection, must never appear.
     /// </summary>
     /// <summary>
     /// The receiver-rendering probe: <paramref name="definitions"/> plus the
@@ -242,11 +241,11 @@ public class EvaluatorIndexingTests
     /// <c>ExprNameRenderer.RenderDotReceiver</c>. Both must be source-faithful.
     /// </summary>
     private static void AssertIndexDiagnosticName(
-        string definitions, string expression, string expectedName, string forbiddenBracketName)
+        string definitions, string expression, string expectedName, string forbiddenColonName)
     {
         var source = ClosedMemberProbe(definitions, expression);
         var diagnostic = AssertCertainFallbackNameUndeclared(source, "Missing", expectedName);
-        Assert.DoesNotContain(forbiddenBracketName, diagnostic.Message);
+        Assert.DoesNotContain(forbiddenColonName, diagnostic.Message);
 
         var result = EvalHostBuilt(source);
         if (result.IsOk)
@@ -254,7 +253,7 @@ public class EvaluatorIndexingTests
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
         Assert.Contains($"`{expectedName}`", formatted);
-        Assert.DoesNotContain(forbiddenBracketName, formatted);
+        Assert.DoesNotContain(forbiddenColonName, formatted);
     }
 
     [Theory]
@@ -263,41 +262,52 @@ public class EvaluatorIndexingTests
     [InlineData("Rows = [[1, 2]]\n")]
     [InlineData("Rows = [[1, 2], [3, 4]]\n")]
     [InlineData("Rows = ((1, 2), (3, 4))\n")]
-    public void Eval_Index_DiagnosticName_RendersSourceFaithfulColonSyntax(string definitions)
-        => AssertIndexDiagnosticName(definitions, "Rows:0.Missing", "Rows:0", "Rows[0]");
+    public void Eval_Index_DiagnosticName_RendersSourceFaithfulBracketSyntax(string definitions)
+        => AssertIndexDiagnosticName(definitions, "Rows[0].Missing", "Rows[0]", "Rows:0");
 
     [Fact]
     public void Eval_Index_ChainedDiagnosticName_RendersEachSelector()
         => AssertIndexDiagnosticName(
-            "Rows = [[[1]]]\n", "Rows:0:0.Missing", "Rows:0:0", "Rows[0][0]");
+            "Rows = [[[1]]]\n", "Rows[0][0].Missing", "Rows[0][0]", "Rows:0:0");
+
+    [Fact]
+    public void Eval_Index_DiagnosticName_RendersEverySelectorSlot()
+    {
+        // Several selectors, none, and a spread slot render as the written list.
+        AssertIndexDiagnosticName(
+            "Rows = ((1, 2), (3, 4))\n", "Rows[1, 0, 1].Missing", "Rows[1, 0, 1]", "Rows:1");
+        AssertIndexDiagnosticName(
+            "Rows = ((1, 2), (3, 4))\nIs = [0]\n", "Rows[Is*].Missing", "Rows[Is*]", "Rows:");
+    }
 
     [Fact]
     public void Eval_Index_DiagnosticName_ParenthesizesOperandsThatWouldRebind()
     {
-        // Indexing binds tighter than every binary operator, so a bare
-        // `Rows + Rows:0` would read as `Rows + (Rows:0)`.
+        // Selection binds tighter than every binary operator, so a bare
+        // `Rows + Rows[0]` would read as `Rows + (Rows[0])`.
         AssertIndexDiagnosticName(
             "Rows = (1, 2)\n",
-            "(Rows + Rows):0.Missing",
-            "(Rows + Rows):0",
-            "(Rows + Rows)[0]");
+            "(Rows + Rows)[0].Missing",
+            "(Rows + Rows)[0]",
+            "(Rows + Rows):0");
 
-        // The selector is a primary in source syntax, so a compound selector
-        // keeps the parentheses it was written with.
+        // A selector sits inside the brackets' expression list; in this base
+        // (Open) spelling a binary renders self-parenthesized, exactly as a
+        // list element does.
         AssertIndexDiagnosticName(
             "Rows = ((1, 2), (3, 4))\ni = 0\n",
-            "Rows:(i + 1).Missing",
-            "Rows:(i + 1)",
-            "Rows[(i + 1)]");
+            "Rows[i + 1].Missing",
+            "Rows[(i + 1)]",
+            "Rows:(i + 1)");
 
-        // Established call abbreviation is preserved on an index target.
+        // Established call abbreviation is preserved on a selection receiver.
         AssertIndexDiagnosticName(
-            "", "take([1, 2, 3], 1):0.Missing", "take(...):0", "take(...)[0]");
+            "", "take([1, 2, 3], 1)[0].Missing", "take(...)[0]", "take(...):0");
 
-        // A list-literal selector is legitimate syntax and stays bare: the ban
-        // above is on bracket INDEXING, not on brackets as such.
+        // A list-literal selector renders as the list it is (one list value —
+        // the selection itself fails at run time with a kind mismatch).
         AssertIndexDiagnosticName(
-            "Rows = ((1, 2), (3, 4))\n", "Rows:[0].Missing", "Rows:[0]", "Rows[[0]]");
+            "Rows = ((1, 2), (3, 4))\n", "Rows[[0]].Missing", "Rows[[0]]", "Rows:[0]");
     }
 
     [Fact]
@@ -346,48 +356,54 @@ public class EvaluatorIndexingTests
 
     [Theory]
     // Sequence/list twins: the span must not depend on the target kind.
-    [InlineData("(1, 2):'x'")]
-    [InlineData("[1, 2]:'x'")]
-    [InlineData("(1, 2):(0, 1)")]
-    [InlineData("[1, 2]:(0, 1)")]
-    [InlineData("(1, 2):()")]
-    [InlineData("[1, 2]:()")]
-    [InlineData("(1, 2):(1 div 0)")]
-    [InlineData("[1, 2]:(1 div 0)")]
-    [InlineData("(1, 2):1.5")]
-    [InlineData("[1, 2]:1.5")]
-    [InlineData("(1, 2):3000000000")]
-    [InlineData("[1, 2]:3000000000")]
-    [InlineData("(1, 2):2")]
-    [InlineData("[1, 2]:2")]
+    [InlineData("(1, 2)['x']")]
+    [InlineData("[1, 2]['x']")]
+    [InlineData("(1, 2)[(0, 1)]")]
+    [InlineData("[1, 2][(0, 1)]")]
+    [InlineData("(1, 2)[()]")]
+    [InlineData("[1, 2][()]")]
+    [InlineData("(1, 2)[1 div 0]")]
+    [InlineData("[1, 2][1 div 0]")]
+    [InlineData("(1, 2)[1.5]")]
+    [InlineData("[1, 2][1.5]")]
+    [InlineData("(1, 2)[3000000000]")]
+    [InlineData("[1, 2][3000000000]")]
+    [InlineData("(1, 2)[2]")]
+    [InlineData("[1, 2][2]")]
     // Nested projection, and an index reached through the plain evaluator as a
     // binary operand.
-    [InlineData("[[1, 2]]:5:0")]
-    [InlineData("[[1, 2]]:0:5")]
-    [InlineData("[[1, 2]]:0:(1 div 0)")]
-    [InlineData("[1, 2]:'x' + 0")]
-    [InlineData("(1, 2):'x' + 0")]
+    [InlineData("[[1, 2]][5][0]")]
+    [InlineData("[[1, 2]][0][5]")]
+    [InlineData("[[1, 2]][0][1 div 0]")]
+    [InlineData("[1, 2]['x'] + 0")]
+    [InlineData("(1, 2)['x'] + 0")]
     public void Eval_Index_SelectorError_AgreesAcrossPlainAndCountedEvaluation(string source)
         => AssertIndexErrorAgreesAcrossEvaluators(source);
 
     [Theory]
-    // A selector error carries the full `target:selector` span rather than
-    // escaping unlocated. Columns are 1-based and the end column is exclusive.
-    [InlineData("[1, 2]:'x'", 1, 1, 1, 11)]
-    [InlineData("(1, 2):'x'", 1, 1, 1, 11)]
-    [InlineData("[1, 2]:(0, 1)", 1, 1, 1, 14)]
-    [InlineData("[1, 2]:()", 1, 1, 1, 10)]
-    [InlineData("[1, 2]:3000000000", 1, 1, 1, 18)]
-    // Nested projection points at the failing index expression: the inner
-    // `[[1, 2]]:5` for an inner failure, the whole expression for an outer one.
-    [InlineData("[[1, 2]]:5:0", 1, 1, 1, 11)]
-    [InlineData("[[1, 2]]:0:5", 1, 1, 1, 13)]
-    // A selector sub-expression that fails on its own keeps its own, more
-    // specific span — the written group `(1 div 0)` the index consumes (the
-    // grouped-expression span rule, F6); WithSpan only fills a missing one.
-    [InlineData("[1, 2]:(1 div 0)", 1, 8, 1, 17)]
-    [InlineData("[[1, 2]]:0:(1 div 0)", 1, 12, 1, 21)]
-    public void Eval_Index_SelectorError_CarriesIndexExpressionSpan(
+    // A selector that names no position, or is no number, is located at its OWN written
+    // selector slot (with several selectors, the one that failed), never escaping
+    // unlocated. Columns are 1-based and the end column is exclusive.
+    [InlineData("[1, 2]['x']", 1, 8, 1, 11)]
+    [InlineData("(1, 2)['x']", 1, 8, 1, 11)]
+    [InlineData("[1, 2][(0, 1)]", 1, 8, 1, 14)]
+    [InlineData("[1, 2][()]", 1, 8, 1, 10)]
+    [InlineData("[1, 2][3000000000]", 1, 8, 1, 18)]
+    [InlineData("[1, 2][0, 7]", 1, 11, 1, 12)]
+    // Nested selection points at the failing selector of the failing selection: the
+    // inner `5` for an inner failure, the outer `5` for an outer one.
+    [InlineData("[[1, 2]][5][0]", 1, 10, 1, 11)]
+    [InlineData("[[1, 2]][0][5]", 1, 13, 1, 14)]
+    // A selector sub-expression that fails on its own keeps its own span (the slot
+    // it was written in); WithSpan only fills a missing one.
+    [InlineData("[1, 2][1 div 0]", 1, 8, 1, 15)]
+    [InlineData("[[1, 2]][0][1 div 0]", 1, 13, 1, 20)]
+    // A spread selector: a cell it formed fails at the written spread slot, and a failure while
+    // the spread is formed keeps its own inner span.
+    [InlineData("[1, 2][[0, 7]*]", 1, 8, 1, 15)]
+    [InlineData("I = [0, 7]\n[1, 2][I*]", 2, 8, 2, 10)]
+    [InlineData("[1, 2][0, ([1 div 0])*]", 1, 13, 1, 20)]
+    public void Eval_Index_SelectorError_CarriesSelectorSlotSpan(
         string source, int startLine, int startColumn, int endLine, int endColumn)
     {
         var result = EvalFull(source);
@@ -398,17 +414,38 @@ public class EvaluatorIndexingTests
         Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
     }
 
-    [Fact]
-    public void Eval_Index_SelectorErrorInPropertyBody_ReportsTheIndexNotTheUseSite()
+    [Theory]
+    [InlineData("[1, 2][0, 7]")]
+    [InlineData("[1, 2][[0, 7]*]")]
+    [InlineData("I = [0, 7]\n[1, 2][I*]")]
+    [InlineData("[1, 2][0, ([1 div 0])*]")]
+    [InlineData("[1, 2]['x']")]
+    public async Task Eval_Index_SelectorErrorSpan_AgreesOnTheAsyncTwin(string source)
     {
-        // The plain evaluator reaches this index as a binary operand. Without a
+        // The async twin positions every selector failure exactly like the synchronous machine.
+        var sync = EvalFull(source);
+        Assert.True(sync.IsError);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (asyncResult, _) = await Evaluator.RunCountedObservedAsync(
+            program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache());
+        Assert.True(asyncResult.IsError);
+        var expected = KatLangError.FromEvalError(sync.Error);
+        var actual = KatLangError.FromEvalError(asyncResult.Error);
+        Assert.Equal(expected.Code, actual.Code);
+        Assert.Equal(expected.Span, actual.Span);
+    }
+
+    [Fact]
+    public void Eval_Index_SelectorErrorInPropertyBody_ReportsTheSelectorNotTheUseSite()
+    {
+        // The plain evaluator reaches this selection as a binary operand. Without a
         // span of its own the error was filled in by an outer use-site span,
-        // mislocating the defect to `X` on line 2.
-        var result = EvalFull("X = [1, 2]:'x' + 0\nX");
+        // mislocating the defect to `X` on line 2; it is the written selector `'x'`.
+        var result = EvalFull("X = [1, 2]['x'] + 0\nX");
         if (result.IsOk)
             Assert.Fail($"Expected a diagnostic but got: {result.Value}");
 
         var error = KatLangError.FromEvalError(result.Error);
-        Assert.Equal(new SourceSpan(1, 5, 1, 15), error.Span);
+        Assert.Equal(new SourceSpan(1, 12, 1, 15), error.Span);
     }
 }

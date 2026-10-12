@@ -159,7 +159,7 @@ internal static class FrontEndFingerprint
                 sb.Append("Cmp("); Expr(sb, first);
                 foreach (var link in links) { sb.Append(',').Append(link.Op).Append(','); Expr(sb, link.Operand); }
                 sb.Append(')'); break;
-            case Expr.Index(var t, var sel): sb.Append("Idx("); Expr(sb, t); sb.Append(','); Expr(sb, sel); sb.Append(')'); break;
+            case Expr.Index(var t, var sel): sb.Append("Idx("); Expr(sb, t); foreach (var it in sel) { sb.Append(','); Expr(sb, it); } sb.Append(')'); break;
             case Expr.SequenceConstruct(var l, var r): sb.Append("SeqC("); Expr(sb, l); sb.Append(','); Expr(sb, r); sb.Append(')'); break;
             case Expr.EmptySequence es: sb.Append("Empty{").Append(es.Depth).Append('}'); break;
             case Expr.SequenceSpread(var o): sb.Append("Spread("); Expr(sb, o); sb.Append(')'); break;

@@ -1,11 +1,11 @@
 IsSquareFree(num) = {
     Step = k + 1, s + if(num mod (k * k) == 0, 1, 0), k * k <= num and s <= 0
-    Step.while(2, 0):1 == 0
+    Step.while(2, 0)[1] == 0
 }
 
 SquareFreeCount(n) = {
     Step = value + 1, total + if(IsSquareFree(value), 1, 0)
-    Step.repeat(n, 1, 0):1
+    Step.repeat(n, 1, 0)[1]
 }
 
 SquareFreeCount(10000)

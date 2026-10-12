@@ -150,7 +150,7 @@ internal static class EvaluatorEligibility
                     Ex(l); Ex(r); break;
                 case Expr.Comparison(var first, var links):
                     Ex(first); foreach (var link in links) Ex(link.Operand); break;
-                case Expr.Index(var t, var s): Ex(t); Ex(s); break;
+                case Expr.Index(var t, var s): Ex(t); foreach (var it in s) Ex(it); break;
                 case Expr.SequenceSpread(var o): Ex(o); break;
                 case Expr.SequenceConstruct(var l, var r): Ex(l); Ex(r); break;
                 case Expr.Grace(var i, _): Ex(i); break;

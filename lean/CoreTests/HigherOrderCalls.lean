@@ -145,7 +145,7 @@ def numbersAlg11 : Algorithm :=
 def addAlg11 : Algorithm :=
   alg ["a", "sum"] [] [] [
     .binary .add (.param "a") (.num 1),
-    .binary .add (.param "sum") (.index (resolve "Numbers") (.param "a"))
+    .binary .add (.param "sum") (.index (resolve "Numbers") [.param "a"])
   ]
 
 def testAlg11 : Algorithm :=
@@ -157,7 +157,7 @@ def testAlg11 : Algorithm :=
           .num 0,
           .num 0
         ])
-      (.num 1)
+      [.num 1]
   ]
 
 def test11 : Bool :=
@@ -521,8 +521,8 @@ def flatFixedIssue101SeparateArgsWork : Bool :=
 def flatFixedIssue101ExplicitIndexingWorks : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Pair", flatFixedIssue101PairAlg), ("Add", flatFixedIssue101AddAlg)] [
     .call (resolve "Add") [
-      .index (resolve "Pair") (.num 0),
-      .index (resolve "Pair") (.num 1)
+      .index (resolve "Pair") [.num 0],
+      .index (resolve "Pair") [.num 1]
     ]
   ])) with
   | Except.ok [30] => true
@@ -843,7 +843,7 @@ def collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSl
       (.dotCall (resolve "YSStep") "repeat" (some [
         .num 1, collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3
       ]))
-      (.num 0)
+      [.num 0]
   ])) with
   | Except.ok [8] => true
   | _ => false
@@ -1809,8 +1809,8 @@ def occurrenceCountAlg19e : Algorithm :=
         ],
         .algorithmExpr (alg ["item"] [] [] [
           .compare .eq
-            (.index (.param "item") (.num 1))
-            (.index (.param "target") (.num 1))
+            (.index (.param "item") [.num 1])
+            (.index (.param "target") [.num 1])
         ])
       ])
       "count"

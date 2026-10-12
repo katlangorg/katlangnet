@@ -508,7 +508,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
     [InlineData("x, y = (load('https://example.test/a'), load('https://example.test/b'))\nx", 2)]
     [InlineData("F((x, *rest)) = { open 'https://example.test/a'\nx }\nF((1, 2))", 1)]
     [InlineData("F(0) = load('https://example.test/a')\nF(x) = x\nF(0)", 1)]
-    [InlineData("[1 + -load('https://example.test/a'), (load('https://example.test/b'))]:0", 2)]
+    [InlineData("[1 + -load('https://example.test/a'), (load('https://example.test/b'))][0]", 2)]
     [InlineData("load('https://example.test/a').F(load('https://example.test/b'))", 2)]
     public async Task LoadGuard_ObservationIsNeutral_AndPublicParsersReportTheSameDiagnostics(string source, int loads)
     {

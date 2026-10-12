@@ -293,7 +293,7 @@ public class KatLangEngineTests
                     acc < 3
                 }
 
-                Step.while(n, 0):1
+                Step.while(n, 0)[1]
             }
 
             Outer(5)
@@ -319,7 +319,7 @@ public class KatLangEngineTests
                     acc + 1
                 }
 
-                Step.repeat(1, n, 0):1
+                Step.repeat(1, n, 0)[1]
             }
 
             Outer(5)
@@ -756,18 +756,28 @@ public class KatLangEngineTests
     [Fact]
     public void Run_ColonLedLineAfterDefinitionBody_ReportsParseFailure()
     {
-        // A physical newline never continues a closed expression into
-        // postfix indexing: `P = Pair` newline `:0` must not silently define
-        // `P = Pair:0`. The ':'-led line is a parse error with a targeted
-        // message.
+        // ':' is not KatLang syntax: the retired colon selection written on the
+        // line after its receiver is a parse error with the migration message
+        // and its own error code.
         var result = KatLangEngine.Run("Pair = 1, 2\nP = Pair\n:0\nP");
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         Assert.Contains(
             failure.Errors,
-            static error => error.Message.Contains(
-                "Indexing is postfix and must follow the indexed expression on the same physical line",
-                StringComparison.Ordinal));
+            static error => error.Code == KatLangErrorCode.RetiredColonSelection
+                && error.Message.Contains("postfix brackets", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Run_BracketLedLineAfterDefinitionBody_IsASeparateRow()
+    {
+        // A physical newline never continues a closed expression into postfix
+        // selection: `P = Pair` newline `[0]` keeps P's body and adds the root
+        // row `[0]`, so the program outputs `[0]` and then `P`.
+        var result = KatLangEngine.Run("Pair = 1, 2\nP = Pair\n[0]\nP");
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal(2, success.OutputRows.Count);
     }
 
     [Fact]

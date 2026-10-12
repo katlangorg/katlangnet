@@ -20,8 +20,9 @@ public static partial class Evaluator
     /// <summary>
     /// The pure-expression composite node kinds whose evaluation is driven by the
     /// iterative spine machine (<see cref="EvalExpressionSpineCounted"/>) instead of
-    /// CLR recursion: unary and binary operators, comparison chains, index selection,
-    /// list literals, and interpolated strings (STR-02). These are the shapes whose
+    /// CLR recursion: unary and binary operators, comparison chains, postfix selection
+    /// (whose receiver and ordinary selector slots are machine children), list literals,
+    /// and interpolated strings (STR-02). These are the shapes whose
     /// recursive evaluation frames were measured to exhaust a 1 MiB stack within the
     /// structural depth ceiling (binary/unary spines at ~330-340 nodes, index spines at
     /// ~270-285, list spines at ~290-300 in Debug; a recursive interpolated string costs
@@ -46,24 +47,36 @@ public static partial class Evaluator
         public readonly Expr Node = node;
 
         /// <summary>
-        /// Unary/Binary/Index: completed child count. ListLiteral: next element index.
-        /// Comparison: the index of the operand being evaluated (0 = the first operand,
-        /// k = the operand of link k-1). InterpolatedString: the index of the link whose hole
-        /// is being evaluated.
+        /// Unary/Binary: completed child count. Index: 0 while the receiver is in flight,
+        /// then 1 + the position of the supplied selector being demanded. ListLiteral: next
+        /// element index. Comparison: the index of the operand being evaluated (0 = the first
+        /// operand, k = the operand of link k-1). InterpolatedString: the index of the link
+        /// whose hole is being evaluated.
         /// </summary>
         public int Phase;
 
         /// <summary>
-        /// Binary left value / Index target value / Comparison PREVIOUS operand value
-        /// (the left side of the next link — reused, never re-evaluated), once evaluated.
+        /// Binary left value / Index RECEIVER value (demanded once, read by every selector) /
+        /// Comparison PREVIOUS operand value (the left side of the next link — reused, never
+        /// re-evaluated), once evaluated.
         /// </summary>
         public Result? FirstValue;
 
         /// <summary>Comparison: true once any link has compared false (the chain still runs to its end).</summary>
         public bool ComparisonFailed;
 
-        /// <summary>ListLiteral element accumulator (exact written slots, spread already expanded).</summary>
+        /// <summary>
+        /// ListLiteral element accumulator (exact written slots, spread already expanded) /
+        /// Index accumulator of the values selected so far (allocated for two or more selectors).
+        /// </summary>
         public List<Result>? ListItems;
+
+        /// <summary>
+        /// Index: the formed selector supply when a selector slot is an explicit spread
+        /// (<see cref="FormSelectionSupply"/>); null when every slot is an ordinary written selector,
+        /// whose supply is the slots themselves.
+        /// </summary>
+        public List<SuppliedSelector>? Selection;
 
         /// <summary>InterpolatedString text accumulator; created on the frame's first visit.</summary>
         public InterpolatedTextBuilder? Text;
@@ -94,11 +107,20 @@ public static partial class Evaluator
     ///   continue: a <c>false</c> link never stops the chain (eager Boolean composition),
     ///   an error does (later operands are not evaluated). Lean:
     ///   <c>evalComparisonCounted</c>.</item>
-    ///   <item><b>Index</b>: target then selector; every child or coercion error gains
-    ///   the index expression's span when it has none; the selected item is returned as
-    ///   stored and RE-COUNTED as one plain value (selection is a value boundary:
-    ///   <c>S:0</c> never opens the selected sequence or list, and a selected <c>()</c>
-    ///   emits zero values). Lean: the <c>.index</c> arm of <c>evalCounted</c>.</item>
+    ///   <item><b>Index</b> (variadic postfix selection <c>R[s1, …, sn]</c>): (1) the receiver,
+    ///   ONCE, as a machine child — a receiver failure gains the selection's span when it has
+    ///   none and ends it, even with no selector; (2) the selector supply is formed like a call's
+    ///   (<see cref="FormSelectionSupply"/>, only when a slot is an explicit spread: every spread
+    ///   runs now, in written order); (3) each supplied selector LEFT TO RIGHT, one machine
+    ///   transition each — an ordinary slot demanded as a machine child at its turn (its
+    ///   suspended cell's first demand), a spread-formed cell demanded directly — validated and
+    ///   selected through the ONE <see cref="SelectPosition"/>, the first failure ending the
+    ///   selection (no later selector is demanded; a selector failure is positioned at its
+    ///   written slot, else the selection); (4) the selected values captured by ordinary
+    ///   normalization of the result grouping (<see cref="MakeCheckedSequenceCapture"/>: zero →
+    ///   <c>()</c>, one → the value itself, several → one sequence kept whole) and RE-COUNTED as
+    ///   one plain value (selection is a value boundary). Lean: the <c>.index</c> arm of
+    ///   <c>evalCounted</c> (<c>selectWith</c>, <c>selectionResult</c>).</item>
     ///   <item><b>ListLiteral</b>: element slots follow the written-parentheses
     ///   expression-list slot rules (<see cref="EvalExplicitSequenceValueExprSlots"/>);
     ///   elements are stored EXACTLY (no singleton erasure, no empty-nesting collapse),
@@ -245,63 +267,45 @@ public static partial class Evaluator
                     break;
                 }
 
-                case Expr.Index(var target, var selector):
+                case Expr.Index selection:
                 {
                     if (frame.Phase == 0)
                     {
+                        // (1) The receiver, once, through its ordinary value path.
                         if (!hasPendingChild)
                         {
-                            requestedChild = target;
+                            requestedChild = selection.Target;
                             break;
                         }
 
                         hasPendingChild = false;
                         frame.FirstValue = pendingChild.Value;
                         frame.Phase = 1;
-                        requestedChild = selector;
-                        break;
+                        // (2) Supply formation: every explicit spread slot runs now.
+                        if (HasSpreadSelector(selection.Selectors))
+                        {
+                            var formed = FormSelectionSupplySync(selection, ctx, valEnv);
+                            if (formed.IsError)
+                            {
+                                completed = formed.Error;
+                                break;
+                            }
+
+                            frame.Selection = formed.Value;
+                        }
                     }
 
+                    // (3) + (4): the supplied selectors left to right, then the capture.
+                    completed = AdvanceSelection(ref frame, hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell);
                     hasPendingChild = false;
-
-                    // ExpectInt reports a TypeMismatch from a Result and so has no
-                    // span of its own; the index expression is the nearest source location.
-                    var nR = ExpectInt(pendingChild.Value);
-                    if (nR.IsError)
+                    if (selectorCell is not null)
                     {
-                        completed = AtSpanIfMissing(nR.Error, frame.Node.Span);
-                        break;
+                        var demanded = selectorCell.Demand();
+                        completed = demanded.IsError
+                            ? SelectorFailure(demanded.Error, frame)
+                            : AdvanceSelection(ref frame, demanded.Value.Value, ctx, out requestedChild, out _);
                     }
 
-                    var n = nR.Value;
-                    // IsInteger is false for NaN and the infinities, so a non-finite
-                    // selector is the same out-of-range badIndex as a fractional one.
-                    if (!Decimal128.IsInteger(n) || n < 0)
-                    {
-                        completed = new EvalError.BadIndex() { Span = frame.Node.Span };
-                        break;
-                    }
-
-                    // Lean models the selector as an unbounded integer and reports
-                    // badIndex for any position past the target's items; a selector
-                    // beyond int range can never be in range, so it is the same
-                    // out-of-range error rather than a host overflow.
-                    if (n > int.MaxValue)
-                    {
-                        completed = new EvalError.BadIndex() { Span = frame.Node.Span };
-                        break;
-                    }
-
-                    // SELECTION IS A VALUE BOUNDARY: the selected element is
-                    // returned exactly as stored and re-counted like any other
-                    // plain value (Result.ValueCount) — a selected sequence or
-                    // list is ONE value, a selected `()` emits zero values, and
-                    // only an explicit spread opens it. Lean: the `.index` arm
-                    // of `evalCounted`.
-                    var selected = frame.FirstValue!.Index((int)n);
-                    completed = selected is null
-                        ? new EvalError.BadIndex() { Span = frame.Node.Span }
-                        : CountValue(selected);
                     break;
                 }
 
@@ -407,7 +411,7 @@ public static partial class Evaluator
                 }
 
                 // Delegated child: exactly the call the recursive code made — plain
-                // Eval for unary/binary operands and index targets/selectors. (List
+                // Eval for unary/binary operands and selection receivers/selectors. (List
                 // elements never reach here; non-machine elements go through
                 // EvalExplicitSequenceValueExprSlots above, exactly as before.)
                 var childR = Eval(requestedChild, ctx, valEnv);
@@ -459,7 +463,8 @@ public static partial class Evaluator
 
     /// <summary>
     /// The decoration a spine frame applies to the error of its FAILED CHILD, shared by both
-    /// machines: an <see cref="Expr.Index"/> attaches its own span, an
+    /// machines: an <see cref="Expr.Index"/> attaches its own span to a failed receiver and the
+    /// written slot of the selector in flight (else its own span) to a failed selector, an
     /// <see cref="Expr.InterpolatedString"/> the span of the hole in flight (link
     /// <see cref="ExpressionSpineFrame.Phase"/>), else its own — each only when the error has
     /// no location yet. Every other spine kind passes its child's error on untouched.
@@ -467,11 +472,148 @@ public static partial class Evaluator
     private static EvalError DecorateSpineChildError(EvalError error, in ExpressionSpineFrame frame)
         => frame.Node switch
         {
-            Expr.Index => AtSpanIfMissing(error, frame.Node.Span),
+            Expr.Index selection => frame.Phase == 0
+                ? AtSpanIfMissing(error, selection.Span)
+                : SelectorFailure(error, frame),
             Expr.InterpolatedString interpolation
                 => AtSpanIfMissing(error, interpolation.Links[frame.Phase].Hole.Span ?? interpolation.Span),
             _ => error,
         };
+
+    // ── Variadic postfix selection (shared by both spine machines) ─────────
+
+    /// <summary>
+    /// One supplied selector of a postfix selection: the written <paramref name="Slot"/> it came
+    /// from — the location a failure reports — and, for an item an explicit spread slot formed
+    /// (a Ready item or a transported collector cell), its <paramref name="Cell"/>. An ORDINARY
+    /// slot has no cell: it is demanded as a machine child of the selection frame at its turn.
+    /// </summary>
+    private readonly record struct SuppliedSelector(Expr Slot, NeedCell? Cell);
+
+    /// <summary>True when some selector slot is an explicit spread, so the supply must be formed first.</summary>
+    private static bool HasSpreadSelector(OutputBundle selectors)
+    {
+        for (var i = 0; i < selectors.Count; i++)
+        {
+            if (selectors[i] is Expr.SequenceSpread)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The location of the supplied selector in flight (<see cref="ExpressionSpineFrame.Phase"/> - 1):
+    /// its written slot, else the whole selection. Read lazily, so no span temporary lives in a
+    /// machine frame.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError SelectorFailure(EvalError error, in ExpressionSpineFrame frame)
+    {
+        var selection = (Expr.Index)frame.Node;
+        var position = frame.Phase - 1;
+        var slot = frame.Selection is { } supplied ? supplied[position].Slot : selection.Selectors[position];
+        return AtSpanIfMissing(error, slot.Span ?? selection.Span);
+    }
+
+    /// <summary>
+    /// One step of a postfix selection after its receiver is in hand — the ONE step both spine
+    /// machines run. With <paramref name="arrived"/> (the value of the supplied selector in
+    /// flight), the selector is validated and its position selected (<see cref="SelectPosition"/>);
+    /// a failure ends the selection, and otherwise the next selector waits for the next machine
+    /// transition. Without it, the next supplied selector is requested: an ordinary written slot
+    /// as a machine child (<paramref name="requestedChild"/>), a spread-formed cell for the caller
+    /// to demand (<paramref name="selectorCell"/>; the synchronous machine demands it inline, the
+    /// async twin awaits it). After the last selector the selected values are captured
+    /// (<see cref="CompleteSelection"/>). Returns the completed result, or null while the selection
+    /// continues. Lean: <c>selectWith</c> then <c>selectionResult</c>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult>? AdvanceSelection(
+        ref ExpressionSpineFrame frame, Result? arrived, EvalCtx ctx, out Expr? requestedChild, out NeedCell? selectorCell)
+    {
+        requestedChild = null;
+        selectorCell = null;
+        var selection = (Expr.Index)frame.Node;
+        var supplied = frame.Selection;
+        var total = supplied?.Count ?? selection.Selectors.Count;
+        if (arrived is not null)
+        {
+            var position = frame.Phase - 1;
+            var slot = supplied is null ? selection.Selectors[position] : supplied[position].Slot;
+            var selectedR = SelectPosition(frame.FirstValue!, arrived, slot, selection);
+            if (selectedR.IsError)
+                return selectedR.Error;
+
+            frame.Phase++;
+            // One selector: the selected value itself, with no accumulator.
+            if (total == 1)
+                return CountValue(selectedR.Value);
+
+            (frame.ListItems ??= new List<Result>(Math.Min(total, 16))).Add(selectedR.Value);
+            // Every further selector takes its own machine transition (its own budget checkpoint).
+            if (frame.Phase - 1 < total)
+                return null;
+            return CompleteSelection(frame.ListItems, ctx, selection);
+        }
+
+        if (frame.Phase - 1 < total)
+        {
+            var next = supplied is null ? new SuppliedSelector(selection.Selectors[frame.Phase - 1], null) : supplied[frame.Phase - 1];
+            if (next.Cell is { } cell)
+                selectorCell = cell;
+            else
+                requestedChild = next.Slot;
+            return null;
+        }
+
+        return CompleteSelection(frame.ListItems, ctx, selection);
+    }
+
+    /// <summary>
+    /// The value of a completed selection: the selected values captured by ordinary sequence
+    /// normalization of the RESULT GROUPING only (<see cref="MakeCheckedSequenceCapture"/>, which
+    /// reserves only what it stores) — zero selections are <c>()</c>, one is the selected value
+    /// itself, several are ONE sequence of the selected values kept whole (a selected <c>()</c> or
+    /// <c>[]</c> stays an element; never <see cref="Expr.SequenceConstruct"/>'s join, which drops
+    /// <c>()</c> leaves) — re-counted at the value boundary. No record of the selector count
+    /// survives. Lean: <c>selectionResult</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> CompleteSelection(List<Result>? selected, EvalCtx ctx, Expr.Index selection)
+        => CountValue(MakeCheckedSequenceCapture(ctx, (IReadOnlyList<Result>?)selected ?? [], selection.Span));
+
+    /// <summary>
+    /// THE check of ONE supplied selector against the receiver — the retired colon form's rules,
+    /// unchanged: a selector VALUE that is not a number is the kind failure <c>TypeMismatch</c>
+    /// (<see cref="ExpectInt"/>); a number naming no position — fractional, negative, NaN or
+    /// infinite, beyond any host position, or past the receiver's immediate positional view
+    /// (<see cref="Result.Index"/> over <see cref="Result.ProjectionItems"/>, the view
+    /// <c>count</c>, <c>first</c> and <c>last</c> read) — is <c>BadIndex</c>. The stored element is
+    /// returned whole, never opened. A failure is positioned at <paramref name="slot"/>, else the
+    /// <paramref name="selection"/>. Non-evaluating, so it serves both machines. Lean:
+    /// <c>selectPosition</c>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static EvalResult<Result> SelectPosition(Result receiver, Result selector, Expr slot, Expr selection)
+    {
+        // ExpectInt reports a TypeMismatch from a Result and so has no span of its own.
+        var nR = ExpectInt(selector);
+        if (nR.IsError)
+            return AtSpanIfMissing(nR.Error, slot.Span ?? selection.Span);
+
+        var n = nR.Value;
+        // IsInteger is false for NaN and the infinities, so a non-finite selector is the same
+        // out-of-range badIndex as a fractional one. Lean models the selector as an unbounded
+        // integer and reports badIndex for any position past the receiver's view; a selector
+        // beyond int range can never be in range, so it is the same out-of-range error rather
+        // than a host overflow.
+        var selected = Decimal128.IsInteger(n) && n >= 0 && n <= int.MaxValue
+            ? receiver.Index((int)n)
+            : null;
+        return selected is null
+            ? new EvalError.BadIndex { Span = slot.Span ?? selection.Span }
+            : EvalResult<Result>.Ok(selected);
+    }
 
     // ── Main eval ───────────────────────────────────────────────────────────
 

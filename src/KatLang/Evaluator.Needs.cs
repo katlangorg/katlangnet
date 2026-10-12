@@ -73,32 +73,88 @@ public static partial class Evaluator
         var supply = new List<NeedCell>(arguments.Count);
         foreach (var argument in arguments)
         {
-            if (argument is not Expr.SequenceSpread(var operand))
+            if (argument is not Expr.SequenceSpread spread)
             {
                 supply.Add(SupplyCell(argument, caller, values));
                 sources?.Add(argument);
                 continue;
             }
-            var cell = SupplyCell(operand, caller, values);
-            if (cell.Slice is { } known)
-            {
-                supply.AddRange(known);
-                if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
-                continue;
-            }
-            // EvalSequenceSpreadCounted owns output-less spread diagnostics and opening.
-            var opened = asynchronous
-                ? await EvalCountedAsync(argument, caller, values).ConfigureAwait(false)
-                : EvalCounted(argument, caller, values);
-            if (opened.IsError) return opened.Error;
-            foreach (var item in CountedTopLevelValues(opened.Value))
-            {
-                supply.Add(NeedCell.Ready(new(item, item.ValueCount())));
-                sources?.Add(null);
-            }
+            if (await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources).ConfigureAwait(false) is { } failure)
+                return failure;
         }
         return EvalResult<IReadOnlyList<NeedCell>>.Ok(supply);
     }
+
+    /// <summary>
+    /// The ONE formation of an explicit spread slot, shared by every supply a written expression
+    /// list forms — a call's arguments (<see cref="FormNeedSupply"/>) and a postfix selection's
+    /// selectors (<see cref="FormSelectionSupply"/>): a collecting parameter's known slice is
+    /// transported unforced; any other spread operand is evaluated NOW, during formation, and
+    /// opened one boundary into Ready items. Appends the slot's cells to <paramref name="supply"/>
+    /// (and their written sources to <paramref name="sources"/>) and returns the formation failure,
+    /// if any. Lean: the spread branch of <c>formNeedSupply</c>.
+    /// </summary>
+    private static async ValueTask<EvalError?> FormSpreadSupplySlot(
+        Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
+        List<NeedCell> supply, List<Expr?>? sources)
+    {
+        var cell = SupplyCell(argument.Operand, caller, values);
+        if (cell.Slice is { } known)
+        {
+            supply.AddRange(known);
+            if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
+            return null;
+        }
+        // EvalSequenceSpreadCounted owns output-less spread diagnostics and opening.
+        var opened = asynchronous
+            ? await EvalCountedAsync(argument, caller, values).ConfigureAwait(false)
+            : EvalCounted(argument, caller, values);
+        if (opened.IsError) return opened.Error;
+        foreach (var item in CountedTopLevelValues(opened.Value))
+        {
+            supply.Add(NeedCell.Ready(new(item, item.ValueCount())));
+            sources?.Add(null);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Forms the SELECTOR SUPPLY of a postfix selection <c>R[s1, …, sn]</c> exactly as a call forms
+    /// its arguments (Lean: <c>formNeedSupply</c>): every explicit spread slot runs now, in written
+    /// order, through the ONE spread formation (<see cref="FormSpreadSupplySlot"/>), and the first
+    /// spread failure stops formation; every ORDINARY slot stays an unevaluated written expression,
+    /// demanded later — left to right, after formation — as a machine child of the selection frame.
+    /// Evaluating that private slot at its turn is observably its suspended cell's first demand:
+    /// nothing else can reach the cell, a parameter slot reads its own transported cell through the
+    /// ordinary parameter read, and the value is the same. Called only when a spread slot exists;
+    /// a selection without one forms nothing. A formation failure is positioned at its spread slot.
+    /// </summary>
+    private static async ValueTask<EvalResult<List<SuppliedSelector>>> FormSelectionSupply(
+        Expr.Index selection, EvalCtx ctx, ValEnv valEnv, bool asynchronous)
+    {
+        var supplied = new List<SuppliedSelector>(selection.Selectors.Count);
+        List<NeedCell>? cells = null;
+        foreach (var slot in selection.Selectors)
+        {
+            if (slot is not Expr.SequenceSpread spread)
+            {
+                supplied.Add(new SuppliedSelector(slot, null));
+                continue;
+            }
+            cells ??= [];
+            cells.Clear();
+            if (await FormSpreadSupplySlot(spread, ctx, valEnv, asynchronous, cells, sources: null).ConfigureAwait(false) is { } failure)
+                return AtSpanIfMissing(failure, slot.Span ?? selection.Span);
+            foreach (var cell in cells)
+                supplied.Add(new SuppliedSelector(slot, cell));
+        }
+        return EvalResult<List<SuppliedSelector>>.Ok(supplied);
+    }
+
+    /// <summary>The synchronous engine's call of <see cref="FormSelectionSupply"/>, kept out of the spine machine's frame.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<List<SuppliedSelector>> FormSelectionSupplySync(Expr.Index selection, EvalCtx ctx, ValEnv valEnv)
+        => FormSelectionSupply(selection, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
 
     private static ValueTask<EvalResult<CountedResult>> DemandCell(NeedCell cell, bool asynchronous)
         => asynchronous ? cell.DemandAsync() : new(cell.Demand());

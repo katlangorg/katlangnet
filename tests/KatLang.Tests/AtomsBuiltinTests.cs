@@ -241,15 +241,15 @@ public class AtomsBuiltinTests
     // ── Composition with list indexing ───────────────────────────────────────
 
     [Theory]
-    [InlineData("atoms((10, 20)):0", 10)]
-    [InlineData("atoms([10, [20, 30]]):2", 30)]
+    [InlineData("atoms((10, 20))[0]", 10)]
+    [InlineData("atoms([10, [20, 30]])[2]", 30)]
     public void Atoms_ResultSupportsListIndexing(string source, decimal expected)
         => AssertAtoms(source, expected);
 
     [Fact]
     public void Atoms_EmptyResultIndexing_IsBadIndex()
     {
-        var parseResult = Parser.Parse("atoms('text'):0");
+        var parseResult = Parser.Parse("atoms('text')[0]");
         Assert.False(parseResult.HasErrors);
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parseResult.Root));
         Assert.True(result.IsError, "Expected BadIndex but evaluation succeeded.");

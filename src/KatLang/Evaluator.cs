@@ -208,7 +208,7 @@ public static partial class Evaluator
     /// <summary>
     /// Counted callback-parameter environment for selected higher-order items.
     /// Each item carries its ordinary value-boundary count: zero for <c>()</c>,
-    /// otherwise one, just like <c>S:i</c>.
+    /// otherwise one, just like <c>S[i]</c>.
     /// </summary>
     private static CountedResult? LookupCountedParam(CountedParamEnv env, string name)
     {

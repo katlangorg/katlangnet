@@ -309,8 +309,10 @@ SequenceAtom          = Expression ;
                         supplies itself as one item) to the surrounding slot
                         context — it does not create a sequence or list value
                         by itself. Using a spread expression as an operand of
-                        a unary or binary operator or an indexing target or
-                        selector is a targeted parse error. Prefix "*" is
+                        a unary or binary operator is a targeted parse error;
+                        a spread is legal as a whole selector slot of a
+                        postfix selection ("Data[Indexes*]"), and "A*[0]" is
+                        the multiplication "A * [0]". Prefix "*" is
                         collect-marker (binding) syntax and is a targeted
                         error in expression position. *)
                      (* Semicolon is intentionally absent from ExpressionList.
@@ -321,8 +323,10 @@ SequenceAtom          = Expression ;
                      complete expression followed on the same physical line by the
                      start of another complete expression is the targeted
                      parse error UnseparatedSameLineItem — 1 2, F(1 2),
-                     (1 2), [1 2], 2(3), A[1], 2m, sqrt 2, and P = a b are
-                     all rejected — and recovers as the next slot of the
+                     (1 2), [1 2], 2(3), A[0](1), 2m, sqrt 2, and P = a b are
+                     all rejected (a same-line "[" after a completed
+                     expression is postfix selection, so A[1] and A [1]
+                     select) — and recovers as the next slot of the
                      SAME list (the arguments of F(1 2) stay two arguments;
                      the body of P = a b keeps both slots and leaks nothing
                      into the enclosing scope). Parameter-pattern lists
@@ -419,8 +423,8 @@ SequenceAtom          = Expression ;
                      THE PHYSICAL-LINE RULE in one sentence: a physical
                      newline ends a closed expression, and only a leading "."
                      (dot-chain continuation) or an
-                     already-open "("/"{" delimiter may carry it across the
-                     line — call delimiters, indexing ":", postfix grace "~",
+                     already-open "("/"["/"{" delimiter may carry it across the
+                     line — call delimiters, the selection bracket "[", postfix grace "~",
                      the postfix spread marker "*", and binary operators all
                      require the same physical line (write a trailing
                      operator, e.g. A - newline 1, to continue arithmetic; a
@@ -508,10 +512,31 @@ PowerExpr       = PostfixExpr [ "^" UnaryExpr ] ;
                      continues the previous expression. *)
 
 PostfixExpr     = Primary { PostfixOp } ;
-PostfixOp       = ":" Primary   (* indexing is same-physical-line only: a ':'-led
-                                   line never continues the previous expression and
-                                   is a parse error. Same-line whitespace around ':'
-                                   is insignificant (Pair:0, Pair :0, Pair : 0). *)
+PostfixOp       = "[" [ ExpressionList ] "]"
+                                (* VARIADIC POSTFIX SELECTION (October 2026):
+                                   Data[], Data[0], Data[0, 1], Data[Indexes*].
+                                   The "[" must be on the same physical line as
+                                   the receiver's final token (same-line spaces and
+                                   tabs allowed: Data [0]); a "["-led line never
+                                   continues the previous expression — it begins a
+                                   new list literal (Data newline [0, 1] is two
+                                   rows). Once open, the selector list is an
+                                   ordinary ExpressionList that may span lines like
+                                   a list literal, with whole-slot spreads. Commas
+                                   select siblings (Grid[0, 1]); chained brackets
+                                   descend (Grid[0][1]). Every completed postfix
+                                   expression is a receiver (Data()[0], (Data)[0],
+                                   [10, 20][0], BuildData(n)[0].sum); a selection is
+                                   never a call target (A[0](1) is
+                                   UnseparatedSameLineItem). The retired colon form
+                                   expr:selector is RetiredColonSelection, never an
+                                   alternative spelling. Semantics: the receiver is
+                                   demanded once; the selector supply is formed like
+                                   a call's (spreads run during formation); each
+                                   supplied index is demanded, validated and
+                                   selected left to right; zero selections are (),
+                                   one is the selected value, several one sequence
+                                   of the selected values kept whole. *)
                 | "." { "~" } Identifier [ CallArgs ]
                                 (* a '.'-led line intentionally continues the
                                    dot-call chain (method-chain layout).
@@ -718,7 +743,7 @@ ParenBundleExpr = "(" ExpressionAlgorithm ")" ;
                      produces (Parser.IsRedundantGrouping; the node takes the
                      group's extent as its span, except that a name keeps its
                      identifier span). Thus "(x)" is "x", "(F(1))" is "F(1)",
-                     "(Obj.X)" is "Obj.X", "(A:0)" is "A:0", "([1, 2])" is
+                     "(Obj.X)" is "Obj.X", "(A[0])" is "A[0]", "([1, 2])" is
                      "[1, 2]", "({ ... })" is "{ ... }", "((1, 2))" is "(1, 2)",
                      and "()", "(())", "((()))" all denote the same empty
                      sequence value — and no later layer (binding, caching,
@@ -757,10 +782,12 @@ ListLiteral     = "[" [ ExpressionList ] "]" ;
                      and "[]" is a different value from "()"). Ordinary
                      parentheses AROUND a list remain redundant sequence
                      grouping: "([1, 2])" is the same value as "[1, 2]".
-                     "[" always begins a NEW expression: it is not a call or
-                     indexing delimiter, so same-line "A[1]" is a second item
-                     after "A" and is rejected by the separator rule (indexing
-                     is ":"; "A, [1]" is the two-slot list). An already-open
+                     "[" begins a NEW list expression at the start of an
+                     expression or slot and on a later physical line; a
+                     same-line "[" after a completed expression is postfix
+                     selection instead ("A[1]" and "A [1]" select from A), while
+                     "A, [1]" and "A" newline "[1]" are the two-slot list. A "["
+                     is never a call delimiter. An already-open
                      "[" spans physical lines exactly like "(" and "{" until
                      its "]" closes. A spread of a list opens exactly one list
                      boundary: "[1, 2, 3]*" supplies 1, 2, 3 and "[]*"
@@ -870,7 +897,8 @@ InterpolationHole = "{" Expression "}" ;
                      recovered at the hole's own close: an empty hole; a
                      hole-level "," (write "{a}, {b}" or "{(a, b)}"), ":"
                      (interpolation has no format specifiers; a selection is
-                     written "{(xs:0)}"), or "="; a token after the expression;
+                     written with brackets, "{xs[0]}"), or "="; a token after
+                     the expression;
                      and a "#" (a hole cannot hold a comment). A bare spread
                      hole ("{xs*}") is MisplacedSpread; "{(xs*)}" captures. *)
 DoubleQuotedText = /([^"\\{}\r\n]|\\["\\nt]|\{\{|\}\})+/ ;

@@ -752,7 +752,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("A = ()\nA.count", "ok raw=0 n=1"),
                 new SpecProbe("A = ()\nA == ()", "ok raw=true n=1"),
-                new SpecProbe("A = ()\nA:0", "err index"),
+                new SpecProbe("A = ()\nA[0]", "err index"),
             ],
             Explanation = "`()` stores and reloads like any value: it displays as `()`, counts zero items, equals `()`, and has no item to index.",
         },
@@ -867,7 +867,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = 1, 2, 3\ncount(A)", "ok raw=3 n=1"),
                 new SpecProbe("A = 1, 2, 3\nA.count", "ok raw=3 n=1"),
                 new SpecProbe("A = 1, 2, 3\nA == (1, 2, 3)", "ok raw=true n=1"),
-                new SpecProbe("A = 1, 2, 3\nA:0", "ok raw=1 n=1"),
+                new SpecProbe("A = 1, 2, 3\nA[0]", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Property access is a value boundary: a multi-item body is observed by the caller as one canonical sequence value.",
@@ -961,7 +961,7 @@ public static class LanguageSpecCorpus
                 // Diverging rows of a repeated-name step fail the NEXT binding, like the direct call `Dup(2, 3)`.
                 new SpecProbe("Dup(x, x) = { x + 1, x + 2 }\nDup.repeat(2, 1, 1)", "err arity"),
                 // An exact list keeps a growing history as ONE slot.
-                new SpecProbe("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0):0", "ok raw=L[0, 1, 2] n=1"),
+                new SpecProbe("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0)[0]", "ok raw=L[0, 1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A loop step's parameter patterns only bind the incoming state; its rows — with `*` opening a value, as everywhere — are the next state. `Dup`'s spread row supplies the same two slots as `Same`'s two rows, and `Step` keeps its pair as ONE slot by writing one value.",
@@ -1026,7 +1026,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-family-multi-slot",
             Category = "conditionals",
-            Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd.while(48, 18):0",
+            Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd.while(48, 18)[0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "6",
             ExpectedRaw = "6",
@@ -1096,7 +1096,7 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "notAnAlgorithm",
             Probes =
             [
-                new SpecProbe("A = 1, 2\nrepeat(A:0, 1, 0)", "err notAnAlgorithm"),
+                new SpecProbe("A = 1, 2\nrepeat(A[0], 1, 0)", "err notAnAlgorithm"),
                 // A genuinely zero-parameter callable is eligible, but one state value fails its ordinary arity.
                 new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
             ],
@@ -1219,17 +1219,17 @@ public static class LanguageSpecCorpus
         {
             Id = "select-spread-vs-capture-select",
             Category = "item-supply-vs-value",
-            Source = "A = [[1, 2], [3, 4]]\n\n(A:0)*,\n(A*):0",
+            Source = "A = [[1, 2], [3, 4]]\n\n(A[0])*,\n(A*)[0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n2\n[1, 2]",
             ExpectedRaw = "S[1, 2, L[1, 2]]",
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("A = [[1, 2], [3, 4]]\nA:0*", "ok raw=S[1, 2] n=2"),
-                new SpecProbe("A = [[1, 2], [3, 4]]\n(A:0)*\n(A*):0", "err type"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\nA[0]*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\n(A[0])*\n(A*)[0]", "err type"),
             ],
-            Explanation = "Select-then-spread and capture-then-select are different operations: `(A:0)*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*):0` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row: without it the `(` on the next line is a right operand and the star is the multiplication `(A:0) * (A*):0` (SYN-07B), which fails on the list operands. (`A:0*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
+            Explanation = "Select-then-spread and capture-then-select are different operations: `(A[0])*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*)[0]` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row: without it the `(` on the next line is a right operand and the star is the multiplication `(A[0]) * (A*)[0]` (SYN-07B), which fails on the list operands. (`A[0]*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
         },
         new()
         {
@@ -1241,10 +1241,10 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair*)", "ok raw=30 n=1"),
-                new SpecProbe("Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair:0, Pair:1)", "ok raw=30 n=1"),
+                new SpecProbe("Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair[0], Pair[1])", "ok raw=30 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A property reference is one argument expression even when it evaluates to several items: `Add(Pair)` is an arity error. Open it explicitly with `Add(Pair*)` or index with `Add(Pair:0, Pair:1)`.",
+            Explanation = "A property reference is one argument expression even when it evaluates to several items: `Add(Pair)` is an arity error. Open it explicitly with `Add(Pair*)` or index with `Add(Pair[0], Pair[1])`.",
         },
         new()
         {
@@ -1649,7 +1649,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(first, *middle, last) = middle\nUse(first, *middle, last) = Target\nUse(1, 2, 3, 4)", "ok raw=L[2, 3] n=1"),
                 // A formula forwards by binding NAME: Use's nested fixed `a` reaches Target's `*a`
                 // as one value.
-                new SpecProbe("Target(b, *a) = a\nUse((a, b)) = [Target]:0\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
+                new SpecProbe("Target(b, *a) = a\nUse((a, b)) = [Target][0]\nUse(([1, 2], 5))", "ok raw=L[L[1, 2]] n=1"),
                 // Bare forwarding is by name too, never by position: Use's `a` reaches Target's `*a`
                 // and Use's `b` Target's `b`, whatever order Use declares them in.
                 new SpecProbe("Target(b, *a) = a\nUse(a, b) = Target\nUse([1, 2], 5)", "ok raw=L[L[1, 2]] n=1"),
@@ -1659,7 +1659,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target\nUseVariadic(1, 2)", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("Target(*items) = items\nUseVariadic(*items) = Target(items*)\nUseVariadic(1, 2)", "ok raw=L[1, 2] n=1"),
                 // In a FORMULA such a callee is read as a value by its bare name (Q-03).
-                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = [Target]:0\nUseVariadic(1, 2)", "ok raw=L[] n=1"),
+                new SpecProbe("Target(*items) = items\nUseVariadic(*items) = [Target][0]\nUseVariadic(1, 2)", "ok raw=L[] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Forwarding decides spread from the SOURCE binding kind, never from the destination parameter kind: an ordinary caller parameter is passed as ONE argument even into a collecting destination (`Use(tag, items) = Target` forwards Use's `tag` and `items` by name, `Target(tag, items)`, so a list and a sequence value alike stay one collected item), and a caller collecting parameter forwards as spread (`UseVariadic(tag, *items) = Target` is `Target(tag, items*)`, which re-supplies exactly the collected items: collecting a supply and then spreading it gives back that same supply). Bare forwarding reads the callee's declared signature and supplies each parameter from the caller's binding of the SAME NAME, never by position, so even `Target(*items)` alone is forwarded; a formula that USES the callee forwards by binding name as well, and there a callee that works with no arguments is read as a value (`[]`).",
@@ -1750,7 +1750,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Cnt(*xs) = xs.count\nCnt([10, 7])", "ok raw=1 n=1"),
                 new SpecProbe("Cnt(*xs) = xs.count\nCnt([10, 7]*)", "ok raw=2 n=1"),
                 new SpecProbe("CntValue(x) = x.count\nCntValue([10, 7])", "ok raw=2 n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ((1, 2), 3)\nColl(A:0), Coll(first(A)), Coll((A:0)*)", "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[1, 2]] n=3"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((1, 2), 3)\nColl(A[0]), Coll(first(A)), Coll((A[0])*)", "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[1, 2]] n=3"),
                 new SpecProbe("WithHead(x, *rest) = (x, rest)\nWithHead(0, (1, 2)), WithHead(0, (1, 2)*)", "ok raw=S[S[0, L[S[1, 2]]], S[0, L[1, 2]]] n=2"),
                 new SpecProbe("Middle(x, *m, y) = (x, m, y)\nMiddle(0, [1, 2], 9), Middle(0, (1, 2), 3, 9)", "ok raw=S[S[0, L[L[1, 2]], 9], S[0, L[S[1, 2], 3], 9]] n=2"),
                 new SpecProbe("Id(x) = x\nId((1, 2)), Id([1, 2])", "ok raw=S[S[1, 2], L[1, 2]] n=2"),
@@ -1794,17 +1794,17 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // Selection, dot access, and calls: the group is the expression.
-                new SpecProbe("A = (1, 2), (3, 4)\n(A):0 == A:0, ((A)):1 == A:1", "ok raw=S[true, true] n=2"),
+                new SpecProbe("A = (1, 2), (3, 4)\n(A)[0] == A[0], ((A))[1] == A[1]", "ok raw=S[true, true] n=2"),
                 new SpecProbe("Obj = {\n    public V = 7\n}\n(Obj).V, ((Obj)).V", "ok raw=S[7, 7] n=2"),
                 new SpecProbe("Apply(f) = f(9)\nInc(x) = x + 1\nApply((Inc))", "ok raw=10 n=1"),
                 new SpecProbe("Inc(x) = x + 1\n(Inc)(1), ((Inc))(2)", "ok raw=S[2, 3] n=2"),
                 // Storage and stored reads agree with the direct value.
                 new SpecProbe("S = 1, 2\nX = S\nY = (S)\nX == Y, (X) == Y, count(Y), (Y).count", "ok raw=S[true, true, 2, 2] n=4"),
                 // Nested sequence and list values keep exactly their structure.
-                new SpecProbe("N = ((1, 2), 3)\nCollect(*items) = items\nCollect((N)), [(N)], ((N)):0", "ok raw=S[L[S[S[1, 2], 3]], L[S[S[1, 2], 3]], S[1, 2]] n=3"),
-                new SpecProbe("N = [[1, 2], 3]\nCollect(*items) = items\nCollect((N)), [(N)], ((N)):0", "ok raw=S[L[L[L[1, 2], 3]], L[L[L[1, 2], 3]], L[1, 2]] n=3"),
+                new SpecProbe("N = ((1, 2), 3)\nCollect(*items) = items\nCollect((N)), [(N)], ((N))[0]", "ok raw=S[L[S[S[1, 2], 3]], L[S[S[1, 2], 3]], S[1, 2]] n=3"),
+                new SpecProbe("N = [[1, 2], 3]\nCollect(*items) = items\nCollect((N)), [(N)], ((N))[0]", "ok raw=S[L[L[L[1, 2], 3]], L[L[L[1, 2], 3]], L[1, 2]] n=3"),
                 // A selected empty sequence stays a selected `()` however it is grouped.
-                new SpecProbe("A = ((), 1)\nCollect(*items) = items\nCollect((first(A))), Collect(((A:0))), ((first(A)))*.Collect", "ok raw=S[L[S[]], L[S[]], L[]] n=3"),
+                new SpecProbe("A = ((), 1)\nCollect(*items) = items\nCollect((first(A))), Collect(((A[0]))), ((first(A)))*.Collect", "ok raw=S[L[S[]], L[S[]], L[]] n=3"),
                 // Only the groups whose parentheses DO something are captures.
                 new SpecProbe("Collect(*items) = items\nCollect((1, 2), 3), Collect(((1, 2), 3))", "ok raw=S[L[S[1, 2], 3], L[S[S[1, 2], 3]]] n=2"),
                 new SpecProbe("A = [[1, 2]]\nCollect(*items) = items\nCollect((A*)), Collect(A*)", "ok raw=S[L[L[1, 2]], L[L[1, 2]]] n=2"),
@@ -1817,7 +1817,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inc(x) = x + 1\nG = count((Inc)), count(Inc)\nG(4)", "ok raw=S[1, 1] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression — `(S)`, `((S))`, `(L)`, `(E)`, `(A):0`, `(Obj).V`, `(Inc)(1)` mean `S`, `L`, `E`, `A:0`, `Obj.V`, `Inc(1)` — with the same value, the same emitted count, the same binding (each is ONE argument: `Collect(((S)))` is `[(1, 2)]` like `Collect(S)`), the same caching, the same selection, the same dot-call receiver, the same spread, and the same error kind. Normalization never stops at a parenthesis (`((S))` is the pair, `(())` is `()`). Only a group whose parentheses do something is a sequence-valued capture: several slots (`((1, 2), 3)` is the pair beside 3) or a lone spread (`(A*)` captures the spread items into one value). Pattern parentheses are call-shape syntax (`F((a, b))` takes one argument that opens to two items), never a runtime boundary. Selection chooses a value, dot-call passes a value, spread opens a value — and parentheses group syntax.",
+            Explanation = "Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression — `(S)`, `((S))`, `(L)`, `(E)`, `(A)[0]`, `(Obj).V`, `(Inc)(1)` mean `S`, `L`, `E`, `A[0]`, `Obj.V`, `Inc(1)` — with the same value, the same emitted count, the same binding (each is ONE argument: `Collect(((S)))` is `[(1, 2)]` like `Collect(S)`), the same caching, the same selection, the same dot-call receiver, the same spread, and the same error kind. Normalization never stops at a parenthesis (`((S))` is the pair, `(())` is `()`). Only a group whose parentheses do something is a sequence-valued capture: several slots (`((1, 2), 3)` is the pair beside 3) or a lone spread (`(A*)` captures the spread items into one value). Pattern parentheses are call-shape syntax (`F((a, b))` takes one argument that opens to two items), never a runtime boundary. Selection chooses a value, dot-call passes a value, spread opens a value — and parentheses group syntax.",
         },
         new()
         {
@@ -2092,7 +2092,7 @@ public static class LanguageSpecCorpus
                 // (formerly `7`), and two failures report the first (formerly a type error).
                 new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(Bad, 7)", "err div0"),
                 new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(7, Bad)", "err div0"),
-                new SpecProbe("Bad = 1 / 0\nMissing = [1]:5\nQ(x, x) = x\nQ(Missing, Bad)", "err index"),
+                new SpecProbe("Bad = 1 / 0\nMissing = [1][5]\nQ(x, x) = x\nQ(Missing, Bad)", "err index"),
                 // Values that each arrive on their own bind; a callable accompanies its own value.
                 new SpecProbe("P(x, x) = x\nP(7, 7)", "ok raw=7 n=1"),
                 new SpecProbe("A = 5\nP(f, f) = f, f()\nP(5, A)", "ok raw=S[5, 5] n=1"),
@@ -2135,7 +2135,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Common(x, x) = x\nCommon(7, 8)", "err arity"),
                 // Three occurrences, a nested group, and a written parameter list that binds the name.
                 new SpecProbe("P(x, x, x) = x\nSome = P + 0\nSome(7)", "ok raw=7 n=1"),
-                new SpecProbe("P((x, a), x) = a\nSome = [P]:0\nSome((7, 8))", "ok raw=8 n=1"),
+                new SpecProbe("P((x, a), x) = a\nSome = [P][0]\nSome((7, 8))", "ok raw=8 n=1"),
                 new SpecProbe("P(x, x) = x\nQ(x) = P + 0\nQ(7)", "ok raw=7 n=1"),
                 // The one binding is the caller's argument, whatever it is: a failing or
                 // callable-only argument is still its own error (Q-05), never repaired or spliced.
@@ -2251,13 +2251,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = P\nSome(Bad, 7)", "err div0"),
                 // One binding supplied to both occurrences, written or forwarded by a formula.
                 new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSame(x) = P(x, x)\nSame(Bad)", "err div0"),
-                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = [P]:0\nSome(Bad)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nP(x, x) = x\nSome = [P][0]\nSome(Bad)", "err div0"),
                 // A nested repetition, and an alias of a wrapper whose own names are distinct.
                 new SpecProbe("P((x, a), x) = a\nW(p, q) = P(p, q)\nW((7, 8), 7)", "ok raw=8 n=1"),
                 new SpecProbe("P(x, x) = x\nW(u, v) = P(u, v)\nAlias = W\nAlias(5, 5)", "ok raw=5 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is a callable alias: calling Some calls Common itself, with its own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common]:0` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
+            Explanation = "Who supplies the occurrences of a repeated name decides what is checked. `Both(a, b) = Common(a, b)` passes two independently supplied arguments, so Common still checks them: `Both(7, 7)` is 7 and `Both(7, 8)` fails as `Common(7, 8)` does. `Some = Common` is a callable alias: calling Some calls Common itself, with its own two independent arguments, so `Some(9, 9)` is 9 and `Some(9, 8)` fails the same way. `Twice(v) = Common(v, v)` writes one binding into both occurrences, and a formula such as `[Common][0]` forwards one binding by name in exactly the same way, so `Twice(8)` is 8.",
         },
         new()
         {
@@ -2946,7 +2946,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count(((1, 2), (3, 4)))", "ok raw=2 n=1"),
-                new SpecProbe("x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("x = ((1, 2), (3, 4))\nx[0]", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("x = ((1, 2), (3, 4))\nx == ((1, 2), (3, 4))", "ok raw=true n=1"),
             ],
             Explanation = "Non-unary nested structure is never flattened: a pair of pairs keeps both boundaries.",
@@ -4050,7 +4050,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("D(x) = x, x\nmap([], D)", "ok raw=L[] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A `map` transform or `reduce` step returns the result of an ordinary call (HO-03): several written rows arrive as ONE sequence value, `()` and `[]` are ordinary values, and the result is stored as one element (or passed as one accumulator), never spread. So `map(L, F)` is `[F(L:0), F(L:1), …]`, and two rows `x, x`, the capture `(x, x)` and the wrapper `G(x) = D(x)` all map to the same pairs. An extra output row written by mistake therefore produces a valid but unexpected sequence value.",
+            Explanation = "A `map` transform or `reduce` step returns the result of an ordinary call (HO-03): several written rows arrive as ONE sequence value, `()` and `[]` are ordinary values, and the result is stored as one element (or passed as one accumulator), never spread. So `map(L, F)` is `[F(L[0]), F(L[1]), …]`, and two rows `x, x`, the capture `(x, x)` and the wrapper `G(x) = D(x)` all map to the same pairs. An extra output row written by mistake therefore produces a valid but unexpected sequence value.",
         },
         new()
         {
@@ -4082,14 +4082,14 @@ public static class LanguageSpecCorpus
             Source = "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
-            Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L:0), F(L:1)]", "ok raw=L[0, 0] n=1")],
+            Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]", "ok raw=L[0, 0] n=1")],
             Explanation = "Map demands its whole collection before invoking transforms. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations.",
         },
         new()
         {
             Id = "expanded-map-calls-may-skip-indexed-arguments",
             Category = "collection-builtins",
-            Source = "L = [1 / 0, 2]\nF(x) = 0\n[F(L:0), F(L:1)]",
+            Source = "L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[0, 0]",
             ExpectedRaw = "L[0, 0]",
@@ -4381,10 +4381,10 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("count(range(1, 5))", "ok raw=5 n=1"),
-                new SpecProbe("range(1, 3):0", "ok raw=1 n=1"),
-                new SpecProbe("x = (range(1, 3)*)\nx:0", "ok raw=1 n=1"),
+                new SpecProbe("range(1, 3)[0]", "ok raw=1 n=1"),
+                new SpecProbe("x = (range(1, 3)*)\nx[0]", "ok raw=1 n=1"),
             ],
-            Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; `:` selects one element directly from the list result.",
+            Explanation = "`range` returns every integer from start to stop inclusive as one exact list value; postfix selection `[i]` selects one element directly from the list result.",
         },
         new()
         {
@@ -4509,7 +4509,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("atoms([3, (1, [4, 2])])", "ok raw=L[3, 1, 4, 2] n=1"),
                 new SpecProbe("atoms([[], (), [1]])", "ok raw=L[1] n=1"),
-                new SpecProbe("atoms([10, [20, 30]]):2", "ok raw=30 n=1"),
+                new SpecProbe("atoms([10, [20, 30]])[2]", "ok raw=30 n=1"),
             ],
             Explanation = "Mixed sequence/list nesting flattens depth-first, left to right, into one flat exact list: container boundaries are opened, never preserved, and structural order is kept without sorting or deduplication.",
         },
@@ -4572,7 +4572,7 @@ public static class LanguageSpecCorpus
         {
             Id = "count-family",
             Category = "collection-builtins",
-            Source = "count(())\ncount((()))\n\ncount(range(1, 5))\n\ncount((10, 20, 30))\n\ncount((3, 4, range(1, 5)*, 7))\n\ncount((range(1, 5)*, 7))\n\ncount(((1, 2), (3, 4)))\n\nData = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)\n(Data:0).count",
+            Source = "count(())\ncount((()))\n\ncount(range(1, 5))\n\ncount((10, 20, 30))\n\ncount((3, 4, range(1, 5)*, 7))\n\ncount((range(1, 5)*, 7))\n\ncount(((1, 2), (3, 4)))\n\nData = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)\n(Data[0]).count",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "0\n0\n5\n3\n8\n6\n2\n5",
             ExpectedRaw = "S[0, 0, 5, 3, 8, 6, 2, 5]",
@@ -4702,107 +4702,219 @@ public static class LanguageSpecCorpus
         {
             Id = "index-selects-atom",
             Category = "equality-and-indexing",
-            Source = "Nums = 10, 20, 30, 40, 50\n\n# Select the third value (index 2):\nNums:2",
+            Source = "Nums = 10, 20, 30, 40, 50\n\n# Select the third value (index 2):\nNums[2]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "30",
             ExpectedRaw = "30",
             ExpectedEmittedCount = 1,
-            Explanation = "`:` selects one top-level item by zero-based index; an atomic item is the result itself.",
+            Explanation = "Postfix brackets select one top-level item by zero-based index; an atomic item is the result itself.",
         },
         new()
         {
             Id = "index-selects-one-value",
             Category = "equality-and-indexing",
-            Source = "Pairs = (1, 2), (3, 4)\nPairs:0",
+            Source = "Pairs = (1, 2), (3, 4)\nPairs[0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(1, 2)",
             ExpectedRaw = "S[1, 2]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs:0).count", "ok raw=2 n=1"),
-                new SpecProbe("G(a) = a\nPairs = (1, 2), (3, 4)\nG(Pairs:0)", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs[0]).count", "ok raw=2 n=1"),
+                new SpecProbe("G(a) = a\nPairs = (1, 2), (3, 4)\nG(Pairs[0])", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("Pairs = (1, 2), (3, 4)\nfirst(Pairs)", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("Pairs = (1, 2), (3, 4)\nX = Pairs:0\nX", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs:0)*", "ok raw=S[1, 2] n=2"),
-                new SpecProbe("Pairs = (1, 2), (3, 4)\nPairs:0*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nX = Pairs[0]\nX", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs[0])*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nPairs[0]*", "ok raw=S[1, 2] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "SELECTION IS A VALUE BOUNDARY: `:` returns the selected item as ONE value without opening it, so a selected sequence value is one root row — exactly what `first(Pairs)` or a property holding the same value shows. Only an explicit spread `(Pairs:0)*` opens the selected value into its items.",
+            Explanation = "SELECTION IS A VALUE BOUNDARY: `Pairs[0]` returns the selected item as ONE value without opening it, so a selected sequence value is one root row — exactly what `first(Pairs)` or a property holding the same value shows. Only an explicit spread `(Pairs[0])*` opens the selected value into its items.",
         },
         new()
         {
             Id = "selection-forms-agree",
             Category = "equality-and-indexing",
-            Source = "Coll(*xs) = xs\nPairs = (1, 2), (3, 4)\nfirst(Pairs).Coll\nPairs:0.Coll\n(Pairs:0)*.Coll\nPairs:0.Coll(3)",
+            Source = "Coll(*xs) = xs\nPairs = (1, 2), (3, 4)\nfirst(Pairs).Coll\nPairs[0].Coll\n(Pairs[0])*.Coll\nPairs[0].Coll(3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[(1, 2)]\n[(1, 2)]\n[1, 2]\n[(1, 2), 3]",
             ExpectedRaw = "S[L[S[1, 2]], L[S[1, 2]], L[1, 2], L[S[1, 2], 3]]",
             ExpectedEmittedCount = 4,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA[0].Coll", "ok raw=L[S[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nfirst(A).Coll", "ok raw=L[S[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (1, ())\nlast(A).Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA:0.Coll(3)", "ok raw=L[S[], 3] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\nA[0].Coll(3)", "ok raw=L[S[], 3] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ((), 1)\n(A[0])*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\nfirst(A).Coll", "ok raw=L[L[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\n(A:0)*.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = ([], 1)\n(A[0])*.Coll", "ok raw=L[] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, [1, 2])\nlast(A).Coll", "ok raw=L[L[1, 2]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\n(last(A))*.Coll", "ok raw=L[1, 2] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nA = (3, (1, 2))\nlast(A).Coll", "ok raw=L[S[1, 2]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nA = (((1, 2), 3), 9)\nA:0.Coll", "ok raw=L[S[S[1, 2], 3]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nA = (((1, 2), 3), 9)\nA[0].Coll", "ok raw=L[S[S[1, 2], 3]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nE = ()\nE.Coll", "ok raw=L[S[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nE = ()\nColl(E)", "ok raw=L[S[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nV = (1, 2)\nV.Coll", "ok raw=L[S[1, 2]] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`first(A)`, `last(A)`, and `A:i` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument. Later behavior depends only on that value, never on selection provenance: a selected pair is ONE argument, collected as one item (`[(1, 2)]`, exactly like `V.Coll` on a property holding the pair), a selected `()` is one visible item (`[()]`, like `Coll(())`), a selected `[]` stays one exact list, and beside another argument the selected value is one item too (`Pairs:0.Coll(3)` is `[(1, 2), 3]`). Only the spread marker opens a selected sequence or list — and a spread `()` supplies nothing.",
+            Explanation = "`first(A)`, `last(A)`, and `A[i]` are the same selection: each returns the selected value through the ordinary value boundary, and dot-call passes that value as the ordinary leading argument. Later behavior depends only on that value, never on selection provenance: a selected pair is ONE argument, collected as one item (`[(1, 2)]`, exactly like `V.Coll` on a property holding the pair), a selected `()` is one visible item (`[()]`, like `Coll(())`), a selected `[]` stays one exact list, and beside another argument the selected value is one item too (`Pairs[0].Coll(3)` is `[(1, 2), 3]`). Only the spread marker opens a selected sequence or list — and a spread `()` supplies nothing.",
         },
         new()
         {
             Id = "index-nested-stays-intact",
             Category = "equality-and-indexing",
-            Source = "Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags:0\nBags:0:1",
+            Source = "Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags[0]\nBags[0][1]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "((1, 2), (3, 4))\n(3, 4)",
             ExpectedRaw = "S[S[S[1, 2], S[3, 4]], S[3, 4]]",
             ExpectedEmittedCount = 2,
-            Explanation = "Selection is one-level only and never opens what it selects: nested pairs stay intact, each selection is one root row, and chaining `:` repeats the one-level step.",
+            Explanation = "Selection is one-level only and never opens what it selects: nested pairs stay intact, each selection is one root row, and a chained bracket `[0][1]` repeats the one-level step.",
         },
         new()
         {
             Id = "index-empty-item-visible",
             Category = "equality-and-indexing",
-            Source = "x = ((), ())\nx:0",
+            Source = "x = ((), ())\nx[0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "()",
             ExpectedRaw = "S[]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll", "ok raw=L[S[]] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx[0].Coll", "ok raw=L[S[]] n=1"),
                 new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nfirst(x).Coll", "ok raw=L[S[]] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx:0.Coll(1)", "ok raw=L[S[], 1] n=1"),
-                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\n(x:0)*.Coll", "ok raw=L[] n=1"),
-                new SpecProbe("One(a) = 1\nx = ((), ())\nx:0.One", "ok raw=1 n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\nx[0].Coll(1)", "ok raw=L[S[], 1] n=1"),
+                new SpecProbe("Coll(*xs) = xs\nx = ((), ())\n(x[0])*.Coll", "ok raw=L[] n=1"),
+                new SpecProbe("One(a) = 1\nx = ((), ())\nx[0].One", "ok raw=1 n=1"),
             ],
-            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — ONE argument value when passed (dot-call passes a value: `x:0.One` binds it, `x:0.Coll` collects `[()]`, and `x:0.Coll(1)` collects `[(), 1]`), and zero items only when spread (`(x:0)*.Coll` is `[]`), whatever route selected it.",
+            Explanation = "Selecting a `()` item shows one `()` row (a non-spread root row is always one visible slot): the empty value is a real selectable item, and past the selection boundary it is simply `()` — ONE argument value when passed (dot-call passes a value: `x[0].One` binds it, `x[0].Coll` collects `[()]`, and `x[0].Coll(1)` collects `[(), 1]`), and zero items only when spread (`(x[0])*.Coll` is `[]`), whatever route selected it.",
         },
         new()
         {
             Id = "index-out-of-range",
             Category = "equality-and-indexing",
-            Source = "x = (1, 2)\nx:9",
+            Source = "x = (1, 2)\nx[9]",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "index",
-            Explanation = "Indexing past the last item is an index error, not an empty result.",
+            Explanation = "Selecting past the last item is an index error, not an empty result.",
+        },
+        new()
+        {
+            Id = "variadic-selection-several-values",
+            Category = "equality-and-indexing",
+            Source = "Data = 10, 20, 30\nData[2, 0, 2]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(30, 10, 30)",
+            ExpectedRaw = "S[30, 10, 30]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Data = 10, 20, 30\nData[1]", "ok raw=20 n=1"),
+                new SpecProbe("Data = 10, 20, 30\ncount(Data[])", "ok raw=0 n=1"),
+                new SpecProbe("Data = 10, 20, 30\nData[] == ()", "ok raw=true n=1"),
+                new SpecProbe("Data = 10, 20, 30\nIs = [2, 0]\nData[Is*]", "ok raw=S[30, 10] n=1"),
+                new SpecProbe("Data = 10, 20, 30\nIs = [2, 0]\nData[1, Is*, 1]", "ok raw=S[20, 30, 10, 20] n=1"),
+                new SpecProbe("Data = 10, 20, 30\nData[2, 0][1]", "ok raw=10 n=1"),
+                new SpecProbe("Data = 10, 20, 30\nData[2, 0]*", "ok raw=S[30, 10] n=2"),
+                new SpecProbe("Data = 10, 20, 30\nData [1]", "ok raw=20 n=1"),
+                new SpecProbe("Data = 10, 20, 30\nData[\n  2,\n  0\n]", "ok raw=S[30, 10] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Postfix brackets select several positions at once: commas select siblings, left to right, repetition allowed. Zero selections give `()`, one gives the selected value itself, and several give ONE sequence of the selected values; a spread selector `Is*` supplies its items as selectors, and a chained bracket selects from that result. A space before `[` on the same line is allowed, and the selector list may span lines once the bracket is open.",
+        },
+        new()
+        {
+            Id = "variadic-selection-keeps-empty-values",
+            Category = "equality-and-indexing",
+            Source = "X = ((), [], 1)\nX[0, 1]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "((), [])",
+            ExpectedRaw = "S[S[], L[]]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("X = ((), [], 1)\ncount(X[0, 1])", "ok raw=2 n=1"),
+                new SpecProbe("X = ((), [], 1)\nX[1]", "ok raw=L[] n=1"),
+                new SpecProbe("X = ((), [], 1)\nX[1, 2]", "ok raw=S[L[], 1] n=1"),
+            ],
+            Explanation = "Several selected values are kept whole as the elements of one sequence: a selected `()` or `[]` stays an element and is never dropped or opened, so `X[0, 1]` has two elements.",
+        },
+        new()
+        {
+            Id = "variadic-selection-spread-forms-before-selection",
+            Category = "equality-and-indexing",
+            Source = "[10, 20][99, (1 / 0)*]",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                new SpecProbe("[10, 20][99, 1 / 0]", "err index"),
+                new SpecProbe("[10, 20][0, 1 / 0]", "err div0"),
+                new SpecProbe("[10, 20][1 / 0, 99]", "err div0"),
+                new SpecProbe("[10, 20][1, 'x']", "err type"),
+                new SpecProbe("[10, 20][9, 'x']", "err index"),
+            ],
+            Explanation = "A selector list forms its supply like a call's argument list: an explicit spread selector runs during formation, before any selector is validated, so `(1 / 0)*` fails first; ordinary selectors stay suspended and are demanded left to right, the first failure ending the selection, so in `[10, 20][99, 1 / 0]` the out-of-range `99` reports and `1 / 0` never runs.",
+        },
+        new()
+        {
+            Id = "variadic-selection-shares-the-positional-view",
+            Category = "equality-and-indexing",
+            Source = "count('abc')\n'abc'[0]\n42[0]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\nabc\n42",
+            ExpectedRaw = "S[1, 'abc', 42]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("'abc'[1]", "err index"),
+                new SpecProbe("''[0] == ''", "ok raw=true n=1"),
+                new SpecProbe("first('abc') == 'abc'[0]", "ok raw=true n=1"),
+                new SpecProbe("true[0]", "ok raw=true n=1"),
+                new SpecProbe("count([])", "ok raw=0 n=1"),
+                new SpecProbe("[][0]", "err index"),
+            ],
+            Explanation = "`count`, `first`, `last`, and selection read ONE immediate positional view: a string is one position (never its characters), so `count('abc')` is 1, `'abc'[0]` is the string itself, and `'abc'[1]` names no position; any other scalar likewise selects itself at 0.",
+        },
+        new()
+        {
+            Id = "variadic-selection-bracket-on-a-later-line-is-a-list",
+            Category = "equality-and-indexing",
+            Source = "Data = 10, 20\nData\n[0, 1]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(10, 20)\n[0, 1]",
+            ExpectedRaw = "S[S[10, 20], L[0, 1]]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("A = 2\nA*[3]", "err type"),
+                new SpecProbe("A = (1, 2)\n(A*)[1]", "ok raw=2 n=1"),
+            ],
+            Explanation = "Selection attaches only on the receiver's line: a `[` on a later line begins a new list literal row. A star before `[` keeps the star rule, so `A*[3]` is the multiplication `A * [3]`; capture first with `(A*)[1]`.",
+        },
+        new()
+        {
+            Id = "variadic-selection-has-no-callable-identity",
+            Category = "equality-and-indexing",
+            Source = "K = 5\nApply(f) = f()\nApply([K][0])",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Explanation = "A selection chooses a calculation VALUE: it carries no callable identity, so invoking it is `NotAnAlgorithm` even when the selected value came from a callable's name.",
+        },
+        new()
+        {
+            Id = "negative-index-selects-no-position",
+            Category = "equality-and-indexing",
+            Source = "x = (1, 2)\nx[-1]",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "index",
+            Explanation = "A selector is an ordinary expression, so `-1` is a number naming no position: an index error, never from-the-end selection.",
         },
         new()
         {
             Id = "index-captured-requality",
             Category = "equality-and-indexing",
-            Source = "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)",
+            Source = "x = ((1, 2), (3, 4))\ny = x[0]\ny == (1, 2)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "true",
             ExpectedRaw = "true",
@@ -5085,12 +5197,12 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "negative-index-literal-rejected",
+            Id = "retired-colon-selection-rejected",
             Category = "parser-layout",
-            Source = "x = (1, 2)\nx:-1",
+            Source = "x = (1, 2)\nx:0",
             Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
-            Explanation = "A negative index selector never forms at parse time.",
+            ExpectedDiagnosticCode = DiagnosticCode.RetiredColonSelection,
+            Explanation = "':' is not KatLang syntax: the retired colon selection reports its migration diagnostic (write 'x[0]'), never an alternative spelling of selection.",
         },
         new()
         {
@@ -5489,7 +5601,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("-[1]", "err type"),
                 new SpecProbe("-'a'", "err type"),
                 new SpecProbe("sqrt((4, 9))", "err type"),
-                new SpecProbe("A = 1, 2\nA:[0]", "err type"),
+                new SpecProbe("A = 1, 2\nA[[0]]", "err type"),
                 new SpecProbe("range([1], 3)", "err type"),
                 new SpecProbe("repeat({ x }, [1], 0)", "err type"),
                 new SpecProbe("sum((1, true))", "err type"),
@@ -5517,14 +5629,14 @@ public static class LanguageSpecCorpus
                 new SpecProbe("().first", "err index"),
                 new SpecProbe("[].last", "err index"),
                 new SpecProbe("E = ()\nlast(E)", "err index"),
-                new SpecProbe("A = (), 1\nfirst(A:0)", "err index"),
+                new SpecProbe("A = (), 1\nfirst(A[0])", "err index"),
                 new SpecProbe("first(filter([1, 2], { x > 5 }))", "err index"),
-                new SpecProbe("():0", "err index"),
-                new SpecProbe("[]:(count([]) - 1)", "err index"),
-                new SpecProbe("first((1, 2)), (1, 2):0, last([3, 4]), [3, 4]:1", "ok raw=S[1, 1, 4, 4] n=4"),
+                new SpecProbe("()[0]", "err index"),
+                new SpecProbe("[][count([]) - 1]", "err index"),
+                new SpecProbe("first((1, 2)), (1, 2)[0], last([3, 4]), [3, 4][1]", "ok raw=S[1, 1, 4, 4] n=4"),
             ],
             Notes = "Q-27 / SEQ-04, decided 2026-10-05 (P2): `first`/`last` on an empty collection were formerly the collection's arity rejection.",
-            Explanation = "`first(A)` is the selection `A:0` and `last(A)` is `A:(count(A) - 1)`, errors included: an empty collection names no position to select, so `first(())` and `last([])` report BadIndex exactly as `():0` does. BadIndex means a selection named no position, never merely that a container is empty.",
+            Explanation = "`first(A)` is the selection `A[0]` and `last(A)` is `A[count(A) - 1]`, errors included: an empty collection names no position to select, so `first(())` and `last([])` report BadIndex exactly as `()[0]` does. BadIndex means a selection named no position, never merely that a container is empty.",
         },
         new()
         {
@@ -5658,50 +5770,50 @@ public static class LanguageSpecCorpus
         {
             Id = "list-index-selects-element",
             Category = "lists",
-            Source = "[1, 2, 3]:0",
+            Source = "[1, 2, 3][0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1",
             ExpectedRaw = "1",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("[1, 2, 3]:2", "ok raw=3 n=1"),
-                new SpecProbe("[7]:0", "ok raw=7 n=1"),
-                new SpecProbe("((1, 2, 3):1) == ([1, 2, 3]:1)", "ok raw=true n=1"),
+                new SpecProbe("[1, 2, 3][2]", "ok raw=3 n=1"),
+                new SpecProbe("[7][0]", "ok raw=7 n=1"),
+                new SpecProbe("((1, 2, 3)[1]) == ([1, 2, 3][1])", "ok raw=true n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "`:` selects one immediate element from an exact list by zero-based position, exactly like sequence selection.",
+            Explanation = "Postfix brackets select one immediate element from an exact list by zero-based position, exactly like sequence selection.",
         },
         new()
         {
             Id = "list-index-nested-element-stays-exact",
             Category = "lists",
-            Source = "Rows = [[1, 2], [3, 4]]\nRows:0\nRows:0:1",
+            Source = "Rows = [[1, 2], [3, 4]]\nRows[0]\nRows[0][1]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 2]\n2",
             ExpectedRaw = "S[L[1, 2], 2]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("[[1, 2]]:0 == [1, 2]", "ok raw=true n=1"),
-                new SpecProbe("[[1, 2]]:0 == (1, 2)", "ok raw=false n=1"),
-                new SpecProbe("[(1, 2), (3, 4)]:0", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("[[1, 2]][0] == [1, 2]", "ok raw=true n=1"),
+                new SpecProbe("[[1, 2]][0] == (1, 2)", "ok raw=false n=1"),
+                new SpecProbe("[(1, 2), (3, 4)][0]", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — and a selected sequence element is likewise one intact value; chaining `:` selects one level at a time.",
+            Explanation = "A selected list element is returned exactly as stored — one opaque list, never flattened or converted — and a selected sequence element is likewise one intact value; chained brackets select one level at a time.",
         },
         new()
         {
             Id = "list-index-out-of-range",
             Category = "lists",
-            Source = "[]:0",
+            Source = "[][0]",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "index",
             Probes =
             [
-                new SpecProbe("[1, 2]:2", "err index"),
-                new SpecProbe("[1, 2]:100", "err index"),
-                new SpecProbe("A = []\nA:0", "err index"),
+                new SpecProbe("[1, 2][2]", "err index"),
+                new SpecProbe("[1, 2][100]", "err index"),
+                new SpecProbe("A = []\nA[0]", "err index"),
             ],
             Explanation = "Empty and past-the-end list positions report the same out-of-range index error as sequence selection.",
         },
@@ -5709,16 +5821,16 @@ public static class LanguageSpecCorpus
         {
             Id = "list-index-builtin-results",
             Category = "lists",
-            Source = "range(1, 3):2",
+            Source = "range(1, 3)[2]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("take([1, 2, 3], 1):0", "ok raw=1 n=1"),
-                new SpecProbe("[3, 1, 2].order:0", "ok raw=1 n=1"),
-                new SpecProbe("A = range(1, 3)\nA:0", "ok raw=1 n=1"),
+                new SpecProbe("take([1, 2, 3], 1)[0]", "ok raw=1 n=1"),
+                new SpecProbe("[3, 1, 2].order[0]", "ok raw=1 n=1"),
+                new SpecProbe("A = range(1, 3)\nA[0]", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Collection-producing builtin results are exact lists and can be indexed directly — no spread-and-recapture step is needed.",
@@ -5792,18 +5904,18 @@ public static class LanguageSpecCorpus
         {
             Id = "list-written-slot-reifies-selection",
             Category = "lists",
-            Source = "S = ((1, 2), (3, 4))\n\n[S:0, 5]\n[S:0*, 5]",
+            Source = "S = ((1, 2), (3, 4))\n\n[S[0], 5]\n[S[0]*, 5]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[(1, 2), 5]\n[1, 2, 5]",
             ExpectedRaw = "S[L[S[1, 2], 5], L[1, 2, 5]]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("S = ((1, 2), (3, 4))\nz = (S:0, 5)\nz", "ok raw=S[S[1, 2], 5] n=1"),
-                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S:0, 5))", "ok raw=6 n=1"),
-                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S:0*, 5))", "ok raw=8 n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nz = (S[0], 5)\nz", "ok raw=S[S[1, 2], 5] n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S[0], 5))", "ok raw=6 n=1"),
+                new SpecProbe("S = ((1, 2), (3, 4))\nF((x, y, z)) = x + y + z\nF((S[0]*, 5))", "ok raw=8 n=1"),
             ],
-            Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: the selection `S:0` is the pair `(1, 2)` as a list element, exactly as at a capture, a call argument, and every other receiver. Only an explicit spread `S:0*` opens the selected value into the surrounding slots.",
+            Explanation = "A non-spread expression occupying one written slot contributes exactly ONE persistent value: the selection `S[0]` is the pair `(1, 2)` as a list element, exactly as at a capture, a call argument, and every other receiver. Only an explicit spread `S[0]*` opens the selected value into the surrounding slots.",
             IncludeInGeneratorPrompt = true,
         },
         new()
@@ -6358,16 +6470,16 @@ public static class LanguageSpecCorpus
             Source = """
                 Target(tag, *items) = items
                 Collected(tag, *items) = {
-                    G(q) = [Target]:0
+                    G(q) = [Target][0]
                     G(99)
                 }
                 Fixed(tag, items) = {
-                    G(q) = [Target]:0
+                    G(q) = [Target][0]
                     G(99)
                 }
                 Head(x, *rest) = x + rest.count
                 Partial(x) = {
-                    H = [Head]:0
+                    H = [Head][0]
                     [H, H(10, 20)]
                 }
                 [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
@@ -7053,7 +7165,7 @@ public static class LanguageSpecCorpus
         {
             Id = "zero-argument-callable-name-is-read-not-lifted",
             Category = "variadic-calls",
-            Source = "Cnt(*xs) = xs.count\nPair(*xs) = 10, 20\nAlias = Cnt\nTwice(*items) = Cnt + Cnt\n\nCnt + 1, [Cnt], Cnt == Cnt, Pair:1\nAlias, Alias()\nTwice(1, 2, 3)",
+            Source = "Cnt(*xs) = xs.count\nPair(*xs) = 10, 20\nAlias = Cnt\nTwice(*items) = Cnt + Cnt\n\nCnt + 1, [Cnt], Cnt == Cnt, Pair[1]\nAlias, Alias()\nTwice(1, 2, 3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n[0]\ntrue\n20\n0\n0\n0",
             ExpectedRaw = "S[1, L[0], true, 20, 0, 0, 0]",
@@ -7075,7 +7187,7 @@ public static class LanguageSpecCorpus
                 // A closed parameter list never blocks such a read: it needs no argument.
                 new SpecProbe("Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)", "ok raw=5 n=1"),
                 // Selection and the builtin first/last read the same value.
-                new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair:0, last(Pair) == Pair:1", "ok raw=S[true, true] n=2"),
+                new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair[0], last(Pair) == Pair[1]", "ok raw=S[true, true] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is its own cached value, `0`. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
@@ -7508,14 +7620,14 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "string-interpolation-selection-in-parentheses",
+            Id = "string-interpolation-selection-in-a-hole",
             Category = "strings",
-            Source = "xs = [10, 20]\n\"{(xs:1)} {[xs:0]}\"",
+            Source = "xs = [10, 20]\n\"{xs[1]} {(xs[1])} {[xs[0]]}\"",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "20 [10]",
-            ExpectedRaw = "'20 [10]'",
+            ExpectedDisplay = "20 20 [10]",
+            ExpectedRaw = "'20 20 [10]'",
             ExpectedEmittedCount = 1,
-            Explanation = "A `:` at the top level of a hole is refused (interpolation has no format specifiers), so a selection in a hole is written inside a delimiter, as in `{(xs:1)}`.",
+            Explanation = "A selection in a hole is written with postfix brackets exactly as anywhere else and needs no grouping, `{xs[1]}`: a redundant group `{(xs[1])}` is the same selection, while `{[xs[0]]}` is a list holding it.",
         },
         new()
         {
@@ -7564,7 +7676,7 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.ParseError,
             ExpectedDiagnosticCode = DiagnosticCode.InvalidInterpolationHole,
             ExpectedParseDiagnosticFragment = "format specifiers",
-            Explanation = "A top-level `:` in a hole is refused: interpolation has no format specifiers, and a selection is written in parentheses, `{(xs:1)}`.",
+            Explanation = "A top-level `:` in a hole is refused: interpolation has no format specifiers, and `:` is no selection anywhere — a selection is written with brackets, `{xs[1]}`.",
         },
         new()
         {

@@ -155,10 +155,10 @@ def pairOrigins : List KatLang.Expr :=
     resolve "A",
     resolve "Make",
     .call (resolve "if") [.boolLiteral true, pair12, .num 0],
-    .index (resolve "B") (.num 0),
+    .index (resolve "B") [.num 0],
     .call (resolve "first") [resolve "B"],
     .call (resolve "last") [resolve "C"],
-    .index (.call (resolve "map") [resolve "B", resolve "Id"]) (.num 0),
+    .index (.call (resolve "map") [resolve "B", resolve "Id"]) [.num 0],
     .capture [sequenceSpread (resolve "A")],
     .algorithmExpr (alg [] [] [] [.num 1, .num 2]) ]
 
@@ -188,7 +188,7 @@ def emptyValuesAreOneArgument : Bool :=
   collIs (.listValue []) (.call (resolve "Coll") [sequenceSpread (.listLiteral [])]) &&
   collIs (.listValue [.atom 3]) (.call (resolve "Coll") [sequenceSpread (resolve "E"), .num 3]) &&
   collIs (.listValue [.sequenceValue []])
-    (.call (resolve "Coll") [.index (.capture [.emptySequence 0, .num 1]) (.num 0)])
+    (.call (resolve "Coll") [.index (.capture [.emptySequence 0, .num 1]) [.num 0]])
 
 #guard emptyValuesAreOneArgument
 
@@ -918,7 +918,7 @@ def loopStateMatrix : Bool :=
 #guard loopStateMatrix
 
 -- Selection feeds every later consumer as ONE value: with `B = ((1, 2), 3)`
--- and `LL = [[1, 2], 3]`, `B:0`, `first(B)`, `LL:0`, and `first(LL)` bind a fixed
+-- and `LL = [[1, 2], 3]`, `B[0]`, `first(B)`, `LL[0]`, and `first(LL)` bind a fixed
 -- parameter unchanged, are rejected by a two-parameter callee (one argument),
 -- are opened by an explicit structural pattern of their own kind (`AddPair`
 -- for a selected sequence, `AddPairL` for a selected list) and by the explicit
@@ -932,9 +932,9 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
     | Except.ok value => value == expected
     | _ => false
   let selections : List (KatLang.Expr × Result × String) :=
-    [ (.index (resolve "B") (.num 0), seq12, "AddPair"),
+    [ (.index (resolve "B") [.num 0], seq12, "AddPair"),
       (.call (resolve "first") [resolve "B"], seq12, "AddPair"),
-      (.index (resolve "LL") (.num 0), list12, "AddPairL"),
+      (.index (resolve "LL") [.num 0], list12, "AddPairL"),
       (.call (resolve "first") [resolve "LL"], list12, "AddPairL") ]
   selections.all fun (selection, value, addPair) =>
     is value (.call (resolve "Id") [selection]) &&

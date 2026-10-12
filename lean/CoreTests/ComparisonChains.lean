@@ -231,7 +231,7 @@ def comparisonChainDiagnosticNames : Bool :=
   (KatLang.exprDiagnosticName (.dotCall (.unary .not a) "f" none) == "(not a).f") &&
   (KatLang.exprDiagnosticName (.dotCall (.num (-2)) "abs" none) == "(-2).abs") &&
   (KatLang.exprDiagnosticName (.call (.unary .minus a) []) == "(-a)(...)") &&
-  (KatLang.exprDiagnosticName (.index (.num (-2)) (.num 0)) == "(-2):0") &&
+  (KatLang.exprDiagnosticName (.index (.num (-2)) [.num 0]) == "(-2)[0]") &&
   (KatLang.exprDiagnosticName (.sequenceSpread (.num (-2))) == "(-2)*") &&
   (KatLang.comparisonLinkDiagnosticName .lt (.num 2) (.boolLiteral true) == "2 < true") &&
   (KatLang.comparisonLinkDiagnosticName .lt (.capture [.num 1, .num 2]) (.capture [.num 1, .num 2]) == "(1, 2) < (1, 2)")

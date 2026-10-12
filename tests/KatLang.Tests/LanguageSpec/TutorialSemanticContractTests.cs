@@ -770,7 +770,7 @@ public class TutorialSemanticContractTests
             Assert.Contains(failure.Errors, e => e.Code == KatLangErrorCode.InvalidInterpolationHole);
         }
 
-        Assert.Equal("1", Display("xs = [1]\n\"{(xs:0)}\""));
+        Assert.Equal("1", Display("xs = [1]\n\"{(xs[0])}\""));
 
         // "There is still no `+` for text."
         RunFailure("'a' + 'b'", KatLangErrorCode.TypeMismatch);

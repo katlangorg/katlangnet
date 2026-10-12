@@ -580,7 +580,7 @@ public class BudgetCrossTalkMatrixTests
         // Multi-slot state: a temp called in BOTH next-state outputs, one of them inside
         // a planned `if` condition, with the loop result indexed.
         Source("PlannedMultiStateIfTempLoop",
-            "Probe = 1\nStep = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nf(0) = Step.repeat(5, 1, 1) : 0\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nf(0) = Step.repeat(5, 1, 1)[0]\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim, MaxCollectionItemsDim, MaxMaterializedItemsDim),
     ];
 

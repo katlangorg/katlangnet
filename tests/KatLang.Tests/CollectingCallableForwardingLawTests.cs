@@ -91,7 +91,7 @@ public sealed class CollectingCallableForwardingLawTests
         },
         {
             "a selection of the collector is a computed value",
-            Inc + Apply + "Fwd(*fs) = Apply(fs:0)\nFwd(Inc)",
+            Inc + Apply + "Fwd(*fs) = Apply(fs[0])\nFwd(Inc)",
             $"err NotAnAlgorithm: {ApplyChain}: {NotCallable} @ [2:12, 2:13)"
         },
         {

@@ -77,7 +77,7 @@ public class InterpolationSemanticsTests
     [InlineData("xs = [1, 2]\n\"{xs}\"", "[1, 2]")]
     [InlineData("xs = [1, 2]\n\"{(xs*)}\"", "(1, 2)")]
     [InlineData("xs = [1, 2]\n\"{(xs*, 3)}\"", "(1, 2, 3)")]
-    [InlineData("xs = [[1, 2]]\n\"{(xs:0)}\"", "[1, 2]")]
+    [InlineData("xs = [[1, 2]]\n\"{(xs[0])}\"", "[1, 2]")]
     [InlineData("Pair = (1, (2, 3))\n\"{Pair}\"", "(1, (2, 3))")]
     public void AHoleValue_IsNeverSpreadOrFlattened(string source, string text)
         => Assert.Equal(text, Text(source));

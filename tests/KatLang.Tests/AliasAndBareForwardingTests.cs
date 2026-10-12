@@ -854,13 +854,13 @@ public class AliasAndBareForwardingTests
     [Fact]
     public async Task FormulaLiftingAndBareForwarding_AreDeliberatelyDifferent()
     {
-        Assert.Equal("x", Signature(Owner(SourceProvenance.ParseValid("F(x) = x * 2\nH = [F]:0\n0").Root, "H")));
+        Assert.Equal("x", Signature(Owner(SourceProvenance.ParseValid("F(x) = x * 2\nH = [F][0]\n0").Root, "H")));
         AssertUnforwardable("F(x) = x * 2\nG(q) = F\n0", "x");
         Assert.StartsWith(
             "err ArityMismatch: while evaluating call to G: Property 'F' expects 1 parameter, but was called with 0 arguments.",
-            await Outcome("F(x) = x * 2\nG(q) = [F]:0\nG(7)"),
+            await Outcome("F(x) = x * 2\nG(q) = [F][0]\nG(7)"),
             StringComparison.Ordinal);
-        Assert.Equal("ok 20", await Outcome("F(x) = x * 2\nOuter(x) = {\n  G(q) = [F]:0\n  G(7)\n}\nOuter(10)"));
+        Assert.Equal("ok 20", await Outcome("F(x) = x * 2\nOuter(x) = {\n  G(q) = [F][0]\n  G(7)\n}\nOuter(10)"));
         Assert.Equal("ok 20", await Outcome("F(x) = x * 2\nOuter(x) = {\n  G(q) = F\n  G(7)\n}\nOuter(10)"));
     }
 

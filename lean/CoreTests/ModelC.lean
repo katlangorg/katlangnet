@@ -218,7 +218,7 @@ def computedSuppliesHaveNoCallable : EvalM Bool := do
   let ctx := EvalCtx.empty.push root
   let sources : List Expr :=
     [ .call (.resolve "ReturnF") [.resolve "Inc"], selectorOf "if", selectorOf "Choose"
-    , .listLiteral [.resolve "Inc"], .index (.listLiteral [.resolve "Inc"]) (.num 0)
+    , .listLiteral [.resolve "Inc"], .index (.listLiteral [.resolve "Inc"]) [.num 0]
     , .capture [.resolve "Inc", .num 1] ]
   let addresses <- sources.mapM (fun source => supplyNeed source ctx [])
   let identities <- addresses.mapM projectNeedCallable

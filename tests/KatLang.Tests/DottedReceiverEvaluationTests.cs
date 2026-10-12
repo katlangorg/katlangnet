@@ -150,7 +150,7 @@ public class DottedReceiverEvaluationTests
     [InlineData("(1, 2, 3)")]                       // parenthesized body
     [InlineData("Pick(1)")]                         // conditional call
     [InlineData("[1, 2, 3].take(2)")]               // nested dotted chain
-    [InlineData("[[1, 2], [3, 4]]:0")]              // index result
+    [InlineData("[[1, 2], [3, 4]][0]")]              // index result
     [InlineData("[1, 2, 3].map(Double)")]           // callback result
     public void EveryReceiverSourceForm_AgreesBetweenForms(string receiver)
     {

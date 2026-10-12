@@ -85,7 +85,7 @@ public static class ConcurrencyCorpus
     public const string Scalar = "6 * 7";
 
     /// <summary>Capture/spread interplay with index selection.</summary>
-    public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S:1)*";
+    public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S[1])*";
 
     /// <summary>Per-call brace scopes: each call mints fresh scope contexts
     /// (Evaluator.AsScopeCtx), each carrying its own owner.</summary>
@@ -110,7 +110,7 @@ public static class ConcurrencyCorpus
     public const string RecursionRunaway = "F(x) = F(x + 1)\nF(0)";
 
     /// <summary>Deterministic index failure.</summary>
-    public const string FailingIndex = "(1, 2):9";
+    public const string FailingIndex = "(1, 2)[9]";
 
     /// <summary>Substantial but legal work under a configured step budget.</summary>
     public const string HeavyLoop = "step(s) = s + 1\nrepeat(step, 4000, 0)";
@@ -125,7 +125,7 @@ public static class ConcurrencyCorpus
     public const string CachedPropB = "P = 9\nP, P";
     public const string StructuralPropA = "Box = {P = 5}\nBox.P, Box.P";
     public const string StructuralPropB = "Box = {P = 6}\nBox.P, Box.P";
-    public const string FailingProp = "P = (1, 2):9\nP, P";
+    public const string FailingProp = "P = (1, 2)[9]\nP, P";
     public const string PropAndBypassA = "P = 7\nP, P()";
     public const string PropAndBypassB = "P = 8\nP, P()";
     public const string ScopeShapeA = "Outer = {Mid = {Leaf = 11\nLeaf}\nMid}\nOuter, Outer";

@@ -643,7 +643,7 @@ def ipRunsTo (out : List KatLang.Expr) (expected : Result) (contexts : Nat) : Bo
 -- literal brace, while a block further right needs nothing (C#: `ExprNameRendererTests`).
 #guard KatLang.exprDiagnosticName (.interpolatedString "x" [ipLink (resolve "a")]) == "\"x{a}\""
 #guard KatLang.holeMayRenderLeadingBrace (.binary .add (.algorithmExpr (alg [] [] [] [num 1])) (num 2))
-#guard KatLang.holeMayRenderLeadingBrace (.index (.algorithmExpr (alg [] [] [] [num 1])) (num 0))
+#guard KatLang.holeMayRenderLeadingBrace (.index (.algorithmExpr (alg [] [] [] [num 1])) [num 0])
 #guard !KatLang.holeMayRenderLeadingBrace (.binary .add (num 2) (.algorithmExpr (alg [] [] [] [num 1])))
 #guard (KatLang.exprDiagnosticName
     (.interpolatedString "x" [ipLink (.binary .add (.algorithmExpr (alg [] [] [] [num 1])) (num 2))])).startsWith "\"x{ "

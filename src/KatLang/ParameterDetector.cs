@@ -1288,7 +1288,7 @@ internal static class ParameterDetector
             // Operator forms are never valid open targets — open-form validation
             // rejects them (BadOpenForm) — but the PARSER still produces them in
             // diagnostic recovery trees (`open -~x`, `open ~x + 1`, `open ~x < 1`,
-            // `open 1 + { ~k }`, `open x:~y`). Their operands are ordinary values,
+            // `open 1 + { ~k }`, `open x[~y]`). Their operands are ordinary values,
             // exactly like a capture's rows, so they take the transparent open-region
             // walk's own arms (this node is already memoized by ProcessOpenExpr; its
             // operands go through the memoized ProcessExpr): the node kind is kept
@@ -1868,9 +1868,11 @@ internal static class ParameterDetector
                 CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
+                // Occurrence order: the receiver, then each selector slot as written.
                 CollectFreeParams(target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(selector, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                foreach (var selector in selectors)
+                    CollectFreeParams(selector, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
@@ -2273,10 +2275,12 @@ internal static class ParameterDetector
 
             Expr.Unary unary => unary with { Operand = RewriteParams(unary.Operand, scope, parameters, memo) },
 
+            // Receiver first, then the selectors left to right: the rewrite order is the
+            // diagnostic order (AmbiguousOpen, Grace).
             Expr.Index index => index with
             {
                 Target = RewriteParams(index.Target, scope, parameters, memo),
-                Selector = RewriteParams(index.Selector, scope, parameters, memo),
+                Selectors = RewriteParams(index.Selectors, scope, parameters, memo),
             },
 
             Expr.SequenceSpread spread => spread with { Operand = RewriteParams(spread.Operand, scope, parameters, memo) },
@@ -2585,7 +2589,7 @@ internal static class ParameterDetector
             Expr.Index index => index with
             {
                 Target = ProcessExpr(index.Target, scope, memo),
-                Selector = ProcessExpr(index.Selector, scope, memo),
+                Selectors = index.Selectors.Select(selector => ProcessExpr(selector, scope, memo)).ToList(),
             },
             Expr.SequenceSpread spread => spread with { Operand = ProcessExpr(spread.Operand, scope, memo) },
             Expr.SequenceConstruct construct => construct with
@@ -2737,7 +2741,7 @@ internal static class ParameterDetector
         Expr.Binary binary => [binary.Left, binary.Right],
         Expr.Comparison comparison => [comparison.First, .. comparison.Links.Select(static link => link.Operand)],
         Expr.Unary unary => [unary.Operand],
-        Expr.Index index => [index.Target, index.Selector],
+        Expr.Index index => [index.Target, .. index.Selectors],
         Expr.SequenceConstruct construct => [construct.Left, construct.Right],
         Expr.SequenceSpread spread => [spread.Operand],
         Expr.ListLiteral list => list.Items,

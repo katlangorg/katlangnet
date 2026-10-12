@@ -165,7 +165,7 @@ public class ConditionalBranchElaborationTests
     // an output row, a call argument, a list element, a capture row, a property body.
     [InlineData("F(0) = {\n    { open { public H = 3 }\n      H }\n}\nF(n) = n\n\nF(0)", "3")]
     [InlineData("Apply(f) = f\nF(0) = Apply({ open { public H = 4 }\n  H })\nF(n) = n\n\nF(0)", "4")]
-    [InlineData("F(0) = [{ open { public H = 6 }\n  H }]:0\nF(n) = n\n\nF(0)", "6")]
+    [InlineData("F(0) = [{ open { public H = 6 }\n  H }][0]\nF(n) = n\n\nF(0)", "6")]
     [InlineData("F(0) = ({ open { public H = 8 }\n  H }, 1)\nF(n) = (n, n)\n\nF(0)", "(8, 1)")]
     [InlineData("F(0) = {\n    G = {\n        open { public H = 1 }\n        H\n    }\n    G\n}\nF(n) = n\n\nF(0)", "1")]
     // An inner clause family's branch opening its own inline block.
@@ -448,7 +448,7 @@ public class ConditionalBranchElaborationTests
     [InlineData("Host(4)")]
     [InlineData("{ G(x) = Host(x)\nG(4) }")]
     [InlineData("(Host(4))")]
-    [InlineData("[Host(4)]:0")]
+    [InlineData("[Host(4)][0]")]
     public void Source_ClosedBranch_ResolvesConfiguredHostOperations(string expression)
     {
         var calls = 0;

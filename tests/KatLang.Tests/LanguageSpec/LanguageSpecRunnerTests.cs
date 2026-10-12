@@ -233,7 +233,7 @@ public class LanguageSpecRunnerTests
             "conditional-branch-inline-open-does-not-leak-to-sibling-branches",
             "conditional-branch-local-library-does-not-leak-to-sibling-branches",
             "grace-line-final-marker-after-call-rejected",
-            "negative-index-literal-rejected",
+            "retired-colon-selection-rejected",
             "open-capture-target-rejected",
             // Constitution PV-11 / PV-25 / PV-49 (September 2026): open-target heads and
             // steps, open placement after clause definitions, and Grace in a branch

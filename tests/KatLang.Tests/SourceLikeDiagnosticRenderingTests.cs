@@ -22,18 +22,21 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
         var sources = new HashSet<string>(StringComparer.Ordinal)
         {
             "a", "0", "true", "'text'", "()", "(a, b)", "[a, b]", "[a]",
-            "f(a, b)", "a.f", "a.f(b)", "a:0", "a:(b:0)", "a:(b.f)",
+            "f(a, b)", "a.f", "a.f(b)", "a[0]", "a[b[0]]", "a[b.f]",
+            // Variadic postfix selection: zero, several, spread and chained selectors, and a
+            // capture receiver (a bare spread receiver would read back as multiplication).
+            "a[]", "a[0, b]", "a[b*]", "a[0, b*, 1]", "a[0][1]", "(a*)[0]", "a[b < c]",
             "~a", "a~", "~~a", "a~~", "~a~", "a.~~f", "-a", "not a", "-a ^ b", "(-a) ^ b",
             "a ^ -b", "-(a ^ b)", "not a < b", "not (a and b)", "{ P = 1 }",
             "(a < b) < c", "a < (b < c)", "a < b < c", "a < b == c", "a == b != c",
-            "(a*)", "(a*, b)", "[a*, b]", "(a.f(b)):0", "(a:0).f(b)", "(~a)(b)",
+            "(a*)", "(a*, b)", "[a*, b]", "(a.f(b))[0]", "(a[0]).f(b)", "(~a)(b)",
             // A call after an argument-bearing edge, `(a.f(b))(c)`, is no source shape (SYN-09,
             // Q-18 C-B3): like a call after any call result, only a host-built tree has it.
-            "(a.f)(b)", "(a.f)(b).g", "((a.f)(b)):0",
-            // STR-02: interpolated strings render as written, a hole that could hold a hole-level
-            // `:` in parentheses and a block hole spaced; a string that cannot be single-quoted
-            // renders double-quoted with its escapes.
-            "\"a{x}b\"", "\"{a + b}\"", "\"{(a:0)}\"", "\"{(a:0) + 1}\"", "\"{-(a:0)}\"", "\"{a.f(b)}\"",
+            "(a.f)(b)", "(a.f)(b).g", "((a.f)(b))[0]",
+            // STR-02: interpolated strings render as written, a selection hole bare (selection
+            // writes no hole-level `:`) and a block hole spaced; a string that cannot be
+            // single-quoted renders double-quoted with its escapes.
+            "\"a{x}b\"", "\"{a + b}\"", "\"{a[0]}\"", "\"{a[0, 1]}\"", "\"{(a[0])}\"", "\"{(a[0]) + 1}\"", "\"{-(a[0])}\"", "\"{a.f(b)}\"",
             "\"{{x}} {f(a)} {\"in{b}\"}\"", "\"{ { P = 1 } }\"", "\"q\\\"{a}\\\\\\t\\n\"",
             "\"it's\"", "\"a\\nb\"", "\"tab\\tquote\\\"\"", "\"{{}}\""
         };
@@ -74,19 +77,19 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
                 sources.Add($"a {comparison} ({unary}b)");
             }
         }
-        // Bounded depth-three compositions, including selectors (primary-only in
-        // the parser), not just the more permissive target positions.
-        foreach (var child in new[] { "-a", "not a", "a + b", "a < b", "a.f(b)", "a:0", "(a, b)", "[a]" })
+        // Bounded depth-three compositions, including selector slots (whole expression-list
+        // slots inside the brackets), not just the receiver positions.
+        foreach (var child in new[] { "-a", "not a", "a + b", "a < b", "a.f(b)", "a[0]", "(a, b)", "[a]" })
         foreach (var inner in new Func<string, string>[]
         {
-            s => $"({s}).f", s => $"({s}):0", s => $"a:({s})",
+            s => $"({s}).f", s => $"({s})[0]", s => $"a[{s}]", s => $"a[0, {s}]",
             s => $"({s}, b)", s => $"[{s}]"
         })
         {
             var nested = inner(child);
             sources.Add(nested);
             sources.Add($"({nested}).m");
-            sources.Add($"({nested}):0");
+            sources.Add($"({nested})[0]");
         }
 
         var checks = 0;
@@ -101,16 +104,14 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
                 {
                     ExprNameMode.UnaryOperand => "-" + fragment,
                     ExprNameMode.SpreadOperand => fragment + "*",
-                    ExprNameMode.IndexTarget => fragment + ":0",
-                    ExprNameMode.IndexSelector => "z:" + fragment,
+                    ExprNameMode.IndexTarget => fragment + "[0]",
                     _ => fragment
                 };
                 Expr expectedParent = mode switch
                 {
                     ExprNameMode.UnaryOperand => new Expr.Unary(UnaryOp.Minus, expected),
                     ExprNameMode.SpreadOperand => new Expr.SequenceSpread(expected),
-                    ExprNameMode.IndexTarget => new Expr.Index(expected, new Expr.Num(0)),
-                    ExprNameMode.IndexSelector => new Expr.Index(new Expr.Resolve("z"), expected),
+                    ExprNameMode.IndexTarget => new Expr.Index(expected, [new Expr.Num(0)]),
                     _ => expected
                 };
                 Check(source, mode.ToString(), expectedParent, rendered);
@@ -168,7 +169,7 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
     [InlineData("(not a)*")]
     [InlineData("(a + b)*")]
     [InlineData("a*.f")]
-    [InlineData("(a:0)*")]
+    [InlineData("(a[0])*")]
     [InlineData("(a.f(b))*")]
     public void SpreadSlots_ReadBack(string source)
     {
@@ -182,11 +183,11 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
     [InlineData("f = { X = 1 }\n(not true).f", KatLangErrorCode.ArityMismatch, "`(not true).f`")]
     [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a + b).missing", KatLangErrorCode.ArityMismatch, "`(a + b).missing`")]
     [InlineData("a = 1\nb = 2\nmissing = { X = 1 }\n(a < b).missing", KatLangErrorCode.ArityMismatch, "`(a < b).missing`")]
-    [InlineData("a = 2\n(-a):true", KatLangErrorCode.TypeMismatch, "Expected a number")]
-    [InlineData("a = true\n(not a):true", KatLangErrorCode.TypeMismatch, "Expected a number")]
+    [InlineData("a = 2\n(-a)[true]", KatLangErrorCode.TypeMismatch, "Expected a number")]
+    [InlineData("a = true\n(not a)[true]", KatLangErrorCode.TypeMismatch, "Expected a number")]
     [InlineData("Obj = { F = 1 }\n(Obj.F)() + true", KatLangErrorCode.TypeMismatch, "(Obj.F)(...) + true")]
-    [InlineData("a = 2\n(-a):0 + true", KatLangErrorCode.TypeMismatch, "(-a):0 + true")]
-    [InlineData("a = true\n(not a):0 + 1", KatLangErrorCode.TypeMismatch, "(not a):0 + 1")]
+    [InlineData("a = 2\n(-a)[0] + true", KatLangErrorCode.TypeMismatch, "(-a)[0] + true")]
+    [InlineData("a = true\n(not a)[0] + 1", KatLangErrorCode.TypeMismatch, "(not a)[0] + 1")]
     public async Task PublicErrors_AndSuspendedTwins_PreserveExpressionText(
         string source, KatLangErrorCode code, string text)
     {
@@ -240,7 +241,7 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
         Expr.Unary u => $"{u.Op}({Shape(u.Operand)})",
         Expr.Binary b => $"{b.Op}({Shape(b.Left)},{Shape(b.Right)})",
         Expr.Comparison c => $"chain({Shape(c.First)};{string.Join(';', c.Links.Select(l => $"{l.Op}:{Shape(l.Operand)}"))})",
-        Expr.Index i => $"index({Shape(i.Target)},{Shape(i.Selector)})",
+        Expr.Index i => $"index({Shape(i.Target)},{string.Join(",", i.Selectors.Select(Shape))})",
         Expr.DotCall d => $"dot({Shape(d.Target)},{d.Name},{(d.Args is null ? "property" : "args")},{(d.LexicalFallback is Expr.Grace g ? Shape(g) : "plain")})",
         Expr.Call c => $"call({Shape(c.Function)},args)",
         Expr.Capture c => $"capture({string.Join(';', c.Body.Select(Shape))})",

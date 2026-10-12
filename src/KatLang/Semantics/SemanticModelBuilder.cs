@@ -1176,9 +1176,10 @@ public static class SemanticModelBuilder
                         VisitExpr(link.Operand, scope);
                     break;
 
-                case Expr.Index(var target, var selector):
+                case Expr.Index(var target, var selectors):
                     VisitExpr(target, scope);
-                    VisitExpr(selector, scope);
+                    foreach (var selector in selectors)
+                        VisitExpr(selector, scope);
                     break;
 
                 case Expr.SequenceSpread spread:
@@ -1286,7 +1287,7 @@ public static class SemanticModelBuilder
                 Expr.Binary binary => IsSemanticallyInert(binary.Left) && IsSemanticallyInert(binary.Right),
                 Expr.Comparison comparison => IsSemanticallyInert(comparison.First)
                     && comparison.Links.All(link => IsSemanticallyInert(link.Operand)),
-                Expr.Index index => IsSemanticallyInert(index.Target) && IsSemanticallyInert(index.Selector),
+                Expr.Index index => IsSemanticallyInert(index.Target) && IsSemanticallyInert(index.Selectors),
                 Expr.SequenceSpread spread => spread.SpreadMarkerSpan is null && IsSemanticallyInert(spread.Operand),
                 Expr.SequenceConstruct construct => IsSemanticallyInert(construct.Left) && IsSemanticallyInert(construct.Right),
                 Expr.ListLiteral list => IsSemanticallyInert(list.Items),

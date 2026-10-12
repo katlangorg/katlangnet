@@ -33,9 +33,9 @@ public class ResultValueBoundaryTests
         // Collections, selections and collector elements hold values, never callables.
         { Inc + "T(f)=[f]\nT(Inc)", KatLangErrorCode.ArityMismatch },
         { Inc + "T(f)=(f,1)\nT(Inc)", KatLangErrorCode.ArityMismatch },
-        { Inc + Apply + "T(f,z)=Apply([f]:0,z)\nT(Inc,3)", KatLangErrorCode.NotAnAlgorithm },
+        { Inc + Apply + "T(f,z)=Apply([f][0],z)\nT(Inc,3)", KatLangErrorCode.NotAnAlgorithm },
         { Inc + Apply + "T(f,z)=Apply(first((f,1)),z)\nT(Inc,3)", KatLangErrorCode.NotAnAlgorithm },
-        { Inc + Apply + "T(*fs)=Apply(fs:0,3)\nT(Inc)", KatLangErrorCode.NotAnAlgorithm },
+        { Inc + Apply + "T(*fs)=Apply(fs[0],3)\nT(Inc)", KatLangErrorCode.NotAnAlgorithm },
         { Inc + "T(*fs)=fs\nT(Inc)", KatLangErrorCode.ArityMismatch },
         // Every output row of a multi-row result is a value, and a spread result opens values.
         { Inc + "Two(f,v)=f,v\nTwo(Inc,1)", KatLangErrorCode.ArityMismatch },

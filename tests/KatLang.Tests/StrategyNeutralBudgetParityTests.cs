@@ -198,7 +198,7 @@ public class StrategyNeutralBudgetParityTests
         ("crosstalk-temp-alias-chain", "Step = {\n    C = 1\n    D = C\n    E = D\n    n + if(D > 0, E, E()) + E()\n}\nStep.repeat(30, 0)", Exercises.PlannedLoop),
         ("crosstalk-temp-call-chain", "Step = {\n    A = 7\n    B = A + 1\n    C = A() + B\n    n + B() + C()\n}\nStep.repeat(30, 0)", Exercises.PlannedLoop),
         ("crosstalk-string-temp-if", "Step = {\n    T = 'aaaa'\n    n + if(T == T(), 1, 0)\n}\nStep.repeat(40, 0)", Exercises.PlannedLoop),
-        ("crosstalk-multi-state", "Step = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nStep.repeat(5, 1, 1) : 0", Exercises.PlannedLoop),
+        ("crosstalk-multi-state", "Step = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nStep.repeat(5, 1, 1)[0]", Exercises.PlannedLoop),
         ("while-nested-if-temp-call", "Step = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), T() > 5 and n < 40\n}\nStep.while(0)", Exercises.PlannedLoop),
         // Q-26 (2026-10-04): a nested loop written as a step row is ONE value, so the planned frame
         // keeps such a step planned where it formerly handed the iteration over to the generic loop;

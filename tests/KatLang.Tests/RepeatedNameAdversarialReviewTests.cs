@@ -23,7 +23,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public async Task RetainedFailures_KeepTheEstablishedSuffixBeforeCollectorOrder(string call, string expected)
     {
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(
-            "Bad = trace(1) / 0\nMissing = [trace(2)]:5\nP(*r, x, x) = x\n" + call);
+            "Bad = trace(1) / 0\nMissing = [trace(2)][5]\nP(*r, x, x) = x\n" + call);
         Assert.StartsWith(expected, result.Outcome);
         Assert.Equal(call == "P(Bad, Missing, 7)" ? ["trace(2)"] : ["trace(1)"], result.HostCalls);
     }
@@ -61,9 +61,9 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public async Task RepeatedNames_CannotHealASeededFailure(string call)
     {
         // `Alias = P` is a callable alias (FWD-02): `Alias(Pick, 10)` is `P(Pick, 10)`. The formula
-        // `Lifted = [P]:0` forwards by binding name: `Lifted(x) = [P(x, x)]:0`, like the written `Same`.
-        const string source = "Pick = [10, 20]:(trace(randomInt(0, 3)))\nP(x, x) = x\n"
-            + "Same(a) = P(a, a)\nAlias = P\nLifted = [P]:0\nWrap(a, b) = { Inner = P(a, b)\nInner }\n";
+        // `Lifted = [P][0]` forwards by binding name: `Lifted(x) = [P(x, x)][0]`, like the written `Same`.
+        const string source = "Pick = [10, 20][trace(randomInt(0, 3))]\nP(x, x) = x\n"
+            + "Same(a) = P(a, a)\nAlias = P\nLifted = [P][0]\nWrap(a, b) = { Inner = P(a, b)\nInner }\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call, seed: 4);
         Assert.StartsWith("err BadIndex:", result.Outcome);
         Assert.Equal(["trace(2)"], result.HostCalls);
@@ -84,7 +84,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         string call, string prefix, string[] effects)
     {
         const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
-            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nAlias = P\nLifted = [P]:0\n";
+            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nAlias = P\nLifted = [P][0]\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
         Assert.StartsWith(prefix, result.Outcome);
         Assert.Equal(effects, result.HostCalls);
@@ -122,7 +122,7 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public void AdditionalNestedShapes_ForwardOneBindingPerNameAndExplicitCallsRemainLegal(
         string declaration, string lifted, string[] names)
     {
-        var parsed = SourceProvenance.ParseValid(declaration + "\nLifted = [P]:0\nAlias = P\n0");
+        var parsed = SourceProvenance.ParseValid(declaration + "\nLifted = [P][0]\nAlias = P\n0");
         var formula = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "Lifted").Value);
         Assert.Equal(lifted, string.Join(", ", formula.ParameterPatterns.Select(static pattern => pattern.DisplayName)));
         Assert.Equal(names, formula.Params);

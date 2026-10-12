@@ -163,7 +163,7 @@ public class OutputRowsTests
         foreach (var source in new[]
         {
             "7", "1, 2, 3", "(1, 2)", "1, (2, 3)", "[1, 2]", "''", "()", "[]",
-            "E = ()\nE*", "S = ((1, 2), (3, 4))\nS:0", "repeat({a, b}, 1, 1, 2)",
+            "E = ()\nE*", "S = ((1, 2), (3, 4))\nS[0]", "repeat({a, b}, 1, 1, 2)",
         })
         {
             var success = Success(source);
@@ -233,10 +233,10 @@ public class OutputRowsTests
         // from a property. Only an explicit spread opens it into rows.
         foreach (var source in new[]
         {
-            "S = ((1, 2), (3, 4))\nS:0",
+            "S = ((1, 2), (3, 4))\nS[0]",
             "S = ((1, 2), (3, 4))\nfirst(S)",
             "S = ((3, 4), (1, 2))\nlast(S)",
-            "S = ((1, 2), (3, 4))\nX = S:0\nX",
+            "S = ((1, 2), (3, 4))\nX = S[0]\nX",
         })
         {
             var success = Success(source);
@@ -247,7 +247,7 @@ public class OutputRowsTests
             Assert.Equal("(1, 2)", success.ToDisplayString());
         }
 
-        var spread = Success("S = ((1, 2), (3, 4))\n(S:0)*");
+        var spread = Success("S = ((1, 2), (3, 4))\n(S[0])*");
         Assert.Equal(2, spread.EmittedCount);
         Assert.Equal([new Result.Atom(1), new Result.Atom(2)], spread.OutputRows);
         Assert.Equal($"1{Environment.NewLine}2", spread.ToDisplayString());

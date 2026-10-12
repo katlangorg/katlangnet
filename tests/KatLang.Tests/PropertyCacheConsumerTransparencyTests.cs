@@ -71,7 +71,7 @@ public class PropertyCacheConsumerTransparencyTests
         // User algorithms, direct, dotted, and forwarded into a higher-order builtin.
         { "A", "Stats(A)" }, { "A", "A.Stats" }, { "A", "Apply(Double, A)" }, { "A", "Pass(A)" },
         // Value positions.
-        { "A", "A:0" }, { "A", "[A, A]" }, { "A", "(A, A)" }, { "A", "A == A" },
+        { "A", "A[0]" }, { "A", "[A, A]" }, { "A", "(A, A)" }, { "A", "A == A" },
         // Numeric consumers, the `.string` intrinsic, loops, and forwarding.
         { "N", "N.string" }, { "N", "Show(N)" }, { "N", "N.Show" }, { "N", "if(N > 0, N, 0)" },
         { "N", "N + N" }, { "N", "Twice(N)" }, { "N", "sum(N)" }, { "N", "range(N, 7)" },
@@ -175,7 +175,7 @@ public class PropertyCacheConsumerTransparencyTests
             Stats(A)
             A.map(Double).sum
             map(A, {x + N})
-            A:1
+            A[1]
             N.string
             Show(N)
             reduce(A, Add, N)
@@ -288,7 +288,7 @@ public class PropertyCacheConsumerTransparencyTests
             D.string
             Id(D)
             Show(D)
-            Stats(D):1
+            Stats(D)[1]
             first([D, 0])
             D.map({x}).first
             {{Draw}}

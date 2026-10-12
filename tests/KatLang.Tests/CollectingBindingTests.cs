@@ -279,7 +279,7 @@ public class CollectingBindingTests
     // A LONE bare row under an explicit list, `Use(params) = Target`, is BARE FORWARDING
     // (FWD-02): each of Target's parameters is supplied from the existing binding of the
     // SAME name, never by position, and an unused parameter of Use stays unused. A FORMULA
-    // that uses the callee (`[Target]:0`) lifts by binding name too. The source binding's
+    // that uses the callee (`[Target][0]`) lifts by binding name too. The source binding's
     // kind decides the spread in both. Formula lifting happens only into a callee that
     // REQUIRES supplied arguments (Q-03), so the formula cases carry a required `tag`
     // beside their collecting destination.
@@ -297,7 +297,7 @@ public class CollectingBindingTests
             "Target(tag, *items) = items\nUse(tag, items, z) = Target\nUse(0, (1, 2), 3)",
             List(Seq(Atom(1), Atom(2))));
         AssertCollects(
-            "Target(tag, *items) = items\nUse(tag, items, z) = [Target]:0\nUse(0, (1, 2), 3)",
+            "Target(tag, *items) = items\nUse(tag, items, z) = [Target][0]\nUse(0, (1, 2), 3)",
             List(Seq(Atom(1), Atom(2))));
     }
 
@@ -349,9 +349,9 @@ public class CollectingBindingTests
         // Q-03: a callee whose only parameter is a top-level collector accepts zero supplied
         // arguments, so its bare name in a FORMULA is a property-style value demand — its own
         // collected empty list — and never a forwarding call, whatever the caller binds.
-        AssertCollects("Target(*items) = items\nUse(*items) = [Target]:0\nUse(1, 2)", List());
-        AssertCollects("Target(*items) = items\nUse(items) = [Target]:0\nUse([1, 2])", List());
-        AssertCollects("Target(*items) = items\nUse = [Target]:0\nUse", List());
+        AssertCollects("Target(*items) = items\nUse(*items) = [Target][0]\nUse(1, 2)", List());
+        AssertCollects("Target(*items) = items\nUse(items) = [Target][0]\nUse([1, 2])", List());
+        AssertCollects("Target(*items) = items\nUse = [Target][0]\nUse", List());
 
         // As a LONE row the callee is forwarded by name or aliased (FWD-02): the same-named
         // binding reaches Target's collector, re-spread only from a collecting source.
@@ -382,7 +382,7 @@ public class CollectingBindingTests
         // Caller `a` is a nested FIXED pattern name; destination `*a` is a
         // collecting binding. In a formula the list-valued source must remain one argument.
         AssertCollects(
-            "Target(b, *a) = a\nUse((a, b)) = [Target]:0\nUse(([1, 2], 5))",
+            "Target(b, *a) = a\nUse((a, b)) = [Target][0]\nUse(([1, 2], 5))",
             List(List(Atom(1), Atom(2))));
         // A lone row forwards by name only a TOP-LEVEL binding of the same pattern: Use binds
         // a and b only inside its group, so bare forwarding cannot supply Target's whole-value
@@ -394,7 +394,7 @@ public class CollectingBindingTests
     public void ImplicitForwarding_NestedCollectingSourceForwardsItsCollectedItems()
     {
         AssertCollects(
-            "Target(first, *r) = r\nUse((first, *r)) = [Target]:0\nUse((1, 2, 3))",
+            "Target(first, *r) = r\nUse((first, *r)) = [Target][0]\nUse((1, 2, 3))",
             List(Atom(2), Atom(3)));
         // Bare forwarding reuses only a top-level binding of the same pattern; first and r
         // are elements of Use's one group.
@@ -415,7 +415,7 @@ public class CollectingBindingTests
         // (never spread) — in a formula and in bare forwarding alike, because both are by
         // name: T2(b, a).
         AssertCollects(
-            "T2(b, *a) = (b, a)\nUse(a, *b) = [T2]:0\nUse([5, 6], 2, 3)",
+            "T2(b, *a) = (b, a)\nUse(a, *b) = [T2][0]\nUse([5, 6], 2, 3)",
             Seq(List(Atom(2), Atom(3)), List(List(Atom(5), Atom(6)))));
         AssertCollects(
             "T2(b, *a) = (b, a)\nUse(a, *b) = T2\nUse([5, 6], 2, 3)",
@@ -426,7 +426,7 @@ public class CollectingBindingTests
     public void ImplicitForwarding_CollectingSourceIntoFixedDestinationIsOneListArgument()
     {
         AssertCollects(
-            "TargetOne(items) = items\nUse(*items) = [TargetOne]:0\nUse(1, 2)",
+            "TargetOne(items) = items\nUse(*items) = [TargetOne][0]\nUse(1, 2)",
             List(Atom(1), Atom(2)));
         // Bare forwarding passes the collected list whole to the fixed destination, like the
         // formula: TargetOne(items).

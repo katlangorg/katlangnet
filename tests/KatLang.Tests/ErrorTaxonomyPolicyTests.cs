@@ -39,7 +39,7 @@ public class ErrorTaxonomyPolicyTests
         "map(5, 5)",
         "Inc(x) = x + 1\nmap([1, 2], Inc(1))",
         "Inc(x) = x + 1\nmap([1, 2], 1.Inc)",
-        "A = 1, 2\nmap([1, 2], A:0)",
+        "A = 1, 2\nmap([1, 2], A[0])",
         "filter([1], true)",
         "filter([1, 2], 1 / 0)",
         "reduce([1, 2], 5, 0)",
@@ -275,7 +275,7 @@ public class ErrorTaxonomyPolicyTests
         // Math numeric arguments
         "sqrt((4, 9))", "abs(())", "sqrt(true)", "Math.Abs([1])", "sqrt('x')", "Math.Pow(2, (1, 2))",
         // selector
-        "A = 1, 2\nA:[0]", "A = 1, 2\nA:(0, 1)", "A = 1, 2\nA:()", "A = 1, 2\nA:'x'", "A = 1, 2\nA:true",
+        "A = 1, 2\nA[[0]]", "A = 1, 2\nA[(0, 1)]", "A = 1, 2\nA[()]", "A = 1, 2\nA['x']", "A = 1, 2\nA[true]",
         // range bounds
         "range([1], 3)", "range(1, ())", "range('a', 2)", "range(1, true)",
         // repeat count
@@ -318,10 +318,10 @@ public class ErrorTaxonomyPolicyTests
         { "Math.RandomInt(1.5, 3)", "IllegalInEval" }, { "Math.Random(3, 1)", "IllegalInEval" },
         { "1 / 0", "DivisionByZero" }, { "5 mod 0", "DivisionByZero" },
         // selection naming no position
-        { "():0", "BadIndex" }, { "[1]:1", "BadIndex" }, { "A = 1, 2\nA:(-1)", "BadIndex" }, { "A = 1, 2\nA:1.5", "BadIndex" },
+        { "()[0]", "BadIndex" }, { "[1][1]", "BadIndex" }, { "A = 1, 2\nA[-1]", "BadIndex" }, { "A = 1, 2\nA[1.5]", "BadIndex" },
         { "first(())", "BadIndex" }, { "first([])", "BadIndex" }, { "last(())", "BadIndex" }, { "last([])", "BadIndex" },
         { "().first", "BadIndex" }, { "[].last", "BadIndex" }, { "E = ()\nlast(E)", "BadIndex" },
-        { "A = (), 1\nfirst(A:0)", "BadIndex" }, { "first(filter([1, 2], { x > 5 }))", "BadIndex" },
+        { "A = (), 1\nfirst(A[0])", "BadIndex" }, { "first(filter([1, 2], { x > 5 }))", "BadIndex" },
         { "[1].skip(1).first", "BadIndex" },
     };
 
@@ -330,7 +330,7 @@ public class ErrorTaxonomyPolicyTests
     public async Task AValueOutsideTheOperationsDomain_ReportsTheDomainOrBoundsCode(string source, string code)
         => Assert.Equal(code, CodeOf(await SixRouteAgreement.OnEveryRouteAsync(source)));
 
-    // ── SEQ-04 made total: first(A) ≡ A:0 and last(A) ≡ A:(count(A) - 1), errors included ──
+    // ── SEQ-04 made total: first(A) ≡ A[0] and last(A) ≡ A[count(A) - 1], errors included ──
 
     public static TheoryData<string> SelectionTargets() => new()
     {
@@ -344,8 +344,8 @@ public class ErrorTaxonomyPolicyTests
     public void FirstAndLast_AreTheExplicitSelection_ValueCountAndErrorIncluded(string target)
     {
         const string prelude = "Pair = 1, 2\nEmpty = ()\n";
-        AssertSameCountedOutcome(prelude + $"first({target})", prelude + $"({target}):0");
-        AssertSameCountedOutcome(prelude + $"last({target})", prelude + $"({target}):(count(({target})) - 1)");
+        AssertSameCountedOutcome(prelude + $"first({target})", prelude + $"({target})[0]");
+        AssertSameCountedOutcome(prelude + $"last({target})", prelude + $"({target})[count(({target})) - 1]");
     }
 
     // ── genuine cardinality stays ArityMismatch (the cleanup does not over-reach) ────────────

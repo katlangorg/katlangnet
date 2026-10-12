@@ -75,10 +75,10 @@ public class RedundantParenthesesTransparencyTests
         "Fz(1)",
         "Fp(1)",
         "Obj.X",
-        "P:0",
-        "N:0",
-        "M:1",
-        "B:0",
+        "P[0]",
+        "N[0]",
+        "M[1]",
+        "B[0]",
         "first(N)",
         "last(N)",
         "first(B)",
@@ -111,13 +111,13 @@ public class RedundantParenthesesTransparencyTests
         "$.map(Id)",
         "$*.Coll",
         "$*.count",
-        "$:0",
+        "$[0]",
         "[$]",
         "[$, 9]",
         "[$*]",
         "X = $\nX",
         "X = $\nX.Coll",
-        "X = $\nX:0",
+        "X = $\nX[0]",
         "Pat($)",
         "Sing($)",
         "Fam($)",
@@ -185,8 +185,8 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("Obj.X", "(Obj.X)")]
     [InlineData("Id(1)", "(Id)(1)")]
     [InlineData("Id(1)", "(Id(1))")]
-    [InlineData("P:0", "(P):0")]
-    [InlineData("P:0", "(P:0)")]
+    [InlineData("P[0]", "(P)[0]")]
+    [InlineData("P[0]", "(P[0])")]
     [InlineData("P*.Coll", "(P)*.Coll")]
     [InlineData("Coll(P*)", "Coll((P)*)")]
     [InlineData("[P]", "[(P)]")]
@@ -293,7 +293,7 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("A.string, (A).string", 1)]
     [InlineData("A(), (A)()", 2)]
     [InlineData("A, A(), (A), (A)()", 3)]
-    [InlineData("[A, (A)], [(A)]:0", 1)]
+    [InlineData("[A, (A)], [(A)][0]", 1)]
     [InlineData("Two(x, y) = [x, y]\nTwo(A, (A))", 1)]
     public async Task HostBackedProperty_IsDemandedIdenticallyInEverySpelling(string output, int expectedCalls)
     {
@@ -446,7 +446,7 @@ public class RedundantParenthesesTransparencyTests
     [Theory]
     [InlineData("Missing = { public V = 1 }\n", "Missing", KatLangErrorCode.MissingOutput)]
     [InlineData("Missing = { public V = 1 }\n", "(Missing*)", KatLangErrorCode.SpreadMissingOutput)]
-    [InlineData("", "P:9", KatLangErrorCode.BadIndex)]
+    [InlineData("", "P[9]", KatLangErrorCode.BadIndex)]
     [InlineData("", "'s' + 1", KatLangErrorCode.TypeMismatch)]
     [InlineData("", "Two(1)", KatLangErrorCode.ArityMismatch)]
     // `count`'s collection is a value slot: an inferring root lifts `Two` into itself, while a
@@ -564,7 +564,7 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("Coll(*xs) = xs\nA = ()\n(A).Coll, ((A))*.Coll")]
     [InlineData("Pat((x, *y)) = ([x], y)\nA = (1, 2, 3)\nPat(((A)))")]
     [InlineData("Obj = { public X = 7\n0 }\nV = Obj.X\n(V), ((V)) + 1")]
-    [InlineData("A = [1, 2]\nV = A\n((V)):0, (V).count")]
+    [InlineData("A = [1, 2]\nV = A\n((V))[0], (V).count")]
     public async Task SuspendedRun_ProducesTheSynchronousOutcome_ForGroupedSpellings(string source)
     {
         var ast = AsyncEvaluationHarness.Ast(source);

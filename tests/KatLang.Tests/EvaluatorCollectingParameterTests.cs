@@ -404,7 +404,7 @@ public class EvaluatorCollectingParameterTests
     {
         var result = EvalFull(
             """
-            F((*xs)) = xs:0
+            F((*xs)) = xs[0]
             F(((1, 2), 3))
             """);
 
@@ -650,7 +650,7 @@ public class EvaluatorCollectingParameterTests
             Wrap((x, y)) = x
             A = ((1, 2))
             R = Wrap(A)
-            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
+            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R[0]
             """,
             new Result.Atom(1), new Result.Atom(1), new Result.Atom(1), new Result.Bool(false), new Result.Bool(false), new Result.Atom(1));
     }
@@ -689,7 +689,7 @@ public class EvaluatorCollectingParameterTests
             """
             IdList([x]) = x
             R = IdList([((1, 2))])
-            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R:0
+            R, count(R), R.count, R == (1, 2), R == ((1, 2)), R[0]
             """,
             ResultFromAtoms(1, 2), new Result.Atom(2), new Result.Atom(2), new Result.Bool(true), new Result.Bool(true), new Result.Atom(1));
     }

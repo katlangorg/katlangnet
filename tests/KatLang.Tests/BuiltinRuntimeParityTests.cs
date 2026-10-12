@@ -73,7 +73,7 @@ public class BuiltinRuntimeParityTests
     public void CollectionBuiltinEmptyPolicyMetadata_MatchesRuntimeDiagnostics(BuiltinId builtinId)
     {
         // Q-27: the empty policy follows what the builtin IS. `first`/`last` select, so an
-        // empty collection names no position (BadIndex, as `():0`); `min`/`max`/`avg`
+        // empty collection names no position (BadIndex, as `()[0]`); `min`/`max`/`avg`
         // aggregate, so it is outside their domain (IllegalInEval).
         var builtin = BuiltinRegistry.GetBuiltin(builtinId);
         Assert.NotNull(builtin.SequenceMetadata);

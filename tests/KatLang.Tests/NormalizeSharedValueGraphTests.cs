@@ -779,10 +779,10 @@ public class NormalizeSharedValueGraphTests
     [Fact]
     public void IndexingSharedValue_DoesNotExpandNormalizeByPath()
     {
-        // `A:0` selects one shared child and projects its content through
+        // `A[0]` selects one shared child and projects its content through
         // Result.FromItems -> Result.Normalize. Before the memo this rebuilt the selected
         // sub-DAG path by path: 2^depth nodes, unreachable at depth 40.
-        var selected = RunValue(DagProgram("A:0"));
+        var selected = RunValue(DagProgram("A[0]"));
 
         // The projected value is A's shared child: DeepDepth-1 list levels over one atom leaf, and
         // still a DAG. The path-expanding rebuild produced 2^(DeepDepth-1) list nodes instead.
@@ -804,7 +804,7 @@ public class NormalizeSharedValueGraphTests
     public void IndexingSharedValue_KeepsItsScalarProjection()
     {
         // A scalar answer, so no rendering of the graph can confound the measurement.
-        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(DagProgram("(A:0).count")).Root);
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(DagProgram("(A[0]).count")).Root);
 
         var plain = Evaluator.RunFlat(expr);
         if (plain.IsError)
@@ -845,7 +845,7 @@ public class NormalizeSharedValueGraphTests
         // non-scalar. The selector repeats the same depth-40 DAG twice; before the memo, merely
         // deciding that it was not one number expanded both occurrences into enormous trees.
         var expr = new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid(DagProgram("[1]:(A, A)")).Root);
+            SourceProvenance.ParseValid(DagProgram("[1][(A, A)]")).Root);
 
         // A structured selector is a value of the wrong KIND (Q-27); its bounded diagnostic
         // rendering must not expand the shared DAG either.
@@ -865,7 +865,7 @@ public class NormalizeSharedValueGraphTests
         // value inherits the expanded tree. These consumers are DAG-bounded only if the projection
         // handed them a DAG.
         var expr = new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid(DagProgram("B = A:0\nB == A:0, B != A:0, distinct((B, A:0)).count")).Root);
+            SourceProvenance.ParseValid(DagProgram("B = A[0]\nB == A[0], B != A[0], distinct((B, A[0])).count")).Root);
 
         var plain = Evaluator.Run(expr);
         if (plain.IsError)

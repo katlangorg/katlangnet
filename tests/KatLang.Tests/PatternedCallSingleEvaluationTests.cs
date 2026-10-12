@@ -199,7 +199,7 @@ public class PatternedCallSingleEvaluationTests
         { "A = [[1, 2], [3]]\nF((*items)) = items\nF((A*))", List(List(Atom(1), Atom(2)), List(Atom(3))) },
         { "S = 1, 2\nF((a, b)) = a + b\nF({S})", Atom(3) },
         {
-            "S = ((1, 2), (3, 4))\nF((x, y)) = (x, y)\nF((S:0, 5))",
+            "S = ((1, 2), (3, 4))\nF((x, y)) = (x, y)\nF((S[0], 5))",
             Seq(Seq(Atom(1), Atom(2)), Atom(5))
         },
     };
@@ -293,7 +293,7 @@ public class PatternedCallSingleEvaluationTests
     }
 
     [Theory]
-    [InlineData("S:0")]
+    [InlineData("S[0]")]
     [InlineData("repeat({a, b}, 1, 1, 2)")]
     public void SelectionOrMultiSlotLoop_IsOneValueThatThePatternOpens(string expression)
     {

@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 433
+- specification surface cases: 440
 - excluded parse-level cases (Lean has no surface parser): 67
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 344
-- probe observations (C#-only by design): 1297
+- Lean-guarded cases: 351
+- probe observations (C#-only by design): 1322
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -371,9 +371,9 @@ def case_loop_step_family_while : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.dotCall (.resolve "Countdown") "while" (some [.num 3]))])
 #guard obs case_loop_step_family_while == "ok raw=0 n=1"
 
--- loop-step-family-multi-slot [conditionals]: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n Gcd.while(48, 18):0
+-- loop-step-family-multi-slot [conditionals]: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n Gcd.while(48, 18)[0]
 def case_loop_step_family_multi_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.index (.dotCall (.resolve "Gcd") "while" (some [.num 48, .num 18])) (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.index (.dotCall (.resolve "Gcd") "while" (some [.num 48, .num 18])) [.num 0])])
 #guard obs case_loop_step_family_multi_slot == "ok raw=6 n=1"
 
 -- loop-step-builtin-is-one-row-wrapper [collection-builtins]: C(c) = count(c) \n repeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])
@@ -436,9 +436,9 @@ def case_scalar_spread_neutral : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [.param "items"])] [(.call (.resolve "Collect") [.num 5]), (.call (.resolve "Collect") [(.sequenceSpread (.num 5))])])
 #guard obs case_scalar_spread_neutral == "ok raw=S[L[5], L[5]] n=2"
 
--- select-spread-vs-capture-select [item-supply-vs-value]: A = [[1, 2], [3, 4]] \n  \n (A:0)*, \n (A*):0
+-- select-spread-vs-capture-select [item-supply-vs-value]: A = [[1, 2], [3, 4]] \n  \n (A[0])*, \n (A*)[0]
 def case_select_spread_vs_capture_select : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.sequenceSpread (.index (.resolve "A") (.num 0))), (.index (.capture [(.sequenceSpread (.resolve "A"))]) (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.sequenceSpread (.index (.resolve "A") [.num 0])), (.index (.capture [(.sequenceSpread (.resolve "A"))]) [.num 0])])
 #guard obs case_select_spread_vs_capture_select == "ok raw=S[1, 2, L[1, 2]] n=3"
 
 -- fixed-call-preserves-boundaries [item-supply-vs-value]: Pair = 10, 20 \n Add(x, y) = x + y \n  \n Add(Pair)
@@ -1121,9 +1121,9 @@ def case_map_demands_collection_before_transforms : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.call (.resolve "map") [.resolve "L", .resolve "F"])])
 #guard obs case_map_demands_collection_before_transforms == "err div0"
 
--- expanded-map-calls-may-skip-indexed-arguments [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n [F(L:0), F(L:1)]
+-- expanded-map-calls-may-skip-indexed-arguments [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n [F(L[0]), F(L[1])]
 def case_expanded_map_calls_may_skip_indexed_arguments : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.listLiteral [(.call (.resolve "F") [(.index (.resolve "L") (.num 0))]), (.call (.resolve "F") [(.index (.resolve "L") (.num 1))])])])
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.listLiteral [(.call (.resolve "F") [(.index (.resolve "L") [.num 0])]), (.call (.resolve "F") [(.index (.resolve "L") [.num 1])])])])
 #guard obs case_expanded_map_calls_may_skip_indexed_arguments == "ok raw=L[0, 0] n=1"
 
 -- map-identity-preserves-empty-elements [collection-builtins]: Id(x) = x \n map([(), 1, [], 2], Id)
@@ -1246,9 +1246,9 @@ def case_sum_of_range_collection : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "sum") [(.call (.resolve "range") [.num 1, .num 3])])])
 #guard obs case_sum_of_range_collection == "ok raw=6 n=1"
 
--- count-family [collection-builtins]: count(()) \n count((())) \n  \n count(range(1, 5)) \n  \n count((10, 20, 30)) \n  \n count((3, 4, range(1, 5)*, 7)) \n  \n count((range(1, 5)*, 7)) \n  \n count(((1, 2), (3, 4))) \n  \n Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5) \n (Data:0).count
+-- count-family [collection-builtins]: count(()) \n count((())) \n  \n count(range(1, 5)) \n  \n count((10, 20, 30)) \n  \n count((3, 4, range(1, 5)*, 7)) \n  \n count((range(1, 5)*, 7)) \n  \n count(((1, 2), (3, 4))) \n  \n Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5) \n (Data[0]).count
 def case_count_family : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Data" (alg [] [] [] [(.capture [.num 7, .num 6, .num 4, .num 2, .num 1]), (.capture [.num 1, .num 2, .num 3, .num 4, .num 5])])] [(.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.call (.resolve "range") [.num 1, .num 5])]), (.call (.resolve "count") [(.capture [.num 10, .num 20, .num 30])]), (.call (.resolve "count") [(.capture [.num 3, .num 4, (.sequenceSpread (.call (.resolve "range") [.num 1, .num 5])), .num 7])]), (.call (.resolve "count") [(.capture [(.sequenceSpread (.call (.resolve "range") [.num 1, .num 5])), .num 7])]), (.call (.resolve "count") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), (.dotCall (.index (.resolve "Data") (.num 0)) "count" none)])
+  .algorithmExpr (alg [] [] [privateProp "Data" (alg [] [] [] [(.capture [.num 7, .num 6, .num 4, .num 2, .num 1]), (.capture [.num 1, .num 2, .num 3, .num 4, .num 5])])] [(.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.emptySequence 0)]), (.call (.resolve "count") [(.call (.resolve "range") [.num 1, .num 5])]), (.call (.resolve "count") [(.capture [.num 10, .num 20, .num 30])]), (.call (.resolve "count") [(.capture [.num 3, .num 4, (.sequenceSpread (.call (.resolve "range") [.num 1, .num 5])), .num 7])]), (.call (.resolve "count") [(.capture [(.sequenceSpread (.call (.resolve "range") [.num 1, .num 5])), .num 7])]), (.call (.resolve "count") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), (.dotCall (.index (.resolve "Data") [.num 0]) "count" none)])
 #guard obs case_count_family == "ok raw=S[0, 0, 5, 3, 8, 6, 2, 5] n=8"
 
 -- count-scalar-and-string [collection-builtins]: count(5)
@@ -1286,39 +1286,74 @@ def case_eq_structural_nested : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])]), privateProp "B" (alg [] [] [] [.num 1, (.capture [.num 2, .num 3])])] [(.comparison (.resolve "A") [{ op := .eq, operand := (.resolve "B") }])])
 #guard obs case_eq_structural_nested == "ok raw=true n=1"
 
--- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums:2
+-- index-selects-atom [equality-and-indexing]: Nums = 10, 20, 30, 40, 50 \n  \n # Select the third value (index 2): \n Nums[2]
 def case_index_selects_atom : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Nums" (alg [] [] [] [.num 10, .num 20, .num 30, .num 40, .num 50])] [(.index (.resolve "Nums") (.num 2))])
+  .algorithmExpr (alg [] [] [privateProp "Nums" (alg [] [] [] [.num 10, .num 20, .num 30, .num 40, .num 50])] [(.index (.resolve "Nums") [.num 2])])
 #guard obs case_index_selects_atom == "ok raw=30 n=1"
 
--- index-selects-one-value [equality-and-indexing]: Pairs = (1, 2), (3, 4) \n Pairs:0
+-- index-selects-one-value [equality-and-indexing]: Pairs = (1, 2), (3, 4) \n Pairs[0]
 def case_index_selects_one_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])] [(.index (.resolve "Pairs") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])] [(.index (.resolve "Pairs") [.num 0])])
 #guard obs case_index_selects_one_value == "ok raw=S[1, 2] n=1"
 
--- selection-forms-agree [equality-and-indexing]: Coll(*xs) = xs \n Pairs = (1, 2), (3, 4) \n first(Pairs).Coll \n Pairs:0.Coll \n (Pairs:0)*.Coll \n Pairs:0.Coll(3)
+-- selection-forms-agree [equality-and-indexing]: Coll(*xs) = xs \n Pairs = (1, 2), (3, 4) \n first(Pairs).Coll \n Pairs[0].Coll \n (Pairs[0])*.Coll \n Pairs[0].Coll(3)
 def case_selection_forms_agree : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.dotCall (.call (.resolve "first") [.resolve "Pairs"]) "Coll" none), (.dotCall (.index (.resolve "Pairs") (.num 0)) "Coll" none), (.call (.resolve "Coll") [(.sequenceSpread (.index (.resolve "Pairs") (.num 0)))]), (.dotCall (.index (.resolve "Pairs") (.num 0)) "Coll" (some [.num 3]))])
+  .algorithmExpr (alg [] [] [privateProp "Pairs" (alg [] [] [] [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.dotCall (.call (.resolve "first") [.resolve "Pairs"]) "Coll" none), (.dotCall (.index (.resolve "Pairs") [.num 0]) "Coll" none), (.call (.resolve "Coll") [(.sequenceSpread (.index (.resolve "Pairs") [.num 0]))]), (.dotCall (.index (.resolve "Pairs") [.num 0]) "Coll" (some [.num 3]))])
 #guard obs case_selection_forms_agree == "ok raw=S[L[S[1, 2]], L[S[1, 2]], L[1, 2], L[S[1, 2], 3]] n=4"
 
--- index-nested-stays-intact [equality-and-indexing]: Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8)) \n Bags:0 \n Bags:0:1
+-- index-nested-stays-intact [equality-and-indexing]: Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8)) \n Bags[0] \n Bags[0][1]
 def case_index_nested_stays_intact : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Bags" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), (.capture [(.capture [.num 5, .num 6]), (.capture [.num 7, .num 8])])])] [(.index (.resolve "Bags") (.num 0)), (.index (.index (.resolve "Bags") (.num 0)) (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "Bags" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), (.capture [(.capture [.num 5, .num 6]), (.capture [.num 7, .num 8])])])] [(.index (.resolve "Bags") [.num 0]), (.index (.index (.resolve "Bags") [.num 0]) [.num 1])])
 #guard obs case_index_nested_stays_intact == "ok raw=S[S[S[1, 2], S[3, 4]], S[3, 4]] n=2"
 
--- index-empty-item-visible [equality-and-indexing]: x = ((), ()) \n x:0
+-- index-empty-item-visible [equality-and-indexing]: x = ((), ()) \n x[0]
 def case_index_empty_item_visible : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index_empty_item_visible == "ok raw=S[] n=1"
 
--- index-out-of-range [equality-and-indexing]: x = (1, 2) \n x:9
+-- index-out-of-range [equality-and-indexing]: x = (1, 2) \n x[9]
 def case_index_out_of_range : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_index_out_of_range == "err index"
 
--- index-captured-requality [equality-and-indexing]: x = ((1, 2), (3, 4)) \n y = x:0 \n y == (1, 2)
+-- variadic-selection-several-values [equality-and-indexing]: Data = 10, 20, 30 \n Data[2, 0, 2]
+def case_variadic_selection_several_values : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Data" (alg [] [] [] [.num 10, .num 20, .num 30])] [(.index (.resolve "Data") [.num 2, .num 0, .num 2])])
+#guard obs case_variadic_selection_several_values == "ok raw=S[30, 10, 30] n=1"
+
+-- variadic-selection-keeps-empty-values [equality-and-indexing]: X = ((), [], 1) \n X[0, 1]
+def case_variadic_selection_keeps_empty_values : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [(.capture [(.emptySequence 0), (.listLiteral []), .num 1])])] [(.index (.resolve "X") [.num 0, .num 1])])
+#guard obs case_variadic_selection_keeps_empty_values == "ok raw=S[S[], L[]] n=1"
+
+-- variadic-selection-spread-forms-before-selection [equality-and-indexing]: [10, 20][99, (1 / 0)*]
+def case_variadic_selection_spread_forms_before_selection : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20]) [.num 99, (.sequenceSpread (.binary .div (.num 1) (.num 0)))])])
+#guard obs case_variadic_selection_spread_forms_before_selection == "err div0"
+
+-- variadic-selection-shares-the-positional-view [equality-and-indexing]: count('abc') \n 'abc'[0] \n 42[0]
+def case_variadic_selection_shares_the_positional_view : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [.stringLiteral "abc"]), (.index (.stringLiteral "abc") [.num 0]), (.index (.num 42) [.num 0])])
+#guard obs case_variadic_selection_shares_the_positional_view == "ok raw=S[1, 'abc', 42] n=3"
+
+-- variadic-selection-bracket-on-a-later-line-is-a-list [equality-and-indexing]: Data = 10, 20 \n Data \n [0, 1]
+def case_variadic_selection_bracket_on_a_later_line_is_a_list : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Data" (alg [] [] [] [.num 10, .num 20])] [.resolve "Data", (.listLiteral [.num 0, .num 1])])
+#guard obs case_variadic_selection_bracket_on_a_later_line_is_a_list == "ok raw=S[S[10, 20], L[0, 1]] n=2"
+
+-- variadic-selection-has-no-callable-identity [equality-and-indexing]: K = 5 \n Apply(f) = f() \n Apply([K][0])
+def case_variadic_selection_has_no_callable_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg [] [] [] [.num 5]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [])])] [(.call (.resolve "Apply") [(.index (.listLiteral [.resolve "K"]) [.num 0])])])
+#guard obs case_variadic_selection_has_no_callable_identity == "err notAnAlgorithm"
+
+-- negative-index-selects-no-position [equality-and-indexing]: x = (1, 2) \n x[-1]
+def case_negative_index_selects_no_position : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_negative_index_selects_no_position == "err index"
+
+-- index-captured-requality [equality-and-indexing]: x = ((1, 2), (3, 4)) \n y = x[0] \n y == (1, 2)
 def case_index_captured_requality : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") [.num 0])])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_index_captured_requality == "ok raw=true n=1"
 
 -- output-rows-interleave-definitions [parser-layout]: A = 3 \n A + B \n B = 2
@@ -1506,24 +1541,24 @@ def case_list_vs_sequence_kind : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.listLiteral []) [{ op := .eq, operand := (.emptySequence 0) }]), (.comparison (.listLiteral [.num 1, .num 2]) [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_list_vs_sequence_kind == "ok raw=S[false, false] n=2"
 
--- list-index-selects-element [lists]: [1, 2, 3]:0
+-- list-index-selects-element [lists]: [1, 2, 3][0]
 def case_list_index_selects_element : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 1, .num 2, .num 3]) (.num 0))])
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 1, .num 2, .num 3]) [.num 0])])
 #guard obs case_list_index_selects_element == "ok raw=1 n=1"
 
--- list-index-nested-element-stays-exact [lists]: Rows = [[1, 2], [3, 4]] \n Rows:0 \n Rows:0:1
+-- list-index-nested-element-stays-exact [lists]: Rows = [[1, 2], [3, 4]] \n Rows[0] \n Rows[0][1]
 def case_list_index_nested_element_stays_exact : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.index (.resolve "Rows") (.num 0)), (.index (.index (.resolve "Rows") (.num 0)) (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "Rows" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.index (.resolve "Rows") [.num 0]), (.index (.index (.resolve "Rows") [.num 0]) [.num 1])])
 #guard obs case_list_index_nested_element_stays_exact == "ok raw=S[L[1, 2], 2] n=2"
 
--- list-index-out-of-range [lists]: []:0
+-- list-index-out-of-range [lists]: [][0]
 def case_list_index_out_of_range : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.listLiteral []) (.num 0))])
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral []) [.num 0])])
 #guard obs case_list_index_out_of_range == "err index"
 
--- list-index-builtin-results [lists]: range(1, 3):2
+-- list-index-builtin-results [lists]: range(1, 3)[2]
 def case_list_index_builtin_results : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.call (.resolve "range") [.num 1, .num 3]) (.num 2))])
+  .algorithmExpr (alg [] [] [] [(.index (.call (.resolve "range") [.num 1, .num 3]) [.num 2])])
 #guard obs case_list_index_builtin_results == "ok raw=3 n=1"
 
 -- list-redundant-parens-canonicalize [lists]: ([1, 2]) == [1, 2]
@@ -1551,9 +1586,9 @@ def case_list_elements_preserve_boundaries : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [(.listLiteral [.resolve "A", .resolve "B"]), (.listLiteral [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B"))]), (.listLiteral [.resolve "A", (.sequenceSpread (.resolve "B"))])])
 #guard obs case_list_elements_preserve_boundaries == "ok raw=S[L[L[1, 2], L[3, 4]], L[1, 2, 3, 4], L[L[1, 2], 3, 4]] n=3"
 
--- list-written-slot-reifies-selection [lists]: S = ((1, 2), (3, 4)) \n  \n [S:0, 5] \n [S:0*, 5]
+-- list-written-slot-reifies-selection [lists]: S = ((1, 2), (3, 4)) \n  \n [S[0], 5] \n [S[0]*, 5]
 def case_list_written_slot_reifies_selection : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.listLiteral [(.index (.resolve "S") (.num 0)), .num 5]), (.listLiteral [(.sequenceSpread (.index (.resolve "S") (.num 0))), .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.listLiteral [(.index (.resolve "S") [.num 0]), .num 5]), (.listLiteral [(.sequenceSpread (.index (.resolve "S") [.num 0])), .num 5])])
 #guard obs case_list_written_slot_reifies_selection == "ok raw=S[L[S[1, 2], 5], L[1, 2, 5]] n=2"
 
 -- list-empty-spread-neutral [lists]: [1, []*, 2] \n [1, ()*, 2]
@@ -1631,9 +1666,9 @@ def case_forwarding_never_supplies_a_property_an_open_or_a_builtin : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [] [(.binary .add (.call (.resolve "Need") [.param "v"]) (.num 1))]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_forwarding_never_supplies_a_property_an_open_or_a_builtin == "ok raw=8 n=1"
 
--- forwarding-reused-binding-kind-preserves-values [name-resolution]: Target(tag, *items) = items \n Collected(tag, *items) = { \n     G(q) = [Target]:0 \n     G(99) \n } \n Fixed(tag, items) = { \n     G(q) = [Target]:0 \n     G(99) \n } \n Head(x, *rest) = x + rest.count \n Partial(x) = { \n     H = [Head]:0 \n     [H, H(10, 20)] \n } \n [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
+-- forwarding-reused-binding-kind-preserves-values [name-resolution]: Target(tag, *items) = items \n Collected(tag, *items) = { \n     G(q) = [Target][0] \n     G(99) \n } \n Fixed(tag, items) = { \n     G(q) = [Target][0] \n     G(99) \n } \n Head(x, *rest) = x + rest.count \n Partial(x) = { \n     H = [Head][0] \n     [H, H(10, 20)] \n } \n [Collected(0, (1, 2), [3], ()), Fixed(0, [(1, 2), [3], ()]), Partial(4)]
 def case_forwarding_reused_binding_kind_preserves_values : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Collected" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])]) (.num 0))])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Fixed" (alg ["tag", "items"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", .param "items"])]) (.num 0))])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.binary .add (.param "x") (.dotCall (.param "rest") "count" none))]), privateProp "Partial" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (algWithParameters [{ name := "rest", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "Head") [.param "x", (.sequenceSpread (.param "rest"))])]) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.listLiteral [.resolve "H", (.call (.resolve "H") [.num 10, .num 20])])])] [(.listLiteral [(.call (.resolve "Collected") [.num 0, (.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)]), (.call (.resolve "Fixed") [.num 0, (.listLiteral [(.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)])]), (.call (.resolve "Partial") [.num 4])])])
+  .algorithmExpr (alg [] [] [privateProp "Target" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [] [.param "items"]), privateProp "Collected" (algWithParameters [{ name := "tag" }, { name := "items", kind := .collecting }] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", (.sequenceSpread (.param "items"))])]) [.num 0])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Fixed" (alg ["tag", "items"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["items", "tag"]) (alg ["q"] [] [] [(.index (.listLiteral [(.call (.resolve "Target") [.param "tag", .param "items"])]) [.num 0])])) with requiredOwnerDepths := some [("items", some 0), ("tag", some 0)] }] [(.call (.resolve "G") [.num 99])]), privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.binary .add (.param "x") (.dotCall (.param "rest") "count" none))]), privateProp "Partial" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (algWithParameters [{ name := "rest", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "Head") [.param "x", (.sequenceSpread (.param "rest"))])]) [.num 0])])) with requiredOwnerDepths := some [("x", some 0)] }] [(.listLiteral [.resolve "H", (.call (.resolve "H") [.num 10, .num 20])])])] [(.listLiteral [(.call (.resolve "Collected") [.num 0, (.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)]), (.call (.resolve "Fixed") [.num 0, (.listLiteral [(.capture [.num 1, .num 2]), (.listLiteral [.num 3]), (.emptySequence 0)])]), (.call (.resolve "Partial") [.num 4])])])
 #guard obs case_forwarding_reused_binding_kind_preserves_values == "ok raw=L[L[S[1, 2], L[3], S[]], L[L[S[1, 2], L[3], S[]]], L[4, 6]] n=1"
 
 -- ownership-captured-parameter-beats-outer-property [name-resolution]: v = 99 \n Outer(v) = { \n     Inner = v + 1 \n     Inner \n } \n Outer(7)
@@ -1726,9 +1761,9 @@ def case_zero_argument_demand_follows_actual_call_arity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [.resolve "Only"])
 #guard obs case_zero_argument_demand_follows_actual_call_arity == "ok raw=L[] n=1"
 
--- zero-argument-callable-name-is-read-not-lifted [variadic-calls]: Cnt(*xs) = xs.count \n Pair(*xs) = 10, 20 \n Alias = Cnt \n Twice(*items) = Cnt + Cnt \n  \n Cnt + 1, [Cnt], Cnt == Cnt, Pair:1 \n Alias, Alias() \n Twice(1, 2, 3)
+-- zero-argument-callable-name-is-read-not-lifted [variadic-calls]: Cnt(*xs) = xs.count \n Pair(*xs) = 10, 20 \n Alias = Cnt \n Twice(*items) = Cnt + Cnt \n  \n Cnt + 1, [Cnt], Cnt == Cnt, Pair[1] \n Alias, Alias() \n Twice(1, 2, 3)
 def case_zero_argument_callable_name_is_read_not_lifted : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Alias" (.alias none [] [] (.resolve "Cnt")), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") (.num 1)), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "Alias" (.alias none [] [] (.resolve "Cnt")), privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Pair" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 10, .num 20]), privateProp "Twice" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.binary .add (.resolve "Cnt") (.resolve "Cnt"))])] [(.binary .add (.resolve "Cnt") (.num 1)), (.listLiteral [.resolve "Cnt"]), (.comparison (.resolve "Cnt") [{ op := .eq, operand := (.resolve "Cnt") }]), (.index (.resolve "Pair") [.num 1]), .resolve "Alias", (.call (.resolve "Alias") []), (.call (.resolve "Twice") [.num 1, .num 2, .num 3])])
 #guard obs case_zero_argument_callable_name_is_read_not_lifted == "ok raw=S[1, L[0], true, 20, 0, 0, 0] n=7"
 
 -- same-arity-user-if-keeps-user-identity [name-resolution]: if(a, b, c) = a + b + c \n if(1, 10, 20) \n 1.if(10, 20)
@@ -1806,10 +1841,10 @@ def case_string_interpolation_hole_lifts_a_formula : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.interpolatedString "v" [{ hole := (.call (.resolve "Inc") [.param "x"]), text := "" }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
 #guard obs case_string_interpolation_hole_lifts_a_formula == "ok raw='v5' n=1"
 
--- string-interpolation-selection-in-parentheses [strings]: xs = [10, 20] \n "{(xs:1)} {[xs:0]}"
-def case_string_interpolation_selection_in_parentheses : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "xs" (alg [] [] [] [(.listLiteral [.num 10, .num 20])])] [(.interpolatedString "" [{ hole := (.index (.resolve "xs") (.num 1)), text := " " }, { hole := (.listLiteral [(.index (.resolve "xs") (.num 0))]), text := "" }])])
-#guard obs case_string_interpolation_selection_in_parentheses == "ok raw='20 [10]' n=1"
+-- string-interpolation-selection-in-a-hole [strings]: xs = [10, 20] \n "{xs[1]} {(xs[1])} {[xs[0]]}"
+def case_string_interpolation_selection_in_a_hole : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "xs" (alg [] [] [] [(.listLiteral [.num 10, .num 20])])] [(.interpolatedString "" [{ hole := (.index (.resolve "xs") [.num 1]), text := " " }, { hole := (.index (.resolve "xs") [.num 1]), text := " " }, { hole := (.listLiteral [(.index (.resolve "xs") [.num 0])]), text := "" }])])
+#guard obs case_string_interpolation_selection_in_a_hole == "ok raw='20 20 [10]' n=1"
 
 -- string-interpolation-hole-failure [strings]: "a{1}b{10 div 0}c"
 def case_string_interpolation_hole_failure : Expr :=
@@ -1821,7 +1856,7 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 344 canonical Lean-guarded specification cases.
+-- 351 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2072,6 +2107,13 @@ def specCaseIds : List String := [
   "index-nested-stays-intact",
   "index-empty-item-visible",
   "index-out-of-range",
+  "variadic-selection-several-values",
+  "variadic-selection-keeps-empty-values",
+  "variadic-selection-spread-forms-before-selection",
+  "variadic-selection-shares-the-positional-view",
+  "variadic-selection-bracket-on-a-later-line-is-a-list",
+  "variadic-selection-has-no-callable-identity",
+  "negative-index-selects-no-position",
   "index-captured-requality",
   "output-rows-interleave-definitions",
   "trailing-comma-continues-line",
@@ -2170,10 +2212,10 @@ def specCaseIds : List String := [
   "string-interpolation-nested",
   "string-interpolation-hole-inference-order",
   "string-interpolation-hole-lifts-a-formula",
-  "string-interpolation-selection-in-parentheses",
+  "string-interpolation-selection-in-a-hole",
   "string-interpolation-hole-failure",
   "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 344
+#guard specCaseIds.length == 351
 
 end LanguageSpecCases

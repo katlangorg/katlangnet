@@ -471,7 +471,7 @@ public class OperationalMetamorphicTests
             {
                 case Expr.Unary(_, var o): Ex(o); break;
                 case Expr.Binary(_, var l, var r): Ex(l); Ex(r); break;
-                case Expr.Index(var t, var s): Ex(t); Ex(s); break;
+                case Expr.Index(var t, var s): Ex(t); foreach (var it in s) Ex(it); break;
                 case Expr.SequenceSpread(var o): Ex(o); break;
                 case Expr.Grace(var i, _): Ex(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) Ex(it); break;

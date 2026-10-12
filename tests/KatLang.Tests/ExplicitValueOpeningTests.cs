@@ -136,18 +136,18 @@ public class ExplicitValueOpeningTests
     {
         // Zero supplied items and one supplied item whose value is empty stay distinct.
         const string defs = Coll + "E = ()\nEL = []\nA = ((), 3)\nFz(x) = ()\n";
-        foreach (var one in new[] { "Coll(E)", "E.Coll", "Coll(())", "().Coll", "Coll(A:0)", "(A:0).Coll",
+        foreach (var one in new[] { "Coll(E)", "E.Coll", "Coll(())", "().Coll", "Coll(A[0])", "(A[0]).Coll",
                      "Coll(first(A))", "first(A).Coll", "Coll(Fz(1))", "Fz(1).Coll", "Coll(if(true, (), 1))" })
             Assert.Equal("[()]", Display(defs + one));
         foreach (var one in new[] { "Coll(EL)", "EL.Coll", "Coll([])", "[].Coll" })
             Assert.Equal("[[]]", Display(defs + one));
         foreach (var none in new[] { "Coll()", "Coll(E*)", "E*.Coll", "Coll(()*)", "Coll(EL*)", "EL*.Coll", "Coll([]*)" })
             Assert.Equal("[]", Display(defs + none));
-        foreach (var beside in new[] { "Coll(E, 3)", "E.Coll(3)", "Coll((), 3)", "().Coll(3)", "Coll(A:0, 3)", "first(A).Coll(3)" })
+        foreach (var beside in new[] { "Coll(E, 3)", "E.Coll(3)", "Coll((), 3)", "().Coll(3)", "Coll(A[0], 3)", "first(A).Coll(3)" })
             Assert.Equal("[(), 3]", Display(defs + beside));
 
         // Selection itself never erases `()`.
-        Assert.Equal("()", Display(defs + "A:0"));
+        Assert.Equal("()", Display(defs + "A[0]"));
         Assert.Equal("()", Display(defs + "first(A)"));
 
         // The zero-argument value demand is untouched: a bare collector reference is `Coll()`.
@@ -201,11 +201,11 @@ public class ExplicitValueOpeningTests
         "Make()",
         "Id((1, 2))",
         "if(true, (1, 2), 0)",
-        "B:0",
+        "B[0]",
         "first(B)",
         "last(C)",
         "Obj.M",
-        "map(B, Id):0",
+        "map(B, Id)[0]",
         "(A*)",
         "{1, 2}",
     ];
@@ -296,8 +296,8 @@ public class ExplicitValueOpeningTests
         foreach (var expression in new[]
         {
             "V", "Id([V]*)", "Stored", "if(true, Id([V]*), 0)",
-            "Coll([V]*):0", "first(Coll([V]*))", "last(Coll([V]*))",
-            "[Id([V]*)]:0", "map([V], Id):0", "(Coll([V]*)*)",
+            "Coll([V]*)[0]", "first(Coll([V]*))", "last(Coll([V]*))",
+            "[Id([V]*)][0]", "map([V], Id)[0]", "(Coll([V]*)*)",
         })
         {
             // map stores Id's ordinary call result whole, `()` included (HO-03, Q-25).
@@ -747,8 +747,8 @@ public class ExplicitValueOpeningTests
         // Each selected pair is opened by the structural pattern of ITS kind.
         foreach (var (selection, value, pairAdder) in new[]
         {
-            ("A:0", "(1, 2)", "AddPair"), ("first(A)", "(1, 2)", "AddPair"), ("last((3, A:0))", "(1, 2)", "AddPair"),
-            ("L:0", "[1, 2]", "LAddPair"), ("first(L)", "[1, 2]", "LAddPair"),
+            ("A[0]", "(1, 2)", "AddPair"), ("first(A)", "(1, 2)", "AddPair"), ("last((3, A[0]))", "(1, 2)", "AddPair"),
+            ("L[0]", "[1, 2]", "LAddPair"), ("first(L)", "[1, 2]", "LAddPair"),
         })
         {
             Assert.Equal(value, Display(defs + selection));
@@ -767,17 +767,17 @@ public class ExplicitValueOpeningTests
             Assert.Equal(KatLangErrorCode.TypeMismatch, FailureCode(defs + otherAdder + "(" + selection + ")"));
         }
 
-        // first(A) ≡ A:0 and last(A) ≡ A:(A.count - 1) through every consumer.
+        // first(A) ≡ A[0] and last(A) ≡ A[A.count - 1] through every consumer.
         foreach (var consumer in new[] { "Coll({0})", "({0}).Coll", "Coll(({0})*)", "map([{0}], Coll)" })
         {
-            Assert.Equal(Display(defs + string.Format(consumer, "A:0")), Display(defs + string.Format(consumer, "first(A)")));
-            Assert.Equal(Display(defs + string.Format(consumer, "L:0")), Display(defs + string.Format(consumer, "first(L)")));
+            Assert.Equal(Display(defs + string.Format(consumer, "A[0]")), Display(defs + string.Format(consumer, "first(A)")));
+            Assert.Equal(Display(defs + string.Format(consumer, "L[0]")), Display(defs + string.Format(consumer, "first(L)")));
         }
 
-        Assert.Equal(Display(defs + "AddPair(A:0)"), Display(defs + "AddPair(first(A))"));
-        Assert.Equal(Display(defs + "LAddPair(L:0)"), Display(defs + "LAddPair(first(L))"));
-        Assert.Equal(Display(defs + "Coll(A:(A.count - 1))"), Display(defs + "Coll(last(A))"));
-        AssertStrategiesAgree(defs + "Coll(A:0), Coll(first(A)), Coll((A:0)*), map([first(L)], LAddPair)");
+        Assert.Equal(Display(defs + "AddPair(A[0])"), Display(defs + "AddPair(first(A))"));
+        Assert.Equal(Display(defs + "LAddPair(L[0])"), Display(defs + "LAddPair(first(L))"));
+        Assert.Equal(Display(defs + "Coll(A[A.count - 1])"), Display(defs + "Coll(last(A))"));
+        AssertStrategiesAgree(defs + "Coll(A[0]), Coll(first(A)), Coll((A[0])*), map([first(L)], LAddPair)");
     }
 
     // ── 12. Forwarding, aliases, and nested capture ─────────────────────────

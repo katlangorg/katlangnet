@@ -69,14 +69,20 @@ public class ExprNameRendererTests
         Assert.Equal("(a + b)", Open(new Expr.Binary(BinaryOp.Add, a, b)));
         Assert.Equal("(a div b)", Open(new Expr.Binary(BinaryOp.IDiv, a, b)));
 
-        // Indexing renders postfix `target:selector` with rebinding-aware wrapping.
-        Assert.Equal("a:0", Open(new Expr.Index(a, new Expr.Num(0))));
-        Assert.Equal("(-a):(-1)", Open(new Expr.Index(
-            new Expr.Unary(UnaryOp.Minus, a), new Expr.Num(-1m))));
-        Assert.Equal("a:0:1", Open(new Expr.Index(
-            new Expr.Index(a, new Expr.Num(0)), new Expr.Num(1))));
-        Assert.Equal("a:(b:0)", Open(new Expr.Index(a, new Expr.Index(b, new Expr.Num(0)))));
-        Assert.Equal("a:(b*)", Open(new Expr.Index(a, new Expr.SequenceSpread(b))));
+        // Indexing renders postfix `target[selector]` with rebinding-aware wrapping.
+        Assert.Equal("a[0]", Open(new Expr.Index(a, [new Expr.Num(0)])));
+        Assert.Equal("(-a)[-1]", Open(new Expr.Index(
+            new Expr.Unary(UnaryOp.Minus, a), [new Expr.Num(-1m)])));
+        Assert.Equal("a[0][1]", Open(new Expr.Index(
+            new Expr.Index(a, [new Expr.Num(0)]), [new Expr.Num(1)])));
+        Assert.Equal("a[b[0]]", Open(new Expr.Index(a, [new Expr.Index(b, [new Expr.Num(0)])])));
+        // A spread selector SLOT renders as written; a spread receiver keeps
+        // parentheses, since `b*[0]` reads back as multiplication.
+        Assert.Equal("a[b*]", Open(new Expr.Index(a, [new Expr.SequenceSpread(b)])));
+        Assert.Equal("(b*)[0]", Open(new Expr.Index(new Expr.SequenceSpread(b), [new Expr.Num(0)])));
+        // Zero and several selectors.
+        Assert.Equal("a[]", Open(new Expr.Index(a, [])));
+        Assert.Equal("a[0, b, 2]", Open(new Expr.Index(a, [new Expr.Num(0), b, new Expr.Num(2)])));
 
         // Calls and dot-calls.
         var emptyArgs = OutputBundle.Empty;
@@ -240,11 +246,11 @@ public class ExprNameRendererTests
         // NaN's diagnostic spelling is unsigned even when its IEEE sign bit
         // is set.
         Assert.Equal(
-            "a:(-Infinity)",
-            Open(new Expr.Index(a, new Expr.Num(Decimal128.NegativeInfinity))));
+            "a[-Infinity]",
+            Open(new Expr.Index(a, [new Expr.Num(Decimal128.NegativeInfinity)])));
         Assert.Equal(
-            "a:NaN",
-            Open(new Expr.Index(a, new Expr.Num(Decimal128.NaN))));
+            "a[NaN]",
+            Open(new Expr.Index(a, [new Expr.Num(Decimal128.NaN)])));
     }
 
     [Fact]
@@ -302,7 +308,7 @@ public class ExprNameRendererTests
         Assert.Equal("a == (b and c)", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Eq, a, new Expr.Binary(BinaryOp.And, b, c))));
         Assert.Equal("a + b < c * d", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Binary(BinaryOp.Add, a, b), new Expr.Binary(BinaryOp.Mul, c, d))));
         Assert.Equal("-a ^ b < c", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Unary(UnaryOp.Minus, new Expr.Binary(BinaryOp.Pow, a, b)), c)));
-        Assert.Equal("a:0 < b.c", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Index(a, new Expr.Num(0)), new Expr.DotCall(b, "c", null))));
+        Assert.Equal("a[0] < b.c", Diag(EvaluatorTestSupport.Compare(ComparisonOp.Lt, new Expr.Index(a, [new Expr.Num(0)]), new Expr.DotCall(b, "c", null))));
 
         // A chain under a tighter operator, under prefix minus, and under `not`.
         Assert.Equal("(a < b) + c", Diag(new Expr.Binary(BinaryOp.Add, EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), c)));
@@ -313,10 +319,14 @@ public class ExprNameRendererTests
 
         // Postfix positions parenthesize a chain like a binary (Lean twin: the
         // `postfixTargetName` goldens in CoreTests comparisonChainDiagnosticNames).
-        Assert.Equal("(a < b):0", Open(new Expr.Index(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), new Expr.Num(0))));
+        Assert.Equal("(a < b)[0]", Open(new Expr.Index(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), [new Expr.Num(0)])));
         Assert.Equal("(a < b).count", Diag(new Expr.DotCall(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b), "count", null)));
         Assert.Equal("(a + b)(...)", Diag(new Expr.Call(new Expr.Binary(BinaryOp.Add, a, b), OutputBundle.Empty)));
-        Assert.Equal("a:(b < c)", Open(new Expr.Index(a, EvaluatorTestSupport.Compare(ComparisonOp.Lt, b, c))));
+        // A selector slot is written inside the brackets' own expression list, so it never
+        // needs grouping; the Open spelling still self-parenthesizes a chain there, exactly
+        // like a list element (`[(b < c)]`), while the diagnostic name writes it bare.
+        Assert.Equal("a[(b < c)]", Open(new Expr.Index(a, [EvaluatorTestSupport.Compare(ComparisonOp.Lt, b, c)])));
+        Assert.Equal("a[b < c]", Diag(new Expr.Index(a, [EvaluatorTestSupport.Compare(ComparisonOp.Lt, b, c)])));
         Assert.Equal("(a < b)*", Open(new Expr.SequenceSpread(EvaluatorTestSupport.Compare(ComparisonOp.Lt, a, b))));
 
         // One link's name is exactly its two adjacent operands.
@@ -392,7 +402,7 @@ public class ExprNameRendererTests
                 "binaryLeft" => new Expr.Binary(BinaryOp.Add, expr, new Expr.Num(1)),
                 "binaryRight" => new Expr.Binary(BinaryOp.Add, new Expr.Num(1), expr),
                 "unary" => new Expr.Unary(UnaryOp.Minus, expr),
-                "index" => new Expr.Index(expr, new Expr.Num(0)),
+                "index" => new Expr.Index(expr, [new Expr.Num(0)]),
                 "dotcall" => new Expr.DotCall(expr, "f", null),
                 "call" => new Expr.Call(expr, OutputBundle.Empty),
                 "gracePost" => new Expr.Grace(expr, 1),
@@ -417,7 +427,7 @@ public class ExprNameRendererTests
         foreach (var mode in new[]
         {
             ExprNameMode.Open, ExprNameMode.DiagnosticName, ExprNameMode.UnaryOperand,
-            ExprNameMode.SpreadOperand, ExprNameMode.IndexTarget, ExprNameMode.IndexSelector,
+            ExprNameMode.SpreadOperand, ExprNameMode.IndexTarget,
         })
         {
             var first = ExprNameRenderer.Render(deep, mode);
@@ -527,12 +537,12 @@ public class ExprNameRendererTests
         Assert.Equal("\"it's {{x}}\\t\\\\\"", Open(new Expr.StringLiteral("it's {x}\t\\")));
 
         // An interpolated string renders as written: text re-escaped, holes in operand shape,
-        // a hole that could show a hole-level `:` parenthesized, a block hole spaced.
+        // a selection hole bare (it writes no hole-level `:`), a block hole spaced.
         Assert.Equal("\"x{a}y\"", Open(Interp("x", (a, "y"))));
         Assert.Equal("\"{{{a}}}\"", Open(Interp("{", (a, "}"))));
-        Assert.Equal("\"{(a:0)}\"", Open(Interp("", (new Expr.Index(a, new Expr.Num(0)), ""))));
-        Assert.Equal("\"{(-a:0)}\"", Open(Interp("", (new Expr.Unary(UnaryOp.Minus, new Expr.Index(a, new Expr.Num(0))), ""))));
-        Assert.Equal("\"{[a:0]}\"", Open(Interp("", (new Expr.ListLiteral([new Expr.Index(a, new Expr.Num(0))]), ""))));
+        Assert.Equal("\"{a[0]}\"", Open(Interp("", (new Expr.Index(a, [new Expr.Num(0)]), ""))));
+        Assert.Equal("\"{-a[0]}\"", Open(Interp("", (new Expr.Unary(UnaryOp.Minus, new Expr.Index(a, [new Expr.Num(0)])), ""))));
+        Assert.Equal("\"{[a[0]]}\"", Open(Interp("", (new Expr.ListLiteral([new Expr.Index(a, [new Expr.Num(0)])]), ""))));
         var blockWithProperty = new Algorithm.User(null, [], [], [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))], []);
         Assert.Equal("\"{ {...} }\"", Open(Interp("", (new Expr.AlgorithmExpr(blockWithProperty), ""))));
         // A plain block renders as its output group (the established diagnostic-name rule), still spaced.

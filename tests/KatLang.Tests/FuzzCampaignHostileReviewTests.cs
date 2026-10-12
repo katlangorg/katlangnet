@@ -46,10 +46,10 @@ public class FuzzCampaignHostileReviewTests
     [InlineData("true and { K = ~b - a\nK }")]
     [InlineData("0 < { K = ~b - a\nK } <= 2")]
     [InlineData("(0 < { K = ~b - a\nK }) == true")]
-    [InlineData("[1, 2]:{ K = ~b - a\nK }")]
+    [InlineData("[1, 2][{ K = ~b - a\nK }]")]
     [InlineData("1 + a.~b(~c)")]
-    [InlineData("-((~a, b.~c):~d)")]
-    [InlineData("not (a.~b < (~c, ~d):0)")]
+    [InlineData("-((~a, b.~c)[~d])")]
+    [InlineData("not (a.~b < (~c, ~d)[0])")]
     public void RejectedOpen_OrdinaryCaptureRowIsAnIndependentTraversalOracle(string expression)
     {
         // A capture's row uses the established ordinary-expression traversal. The expected
@@ -127,7 +127,7 @@ public class FuzzCampaignHostileReviewTests
         "F(0) = { a, b = (1, 2)\na }\nF(n) = { a, *b = (n, 2, 3)\nb }\nF(0)",
         "open M\nM = { public X = 3 }\na, b = (X, 4)\na + b",
         "M = load('https://example.test/m')\na, b = (M.X, 4)\na",
-        "a, *b, z = ([1, 2]*, 3, 4)\nb:0",
+        "a, *b, z = ([1, 2]*, 3, 4)\nb[0]",
         "a, *b = (1, $)\na",
         "a, b = (1, $)\na",
         "Outer = { a, b = (1, 2)\nNested = { c, d = (a, b)\nc + d }\nNested }\nOuter",
@@ -146,7 +146,7 @@ public class FuzzCampaignHostileReviewTests
             {
                 var expression = group ? "((x + y + z))" : "x + y + z";
                 var source = $"# layout\nopen M\nM = {{ public V = {a} }}\n"
-                    + $"{rename}(p) = {{ x, *middle, z = (V, 11, 12, p)\ny = middle:0\n{expression} }}\n{rename}({b})";
+                    + $"{rename}(p) = {{ x, *middle, z = (V, 11, 12, p)\ny = middle[0]\n{expression} }}\n{rename}({b})";
                 var parsed = SourceProvenance.ParseValid(source);
                 var ast = new Expr.AlgorithmExpr(parsed.Root);
                 var generic = Evaluator.RunCountedObserved(ast, enableOptimizations: false).Result;
@@ -257,7 +257,7 @@ public class FuzzCampaignHostileReviewTests
         Expr.Unary unary => unary with { Operand = Rewrite(unary.Operand) },
         Expr.Binary binary => binary with { Left = Rewrite(binary.Left), Right = Rewrite(binary.Right) },
         Expr.Comparison comparison => comparison with { First = Rewrite(comparison.First), Links = comparison.Links.Select(l => l with { Operand = Rewrite(l.Operand) }).ToArray() },
-        Expr.Index index => index with { Target = Rewrite(index.Target), Selector = Rewrite(index.Selector) },
+        Expr.Index index => index with { Target = Rewrite(index.Target), Selectors = new(index.Selectors.Select(Rewrite).ToArray()) },
         Expr.ListLiteral list => list with { Items = new(list.Items.Select(Rewrite).ToArray()) },
         Expr.InterpolatedString interpolated => interpolated with { Links = interpolated.Links.Select(l => l with { Hole = Rewrite(l.Hole) }).ToArray() },
         Expr.SequenceSpread spread => spread with { Operand = Rewrite(spread.Operand) },

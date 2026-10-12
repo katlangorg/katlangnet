@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// ordinary call-result boundary defines (VAL-06): several written rows arrive as one sequence value, <c>()</c>
 /// and <c>[]</c> are ordinary values, <c>map</c> stores the result whole as ONE list element and <c>reduce</c>
 /// passes it whole as the next accumulator; nothing is spread, and no cardinality or non-empty restriction is
-/// added. For pure, deterministic, total computations, <c>map(L, F)</c> is <c>[F(L:0), F(L:1), …]</c> and
+/// added. For pure, deterministic, total computations, <c>map(L, F)</c> is <c>[F(L[0]), F(L[1]), …]</c> and
 /// <c>reduce([a, b], R, i)</c> is <c>R(b, R(a, i))</c> in result value. Map demands its collection; sequential reduction demands its initial
 /// value and every step; nested Model-C calls retain their ordinary demand order. Failures of the invocation
 /// propagate unchanged (an output-less algorithm is still
@@ -105,8 +105,8 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-defend-A-AD4-running-max-forgot-else", "MaxStep(x, acc) = if(x > acc, x, ())\nBest = reduce([3, 1], MaxStep, 0)\n[Best, Best == 3]", "ok L[S[], false]", "" },
         { "ADV-defend-A-AD5-append-forgot-spread-nests", "Append(x, acc) = acc, x\nR = reduce([1, 2, 3], Append, ())\n[count(R), R]", "ok L[2, S[S[S[S[], 1], 2], 3]]", "" },
         { "ADV-defend-A-AD6-reduce-leftover-row-displaced-error", "Fold(d, acc) = {\n  acc * 10\n  acc * 10 - d\n}\nreduce([1, 2], Fold, 0)", "err TypeMismatch", "" },
-        { "ADV-defend-A-AD7-map-equals-one-iteration-repeat", "D(x) = x, x\nE(x) = ()\nZ(x) = { ()* }\n[map([5], D):0 == repeat(D, 1, 5), map([5], E):0 == repeat(E, 1, 5), map([5], Z):0 == repeat(Z, 1, 5)]", "ok L[true, true, true]", "" },
-        { "ADV-defend-A-AD8-compat-positive-control-special-routes", "H(x) = (x, x * 10)\nP = [1, 2].map(H)\nStep(n) = n + count(map([n, n], H))\nColl(*xs) = xs\nR(x, acc) = [acc*, x * 2]\n[P:1, repeat(Step, 3, 0), Coll(P*), count(filter(range(1, 4), {last(first(map([k], H))) > 15})), last(P:0).string, reduce([1, 2], R, [])]", "ok L[S[2, 20], 6, L[S[1, 10], S[2, 20]], 3, '10', L[2, 4]]", "" },
+        { "ADV-defend-A-AD7-map-equals-one-iteration-repeat", "D(x) = x, x\nE(x) = ()\nZ(x) = { ()* }\n[map([5], D)[0] == repeat(D, 1, 5), map([5], E)[0] == repeat(E, 1, 5), map([5], Z)[0] == repeat(Z, 1, 5)]", "ok L[true, true, true]", "" },
+        { "ADV-defend-A-AD8-compat-positive-control-special-routes", "H(x) = (x, x * 10)\nP = [1, 2].map(H)\nStep(n) = n + count(map([n, n], H))\nColl(*xs) = xs\nR(x, acc) = [acc*, x * 2]\n[P[1], repeat(Step, 3, 0), Coll(P*), count(filter(range(1, 4), {last(first(map([k], H))) > 15})), last(P[0]).string, reduce([1, 2], R, [])]", "ok L[S[2, 20], 6, L[S[1, 10], S[2, 20]], 3, '10', L[2, 4]]", "" },
         { "ADV-attack-B-ADV-B1-reduce-empty-skip-discards-state", "Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())", "ok 3", "" },
         { "ADV-attack-B-ADV-B2-accidental-row-never-detected", "Net(x) = {\n  x * 2\n  - 2\n}\n[1, 2, 3].map(Net).filter({v != 0}).count", "ok 3", "" },
         { "ADV-attack-B-ADV-B3-lookup-shape-depends-on-match-count", "Data = [10, 20, 20]\nFind(k) = { filter(Data, {v == k})* }\nmap([10, 20, 30], Find)", "ok L[10, S[20, 20], S[]]", "" },
@@ -249,9 +249,9 @@ public sealed class CallbackResultBoundaryTests
 
     /// <summary>A clause-family callback returns exactly what its selected clause returns as a user callback.</summary>
     [Theory]
-    [InlineData("F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)", "F0(x) = 1, 2\nF1(x) = x, x\n[map([0], F0):0, map([3], F1):0]")]
-    [InlineData("F(0) = ()\nF(n) = n\nmap([0, 3], F)", "E(x) = ()\nI(x) = x\n[map([0], E):0, map([3], I):0]")]
-    [InlineData("F(0) = []*\nF(n) = [n, n]*\nK = 0\nmap([0, 3], F)", "Z(x) = { []* }\nT(x) = { [x, x]* }\n[map([0], Z):0, map([3], T):0]")]
+    [InlineData("F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)", "F0(x) = 1, 2\nF1(x) = x, x\n[map([0], F0)[0], map([3], F1)[0]]")]
+    [InlineData("F(0) = ()\nF(n) = n\nmap([0, 3], F)", "E(x) = ()\nI(x) = x\n[map([0], E)[0], map([3], I)[0]]")]
+    [InlineData("F(0) = []*\nF(n) = [n, n]*\nK = 0\nmap([0, 3], F)", "Z(x) = { []* }\nT(x) = { [x, x]* }\n[map([0], Z)[0], map([3], T)[0]]")]
     [InlineData("R(e, 0) = ()\nR(e, acc) = [e, acc]*\nK = 0\n[reduce([1, 2], R, 0)]", "E(e, acc) = ()\nP(e, acc) = e, acc\n[P(2, E(1, 0))]")]
     public async Task FamilyCallback_EqualsItsSelectedClausesAsUserCallbacks(string family, string user)
     {
@@ -265,7 +265,7 @@ public sealed class CallbackResultBoundaryTests
     [Theory]
     [InlineData("D(x) = x, x\nmap([1, 2], D).count", "ok 2")]
     [InlineData("D(x) = x, x\n(map([1, 2], D)*)", "ok S[S[1, 1], S[2, 2]]")]
-    [InlineData("D(x) = x, x\n[map([1, 2], D):0*]", "ok L[1, 1]")]
+    [InlineData("D(x) = x, x\n[map([1, 2], D)[0]*]", "ok L[1, 1]")]
     [InlineData("D(x) = x, x\natoms(map([1, 2], D))", "ok L[1, 1, 2, 2]")]
     [InlineData("D(x) = x, x\nColl(*xs) = xs\nColl(map([1], D))", "ok L[L[S[1, 1]]]")]
     [InlineData("D(x) = x, x\nColl(*xs) = xs\nColl(map([1], D)*)", "ok L[S[1, 1]]")]
@@ -485,7 +485,7 @@ public sealed class CallbackResultBoundaryTests
     {
         const string definitions = "L = [1 / 0, 2]\nF(x) = 0\n";
         var (mapped, _) = await AllRoutesAsync(definitions + "map(L, F)");
-        var (calls, _) = await AllRoutesAsync(definitions + "[F(L:0), F(L:1)]");
+        var (calls, _) = await AllRoutesAsync(definitions + "[F(L[0]), F(L[1])]");
         Assert.Equal("err DivisionByZero", mapped.Outcome);
         Assert.Equal("ok L[0, 0]", calls.Outcome);
     }
@@ -495,7 +495,7 @@ public sealed class CallbackResultBoundaryTests
     {
         const string definitions = "L = [tick(), tick()]\nF(x) = tick()\n";
         var (mapped, _) = await AllRoutesAsync(definitions + "map(L, F)");
-        var (calls, _) = await AllRoutesAsync(definitions + "[F(L:0), F(L:1)]");
+        var (calls, _) = await AllRoutesAsync(definitions + "[F(L[0]), F(L[1])]");
         Assert.Equal("ok L[3, 4]", mapped.Outcome);
         Assert.Equal("ok L[1, 2]", calls.Outcome);
         Assert.Equal(new[] { "tick#1", "tick#2", "tick#3", "tick#4" }, mapped.HostCalls);

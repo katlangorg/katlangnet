@@ -97,9 +97,9 @@ internal static class MetamorphicOptimizerTemplate
         // ── Loops: the loop optimizer selecting a plan ─────────────────────────
         new("repeat-one-iteration", $"{Loop} = x + 1\n{Loop}.repeat(1, 0)", Planned),
         new("repeat-many-iterations", $"{Loop} = x + 1\n{Loop}.repeat(12, 0)", Planned),
-        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\n{Loop}.repeat(6, 1, 0):1", Planned),
+        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\n{Loop}.repeat(6, 1, 0)[1]", Planned),
         new("while-scalar-state", $"{Loop} = x - 1, x > 1\n{Loop}.while(9)", Planned),
-        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}.while(8, 0):1", Planned),
+        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}.while(8, 0)[1]", Planned),
         new("repeat-conditional-body",
             $"{Loop} = x + if(x > 3, 2, 1)\n{Loop}.repeat(7, 0)", Planned),
         new("repeat-boolean-state", $"{Loop}(b) = not b\n{Loop}.repeat(7, false)", Planned),

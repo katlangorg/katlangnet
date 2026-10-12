@@ -363,7 +363,7 @@ public class ModuleCoordinateSpaceTests
         // Every location-bearing syntax at once: explicit and nested parameter patterns with
         // a collect marker, clause-head binders, a deconstruction, a dot member, a spread
         // marker, list and index syntax, and a nested open.
-        var module = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*,\n[H]:0";
+        var module = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*,\n[H][0]";
         var parsed = await Parser.ParseAsync(
             "open '" + Lib + "'\nM = load('" + Lib + "')\n1",
             Options((Lib, module)));
@@ -376,7 +376,7 @@ public class ModuleCoordinateSpaceTests
         // checks them: the trailing comma ends the spread row. Without it the line-final `*`
         // is followed by `[`, which begins an operand and no declaration, so the star would be
         // multiplication and the row would continue across the newline (SYN-11, Q-33): the one
-        // row `F(1, (2, 3)) * [H]:0`, with no spread node at all (pinned by LineFinalStarLawTests).
+        // row `F(1, (2, 3)) * [H][0]`, with no spread node at all (pinned by LineFinalStarLawTests).
         foreach (var view in new[] { held, opened })
         {
             Assert.Collection(
@@ -390,11 +390,11 @@ public class ModuleCoordinateSpaceTests
                 },
                 row =>
                 {
-                    // Row 2, separate: the selection `[H]:0`.
+                    // Row 2, separate: the selection `[H][0]`.
                     var selection = Assert.IsType<Expr.Index>(row);
                     var list = Assert.IsType<Expr.ListLiteral>(selection.Target);
                     Assert.Equal("H", Assert.IsType<Expr.Resolve>(Assert.Single(list.Items)).Name);
-                    Assert.Equal(0, (int)Assert.IsType<Expr.Num>(selection.Selector).Value);
+                    Assert.Equal(0, (int)Assert.IsType<Expr.Num>(Assert.Single(selection.Selectors)).Value);
                 });
         }
 

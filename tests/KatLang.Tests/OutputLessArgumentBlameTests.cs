@@ -699,7 +699,7 @@ public class OutputLessArgumentBlameTests
     [InlineData("Step(s) = s + 1\nrepeat(Step, 1, {})")]
     [InlineData("Step(s) = s, false\nwhile(Step, {})")]
     [InlineData("Step(v, acc) = v + acc\nreduce([1], Step, {})")]
-    [InlineData("Coll(*xs) = xs\nColl({}:0)")]
+    [InlineData("Coll(*xs) = xs\nColl({}[0])")]
     [InlineData("Coll(*xs) = xs\nColl([1, {}])")]
     [InlineData("Coll(*xs) = xs\nColl((1, {}))")]
     public async Task ValueDemandPaths_RetainWrittenSource_InBothTwins(string source)

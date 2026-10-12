@@ -779,7 +779,7 @@ public closed record Result
     /// openers are the spread marker (<see cref="SpreadItems"/>, which assignment
     /// deconstruction's unpacking receiver also uses), the kind-specific structural
     /// patterns (<see cref="SequencePatternItems"/>, <see cref="ListPatternItems"/>),
-    /// the indexing <c>:</c> TARGET position view (<see cref="ProjectionItems"/> —
+    /// the postfix-selection RECEIVER position view (<see cref="ProjectionItems"/> —
     /// the target's positions, never the selected element), and the builtin
     /// collection-item view (the bound collection argument after ordinary fixed
     /// binding); every opener except the structural patterns opens a sequence and a
@@ -832,7 +832,7 @@ public closed record Result
         => this is ListValue(var items) ? items : null;
 
     /// <summary>
-    /// Selectable-position view of an indexing <c>:</c> TARGET: a sequence
+    /// Selectable-position view of a postfix-selection RECEIVER (<c>A[i]</c>): a sequence
     /// value or exact list value offers its immediate elements as positions;
     /// every other value follows <see cref="ToItems"/> (a scalar offers itself
     /// as the single position). This view decides WHICH positions exist; it
@@ -851,7 +851,7 @@ public closed record Result
     }
 
     /// <summary>
-    /// SELECTION IS A VALUE BOUNDARY: <c>:</c> selects one top-level position
+    /// SELECTION IS A VALUE BOUNDARY: postfix selection <c>[i]</c> selects one top-level position
     /// of a sequence or exact list target and returns the stored element as
     /// ONE value — it never opens it. A selected sequence value stays one
     /// sequence value, a selected list stays one exact list, and the selected

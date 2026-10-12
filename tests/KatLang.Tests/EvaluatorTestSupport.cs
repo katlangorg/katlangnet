@@ -110,7 +110,7 @@ internal static class EvaluatorTestSupport
             links.Select(link => link with { Operand = MakeAllPublicExpr(link.Operand) }).ToList())
         { Span = expr.Span },
         Expr.Unary(var op, var o) => new Expr.Unary(op, MakeAllPublicExpr(o)) { Span = expr.Span },
-        Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), MakeAllPublicExpr(s)) { Span = expr.Span },
+        Expr.Index(var t, var s) => new Expr.Index(MakeAllPublicExpr(t), s.Select(MakeAllPublicExpr).ToList()) { Span = expr.Span },
         Expr.SequenceConstruct(var l, var r) => new Expr.SequenceConstruct(MakeAllPublicExpr(l), MakeAllPublicExpr(r)) { Span = expr.Span },
         Expr.SequenceSpread(var operand) => new Expr.SequenceSpread(MakeAllPublicExpr(operand)) { Span = expr.Span },
         Expr.ListLiteral(var items) => new Expr.ListLiteral(items.Select(MakeAllPublicExpr).ToList()) { Span = expr.Span },

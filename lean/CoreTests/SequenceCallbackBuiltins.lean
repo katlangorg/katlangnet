@@ -434,8 +434,8 @@ def reduceSequenceValueItemAlg79 : Algorithm :=
 def reduceStatsAlg80 : Algorithm :=
   alg ["x", "acc"] [] [] [
     .capture [
-      .binary .add (.dotCall (.param "x") "count" none) (.index (.param "acc") (.num 0)),
-      .binary .add (.index (.param "acc") (.num 1)) (.num 1)
+      .binary .add (.dotCall (.param "x") "count" none) (.index (.param "acc") [.num 0]),
+      .binary .add (.index (.param "acc") [.num 1]) (.num 1)
     ]
   ]
 
@@ -450,9 +450,9 @@ def reduceEmptyBoundarySequenceValueAccAlg80b : Algorithm :=
   alg ["x", "acc"] [] [] [
     .capture [
       .binary .add
-        (.binary .add (.index (.param "acc") (.num 0)) (.num 100))
+        (.binary .add (.index (.param "acc") [.num 0]) (.num 100))
         (.dotCall (.param "x") "count" none),
-      .binary .add (.index (.param "acc") (.num 1)) (.num 1)
+      .binary .add (.index (.param "acc") [.num 1]) (.num 1)
     ]
   ]
 
@@ -484,7 +484,7 @@ def sequenceBoundaryLawAocCountMatchStepAlg : Algorithm :=
     .capture [
       .dotCall (resolve "T") "first" none,
       .binary .add
-        (.index (resolve "T") (.num 1))
+        (.index (resolve "T") [.num 1])
         (.call (resolve "if") [
           .compare .eq (.param "element") (.dotCall (resolve "T") "first" none),
           .num 1,
@@ -507,7 +507,7 @@ def sequenceBoundaryLawAocNamedReduceSource : Bool :=
           resolve "CountMatchStep",
           .capture [.param "value", .num 0]
         ])
-        (.num 1)
+        [.num 1]
     ]),
     ("SimilarityAt", alg ["value"] [] [] [
       .binary .mul

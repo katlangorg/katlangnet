@@ -262,8 +262,8 @@ public class RepeatedNameConstraintTests
         { "value-then-failed-block", "Q(x, x) = x\nQ(7, {trace(1) / 0})", DivisionByZero(Call("Q")) + BadTraced },
 
         // 5. The first failed inspecting demand stops traversal; later cells stay suspended.
-        { "two-failures", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Bad, Missing)", DivisionByZero(Call("Q")) + " [trace(1)]" },
-        { "two-failures-reversed", Bad + "Missing = [trace(2)]:5\nQ(x, x) = x\nQ(Missing, Bad)", $"err BadIndex: {Call("Q")}Bad index [trace(2)]" },
+        { "two-failures", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Bad, Missing)", DivisionByZero(Call("Q")) + " [trace(1)]" },
+        { "two-failures-reversed", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Missing, Bad)", $"err BadIndex: {Call("Q")}Bad index [trace(2)]" },
         { "same-failure-twice", Bad + "Q(x, x) = 0\nQ(Bad, Bad)", DivisionByZero(Call("Q")) + " [trace(1)]" },
 
         // 6. Arguments that each carry BOTH channels: equal values and one callable identity bind

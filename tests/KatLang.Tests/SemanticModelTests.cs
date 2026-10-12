@@ -700,11 +700,11 @@ public class SemanticModelTests
             """
             public _x = 0
             public _y = 1
-            X = v:_x
-            Y = v:_y
+            X = v[_x]
+            Y = v[_y]
             public Vector = x, y
-            public Neg = Vector(-v:_x, -v:_y)
-            public Scale = Vector(q~*v:_x, q*v:_y)
+            public Neg = Vector(-v[_x], -v[_y])
+            public Scale = Vector(q~*v[_x], q*v[_y])
             public Add(*vectors) = Vector(vectors.map(X).sum, vectors.map(Y).sum)
             public Subtract = a.Add(b.Neg)
             """);
@@ -1212,10 +1212,10 @@ public class SemanticModelTests
         var model = BuildModel(
             """
             Data = (1, 2, 3), (4, 5)
-            (Data:0).take(2)
+            (Data[0]).take(2)
             """);
 
-        var takeReference = ResolutionAt(model, 2, 10);
+        var takeReference = ResolutionAt(model, 2, 11);
         Assert.Equal(OccurrenceKind.DotMemberReference, takeReference.Occurrence.Kind);
         Assert.Equal(IdentifierClassification.Builtin, takeReference.Classification);
         Assert.Null(takeReference.ResolvedDeclaration);
@@ -1423,7 +1423,7 @@ public class SemanticModelTests
         var model = BuildModel(
             """
             Algo = b, ~a + b, total + if(b mod 2 == 0, b, 0), b <= 100
-            Sum = Algo.while(1, 2, 0) : 2
+            Sum = Algo.while(1, 2, 0)[2]
             Sum
             """);
 

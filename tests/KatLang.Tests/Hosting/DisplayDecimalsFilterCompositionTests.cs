@@ -484,7 +484,7 @@ public sealed class DisplayDecimalsFilterCompositionTests
         Assert.StartsWith(nameof(KatLangErrorCode.DivisionByZero) + ": ", Assert.Single(divide.Errors), StringComparison.Ordinal);
         Assert.Empty(divide.HostCalls);
 
-        var index = await OnEveryEngineRouteAsync("DisplayDecimals = 1 / 0\n[1]:5", hostFilter);
+        var index = await OnEveryEngineRouteAsync("DisplayDecimals = 1 / 0\n[1][5]", hostFilter);
         Assert.StartsWith(nameof(KatLangErrorCode.BadIndex) + ": ", Assert.Single(index.Errors), StringComparison.Ordinal);
 
         var none = await OnEveryEngineRouteAsync("DisplayDecimals = trace(2)", hostFilter);

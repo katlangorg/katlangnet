@@ -56,9 +56,9 @@ def lcHeads : List LcHead := [
   { name := "repeated names", patterns := [lcCap "a", lcCap "a", lcCap "b"],
     init := [.num 1, .num 1, .num 2], a := .param "a", b := .param "b" },
   { name := "collector", patterns := [lcCap "a", lcColl "rest"],
-    init := [.num 1, .num 2], a := .param "a", b := .index (.param "rest") (.num 0) },
+    init := [.num 1, .num 2], a := .param "a", b := .index (.param "rest") [.num 0] },
   { name := "collector only", patterns := [lcColl "xs"],
-    init := [.num 1, .num 2], a := .index (.param "xs") (.num 0), b := .index (.param "xs") (.num 1) },
+    init := [.num 1, .num 2], a := .index (.param "xs") [.num 0], b := .index (.param "xs") [.num 1] },
   { name := "sequence pattern", patterns := [.sequenceValue [lcCap "a", lcCap "b"]],
     init := [lcPair 1 2], a := .param "a", b := .param "b" },
   { name := "list pattern", patterns := [.listValue [lcCap "a", lcCap "b"]],
@@ -66,7 +66,7 @@ def lcHeads : List LcHead := [
   { name := "nested pattern", patterns := [.sequenceValue [.sequenceValue [lcCap "a", lcCap "b"], lcCap "c"]],
     init := [.capture [lcPair 1 2, .num 3]], a := .param "a", b := .param "b" },
   { name := "sequence pattern with collector", patterns := [.sequenceValue [lcCap "a", lcColl "rest"]],
-    init := [lcPair 1 2], a := .param "a", b := .index (.param "rest") (.num 0) },
+    init := [lcPair 1 2], a := .param "a", b := .index (.param "rest") [.num 0] },
   { name := "repeated structural leaf",
     patterns := [.sequenceValue [lcCap "a", lcCap "b"], .sequenceValue [lcCap "a", lcCap "c"]],
     init := [lcPair 1 2, lcPair 1 3], a := .param "a", b := .param "b" }
@@ -190,7 +190,7 @@ def structuralStepRowsAreOrdinaryRows : Bool :=
    | .error err => innermostIsArityMismatch 2 3 err
    | _ => false) &&
   (match run [("Grow", grow)]
-      (.index (.call (resolve "repeat") [resolve "Grow", .num 3, .listLiteral [], .num 0]) (.num 0)) with
+      (.index (.call (resolve "repeat") [resolve "Grow", .num 3, .listLiteral [], .num 0]) [.num 0]) with
    | .ok value => value == .listValue [.atom 0, .atom 1, .atom 2]
    | _ => false)
 
@@ -263,8 +263,8 @@ def loopResultIsAValueBoundary : Bool :=
     counted result; their difference is only the loop's own next binding. -/
 def completedLoopForgetsItsSlotCount : Bool :=
   let onePair := alg ["p"] [] []
-    [.capture [.binary .add (.index (.param "p") (.num 0)) (.num 10),
-               .binary .add (.index (.param "p") (.num 1)) (.num 10)]]
+    [.capture [.binary .add (.index (.param "p") [.num 0]) (.num 10),
+               .binary .add (.index (.param "p") [.num 1]) (.num 10)]]
   let twoSlots := alg ["a", "b"] [] []
     [.binary .add (.param "a") (.num 10), .binary .add (.param "b") (.num 10)]
   let props := [("P1", onePair), ("P2", twoSlots)]

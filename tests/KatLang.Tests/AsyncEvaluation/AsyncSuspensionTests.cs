@@ -51,7 +51,7 @@ public class AsyncSuspensionTests
         { "string-building", "Name = 'Kat'\nName + 'Lang'" },
         { "expression-spine", "A = 1\n(A + 1) * (A + 2) * (A + 3) - A" },
         { "range-pipeline", "N = 3\nrange(1, N + 0).sum" },
-        { "index-projection", "S = ((1, 2), (3, 4))\nS:1" },
+        { "index-projection", "S = ((1, 2), (3, 4))\nS[1]" },
         { "zero-arg-cache-shape", "A = 1, 2\nA, A, A()" },
         // Ownership: the nested `Inner` reads `Outer`'s parameter, which the owner walk
         // selects over the root property of the same name. `Inner` is a zero-argument

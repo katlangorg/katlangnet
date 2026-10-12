@@ -2,6 +2,8 @@
 
 > **Syntax note (2026-07-29):** the collection/spreading surface syntax was later redesigned: prefix `*name` is now the collect marker (collecting binding / collecting parameter), postfix `value*` is the spread marker, and the former spellings `name...`, `spread(x)`, and `x.spread` are no longer KatLang syntax (`spread` is an ordinary identifier). Spellings in the historical text below are the spellings of their time; the semantics they describe are unchanged.
 
+> **Syntax note (2026-10-12):** selection is now variadic postfix selection `x[i]` (`docs/design/language-rules/sequences-lists-and-calls.md` § Variadic postfix selection); the colon form `x:i` is retired with a migration diagnostic. Read a historical `x:i` below as `x[i]` and `x:i:j` as `x[i][j]`; the corpus and both generated artifacts use the bracket spelling.
+
 Status: completed audit + durable validator. This document is the Phase-1
 receiver/boundary review deliverable for the small-state arity-semantics
 validator, and the reference for the invariants that validator enforces.
@@ -176,9 +178,9 @@ observable count at root; notes):
 | spread in seq `(V.spread, 99)` | items+1 | shallow combine | 1 | `(().spread, 99)` = `99` (singleton collapse) |
 | `count(V)` / `V.count` | 1 fixed collection arg | `items(V).count` | 1 | collection view opens one bound sequence/list boundary |
 | `count(V.spread)` | `items(V).count` ordinary args | count or `E:arity` | 1 / — | succeeds only when spread supplies exactly one argument |
-| `x:0` (item = pair) | — | the stored pair, one value | 1 | selection is a value boundary (Sept 2026; was a `max(1, k)` supply at root) |
-| `x:0` (item = `()`) | — | `S[]` | 1 | value count 0, root bump to 1 row |
-| `x:9` / `x:-1` | — | `E:index` / parse error | — | negative selector rejected at parse (C#) |
+| `x[0]` (item = pair) | — | the stored pair, one value | 1 | selection is a value boundary (Sept 2026; was a `max(1, k)` supply at root) |
+| `x[0]` (item = `()`) | — | `S[]` | 1 | value count 0, root bump to 1 row |
+| `x[9]` / `x[-1]` | — | `E:index` | — | a selector is an ordinary expression slot: `-1` names no position (October 2026; the colon form rejected `x:-1` at parse) |
 | `==` / `!=` | 2 values | `true`/`false` | 1 | structural, reflexive, path-independent |
 | re-entry `I(x)`, `P = R` | 1 | unchanged | 1 | validated across double re-entry |
 | `take/skip/filter/distinct/order/map` | items | exact list of survivors/results | 1 | zero -> `[]`; one -> `[item]`; never singleton-erased |
@@ -346,8 +348,8 @@ list-pattern counterparts now pin this kind-specific law.)*
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**2,596 surface cases** as of this update — the surface corpus minus its 45
-parse-level cases such as `(3,)`, `x:-1`, `A.spread == A.spread`, `1 ; 2`, `open count, Lib`, `open Lib.S` through a private `S`, and a written `X` that `open L1, L2` provides twice, which
+(**2,630 surface cases** as of this update — the surface corpus minus its 11
+parse-level cases such as `(3,)`, `A.spread == A.spread`, `1 ; 2`, `open count, Lib`, `open Lib.S` through a private `S`, and a written `X` that `open L1, L2` provides twice, which
 are C#-only typed outcomes since Lean has no surface parser — plus **14**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
@@ -396,12 +398,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,641 | 2,312 template cases (68 receiver templates x 34 values) + 329 specials; outcomes 2,126 ok / 470 err / 45 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 2,596 | the 2,641 above minus the 45 parse-level cases (34 `indexNeg__*` + eleven deliberate parse-error specials, the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, and the three written open ambiguities since Q-29 A-U, October 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 2,641 | 2,312 template cases (68 receiver templates x 34 values) + 329 specials; outcomes 2,126 ok / 504 err / 11 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 2,630 | the 2,641 above minus the 11 parse-level cases (eleven deliberate parse-error specials — the 34 `indexNeg__*` cases became Lean-representable with variadic postfix selection, October 2026, since `x[-1]` is an ordinary selector slot evaluating to `BadIndex` where `x:-1` was a parse error — the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, and the three written open ambiguities since Q-29 A-U, October 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 2,610 | 2,596 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 2,644 | 2,630 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 2,641 attempted, 2,596 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 45 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 2,641 attempted, 2,630 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 11 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -425,7 +427,9 @@ nested-scope leakage, builtin collision, and structural dot access to a private
 member, none of which had ANY case in either generated artifact before); the
 generated header, partition guards, JSON report, and table above now agree on
 2,641 surface cases, 45 parse-level exclusions, 2,596 Lean-representable
-surface cases, and 14 internal-node cases. String interpolation (STR-02,
+surface cases, and 14 internal-node cases (since variadic postfix selection,
+October 2026: 11 parse-level exclusions and 2,630 Lean-representable cases, the
+34 `indexNeg__*` cases now evaluating `x[-1]` to `BadIndex` on both sides). String interpolation (STR-02,
 October 2026) added three receiver templates — `interpolation` (a hole written
 directly), `interpolationViaProp` (a property read in two holes) and
 `interpolationViaParam` (a parameter read in a hole), 102 cases that pin every

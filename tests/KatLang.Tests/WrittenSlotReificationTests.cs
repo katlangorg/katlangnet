@@ -81,15 +81,15 @@ public class WrittenSlotReificationTests
     [Fact]
     public void ListLiteral_MultiEmittingProjection_ReifiesAsOneElement()
     {
-        // The audited defect: `S:0` emits a two-item counted supply, but it
+        // The audited defect: `S[0]` emits a two-item counted supply, but it
         // occupies ONE written list slot, so it contributes the pair as one
         // element — matching capture, call arguments, and deconstruction.
-        AssertEvaluates(PairSource + "[S:0, 5]", List(Seq(Atom(1), Atom(2)), Atom(5)));
-        AssertEvaluates(PairSource + "[S:0, S:1]", List(Seq(Atom(1), Atom(2)), Seq(Atom(3), Atom(4))));
+        AssertEvaluates(PairSource + "[S[0], 5]", List(Seq(Atom(1), Atom(2)), Atom(5)));
+        AssertEvaluates(PairSource + "[S[0], S[1]]", List(Seq(Atom(1), Atom(2)), Seq(Atom(3), Atom(4))));
 
         // Parentheses are ordinary redundant grouping, not the only escape
-        // hatch: `[(S:0), 5]` is the same list.
-        AssertEvaluates(PairSource + "[(S:0), 5]", List(Seq(Atom(1), Atom(2)), Atom(5)));
+        // hatch: `[(S[0]), 5]` is the same list.
+        AssertEvaluates(PairSource + "[(S[0]), 5]", List(Seq(Atom(1), Atom(2)), Atom(5)));
     }
 
     [Fact]
@@ -97,8 +97,8 @@ public class WrittenSlotReificationTests
     {
         // The contrast required by the spread rule: only a written spread
         // marker opens the projected value into the surrounding slots.
-        AssertEvaluates(PairSource + "[S:0*, 5]", List(Atom(1), Atom(2), Atom(5)));
-        AssertEvaluates(PairSource + "[S:0*, S:1*]", List(Atom(1), Atom(2), Atom(3), Atom(4)));
+        AssertEvaluates(PairSource + "[S[0]*, 5]", List(Atom(1), Atom(2), Atom(5)));
+        AssertEvaluates(PairSource + "[S[0]*, S[1]*]", List(Atom(1), Atom(2), Atom(3), Atom(4)));
     }
 
     [Fact]
@@ -124,15 +124,15 @@ public class WrittenSlotReificationTests
     [Fact]
     public void WrittenPatternArgument_MultiEmittingItem_IsOneWrittenSlot()
     {
-        // `(S:0, 5)` supplies TWO written items to the sequence-value pattern:
+        // `(S[0], 5)` supplies TWO written items to the sequence-value pattern:
         // the reified pair and the atom — so `F((x, y))` binds x = (1, 2).
         AssertEvaluates(
-            PairSource + "F((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S:0, 5))",
+            PairSource + "F((x, y)) = if(x == (1, 2), 1, 0) + y\nF((S[0], 5))",
             Atom(6));
 
         // With an explicit spread the same written group supplies three items.
         AssertEvaluates(
-            PairSource + "F((x, y, z)) = x + y + z\nF((S:0*, 5))",
+            PairSource + "F((x, y, z)) = x + y + z\nF((S[0]*, 5))",
             Atom(8));
     }
 

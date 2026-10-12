@@ -78,7 +78,7 @@ public class DeepValueRobustnessTests
 
     [Fact]
     public void DeepAtomsBuiltin()
-        => AssertEval(DeepListProgram("atoms(A).count, atoms(A):0"), 1, 0);
+        => AssertEval(DeepListProgram("atoms(A).count, atoms(A)[0]"), 1, 0);
 
     [Fact]
     public void DeepDotCallReceiverReification()
@@ -86,7 +86,7 @@ public class DeepValueRobustnessTests
 
     [Fact]
     public void DeepIndexSelectionPreservesStoredValue()
-        => AssertEval(DeepListProgram("A:0"), 0);
+        => AssertEval(DeepListProgram("A[0]"), 0);
 
     [Fact]
     public void DeepValueFlattensToHostAtoms()

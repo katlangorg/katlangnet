@@ -411,10 +411,10 @@ public class SharedValueGraphComplexityTests
         // value structurally against the bound one. Select the graph VALUES so the
         // test exercises deep equality, independently of A/B's distinct callable
         // identities (equal-valued distinct callables deliberately reject).
-        AssertEval(DagProgram("Same(v, v) = 1\nSame([A]:0, [B]:0)"), 1);
+        AssertEval(DagProgram("Same(v, v) = 1\nSame([A][0], [B][0])"), 1);
 
         var mismatched = Evaluator.RunFlat(new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid(DagProgram("Same(v, v) = 1\nSame([A]:0, [C]:0)")).Root));
+            SourceProvenance.ParseValid(DagProgram("Same(v, v) = 1\nSame([A][0], [C][0])")).Root));
         Assert.True(mismatched.IsError);
         var error = mismatched.Error;
         while (error is EvalError.WithContext context)

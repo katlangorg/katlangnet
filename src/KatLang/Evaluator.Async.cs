@@ -1118,54 +1118,45 @@ public static partial class Evaluator
                         break;
                     }
 
-                case Expr.Index(var target, var selector):
+                case Expr.Index selection:
                     {
+                        // MIRROR of the sync Index case: the receiver once, the supply formed
+                        // (spreads only), the supplied selectors left to right through the ONE
+                        // AdvanceSelection step, then the capture.
                         if (frames[top].Phase == 0)
                         {
                             if (!hasPendingChild)
                             {
-                                requestedChild = target;
+                                requestedChild = selection.Target;
                                 break;
                             }
 
                             hasPendingChild = false;
                             frames[top].FirstValue = pendingChild.Value;
                             frames[top].Phase = 1;
-                            requestedChild = selector;
-                            break;
+                            if (HasSpreadSelector(selection.Selectors))
+                            {
+                                var formed = await FormSelectionSupply(selection, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+                                if (formed.IsError)
+                                {
+                                    completed = formed.Error;
+                                    break;
+                                }
+
+                                frames[top].Selection = formed.Value;
+                            }
                         }
 
+                        completed = AdvanceSelection(ref frames[top], hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell);
                         hasPendingChild = false;
-
-                        var nR = ExpectInt(pendingChild.Value);
-                        if (nR.IsError)
+                        if (selectorCell is not null)
                         {
-                            completed = AtSpanIfMissing(nR.Error, frames[top].Node.Span);
-                            break;
+                            var demanded = await selectorCell.DemandAsync().ConfigureAwait(false);
+                            completed = demanded.IsError
+                                ? SelectorFailure(demanded.Error, frames[top])
+                                : AdvanceSelection(ref frames[top], demanded.Value.Value, ctx, out requestedChild, out _);
                         }
 
-                        var n = nR.Value;
-                        // IsInteger is false for NaN and the infinities, so a non-finite
-                        // selector is the same out-of-range badIndex as a fractional one.
-                        if (!Decimal128.IsInteger(n) || n < 0)
-                        {
-                            completed = new EvalError.BadIndex() { Span = frames[top].Node.Span };
-                            break;
-                        }
-
-                        if (n > int.MaxValue)
-                        {
-                            completed = new EvalError.BadIndex() { Span = frames[top].Node.Span };
-                            break;
-                        }
-
-                        // MIRROR of the sync Index case: selection is a value
-                        // boundary — the stored element, re-counted as one plain
-                        // value (Result.ValueCount), never opened.
-                        var selected = frames[top].FirstValue!.Index((int)n);
-                        completed = selected is null
-                            ? new EvalError.BadIndex() { Span = frames[top].Node.Span }
-                            : CountValue(selected);
                         break;
                     }
 

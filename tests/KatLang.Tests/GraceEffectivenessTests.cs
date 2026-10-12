@@ -365,7 +365,7 @@ public class GraceEffectivenessTests
     [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
     [InlineData("K = a.~t\nK({a+1}, 7)", "8")]
     [InlineData("K = a~.~t\nK({a+1}, 7)", "8")]
-    [InlineData("Fib = b~, a + b\nFib.repeat(10, 0, 1) : 0", "55")]
+    [InlineData("Fib = b~, a + b\nFib.repeat(10, 0, 1)[0]", "55")]
     [InlineData("K = {\n  a\n  ~b\n}\nK(10, 20)", "(20, 10)")]
     [InlineData("F(v, w) = w\nK = F(y, ~x)\nK(1, 2)", "1")]
     [InlineData("K = (y, ~x)\nK(1, 2)", "(2, 1)")]
@@ -375,7 +375,7 @@ public class GraceEffectivenessTests
     [InlineData("V(x) = 99\nObj = { public V = 42 }\nRead = o~.V\nRead(Obj)", "42")]
     [InlineData("Obj = { public V = 42 }\nRead = o.~V\nRead({x}, Obj)", "42")]
     [InlineData("t(x) = x + 1\nK = a~.t\nK(7)", "8")]
-    [InlineData("S = 1, 2, 3\nK = S.~t\nK({a:0 + 100})", "101")]
+    [InlineData("S = 1, 2, 3\nK = S.~t\nK({a[0] + 100})", "101")]
     [InlineData("Outer = {\n    t(a) = a + 1\n    K = a~.t\n    K(41)\n}\nOuter", "42")]
     public void EffectiveGrace_StaysValidAndUnchanged(string source, string expected)
     {

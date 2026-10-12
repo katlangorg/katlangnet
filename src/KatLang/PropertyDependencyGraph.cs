@@ -2510,7 +2510,9 @@ internal static class PropertyDependencyGraphBuilder
             Expr.Binary(_, var left, var right) => Seed(left).Absorb(Seed(right)),
             Expr.Comparison(var first, var links) => links.Aggregate(Seed(first), (seed, link) => seed.Absorb(Seed(link.Operand))),
             Expr.Unary(_, var operand) => Seed(operand),
-            Expr.Index(var target, var selector) => Seed(target).Absorb(Seed(selector)),
+            // Selector slots are written in the ENCLOSING context, like list elements.
+            Expr.Index(var target, var selectors) => Seed(target).Absorb(CollectSummarySeed(
+                selectors, localPropertySummaries, ownedHere, memos, inTransparentContext)),
             Expr.SequenceSpread(var operand) => Seed(operand),
             Expr.SequenceConstruct(var left, var right) => Seed(left).Absorb(Seed(right)),
             Expr.ListLiteral(var listItems) => CollectSummarySeed(
@@ -3138,9 +3140,11 @@ internal static class PropertyDependencyGraphBuilder
                 CollectSiblingDependencyIndices(operand, context, shadow, LiftingRole.Value);
                 break;
 
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
+                // The receiver and every selector slot are VALUE uses; a selection has no callee.
                 CollectSiblingDependencyIndices(target, context, shadow, LiftingRole.Value);
-                CollectSiblingDependencyIndices(selector, context, shadow, LiftingRole.Value);
+                foreach (var selector in selectors)
+                    CollectSiblingDependencyIndices(selector, context, shadow, LiftingRole.Value);
                 break;
 
             case Expr.SequenceSpread(var operand):

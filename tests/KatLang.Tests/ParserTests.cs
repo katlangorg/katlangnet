@@ -321,37 +321,37 @@ public class ParserTests
     [Fact]
     public void Parse_Index_ReturnsIndexExpr()
     {
-        var result = Parser.ParseSyntax("X:0");
+        var result = Parser.ParseSyntax("X[0]");
 
         Assert.False(result.HasErrors);
         var index = Assert.IsType<Expr.Index>(result.Root.Output[0]);
         var target = Assert.IsType<Expr.Resolve>(index.Target);
         Assert.Equal("X", target.Name);
-        Assert.Equal(0, ((Expr.Num)index.Selector).Value);
+        Assert.Equal(0, ((Expr.Num)Assert.Single(index.Selectors)).Value);
     }
 
     [Fact]
     public void Parse_Index_ListLiteralTarget_ReturnsIndexExpr()
     {
-        var result = Parser.ParseSyntax("[1, 2, 3]:1");
+        var result = Parser.ParseSyntax("[1, 2, 3][1]");
 
         Assert.False(result.HasErrors);
         var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
         var target = Assert.IsType<Expr.ListLiteral>(index.Target);
         Assert.Equal(3, target.Items.Count);
-        Assert.Equal(1, ((Expr.Num)index.Selector).Value);
+        Assert.Equal(1, ((Expr.Num)Assert.Single(index.Selectors)).Value);
     }
 
     [Fact]
     public void Parse_Index_NestedListLiteralTarget_ChainsLeftAssociatively()
     {
-        var result = Parser.ParseSyntax("[[1, 2], [3, 4]]:1:0");
+        var result = Parser.ParseSyntax("[[1, 2], [3, 4]][1][0]");
 
         Assert.False(result.HasErrors);
         var outer = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
-        Assert.Equal(0, ((Expr.Num)outer.Selector).Value);
+        Assert.Equal(0, ((Expr.Num)Assert.Single(outer.Selectors)).Value);
         var inner = Assert.IsType<Expr.Index>(outer.Target);
-        Assert.Equal(1, ((Expr.Num)inner.Selector).Value);
+        Assert.Equal(1, ((Expr.Num)Assert.Single(inner.Selectors)).Value);
         var list = Assert.IsType<Expr.ListLiteral>(inner.Target);
         Assert.Equal(2, list.Items.Count);
         Assert.All(list.Items, static item => Assert.IsType<Expr.ListLiteral>(item));
@@ -360,11 +360,11 @@ public class ParserTests
     [Fact]
     public void Parse_Index_CallTarget_ReturnsIndexOverCall()
     {
-        var result = Parser.ParseSyntax("take([1, 2, 3], 2):1");
+        var result = Parser.ParseSyntax("take([1, 2, 3], 2)[1]");
 
         Assert.False(result.HasErrors);
         var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
-        Assert.Equal(1, ((Expr.Num)index.Selector).Value);
+        Assert.Equal(1, ((Expr.Num)Assert.Single(index.Selectors)).Value);
         var call = Assert.IsType<Expr.Call>(index.Target);
         var callee = Assert.IsType<Expr.Resolve>(call.Function);
         Assert.Equal("take", callee.Name);
@@ -373,11 +373,11 @@ public class ParserTests
     [Fact]
     public void Parse_Index_DottedBuiltinTarget_ReturnsIndexOverDotCall()
     {
-        var result = Parser.ParseSyntax("[3, 1, 2].order:0");
+        var result = Parser.ParseSyntax("[3, 1, 2].order[0]");
 
         Assert.False(result.HasErrors);
         var index = Assert.IsType<Expr.Index>(Assert.Single(result.Root.Output));
-        Assert.Equal(0, ((Expr.Num)index.Selector).Value);
+        Assert.Equal(0, ((Expr.Num)Assert.Single(index.Selectors)).Value);
         var dotCall = Assert.IsType<Expr.DotCall>(index.Target);
         Assert.Equal("order", dotCall.Name);
         var receiver = Assert.IsType<Expr.ListLiteral>(dotCall.Target);
@@ -1555,13 +1555,16 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("Pair = 1, 2\nP = Pair:0")]
-    [InlineData("Pair = 1, 2\nP = Pair :0")]
-    [InlineData("Pair = 1, 2\nP = Pair : 0")]
-    public void Parse_SameLineIndexing_RemainsPostfixIndex(string source)
+    [InlineData("Pair = 1, 2\nP = Pair[0]")]
+    [InlineData("Pair = 1, 2\nP = Pair [0]")]
+    [InlineData("Pair = 1, 2\nP = Pair\t[0]")]
+    [InlineData("Pair = 1, 2\nP = Pair [ 0 ]")]
+    [InlineData("Pair = 1, 2\nP = Pair [\n  0\n]")]
+    public void Parse_SameLineSelection_RemainsPostfixSelection(string source)
     {
-        // Same-line whitespace around ':' is insignificant; the index stays
-        // a postfix continuation of the expression before it.
+        // Same-line spaces and tabs before '[' are insignificant, and the
+        // selector list may span lines once the bracket is open: the selection
+        // stays a postfix continuation of the expression before it.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -1570,49 +1573,59 @@ public class ParserTests
         var body = Assert.IsType<Algorithm.User>(property.Value);
         var index = Assert.IsType<Expr.Index>(Assert.Single(body.Output));
         Assert.Equal("Pair", Assert.IsType<Expr.Resolve>(index.Target).Name);
+        Assert.Equal(0, Assert.IsType<Expr.Num>(Assert.Single(index.Selectors)).Value);
     }
 
     [Fact]
-    public void Parse_ColonLedLineAfterDefinitionBody_IsRejectedNotBodyContinuation()
+    public void Parse_BracketLedLineAfterDefinitionBody_IsANewListRowNotASelection()
     {
-        // A physical newline never continues a closed expression into
-        // postfix indexing, mirroring the call-delimiter rule: `P = Pair`
-        // newline `:0` must not silently define `P = Pair:0`. P's body stays
-        // the bare resolve and the ':'-led line is rejected with a targeted
-        // diagnostic.
-        var result = Parser.ParseSyntax("Pair = 1, 2\nP = Pair\n:0\nP");
+        // A physical newline never continues a closed expression into postfix
+        // selection, mirroring the call-delimiter rule: `P = Pair` newline `[0]`
+        // keeps P's body the bare resolve, and the '['-led line is a root
+        // list-literal row of its own — valid source, never `P = Pair[0]`.
+        var result = Parser.ParseSyntax("Pair = 1, 2\nP = Pair\n[0]\nP");
 
-        Assert.True(result.HasErrors);
-        Assert.Contains(
-            result.Diagnostics,
-            static diagnostic => diagnostic.Message.Contains(
-                "Indexing is postfix and must follow the indexed expression on the same physical line",
-                StringComparison.Ordinal));
+        Assert.False(result.HasErrors);
         var property = result.Root.Properties[1];
         Assert.Equal("P", property.Name);
         var body = Assert.IsType<Algorithm.User>(property.Value);
         Assert.Equal("Pair", Assert.IsType<Expr.Resolve>(Assert.Single(body.Output)).Name);
+        Assert.IsType<Expr.ListLiteral>(result.Root.Output[0]);
     }
 
     [Theory]
+    [InlineData("Pair = 1, 2\nPair\n[0, 1]")]
+    [InlineData("Pair = 1, 2\nPair # comment\n[0, 1]")]
+    public void Parse_BracketLedLineAfterOutputRow_IsTwoRowsNotAPostfixContinuation(string source)
+    {
+        // Same boundary in root output: `Pair` newline `[0, 1]` is two output
+        // rows, never the selection `Pair[0, 1]`. A trailing comment is
+        // invisible and must not change that.
+        var result = Parser.ParseSyntax(source);
+
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Output.Count);
+        Assert.IsType<Expr.Resolve>(result.Root.Output[0]);
+        Assert.IsType<Expr.ListLiteral>(result.Root.Output[1]);
+        Assert.DoesNotContain(result.Root.Output, static expr => expr is Expr.Index);
+    }
+
+    [Theory]
+    [InlineData("Pair = 1, 2\nP = Pair\n:0\nP")]
     [InlineData("Pair = 1, 2\nPair\n:0")]
     [InlineData("Pair = 1, 2\nPair # comment\n:0")]
-    public void Parse_ColonLedLineAfterOutputRow_IsRejectedNotPostfixContinuation(string source)
+    public void Parse_ColonLedLine_ReportsTheRetiredColonSelection(string source)
     {
-        // Same boundary in root output: `Pair` newline `:0` is not the index
-        // `Pair:0`; the ':'-led row reports the targeted diagnostic. A
-        // trailing comment is invisible and must not change that.
+        // ':' is not KatLang syntax: a ':'-led line (a retired colon selection
+        // written on the line after its receiver) reports the migration
+        // diagnostic and never selects.
         var result = Parser.ParseSyntax(source);
 
         Assert.True(result.HasErrors);
-        Assert.Contains(
-            result.Diagnostics,
-            static diagnostic => diagnostic.Message.Contains(
-                "Indexing is postfix and must follow the indexed expression on the same physical line",
-                StringComparison.Ordinal));
-        Assert.DoesNotContain(
-            result.Root.Output,
-            static expr => expr is Expr.Index);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, diagnostic.Code);
+        Assert.Contains("postfix brackets", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Root.Output, static expr => expr is Expr.Index);
     }
 
     [Theory]
@@ -2550,7 +2563,7 @@ public class ParserTests
     [Fact]
     public void Parse_ChainedIndex_LeftAssociative()
     {
-        var result = Parser.ParseSyntax("X:0:1");
+        var result = Parser.ParseSyntax("X[0][1]");
 
         Assert.False(result.HasErrors);
         var outer = Assert.IsType<Expr.Index>(result.Root.Output[0]);
@@ -3066,9 +3079,9 @@ public class ParserTests
     [Fact]
     public void Parse_PowerBaseIsPostfixLevel_CallsIndexingAndGroupsBindFirst()
     {
-        // Postfix forms complete before `^` takes the base: `A:0 ^ 2` is
-        // `(A:0) ^ 2`, and a parenthesized group is the base it wraps.
-        var indexed = AssertPow(ParseSingleOutput("A = 4, 9\nA:0 ^ 2"));
+        // Postfix forms complete before `^` takes the base: `A[0] ^ 2` is
+        // `(A[0]) ^ 2`, and a parenthesized group is the base it wraps.
+        var indexed = AssertPow(ParseSingleOutput("A = 4, 9\nA[0] ^ 2"));
         Assert.IsType<Expr.Index>(indexed.Left);
         AssertNum(indexed.Right, 2);
 

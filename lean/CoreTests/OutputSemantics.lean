@@ -626,7 +626,7 @@ def distinctNestedEmptyInputCanonicalizesToEmptyCollection : Bool :=
 -- stays one exact element (`[(1, 2)]` is a writable KatLang value).
 def filterSingleKeptSequenceValueItemStaysExactElement : Bool :=
   let keepFirstPair : KatLang.Expr := .algorithmExpr (alg ["pair"] [] [] [
-    .compare .eq (.index (.param "pair") (.num 0)) (.num 1)
+    .compare .eq (.index (.param "pair") [.num 0]) (.num 1)
   ])
   match runResult (.call (.resolve "filter") [
         sequenceItems [

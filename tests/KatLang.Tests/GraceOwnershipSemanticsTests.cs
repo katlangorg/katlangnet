@@ -66,9 +66,10 @@ public class GraceOwnershipSemanticsTests
                 case Expr.Unary(_, var operand):
                     Collect(operand);
                     break;
-                case Expr.Index(var target, var selector):
+                case Expr.Index(var target, var selectors):
                     Collect(target);
-                    Collect(selector);
+                    foreach (var selector in selectors)
+                        Collect(selector);
                     break;
                 case Expr.SequenceSpread(var operand):
                     Collect(operand);

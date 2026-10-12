@@ -175,7 +175,7 @@ public closed record RunResult
         /// <para>The evaluator's exact emitted-slot count is used here only as a
         /// zero/one/many discriminator. Each written top-level row contributes
         /// one row to this view — whatever produced its value: a literal, a
-        /// property, a call, a selection (<c>A:i</c>, <c>first</c>,
+        /// property, a call, a selection (<c>A[i]</c>, <c>first</c>,
         /// <c>last</c>), or a completed <c>while</c>/<c>repeat</c>, all of
         /// which are value boundaries, so <c>Fibonacci.repeat(10, 0, 1)</c>
         /// is the one row <c>(55, 89)</c> — while a spread row <c>E*</c>

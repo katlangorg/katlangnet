@@ -999,7 +999,7 @@ public static partial class Evaluator
     /// result (HO-03, Q-25 resolved October 2026) — several rows arrive as one sequence
     /// value, <c>()</c> and <c>[]</c> are ordinary values — and becomes ONE element of the
     /// list result, never flattened into it. For pure, deterministic, total computations,
-    /// <c>map(L, F)</c> has the same result value as <c>[F(L:0), …]</c>. Map demands its
+    /// <c>map(L, F)</c> has the same result value as <c>[F(L[0]), …]</c>. Map demands its
     /// collection; expanded Model-C calls may leave indexed arguments undemanded.
     /// Lean: <c>evalMapCounted</c>.
     /// </summary>
@@ -1486,10 +1486,10 @@ public static partial class Evaluator
     /// Evaluate <c>first(collection)</c> by SELECTING the first top-level
     /// collection element: the element is returned exactly as stored and
     /// re-counted through the ordinary value boundary (<see cref="CountValue(Result)"/>),
-    /// exactly like <c>collection:0</c> — a selected sequence or list stays one
+    /// exactly like <c>collection[0]</c> — a selected sequence or list stays one
     /// value, a selected <c>()</c> emits zero values, and only an explicit
     /// spread opens the selection. An empty collection has no position to
-    /// select: <c>BadIndex</c>, the outcome of <c>collection:0</c> (SEQ-04, Q-27;
+    /// select: <c>BadIndex</c>, the outcome of <c>collection[0]</c> (SEQ-04, Q-27;
     /// the empty policy reports it before this point).
     /// Lean: <c>evalFirstCounted</c>.
     /// </summary>
@@ -1505,7 +1505,7 @@ public static partial class Evaluator
     /// <summary>
     /// Evaluate <c>last(collection)</c> by SELECTING the last top-level
     /// collection element through the same value boundary as
-    /// <see cref="EvalFirstCounted"/> and <c>collection:(count - 1)</c>.
+    /// <see cref="EvalFirstCounted"/> and <c>collection[count(collection) - 1]</c>.
     /// An empty collection has no position to select: <c>BadIndex</c>.
     /// Lean: <c>evalLastCounted</c>.
     /// </summary>

@@ -11,10 +11,10 @@ Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
 - surface corpus cases: 2641
-- excluded parse-level cases (Lean has no surface parser): 45
-- Lean-representable surface cases: 2596
+- excluded parse-level cases (Lean has no surface parser): 11
+- Lean-representable surface cases: 2630
 - internal-node cases: 14
-- total generated guards: 2610 case guards + 2 count guards
+- total generated guards: 2644 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -5535,515 +5535,685 @@ def case_literalDotCount__pl1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.dotCall (.listLiteral [.num 1]) "count" none)])
 #guard obs case_literalDotCount__pl1 == "ok raw=1 n=1"
 
--- index0__e: x = () \n x:0
+-- index0__e: x = () \n x[0]
 def case_index0__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__e == "err index"
 
--- index0__n0: x = 0 \n x:0
+-- index0__n0: x = 0 \n x[0]
 def case_index0__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__n0 == "ok raw=0 n=1"
 
--- index0__n1: x = 1 \n x:0
+-- index0__n1: x = 1 \n x[0]
 def case_index0__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__n1 == "ok raw=1 n=1"
 
--- index0__bt: x = true \n x:0
+-- index0__bt: x = true \n x[0]
 def case_index0__bt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__bt == "ok raw=true n=1"
 
--- index0__bf: x = false \n x:0
+-- index0__bf: x = false \n x[0]
 def case_index0__bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__bf == "ok raw=false n=1"
 
--- index0__pbt: x = (true) \n x:0
+-- index0__pbt: x = (true) \n x[0]
 def case_index0__pbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pbt == "ok raw=true n=1"
 
--- index0__pbt_e: x = (true, ()) \n x:0
+-- index0__pbt_e: x = (true, ()) \n x[0]
 def case_index0__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pbt_e == "ok raw=true n=1"
 
--- index0__pbt_1: x = (true, 1) \n x:0
+-- index0__pbt_1: x = (true, 1) \n x[0]
 def case_index0__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pbt_1 == "ok raw=true n=1"
 
--- index0__lbt: x = [true] \n x:0
+-- index0__lbt: x = [true] \n x[0]
 def case_index0__lbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__lbt == "ok raw=true n=1"
 
--- index0__lbt_bf: x = [true, false] \n x:0
+-- index0__lbt_bf: x = [true, false] \n x[0]
 def case_index0__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__lbt_bf == "ok raw=true n=1"
 
--- index0__lpbt_1: x = [(true, 1)] \n x:0
+-- index0__lpbt_1: x = [(true, 1)] \n x[0]
 def case_index0__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__lpbt_1 == "ok raw=S[true, 1] n=1"
 
--- index0__p1: x = (1) \n x:0
+-- index0__p1: x = (1) \n x[0]
 def case_index0__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p1 == "ok raw=1 n=1"
 
--- index0__p12: x = (1, 2) \n x:0
+-- index0__p12: x = (1, 2) \n x[0]
 def case_index0__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p12 == "ok raw=1 n=1"
 
--- index0__p123: x = (1, 2, 3) \n x:0
+-- index0__p123: x = (1, 2, 3) \n x[0]
 def case_index0__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p123 == "ok raw=1 n=1"
 
--- index0__pee: x = ((), ()) \n x:0
+-- index0__pee: x = ((), ()) \n x[0]
 def case_index0__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pee == "ok raw=S[] n=1"
 
--- index0__pe1: x = ((), 1) \n x:0
+-- index0__pe1: x = ((), 1) \n x[0]
 def case_index0__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pe1 == "ok raw=S[] n=1"
 
--- index0__p1e: x = (1, ()) \n x:0
+-- index0__p1e: x = (1, ()) \n x[0]
 def case_index0__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p1e == "ok raw=1 n=1"
 
--- index0__p12_3: x = ((1, 2), 3) \n x:0
+-- index0__p12_3: x = ((1, 2), 3) \n x[0]
 def case_index0__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p12_3 == "ok raw=S[1, 2] n=1"
 
--- index0__p12_34: x = ((1, 2), (3, 4)) \n x:0
+-- index0__p12_34: x = ((1, 2), (3, 4)) \n x[0]
 def case_index0__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p12_34 == "ok raw=S[1, 2] n=1"
 
--- index0__pe_12: x = ((), (1, 2)) \n x:0
+-- index0__pe_12: x = ((), (1, 2)) \n x[0]
 def case_index0__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pe_12 == "ok raw=S[] n=1"
 
--- index0__ppe1_2: x = (((), 1), 2) \n x:0
+-- index0__ppe1_2: x = (((), 1), 2) \n x[0]
 def case_index0__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__ppe1_2 == "ok raw=S[S[], 1] n=1"
 
--- index0__p12_e: x = ((1, 2), ()) \n x:0
+-- index0__p12_e: x = ((1, 2), ()) \n x[0]
 def case_index0__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p12_e == "ok raw=S[1, 2] n=1"
 
--- index0__ppe: x = (()) \n x:0
+-- index0__ppe: x = (()) \n x[0]
 def case_index0__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__ppe == "err index"
 
--- index0__pp1: x = ((1)) \n x:0
+-- index0__pp1: x = ((1)) \n x[0]
 def case_index0__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pp1 == "ok raw=1 n=1"
 
--- index0__ppp12: x = (((1, 2))) \n x:0
+-- index0__ppp12: x = (((1, 2))) \n x[0]
 def case_index0__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__ppp12 == "ok raw=1 n=1"
 
--- index0__le: x = [] \n x:0
+-- index0__le: x = [] \n x[0]
 def case_index0__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__le == "err index"
 
--- index0__l7: x = [7] \n x:0
+-- index0__l7: x = [7] \n x[0]
 def case_index0__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__l7 == "ok raw=7 n=1"
 
--- index0__l12: x = [1, 2] \n x:0
+-- index0__l12: x = [1, 2] \n x[0]
 def case_index0__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__l12 == "ok raw=1 n=1"
 
--- index0__l12_3: x = [[1, 2], 3] \n x:0
+-- index0__l12_3: x = [[1, 2], 3] \n x[0]
 def case_index0__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__l12_3 == "ok raw=L[1, 2] n=1"
 
--- index0__lle: x = [[]] \n x:0
+-- index0__lle: x = [[]] \n x[0]
 def case_index0__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__lle == "ok raw=L[] n=1"
 
--- index0__l_e: x = [()] \n x:0
+-- index0__l_e: x = [()] \n x[0]
 def case_index0__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__l_e == "ok raw=S[] n=1"
 
--- index0__l_p12: x = [(1, 2)] \n x:0
+-- index0__l_p12: x = [(1, 2)] \n x[0]
 def case_index0__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__l_p12 == "ok raw=S[1, 2] n=1"
 
--- index0__p_l12: x = ([1, 2], 3) \n x:0
+-- index0__p_l12: x = ([1, 2], 3) \n x[0]
 def case_index0__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__p_l12 == "ok raw=L[1, 2] n=1"
 
--- index0__pl1: x = ([1]) \n x:0
+-- index0__pl1: x = ([1]) \n x[0]
 def case_index0__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__pl1 == "ok raw=1 n=1"
 
--- index1__e: x = () \n x:1
+-- index1__e: x = () \n x[1]
 def case_index1__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__e == "err index"
 
--- index1__n0: x = 0 \n x:1
+-- index1__n0: x = 0 \n x[1]
 def case_index1__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__n0 == "err index"
 
--- index1__n1: x = 1 \n x:1
+-- index1__n1: x = 1 \n x[1]
 def case_index1__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__n1 == "err index"
 
--- index1__bt: x = true \n x:1
+-- index1__bt: x = true \n x[1]
 def case_index1__bt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__bt == "err index"
 
--- index1__bf: x = false \n x:1
+-- index1__bf: x = false \n x[1]
 def case_index1__bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__bf == "err index"
 
--- index1__pbt: x = (true) \n x:1
+-- index1__pbt: x = (true) \n x[1]
 def case_index1__pbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pbt == "err index"
 
--- index1__pbt_e: x = (true, ()) \n x:1
+-- index1__pbt_e: x = (true, ()) \n x[1]
 def case_index1__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pbt_e == "ok raw=S[] n=1"
 
--- index1__pbt_1: x = (true, 1) \n x:1
+-- index1__pbt_1: x = (true, 1) \n x[1]
 def case_index1__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pbt_1 == "ok raw=1 n=1"
 
--- index1__lbt: x = [true] \n x:1
+-- index1__lbt: x = [true] \n x[1]
 def case_index1__lbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lbt == "err index"
 
--- index1__lbt_bf: x = [true, false] \n x:1
+-- index1__lbt_bf: x = [true, false] \n x[1]
 def case_index1__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lbt_bf == "ok raw=false n=1"
 
--- index1__lpbt_1: x = [(true, 1)] \n x:1
+-- index1__lpbt_1: x = [(true, 1)] \n x[1]
 def case_index1__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lpbt_1 == "err index"
 
--- index1__p1: x = (1) \n x:1
+-- index1__p1: x = (1) \n x[1]
 def case_index1__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p1 == "err index"
 
--- index1__p12: x = (1, 2) \n x:1
+-- index1__p12: x = (1, 2) \n x[1]
 def case_index1__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p12 == "ok raw=2 n=1"
 
--- index1__p123: x = (1, 2, 3) \n x:1
+-- index1__p123: x = (1, 2, 3) \n x[1]
 def case_index1__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p123 == "ok raw=2 n=1"
 
--- index1__pee: x = ((), ()) \n x:1
+-- index1__pee: x = ((), ()) \n x[1]
 def case_index1__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pee == "ok raw=S[] n=1"
 
--- index1__pe1: x = ((), 1) \n x:1
+-- index1__pe1: x = ((), 1) \n x[1]
 def case_index1__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pe1 == "ok raw=1 n=1"
 
--- index1__p1e: x = (1, ()) \n x:1
+-- index1__p1e: x = (1, ()) \n x[1]
 def case_index1__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p1e == "ok raw=S[] n=1"
 
--- index1__p12_3: x = ((1, 2), 3) \n x:1
+-- index1__p12_3: x = ((1, 2), 3) \n x[1]
 def case_index1__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p12_3 == "ok raw=3 n=1"
 
--- index1__p12_34: x = ((1, 2), (3, 4)) \n x:1
+-- index1__p12_34: x = ((1, 2), (3, 4)) \n x[1]
 def case_index1__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p12_34 == "ok raw=S[3, 4] n=1"
 
--- index1__pe_12: x = ((), (1, 2)) \n x:1
+-- index1__pe_12: x = ((), (1, 2)) \n x[1]
 def case_index1__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pe_12 == "ok raw=S[1, 2] n=1"
 
--- index1__ppe1_2: x = (((), 1), 2) \n x:1
+-- index1__ppe1_2: x = (((), 1), 2) \n x[1]
 def case_index1__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__ppe1_2 == "ok raw=2 n=1"
 
--- index1__p12_e: x = ((1, 2), ()) \n x:1
+-- index1__p12_e: x = ((1, 2), ()) \n x[1]
 def case_index1__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p12_e == "ok raw=S[] n=1"
 
--- index1__ppe: x = (()) \n x:1
+-- index1__ppe: x = (()) \n x[1]
 def case_index1__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__ppe == "err index"
 
--- index1__pp1: x = ((1)) \n x:1
+-- index1__pp1: x = ((1)) \n x[1]
 def case_index1__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pp1 == "err index"
 
--- index1__ppp12: x = (((1, 2))) \n x:1
+-- index1__ppp12: x = (((1, 2))) \n x[1]
 def case_index1__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__ppp12 == "ok raw=2 n=1"
 
--- index1__le: x = [] \n x:1
+-- index1__le: x = [] \n x[1]
 def case_index1__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__le == "err index"
 
--- index1__l7: x = [7] \n x:1
+-- index1__l7: x = [7] \n x[1]
 def case_index1__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l7 == "err index"
 
--- index1__l12: x = [1, 2] \n x:1
+-- index1__l12: x = [1, 2] \n x[1]
 def case_index1__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l12 == "ok raw=2 n=1"
 
--- index1__l12_3: x = [[1, 2], 3] \n x:1
+-- index1__l12_3: x = [[1, 2], 3] \n x[1]
 def case_index1__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l12_3 == "ok raw=3 n=1"
 
--- index1__lle: x = [[]] \n x:1
+-- index1__lle: x = [[]] \n x[1]
 def case_index1__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lle == "err index"
 
--- index1__l_e: x = [()] \n x:1
+-- index1__l_e: x = [()] \n x[1]
 def case_index1__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l_e == "err index"
 
--- index1__l_p12: x = [(1, 2)] \n x:1
+-- index1__l_p12: x = [(1, 2)] \n x[1]
 def case_index1__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l_p12 == "err index"
 
--- index1__p_l12: x = ([1, 2], 3) \n x:1
+-- index1__p_l12: x = ([1, 2], 3) \n x[1]
 def case_index1__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p_l12 == "ok raw=3 n=1"
 
--- index1__pl1: x = ([1]) \n x:1
+-- index1__pl1: x = ([1]) \n x[1]
 def case_index1__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") (.num 1))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pl1 == "err index"
 
--- indexBig__e: x = () \n x:9
+-- indexBig__e: x = () \n x[9]
 def case_indexBig__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__e == "err index"
 
--- indexBig__n0: x = 0 \n x:9
+-- indexBig__n0: x = 0 \n x[9]
 def case_indexBig__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__n0 == "err index"
 
--- indexBig__n1: x = 1 \n x:9
+-- indexBig__n1: x = 1 \n x[9]
 def case_indexBig__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__n1 == "err index"
 
--- indexBig__bt: x = true \n x:9
+-- indexBig__bt: x = true \n x[9]
 def case_indexBig__bt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__bt == "err index"
 
--- indexBig__bf: x = false \n x:9
+-- indexBig__bf: x = false \n x[9]
 def case_indexBig__bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__bf == "err index"
 
--- indexBig__pbt: x = (true) \n x:9
+-- indexBig__pbt: x = (true) \n x[9]
 def case_indexBig__pbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt == "err index"
 
--- indexBig__pbt_e: x = (true, ()) \n x:9
+-- indexBig__pbt_e: x = (true, ()) \n x[9]
 def case_indexBig__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt_e == "err index"
 
--- indexBig__pbt_1: x = (true, 1) \n x:9
+-- indexBig__pbt_1: x = (true, 1) \n x[9]
 def case_indexBig__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt_1 == "err index"
 
--- indexBig__lbt: x = [true] \n x:9
+-- indexBig__lbt: x = [true] \n x[9]
 def case_indexBig__lbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lbt == "err index"
 
--- indexBig__lbt_bf: x = [true, false] \n x:9
+-- indexBig__lbt_bf: x = [true, false] \n x[9]
 def case_indexBig__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lbt_bf == "err index"
 
--- indexBig__lpbt_1: x = [(true, 1)] \n x:9
+-- indexBig__lpbt_1: x = [(true, 1)] \n x[9]
 def case_indexBig__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lpbt_1 == "err index"
 
--- indexBig__p1: x = (1) \n x:9
+-- indexBig__p1: x = (1) \n x[9]
 def case_indexBig__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p1 == "err index"
 
--- indexBig__p12: x = (1, 2) \n x:9
+-- indexBig__p12: x = (1, 2) \n x[9]
 def case_indexBig__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12 == "err index"
 
--- indexBig__p123: x = (1, 2, 3) \n x:9
+-- indexBig__p123: x = (1, 2, 3) \n x[9]
 def case_indexBig__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p123 == "err index"
 
--- indexBig__pee: x = ((), ()) \n x:9
+-- indexBig__pee: x = ((), ()) \n x[9]
 def case_indexBig__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pee == "err index"
 
--- indexBig__pe1: x = ((), 1) \n x:9
+-- indexBig__pe1: x = ((), 1) \n x[9]
 def case_indexBig__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pe1 == "err index"
 
--- indexBig__p1e: x = (1, ()) \n x:9
+-- indexBig__p1e: x = (1, ()) \n x[9]
 def case_indexBig__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p1e == "err index"
 
--- indexBig__p12_3: x = ((1, 2), 3) \n x:9
+-- indexBig__p12_3: x = ((1, 2), 3) \n x[9]
 def case_indexBig__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_3 == "err index"
 
--- indexBig__p12_34: x = ((1, 2), (3, 4)) \n x:9
+-- indexBig__p12_34: x = ((1, 2), (3, 4)) \n x[9]
 def case_indexBig__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_34 == "err index"
 
--- indexBig__pe_12: x = ((), (1, 2)) \n x:9
+-- indexBig__pe_12: x = ((), (1, 2)) \n x[9]
 def case_indexBig__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pe_12 == "err index"
 
--- indexBig__ppe1_2: x = (((), 1), 2) \n x:9
+-- indexBig__ppe1_2: x = (((), 1), 2) \n x[9]
 def case_indexBig__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppe1_2 == "err index"
 
--- indexBig__p12_e: x = ((1, 2), ()) \n x:9
+-- indexBig__p12_e: x = ((1, 2), ()) \n x[9]
 def case_indexBig__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_e == "err index"
 
--- indexBig__ppe: x = (()) \n x:9
+-- indexBig__ppe: x = (()) \n x[9]
 def case_indexBig__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppe == "err index"
 
--- indexBig__pp1: x = ((1)) \n x:9
+-- indexBig__pp1: x = ((1)) \n x[9]
 def case_indexBig__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pp1 == "err index"
 
--- indexBig__ppp12: x = (((1, 2))) \n x:9
+-- indexBig__ppp12: x = (((1, 2))) \n x[9]
 def case_indexBig__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppp12 == "err index"
 
--- indexBig__le: x = [] \n x:9
+-- indexBig__le: x = [] \n x[9]
 def case_indexBig__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__le == "err index"
 
--- indexBig__l7: x = [7] \n x:9
+-- indexBig__l7: x = [7] \n x[9]
 def case_indexBig__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l7 == "err index"
 
--- indexBig__l12: x = [1, 2] \n x:9
+-- indexBig__l12: x = [1, 2] \n x[9]
 def case_indexBig__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l12 == "err index"
 
--- indexBig__l12_3: x = [[1, 2], 3] \n x:9
+-- indexBig__l12_3: x = [[1, 2], 3] \n x[9]
 def case_indexBig__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l12_3 == "err index"
 
--- indexBig__lle: x = [[]] \n x:9
+-- indexBig__lle: x = [[]] \n x[9]
 def case_indexBig__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lle == "err index"
 
--- indexBig__l_e: x = [()] \n x:9
+-- indexBig__l_e: x = [()] \n x[9]
 def case_indexBig__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l_e == "err index"
 
--- indexBig__l_p12: x = [(1, 2)] \n x:9
+-- indexBig__l_p12: x = [(1, 2)] \n x[9]
 def case_indexBig__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l_p12 == "err index"
 
--- indexBig__p_l12: x = ([1, 2], 3) \n x:9
+-- indexBig__p_l12: x = ([1, 2], 3) \n x[9]
 def case_indexBig__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p_l12 == "err index"
 
--- indexBig__pl1: x = ([1]) \n x:9
+-- indexBig__pl1: x = ([1]) \n x[9]
 def case_indexBig__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") (.num 9))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pl1 == "err index"
+
+-- indexNeg__e: x = () \n x[-1]
+def case_indexNeg__e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__e == "err index"
+
+-- indexNeg__n0: x = 0 \n x[-1]
+def case_indexNeg__n0 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__n0 == "err index"
+
+-- indexNeg__n1: x = 1 \n x[-1]
+def case_indexNeg__n1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__n1 == "err index"
+
+-- indexNeg__bt: x = true \n x[-1]
+def case_indexNeg__bt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__bt == "err index"
+
+-- indexNeg__bf: x = false \n x[-1]
+def case_indexNeg__bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__bf == "err index"
+
+-- indexNeg__pbt: x = (true) \n x[-1]
+def case_indexNeg__pbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pbt == "err index"
+
+-- indexNeg__pbt_e: x = (true, ()) \n x[-1]
+def case_indexNeg__pbt_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pbt_e == "err index"
+
+-- indexNeg__pbt_1: x = (true, 1) \n x[-1]
+def case_indexNeg__pbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pbt_1 == "err index"
+
+-- indexNeg__lbt: x = [true] \n x[-1]
+def case_indexNeg__lbt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__lbt == "err index"
+
+-- indexNeg__lbt_bf: x = [true, false] \n x[-1]
+def case_indexNeg__lbt_bf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__lbt_bf == "err index"
+
+-- indexNeg__lpbt_1: x = [(true, 1)] \n x[-1]
+def case_indexNeg__lpbt_1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__lpbt_1 == "err index"
+
+-- indexNeg__p1: x = (1) \n x[-1]
+def case_indexNeg__p1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p1 == "err index"
+
+-- indexNeg__p12: x = (1, 2) \n x[-1]
+def case_indexNeg__p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p12 == "err index"
+
+-- indexNeg__p123: x = (1, 2, 3) \n x[-1]
+def case_indexNeg__p123 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p123 == "err index"
+
+-- indexNeg__pee: x = ((), ()) \n x[-1]
+def case_indexNeg__pee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pee == "err index"
+
+-- indexNeg__pe1: x = ((), 1) \n x[-1]
+def case_indexNeg__pe1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pe1 == "err index"
+
+-- indexNeg__p1e: x = (1, ()) \n x[-1]
+def case_indexNeg__p1e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p1e == "err index"
+
+-- indexNeg__p12_3: x = ((1, 2), 3) \n x[-1]
+def case_indexNeg__p12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p12_3 == "err index"
+
+-- indexNeg__p12_34: x = ((1, 2), (3, 4)) \n x[-1]
+def case_indexNeg__p12_34 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p12_34 == "err index"
+
+-- indexNeg__pe_12: x = ((), (1, 2)) \n x[-1]
+def case_indexNeg__pe_12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pe_12 == "err index"
+
+-- indexNeg__ppe1_2: x = (((), 1), 2) \n x[-1]
+def case_indexNeg__ppe1_2 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__ppe1_2 == "err index"
+
+-- indexNeg__p12_e: x = ((1, 2), ()) \n x[-1]
+def case_indexNeg__p12_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p12_e == "err index"
+
+-- indexNeg__ppe: x = (()) \n x[-1]
+def case_indexNeg__ppe : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__ppe == "err index"
+
+-- indexNeg__pp1: x = ((1)) \n x[-1]
+def case_indexNeg__pp1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pp1 == "err index"
+
+-- indexNeg__ppp12: x = (((1, 2))) \n x[-1]
+def case_indexNeg__ppp12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__ppp12 == "err index"
+
+-- indexNeg__le: x = [] \n x[-1]
+def case_indexNeg__le : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__le == "err index"
+
+-- indexNeg__l7: x = [7] \n x[-1]
+def case_indexNeg__l7 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__l7 == "err index"
+
+-- indexNeg__l12: x = [1, 2] \n x[-1]
+def case_indexNeg__l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__l12 == "err index"
+
+-- indexNeg__l12_3: x = [[1, 2], 3] \n x[-1]
+def case_indexNeg__l12_3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__l12_3 == "err index"
+
+-- indexNeg__lle: x = [[]] \n x[-1]
+def case_indexNeg__lle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__lle == "err index"
+
+-- indexNeg__l_e: x = [()] \n x[-1]
+def case_indexNeg__l_e : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__l_e == "err index"
+
+-- indexNeg__l_p12: x = [(1, 2)] \n x[-1]
+def case_indexNeg__l_p12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__l_p12 == "err index"
+
+-- indexNeg__p_l12: x = ([1, 2], 3) \n x[-1]
+def case_indexNeg__p_l12 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__p_l12 == "err index"
+
+-- indexNeg__pl1: x = ([1]) \n x[-1]
+def case_indexNeg__pl1 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
+#guard obs case_indexNeg__pl1 == "err index"
 
 -- eqSelf__e: x = () \n x == x
 def case_eqSelf__e : Expr :=
@@ -11500,9 +11670,9 @@ def case_special__interpolationLiftsAFormula : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.interpolatedString "v" [{ hole := (.call (.resolve "Inc") [.param "x"]), text := "" }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
 #guard obs case_special__interpolationLiftsAFormula == "ok raw='v5' n=1"
 
--- special__interpolationFirstFailureStops: "a{1}b{10 div 0}c{([]:0)}"
+-- special__interpolationFirstFailureStops: "a{1}b{10 div 0}c{([][0])}"
 def case_special__interpolationFirstFailureStops : Expr :=
-  .algorithmExpr (alg [] [] [] [(.interpolatedString "a" [{ hole := (.num 1), text := "b" }, { hole := (.binary .idiv (.num 10) (.num 0)), text := "c" }, { hole := (.index (.listLiteral []) (.num 0)), text := "" }])])
+  .algorithmExpr (alg [] [] [] [(.interpolatedString "a" [{ hole := (.num 1), text := "b" }, { hole := (.binary .idiv (.num 10) (.num 0)), text := "c" }, { hole := (.index (.listLiteral []) [.num 0]), text := "" }])])
 #guard obs case_special__interpolationFirstFailureStops == "err div0"
 
 -- special__interpolationHoleWithoutOutput: B = { \n     A = 1 \n } \n "{B}"
@@ -11555,9 +11725,9 @@ def case_special__dotAccessCallPublicMember : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1, .num 2, .num 3])] [])] [(.dotCall (.resolve "A") "X" (some []))])
 #guard obs case_special__dotAccessCallPublicMember == "ok raw=S[1, 2, 3] n=1"
 
--- special__multiPropIndex0: P = 1, 2, 3 \n P:0
+-- special__multiPropIndex0: P = 1, 2, 3 \n P[0]
 def case_special__multiPropIndex0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.index (.resolve "P") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.index (.resolve "P") [.num 0])])
 #guard obs case_special__multiPropIndex0 == "ok raw=1 n=1"
 
 -- special__multiPropEq: P = 1, 2, 3 \n P == (1, 2, 3)
@@ -11610,9 +11780,9 @@ def case_special__rangeCount : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.call (.resolve "range") [.num 1, .num 3])])])
 #guard obs case_special__rangeCount == "ok raw=3 n=1"
 
--- special__rangeIndex0: range(1, 3):0
+-- special__rangeIndex0: range(1, 3)[0]
 def case_special__rangeIndex0 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.call (.resolve "range") [.num 1, .num 3]) (.num 0))])
+  .algorithmExpr (alg [] [] [] [(.index (.call (.resolve "range") [.num 1, .num 3]) [.num 0])])
 #guard obs case_special__rangeIndex0 == "ok raw=1 n=1"
 
 -- special__takeOneSurvivorPair: take(((1, 2), (3, 4)), 1)
@@ -11775,39 +11945,39 @@ def case_special__seqOfSpreadEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.capture [(.capture [(.sequenceSpread (.emptySequence 0))]), .num 1])])
 #guard obs case_special__seqOfSpreadEmpty == "ok raw=S[S[], 1] n=1"
 
--- special__indexPairInSeq: x = ((1, 2), (3, 4)) \n (x:0, 99)
+-- special__indexPairInSeq: x = ((1, 2), (3, 4)) \n (x[0], 99)
 def case_special__indexPairInSeq : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.capture [(.index (.resolve "x") (.num 0)), .num 99])])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.capture [(.index (.resolve "x") [.num 0]), .num 99])])
 #guard obs case_special__indexPairInSeq == "ok raw=S[S[1, 2], 99] n=1"
 
--- special__indexEmptyItemRoot: x = ((), ()) \n x:0
+-- special__indexEmptyItemRoot: x = ((), ()) \n x[0]
 def case_special__indexEmptyItemRoot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_special__indexEmptyItemRoot == "ok raw=S[] n=1"
 
--- special__indexCapturedEq: x = ((1, 2), (3, 4)) \n y = x:0 \n y == (1, 2)
+-- special__indexCapturedEq: x = ((1, 2), (3, 4)) \n y = x[0] \n y == (1, 2)
 def case_special__indexCapturedEq : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") [.num 0])])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_special__indexCapturedEq == "ok raw=true n=1"
 
--- special__chainedListIndex: x = [[1, 2], [3, 4]] \n x:1:0
+-- special__chainedListIndex: x = [[1, 2], [3, 4]] \n x[1][0]
 def case_special__chainedListIndex : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.index (.index (.resolve "x") (.num 1)) (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3, .num 4])])])] [(.index (.index (.resolve "x") [.num 1]) [.num 0])])
 #guard obs case_special__chainedListIndex == "ok raw=3 n=1"
 
--- special__listIndexCapturedEq: x = [[1, 2]] \n y = x:0 \n y == [1, 2]
+-- special__listIndexCapturedEq: x = [[1, 2]] \n y = x[0] \n y == [1, 2]
 def case_special__listIndexCapturedEq : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") (.num 0))])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.listLiteral [.num 1, .num 2]) }])])
+  .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2])])]), privateProp "y" (alg [] [] [] [(.index (.resolve "x") [.num 0])])] [(.comparison (.resolve "y") [{ op := .eq, operand := (.listLiteral [.num 1, .num 2]) }])])
 #guard obs case_special__listIndexCapturedEq == "ok raw=true n=1"
 
--- special__listIndexSelectedKindEqFalse: [[1, 2]]:0 == (1, 2)
+-- special__listIndexSelectedKindEqFalse: [[1, 2]][0] == (1, 2)
 def case_special__listIndexSelectedKindEqFalse : Expr :=
-  .algorithmExpr (alg [] [] [] [(.comparison (.index (.listLiteral [(.listLiteral [.num 1, .num 2])]) (.num 0)) [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
+  .algorithmExpr (alg [] [] [] [(.comparison (.index (.listLiteral [(.listLiteral [.num 1, .num 2])]) [.num 0]) [{ op := .eq, operand := (.capture [.num 1, .num 2]) }])])
 #guard obs case_special__listIndexSelectedKindEqFalse == "ok raw=false n=1"
 
--- special__orderIndex0: [3, 1, 2].order:0
+-- special__orderIndex0: [3, 1, 2].order[0]
 def case_special__orderIndex0 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) (.num 0))])
+  .algorithmExpr (alg [] [] [] [(.index (.dotCall (.listLiteral [.num 3, .num 1, .num 2]) "order" none) [.num 0])])
 #guard obs case_special__orderIndex0 == "ok raw=1 n=1"
 
 -- special__nestedWrittenArg: F(a, b) = a \n F(((1, 2)), 3)
@@ -11855,9 +12025,9 @@ def case_special__eqSpreadSeqLiteral : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.comparison (.capture [(.sequenceSpread (.resolve "P")), .num 99]) [{ op := .eq, operand := (.capture [.num 1, .num 2, .num 99]) }])])
 #guard obs case_special__eqSpreadSeqLiteral == "ok raw=true n=1"
 
--- special__loopSpreadHistoryFlat: Step((*history), previous) = (history*, previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2):0
+-- special__loopSpreadHistoryFlat: Step((*history), previous) = (history*, previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2)[0]
 def case_special__loopSpreadHistoryFlat : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .collecting }], .capture { name := "previous" }] [] [] [(.capture [(.sequenceSpread (.param "history")), (.binary .add (.param "previous") (.num 1))]), (.binary .add (.param "previous") (.num 1))])] [(.index (.dotCall (.resolve "Step") "repeat" (some [.num 2, (.capture [.num 1, .num 2]), .num 2])) (.num 0))])
+  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .collecting }], .capture { name := "previous" }] [] [] [(.capture [(.sequenceSpread (.param "history")), (.binary .add (.param "previous") (.num 1))]), (.binary .add (.param "previous") (.num 1))])] [(.index (.dotCall (.resolve "Step") "repeat" (some [.num 2, (.capture [.num 1, .num 2]), .num 2])) [.num 0])])
 #guard obs case_special__loopSpreadHistoryFlat == "ok raw=S[1, 2, 3, 4] n=1"
 
 -- special__ifBranchSeq: if(true, (1, 2), 3)
@@ -12045,9 +12215,9 @@ def case_special__chainMiddleOperandError : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.binary .div (.num 1) (.num 0)) }, { op := .lt, operand := (.boolLiteral true) }])])
 #guard obs case_special__chainMiddleOperandError == "err div0"
 
--- special__chainGroupedSelectionReceiver: (1 < 2 < 3):0 == true
+-- special__chainGroupedSelectionReceiver: (1 < 2 < 3)[0] == true
 def case_special__chainGroupedSelectionReceiver : Expr :=
-  .algorithmExpr (alg [] [] [] [(.comparison (.index (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 3) }]) (.num 0)) [{ op := .eq, operand := (.boolLiteral true) }])])
+  .algorithmExpr (alg [] [] [] [(.comparison (.index (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 3) }]) [.num 0]) [{ op := .eq, operand := (.boolLiteral true) }])])
 #guard obs case_special__chainGroupedSelectionReceiver == "ok raw=true n=1"
 
 -- special__strCount: count('ab')
@@ -12870,39 +13040,39 @@ def case_special__repeatedNameAccompanyingChannel : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "P" (alg ["f", "f"] [] [] [.param "f", (.call (.param "f") [])])] [(.call (.resolve "P") [.num 5, .resolve "A"])])
 #guard obs case_special__repeatedNameAccompanyingChannel == "ok raw=S[5, 5] n=1"
 
--- special__forwardByNameAlias: P(x, x) = x \n Some = [P]:0 \n Some(7)
+-- special__forwardByNameAlias: P(x, x) = x \n Some = [P][0] \n Some(7)
 def case_special__forwardByNameAlias : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) (.num 0))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
 #guard obs case_special__forwardByNameAlias == "ok raw=7 n=1"
 
--- special__forwardByNameThreeOccurrences: P(x, x, x) = x \n Some = [P]:0 \n Some(7)
+-- special__forwardByNameThreeOccurrences: P(x, x, x) = x \n Some = [P][0] \n Some(7)
 def case_special__forwardByNameThreeOccurrences : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x", .param "x"])]) (.num 0))]), privateProp "P" (alg ["x", "x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x", .param "x"])]) [.num 0])]), privateProp "P" (alg ["x", "x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
 #guard obs case_special__forwardByNameThreeOccurrences == "ok raw=7 n=1"
 
--- special__forwardByNameNestedGroup: P((x, a), x) = a \n Some = [P]:0 \n Some((7, 8))
+-- special__forwardByNameNestedGroup: P((x, a), x) = a \n Some = [P][0] \n Some((7, 8))
 def case_special__forwardByNameNestedGroup : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.index (.listLiteral [(.call (.resolve "P") [(.capture [.param "x", .param "a"]), .param "x"])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }], .capture { name := "x" }] [] [] [.param "a"])] [(.call (.resolve "Some") [(.capture [.num 7, .num 8])])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.index (.listLiteral [(.call (.resolve "P") [(.capture [.param "x", .param "a"]), .param "x"])]) [.num 0])]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }], .capture { name := "x" }] [] [] [.param "a"])] [(.call (.resolve "Some") [(.capture [.num 7, .num 8])])])
 #guard obs case_special__forwardByNameNestedGroup == "ok raw=8 n=1"
 
--- special__forwardByNameAcrossGroup: P(x, (x, a)) = a \n Some = [P]:0 \n Some(7, 8)
+-- special__forwardByNameAcrossGroup: P(x, (x, a)) = a \n Some = [P][0] \n Some(7, 8)
 def case_special__forwardByNameAcrossGroup : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x", "a"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", (.capture [.param "x", .param "a"])])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [.param "a"])] [(.call (.resolve "Some") [.num 7, .num 8])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x", "a"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", (.capture [.param "x", .param "a"])])]) [.num 0])]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [.param "a"])] [(.call (.resolve "Some") [.num 7, .num 8])])
 #guard obs case_special__forwardByNameAcrossGroup == "ok raw=8 n=1"
 
--- special__forwardByNameInsideOneGroup: P((x, x)) = x \n Some = [P]:0 \n Some(7)
+-- special__forwardByNameInsideOneGroup: P((x, x)) = x \n Some = [P][0] \n Some(7)
 def case_special__forwardByNameInsideOneGroup : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [(.capture [.param "x", .param "x"])])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [(.capture [.param "x", .param "x"])])]) [.num 0])]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "Some") [.num 7])])
 #guard obs case_special__forwardByNameInsideOneGroup == "ok raw=7 n=1"
 
--- special__forwardByNameBesideCollector: P(x, *rest, x) = rest \n Some = [P]:0 \n Some(7, 1, 2)
+-- special__forwardByNameBesideCollector: P(x, *rest, x) = rest \n Some = [P][0] \n Some(7, 1, 2)
 def case_special__forwardByNameBesideCollector : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", (.sequenceSpread (.param "rest")), .param "x"])]) (.num 0))]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "rest"])] [(.call (.resolve "Some") [.num 7, .num 1, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", (.sequenceSpread (.param "rest")), .param "x"])]) [.num 0])]), privateProp "P" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }, { name := "x" }] [] [] [.param "rest"])] [(.call (.resolve "Some") [.num 7, .num 1, .num 2])])
 #guard obs case_special__forwardByNameBesideCollector == "ok raw=L[1, 2] n=1"
 
--- special__forwardByNameClosedList: P(x, x) = x \n Q(x) = [P]:0 \n Q(7)
+-- special__forwardByNameClosedList: P(x, x) = x \n Q(x) = [P][0] \n Q(7)
 def case_special__forwardByNameClosedList : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Q" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) (.num 0))])] [(.call (.resolve "Q") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Q" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])])] [(.call (.resolve "Q") [.num 7])])
 #guard obs case_special__forwardByNameClosedList == "ok raw=7 n=1"
 
 -- special__forwardByNameAcrossCallees: P(x, x) = x \n F(x) = x + 1 \n H = P + F \n H(3)
@@ -12910,14 +13080,14 @@ def case_special__forwardByNameAcrossCallees : Expr :=
   .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "P") [.param "x", .param "x"]) (.call (.resolve "F") [.param "x"]))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [.num 3])])
 #guard obs case_special__forwardByNameAcrossCallees == "ok raw=7 n=1"
 
--- special__forwardByNameFailedArgument: Bad = 1 / 0 \n P(x, x) = x \n Some = [P]:0 \n Some(Bad)
+-- special__forwardByNameFailedArgument: Bad = 1 / 0 \n P(x, x) = x \n Some = [P][0] \n Some(Bad)
 def case_special__forwardByNameFailedArgument : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) (.num 0))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.resolve "Bad"])])
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.resolve "Bad"])])
 #guard obs case_special__forwardByNameFailedArgument == "err div0"
 
--- special__forwardByNameCallableArgument: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Some = [P]:0 \n Some(Inc)
+-- special__forwardByNameCallableArgument: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Some = [P][0] \n Some(Inc)
 def case_special__forwardByNameCallableArgument : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) (.num 0))]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "Some") [.resolve "Inc"])])
+  .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "Some") [.resolve "Inc"])])
 #guard obs case_special__forwardByNameCallableArgument == "err arity"
 
 -- special__aliasKeepsRepeatedSignature: P(x, x) = x \n A = P \n A(7, 7)
@@ -13075,7 +13245,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2596 differential cases.
+-- 2630 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -14273,6 +14443,40 @@ def surfaceCaseIds : List String := [
   "indexBig__l_p12",
   "indexBig__p_l12",
   "indexBig__pl1",
+  "indexNeg__e",
+  "indexNeg__n0",
+  "indexNeg__n1",
+  "indexNeg__bt",
+  "indexNeg__bf",
+  "indexNeg__pbt",
+  "indexNeg__pbt_e",
+  "indexNeg__pbt_1",
+  "indexNeg__lbt",
+  "indexNeg__lbt_bf",
+  "indexNeg__lpbt_1",
+  "indexNeg__p1",
+  "indexNeg__p12",
+  "indexNeg__p123",
+  "indexNeg__pee",
+  "indexNeg__pe1",
+  "indexNeg__p1e",
+  "indexNeg__p12_3",
+  "indexNeg__p12_34",
+  "indexNeg__pe_12",
+  "indexNeg__ppe1_2",
+  "indexNeg__p12_e",
+  "indexNeg__ppe",
+  "indexNeg__pp1",
+  "indexNeg__ppp12",
+  "indexNeg__le",
+  "indexNeg__l7",
+  "indexNeg__l12",
+  "indexNeg__l12_3",
+  "indexNeg__lle",
+  "indexNeg__l_e",
+  "indexNeg__l_p12",
+  "indexNeg__p_l12",
+  "indexNeg__pl1",
   "eqSelf__e",
   "eqSelf__n0",
   "eqSelf__n1",
@@ -15680,7 +15884,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2596
+#guard surfaceCaseIds.length == 2630
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -15782,5 +15986,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 14
 
 -- 14 internal-node cases.
--- Total: 2610 case guards (2596 surface + 14 internal-node).
+-- Total: 2644 case guards (2630 surface + 14 internal-node).
 end SemanticExplorerCases

@@ -93,7 +93,7 @@ public class StructuralNestingStackBackstopProcessTests
                 // (the explicit written-slot funnel), never through EvalOutputRowsPreparedCore.
                 body.Append('[');
                 AppendGroup(body, width);
-                body.Append("]:0");
+                body.Append("][0]");
                 break;
 
             case "list-alternation":

@@ -71,7 +71,7 @@ public class WeightedCostCompositionTests
     // ── The mechanism table ──────────────────────────────────────────────────
     //
     // Each Wrap is a FIXED POINT at the scalar 1 and performs real dispatch:
-    //   Index         x:0             projection through the iterative spine machine
+    //   Index         x[0]             projection through the iterative spine machine
     //   Capture       (x)             written value boundary
     //   Call          sum(x)          real builtin call; the post-binding collection view
     //                                 of a scalar is a one-item collection, so sum(1) == 1
@@ -86,7 +86,7 @@ public class WeightedCostCompositionTests
     // ZeroWeightJoins_* tests below.
 
     internal static readonly WeightedMechanism Index =
-        new("Index", 1, inner => new Expr.Index(inner, new Expr.Num(0)));
+        new("Index", 1, inner => new Expr.Index(inner, [new Expr.Num(0)]));
 
     internal static readonly WeightedMechanism Capture =
         new("Capture", 2, inner => new Expr.Capture([inner]));
@@ -834,7 +834,7 @@ public class WeightedCostCompositionTests
         var shared = new Expr.Capture([new Expr.Num(1)]);
         var root = new Expr.Capture([
             shared,
-            new Expr.Index(shared, new Expr.Num(0)),
+            new Expr.Index(shared, [new Expr.Num(0)]),
         ]);
 
         // Root Capture 2 + Index 1 + transition surcharge 7 + shared Capture/Num 3.

@@ -391,7 +391,7 @@ def sequenceValueCollectingCountAlg : Algorithm :=
 
 def sequenceValueCollectingFirstAlg : Algorithm :=
   algWithParameterPatterns [.sequenceValue [.capture { name := "xs", kind := .collecting }]] [] [] [
-    .index (.param "xs") (.num 0)
+    .index (.param "xs") [.num 0]
   ]
 
 def sequenceValueCollectingMixedAlg : Algorithm :=
@@ -701,7 +701,7 @@ def preparedAlgorithmOutputRetainsWrittenSlots : Bool :=
 
 /-- Discriminator: a single selection output row is ONE written slot in the
     prepared view AND one emitted value. Selection is a value boundary, so
-    `((1, 2), (3, 4)):0` emits the selected pair with count 1 (never re-emitted
+    `((1, 2), (3, 4))[0]` emits the selected pair with count 1 (never re-emitted
     as two values); the retained accumulator keeps the one written slot
     `[(1, 2)]`. The multi-emitting non-spread discriminator is the loop below. -/
 def preparedAlgorithmOutputKeepsSelectedSlotWhole : Bool :=
@@ -709,7 +709,7 @@ def preparedAlgorithmOutputKeepsSelectedSlotWhole : Bool :=
     .capture [.num 1, .num 2],
     .capture [.num 3, .num 4]
   ]
-  let output := alg [] [] [] [.index pairOfPairs (.num 0)]
+  let output := alg [] [] [] [.index pairOfPairs [.num 0]]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
   | .ok ({
@@ -739,14 +739,14 @@ def preparedAlgorithmOutputCountsAMultiSlotLoopOnce : Bool :=
 #guard preparedAlgorithmOutputCountsAMultiSlotLoopOnce
 
 /-- Discriminator: a multi-emitting single output row — the explicit spread of the
-    selected pair, `(((1, 2), (3, 4)):0)*` — supplies two slots with count 2, so
+    selected pair, `(((1, 2), (3, 4))[0])*` — supplies two slots with count 2, so
     the slot view lists both items; only the spread opens the selection. -/
 def preparedAlgorithmOutputSpreadOfSelectionSuppliesItems : Bool :=
   let pairOfPairs := KatLang.Expr.capture [
     .capture [.num 1, .num 2],
     .capture [.num 3, .num 4]
   ]
-  let output := alg [] [] [] [.sequenceSpread (.index pairOfPairs (.num 0))]
+  let output := alg [] [] [] [.sequenceSpread (.index pairOfPairs [.num 0])]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
   | .ok ({
@@ -768,9 +768,9 @@ def oneElementListFirstAlg : Algorithm :=
 /-- End-to-end (PARENTHESES GROUP SYNTAX, September 2026): a structural pattern
     reads the argument's VALUE, never a written slot. The selected pair is ONE
     sequence value (selection is a value boundary), so the list pattern
-    `F([x]) = x` rejects `F(S:0)` as its kind mismatch — and a host-built single
-    capture around the selection (`capture [S:0]`, the shape the C# parser never
-    writes because `(S:0)` IS `S:0`) is the very same rejection: no capture depth
+    `F([x]) = x` rejects `F(S[0])` as its kind mismatch — and a host-built single
+    capture around the selection (`capture [S[0]]`, the shape the C# parser never
+    writes because `(S[0])` IS `S[0]`) is the very same rejection: no capture depth
     restores a written slot for the pattern to bind. Mirrors
     `PatternedCallSingleEvaluationTests`. -/
 def oneElementListPatternRejectsTheSelectedSequence : Bool :=
@@ -781,12 +781,12 @@ def oneElementListPatternRejectsTheSelectedSequence : Bool :=
   let direct := runResult (.algorithmExpr (algPrivate [] [] [
     ("S", s), ("F", oneElementListFirstAlg)
   ] [
-    .call (resolve "F") [.index (resolve "S") (.num 0)]
+    .call (resolve "F") [.index (resolve "S") [.num 0]]
   ]))
   let grouped := runResult (.algorithmExpr (algPrivate [] [] [
     ("S", s), ("F", oneElementListFirstAlg)
   ] [
-    .call (resolve "F") [.capture [.index (resolve "S") (.num 0)]]
+    .call (resolve "F") [.capture [.index (resolve "S") [.num 0]]]
   ]))
   (match direct with
    | Except.error err => innermostIsAnyTypeMismatch err
@@ -825,7 +825,7 @@ def singletonSequencePatternIsRejectedBeforeEvaluation : Bool :=
 
 #guard singletonSequencePatternIsRejectedBeforeEvaluation
 
-/-- The one-element LIST is what opens to exactly one item: `F([S:0])` binds the
+/-- The one-element LIST is what opens to exactly one item: `F([S[0]])` binds the
     whole selected pair. -/
 def sequenceValueSingletonPatternBindsTheOneListElement : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
@@ -835,7 +835,7 @@ def sequenceValueSingletonPatternBindsTheOneListElement : Bool :=
     ]),
     ("F", oneElementListFirstAlg)
   ] [
-    .call (resolve "F") [.listLiteral [.index (resolve "S") (.num 0)]]
+    .call (resolve "F") [.listLiteral [.index (resolve "S") [.num 0]]]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -1124,7 +1124,7 @@ def sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat : Bool :=
         .capture [.num 1, .num 2],
         .num 2
       ]))
-      (.num 0)
+      [.num 0]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
   | _ => false
@@ -1162,7 +1162,7 @@ def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateSh
         .capture [.num 1, .num 2],
         .num 3
       ]))
-      (.num 0)
+      [.num 0]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 3]) => true
   | _ => false
@@ -1530,8 +1530,8 @@ def loopInitialExplicitSelectionsSplitSequenceValueArg : Bool :=
   ] [
     .dotCall (resolve "Step") "repeat" (some [
       .num 1,
-      .index (resolve "Pair") (.num 0),
-      .index (resolve "Pair") (.num 1)
+      .index (resolve "Pair") [.num 0],
+      .index (resolve "Pair") [.num 1]
     ])
   ])) with
   | Except.ok (.atom 3) => true
@@ -1585,9 +1585,9 @@ def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
   ] [
     .dotCall (resolve "Step") "repeat" (some [
       .num 1,
-      .index (resolve "Values") (.num 0),
-      .index (resolve "Values") (.num 1),
-      .index (resolve "Values") (.num 2)
+      .index (resolve "Values") [.num 0],
+      .index (resolve "Values") [.num 1],
+      .index (resolve "Values") [.num 2]
     ])
   ])) with
   | Except.ok (.listValue [.atom 1, .atom 2, .atom 4]) => true

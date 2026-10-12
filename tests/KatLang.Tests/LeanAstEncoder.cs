@@ -173,7 +173,7 @@ internal sealed class LeanAstEncoding
         // and one `{ hole, text }` link per hole, in written order.
         Expr.InterpolatedString(var head, var links) =>
             $"(.interpolatedString {Quote(head)} [{EncodeList(links, EncodeInterpolationLink)}])",
-        Expr.Index(var target, var selector) => $"(.index {Arg(target)} {Arg(selector)})",
+        Expr.Index(var target, var selectors) => $"(.index {Arg(target)} [{EncodeList(selectors, EncodeExpr)}])",
         // INTERNAL node: the parser never produces it, but the internal-node
         // differential cases hand-construct it, and their Lean text is derived
         // from the same constructed AST the C# side observes.

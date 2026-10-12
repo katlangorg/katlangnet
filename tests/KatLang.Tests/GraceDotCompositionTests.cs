@@ -98,7 +98,7 @@ public class GraceDotCompositionTests
         Expr.Grace(var inner, var weight) => $"Grace({Shape(inner)},{weight})",
         Expr.Unary(var op, var operand) => $"Unary({op},{Shape(operand)})",
         Expr.Binary(var op, var left, var right) => $"Binary({op},{Shape(left)},{Shape(right)})",
-        Expr.Index(var target, var selector) => $"Index({Shape(target)},{Shape(selector)})",
+        Expr.Index(var target, var selectors) => $"Index({Shape(target)},{string.Join(",", selectors.Select(Shape))})",
         Expr.SequenceSpread(var operand) => $"Spread({Shape(operand)})",
         Expr.EmptySequence => "()",
         Expr.ListLiteral(var items) => $"List([{string.Join(",", items.Select(Shape))}])",
@@ -318,7 +318,7 @@ public class GraceDotCompositionTests
     {
         Assert.Equal(["a", "b"], ParamsOf("K = a + b"));
         Assert.Equal(["f", "a"], ParamsOf("K = f(a)"));
-        Assert.Equal(["a", "b"], ParamsOf("K = a:b"));
+        Assert.Equal(["a", "b"], ParamsOf("K = a[b]"));
 
         Assert.Equal(["z", "a", "t"], ParamsOf("K = z + a.t"));
         Assert.Equal(["z", "t", "a"], ParamsOf("K = z + a~.t"));
@@ -567,11 +567,11 @@ public class GraceDotCompositionTests
         // participates. (`S` itself is a visible sibling, not a free name — so
         // `S~.t` graces a bound name and is rejected (F10), while `S.~t` graces
         // the participating free member and is effective.)
-        Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S.t\nK({a:0 + 100})"));
+        Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S.t\nK({a[0] + 100})"));
         AssertGraceIneffective("S = 1, 2, 3\nK = S~.t", "S", "it already resolves to a property");
         Assert.Equal(["t"], ParamsOf("S = 1, 2, 3\nK = S.~t"));
-        AssertResult("S = 1, 2, 3\nK = S.t\nK({a:0 + 100})", Atom(101));
-        AssertResult("S = 1, 2, 3\nK = S.~t\nK({a:0 + 100})", Atom(101));
+        AssertResult("S = 1, 2, 3\nK = S.t\nK({a[0] + 100})", Atom(101));
+        AssertResult("S = 1, 2, 3\nK = S.~t\nK({a[0] + 100})", Atom(101));
     }
 
     [Fact]
@@ -942,7 +942,7 @@ public class GraceDotCompositionTests
         AssertParseFails("K = f(x)~.t", GraceEligibilityFragment);
         AssertParseFails("K = [x, y]~.t", GraceEligibilityFragment);
         AssertParseFails("K = a.b~.t", GraceEligibilityFragment);
-        AssertParseFails("S = 1, 2, 3\nK = (S:0)~.t", GraceEligibilityFragment);
+        AssertParseFails("S = 1, 2, 3\nK = (S[0])~.t", GraceEligibilityFragment);
         AssertParseFails("t(a) = a\n{1}~.t", GraceEligibilityFragment);
         AssertParseFails("t(a) = a\n'text'~.t", GraceEligibilityFragment);
         AssertParseFails("[1, 2, 3]~.sum", GraceEligibilityFragment);

@@ -1401,9 +1401,9 @@ public static class ArityDifferentialMatrix
             },
             new()
             {
-                Id = "add-spread-index-target",
+                Id = "add-spread-comparison-operand",
                 Family = "spread-placement",
-                Source = "V = (1, 2)\nV*:0",
+                Source = "V = (1, 2)\n1 < V*",
                 PrimaryLaw = ReceiverLaw.SPREAD_IS_SLOT_ONLY,
                 ExpectedParseDiagnosticFragment = "spread",
             },

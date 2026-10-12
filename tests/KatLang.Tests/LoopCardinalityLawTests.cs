@@ -90,8 +90,8 @@ public class LoopCardinalityLawTests
         // The explicit capture keeps the history as ONE state slot ...
         AssertOk(await OnEveryRouteAsync("P((*h), n) = (h*), n + 1\nP.repeat(2, (1, 2), 0)"), "S[S[1, 2], 2]", 1, "S[S[1, 2], 2]");
         // ... as does the exact list, at every history length, the empty one included.
-        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0):0"), "L[0, 1, 2]", 1, "L[0, 1, 2]");
-        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(0, [], 0):0"), "L[]", 1, "L[]");
+        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0)[0]"), "L[0, 1, 2]", 1, "L[0, 1, 2]");
+        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(0, [], 0)[0]"), "L[]", 1, "L[]");
 
         // Without it, the spread row supplies the history's items as separate slots (no implicit
         // packing): one iteration equals the direct call, and the second binding sees three slots.
@@ -110,7 +110,7 @@ public class LoopCardinalityLawTests
         // it never depended on packing; its patterned head only BINDS the history slot.
         const string source = """
             GcdStep = b, ~a mod b, a mod b != 0
-            Gcd = GcdStep.while(a, b):1
+            Gcd = GcdStep.while(a, b)[1]
 
             FindNext(*history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not history.contains(candidate) and
@@ -118,7 +118,7 @@ public class LoopCardinalityLawTests
                     Gcd(candidate, pre2) != 1
 
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
-                FindStep.while(1):0
+                FindStep.while(1)[0]
             }
 
             YSStep((*history), pre2, pre1) = {
@@ -126,7 +126,7 @@ public class LoopCardinalityLawTests
                 (history*, Next), pre1, Next
             }
 
-            YSStep.repeat(7, (1, 2, 3), 2, 3):0
+            YSStep.repeat(7, (1, 2, 3), 2, 3)[0]
             """;
         AssertOk(await OnEveryRouteAsync(source),
             "S[1, 2, 3, 4, 9, 8, 15, 14, 5, 6]", 1, "S[1, 2, 3, 4, 9, 8, 15, 14, 5, 6]");
@@ -167,13 +167,13 @@ public class LoopCardinalityLawTests
     [
         new("flat", rows => $"S(a, b) = {Body(rows)}", "1, 2"),
         new("repeated names", rows => $"S(a, a, b) = {Body(rows)}", "1, 1, 2"),
-        new("collector", rows => $"S(a, *rest) = {Body(rows, "b = rest:0")}", "1, 2"),
-        new("collector only", rows => $"S(*xs) = {Body(rows, "a = xs:0\n  b = xs:1")}", "1, 2"),
+        new("collector", rows => $"S(a, *rest) = {Body(rows, "b = rest[0]")}", "1, 2"),
+        new("collector only", rows => $"S(*xs) = {Body(rows, "a = xs[0]\n  b = xs[1]")}", "1, 2"),
         new("sequence pattern", rows => $"S((a, b)) = {Body(rows)}", "(1, 2)"),
         new("list pattern", rows => $"S([a, b]) = {Body(rows)}", "[1, 2]"),
         new("nested pattern", rows => $"S(((a, b), c)) = {Body(rows)}", "((1, 2), 3)"),
-        new("sequence pattern with collector", rows => $"S((a, *rest)) = {Body(rows, "b = rest:0")}", "(1, 2)"),
-        new("list pattern with collector", rows => $"S([a, *rest]) = {Body(rows, "b = rest:0")}", "[1, 2]"),
+        new("sequence pattern with collector", rows => $"S((a, *rest)) = {Body(rows, "b = rest[0]")}", "(1, 2)"),
+        new("list pattern with collector", rows => $"S([a, *rest]) = {Body(rows, "b = rest[0]")}", "[1, 2]"),
         new("repeated structural leaf", rows => $"S((a, b), (a, c)) = {Body(rows)}", "(1, 2), (1, 3)"),
         new("alias of a structural step", rows => $"P((a, b)) = {Body(rows)}\nS = P", "(1, 2)"),
         new("wrapper of a structural step", rows => $"P((a, b)) = {Body(rows)}\nS(p) = {{ P(p)* }}", "(1, 2)"),
@@ -206,7 +206,7 @@ public class LoopCardinalityLawTests
         ("if(a < b, (a, b), ())*", "S[1, 2, 0]"),
         ("repeat(Fib, 1, a, b)", "S[S[2, 3], 0]"),
         ("repeat(Fib, 1, a, b)*", "S[2, 3, 0]"),
-        ("[a, b]:1", "S[2, 0]"),
+        ("[a, b][1]", "S[2, 0]"),
         ("a, (b, a)*", "S[1, 2, 1, 0]"),
         ("[a, b], (a, b)*", "S[L[1, 2], 1, 2, 0]"),
         ("(a, b)**", "S[1, 2, 0]"),
@@ -353,7 +353,7 @@ public class LoopCardinalityLawTests
             AssertOk(await OnEveryRouteAsync(defs + call), "L[S[1, 2], S[2, 3]]", 1, "L[S[1, 2], S[2, 3]]");
 
         // The reducer step likewise receives and returns one value.
-        const string reducer = "Step(x, acc) = acc:0 + x, acc:1 + 1\nR(x, acc) = repeat(Step, 1, x, acc)\n";
+        const string reducer = "Step(x, acc) = acc[0] + x, acc[1] + 1\nR(x, acc) = repeat(Step, 1, x, acc)\n";
         foreach (var call in new[] { "[1, 2, 3].reduce(R, (0, 0))", "[1, 2, 3].reduce({ repeat(Step, 1, x, acc) }, (0, 0))" })
             AssertOk(await OnEveryRouteAsync(reducer + call), "S[6, 3]", 1, "S[6, 3]");
 
@@ -392,7 +392,7 @@ public class LoopCardinalityLawTests
     [Fact]
     public async Task OneSlotPairAndTwoSlotState_CompleteToTheSameValue()
     {
-        const string defs = "P1(p) = (p:0 + 10, p:1 + 10)\nP2(a, b) = a + 10, b + 10\n";
+        const string defs = "P1(p) = (p[0] + 10, p[1] + 10)\nP2(a, b) = a + 10, b + 10\n";
         var onePair = await OnEveryRouteAsync(defs + "repeat(P1, 1, (10, 20))");
         var twoSlots = await OnEveryRouteAsync(defs + "repeat(P2, 1, 10, 20)");
         AssertOk(onePair, "S[20, 30]", 1, "S[20, 30]");
@@ -410,7 +410,7 @@ public class LoopCardinalityLawTests
         // Q-26 never collapses a step's rows into its call value: two rows are two slots ...
         AssertOk(await OnEveryRouteAsync("Fib(a, b) = b, a + b\nrepeat(Fib, 3, 0, 1)"), "S[2, 3]", 1, "S[2, 3]");
         // ... while one parenthesized row is ONE slot holding a sequence.
-        AssertOk(await OnEveryRouteAsync("G(p) = (p:1, p:0 + p:1)\nrepeat(G, 3, (0, 1))"), "S[2, 3]", 1, "S[2, 3]");
+        AssertOk(await OnEveryRouteAsync("G(p) = (p[1], p[0] + p[1])\nrepeat(G, 3, (0, 1))"), "S[2, 3]", 1, "S[2, 3]");
         AssertLoopStateArity(
             await OnEveryRouteAsync("G(a, b) = (b, a + b)\nrepeat(G, 2, 0, 1)"),
             "`repeat` step expects 2 state values for 2 parameters 'a' and 'b', but the current loop state has 1 state value.");

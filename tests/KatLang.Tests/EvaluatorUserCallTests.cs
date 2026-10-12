@@ -66,7 +66,7 @@ public class EvaluatorUserCallTests
     {
         var source = """
             Numbers = 3, 5, 9
-            Numbers:0
+            Numbers[0]
             """;
         AssertEval(source, 3);
     }
@@ -78,8 +78,8 @@ public class EvaluatorUserCallTests
     {
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
-            Add = a + 1, total + Numbers:a
-            Sum = repeat(Add, (6), 0, 0) : 1
+            Add = a + 1, total + Numbers[a]
+            Sum = repeat(Add, (6), 0, 0)[1]
             Sum
             """;
         AssertEval(source, 24);
@@ -90,7 +90,7 @@ public class EvaluatorUserCallTests
     {
         var source = """
             Fib = a + b, a
-            repeat(Fib, (10), 1, 0):0
+            repeat(Fib, (10), 1, 0)[0]
             """;
         AssertEval(source, 89);
     }
@@ -237,7 +237,7 @@ public class EvaluatorUserCallTests
             """
             Pair = 10, 20
             Add(x, y) = x + y
-            Add(Pair:0, Pair:1)
+            Add(Pair[0], Pair[1])
             """,
             30);
     }
@@ -444,7 +444,7 @@ public class EvaluatorUserCallTests
     {
         AssertEval(
             """
-            Apply(*values, f) = f(values:0)
+            Apply(*values, f) = f(values[0])
             Inc = a + 1
             Apply((10, 20)*, Inc)
             """,

@@ -187,7 +187,7 @@ public sealed class EmptyStructuralPatternLawTests
 
     [Theory]
     [InlineData("x.y")]
-    [InlineData("x:0")]
+    [InlineData("x[0]")]
     [InlineData("g(1, 2)")]
     [InlineData("{ 1 }")]
     [InlineData("1 == 1")]

@@ -221,7 +221,7 @@ public class OpenTargetHeadValidityTests
     [InlineData("F(1)", "call", "F(x) = x\n")]
     [InlineData("[A]", "listLiteral", "A = { public N = 1 }\n")]
     [InlineData("(A + B)", "binary", "A = 1\nB = 2\n")]
-    [InlineData("(A:0)", "index", "A = 1, 2\n")]
+    [InlineData("(A[0])", "index", "A = 1, 2\n")]
     [InlineData("(-A)", "unary", "A = 1\n")]
     [InlineData("('https://mods.test/lib.kat')", "stringLiteral", "")]
     public void DottedTarget_WithANonAlgorithmHead_IsBadOpenForm_ExactlyLikeTheBareHead(

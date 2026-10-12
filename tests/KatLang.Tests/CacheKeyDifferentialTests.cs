@@ -319,7 +319,7 @@ public class CacheKeyDifferentialTests
         const string source = """
             Step(x) = {
                 Val = x * 2
-                x + Val + Val + [0]:0
+                x + Val + Val + [0][0]
             }
             repeat(Step, 3, 1)
             """;
@@ -358,7 +358,7 @@ public class CacheKeyDifferentialTests
         const string source = """
             Step(x) = {
                 Val = x * 2
-                x + Val + Val + [0]:0,
+                x + Val + Val + [0][0],
                 x < 20
             }
             while(Step, 1)

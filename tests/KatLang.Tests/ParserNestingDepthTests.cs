@@ -42,6 +42,7 @@ public class ParserNestingDepthTests
     [InlineData("(", ")", 90)]   // groups: 4 weighted units/level (heavy machinery)
     [InlineData("{", "}", 90)]   // blocks: 4 units/level
     [InlineData("[", "]", 120)]  // lists: 3 units/level
+    [InlineData("A[", "]", 120)] // nested selections: the list literal's production, 3 units/level
     public void DeepBalanced_InBudget_ParsesWithoutError(string open, string close, int levels)
     {
         // Just under each shape's budget capacity — every capacity was proven to
@@ -67,6 +68,8 @@ public class ParserNestingDepthTests
     [InlineData("(", ")", 95)]   // 95 x 4 units + 2 = 382 <= 384; 96 x 4 + 2 = 386
     [InlineData("{", "}", 95)]
     [InlineData("[", "]", 127)]  // 127 x 3 + 2 = 383 <= 384
+    [InlineData("A[", "]", 127)] // nested selections: each selector slot holds the next selection
+    [InlineData("A[0, ", "]", 127)] // a sibling selector before each nested one charges nothing extra
     [InlineData("\"{", "}\"", 95)] // interpolation holes (STR-02): 2 base + 2 surcharge, like groups
     [InlineData("(\"{", "}\")", 47)] // a group and a hole per cycle: 47 x 8 + 2 = 378; 48 x 8 + 2 = 386
     public void StructuralBoundary_AtMaximumParses_OneBeyondDiagnoses(string open, string close, int max)
@@ -196,6 +199,7 @@ public class ParserNestingDepthTests
     [Theory]
     [InlineData("(", ")")]
     [InlineData("[", "]")]
+    [InlineData("A[", "]")]
     [InlineData("{", "}")]
     public void DeepBalanced_OverBudget_EmitsNestingDiagnostic(string open, string close)
     {

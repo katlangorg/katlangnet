@@ -112,8 +112,8 @@ public class EvaluatorCollectionBuiltinTests
         => AssertEval(
             """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            order(Data:0)
-            (Data:0).order
+            order(Data[0])
+            (Data[0]).order
             """,
             1,
             2,
@@ -316,7 +316,7 @@ public class EvaluatorCollectionBuiltinTests
         // no singleton erasure ever applies to list structure.
         var result = EvalFull(
             """
-            KeepFirstPair(pair) = pair:0 == 1
+            KeepFirstPair(pair) = pair[0] == 1
             filter(((1, 2), (3, 4)), KeepFirstPair)
             """);
         if (result.IsError)
@@ -331,7 +331,7 @@ public class EvaluatorCollectionBuiltinTests
         // T is the exact list [(1, 2)]: display, count(T), T.count, equality, and
         // indexing all observe the same one-element list value. Lists are not
         // equal to sequences, and `:` indexing selects the stored element
-        // exactly (T:0 is the kept `(1, 2)` element as ONE value — selection is
+        // exactly (T[0] is the kept `(1, 2)` element as ONE value — selection is
         // a value boundary — so it emits one value like any selected element).
         AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT", 1, ListValue(SequenceValue(Atom(1), Atom(2))));
         AssertEval("T = take(((1, 2), (3, 4)), 1)\ncount(T)", 1);
@@ -339,7 +339,7 @@ public class EvaluatorCollectionBuiltinTests
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == (1, 2)", false);
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == ((1, 2))", false);
         AssertEvalBool("T = take(((1, 2), (3, 4)), 1)\nT == [(1, 2)]", true);
-        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT:0", 1, SequenceValue(Atom(1), Atom(2)));
+        AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nT[0]", 1, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("T = take(((1, 2), (3, 4)), 1)\nfirst(T)", 1, SequenceValue(Atom(1), Atom(2)));
     }
 
@@ -477,8 +477,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            contains(Data:0, 4)
-            (Data:0).contains(4)
+            contains(Data[0], 4)
+            (Data[0]).contains(4)
             """;
 
         AssertEvalBools(source, true, true);
@@ -588,8 +588,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            first(Data:0)
-            (Data:0).first
+            first(Data[0])
+            (Data[0]).first
             """;
 
         AssertEval(source, 7, 7);
@@ -600,8 +600,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            last(Data:0)
-            (Data:0).last
+            last(Data[0])
+            (Data[0]).last
             """;
 
         AssertEval(source, 1, 1);
@@ -883,8 +883,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            take(Data:0, 2)
-            (Data:0).take(2)
+            take(Data[0], 2)
+            (Data[0]).take(2)
             """;
 
         AssertEval(source, 7, 6, 7, 6);
@@ -895,8 +895,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            skip(Data:0, 2)
-            (Data:0).skip(2)
+            skip(Data[0], 2)
+            (Data[0]).skip(2)
             """;
 
         AssertEval(source, 4, 2, 1, 4, 2, 1);
@@ -955,8 +955,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            min(Data:0)
-            (Data:0).min
+            min(Data[0])
+            (Data[0]).min
             """;
 
         AssertEval(source, 1, 1);
@@ -1018,8 +1018,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            max(Data:0)
-            (Data:0).max
+            max(Data[0])
+            (Data[0]).max
             """;
 
         AssertEval(source, 7, 7);
@@ -1096,8 +1096,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            sum(Data:0)
-            (Data:0).sum
+            sum(Data[0])
+            (Data[0]).sum
             """;
 
         AssertEval(source, 20, 20);
@@ -1155,7 +1155,7 @@ public class EvaluatorCollectionBuiltinTests
         => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             """
             A = ((1, 2), (3, 4)), ((5, 6), (7, 8))
-            sum(A:0)
+            sum(A[0])
             """,
             "sum expects each collection element to be a single numeric value; item 0 was sequence value");
 
@@ -1174,8 +1174,8 @@ public class EvaluatorCollectionBuiltinTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            avg(Data:0)
-            (Data:0).avg
+            avg(Data[0])
+            (Data[0]).avg
             """;
 
         AssertEval(source, 4, 4);

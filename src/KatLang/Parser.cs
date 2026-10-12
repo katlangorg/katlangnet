@@ -157,12 +157,15 @@ public sealed class Parser
     // call form charges BOTH surcharges because it runs the call AND block
     // machineries ⇒ 5 total units per level — deliberately conservative, bounding
     // trailing-brace chains at 76 levels; see the exact-boundary pins in
-    // ParserNestingDepthTests and the ParserRecursionBudget probe), and a list
-    // literal adds its element-list machinery (~2.8 KB ⇒ 3 units).
+    // ParserNestingDepthTests and the ParserRecursionBudget probe), a list
+    // literal adds its element-list machinery (~2.8 KB ⇒ 3 units), and a postfix
+    // selector list `R[ ... ]` runs the same element-list machinery from the
+    // postfix loop (⇒ 3 units, the list literal's charge).
     private const int GroupNestingSurcharge = 2;
     private const int BlockNestingSurcharge = 2;
     private const int CallArgsNestingSurcharge = 1;
     private const int ListNestingSurcharge = 1;
+    private const int SelectionNestingSurcharge = 1;
 
     // An interpolated string and its hole run the string/hole machinery on top of the hole's
     // expression levels (ParseInterpolatedString → ParseInterpolationHole → ParseExpression),
@@ -318,11 +321,15 @@ public sealed class Parser
 
     /// <summary>
     /// Whether the parser is at HOLE LEVEL: directly inside an interpolation hole, with no
-    /// group, list, call argument list or brace body opened since the hole began (the hole's
-    /// ownership barrier zeroed their counters). The hole-level restrictions apply only here:
-    /// a hole holds ONE expression, so a hole-level <c>:</c> is not taken as indexing (STR-02
-    /// makes no commitment about <c>:</c> inside holes; a selection is written in parentheses,
-    /// <c>"{(xs:0)}"</c>), and the hole reports it.
+    /// group, list, selector list, call argument list or brace body opened since the hole began
+    /// (the hole's ownership barrier zeroed their counters). The hole-level restrictions apply
+    /// only here: a hole holds ONE expression, and interpolation has no format specifiers, so a
+    /// <c>:</c> that begins a hole or follows the hole's completed expression is the hole's own
+    /// report, never the retired colon selection (a selection in a hole is written with brackets,
+    /// <c>"{xs[0]}"</c>). A <c>:</c> where the hole's expression still needs an operand
+    /// (<c>"{a + :0}"</c>, <c>"{-:0}"</c>) is that operand's own <c>RetiredColonSelection</c>, and the
+    /// hole adds no second report — exactly as a misplaced <c>,</c> or <c>=</c> there is the
+    /// operand's own report.
     /// </summary>
     private bool IsAtInterpolationHoleLevel
         => _openInterpolationHoles > 0 && _openParens + _openBrackets + _openBraces == 0;
@@ -915,10 +922,10 @@ public sealed class Parser
     // expression; every line-sensitive parser path consults it through
     // MayContinueClosedExpression. The only cross-line whitelisted
     // continuation is a leading '.' (method-chain layout); anything inside an
-    // already-open delimiter ('(' .. ')', '{' .. '}') spans lines until the
+    // already-open delimiter ('(' .. ')', '[' .. ']', '{' .. '}') spans lines until the
     // delimiter closes, because those tokens never reach a closed-expression
-    // boundary. Call delimiters '(' and '{', indexing ':', postfix grace
-    // '~', and binary operators continue on the same physical line only —
+    // boundary. Call delimiters '(' and '{', the selection bracket '[', postfix
+    // grace '~', and binary operators continue on the same physical line only —
     // the trailing-operator idiom (`A -` newline `1`) works because the
     // operator itself sits on the same line; only its right operand starts a
     // new line. The star '*' is covered by the binary-operator row: a
@@ -951,6 +958,11 @@ public sealed class Parser
     {
         TokenKind.Dot => new(CanContinueSameLine: true, CanContinueAcrossLine: true),
         TokenKind.LParen or TokenKind.LBrace => new(true, false),
+        // A same-line '[' after a completed expression opens its postfix selector list
+        // (spaces and tabs allowed; a '[' on a later line begins a new list literal).
+        TokenKind.LBracket => new(true, false),
+        // ':' is not KatLang syntax; the row only lets ParsePostfix report a same-line
+        // retired colon selection with its migration diagnostic.
         TokenKind.Colon => new(true, false),
         TokenKind.Tilde => new(true, false),
         // `^` is parsed by ParsePower rather than the binary loop, so it is
@@ -1108,8 +1120,9 @@ public sealed class Parser
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private Expr.Unary UnaryFrom(UnaryOp op, Expr operand, Token operatorToken) => new(op, operand) { Span = MakeSpan(operatorToken) };
 
+    /// <summary>A selection spanning its receiver through the last consumed token (the closing <c>]</c>).</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private Expr.Index IndexFrom(Expr lhs, Expr selector) => new(lhs, selector) { Span = SpanFrom(lhs) };
+    private Expr.Index SelectionFrom(Expr lhs, OutputBundle selectors) => new(lhs, selectors) { Span = SpanFrom(lhs) };
 
     /// <summary>A call node spanning <paramref name="start"/> (the callee, or a fluent spread receiver) through the consumed ')'.</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
@@ -1812,15 +1825,17 @@ public sealed class Parser
     //
     // A spread expression is legal only as a whole expression-list slot
     // (root output rows, call argument slots, parenthesized group and
-    // brace-body slots, list-literal elements, definition body slots, and
-    // the operand of another spread), or as the receiver of the
-    // fluent dot continuation `operand*.Target(...)`, which lowers to the
-    // ordinary lexical call `Target(operand*, ...)` with the spread as the
-    // leading argument slot. It never participates as an operand of a
-    // unary/binary operator or an indexing target/selector — those
+    // brace-body slots, list-literal elements, selector slots of a postfix
+    // selection — `Data[Is*]` — definition body slots, and the operand of
+    // another spread), or as the receiver of the fluent dot continuation
+    // `operand*.Target(...)`, which lowers to the ordinary lexical call
+    // `Target(operand*, ...)` with the spread as the leading argument slot.
+    // It never participates as an operand of a unary/binary operator — those
     // placements report the targeted misplaced-spread diagnostic and
     // recover by unwrapping to the spread's operand, so no embedded
-    // SequenceSpread survives in the recovered tree.
+    // SequenceSpread survives in the recovered tree. A star before `[` is
+    // never a spread receiver (`A*[0]` is multiplication), and a spread
+    // before a retired `:` is unwrapped silently (one RetiredColonSelection).
     //
     // Prefix `*` is the collect marker and is COLLECTING-BINDING syntax only
     // (`*name` in binding positions). It is not an expression operator, so a
@@ -2143,24 +2158,11 @@ public sealed class Parser
         "The final `*` on an earlier line continued as multiplication, making this spread expression its right operand. A spread cannot be a scalar operand. For separate spread rows, add a comma (`A*,`). Grouping (`(A*)`) also ends the row but captures its items as one value. For multiplication, remove the right operand's spread marker (`A * B`); the operands may be on different lines.";
 
     /// <summary>
-    /// Targeted message for the indexing continuation (`A*:0`): selection
-    /// needs ONE value while a spread supplies items, and the two nearby
-    /// valid forms mean DIFFERENT things — `(A:0)*` selects first and then
-    /// spreads the selected value, `(A*):0` captures the spread supply as one
-    /// sequence value and then selects. The message names both intentions so
-    /// they are not presented as interchangeable fixes.
-    /// </summary>
-    private const string SpreadSelectionDiagnostic =
-        "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value. Write `(A:0)*` to select first and then spread the selected value, or `(A*):0` to capture the spread items as one sequence value and then select; the two forms have different meanings.";
-
-    /// <summary>
     /// Rejects a spread expression used as an operand of a larger expression
-    /// (unary/binary operand, indexing target or selector). Spread is legal
-    /// only as a whole expression-list slot, as the operand of another
-    /// spread, or as the fluent dot-chain receiver (which lowers to a call).
-    /// The default message covers scalar operand positions; the indexing
-    /// continuation passes <see cref="SpreadSelectionDiagnostic"/> to
-    /// distinguish select-then-spread from capture-then-select. Recovery
+    /// (a unary, binary or comparison operand, or a whole interpolation hole). Spread
+    /// is legal only as a whole expression-list slot — a selector slot of a postfix
+    /// selection included (<c>Data[Indexes*]</c>) — as the operand of another spread, or
+    /// as the fluent dot-chain receiver (which lowers to a call). Recovery
     /// unwraps to the innermost non-spread operand so no embedded
     /// SequenceSpread survives in the recovered tree — downstream layers
     /// keep the slot-level-only spread invariant.
@@ -4003,11 +4005,11 @@ public sealed class Parser
         or TokenKind.Tilde
         or TokenKind.LParen
         or TokenKind.LBrace
-        // '[' always starts a NEW list-literal expression; it is deliberately
-        // absent from the continuation policy table, so `A[1]` is a second
-        // same-line item after `A` — the SYN-07A separator error, never
-        // indexing (indexing is ':') — while `A, [1]` and `A` newline `[1]`
-        // are the two-slot expression list, and `F[1]` is never a call form.
+        // '[' starts a NEW list-literal expression at the start of an expression or a
+        // slot and on a later physical line; a same-line '[' after a completed
+        // expression is consumed by ParsePostfix as postfix selection before the slot
+        // rule sees it (`A[1]`, `A [1]` select), while `A, [1]` and `A` newline `[1]`
+        // stay the two-slot expression list, and `F[1]` selects from F — never a call.
         or TokenKind.LBracket
         or TokenKind.KeywordOpen => true,
         _ => false,
@@ -4391,7 +4393,7 @@ public sealed class Parser
         return CreateBinaryExpression(BinaryOp.Pow, lhs, rhs, operatorToken);
     }
 
-    // ── Postfix (dot, colon, call) ──────────────────────────────────────────
+    // ── Postfix (dot, selection, call) ──────────────────────────────────────
 
     private Expr ParsePostfix()
     {
@@ -4421,21 +4423,33 @@ public sealed class Parser
                     lhs = ParseSpreadMarkerContinuation(lhs);
                     break;
 
+                case TokenKind.LBracket when MayContinueClosedExpression(TokenKind.LBracket)
+                    && Current.Position != _ownedSameLineItemPosition:
+                    // Postfix selection: expr[s1, ..., sn]. The '[' must be on the
+                    // same physical line as the receiver's final token (spaces and
+                    // tabs allowed; a '[' on a later line begins a new list literal);
+                    // the selector list is an ordinary expression list that may span
+                    // lines once the bracket is open. Every completed postfix-level
+                    // expression is a receiver — a name, a call result, a group, a
+                    // capture, a list, a number, a string, a block, a dot edge — and
+                    // chained brackets descend (`Grid[0][1]`). A star before the
+                    // bracket is never a spread receiver: '[' begins a multiplication
+                    // operand, so `A*[0]` is `A * [0]` (the star arm above leaves it).
+                    // A selection is never a call target (the call gate below admits
+                    // only callable references), so `A[0](1)` is the separator error.
+                    // A '[' that a recovery already owns stays that recovery's next
+                    // slot, never a selection of the recovered operand.
+                    lhs = ParseSelectionContinuation(lhs);
+                    break;
+
                 case TokenKind.Colon when MayContinueClosedExpression(TokenKind.Colon)
                     && !IsAtInterpolationHoleLevel:
-                    // Index: expr : selector. Same-physical-line only — a
-                    // newline never continues a closed expression into
-                    // postfix indexing, mirroring the call-delimiter rule. A
-                    // ':'-led line is rejected by ParsePrimary with a
-                    // targeted diagnostic. A spread expression is never an
-                    // indexing target or selector (`A*:0` reports
-                    // SpreadSelectionDiagnostic, which distinguishes
-                    // select-then-spread `(A:0)*` from capture-then-select
-                    // `(A*):0`). A ':' at interpolation-hole level is never
-                    // indexing: the expression ends there and the hole reports
-                    // it (a selection in a hole is written `"{(xs:0)}"`).
-                    var colonToken = Advance(); // consume ':'
-                    lhs = ParseIndexContinuation(lhs, colonToken);
+                    // The RETIRED colon selection `expr:selector` (October 2026): it is
+                    // reported with its migration diagnostic and recovered as the
+                    // equivalent selection, so later rows keep parsing and tooling keeps
+                    // a truthful tree. A ':' at interpolation-hole level is the hole's
+                    // own report (no format specifiers).
+                    lhs = ParseRetiredColonSelection(lhs);
                     break;
 
                 case TokenKind.Tilde when MayContinueClosedExpression(TokenKind.Tilde):
@@ -4506,19 +4520,75 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Parses the `: selector` indexing continuation and builds the index
-    /// node, rejecting spread expressions as target or selector. Kept out of
-    /// <see cref="ParsePostfix"/> so its locals and call temporaries never
-    /// enlarge that hot recursive frame (native stack-margin calibration).
+    /// Parses the postfix selector list <c>[s1, ..., sn]</c> after a completed receiver and builds
+    /// the selection node. The bracket content is the list literal's production — an ordinary
+    /// expression list: zero or more slots separated by commas (or newlines once the bracket is
+    /// open), explicit spread slots included (<c>Data[Indexes*]</c>), the separator rule inside
+    /// (<c>Data[0 1]</c>), owned-closer recovery, and the cumulative nesting budget. The chain
+    /// depth is the receiver's: selector slots are delimited and each starts at depth zero. Kept
+    /// out of <see cref="ParsePostfix"/> so its locals never enlarge that hot recursive frame.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private Expr ParseIndexContinuation(Expr lhs, Token colonToken)
+    private Expr ParseSelectionContinuation(Expr lhs)
     {
-        lhs = RejectMisplacedSpreadOperand(lhs, SpreadSelectionDiagnostic);
-        var selector = RejectMisplacedSpreadOperand(ParsePrimary(), SpreadSelectionDiagnostic);
-        var index = IndexFrom(lhs, selector);
-        return GuardExpressionChainDepth(index, colonToken, lhs, selector);
+        var openBracket = Advance(); // consume '['
+        List<Expr> selectors;
+        using (EnterDelimitedProduction(TokenKind.RBracket, SelectionNestingSurcharge))
+        {
+            selectors = Current.Kind == TokenKind.RBracket
+                ? []
+                : ParseExpressionListOperand(allowNewlineSeparator: true);
+        }
+
+        ExpectCloser(TokenKind.RBracket);
+        var selection = SelectionFrom(lhs, OutputBundle.From(selectors));
+        return GuardExpressionChainDepth(selection, openBracket, lhs);
     }
+
+    /// <summary>
+    /// The migration diagnostic of the RETIRED colon selection.
+    /// </summary>
+    private const string RetiredColonSelectionMessage =
+        "':' selection is not KatLang syntax. Select with postfix brackets on the receiver's line: write 'Pair[0]' for 'Pair:0', 'Grid[0][1]' for 'Grid:0:1', and 'Data()[0]' for 'Data():0'.";
+
+    /// <summary>
+    /// Reports a same-line retired colon selection <c>expr:selector</c> with
+    /// <see cref="DiagnosticCode.RetiredColonSelection"/> and recovers it as the selection it
+    /// meant: the old selector PRIMARY (a name, a prefix-Grace name, number, string, Boolean, group,
+    /// list or block on the same line) becomes the one selector slot, so <c>Pair:0</c> recovers to <c>Pair[0]</c>.
+    /// When no selector primary follows on the line the ':' alone is reported and the receiver is
+    /// kept. A spread receiver (<c>A*:0</c>: the star before a ':' classifies as a spread marker)
+    /// is unwrapped silently, so the colon is the source's one diagnostic.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ParseRetiredColonSelection(Expr lhs)
+    {
+        var colonToken = Advance(); // consume ':'
+        while (lhs is Expr.SequenceSpread spread)
+            lhs = spread.Operand;
+
+        if (!IsSamePhysicalLineAsPreviousToken() || !CanStartRetiredColonSelector(Current.Kind))
+        {
+            ReportErrorAt(DiagnosticCode.RetiredColonSelection, RetiredColonSelectionMessage, colonToken);
+            return lhs;
+        }
+
+        var selector = ParsePrimary();
+        ReportRetiredColonSelection(colonToken);
+        var selection = SelectionFrom(lhs, [selector]);
+        return GuardExpressionChainDepth(selection, colonToken, lhs);
+    }
+
+    /// <summary>The retired colon diagnostic spanning the ':' through its old selector (the last consumed token).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportRetiredColonSelection(Token colonToken)
+        => ReportError(DiagnosticCode.RetiredColonSelection, RetiredColonSelectionMessage, MakeSpan(colonToken));
+
+    /// <summary>The tokens that began the retired colon form's selector PRIMARY (<c>xs:~i</c> included).</summary>
+    private static bool CanStartRetiredColonSelector(TokenKind kind)
+        => kind is TokenKind.Identifier or TokenKind.Number or TokenKind.StringLiteral
+            or TokenKind.InterpolatedStringStart or TokenKind.KeywordTrue or TokenKind.KeywordFalse
+            or TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace or TokenKind.Tilde;
 
     /// <summary>
     /// True when the current same-line star is the postfix SPREAD marker for
@@ -5107,13 +5177,13 @@ public sealed class Parser
 
             case TokenKind.Colon:
                 {
-                    // A ':' reaching primary position has no expression to index.
-                    // The common cause is a line starting with ':' — indexing is
-                    // postfix and same-line only.
+                    // A ':' reaching primary position has no receiver. ':' is not KatLang
+                    // syntax; the common cause is a retired colon selection written on the
+                    // line after its receiver.
                     var token = Current;
                     ReportError(
-                        DiagnosticCode.UnexpectedToken,
-                        "Unexpected ':'. Indexing is postfix and must follow the indexed expression on the same physical line, as in 'Pair:0'.");
+                        DiagnosticCode.RetiredColonSelection,
+                        "Unexpected ':'. ':' selection is not KatLang syntax: select with postfix brackets on the receiver's line, as in 'Pair[0]'.");
                     SkipForRecovery(); // the token after it is a recovery-owned boundary
                     return PlaceholderAt(token); // error placeholder
                 }
@@ -5182,7 +5252,7 @@ public sealed class Parser
     /// follower is left to the ordinary operand path, which consumes it, so a loop that
     /// hands the same token back to this method always makes progress.</para>
     /// <para>A DECLARATION HEAD IS NEVER AN OPERAND. When the token that demanded this
-    /// operand ended its line — a trailing binary operator, <c>,</c>, <c>:</c>, prefix
+    /// operand ended its line — a trailing binary operator, <c>,</c>, prefix
     /// <c>-</c> or <c>not</c>, or the <c>=</c> of a definition whose body would start on
     /// the next line — and the next line begins a declaration (<c>1 +</c> newline
     /// <c>Good = 41</c>, <c>x,</c> newline <c>y = 1, 2</c>, <c>A =</c> newline
@@ -5393,7 +5463,7 @@ public sealed class Parser
         TokenKind.Comma =>
             "An interpolation hole holds one expression, so ',' cannot separate several. Write one hole per value, as in \"{a}, {b}\", or one sequence value in parentheses, as in \"{(a, b)}\".",
         TokenKind.Colon =>
-            "':' is not available at the top level of an interpolation hole, and interpolation has no format specifiers. To select an item, write the selection in parentheses, as in \"{(xs:0)}\".",
+            "':' is not available in an interpolation hole, and interpolation has no format specifiers. To select an item, write the selection with brackets, as in \"{xs[0]}\".",
         TokenKind.Equals =>
             "An interpolation hole holds one expression, never a declaration, so it cannot contain '='. To compare values, use '=='.",
         _ when leading =>

@@ -226,7 +226,7 @@ internal static class PropertyExposureResolver
                 Expr.Binary binary => IsRewriteInvariant(binary.Left) && IsRewriteInvariant(binary.Right),
                 Expr.Comparison comparison => IsRewriteInvariant(comparison.First)
                     && comparison.Links.All(link => IsRewriteInvariant(link.Operand)),
-                Expr.Index index => IsRewriteInvariant(index.Target) && IsRewriteInvariant(index.Selector),
+                Expr.Index index => IsRewriteInvariant(index.Target) && IsRewriteInvariant(index.Selectors),
                 Expr.SequenceSpread spread => IsRewriteInvariant(spread.Operand),
                 Expr.SequenceConstruct construct => IsRewriteInvariant(construct.Left) && IsRewriteInvariant(construct.Right),
                 Expr.ListLiteral list => IsRewriteInvariant(list.Items),
@@ -1222,7 +1222,7 @@ internal static class PropertyExposureResolver
             Expr.Index index => index with
             {
                 Target = RewriteExpr(index.Target, memos),
-                Selector = RewriteExpr(index.Selector, memos),
+                Selectors = RewriteExprList(index.Selectors, memos),
             },
 
             Expr.SequenceSpread spread => spread with { Operand = RewriteExpr(spread.Operand, memos) },

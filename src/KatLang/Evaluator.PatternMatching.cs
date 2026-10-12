@@ -136,7 +136,7 @@ public static partial class Evaluator
     /// <summary>
     /// The counted view of one iterated collection item as the callback
     /// receives it. A callback item is a SELECTED value, so it crosses the same
-    /// ordinary value boundary as <c>S:i</c> / <c>first</c> / <c>last</c>
+    /// ordinary value boundary as <c>S[i]</c> / <c>first</c> / <c>last</c>
     /// (<see cref="ReCountValueBoundary(CountedResult)"/>): the item keeps its
     /// stored shape (a nested sequence or list stays one value for pattern
     /// matching and for every count-sensitive reader inside the body — a bare

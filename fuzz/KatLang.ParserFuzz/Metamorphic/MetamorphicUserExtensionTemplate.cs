@@ -51,7 +51,7 @@ internal static class MetamorphicUserExtensionTemplate
     [
         new("identity", "r", 0),
         new("receiverCount", "r.count", 0),
-        new("firstElement", "r:0", 0),
+        new("firstElement", "r[0]", 0),
         new("wrapInList", "[r]", 0),
         new("spreadIntoList", "[r*]", 0),
         new("builtinCall", "take(r, 1)", 0),

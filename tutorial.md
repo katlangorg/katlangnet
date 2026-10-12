@@ -448,7 +448,7 @@ Ignore(1 / 0, 2)
 
 **Result:** `10`
 
-Reading the collector as a value creates its entire eager list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs:0` all receive that complete list: they cannot skip a failing later element. Forwarding `xs*` to another collector shares the slice without materializing it.
+Reading the collector as a value creates its entire eager list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs[0]` all receive that complete list: they cannot skip a failing later element. Forwarding `xs*` to another collector shares the slice without materializing it.
 
 Literal, structural and repeated-name patterns may need values before the body starts. Patterns are inspected from left to right. A structural pattern first evaluates its complete parent value. A repeated name requires each supplied occurrence to agree; an early conflict stops before a later argument runs. Conditional clauses share the same argument computations across attempts. A plain name in a clause binds without forcing, so ordinary selectors can leave their unselected arguments untouched just like `if`.
 
@@ -924,7 +924,7 @@ Ada: 9 points, pass
 Bob: 3 points, fail
 ```
 
-The holes are evaluated from left to right, each once, and the result is one string. A number appears with exactly its digits — `"{1.50}"` is `1.50` — and `true` and `false` appear as words; display settings such as `DisplayDecimals` never change the text inside a string. A hole holds one expression, so `"{a, b}"` is an error (write `"{a}, {b}"`), and there are no format specifiers: a `:` directly inside a hole is an error, so a selection is written in parentheses, as in `"{(xs:0)}"`. An interpolated string cannot stand where fixed text is required, such as a [pattern](#matching-text) or a `load` URL.
+The holes are evaluated from left to right, each once, and the result is one string. A number appears with exactly its digits — `"{1.50}"` is `1.50` — and `true` and `false` appear as words; display settings such as `DisplayDecimals` never change the text inside a string. A hole holds one expression, so `"{a, b}"` is an error (write `"{a}, {b}"`), and there are no format specifiers: a `:` inside a hole is an error. A selection is written as anywhere else, as in `"{xs[0]}"`. An interpolated string cannot stand where fixed text is required, such as a [pattern](#matching-text) or a `load` URL.
 
 There is still no `+` for text: `'a' + 'b'` is an error, while `"{x}{y}"` joins two values.
 
@@ -1119,14 +1119,14 @@ Sequences nest: `(1, (2, 3))` has two items, the second of which is itself a seq
 
 ### Counting and Selecting
 
-`count` gives the number of items, and `value:index` selects one item. Indexing is **zero-based**: `:0` selects the first item.
+`count` gives the number of values, and postfix brackets select by position: `value[index]`. Positions are **zero-based**: `[0]` selects the first value.
 
 <!-- spec:index-selects-atom -->
 ```
 Nums = 10, 20, 30, 40, 50
 
 # Select the third value (index 2):
-Nums:2
+Nums[2]
 ```
 
 **Result:** `30`
@@ -1135,8 +1135,8 @@ Nums:2
 Pairs = (1, 2), (3, 4)
 
 Pairs.count
-Pairs:1
-Pairs:1:0
+Pairs[1]
+Pairs[1][0]
 ```
 
 **Results:**
@@ -1146,7 +1146,37 @@ Pairs:1:0
 3
 ```
 
-Selection returns the chosen item as it is: selecting a sequence gives the whole sequence `(3, 4)`, and a further `:0` selects inside it. An index outside the sequence is an error.
+Selection returns the chosen value as it is: selecting a sequence gives the whole sequence `(3, 4)`, and a further `[0]` selects inside it. An index outside the sequence is an error, and so is a negative one — there is no counting from the end.
+
+Several indices select several values at once, in the order written; repeating an index repeats the value. The selected values form one sequence — a single index gives the value itself, and no index at all gives the empty value `()`:
+
+```
+Data = [10, 20, 30]
+
+Data[2, 0, 2]
+Data[0]
+Data[]
+```
+
+**Results:**
+```
+(30, 10, 30)
+10
+()
+```
+
+Commas select siblings, while a second pair of brackets goes one level deeper: with `Grid = [[10, 20], [30, 40]]`, `Grid[0, 1]` is `([10, 20], [30, 40])` and `Grid[0][1]` is `20`. To take the indices from a collection, open it with `*` (see the next sections):
+
+```
+Data = [10, 20, 30]
+Order = [2, 0]
+
+Data[Order*]
+```
+
+**Result:** `(30, 10)`
+
+Brackets select from a value and never run anything: `Data[0]` selects from the value of `Data`, while `Data()[0]` first runs `Data` afresh and selects from that result. Counting and selection see the same positions — a value's immediate items, never their insides. A number, a Boolean, or a string is one value with the single position `0`, so `count('abc')` is `1` and `'abc'[0]` is `'abc'`; KatLang has no character selection.
 
 ### Values Stay Values
 
@@ -1162,7 +1192,7 @@ Add(Pair)
 
 **Result:** error — `Pair` is one argument, but `Add` needs two.
 
-KatLang never takes a value apart on its own. A dot call passes its receiver in the same way: `(10, 20).Add` is `Add((10, 20))`, which fails for the same reason. To use the items of a value, say so explicitly in one of three ways: select them with `:`, as in `Add(Pair:0, Pair:1)`; open the value with `*` (next section); or declare a parameter that unpacks it (see [Unpacking an Argument](#unpacking-an-argument)).
+KatLang never takes a value apart on its own. A dot call passes its receiver in the same way: `(10, 20).Add` is `Add((10, 20))`, which fails for the same reason. To use the items of a value, say so explicitly in one of three ways: select them with brackets, as in `Add(Pair[0], Pair[1])`; open the value with `*` (next section); or declare a parameter that unpacks it (see [Unpacking an Argument](#unpacking-an-argument)).
 
 ### Opening a Value with `*`
 
@@ -1360,7 +1390,7 @@ Lists support the same operations as sequences — counting, zero-based selectio
 Primes = [2, 3, 5, 7]
 
 Primes.count
-Primes:0
+Primes[0]
 [0, Primes*, 11]
 [Primes, 11]
 ```
@@ -1378,8 +1408,8 @@ With the star, the items of `Primes` become elements of the new list; without it
 ```
 Grid = [[1, 2], [3, 4]]
 
-Grid:1
-Grid:1:0
+Grid[1]
+Grid[1][0]
 ```
 
 **Results:**
@@ -1714,7 +1744,7 @@ Add a star to use the items of a result directly:
 ```
 Pairs = [(2, 3), (4, 5)]
 
-Pairs.map{p:0 * p:1}
+Pairs.map{p[0] * p[1]}
 ```
 
 **Result:** `[6, 20]`
@@ -1745,7 +1775,7 @@ map([], Broken)
 
 ### A Callback Returns One Value
 
-A callback's result is exactly what an ordinary call of it returns, so `map(L, F)` is the list `[F(L:0), F(L:1), …]`. When the callback writes several output rows, they become one sequence value — one element of the result, never several:
+A callback's result is exactly what an ordinary call of it returns, so `map(L, F)` is the list `[F(L[0]), F(L[1]), …]`. When the callback writes several output rows, they become one sequence value — one element of the result, never several:
 
 ```
 Twice(x) = x, x
@@ -1841,7 +1871,7 @@ The first fold is `Pair(2, Pair(1, 0))`: each pair is passed on whole, never fla
 
 **Result:** error — division by zero, in the initial accumulator.
 
-For pure, deterministic, total computations, `reduce([a, b], R, initial)` gives the same result value as `R(b, R(a, initial))`. Reduce processes elements from left to right, using each complete call result as the next accumulator. Nested calls follow Model-C demand order and can skip an unused inner accumulator. The equation does not promise identical effects, argument demand, random draws, resource use or error timing. The analogous map equation, `map(L, F) == [F(L:0), F(L:1), …]`, has the same qualification: map demands the collection, while expanded calls may ignore their indexed arguments.
+For pure, deterministic, total computations, `reduce([a, b], R, initial)` gives the same result value as `R(b, R(a, initial))`. Reduce processes elements from left to right, using each complete call result as the next accumulator. Nested calls follow Model-C demand order and can skip an unused inner accumulator. The equation does not promise identical effects, argument demand, random draws, resource use or error timing. The analogous map equation, `map(L, F) == [F(L[0]), F(L[1]), …]`, has the same qualification: map demands the collection, while expanded calls may ignore their indexed arguments.
 
 ### Flattening with `atoms`
 
@@ -2032,7 +2062,7 @@ The last chapters rest on one idea: a value stays one value until you open it ex
 | `F(A*)` | Two arguments: the items `1` and `2` |
 | `A.F` | The call `F(A)`, unless `A` has a member `F` |
 | `A*.F` | The call `F(A*)` |
-| `A:0` | One item of `A`, selected as a value: `1` |
+| `A[0]` | One item of `A`, selected as a value: `1` |
 | `(A*, B*)`, `[A*, B*]` | One sequence, or one list, of the items `1, 2, 3, 4` |
 | `F(*xs) = ...` | `F` collects its arguments into the list `xs` |
 | `F((x, y)) = ...` | `F` takes one sequence argument and unpacks its two items |
@@ -2134,7 +2164,7 @@ Fibonacci(a, b) = b, a + b
 Final = Fibonacci.repeat(10, 0, 1)
 
 Final
-Final:0
+Final[0]
 ```
 
 **Results:**
@@ -2143,7 +2173,7 @@ Final:0
 55
 ```
 
-Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, ten rounds reach `(55, 89)`, and `:0` selects the tenth Fibonacci number.
+Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, ten rounds reach `(55, 89)`, and `[0]` selects the tenth Fibonacci number.
 
 Each initial value is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it, as in `Fibonacci.repeat(10, Start*)`.
 
@@ -2166,8 +2196,8 @@ Two more examples: how many years it takes 5% interest to double 1000, and how m
 Grow(years, balance) = years + 1, balance * 1.05, balance < 2000
 Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1
 
-Grow.while(0, 1000):0
-Collatz.while(27, 0):1
+Grow.while(0, 1000)[0]
+Collatz.while(27, 0)[1]
 ```
 
 **Results:**
@@ -2583,7 +2613,7 @@ Lib = load('https://katlang.org/algorithm.kat')
 Lib.X + 3
 
 # Use the second output value of the loaded algorithm (index 1):
-Lib:1 + 10
+Lib[1] + 10
 ```
 
 **Results:**
@@ -2677,7 +2707,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 - **A misspelled name becomes a parameter.** An undefined name is inferred as a parameter, so a typo shows up as a missing argument ([Undefined Names in the Program](#undefined-names-in-the-program)).
 - **A misspelled member falls back to a call.** `Math` has no member `Ceiling`, so `Math.Ceiling(2.1)` means `Ceiling(Math, 2.1)`; as nothing named `Ceiling` is defined, the name becomes a parameter, and the error message suggests `Math.Ceil`.
 - **Parameters follow first appearance.** `Ratio = b / a` takes `b` first; use an explicit parameter list or Grace to change the order.
-- **Values are not unpacked automatically.** A sequence or list is one argument. Open it with `*`, select its items with `:`, or unpack it with a pattern parameter.
+- **Values are not unpacked automatically.** A sequence or list is one argument. Open it with `*`, select its items with brackets (`v[0]`), or unpack it with a pattern parameter.
 - **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
@@ -2686,7 +2716,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 - **Parentheses compute, braces define.** `(n + 1)` is a value computed now; `{n + 1}` is an algorithm with the parameter `n`.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
 - **A brace in double quotes opens a hole.** Write `{{` and `}}` for literal braces in a double-quoted string, or use single quotes, where braces and backslashes are plain text.
-- **A hole holds one expression.** `"{a, b}"` is an error; write `"{a}, {b}"` or `"{(a, b)}"`, and put a selection in parentheses: `"{(xs:0)}"`.
+- **A hole holds one expression.** `"{a, b}"` is an error; write `"{a}, {b}"` or `"{(a, b)}"`; a selection needs no parentheses: `"{xs[0]}"`.
 - **Deep recursion stops with an error.** Use `repeat`, `while`, or `reduce` for long iterations.
 
 ### Numbers: Precision and Limits
@@ -2714,7 +2744,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
-| `:` | Selection by zero-based index (`value:0`) | Postfix |
+| `[ ]` | Selection by zero-based position (`value[0]`, `value[0, 1]`) | Postfix |
 | `.` | Dot call or member access (`a.f(b)`) | Postfix |
 
 ### Syntax

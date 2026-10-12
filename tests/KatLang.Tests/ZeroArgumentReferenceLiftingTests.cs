@@ -25,7 +25,7 @@ namespace KatLang.Tests;
 /// comparison operands, list elements, index targets, spread operands, strict Math arguments,
 /// alias rows and block bodies — with <c>xs</c> lifted into the enclosing owner, which could only
 /// forward an empty supply at the root. <c>Roll == Roll</c> was <c>false</c>,
-/// <c>first(Pair)</c> and <c>Pair:0</c> read different draws, and a formula chain re-ran its base
+/// <c>first(Pair)</c> and <c>Pair[0]</c> read different draws, and a formula chain re-ran its base
 /// 2^k times. Both halves now read ONE rule, <c>ParameterPattern.AcceptsZeroSuppliedSlots</c>
 /// (<c>ImplicitArgumentResolver.RequiresSuppliedArguments</c> is its complement).</para>
 ///
@@ -262,7 +262,7 @@ public class ZeroArgumentReferenceLiftingTests
         AssertOk(await OnEveryRouteAsync($"Roll(*xs) = {draw}\nRoll == Roll", seed), "true");
         AssertOk(
             await OnEveryRouteAsync(
-                $"Roll(*xs) = {draw}\nRoll, Roll + 0, sum(Roll), abs(Roll), [Roll]:0, Roll:0, {draw}",
+                $"Roll(*xs) = {draw}\nRoll, Roll + 0, sum(Roll), abs(Roll), [Roll][0], Roll[0], {draw}",
                 seed),
             $"S[{r[0]}, {r[0]}, {r[0]}, {r[0]}, {r[0]}, {r[0]}, {r[1]}]");
         // An explicit call draws afresh: it consumes the SECOND draw and leaves the entry alone.
@@ -288,8 +288,8 @@ public class ZeroArgumentReferenceLiftingTests
         { "", "1 <= Only <= 1" },
         { "", "not (Only == 1)" },
         { "", "[Only, Only]" },
-        { "", "[Only]:0" },
-        { "", "Only:0" },
+        { "", "[Only][0]" },
+        { "", "Only[0]" },
         { "", "[Only*]" },
         { "", "(Only*, 0)" },
         { "", "abs(Only)" },
@@ -341,7 +341,7 @@ public class ZeroArgumentReferenceLiftingTests
     [InlineData("Only + 1")]
     [InlineData("Only == Only")]
     [InlineData("[Only]")]
-    [InlineData("Only:0")]
+    [InlineData("Only[0]")]
     [InlineData("[Only*]")]
     [InlineData("abs(Only)")]
     [InlineData("Math.Abs(Only)")]
@@ -377,14 +377,14 @@ public class ZeroArgumentReferenceLiftingTests
     // ── 3. Selection and formula chains ──────────────────────────────────────────────
 
     /// <summary>
-    /// <c>first(Pair)</c> and <c>Pair:0</c> choose from ONE evaluation of <c>Pair</c>. Before
-    /// Q-03 the index target was lifted, so <c>Pair:0</c> read a fresh evaluation while the
+    /// <c>first(Pair)</c> and <c>Pair[0]</c> choose from ONE evaluation of <c>Pair</c>. Before
+    /// Q-03 the index target was lifted, so <c>Pair[0]</c> read a fresh evaluation while the
     /// neutral builtin argument read the cached one.
     /// </summary>
     [Fact]
     public async Task Selection_FirstAndIndex_ObserveTheSameEvaluation()
         => AssertOk(
-            await OnEveryRouteAsync("Pair(*xs) = tick(), tick()\nfirst(Pair), Pair:0, last(Pair), Pair:1, Pair"),
+            await OnEveryRouteAsync("Pair(*xs) = tick(), tick()\nfirst(Pair), Pair[0], last(Pair), Pair[1], Pair"),
             "S[1, 1, 2, 2, S[1, 2]]",
             "tick#1", "tick#2");
 
@@ -396,7 +396,7 @@ public class ZeroArgumentReferenceLiftingTests
         => AssertOk(
             await OnEveryRouteAsync(
                 "Pair(*xs) = randomInt(0, 1000000), randomInt(0, 1000000)\n"
-                + "first(Pair) == Pair:0, last(Pair) == Pair:1, Pair:0 == Pair:0",
+                + "first(Pair) == Pair[0], last(Pair) == Pair[1], Pair[0] == Pair[0]",
                 seed),
             "S[true, true, true]");
 
@@ -417,7 +417,7 @@ public class ZeroArgumentReferenceLiftingTests
         // The same through strict Math arguments and list elements.
         AssertOk(
             await OnEveryRouteAsync(
-                "Only(*xs) = tick() * 0 + 1\nB1 = abs(Only) + [Only]:0\nB2 = abs(B1) + [B1]:0\nB3 = abs(B2) + [B2]:0\nB3"),
+                "Only(*xs) = tick() * 0 + 1\nB1 = abs(Only) + [Only][0]\nB2 = abs(B1) + [B1][0]\nB3 = abs(B2) + [B2][0]\nB3"),
             "8",
             "tick#1");
     }
@@ -570,7 +570,7 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task LexicalOpenedAndStructuralReads_ShareOneEntry()
         => AssertOk(
             await OnEveryRouteAsync(
-                "open Lib\nLib = {\n  public Only(*xs) = tick()\n}\nOnly + Only, Lib.Only + 0, Lib.Only:0, abs(Lib.Only)"),
+                "open Lib\nLib = {\n  public Only(*xs) = tick()\n}\nOnly + Only, Lib.Only + 0, Lib.Only[0], abs(Lib.Only)"),
             "S[2, 1, 1, 1]",
             "tick#1");
 

@@ -705,10 +705,10 @@ def containsProjectionRoot110f : Algorithm :=
     ])
   ] [
     .call (resolve "contains") [
-      .index (.resolve "Data") (.num 0),
+      .index (.resolve "Data") [.num 0],
       .num 4
     ],
-    .dotCall (.index (.resolve "Data") (.num 0)) "contains" (some [.num 4])
+    .dotCall (.index (.resolve "Data") [.num 0]) "contains" (some [.num 4])
   ]
 
 def test110f : Bool :=
@@ -2659,10 +2659,10 @@ def test215 : Bool :=
       .capture [.num 1, .num 2, .num 3, .num 4, .num 5]
     ])
   ] [
-    .call (resolve "count") [.index (.resolve "Data") (.num 0)],
-    .dotCall (.index (.resolve "Data") (.num 0)) "count" none
-    , .call (resolve "order") [.index (.resolve "Data") (.num 0)]
-    , .dotCall (.index (.resolve "Data") (.num 0)) "order" none
+    .call (resolve "count") [.index (.resolve "Data") [.num 0]],
+    .dotCall (.index (.resolve "Data") [.num 0]) "count" none
+    , .call (resolve "order") [.index (.resolve "Data") [.num 0]]
+    , .dotCall (.index (.resolve "Data") [.num 0]) "order" none
   ])) with
   | Except.ok [5, 5, 1, 2, 4, 6, 7, 1, 2, 4, 6, 7] => true
   | _ => false
@@ -2673,7 +2673,7 @@ def test215a : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("A", alg [] [] [] [.num 7, .num 8])
   ] [
-    .index (.resolve "A") (.num 0)
+    .index (.resolve "A") [.num 0]
   ])) with
   | Except.ok (.atom 7) => true
   | _ => false
@@ -2687,7 +2687,7 @@ def test215b : Bool :=
       .capture [.num 3, .num 4]
     ])
   ] [
-    .index (.resolve "A") (.num 0)
+    .index (.resolve "A") [.num 0]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2]) => true
   | _ => false
@@ -2701,8 +2701,8 @@ def test215c : Bool :=
       .capture [.num 3, .num 4]
     ])
   ] [
-    .call (resolve "count") [.index (.resolve "A") (.num 0)],
-    .dotCall (.index (.resolve "A") (.num 0)) "count" none
+    .call (resolve "count") [.index (.resolve "A") [.num 0]],
+    .dotCall (.index (.resolve "A") [.num 0]) "count" none
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -2716,10 +2716,10 @@ def test215cWrappedProjectionBoundary : Bool :=
       .capture [.num 3, .num 4]
     ]),
     ("Projected", alg [] [] [] [
-      .index (.resolve "A") (.num 0)
+      .index (.resolve "A") [.num 0]
     ])
   ] [
-    .call (resolve "count") [.index (.resolve "A") (.num 0)],
+    .call (resolve "count") [.index (.resolve "A") [.num 0]],
     .call (resolve "count") [.resolve "Projected"]
   ])) with
   | Except.ok [2, 2] => true
@@ -2740,7 +2740,7 @@ def test215d : Bool :=
       ]
     ])
   ] [
-    .index (.resolve "A") (.num 0)
+    .index (.resolve "A") [.num 0]
   ])) with
   | Except.ok (.sequenceValue [
       .sequenceValue [.atom 1, .atom 2],
@@ -2763,7 +2763,7 @@ def test215e : Bool :=
       ]
     ])
   ] [
-    .index (.index (.resolve "A") (.num 0)) (.num 1)
+    .index (.index (.resolve "A") [.num 0]) [.num 1]
   ])) with
   | Except.ok (.sequenceValue [.atom 3, .atom 4]) => true
   | _ => false
@@ -2783,8 +2783,8 @@ def test215f : Bool :=
       ]
     ])
   ] [
-    .call (resolve "count") [.index (.resolve "A") (.num 0)],
-    .call (resolve "count") [.index (.index (.resolve "A") (.num 0)) (.num 1)]
+    .call (resolve "count") [.index (.resolve "A") [.num 0]],
+    .call (resolve "count") [.index (.index (.resolve "A") [.num 0]) [.num 1]]
   ])) with
   | Except.ok [2, 2] => true
   | _ => false
@@ -2804,7 +2804,7 @@ def test215g : Bool :=
       ]
     ])
   ] [
-    .call (resolve "sum") [.index (.resolve "A") (.num 0)]
+    .call (resolve "sum") [.index (.resolve "A") [.num 0]]
   ])) with
   | Except.error err =>
       innermostIsTypeMismatch "sum expects each collection element to be a single numeric value; item 0 was sequence value" err
@@ -2876,12 +2876,12 @@ def test218 : Bool :=
   let keepSecondEven : Algorithm :=
     alg ["pair"] [] [] [
       .compare .eq
-        (.binary .mod (.index (.param "pair") (.num 1)) (.num 2))
+        (.binary .mod (.index (.param "pair") [.num 1]) (.num 2))
         (.num 0)
     ]
   let takeFirstAlg : Algorithm :=
     alg ["x"] [] [] [
-      .index (.param "x") (.num 0)
+      .index (.param "x") [.num 0]
     ]
   let addItemCount : Algorithm :=
     alg ["item", "acc"] [] [] [

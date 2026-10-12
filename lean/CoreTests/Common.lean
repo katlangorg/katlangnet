@@ -140,7 +140,7 @@ def sequenceSpreadReceiver (expr : KatLang.Expr) : KatLang.Expr :=
 def evenPredicateAlg19d : Algorithm :=
   alg ["n"] [] [] [
     .compare .eq
-      (.binary .mod (.index (.param "n") (.num 1)) (.num 2))
+      (.binary .mod (.index (.param "n") [.num 1]) (.num 2))
       (.num 0)
   ]
 

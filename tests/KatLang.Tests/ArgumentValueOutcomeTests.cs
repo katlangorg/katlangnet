@@ -280,14 +280,14 @@ public class ArgumentValueOutcomeTests
     {
         Assert.Equal(["2", "0"], Rows("randomInt(0, 3), randomInt(0, 3)", seed: 4));
 
-        const string pick = "Pick = [10, 20]:(trace(randomInt(0, 3)))";
+        const string pick = "Pick = [10, 20][trace(randomInt(0, 3))]";
         AssertFails(await OnEveryRouteAsync($"{pick}\nF(v) = v\nF(Pick)", seed: 4), KatLangErrorCode.BadIndex, "trace(2)");
         AssertFails(await OnEveryRouteAsync($"{pick}\nPair(v) = v, v\nPair(Pick)", seed: 4), KatLangErrorCode.BadIndex, "trace(2)");
         // The property alone agrees: one draw, the same failure.
         AssertFails(await OnEveryRouteAsync($"{pick}\nPick", seed: 4), KatLangErrorCode.BadIndex, "trace(2)");
         // A written block argument (also carrying an algorithm channel) behaves the same.
         AssertFails(
-            await OnEveryRouteAsync("F(v) = v\nF({ [10, 20]:(trace(randomInt(0, 3))) })", seed: 4),
+            await OnEveryRouteAsync("F(v) = v\nF({ [10, 20][trace(randomInt(0, 3))] })", seed: 4),
             KatLangErrorCode.BadIndex,
             "trace(2)");
     }
@@ -505,7 +505,7 @@ public class ArgumentValueOutcomeTests
         "G(v) = range(v, 3)\nG(Bad)",
         "G(v) = v.filter({x > 0}).count\nG(Bad)",
         "G(v) = [v, v]\nG(Bad)",
-        "G(v) = v:0\nG(Bad)",
+        "G(v) = v[0]\nG(Bad)",
         "G(v) = (v), (v)\nG(Bad)",
         "G(v) = v < v\nG(Bad)",
         "Coll(*xs) = xs\nG(v) = Coll(v*)\nG(Bad)",
@@ -732,7 +732,7 @@ public class ArgumentValueOutcomeTests
     private const string LawDefinitions = """
         Bad = trace(1) / 0
         Flaky = if(tick() < 2, 1 / 0, tick())
-        Pick = [10, 20]:(trace(randomInt(0, 3)))
+        Pick = [10, 20][trace(randomInt(0, 3))]
         Roll = trace(randomInt(1, 1000000))
         Tock = tick() * 100
         Box = {

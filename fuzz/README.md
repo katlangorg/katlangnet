@@ -170,7 +170,7 @@ parentheses/braces/exact-list brackets and their empty/nested forms, comma vs ba
 adjacency (the latter now a targeted parse error, SYN-07A — kept as recovery input),
 newline/CRLF/lone-CR boundaries, comments, property/`public` definitions,
 ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
-leading-dot continuation, `open` declarations, `:` indexing, `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,
+leading-dot continuation, `open` declarations, `[...]` postfix selection (and the retired `:` form, kept as recovery input), `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,
 deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-
 character mixtures. Keep new seeds small and reviewable; do not commit generated corpora
 (they belong in `fuzz/artifacts/corpus`).

@@ -60,7 +60,7 @@ internal static class ExprVariantCatalog
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
             [nameof(Expr.Comparison)] = new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Lt, leaf)]),
-            [nameof(Expr.Index)] = new Expr.Index(new Expr.Capture([leaf, leaf]), new Expr.Num(0)),
+            [nameof(Expr.Index)] = new Expr.Index(new Expr.Capture([leaf, leaf]), [new Expr.Num(0)]),
             [nameof(Expr.SequenceConstruct)] = new Expr.SequenceConstruct(leaf, leaf),
             [nameof(Expr.EmptySequence)] = new Expr.EmptySequence(0),
             [nameof(Expr.SequenceSpread)] = new Expr.SequenceSpread(new Expr.Capture([leaf, leaf])),

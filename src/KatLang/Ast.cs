@@ -61,11 +61,11 @@ public sealed record InterpolationLink(Expr Hole, string Text);
 /// items whose predicate returns the Boolean value <c>true</c> (a number,
 /// string, sequence, or list predicate result is a value-kind error); each
 /// callback item is a SELECTED value that crosses the same ordinary value
-/// boundary as <c>S:i</c> (one value, never opened), and the kept items are
+/// boundary as <c>S[i]</c> (one value, never opened), and the kept items are
 /// materialized as one exact list value.
 /// <c>map(collection, mapper)</c> maps top-level sequence items left to right;
 /// each callback item is a selected value under the same value-boundary rule
-/// as <c>S:i</c>, and each mapped element is the ordinary call result of
+/// as <c>S[i]</c>, and each mapped element is the ordinary call result of
 /// <c>mapper(element)</c> — ONE value whatever rows produced it, <c>()</c> and
 /// <c>[]</c> included (HO-03) — preserved whole as an exact element of one
 /// list result.
@@ -116,7 +116,7 @@ public sealed record InterpolationLink(Expr Hole, string Text);
 /// toward zero.)
 /// <c>reduce(collection, reducer, initial)</c> folds top-level sequence items left
 /// to right; the current callback item is a selected value under the same
-/// value-boundary rule as <c>S:i</c>, <c>reducer(element, accumulator)</c> must return exactly
+/// value-boundary rule as <c>S[i]</c>, <c>reducer(element, accumulator)</c> must return exactly
 /// one next accumulator value, and sequence-value accumulators are preserved whole.
 /// </summary>
 public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
@@ -138,6 +138,8 @@ public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @or
 ///     (singleton/empty normalization) over the bundle.</item>
 ///   <item><see cref="Expr.ListLiteral"/> collects the slots as one exact
 ///     immutable list value.</item>
+///   <item><see cref="Expr.Index"/> forms the slots into a selector supply exactly as a
+///     call forms its arguments, and selects one receiver position per supplied item.</item>
 /// </list>
 /// It deliberately does NOT encode a fixed runtime consumption policy and is
 /// NOT a list of evaluated results.
@@ -1002,8 +1004,24 @@ public closed record Expr
     /// </summary>
     public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr;
 
-    /// <summary>Output selection. <c>Index(a, i)</c> selects top-level item <c>i</c> of the evaluated target <c>a</c> and returns it as ONE value (selection is a value boundary: the item is never opened; <c>*</c> opens it).</summary>
-    public sealed record Index(Expr Target, Expr Selector) : Expr;
+    /// <summary>
+    /// VARIADIC POSTFIX SELECTION <c>Target[s1, ..., sn]</c> (October 2026; the retired colon form
+    /// <c>Target:s</c> is no longer syntax). <see cref="Selectors"/> is an ordinary written expression
+    /// list — zero, one, or several slots, explicit spread slots included — over the receiver
+    /// <see cref="Target"/>. PARENTHESES INVOKE A COMPUTATION; POSTFIX BRACKETS SELECT FROM A VALUE;
+    /// selection never changes how its receiver obtains that value. Evaluation: the receiver is
+    /// demanded ONCE through its ordinary value path (a cached property read for <c>Data</c>, one
+    /// fresh call for <c>Data()</c>), even when no selector is supplied; the selector supply is formed
+    /// like a call's (explicit spreads run during formation, ordinary selectors stay unevaluated);
+    /// each supplied selector is then demanded, validated and selected LEFT TO RIGHT against the
+    /// receiver's immediate positional view (the view <c>count</c>, <c>first</c> and <c>last</c>
+    /// read), the first failure ending the selection; the selected values are captured by ordinary
+    /// normalization of the result grouping — zero selections are <c>()</c>, one is the selected
+    /// value itself, several are ONE sequence of the selected values kept whole (selection is a
+    /// value boundary: a selected value is never opened; <c>*</c> opens it). A selection has no
+    /// callable identity. Lean: <c>Expr.index</c>.
+    /// </summary>
+    public sealed record Index(Expr Target, OutputBundle Selectors) : Expr;
 
     /// <summary>
     /// INTERNAL sequence-join node retained for semantic AST compatibility

@@ -58,7 +58,7 @@ public class LoopStepUnboundStateMessageTests
         { "empty sequence", "repeat((), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
         { "operator result", "repeat(2 + 3, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
         { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "selection", "A = 1, 2\nrepeat(A:0, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
+        { "selection", "A = 1, 2\nrepeat(A[0], 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
         { "dot-call value", "A = 3\nrepeat(A.abs, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
         { "value forwarded through a parameter", "Run(s) = repeat(s, 1, 1)\nRun(5)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
     };

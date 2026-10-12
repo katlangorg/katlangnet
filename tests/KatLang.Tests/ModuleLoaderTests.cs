@@ -79,7 +79,7 @@ public class ModuleLoaderTests
             Expr.DotCall(var target, _, var args) => ContainsRawLoad(target) || (args is not null && args.Any(ContainsRawLoad)),
             Expr.Unary(_, var operand) => ContainsRawLoad(operand),
             Expr.Binary(_, var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
-            Expr.Index(var target, var selector) => ContainsRawLoad(target) || ContainsRawLoad(selector),
+            Expr.Index(var target, var selectors) => ContainsRawLoad(target) || selectors.Any(ContainsRawLoad),
             Expr.SequenceConstruct(var left, var right) => ContainsRawLoad(left) || ContainsRawLoad(right),
             Expr.SequenceSpread(var operand) => ContainsRawLoad(operand),
             Expr.Grace(var inner, _) => ContainsRawLoad(inner),
@@ -251,7 +251,7 @@ public class ModuleLoaderTests
                 public _x = 0
                 public _y = 1
                 public Vector = (x, y)
-                public Scale = Vector(q~ * v:_x, q * v:_y)
+                public Scale = Vector(q~ * v[_x], q * v[_y])
                 """
         };
 
@@ -276,8 +276,8 @@ public class ModuleLoaderTests
             ["https://katlang.org/demo/vec.kat"] = """
                 public _x = 0
                 public _y = 1
-                GetX = v:_x
-                GetY = v:_y
+                GetX = v[_x]
+                GetY = v[_y]
                 public Vector = (x, y)
                 public Add(*vectors) = Vector(vectors.map(GetX).sum, vectors.map(GetY).sum)
                 """

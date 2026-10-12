@@ -39,7 +39,7 @@ public class FrontEndPipelineInvariantTests
             {
                 case Expr.Unary(_, var o): WalkExpr(o); break;
                 case Expr.Binary(_, var l, var r): WalkExpr(l); WalkExpr(r); break;
-                case Expr.Index(var t, var s): WalkExpr(t); WalkExpr(s); break;
+                case Expr.Index(var t, var s): WalkExpr(t); foreach (var it in s) WalkExpr(it); break;
                 case Expr.SequenceSpread(var o): WalkExpr(o); break;
                 case Expr.Grace(var i, _): WalkExpr(i); break;
                 case Expr.ListLiteral(var items): foreach (var it in items) WalkExpr(it); break;

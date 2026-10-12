@@ -193,18 +193,18 @@ public class DotCallCollectingReceiverTests
         AssertResult(defs + "if(true, (), 1).Collect(9)", List(Seq(), Atom(9)));
         AssertResult(defs + "Fz(1)*.Collect", List());
 
-        AssertResult(defs + "A:0.Collect", List(Seq(Atom(1), Atom(2))));
+        AssertResult(defs + "A[0].Collect", List(Seq(Atom(1), Atom(2))));
         AssertResult(defs + "first(A).Collect", List(Seq(Atom(1), Atom(2))));
-        AssertResult(defs + "A:0.Collect(9)", List(Seq(Atom(1), Atom(2)), Atom(9)));
-        AssertResult(defs + "(A:0)*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "A[0].Collect(9)", List(Seq(Atom(1), Atom(2)), Atom(9)));
+        AssertResult(defs + "(A[0])*.Collect", List(Atom(1), Atom(2)));
         AssertResult(defs + "(first(A))*.Collect", List(Atom(1), Atom(2)));
-        AssertResult(defs + "B:0.Collect", List(Seq()));
+        AssertResult(defs + "B[0].Collect", List(Seq()));
         AssertResult(defs + "first(B).Collect", List(Seq()));
-        AssertResult(defs + "B:0.Collect(9)", List(Seq(), Atom(9)));
-        AssertResult(defs + "(B:0)*.Collect", List());
-        AssertResult(defs + "C:0.Collect", List(List(Atom(1), Atom(2))));
+        AssertResult(defs + "B[0].Collect(9)", List(Seq(), Atom(9)));
+        AssertResult(defs + "(B[0])*.Collect", List());
+        AssertResult(defs + "C[0].Collect", List(List(Atom(1), Atom(2))));
         AssertResult(defs + "first(C).Collect", List(List(Atom(1), Atom(2))));
-        AssertResult(defs + "(C:0)*.Collect", List(Atom(1), Atom(2)));
+        AssertResult(defs + "(C[0])*.Collect", List(Atom(1), Atom(2)));
     }
 
     // ── C. Fixed parameters, allocation, and callee shapes ──────────────────

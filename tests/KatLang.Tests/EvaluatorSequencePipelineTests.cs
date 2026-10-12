@@ -92,7 +92,7 @@ public class EvaluatorSequencePipelineTests
         // is the kept-item count 1, in both the generic composition and the fused
         // filter.count path.
         var source = """
-            KeepFirstPair(pair) = pair:0 == 1
+            KeepFirstPair(pair) = pair[0] == 1
             (((1, 2), (3, 4))).filter(KeepFirstPair).count
             """;
 
@@ -283,7 +283,7 @@ public class EvaluatorSequencePipelineTests
     public void Eval_SequencePipelineS1_FilterCount_SequenceValueItems()
     {
         var source = """
-            KeepPair = pair:0 mod 2 == 0
+            KeepPair = pair[0] mod 2 == 0
             Data = (1, 10), (2, 20), (3, 30), (4, 40)
             Data.filter(KeepPair).count
             """;
@@ -839,7 +839,7 @@ public class EvaluatorSequencePipelineTests
                     Square = k * k
                     k + 1, s + if(num mod Square == 0, 1, 0), Square <= num and s <= 0
                 }
-                Step.while(2, 0):1 == 0
+                Step.while(2, 0)[1] == 0
             }
 
             SquareFreeCount(N) = range(1, N).filter(IsSquareFree).count
@@ -874,7 +874,7 @@ public class EvaluatorSequencePipelineTests
                     Square = k * k
                     k + 1, s + if(num mod Square == 0, 1, 0), Square <= num and s <= 0
                 }
-                Step.while(2, 0):1 == 0
+                Step.while(2, 0)[1] == 0
             }
 
             SquareFreeCount = range(1,N).filter(IsSquareFree).count

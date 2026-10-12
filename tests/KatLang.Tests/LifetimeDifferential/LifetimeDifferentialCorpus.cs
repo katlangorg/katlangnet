@@ -53,7 +53,7 @@ public static class LifetimeDifferentialCorpus
         "D(0), D(2), G((1, 2, 3)), Inner, Items(x)*";
 
     /// <summary>Runtime-error target: error-category equality across histories.</summary>
-    public const string TargetRuntimeError = "(1, 2):9";
+    public const string TargetRuntimeError = "(1, 2)[9]";
 
     // ── History programs (no modules) ───────────────────────────────────────
 
@@ -73,7 +73,7 @@ public static class LifetimeDifferentialCorpus
 
     public const string HistParenDecl = "(y = 1)\n5";
 
-    public const string HistRuntimeIndexError = "(1, 2):9";
+    public const string HistRuntimeIndexError = "(1, 2)[9]";
 
     /// <summary>Unbounded recursion: rejected by the always-active dynamic depth
     /// ceiling — a resource-limit failure history.</summary>

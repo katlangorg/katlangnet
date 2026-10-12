@@ -98,7 +98,7 @@ private def withFwdBody (body : Expr) : List (Prod Ident Algorithm) :=
 -- CALLABLE identity; invoking it is NotAnAlgorithm by projection (no VALUE demand).
 #guard fails (withFwdBody (.call (.resolve "Apply") [.param "fs"])) [.call (.resolve "Fwd") [.resolve "Inc"]] notCallable
 -- V6b: a selection is a computed value: no identity.
-#guard fails (withFwdBody (.call (.resolve "Apply") [.index (.param "fs") (.num 0)])) [.call (.resolve "Fwd") [.resolve "Inc"]] notCallable
+#guard fails (withFwdBody (.call (.resolve "Apply") [.index (.param "fs") [.num 0]])) [.call (.resolve "Fwd") [.resolve "Inc"]] notCallable
 -- V6f: a capture of the spread is one sequence-valued computation: no identity.
 #guard fails (withFwdBody (.call (.resolve "Apply") [.capture [.sequenceSpread (.param "fs")]])) [.call (.resolve "Fwd") [.resolve "Inc"]] notCallable
 -- V6c: an ordinary materialized list, then `*`: building `[fs*]` demands Inc's VALUE.
@@ -293,7 +293,7 @@ private def fixedCarrier : Algorithm := alg ["v"] [] [] [.call (.resolve "Apply"
     ("Outer", collecting "xs" [.param "xs", .call (.resolve "Call") [.sequenceSpread (.param "xs")]])]
   [.call (.resolve "Outer") [.resolve "Z"]] (.sequenceValue [.listValue [.atom 7], .atom 7])
 -- Selection receives the whole eager list: a failure in its tail aborts before selection.
-#guard fails [("Outer", collecting "xs" [.index (.param "xs") (.num 0)])]
+#guard fails [("Outer", collecting "xs" [.index (.param "xs") [.num 0]])]
   [.call (.resolve "Outer") [.num 1, bad]] innermostIsDivByZero
 
 end KatLangTests.CollectingCallableForwarding

@@ -438,9 +438,9 @@ public class BooleanValueTests
         AssertEval("count([true])", 1);
         Assert.Equal("[true, false]", Display("distinct((true, true, false))"));
         Assert.Equal("[true, false]", Display("take((true, false, true), 2)"));
-        AssertEvalResults("(true, (false, 1)):1", new Result.Bool(false), new Result.Atom(1));
-        AssertEvalBool("[true, 1]:0", true);
-        AssertEvalBool("A = (true, 2)\nB = { A* }\nB:0", true);
+        AssertEvalResults("(true, (false, 1))[1]", new Result.Bool(false), new Result.Atom(1));
+        AssertEvalBool("[true, 1][0]", true);
+        AssertEvalBool("A = (true, 2)\nB = { A* }\nB[0]", true);
         Assert.Equal("[true, 3]", Display("F(*items) = items\nF(true, 3)"));
         AssertEvalBool("F((x, y)) = x and y == 2\nF((true, 2))", true);
         // `atoms` collects numbers only: a Boolean is not an atom.

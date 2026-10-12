@@ -446,7 +446,7 @@ public class CallableSignatureTests
         AssertEval(
             """
             CountSequenceValue((*items)) = items.count
-            Use(*values) = [CountSequenceValue]:0
+            Use(*values) = [CountSequenceValue][0]
             Use((1, 2, 3)*)
             """,
             3);

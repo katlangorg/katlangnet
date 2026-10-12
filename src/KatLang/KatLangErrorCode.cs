@@ -354,4 +354,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.InterpolationNotAllowedHere"/>.</summary>
     InterpolationNotAllowedHere = 79,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.RetiredColonSelection"/>.</summary>
+    RetiredColonSelection = 80,
 }

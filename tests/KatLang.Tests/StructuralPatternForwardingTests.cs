@@ -77,7 +77,7 @@ public class StructuralPatternForwardingTests
             {
                 Expr.Call call => [call.Function, .. call.Args],
                 Expr.Binary binary => [binary.Left, binary.Right],
-                Expr.Index index => [index.Target, index.Selector],
+                Expr.Index index => [index.Target, .. index.Selectors],
                 Expr.ListLiteral list => list.Items,
                 Expr.Capture capture => capture.Body,
                 Expr.SequenceSpread spread => [spread.Operand],
@@ -99,8 +99,8 @@ public class StructuralPatternForwardingTests
         { "Single([x]) = x\nQ = Single + 0", "Q", "Single", "[x]", "[x]" },
         { "Add((x, y)) = x + y\nL = [Add]", "L", "Add", "(x, y)", "(x, y)" },
         { "P((a, b)) = a + b\nF(a) = {\n  G = P + 0\n  G(5)\n}", "G", "P", "b", "(a, b)" },
-        { "P(x, ((x, a), b)) = a\nSome = [P]:0", "Some", "P", "x, (a, b)", "x, ((x, a), b)" },
-        { "P(x, (x, *rest)) = rest\nSome = [P]:0", "Some", "P", "x, (*rest)", "x, (x, rest*)" },
+        { "P(x, ((x, a), b)) = a\nSome = [P][0]", "Some", "P", "x, (a, b)", "x, ((x, a), b)" },
+        { "P(x, (x, *rest)) = rest\nSome = [P][0]", "Some", "P", "x, (*rest)", "x, (x, rest*)" },
         // Bare forwarding supplies each callee pattern from the SAME-NAMED binding declared with the
         // SAME pattern, rebuilt as its own kind at every depth; unused source parameters stay unused.
         { "C((*xs)) = xs\nG((*xs)) = C", "G", "C", "(*xs)", "(xs*)" },

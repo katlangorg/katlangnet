@@ -53,13 +53,13 @@ def test230 : Bool :=
     ])
   ] [
     .call (resolve "count") [
-      .index (.resolve "Data") (.num 0)
+      .index (.resolve "Data") [.num 0]
     ],
-    .dotCall (.index (.resolve "Data") (.num 0)) "count" none,
+    .dotCall (.index (.resolve "Data") [.num 0]) "count" none,
     .call (resolve "order") [
-      .index (.resolve "Data") (.num 0)
+      .index (.resolve "Data") [.num 0]
     ],
-    .dotCall (.index (.resolve "Data") (.num 0)) "order" none
+    .dotCall (.index (.resolve "Data") [.num 0]) "order" none
   ])) with
   | Except.ok [5, 5, 1, 2, 4, 6, 7, 1, 2, 4, 6, 7] => true
   | _ => false
@@ -71,7 +71,7 @@ def test232 : Bool :=
   let secondReport := .capture [.num 1, .num 2, .num 7, .num 8, .num 9]
   let safeReportProjected : Algorithm :=
     let report := .param "report"
-    let itemAt (i : Int) := .index report (.num i)
+    let itemAt (i : Int) := .index report [.num i]
     let desc (i : Int) := .compare .gt (itemAt i) (itemAt (i + 1))
     let stepOk (i : Int) := .compare .le (.binary .sub (itemAt i) (itemAt (i + 1))) (.num 3)
     let descendingChecks :=
@@ -107,7 +107,7 @@ def test232 : Bool :=
 def test233 : Bool :=
   let takeFirstProjected : Algorithm :=
     alg ["report"] [] [] [
-      .index (.param "report") (.num 0)
+      .index (.param "report") [.num 0]
     ]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("TakeFirst", takeFirstProjected)
@@ -137,8 +137,8 @@ def test234 : Bool :=
     ("CountItem", countItem)
   ] [
     .dotCall (.resolve "Items") "count" none,
-    .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
-    .dotCall (.index (.resolve "Items") (.num 1)) "count" none,
+    .dotCall (.index (.resolve "Items") [.num 0]) "count" none,
+    .dotCall (.index (.resolve "Items") [.num 1]) "count" none,
     .dotCall (.resolve "Items") "map" (some [.resolve "CountItem"])
   ])) with
   | Except.ok [2, 3, 3, 3, 3] => true
@@ -149,7 +149,7 @@ def test234 : Bool :=
 def test235 : Bool :=
   let takeFirstProjected : Algorithm :=
     alg ["x"] [] [] [
-      .index (.param "x") (.num 0)
+      .index (.param "x") [.num 0]
     ]
   let hasThreeItems : Algorithm :=
     alg ["x"] [] [] [
@@ -195,14 +195,14 @@ def reduceCurrentOneLevelSignatureAlg237 : Algorithm :=
       (.binary .mul (.param "acc") (.num 100))
       (.binary .add
         (.binary .mul (.dotCall (.param "current") "count" none) (.num 10))
-        (.dotCall (.index (.param "current") (.num 0)) "count" none))
+        (.dotCall (.index (.param "current") [.num 0]) "count" none))
   ]
 
 def reduceAccumulatorAsymmetryAlg238 : Algorithm :=
   alg ["current", "acc"] [] [] [
     .capture [
       .binary .add
-        (.binary .mul (.index (.param "acc") (.num 0)) (.num 100))
+        (.binary .mul (.index (.param "acc") [.num 0]) (.num 100))
         (.binary .add
           (.binary .mul (.dotCall (.param "current") "count" none) (.num 10))
           (.dotCall (.param "acc") "count" none)),
@@ -218,10 +218,10 @@ def test236 : Bool :=
       .capture [.num 3, .num 4]
     ])
   ] [
-    .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
-    .dotCall (.index (.resolve "Items") (.num 0)) "sum" none,
-    .dotCall (.index (.resolve "Items") (.num 1)) "count" none,
-    .dotCall (.index (.resolve "Items") (.num 1)) "sum" none,
+    .dotCall (.index (.resolve "Items") [.num 0]) "count" none,
+    .dotCall (.index (.resolve "Items") [.num 0]) "sum" none,
+    .dotCall (.index (.resolve "Items") [.num 1]) "count" none,
+    .dotCall (.index (.resolve "Items") [.num 1]) "sum" none,
     .dotCall (.resolve "Items") "reduce" (some [.resolve "Signature", .num 0]),
     .call (.resolve "reduce") [
       sequenceItems [
@@ -246,7 +246,7 @@ def test237 : Bool :=
       ]
     ])
   ] [
-    .dotCall (.index (.resolve "Items") (.num 0)) "count" none,
+    .dotCall (.index (.resolve "Items") [.num 0]) "count" none,
     .dotCall (.resolve "Items") "reduce" (some [.resolve "Signature", .num 0]),
     .call (.resolve "reduce") [
       .capture [
@@ -373,7 +373,7 @@ private def dotSweepAddAlg : Algorithm :=
   alg ["x", "total"] [] [] [.binary .add (.param "x") (.param "total")]
 
 def sequenceBuiltinDotCallCountSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
@@ -392,7 +392,7 @@ def sequenceBuiltinDotCallCountSweep : Bool :=
 #guard sequenceBuiltinDotCallCountSweep
 
 def sequenceBuiltinDotCallContainsSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runResult (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("SequenceValue", dotSweepSequenceValueAlg [1, 2, 3]),
@@ -411,7 +411,7 @@ def sequenceBuiltinDotCallContainsSweep : Bool :=
 #guard sequenceBuiltinDotCallContainsSweep
 
 def sequenceBuiltinDotCallOrderSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [3, 1, 2]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
@@ -466,7 +466,7 @@ def sequenceBuiltinDotCallOrderBoundarySweep : Bool :=
 #guard sequenceBuiltinDotCallOrderBoundarySweep
 
 def sequenceBuiltinDotCallFirstLastSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [5, 6, 7]),
     ("Data", dotSweepPairAlg [9, 8, 7] [3, 2, 1])
@@ -503,7 +503,7 @@ def sequenceBuiltinDotCallFirstLastSequenceValueSweep : Bool :=
 #guard sequenceBuiltinDotCallFirstLastSequenceValueSweep
 
 def sequenceBuiltinDotCallDistinctSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 1, 3]),
     ("Data", dotSweepPairAlg [1, 2, 1, 3] [9, 8, 9])
@@ -533,7 +533,7 @@ def sequenceBuiltinDotCallDistinctSequenceValueSweep : Bool :=
 #guard sequenceBuiltinDotCallDistinctSequenceValueSweep
 
 def sequenceBuiltinDotCallTakeSkipSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [7, 6, 4, 2, 1] [1, 2, 3, 4, 5])
@@ -681,7 +681,7 @@ def sequenceBuiltinDotCallInlineReceiverSweep : Bool :=
 #guard sequenceBuiltinDotCallInlineReceiverSweep
 
 def sequenceBuiltinDotCallNumericAggregationSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("Values", dotSweepAtomsAlg [1, 2, 3]),
     ("Data", dotSweepPairAlg [3, 1, 2] [9, 8, 7])
@@ -774,7 +774,7 @@ def sequenceBuiltinDotCallNumericAggregationBoundarySweep : Bool :=
 #guard sequenceBuiltinDotCallNumericAggregationBoundarySweep
 
 def sequenceBuiltinDotCallMapSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("ItemCount", dotSweepTopLevelItemCountAlg),
     ("AddOne", dotSweepAddOneAlg),
@@ -795,7 +795,7 @@ def sequenceBuiltinDotCallMapSweep : Bool :=
 #guard sequenceBuiltinDotCallMapSweep
 
 def sequenceBuiltinDotCallFilterSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("KeepCountThree", dotSweepKeepCountThreeAlg),
     ("IsLarge", dotSweepIsGreaterThanOneAlg),
@@ -816,7 +816,7 @@ def sequenceBuiltinDotCallFilterSweep : Bool :=
 #guard sequenceBuiltinDotCallFilterSweep
 
 def sequenceBuiltinDotCallReduceSweep : Bool :=
-  let data0 := .index (resolve "Data") (.num 0)
+  let data0 := .index (resolve "Data") [.num 0]
   match runFlat (.algorithmExpr (algPrivate [] [] [
     ("AddItemCount", dotSweepAddTopLevelItemCountAlg),
     ("Add", dotSweepAddAlg),

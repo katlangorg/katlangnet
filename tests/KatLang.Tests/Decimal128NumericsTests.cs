@@ -603,7 +603,7 @@ public class Decimal128NumericsTests
     {
         Assert.IsType<EvalError.IllegalInEval>(EvalError("range(9e6144 * 10, 5)"));
         Assert.IsType<EvalError.IllegalInEval>(EvalError("repeat({s + 1}, Math.Sqrt(-1), 0)"));
-        Assert.IsType<EvalError.BadIndex>(EvalError("(1, 2, 3):(Math.Sqrt(-1))"));
+        Assert.IsType<EvalError.BadIndex>(EvalError("(1, 2, 3)[Math.Sqrt(-1)]"));
     }
 
     [Fact]

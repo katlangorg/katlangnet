@@ -8,7 +8,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// SELECTION IS A VALUE BOUNDARY, NOT AN IMPLICIT SPREAD BOUNDARY.
 ///
-/// <para><c>A:i</c>, <c>first(A)</c>, and <c>last(A)</c> CHOOSE a value: the selected
+/// <para><c>A[i]</c>, <c>first(A)</c>, and <c>last(A)</c> CHOOSE a value: the selected
 /// element is returned exactly as stored and re-counted through the ordinary value
 /// boundary (<c>Result.valueCount</c>) — <c>()</c> emits zero values, everything else
 /// (a sequence value, an exact list, a scalar) emits ONE. The selected value's origin is
@@ -66,12 +66,12 @@ public class SelectionValueBoundaryTests
     /// </summary>
     private static readonly (string Name, string Definition, string Selection)[] SelectionForms =
     [
-        ("A:0", "A = ({0}, 9)\n", "A:0"),
+        ("A[0]", "A = ({0}, 9)\n", "A[0]"),
         ("first(A)", "A = ({0}, 9)\n", "first(A)"),
-        ("A:1", "A = (9, {0})\n", "A:1"),
+        ("A[1]", "A = (9, {0})\n", "A[1]"),
         ("last(A)", "A = (9, {0})\n", "last(A)"),
-        ("A:(A.count - 1)", "A = (9, {0})\n", "A:(A.count - 1)"),
-        ("list A:0", "A = [{0}, 9]\n", "A:0"),
+        ("A[A.count - 1]", "A = (9, {0})\n", "A[A.count - 1]"),
+        ("list A[0]", "A = [{0}, 9]\n", "A[0]"),
         ("list first(A)", "A = [{0}, 9]\n", "first(A)"),
         ("list last(A)", "A = [9, {0}]\n", "last(A)"),
     ];
@@ -164,10 +164,10 @@ public class SelectionValueBoundaryTests
         const string defs = Coll + "A = ((), 1)\nE = ()\nFz(x) = ()\nB = (1, ())\nOne(a) = 1\n";
         foreach (var program in new[]
         {
-            "A:0.Coll", "first(A).Coll", "B:1.Coll", "last(B).Coll",
+            "A[0].Coll", "first(A).Coll", "B[1].Coll", "last(B).Coll",
             "E.Coll", "Fz(1).Coll", "if(true, (), 1).Coll", "().Coll",
-            "Coll(A:0)", "Coll(first(A))", "Coll(E)", "Coll(Fz(1))", "Coll(())",
-            "X = A:0\nX.Coll", "Y = first(A)\nY.Coll", "Z = last(B)\nZ.Coll",
+            "Coll(A[0])", "Coll(first(A))", "Coll(E)", "Coll(Fz(1))", "Coll(())",
+            "X = A[0]\nX.Coll", "Y = first(A)\nY.Coll", "Z = last(B)\nZ.Coll",
         })
         {
             Assert.Equal("[()]", Display(defs + program));
@@ -175,23 +175,23 @@ public class SelectionValueBoundaryTests
 
         foreach (var program in new[]
         {
-            "A:0.Coll(1)", "first(A).Coll(1)", "E.Coll(1)", "Fz(1).Coll(1)", "().Coll(1)",
-            "Coll(A:0, 1)", "Coll(E, 1)", "Coll((), 1)", "X = A:0\nColl(X, 1)",
+            "A[0].Coll(1)", "first(A).Coll(1)", "E.Coll(1)", "Fz(1).Coll(1)", "().Coll(1)",
+            "Coll(A[0], 1)", "Coll(E, 1)", "Coll((), 1)", "X = A[0]\nColl(X, 1)",
         })
         {
             Assert.Equal("[(), 1]", Display(defs + program));
         }
 
-        foreach (var program in new[] { "One(A:0)", "One(E)", "One(())", "A:0.One", "E.One" })
+        foreach (var program in new[] { "One(A[0])", "One(E)", "One(())", "A[0].One", "E.One" })
         {
             Assert.Equal("1", Display(defs + program));
         }
 
         foreach (var program in new[]
         {
-            "(A:0)*.Coll", "(first(A))*.Coll", "(last(B))*.Coll", "A:0*.Coll",
+            "(A[0])*.Coll", "(first(A))*.Coll", "(last(B))*.Coll", "A[0]*.Coll",
             "E*.Coll", "Fz(1)*.Coll", "()*.Coll",
-            "Coll((A:0)*)", "Coll(E*)", "Coll(()*)",
+            "Coll((A[0])*)", "Coll(E*)", "Coll(()*)",
         })
         {
             Assert.Equal("[]", Display(defs + program));
@@ -204,15 +204,15 @@ public class SelectionValueBoundaryTests
         const string defs = Coll + "A = ([], 1)\nL = []\nFl(x) = []\nB = (1, [])\n";
         foreach (var program in new[]
         {
-            "A:0.Coll", "first(A).Coll", "B:1.Coll", "last(B).Coll",
+            "A[0].Coll", "first(A).Coll", "B[1].Coll", "last(B).Coll",
             "L.Coll", "Fl(1).Coll", "if(true, [], 1).Coll",
-            "X = A:0\nX.Coll", "Y = last(B)\nY.Coll",
+            "X = A[0]\nX.Coll", "Y = last(B)\nY.Coll",
         })
         {
             Assert.Equal("[[]]", Display(defs + program));
         }
 
-        foreach (var program in new[] { "(A:0)*.Coll", "(first(A))*.Coll", "(last(B))*.Coll", "L*.Coll" })
+        foreach (var program in new[] { "(A[0])*.Coll", "(first(A))*.Coll", "(last(B))*.Coll", "L*.Coll" })
             Assert.Equal("[]", Display(defs + program));
     }
 
@@ -370,8 +370,8 @@ public class SelectionValueBoundaryTests
             ("X = first(A)\nX.Coll", "X = last(A)\nX.Coll"),
         })
         {
-            var indexZero = firstForm.Replace("first(A)", "A:0");
-            var indexLast = lastForm.Replace("last(A)", "A:(A.count - 1)");
+            var indexZero = firstForm.Replace("first(A)", "A[0]");
+            var indexLast = lastForm.Replace("last(A)", "A[A.count - 1]");
 
             Assert.Equal(Neutral(defs + indexZero), Neutral(defs + firstForm));
             Assert.Equal(Neutral(defs + indexLast), Neutral(defs + lastForm));
@@ -390,7 +390,7 @@ public class SelectionValueBoundaryTests
             var defs = "A = " + target + "\n";
             Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "first(A)").Error));
             Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "last(A)").Error));
-            Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "A:0").Error));
+            Assert.IsType<EvalError.BadIndex>(Innermost(EvalFull(defs + "A[0]").Error));
         }
     }
 
@@ -402,20 +402,20 @@ public class SelectionValueBoundaryTests
         const string defs = Coll + "A = (((1, 2), [3, 4]), 9)\nL = ([[1], [2, 3]], 9)\n";
 
         // One boundary: the selected sequence opens to its immediate items, which stay intact.
-        Assert.Equal("[(1, 2), [3, 4]]", Display(defs + "(A:0)*.Coll"));
+        Assert.Equal("[(1, 2), [3, 4]]", Display(defs + "(A[0])*.Coll"));
         Assert.Equal("[(1, 2), [3, 4]]", Display(defs + "(first(A))*.Coll"));
-        Assert.Equal("[[1], [2, 3]]", Display(defs + "(L:0)*.Coll"));
+        Assert.Equal("[[1], [2, 3]]", Display(defs + "(L[0])*.Coll"));
         Assert.Equal("[[1], [2, 3]]", Display(defs + "(first(L))*.Coll"));
 
         // `value**` is `(value*)*`: the second star spreads each already-spread item
         // supply's single value again, never a recursive flattening.
-        AssertEvalCounted(defs + "(A:0)*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        AssertEvalCounted(defs + "(A[0])*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
         AssertEvalCounted(defs + "(first(A))*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
-        AssertEvalCounted(defs + "A:0*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        AssertEvalCounted(defs + "A[0]*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
 
         // Selection then spread differs from spread then selection.
-        Assert.Equal("[1, 2]", Display(defs + "B = [[1, 2], [3, 4]]\n(B:0)*.Coll"));
-        Assert.Equal("[[1, 2]]", Display(defs + "B = [[1, 2], [3, 4]]\n(B*):0.Coll"));
+        Assert.Equal("[1, 2]", Display(defs + "B = [[1, 2], [3, 4]]\n(B[0])*.Coll"));
+        Assert.Equal("[[1, 2]]", Display(defs + "B = [[1, 2], [3, 4]]\n(B*)[0].Coll"));
     }
 
     [Fact]
@@ -423,23 +423,23 @@ public class SelectionValueBoundaryTests
     {
         const string defs = Coll + "Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\n";
         // Beside another written argument the selection is ONE exact collected item.
-        Assert.Equal("[((1, 2), (3, 4)), 9]", Display(defs + "Coll(Bags:0, 9)"));
+        Assert.Equal("[((1, 2), (3, 4)), 9]", Display(defs + "Coll(Bags[0], 9)"));
         Assert.Equal("[((1, 2), (3, 4)), 9]", Display(defs + "first(Bags).Coll(9)"));
-        Assert.Equal("[(3, 4), 9]", Display(defs + "Coll(Bags:0:1, 9)"));
+        Assert.Equal("[(3, 4), 9]", Display(defs + "Coll(Bags[0][1], 9)"));
         Assert.Equal("[(3, 4), 9]", Display(defs + "last(first(Bags)).Coll(9)"));
         // Alone at the collector the selection is ONE collected item too; only its
         // explicit spread opens it — exactly one level, the nested pairs intact.
-        Assert.Equal("[((1, 2), (3, 4))]", Display(defs + "Bags:0.Coll"));
+        Assert.Equal("[((1, 2), (3, 4))]", Display(defs + "Bags[0].Coll"));
         Assert.Equal("[((1, 2), (3, 4))]", Display(defs + "first(Bags).Coll"));
-        Assert.Equal("[(3, 4)]", Display(defs + "Bags:0:1.Coll"));
+        Assert.Equal("[(3, 4)]", Display(defs + "Bags[0][1].Coll"));
         Assert.Equal("[(3, 4)]", Display(defs + "last(first(Bags)).Coll"));
-        Assert.Equal("[(1, 2), (3, 4)]", Display(defs + "(Bags:0)*.Coll"));
-        Assert.Equal("[3, 4]", Display(defs + "(Bags:0:1)*.Coll"));
+        Assert.Equal("[(1, 2), (3, 4)]", Display(defs + "(Bags[0])*.Coll"));
+        Assert.Equal("[3, 4]", Display(defs + "(Bags[0][1])*.Coll"));
         Assert.Equal("[3, 4]", Display(defs + "(last(first(Bags)))*.Coll"));
 
         // A lone root row shows the intact selection, chained or not.
-        Assert.Equal("((1, 2), (3, 4))", Display("Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags:0"));
-        Assert.Equal("(3, 4)", Display("Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags:0:1"));
+        Assert.Equal("((1, 2), (3, 4))", Display("Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags[0]"));
+        Assert.Equal("(3, 4)", Display("Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))\nBags[0][1]"));
     }
 
     [Theory]
@@ -485,7 +485,7 @@ public class SelectionValueBoundaryTests
     public async Task SelectionCount_IsMaterializedBeforeAnyRootRowDecoration(string selected, int count)
     {
         var expectedValue = Success(selected).Value;
-        foreach (var expression in new[] { "[" + selected + "]:0", "first([" + selected + "])", "last([" + selected + "])" })
+        foreach (var expression in new[] { "[" + selected + "][0]", "first([" + selected + "])", "last([" + selected + "])" })
         {
             // Evaluate the expression itself: a root row would make even a zero-count
             // empty sequence visible and could hide a broken selection count.
@@ -511,7 +511,7 @@ public class SelectionValueBoundaryTests
     [InlineData("[1, 2]")]
     public async Task SelectionInLoopTemps_AndSubsequentStateReads_PreserveOneSlot(string selected)
     {
-        foreach (var selection in new[] { "A:0", "first(A)", "A:(A.count - 1)", "last(A)" })
+        foreach (var selection in new[] { "A[0]", "first(A)", "A[A.count - 1]", "last(A)" })
         {
             // Identical endpoints let every selector choose the same value. T is a
             // loop-local temporary; reading x in later iterations also exercises the

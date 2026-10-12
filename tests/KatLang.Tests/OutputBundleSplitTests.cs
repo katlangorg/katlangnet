@@ -81,7 +81,7 @@ public class OutputBundleSplitTests
         Assert.IsType<Expr.DotCall>(Assert.Single(ParseValidRoot("x = { public M = 1 }\n(x.M)").Output));
         Assert.IsType<Expr.Call>(Assert.Single(ParseValidRoot("F(a) = a\n(F(1))").Output));
         Assert.IsType<Expr.ListLiteral>(Assert.Single(ParseValidRoot("([1])").Output));
-        Assert.IsType<Expr.Index>(Assert.Single(ParseValidRoot("A = 1, 2\n(A:0)").Output));
+        Assert.IsType<Expr.Index>(Assert.Single(ParseValidRoot("A = 1, 2\n(A[0])").Output));
 
         var nested = Assert.IsType<Expr.Capture>(Assert.Single(ParseValidRoot("((1, 2))").Output));
         Assert.Equal(2, nested.Body.Count);

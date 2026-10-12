@@ -181,11 +181,11 @@ public class SignedZeroExtremaTests
         { "A = 0, -0\nB = -0, 0\nmin((A*, B*))", "-0" },
         { "A = -0\nmax((A*, 0))", "0" },
         // Selection, first/last, and an index result are value boundaries that keep the sign.
-        { "A = (0, -0), (-0, 0)\nmin(A:0)", "-0" },
-        { "A = (0, -0), (-0, 0)\n(A:1).max", "0" },
+        { "A = (0, -0), (-0, 0)\nmin(A[0])", "-0" },
+        { "A = (0, -0), (-0, 0)\n(A[1]).max", "0" },
         { "max((first((-0, 1)), -0))", "-0" },
         { "min((0, last((1, -0))))", "-0" },
-        { "A = -0, 5\nmin((0, A:0))", "-0" },
+        { "A = -0, 5\nmin((0, A[0]))", "-0" },
         // Callback-produced zeros: the maximum of negative zeros alone stays negative.
         { "Neg(x) = -x\nmax(map((0, 0), Neg))", "-0" },
         { "Neg(x) = -x\nmax((map((0, 0), Neg)*, 0))", "0" },
@@ -223,7 +223,7 @@ public class SignedZeroExtremaTests
     [InlineData("Z = -0\nO = 0\nmin((O, Z))", "-0")]
     [InlineData("Z = -0\nO = 0\nmax((Z, O))", "0")]
     [InlineData("Z = -0\nmax((Z, Z))", "-0")]
-    [InlineData("A = (0, -0), (-0, 0)\n(A:1).min", "-0")]
+    [InlineData("A = (0, -0), (-0, 0)\n(A[1]).min", "-0")]
     public async Task AsyncTwin_AfterGenuineSuspension_KeepsTheExtremumSign(string source, string expected)
     {
         var ast = Program(source);

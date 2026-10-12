@@ -12,7 +12,7 @@ callback — the ONE value the call boundary delivers (VAL-06): several written
 rows arrive as one sequence value, `()` and `[]` are ordinary values, `map`
 stores the result whole as ONE list element and `reduce` passes it whole as the
 next accumulator, and nothing is spread. For pure, deterministic, total computations,
-`map(L, F)` has the result value `[F(L:0), F(L:1), …]`; `reduce([a, b], R, i)`
+`map(L, F)` has the result value `[F(L[0]), F(L[1]), …]`; `reduce([a, b], R, i)`
 has the same result value as `R(b, R(a, i))`. Reduction demands its initial
 value and every step; nested Model-C calls retain their ordinary demand order. Failures
 of the invocation propagate unchanged (an output-less algorithm is still

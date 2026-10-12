@@ -58,7 +58,7 @@ public class InterpolationSyntaxTests
     [InlineData("\"{not true}\"", typeof(Expr.Unary))]
     [InlineData("\"{\"in{1}\"}\"", typeof(Expr.InterpolatedString))]
     [InlineData("\"{'raw'}\"", typeof(Expr.StringLiteral))]
-    [InlineData("xs = [1]\n\"{(xs:0)}\"", typeof(Expr.Index))]
+    [InlineData("xs = [1]\n\"{(xs[0])}\"", typeof(Expr.Index))]
     [InlineData("\"{((1))}\"", typeof(Expr.Num))]
     public void AHole_IsOneOrdinaryExpression(string source, Type holeType)
     {
@@ -99,18 +99,37 @@ public class InterpolationSyntaxTests
     }
 
     [Fact]
-    public void AHoleLevelColon_NamesTheParenthesizedSelection_AndTheAbsentFormatSpecifiers()
+    public void AHoleLevelColon_NamesTheBracketSelection_AndTheAbsentFormatSpecifiers()
     {
         var diagnostic = Assert.Single(SyntaxDiagnostics("a = [1]\n\"{a:0}\""));
-        Assert.Contains("(xs:0)", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(DiagnosticCode.InvalidInterpolationHole, diagnostic.Code);
+        Assert.Contains("\"{xs[0]}\"", diagnostic.Message, StringComparison.Ordinal);
         Assert.Contains("format specifiers", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AColonInsideADelimiterWithinAHole_IsOrdinarySelection()
+    public void ABracketSelectionInAHole_NeedsNoGrouping()
     {
-        Assert.IsType<Expr.Index>(Assert.Single(Assert.IsType<Expr.InterpolatedString>(OnlyRow("a = [1]\n\"{(a:0)}\"")).Links).Hole);
-        Assert.IsType<Expr.ListLiteral>(Assert.Single(Assert.IsType<Expr.InterpolatedString>(OnlyRow("a = [1]\n\"{[a:0]}\"")).Links).Hole);
+        Assert.IsType<Expr.Index>(Assert.Single(Assert.IsType<Expr.InterpolatedString>(OnlyRow("a = [1]\n\"{a[0]}\"")).Links).Hole);
+        Assert.IsType<Expr.Index>(Assert.Single(Assert.IsType<Expr.InterpolatedString>(OnlyRow("a = [1]\n\"{(a[0])}\"")).Links).Hole);
+        Assert.IsType<Expr.ListLiteral>(Assert.Single(Assert.IsType<Expr.InterpolatedString>(OnlyRow("a = [1]\n\"{[a[0]]}\"")).Links).Hole);
+    }
+
+    [Theory]
+    [InlineData("a = 1\n\"{a + :0}\"")]
+    [InlineData("a = 1\n\"{-:0}\"")]
+    public void AColonWhereTheHolesExpressionNeedsAnOperand_IsThatOperandsRetiredColon_ReportedOnce(string source)
+    {
+        // Like a misplaced `,` or `=` there, the operand's own report stands and the hole adds none.
+        var diagnostic = Assert.Single(SyntaxDiagnostics(source));
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, diagnostic.Code);
+    }
+
+    [Fact]
+    public void AColonInsideADelimiterWithinAHole_IsTheRetiredColonSelection()
+    {
+        var diagnostic = Assert.Single(SyntaxDiagnostics("a = [1]\n\"{(a:0)}\""));
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, diagnostic.Code);
     }
 
     [Theory]

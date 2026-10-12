@@ -77,7 +77,7 @@ public partial class LoopStepCallableDispatchTests
         { "list", "repeat([1], 1, 0)", "notAnAlgorithm" },
         { "empty sequence", "repeat((), 1, 0)", "notAnAlgorithm" },
         { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 0)", "notAnAlgorithm" },
-        { "selection", "A = 1, 2\nrepeat(A:0, 1, 0)", "notAnAlgorithm" },
+        { "selection", "A = 1, 2\nrepeat(A[0], 1, 0)", "notAnAlgorithm" },
         { "zero-parameter property", "Z = 5\nrepeat(Z, 1, 0)", "unbound" },
         { "zero-parameter host operation", "repeat(tick, 1, 0)", "unbound" },
         { "zero-parameter Math member", "repeat(pi, 1, 0)", "unbound" },
@@ -141,7 +141,7 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task Family_MultiSlotWhile_MatchesLiteralsAndSuppliesTheSelectedRows()
     {
-        var (observation, _) = await AllRoutesAsync(Gcd + "while(Gcd, 48, 18), Gcd.while(48, 18):0, while(Gcd, 7, 0)");
+        var (observation, _) = await AllRoutesAsync(Gcd + "while(Gcd, 48, 18), Gcd.while(48, 18)[0], while(Gcd, 7, 0)");
         Assert.Equal(("ok", "S[S[6, 0], 6, S[7, 0]]"), (observation.Kind, observation.Value));
     }
 

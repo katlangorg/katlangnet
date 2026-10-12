@@ -235,17 +235,15 @@ public static class SemanticExplorerCorpus
         new("literalDotCount",
             v => $"({v.Source}).count"),
         new("index0",
-            v => $"x = {v.Source}\nx:0"),
+            v => $"x = {v.Source}\nx[0]"),
         new("index1",
-            v => $"x = {v.Source}\nx:1"),
+            v => $"x = {v.Source}\nx[1]"),
         new("indexBig",
-            v => $"x = {v.Source}\nx:9"),
-        // `x:-1` is a C#-parser-level rejection (a negative selector never forms);
-        // there is no comparable Lean program, so this case is C#-only.
+            v => $"x = {v.Source}\nx[9]"),
+        // A selector is an ordinary expression: `-1` is a number naming no position
+        // (BadIndex), never from-the-end selection.
         new("indexNeg",
-            v => $"x = {v.Source}\nx:-1",
-            LeanExclusionReason:
-                "Negative selectors are rejected by KatLang's surface parser; Lean models only the elaborated AST."),
+            v => $"x = {v.Source}\nx[-1]"),
         new("eqSelf",
             v => $"x = {v.Source}\nx == x"),
         new("neqSelf",
@@ -348,7 +346,7 @@ public static class SemanticExplorerCorpus
         Special("interpolationNested", "x = 1\n\"<{\"[{x + 1}]\"}>\""),
         Special("interpolationInferenceOrder", "F = \"{b}-{a}-{b}\"\nF(1, 2)"),
         Special("interpolationLiftsAFormula", "Inc(x) = x + 1\nG = \"v{Inc}\"\nG(4)"),
-        Special("interpolationFirstFailureStops", "\"a{1}b{10 div 0}c{([]:0)}\""),
+        Special("interpolationFirstFailureStops", "\"a{1}b{10 div 0}c{([][0])}\""),
         Special("interpolationHoleWithoutOutput", "B = {\n    A = 1\n}\n\"{B}\""),
         Special("interpolationStringsUnquoted", "\"{['one, two', 'three']} {('a', ['b'])}\""),
         Special("interpolationHoleFreeIsLiteral", "\"abc\" == 'abc'"),
@@ -363,7 +361,7 @@ public static class SemanticExplorerCorpus
         // on one side alone cannot pass unnoticed.
         Special("dotAccessPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X"),
         Special("dotAccessCallPublicMember", "A = {\n    public X = 1, 2, 3\n}\nA.X()"),
-        Special("multiPropIndex0", "P = 1, 2, 3\nP:0"),
+        Special("multiPropIndex0", "P = 1, 2, 3\nP[0]"),
         Special("multiPropEq", "P = 1, 2, 3\nP == (1, 2, 3)"),
         Special("multiCollecting", "F(*a) = a\nF(1, 2, 3)"),
         Special("multiCollectingCount", "F(*a) = a\ncount(F(1, 2, 3))"),
@@ -374,7 +372,7 @@ public static class SemanticExplorerCorpus
         Special("range13", "range(1, 3)"),
         Special("rangeCapture", "x = range(1, 3)\nx"),
         Special("rangeCount", "count(range(1, 3))"),
-        Special("rangeIndex0", "range(1, 3):0"),
+        Special("rangeIndex0", "range(1, 3)[0]"),
         Special("takeOneSurvivorPair", "take(((1, 2), (3, 4)), 1)"),
         Special("takeOneSurvivorPairCount", "count(take(((1, 2), (3, 4)), 1))"),
         Special("takeOneSurvivorPairEq", "take(((1, 2), (3, 4)), 1) == (1, 2)"),
@@ -413,13 +411,13 @@ public static class SemanticExplorerCorpus
         Special("propBodyEmptySlot", "P = (), 99\nP"),
         Special("rootEmptySlots", "(), 99"),
         Special("seqOfSpreadEmpty", "((()*), 1)"),
-        Special("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x:0, 99)"),
-        Special("indexEmptyItemRoot", "x = ((), ())\nx:0"),
-        Special("indexCapturedEq", "x = ((1, 2), (3, 4))\ny = x:0\ny == (1, 2)"),
-        Special("chainedListIndex", "x = [[1, 2], [3, 4]]\nx:1:0"),
-        Special("listIndexCapturedEq", "x = [[1, 2]]\ny = x:0\ny == [1, 2]"),
-        Special("listIndexSelectedKindEqFalse", "[[1, 2]]:0 == (1, 2)"),
-        Special("orderIndex0", "[3, 1, 2].order:0"),
+        Special("indexPairInSeq", "x = ((1, 2), (3, 4))\n(x[0], 99)"),
+        Special("indexEmptyItemRoot", "x = ((), ())\nx[0]"),
+        Special("indexCapturedEq", "x = ((1, 2), (3, 4))\ny = x[0]\ny == (1, 2)"),
+        Special("chainedListIndex", "x = [[1, 2], [3, 4]]\nx[1][0]"),
+        Special("listIndexCapturedEq", "x = [[1, 2]]\ny = x[0]\ny == [1, 2]"),
+        Special("listIndexSelectedKindEqFalse", "[[1, 2]][0] == (1, 2)"),
+        Special("orderIndex0", "[3, 1, 2].order[0]"),
         Special("nestedWrittenArg", "F(a, b) = a\nF(((1, 2)), 3)"),
         Special("writtenSlotArity", "F(a, b) = a + b\nF(((1, 2)))"),
         Special("mixedSingleGrouped", "F(x, *y, z) = y\nA = (1, 2, 3, 4)\nF(A)"),
@@ -435,7 +433,7 @@ public static class SemanticExplorerCorpus
         Special("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*"),
         Special("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)"),
         Special("loopSpreadHistoryFlat",
-            "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2):0"),
+            "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2)[0]"),
         Special("ifBranchSeq", "if(true, (1, 2), 3)"),
         Special("divZero", "1 / 0"),
         Special("negativeResult", "0 - 1"),
@@ -484,7 +482,7 @@ public static class SemanticExplorerCorpus
         Special("chainGroupedNegatedBasePowerOperand", "1 < (-2) ^ 2"),
         Special("chainArithmeticTiers", "1 + 1 < 2 * 2 == 2 ^ 2"),
         Special("chainMiddleOperandError", "1 < 1 / 0 < true"),
-        Special("chainGroupedSelectionReceiver", "(1 < 2 < 3):0 == true"),
+        Special("chainGroupedSelectionReceiver", "(1 < 2 < 3)[0] == true"),
         Special("strCount", "count('ab')"),
         Special("strCapture", "x = 'ab'\nx"),
         // Exact list values: spread inside list literals, list/sequence kind
@@ -834,19 +832,19 @@ public static class SemanticExplorerCorpus
         // Formula lifting is by binding name (September 29 2026, reversing the Q-72 refusal): a
         // callee a formula USES that repeats a name — at the top level, inside one group, across
         // groups, beside a collector, under a closed list that binds it — receives the caller's ONE
-        // binding at every occurrence (`Some = [P]:0` is `Some(x) = [P(x, x)]:0`), exactly as a name
+        // binding at every occurrence (`Some = [P][0]` is `Some(x) = [P(x, x)][0]`), exactly as a name
         // shared across callees does; a failed or callable-only argument stays its own failure.
         // Pinned against Lean on the elaborated trees.
-        Special("forwardByNameAlias", "P(x, x) = x\nSome = [P]:0\nSome(7)"),
-        Special("forwardByNameThreeOccurrences", "P(x, x, x) = x\nSome = [P]:0\nSome(7)"),
-        Special("forwardByNameNestedGroup", "P((x, a), x) = a\nSome = [P]:0\nSome((7, 8))"),
-        Special("forwardByNameAcrossGroup", "P(x, (x, a)) = a\nSome = [P]:0\nSome(7, 8)"),
-        Special("forwardByNameInsideOneGroup", "P((x, x)) = x\nSome = [P]:0\nSome(7)"),
-        Special("forwardByNameBesideCollector", "P(x, *rest, x) = rest\nSome = [P]:0\nSome(7, 1, 2)"),
-        Special("forwardByNameClosedList", "P(x, x) = x\nQ(x) = [P]:0\nQ(7)"),
+        Special("forwardByNameAlias", "P(x, x) = x\nSome = [P][0]\nSome(7)"),
+        Special("forwardByNameThreeOccurrences", "P(x, x, x) = x\nSome = [P][0]\nSome(7)"),
+        Special("forwardByNameNestedGroup", "P((x, a), x) = a\nSome = [P][0]\nSome((7, 8))"),
+        Special("forwardByNameAcrossGroup", "P(x, (x, a)) = a\nSome = [P][0]\nSome(7, 8)"),
+        Special("forwardByNameInsideOneGroup", "P((x, x)) = x\nSome = [P][0]\nSome(7)"),
+        Special("forwardByNameBesideCollector", "P(x, *rest, x) = rest\nSome = [P][0]\nSome(7, 1, 2)"),
+        Special("forwardByNameClosedList", "P(x, x) = x\nQ(x) = [P][0]\nQ(7)"),
         Special("forwardByNameAcrossCallees", "P(x, x) = x\nF(x) = x + 1\nH = P + F\nH(3)"),
-        Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = [P]:0\nSome(Bad)"),
-        Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = [P]:0\nSome(Inc)"),
+        Special("forwardByNameFailedArgument", "Bad = 1 / 0\nP(x, x) = x\nSome = [P][0]\nSome(Bad)"),
+        Special("forwardByNameCallableArgument", "Inc(y) = y + 1\nP(x, x) = x, x(5)\nSome = [P][0]\nSome(Inc)"),
         // FWD-02 (September 29–30 2026; binding indirection October 1 2026): a body whose ONE row
         // is a bare callable that declares parameterized structure is a CALLABLE ALIAS (an open
         // body: `Algorithm.alias`, whose every callable use is the target's own — no wrapper, no

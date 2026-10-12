@@ -62,7 +62,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         Assert.Equal((value, 1), (observation.Value, observation.Count));
         Assert.Empty(observation.HostCalls);
 
-        // map(L, F) is [F(L:0), …] and reduce([a], R, i) is R(a, i): the explicit ordinary calls give the same value.
+        // map(L, F) is [F(L[0]), …] and reduce([a], R, i) is R(a, i): the explicit ordinary calls give the same value.
         var (direct, _) = await AllRoutesAsync(explicitCalls);
         Assert.Equal(value, direct.Value);
     }
@@ -268,7 +268,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "list of calls", Fam + "[F(0), F(3)]", "L[S[1, 2], S[3, 3]]" },
         { "collectors, count and spread", Fam + "Coll(*xs) = xs\nCnt(*xs) = xs.count\nColl(F(0)), Cnt(F(3)), F(0).count, (F(0))*.Coll",
             "S[L[S[1, 2]], 1, 2, L[1, 2]]" },
-        { "selection", Fam + "F(0):1, first(F(3)), F(0).count", "S[2, 3, 2]" },
+        { "selection", Fam + "F(0)[1], first(F(3)), F(0).count", "S[2, 3, 2]" },
         { "if branches", Fam + "if(true, F(0), 0), [if(false, 0, F(3))]", "S[S[1, 2], L[S[3, 3]]]" },
         { "a higher-order parameter's ordinary call", Fam + "Apply(f, x) = f(x)\nApply(F, 0), map([0], { Apply(F, x) })",
             "S[S[1, 2], L[S[1, 2]]]" },

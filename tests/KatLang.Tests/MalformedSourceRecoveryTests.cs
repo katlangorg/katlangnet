@@ -130,7 +130,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
             ("1 +", 3, 4), ("1 -", 3, 4), ("1 /", 3, 4), ("1 div", 3, 6), ("2 ^", 3, 4),
             ("1 <", 3, 4), ("1 ==", 3, 5), ("true and", 6, 9), ("true or", 6, 8),
             ("1,", 2, 3), ("-", 1, 2), ("not", 1, 4), ("A =", 3, 4), ("A = 1 +", 7, 8),
-            ("Pair = (1, 2)\nPair:", 5, 6), ("F(x) =", 6, 7), ("p, q =", 6, 7),
+            ("F(x) =", 6, 7), ("p, q =", 6, 7),
         ];
         (string Declaration, string Name)[] declarations =
         [
@@ -163,6 +163,26 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
         Assert.Equal(source.Contains("public Good", StringComparison.Ordinal), property.IsPublic);
     }
 
+    // The retired colon (variadic postfix selection) is its own migration diagnostic, and a
+    // trailing `:` still never takes the next line's declaration head as its selector.
+    [Theory]
+    [InlineData("Good = 41")]
+    [InlineData("public Good = 41")]
+    [InlineData("Good(x) = x")]
+    [InlineData("Good, Other = 1, 2")]
+    [InlineData("*Good = 1, 2")]
+    public void RetiredTrailingColon_ReportsOnce_AndNeverTakesTheNextLinesDeclarationHead(string declaration)
+    {
+        var source = "Pair = (1, 2)\nPair:\n" + declaration;
+        var parsed = Parser.ParseSyntax(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, diagnostic.Code);
+        Assert.Equal(new SourceSpan(2, 5, 2, 6), diagnostic.Span);
+        var property = RootProperty(parsed.Root, "Good");
+        Assert.Equal(3, property.DeclarationSpans[0].Start.Line);
+        Assert.Equal(declaration.StartsWith("public", StringComparison.Ordinal), property.IsPublic);
+    }
+
     [Fact]
     public void TrailingDot_NeverTakesTheNextLinesDeclarationHeadAsItsMember()
     {
@@ -180,7 +200,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     [InlineData("1,\n2", "1\n2")]
     [InlineData("-\n3", "-3")]
     [InlineData("not\ntrue", "false")]
-    [InlineData("Pair = (1, 2)\nX = Pair:\n0\nX", "1")]
+    [InlineData("Pair = (1, 2)\nX = Pair[\n0\n]\nX", "1")]
     [InlineData("A = { B = 3 }\nX = A.\nB\nX", "3")]
     [InlineData("A = 2\nB = 3\nA*\nB", "6")]
     public void IncompleteLine_StillContinuesIntoAnExpressionOnTheNextLine(string source, string expected)
@@ -344,7 +364,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     [InlineData("1@ + 2")]
     [InlineData("A = { B = 1 }\nA@.B")]
     [InlineData("F(x) = x\nF@(1)")]
-    [InlineData("A = (1, 2)\nA@:0")]
+    [InlineData("A = (1, 2)\nA@[0]")]
     [InlineData("A @= 1\nA")]
     [InlineData("A =@ 1\nA")]
     [InlineData("F@(x) = x\nF(1)")]

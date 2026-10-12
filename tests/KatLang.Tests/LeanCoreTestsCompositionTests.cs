@@ -52,6 +52,7 @@ public class LeanCoreTestsCompositionTests
         "EmptyStructuralPatterns",
         "CallbackResultBoundary",
         "PropertyCachePublication",
+        "VariadicSelection",
     ];
 
     [Fact]

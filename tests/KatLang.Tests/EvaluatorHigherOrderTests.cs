@@ -96,7 +96,7 @@ public class EvaluatorHigherOrderTests
     {
         var source = """
             OccurrenceCount = filter(values, predicate).count
-            OccurrenceCount((1, 2), {n:0 mod 2 == 1})
+            OccurrenceCount((1, 2), {n[0] mod 2 == 1})
             """;
 
         AssertEval(source, 1);
@@ -107,7 +107,7 @@ public class EvaluatorHigherOrderTests
     {
         var source = """
             OccurrenceCount(target) = {
-                MatchesTarget(pair) = pair:1 == target:1
+                MatchesTarget(pair) = pair[1] == target[1]
                 filter(((1, 10), (2, 20), (2, 30)), MatchesTarget)
             }
             OccurrenceCount((2, 20))

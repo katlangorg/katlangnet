@@ -76,11 +76,11 @@ public class CallbackNestedPatternBindingTests
             AssertBindsAlike(direct, Run(callee + $"[{value}].map(P)"), $"[{value}].map(P) vs P({value}) for {pattern}");
 
             // Selection passes a value: a stored list's element reaches the callback exactly
-            // as the selection `L:0` reaches the ordinary call.
+            // as the selection `L[0]` reaches the ordinary call.
             AssertBindsAlike(
-                Run(callee + $"L = [{value}]\nP(L:0)"),
+                Run(callee + $"L = [{value}]\nP(L[0])"),
                 Run(callee + $"L = [{value}]\nmap(L, P)"),
-                $"map(L, P) vs P(L:0) with L = [{value}] for {pattern}");
+                $"map(L, P) vs P(L[0]) with L = [{value}] for {pattern}");
 
             // filter: the predicate binds the element like the call; a kept element is the
             // element itself, so the result is the one-element list `[value]`.

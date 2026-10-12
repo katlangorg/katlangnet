@@ -239,8 +239,8 @@ public class AutomaticForwardingBindingTests
         { "closed-list-without-an-ancestor-still-refuses", "Speed = distance / time\nKE(m, d, t) = m * Speed ^ 2 / 2\nKE(2, 10, 5)", "err ArityMismatch" },
 
         // A reused binding keeps its KIND: a collecting ancestor re-spreads, an ordinary one does not.
-        { "collecting-ancestor-respreads", "Target(tag, *items) = items\nOuter(tag, *items) = {\n    G = [Target]:0\n    G\n}\nOuter(0, 1, 2)", "ok L[1, 2]" },
-        { "ordinary-ancestor-stays-one-argument", "Target(tag, *items) = items\nOuter(tag, items) = {\n    G = [Target]:0\n    G\n}\nOuter(0, [1, 2])", "ok L[L[1, 2]]" },
+        { "collecting-ancestor-respreads", "Target(tag, *items) = items\nOuter(tag, *items) = {\n    G = [Target][0]\n    G\n}\nOuter(0, 1, 2)", "ok L[1, 2]" },
+        { "ordinary-ancestor-stays-one-argument", "Target(tag, *items) = items\nOuter(tag, items) = {\n    G = [Target][0]\n    G\n}\nOuter(0, [1, 2])", "ok L[L[1, 2]]" },
         // alias/bare forwarding: G is an alias of Target, and Outer forwards its same-named
         // bindings to it by name, re-spreading only its own collector — the same values here, for
         // the owner's reasons, not G's.
@@ -249,8 +249,8 @@ public class AutomaticForwardingBindingTests
 
         // Blocks, callbacks, aliases, and deconstruction right-hand sides reuse the same bindings.
         { "callback-block-reuses-ancestor", "A = y + 1\nG(y) = map([1, 2], { A + n })\nG(10)", "ok L[12, 13]" },
-        { "formula-reuses-ancestor", "Inc(x) = x + 1\nF(x) = {\n    Lifted = [Inc]:0\n    Lifted\n}\nF(4)", "ok 5" },
-        { "partial-formula-reuses-ancestor", "Head(x, *rest) = x + rest.count\nF(x) = {\n    H = [Head]:0\n    H(10, 20)\n}\nF(4)", "ok 6" },
+        { "formula-reuses-ancestor", "Inc(x) = x + 1\nF(x) = {\n    Lifted = [Inc][0]\n    Lifted\n}\nF(4)", "ok 5" },
+        { "partial-formula-reuses-ancestor", "Head(x, *rest) = x + rest.count\nF(x) = {\n    H = [Head][0]\n    H(10, 20)\n}\nF(4)", "ok 6" },
         // alias: a bare local alias keeps the callee's own signature (formerly 6: H reused F's x).
         { "local-alias-keeps-the-callee-signature", "Head(x, *rest) = x + rest.count\nF(x) = {\n    H = Head\n    H(10, 20)\n}\nF(4)", "ok 11" },
         { "local-alias-is-forwarded-by-its-owner","Inc(x) = x + 1\nF(x) = {\n    Alias = Inc\n    Alias\n}\nF(4)", "ok 5" },
@@ -296,13 +296,13 @@ public class AutomaticForwardingBindingTests
         { "grouped-callee-no-longer-takes-the-reused-capture", "P((a, b)) = a + b\nF(a) = {\n    G = P + 0\n    G(1, 2)\n}\nF(10)", "err ArityMismatch" },
         // A Math alias forwards like any callee: pow's `x` is F's (formerly ArityMismatch).
         { "math-alias-reuses-ancestor", "F(x) = {\n    G = pow + 0\n    G(2)\n}\nF(3)", "ok 9" },
-        { "collector-through-several-owners", "Target(tag, *items) = items\nF(tag, *items) = {\n G = { H = { I = [Target]:0\n I }\n H }\n G\n}\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
-        { "closed-child-reuses-collector", "Target(tag, *items) = items\nF(tag, *items) = { G(q) = [Target]:0\n G(99) }\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
-        { "partial-reuse-of-collector", "Target(tag, *items) = items\nF(*items) = { G = [Target]:0\n G(0) }\nF((1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
-        { "collector-to-fixed-keeps-one-value", "Target(items) = items\nF(*items) = { G = [Target]:0\n G }\nF((1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
-        { "nearer-fixed-over-outer-collector", "Target(tag, *items) = items\nF(tag, *items) = { M(items) = { G = [Target]:0\n G }\n M([7, 8]) }\nF(0, 1, 2)", "ok L[L[7, 8]]" },
-        { "nearer-collector-over-outer-fixed", "Target(tag, *items) = items\nF(tag, items) = { M(*items) = { G = [Target]:0\n G }\n M(7, 8) }\nF(0, [1, 2])", "ok L[7, 8]" },
-        { "branch-nested-closed-list-reuses-ancestor", "Target(tag, *items) = items\nF(tag, *items) = { M(0) = 0\n M(n) = { G(q) = [Target]:0\n G(n) }\n M(1) }\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
+        { "collector-through-several-owners", "Target(tag, *items) = items\nF(tag, *items) = {\n G = { H = { I = [Target][0]\n I }\n H }\n G\n}\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
+        { "closed-child-reuses-collector", "Target(tag, *items) = items\nF(tag, *items) = { G(q) = [Target][0]\n G(99) }\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
+        { "partial-reuse-of-collector", "Target(tag, *items) = items\nF(*items) = { G = [Target][0]\n G(0) }\nF((1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
+        { "collector-to-fixed-keeps-one-value", "Target(items) = items\nF(*items) = { G = [Target][0]\n G }\nF((1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
+        { "nearer-fixed-over-outer-collector", "Target(tag, *items) = items\nF(tag, *items) = { M(items) = { G = [Target][0]\n G }\n M([7, 8]) }\nF(0, 1, 2)", "ok L[L[7, 8]]" },
+        { "nearer-collector-over-outer-fixed", "Target(tag, *items) = items\nF(tag, items) = { M(*items) = { G = [Target][0]\n G }\n M(7, 8) }\nF(0, [1, 2])", "ok L[7, 8]" },
+        { "branch-nested-closed-list-reuses-ancestor", "Target(tag, *items) = items\nF(tag, *items) = { M(0) = 0\n M(n) = { G(q) = [Target][0]\n G(n) }\n M(1) }\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
         // Bare forwarding reuses the same bindings by the same rule: the lone-row forms of the rows
         // above give the same values (G(q) never renames q, and M's nearer binding wins).
         { "closed-child-bare-forwarding-reuses-collector", "Target(tag, *items) = items\nF(tag, *items) = { G(q) = Target\n G(99) }\nF(0, (1, 2), [3], ())", "ok L[S[1, 2], L[3], S[]]" },
@@ -366,7 +366,7 @@ public class AutomaticForwardingBindingTests
     public void ReusedEnclosingBinding_IsNeverAppendedToTheSignature()
     {
         // Head's `x` is F's; only the collector it cannot supply is forwarded into the formula H.
-        var root = SourceProvenance.ParseValid("Head(x, *rest) = x + rest.count\nF(x) = {\n    H = [Head]:0\n    H(10, 20)\n}\nF(4)").Root;
+        var root = SourceProvenance.ParseValid("Head(x, *rest) = x + rest.count\nF(x) = {\n    H = [Head][0]\n    H(10, 20)\n}\nF(4)").Root;
         var h = Assert.IsType<Algorithm.User>(Property(root, "F", "H"));
         Assert.Equal(["rest"], h.Params);
         Assert.Equal(ParameterKind.Collecting, Assert.IsType<CaptureParameterPattern>(Assert.Single(h.ParameterPatterns)).Kind);
@@ -560,7 +560,8 @@ public class AutomaticForwardingBindingTests
                     break;
                 case Expr.Index index:
                     VisitExpr(index.Target, chain, path);
-                    VisitExpr(index.Selector, chain, path);
+                    foreach (var selector in index.Selectors)
+                        VisitExpr(selector, chain, path);
                     break;
                 case Expr.SequenceSpread spread:
                     VisitExpr(spread.Operand, chain, path);
@@ -657,7 +658,7 @@ public class AutomaticForwardingBindingTests
     [InlineData(true)]
     public void SharedBody_UnderTheSameParameterNamesWithDifferentKinds_KeepsItsSupply(bool collectingFirst)
     {
-        const string source = "Target(tag, *items) = items\nF(tag, *items) = { G = [Target]:0\n G }\nK(tag, items) = { G = [Target]:0\n G }\n[F(0, (1, 2), [3], ()), K(0, [(1, 2), [3], ()])]";
+        const string source = "Target(tag, *items) = items\nF(tag, *items) = { G = [Target][0]\n G }\nK(tag, items) = { G = [Target][0]\n G }\n[F(0, (1, 2), [3], ()), K(0, [(1, 2), [3], ()])]";
         var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
         Assert.Empty(diagnostics);
         var root = Assert.IsType<Algorithm.User>(detected);
@@ -713,7 +714,7 @@ public class AutomaticForwardingBindingTests
         { "two-level-helper", "F(y) = {\n    G = (y + 1) * 2 + y\n    if(true, G, 0)\n}\nF(3)", "A = y + 1\nB = A * 2", "F(y) = {\n    G = B + y\n    if(true, G, 0)\n}\nF(3)" },
         // A formula whose value is the helper's (a bare `G = A` is not an extraction but an exact
         // alias of A, which keeps A's own parameter: AliasAndBareForwardingTests).
-        { "whole-body", "F(y) = {\n    G = [y + 1]:0\n    if(true, G, 0)\n}\nF(3)", "A = y + 1", "F(y) = {\n    G = [A]:0\n    if(true, G, 0)\n}\nF(3)" },
+        { "whole-body", "F(y) = {\n    G = [y + 1][0]\n    if(true, G, 0)\n}\nF(3)", "A = y + 1", "F(y) = {\n    G = [A][0]\n    if(true, G, 0)\n}\nF(3)" },
         { "clause-family-owner", "F(0) = 0\nF(y) = {\n    G = (y + 1) * 10\n    G\n}\nF(3)", "A = y + 1", "F(0) = 0\nF(y) = {\n    G = A * 10\n    G\n}\nF(3)" },
     };
 

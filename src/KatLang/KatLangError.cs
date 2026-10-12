@@ -176,6 +176,7 @@ public sealed class KatLangError
             DiagnosticCode.UnterminatedInterpolationHole => KatLangErrorCode.UnterminatedInterpolationHole,
             DiagnosticCode.InvalidInterpolationHole => KatLangErrorCode.InvalidInterpolationHole,
             DiagnosticCode.InterpolationNotAllowedHere => KatLangErrorCode.InterpolationNotAllowedHere,
+            DiagnosticCode.RetiredColonSelection => KatLangErrorCode.RetiredColonSelection,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

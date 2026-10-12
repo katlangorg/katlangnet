@@ -168,7 +168,12 @@ public class DiagnosticCodeTests
         { "collecting-in-clause-family", "F(*xs) = 1\nF(0) = 2\nF(3)", DiagnosticCode.InvalidCollectingBinding },
         { "two-collecting-deconstruction", "*a, *b = 1, 2, 3\na", DiagnosticCode.InvalidCollectingBinding },
         { "spread-as-binary-operand", "A = (1, 2)\nA* == A*", DiagnosticCode.MisplacedSpread },
-        { "spread-selection", "A = (1, 2)\nA*:0", DiagnosticCode.MisplacedSpread },
+        { "spread-comparison-operand", "A = (1, 2)\n1 < A*", DiagnosticCode.MisplacedSpread },
+        // Variadic postfix selection: the colon form is retired with a migration diagnostic
+        // (a spread receiver before the `:` adds no second report).
+        { "retired-colon-selection", "A = (1, 2)\nA:0", DiagnosticCode.RetiredColonSelection },
+        { "retired-colon-selection-after-spread", "A = (1, 2)\nA*:0", DiagnosticCode.RetiredColonSelection },
+        { "retired-colon-selection-without-selector", "A = (1, 2)\nA:", DiagnosticCode.RetiredColonSelection },
         { "explicit-params-require-output", "Algo(x, y) = {\n  Prop = 7\n}", DiagnosticCode.ExplicitParametersRequireOutput },
         { "undeclared-in-explicit-list", "F(x) = x + y\nF(1)", DiagnosticCode.UndeclaredIdentifier },
         { "undeclared-in-branch", "F(0) = y\nF(x) = x\nF(0)", DiagnosticCode.UndeclaredIdentifier },

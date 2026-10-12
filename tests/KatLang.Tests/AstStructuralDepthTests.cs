@@ -253,7 +253,7 @@ public class AstStructuralDepthTests
         // Index spine over a scalar: every projection re-selects the scalar itself.
         Expr indexSpine = new Expr.Num(1);
         for (var i = 0; i < max - 1; i++)
-            indexSpine = new Expr.Index(indexSpine, new Expr.Num(0));
+            indexSpine = new Expr.Index(indexSpine, [new Expr.Num(0)]);
         var index = Evaluator.RunFlat(indexSpine);
         Assert.False(index.IsError);
         Assert.Equal(1m, Assert.Single(index.Value));
@@ -271,13 +271,13 @@ public class AstStructuralDepthTests
         // an index expression attaches its span to child and coercion errors, while
         // unary/binary/list propagate child errors untouched.
         var indexSpan = new SourceSpan(3, 1, 3, 10);
-        var badSelector = new Expr.Index(new Expr.Num(1), new Expr.StringLiteral("x")) { Span = indexSpan };
+        var badSelector = new Expr.Index(new Expr.Num(1), [new Expr.StringLiteral("x")]) { Span = indexSpan };
         var badSelectorR = Evaluator.Run(badSelector);
         Assert.True(badSelectorR.IsError);
         Assert.IsType<EvalError.TypeMismatch>(badSelectorR.Error);
         Assert.Equal(indexSpan, badSelectorR.Error.Span);
 
-        var badIndex = new Expr.Index(new Expr.EmptySequence(0), new Expr.Num(5)) { Span = indexSpan };
+        var badIndex = new Expr.Index(new Expr.EmptySequence(0), [new Expr.Num(5)]) { Span = indexSpan };
         var badIndexR = Evaluator.Run(badIndex);
         Assert.True(badIndexR.IsError);
         Assert.IsType<EvalError.BadIndex>(badIndexR.Error);
@@ -1168,7 +1168,7 @@ public class AstStructuralDepthTests
             // decoded texts are strings); enumerated by TryGetChild (PickInterpolationChild).
             ["InterpolatedString"] = ["Links"],
             [nameof(InterpolationLink)] = ["Hole"],
-            ["Index"] = ["Target", "Selector"],
+            ["Index"] = ["Target", "Selectors"],
             ["SequenceConstruct"] = ["Left", "Right"],
             ["SequenceSpread"] = ["Operand"],
             ["ListLiteral"] = ["Items"],
@@ -1504,7 +1504,7 @@ public class AstStructuralDepthTests
             [
                 new Expr.Unary(UnaryOp.Minus, new Expr.Num(1)),
                 new Expr.Binary(BinaryOp.Add, new Expr.Num(1), new Expr.Num(2)),
-                new Expr.Index(new Expr.ListLiteral([new Expr.Num(1)]), new Expr.Num(0)),
+                new Expr.Index(new Expr.ListLiteral([new Expr.Num(1)]), [new Expr.Num(0)]),
                 new Expr.SequenceConstruct(new Expr.Num(1), new Expr.EmptySequence(0)),
                 new Expr.SequenceSpread(new Expr.StringLiteral("s")),
                 new Expr.Grace(new Expr.Resolve("Cond"), 1),
@@ -2131,7 +2131,7 @@ public class AstStructuralDepthProcessTests
         {
             Expr expr = new Expr.Num(1);
             for (var i = 0; i < totalCountedNodes - 1; i++)
-                expr = new Expr.Index(expr, new Expr.Num(0));
+                expr = new Expr.Index(expr, [new Expr.Num(0)]);
             return expr;
         }
 
@@ -2505,6 +2505,14 @@ public class AstStructuralDepthProcessTests
 
             // Lists, call argument nesting: 3 units/level -> 127 levels max.
             AssertBoundary(n => Rep("[", n) + "1" + Rep("]", n), 127);
+            // Nested postfix selections (each selector slot holding the next selection): the
+            // selector list is the list literal's production, 3 units/level -> 127 levels max,
+            // with or without a sibling selector before the nested one. Chained selections are
+            // a postfix chain, governed by the 256-link expression-chain limit.
+            AssertBoundary(n => "A = [0]\n" + Rep("A[", n) + "0" + Rep("]", n), 127);
+            AssertBoundary(n => "A = [0]\n" + Rep("A[0, ", n) + "0" + Rep("]", n), 127);
+            AssertParses("A = [0]\nA" + Rep("[0]", 256));
+            AssertExpressionChainRejected("A = [0]\nA" + Rep("[0]", 257));
             AssertBoundary(n => "f(x) = x\n" + Rep("f(", n) + "1" + Rep(")", n), 127);
 
             // Trailing-brace calls charge BOTH heavy surcharges (call + block
@@ -2565,6 +2573,12 @@ public class AstStructuralDepthProcessTests
             Assert.Equal(new Decimal128[] { 7m }, Assert.IsType<RunResult.Success>(parenValue).Atoms);
             var bracketValue = KatLangEngine.Run(Rep("[", 120) + "3" + Rep("]", 120));
             Assert.Equal(new Decimal128[] { 3m }, Assert.IsType<RunResult.Success>(bracketValue).Atoms);
+            // The deepest nested and the longest chained selections the parser admits run through
+            // the whole front end and the evaluator on this thread too.
+            var nestedSelectionValue = KatLangEngine.Run("A = [0]\n" + Rep("A[", 127) + "0" + Rep("]", 127));
+            Assert.Equal(new Decimal128[] { 0m }, Assert.IsType<RunResult.Success>(nestedSelectionValue).Atoms);
+            var chainedSelectionValue = KatLangEngine.Run("A = [0]\nA" + Rep("[0]", 256));
+            Assert.Equal(new Decimal128[] { 0m }, Assert.IsType<RunResult.Success>(chainedSelectionValue).Atoms);
             // 296 keeps the engine-wrapped tree just below the evaluation ceiling
             // (296 unary + Num + the two relevant engine wrapping nodes = 299).
             var unaryValue = KatLangEngine.Run(Rep("-", 296) + "1");

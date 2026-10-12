@@ -44,8 +44,8 @@ def brGoodAlg : Algorithm := alg [] [] [] [.call (resolve "Id") [num 5]]
 /-- `BadType = 1 + "a"`: a failure of another kind. -/
 def brBadTypeAlg : Algorithm := alg [] [] [] [.binary .add (num 1) (.stringLiteral "a")]
 
-/-- `BadIndex = [1]:5`: a failure of a third kind. -/
-def brBadIndexAlg : Algorithm := alg [] [] [] [.index (.listLiteral [num 1]) (num 5)]
+/-- `BadIndex = [1][5]`: a failure of a third kind. -/
+def brBadIndexAlg : Algorithm := alg [] [] [] [.index (.listLiteral [num 1]) [num 5]]
 
 /-- `L = L + 1`: reading it never terminates (until a resource limit in C#). -/
 def brLoopAlg : Algorithm := alg [] [] [] [.binary .add (resolve "L") (num 1)]

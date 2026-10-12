@@ -244,12 +244,12 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_IndexTarget_ParamDetected()
     {
-        var ast = ParseAndDetect("arr:i");
+        var ast = ParseAndDetect("arr[i]");
 
         Assert.Equal(2, ast.Params.Count);
         var index = Assert.IsType<Expr.Index>(ast.Output[0]);
         Assert.IsType<Expr.Param>(index.Target);
-        Assert.IsType<Expr.Param>(index.Selector);
+        Assert.IsType<Expr.Param>(Assert.Single(index.Selectors));
     }
 
     [Fact]
@@ -338,7 +338,7 @@ public class ParameterDetectorTests
     {
         var source = """
             Numbers = 3, 5, 9
-            Add = a + 1, total + Numbers:a
+            Add = a + 1, total + Numbers[a]
             Add
             """;
         var ast = ParseAndDetect(source);
@@ -857,7 +857,7 @@ public class ParameterDetectorTests
             Expr.Grace(var inner, _) => ContainsResolve(inner, name),
             Expr.Binary(_, var left, var right) => ContainsResolve(left, name) || ContainsResolve(right, name),
             Expr.Unary(_, var operand) => ContainsResolve(operand, name),
-            Expr.Index(var target, var selector) => ContainsResolve(target, name) || ContainsResolve(selector, name),
+            Expr.Index(var target, var selectors) => ContainsResolve(target, name) || selectors.Any(selector => ContainsResolve(selector, name)),
             Expr.SequenceSpread(var operand) => ContainsResolve(operand, name),
             Expr.DotCall(var target, _, var args) => ContainsResolve(target, name)
                 || (args is not null && args.Any(output => ContainsResolve(output, name))),
@@ -874,7 +874,7 @@ public class ParameterDetectorTests
     // deleted without a single test failing (34 surviving + ~15 no-coverage mutants),
     // yet `expr.Span` feeds evaluator diagnostic attachment and the semantic model.
     [Theory]
-    [InlineData("K = x:0", typeof(Expr.Index))]
+    [InlineData("K = x[0]", typeof(Expr.Index))]
     [InlineData("K = -x", typeof(Expr.Unary))]
     [InlineData("K = x + 1", typeof(Expr.Binary))]
     [InlineData("K = [x]", typeof(Expr.ListLiteral))]

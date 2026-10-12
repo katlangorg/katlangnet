@@ -420,6 +420,7 @@ public class KatLangErrorCodeTests
             ["UnterminatedInterpolationHole"] = 55,
             ["InvalidInterpolationHole"] = 56,
             ["InterpolationNotAllowedHere"] = 57,
+            ["RetiredColonSelection"] = 58,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -511,6 +512,7 @@ public class KatLangErrorCodeTests
             ["UnterminatedInterpolationHole"] = 77,
             ["InvalidInterpolationHole"] = 78,
             ["InterpolationNotAllowedHere"] = 79,
+            ["RetiredColonSelection"] = 80,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

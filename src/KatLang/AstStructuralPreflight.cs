@@ -501,8 +501,8 @@ internal static class AstStructuralPreflight
     /// Classifies the node kinds owned by the iterative expression-spine machine.
     ///
     /// <para>Only the operand positions the machine actually drives are inspected. A
-    /// <see cref="Expr.Binary"/>'s or <see cref="Expr.Index"/>'s SECOND operand, a
-    /// <see cref="Expr.Comparison"/>'s link operands, and a list's later elements are
+    /// <see cref="Expr.Binary"/>'s SECOND operand, an <see cref="Expr.Index"/>'s selector
+    /// slots, a <see cref="Expr.Comparison"/>'s link operands, and a list's later elements are
     /// siblings on separate paths: the preflight already judges each path independently,
     /// so a wide-but-shallow expression such as <c>1 + f(2) + g(3)</c> pays nothing along
     /// its long spine path. An interpolated string's holes are evaluated one after another
@@ -833,7 +833,7 @@ internal static class AstStructuralPreflight
             Expr.Unary unary => PickOne(index, unary.Operand, out child),
             Expr.Binary binary => PickTwo(index, binary.Left, binary.Right, out child),
             Expr.Comparison comparison => PickComparisonChild(index, comparison, out child),
-            Expr.Index indexExpr => PickTwo(index, indexExpr.Target, indexExpr.Selector, out child),
+            Expr.Index indexExpr => PickIndexChild(index, indexExpr, out child),
             Expr.SequenceConstruct sequenceConstruct => PickTwo(index, sequenceConstruct.Left, sequenceConstruct.Right, out child),
             Expr.SequenceSpread spread => PickOne(index, spread.Operand, out child),
             Expr.Grace grace => PickOne(index, grace.Inner, out child),
@@ -862,6 +862,31 @@ internal static class AstStructuralPreflight
     }
 
     /// <summary>The first operand, then each link's operand in chain order.</summary>
+    /// <summary>
+    /// A selection's children: the receiver (child 0), then every selector slot directly
+    /// (children 1..n) — never a weightless grouping child, so the transition weight sees the
+    /// selection as each selector edge's parent (an ordinary selector is a machine child of the
+    /// selection frame; a spread slot is evaluated during supply formation, a re-entry).
+    /// </summary>
+    private static bool PickIndexChild(int index, Expr.Index selection, out object child)
+    {
+        if (index == 0)
+        {
+            child = selection.Target;
+            return true;
+        }
+
+        var selectors = selection.Selectors;
+        if (index - 1 < selectors.Count)
+        {
+            child = selectors[index - 1];
+            return true;
+        }
+
+        child = null!;
+        return false;
+    }
+
     private static bool PickComparisonChild(int index, Expr.Comparison comparison, out object child)
     {
         if (index == 0)

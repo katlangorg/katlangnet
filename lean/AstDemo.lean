@@ -23,7 +23,7 @@ def AddAlg : Algorithm :=
     []
     []
     [ KatLang.param "a" + KatLang.num 1
-    , KatLang.param "sum" + KatLang.index (KatLang.resolve "Numbers") (KatLang.param "a")
+    , KatLang.param "sum" + KatLang.index (KatLang.resolve "Numbers") [KatLang.param "a"]
     ]
 
 def SumAlg : Algorithm :=
@@ -39,7 +39,7 @@ def SumAlg : Algorithm :=
           , KatLang.num 0
           , KatLang.num 0
           ])
-        (KatLang.num 1)
+        [KatLang.num 1]
     ]
 
 def RootAlg : Algorithm :=

@@ -610,7 +610,7 @@ public static class AstGraphFuzzer
                 Enumerable.Range(1, node.Children.Length - 1)
                     .Select(slot => new ComparisonLink(ComparisonOps[(node.Aux + slot - 1) % ComparisonOps.Length], Child(slot)))
                     .ToList()),
-            GKind.Index => new Expr.Index(Child(0), Child(1)),
+            GKind.Index => new Expr.Index(Child(0), [Child(1)]),
             GKind.List => new Expr.ListLiteral(new OutputBundle(ChildrenFrom(0))),
             GKind.Capture => new Expr.Capture(new OutputBundle(ChildrenFrom(0))),
             GKind.Call => new Expr.Call(Child(0), new OutputBundle(ChildrenFrom(1))),

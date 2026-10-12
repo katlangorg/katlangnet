@@ -786,9 +786,9 @@ public class DeconstructionBindingTests
     public void ParenthesizedSequencePropertyItem_PatternCallMatchesAssignmentDeconstruction()
     {
         // With A = (1, 2) both binding forms receive the canonical (1, 2) as
-        // one item, so x:0 selects 1 in both.
-        AssertAtoms("A = 1, 2\nx, y = ((A), 6)\nx:0, y", 1, 6);
-        AssertAtoms("A = 1, 2\nF((x, y)) = x:0, y\nF(((A), 6))", 1, 6);
+        // one item, so x[0] selects 1 in both.
+        AssertAtoms("A = 1, 2\nx, y = ((A), 6)\nx[0], y", 1, 6);
+        AssertAtoms("A = 1, 2\nF((x, y)) = x[0], y\nF(((A), 6))", 1, 6);
     }
 
     [Fact]

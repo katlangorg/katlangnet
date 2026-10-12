@@ -816,9 +816,9 @@ def evalProjectionProbes : List (String × KatLang.Expr × Bool) :=
     -- The Int-valued Lean core rejects fractional reciprocals explicitly
     -- (`negativeIntPow`); parity covers the error Repr on both sides.
     ("binary-negative-pow-fractional", .binary .pow (.num 2) (.num (-2)), false),
-    ("index-selects", .index (.capture [.num 1, .num 2, .num 3]) (.num 1), true),
-    ("index-out-of-range", .index (.capture [.num 1]) (.num 5), false),
-    ("index-negative", .index (.capture [.num 1]) (.unary .minus (.num 1)), false),
+    ("index-selects", .index (.capture [.num 1, .num 2, .num 3]) [.num 1], true),
+    ("index-out-of-range", .index (.capture [.num 1]) [.num 5], false),
+    ("index-negative", .index (.capture [.num 1]) [.unary .minus (.num 1)], false),
     ("param-unknown", .param "nope", false),
     ("resolve-cached-property", resolve "Value", true),
     ("resolve-unknown", resolve "NoSuchName", false),

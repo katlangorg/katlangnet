@@ -42,6 +42,8 @@ CALLABLE projection obtains the supplied expression's resolved algorithm identit
 
 Explicit `E*` opens one supply level. An arbitrary E must be evaluated during supply formation to discover its ordinary value and items; those items become ready cells. An existing collector already represents an exact, known-cardinality slice: opening it transfers its element-cell addresses directly, without VALUE materialization. Slice transfer opens no element value.
 
+A POSTFIX SELECTION forms its selector supply by the same law (variadic postfix selection, October 2026; `sequences-lists-and-calls.md` § Variadic postfix selection): after the receiver's one VALUE demand, every explicit spread selector runs during formation and contributes its items (a collector slice transfers its cells unforced), while each ordinary selector stays a suspended computation demanded left to right only when the selection reaches it. So formation precedes selection: `[10, 20][99, (1 / 0)*]` is `DivisionByZero` (the spread ran before `99` was validated), while `[10, 20][99, 1 / 0]` is `BadIndex` (`1 / 0` is never demanded).
+
 A collector's ordinary VALUE demand materializes **all** its cells left to right into one exact eager list, preserving nested and empty values as elements. Empty slices yield `[]`. `.count`, `.first`, `.sum`, selection and normal collection consumers receive that complete ordinary value. No shape-only count, lazy list node or lazy element rule exists. A collector passed without opening is one collection-valued computation; demanded capture/list reconstruction uses the established eager value boundaries.
 
 ## NEED-08 / NEED-FWD — Forwarding transfers supplies

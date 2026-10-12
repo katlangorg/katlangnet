@@ -12,13 +12,13 @@ public class EvaluatorDotCallTests
     private static string YellowstoneSource(string finalExpression) =>
         $$"""
           GcdStep = b~, a mod b, a mod b != 0
-          Gcd = GcdStep.while(a, b):1
+          Gcd = GcdStep.while(a, b)[1]
 
           FindNext(*history, pre1, pre2) = {
               IsYSCandidate = not history.contains(candidate) and
                   Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
               FindStep = candidate + 1, not IsYSCandidate
-              FindStep.while(1):0
+              FindStep.while(1)[0]
           }
           YSStep((*history), pre2, pre1) = {
               Next = FindNext(history*, pre1, pre2)
@@ -486,8 +486,8 @@ public class EvaluatorDotCallTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            count(Data:0)
-            (Data:0).count
+            count(Data[0])
+            (Data[0]).count
             """;
 
         AssertEval(source, 5, 5);
@@ -498,8 +498,8 @@ public class EvaluatorDotCallTests
     {
         var source = """
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            Projected = Data:0
-            count(Data:0)
+            Projected = Data[0]
+            count(Data[0])
             count(Projected)
             """;
 
@@ -597,7 +597,7 @@ public class EvaluatorDotCallTests
         };
 
         AssertEval(
-            YellowstoneSource("YSStep.repeat(27, (1, 2, 3), 2, 3):0"),
+            YellowstoneSource("YSStep.repeat(27, (1, 2, 3), 2, 3)[0]"),
             expectedPrefix);
     }
 
@@ -631,13 +631,13 @@ public class EvaluatorDotCallTests
 
         var source = """
             GcdStep = b, ~a mod b, a mod b != 0
-            Gcd = GcdStep.while(a, b):1
+            Gcd = GcdStep.while(a, b)[1]
 
             FindNext(history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not contains(history, candidate) and
                     Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
-                FindStep.while(1):0
+                FindStep.while(1)[0]
             }
 
             YSStep(history, pre2, pre1) = {
@@ -655,7 +655,7 @@ public class EvaluatorDotCallTests
             ]));
 
         AssertEvalLoopModes(
-            source + "\nYSStep.repeat(27, (1, 2, 3), 2, 3):0",
+            source + "\nYSStep.repeat(27, (1, 2, 3), 2, 3)[0]",
             expectedHistory);
     }
 
@@ -672,8 +672,8 @@ public class EvaluatorDotCallTests
             count(Values)
             SequenceValue.count
             count(SequenceValue)
-            (Data:0).count
-            count(Data:0)
+            (Data[0]).count
+            count(Data[0])
             """,
             3,
             3,
@@ -693,8 +693,8 @@ public class EvaluatorDotCallTests
             contains(Values, 2)
             SequenceValue.contains(2)
             SequenceValue.contains((1, 2, 3))
-            (Data:0).contains(2)
-            contains(Data:0, 2)
+            (Data[0]).contains(2)
+            contains(Data[0], 2)
             """,
             true,
             true,
@@ -711,10 +711,10 @@ public class EvaluatorDotCallTests
             Data = (3, 1, 2), (9, 8, 7)
             Values.order
             Values.orderDesc
-            (Data:0).order
-            order(Data:0)
-            (Data:0).orderDesc
-            orderDesc(Data:0)
+            (Data[0]).order
+            order(Data[0])
+            (Data[0]).orderDesc
+            orderDesc(Data[0])
             """,
             1,
             2,
@@ -778,10 +778,10 @@ public class EvaluatorDotCallTests
             Data = (9, 8, 7), (3, 2, 1)
             Values.first
             Values.last
-            (Data:0).first
-            first(Data:0)
-            (Data:0).last
-            last(Data:0)
+            (Data[0]).first
+            first(Data[0])
+            (Data[0]).last
+            last(Data[0])
             """,
             5,
             7,
@@ -814,8 +814,8 @@ public class EvaluatorDotCallTests
             Values = 1, 2, 1, 3
             Data = (1, 2, 1, 3), (9, 8, 9)
             Values.distinct
-            (Data:0).distinct
-            distinct(Data:0)
+            (Data[0]).distinct
+            distinct(Data[0])
             """,
             1,
             2,
@@ -854,10 +854,10 @@ public class EvaluatorDotCallTests
             take(Values, 2)
             Values.skip(1)
             skip(Values, 1)
-            (Data:0).take(2)
-            take(Data:0, 2)
-            (Data:0).skip(2)
-            skip(Data:0, 2)
+            (Data[0]).take(2)
+            take(Data[0], 2)
+            (Data[0]).skip(2)
+            skip(Data[0], 2)
             """,
             1,
             2,
@@ -963,14 +963,14 @@ public class EvaluatorDotCallTests
             Values.avg
             Values.min
             Values.max
-            (Data:0).sum
-            sum(Data:0)
-            (Data:0).avg
-            avg(Data:0)
-            (Data:0).min
-            min(Data:0)
-            (Data:0).max
-            max(Data:0)
+            (Data[0]).sum
+            sum(Data[0])
+            (Data[0]).avg
+            avg(Data[0])
+            (Data[0]).min
+            min(Data[0])
+            (Data[0]).max
+            max(Data[0])
             """,
             6,
             2,
@@ -1043,8 +1043,8 @@ public class EvaluatorDotCallTests
             map(Items, ItemCount)
             SequenceValue.map(ItemCount)
             map(SequenceValue, ItemCount)
-            (Data:0).map(AddOne)
-            map(Data:0, AddOne)
+            (Data[0]).map(AddOne)
+            map(Data[0], AddOne)
             """,
             3,
             1,
@@ -1076,8 +1076,8 @@ public class EvaluatorDotCallTests
             filter(Items, KeepCountThree).count
             SequenceValue.filter(KeepCountThree).count
             filter(SequenceValue, KeepCountThree).count
-            (Data:0).filter(IsLarge).count
-            filter(Data:0, IsLarge).count
+            (Data[0]).filter(IsLarge).count
+            filter(Data[0], IsLarge).count
             """,
             2,
             2,
@@ -1099,8 +1099,8 @@ public class EvaluatorDotCallTests
             reduce(Items, AddItemCount, 0)
             SequenceValue.reduce(AddItemCount, 0)
             reduce(SequenceValue, AddItemCount, 0)
-            (Data:0).reduce(Add, 0)
-            reduce(Data:0, Add, 0)
+            (Data[0]).reduce(Add, 0)
+            reduce(Data[0], Add, 0)
             """,
             4,
             4,

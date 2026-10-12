@@ -199,9 +199,9 @@ public class ListValueImmutabilityTests
     // ── 4b. Projection-selected lists cannot be mutated from the host ───────
 
     [Theory]
-    [InlineData("[[1, 2], [3, 4]]:0", "[1, 2]")]
-    [InlineData("(0, [1, 2]):1", "[1, 2]")]
-    [InlineData("take([[1, 2], [3, 4]], 1):0", "[1, 2]")]
+    [InlineData("[[1, 2], [3, 4]][0]", "[1, 2]")]
+    [InlineData("(0, [1, 2])[1]", "[1, 2]")]
+    [InlineData("take([[1, 2], [3, 4]], 1)[0]", "[1, 2]")]
     public void ProjectionSelectedList_ResistsHostMutation(string source, string expectedDisplay)
     {
         // A list selected by `:` is an ordinary immutable list value: no item

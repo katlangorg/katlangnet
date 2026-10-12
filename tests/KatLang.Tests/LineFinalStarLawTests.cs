@@ -46,7 +46,7 @@ public class LineFinalStarLawTests
         Expr.SequenceSpread(var operand) => $"spread({Shape(operand)})",
         Expr.Capture(var body) => $"capture({Join(body)})",
         Expr.ListLiteral(var items) => $"list({Join(items)})",
-        Expr.Index(var target, var selector) => $"index({Shape(target)}, {Shape(selector)})",
+        Expr.Index(var target, var selectors) => $"index({Shape(target)}, {Join(selectors)})",
         Expr.Call(var function, var args) => $"call({Shape(function)}; {Join(args)})",
         Expr.DotCall dot => dot.Args is { } args
             ? $"dot({Shape(dot.Target)}.{dot.Name}; {Join(args)})"
@@ -226,7 +226,7 @@ public class LineFinalStarLawTests
         { "A = (1, 2)\nA*\npublic B = 5\nB", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
         { "A = (1, 2)\nA*\nF(x) = x + 3\nF(2)", "{A = capture(1, 2); F = +($x, 3)} spread(A) | call(F; 2)", "S[1, 2, 5]" },
         { "A = (1, 2)\nA*\nx, y = 4, 5\ny", "{A = capture(1, 2); $deconstruct$0 = 4 | 5; x = call(block($x); $deconstruct$0); y = call(block($y); $deconstruct$0)} spread(A) | y", "S[1, 2, 5]" },
-        { "A = (1, 2)\nA*\n*items = 4, 5\nitems:1", "{A = capture(1, 2); $deconstruct$0 = 4 | 5; items = call(block($items); $deconstruct$0)} spread(A) | index(items, 1)", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\n*items = 4, 5\nitems[1]", "{A = capture(1, 2); $deconstruct$0 = 4 | 5; items = call(block($items); $deconstruct$0)} spread(A) | index(items, 1)", "S[1, 2, 5]" },
         { "A = (1, 2)\nX = A*\nY = 5\nX, Y", "{A = capture(1, 2); X = spread(A); Y = 5} X | Y", "S[S[1, 2], 5]" },
         { "A = (1, 2)\n{ A*\n  Y = 5\n  Y }", "{A = capture(1, 2)} block({Y = 5} spread(A) | Y)", "S[1, 2, 5]" },
         // A closing delimiter or the end of input closes the expression before any operand.
@@ -312,7 +312,7 @@ public class LineFinalStarLawTests
         { "A = 4\nB = 6\nA *\nB - 1", "-(*(A, B), 1)", "23" },
         { "A = 4\nB = 6\nA*\nB ^ 2", "*(A, ^(B, 2))", "144" },
         { "A = 4\nB = 6\nA*\n-B", "*(A, neg(B))", "-24" },
-        { "A = 4\nL = [6]\nA*\nL:0", "*(A, index(L, 0))", "24" },
+        { "A = 4\nL = [6]\nA*\nL[0]", "*(A, index(L, 0))", "24" },
         { "A = 4\nB = 6\nA*\nB == 24", "cmp(*(A, B) == 24)", "true" },
         { "A = 4\nB = 6\nC = 2\nA*\nB*\nC", "*(*(A, B), C)", "48" },
         { "map([1, 2], { x*\n  (x + 1) })", "call(map; list(1, 2), block(*($x, +($x, 1))))", "L[2, 6]" },
@@ -484,9 +484,9 @@ public class LineFinalStarLawTests
     public async Task UnseparatedSpreadRowInModuleText_IsOneMultiplicationRow()
     {
         // The intentional-multiplication twin of the ModuleCoordinateSpaceTests fixture: without
-        // the trailing comma, `F(1, (2, 3))*` before the `[H]:0` line multiplies, so the module has
+        // the trailing comma, `F(1, (2, 3))*` before the `[H][0]` line multiplies, so the module has
         // ONE row and no spread node. With `*,` it has the spread row and the selection row.
-        const string unseparated = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*\n[H]:0";
+        const string unseparated = "open Math\npublic F(x, (y, *z)) = x + y\npublic G(0) = 'a'\npublic G(n) = n.count\nH = { a, *b = 1, 2, 3\n a + b.count }\nF(1, (2, 3))*\n[H][0]";
         var separated = unseparated.Replace("F(1, (2, 3))*\n", "F(1, (2, 3))*,\n", StringComparison.Ordinal);
         Assert.NotEqual(unseparated, separated);
 

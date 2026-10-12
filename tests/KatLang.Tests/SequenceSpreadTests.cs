@@ -645,7 +645,7 @@ public class SequenceSpreadTests
             """
             FindNext(*history, pre1, pre2) = history.count + pre1 + pre2
             YSStep((*history), pre2, pre1) = FindNext(history*, pre1, pre2), pre1, pre2
-            YSStep.repeat(1, (1, 2, 3), 2, 3):0
+            YSStep.repeat(1, (1, 2, 3), 2, 3)[0]
             """,
             8m);
 

@@ -484,7 +484,7 @@ public class IntegerDivisionContractTests
         var source =
             $"Step(v, s) = v div 10, s + v mod 10, v > 0\n" +
             $"R = while(Step, {n}, 0)\n" +
-            "R:1";
+            "R[1]";
         EvaluatorTestSupport.AssertEvalLoopModes(source, expectedDigitSum);
     }
 

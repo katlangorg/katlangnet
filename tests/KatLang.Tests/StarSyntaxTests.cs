@@ -170,8 +170,8 @@ public class StarSyntaxTests
     [InlineData("A = (1, 2)\nA*\npublic B = 5\nB", "1\n2\n5")]
     [InlineData("A = (1, 2)\nA*\nF(x) = x + 4\nF(1)", "1\n2\n5")]
     [InlineData("A = (1, 2)\nA*\nx, y = 4, 5\ny", "1\n2\n5")]
-    [InlineData("A = (1, 2)\nA*\n*items = 4, 5\nitems:1", "1\n2\n5")]
-    [InlineData("A = (1, 2)\nA*\nx, *rest = 4, 5\nrest:0", "1\n2\n5")]
+    [InlineData("A = (1, 2)\nA*\n*items = 4, 5\nitems[1]", "1\n2\n5")]
+    [InlineData("A = (1, 2)\nA*\nx, *rest = 4, 5\nrest[0]", "1\n2\n5")]
     public void LineEndingStar_BeforeADeclarationHead_IsASpread(string source, string expected)
     {
         // A declaration head is never a multiplication operand, so the star
@@ -1373,17 +1373,17 @@ public class StarSyntaxTests
     {
         const string value = "A = [[1, 2], [3, 4]]\n";
 
-        // `A:0*` — the star attaches to the completed index, so this SELECTS
+        // `A[0]*` — the star attaches to the completed index, so this SELECTS
         // the stored list `[1, 2]` first and then spreads the selected value.
-        Assert.Equal("1\n2", Display(value + "A:0*"));
-        Assert.Equal(Display(value + "(A:0)*"), Display(value + "A:0*"));
+        Assert.Equal("1\n2", Display(value + "A[0]*"));
+        Assert.Equal(Display(value + "(A[0])*"), Display(value + "A[0]*"));
 
-        // `(A*):0` — the parentheses CAPTURE the two-item spread supply as
+        // `(A*)[0]` — the parentheses CAPTURE the two-item spread supply as
         // one sequence value first, and selection projects from that value.
-        Assert.Equal("[1, 2]", Display(value + "(A*):0"));
+        Assert.Equal("[1, 2]", Display(value + "(A*)[0]"));
 
         // The two forms are not interchangeable.
-        Assert.NotEqual(Display(value + "(A:0)*"), Display(value + "(A*):0"));
+        Assert.NotEqual(Display(value + "(A[0])*"), Display(value + "(A*)[0]"));
     }
 
     [Fact]
@@ -1462,29 +1462,24 @@ public class StarSyntaxTests
     }
 
     [Fact]
-    public void SelectionOnSpread_ReportsValueSupplyDiagnostic_WithExactMessageSpanAndRecovery()
+    public void RetiredColonSelectionOnSpread_ReportsOneMigrationDiagnostic_AndRecovers()
     {
-        // `A*:0` — indexing a spread expression. The diagnostic must
-        // distinguish the two valid intentions instead of offering them as
-        // interchangeable fixes: `(A:0)*` selects first and then spreads the
-        // selected value; `(A*):0` captures the spread supply and then
-        // selects.
+        // `values*:0` — the retired colon form after a spread: the star before a
+        // ':' classifies as a spread marker, and the ':' reports the ONE
+        // migration diagnostic (the spread receiver is unwrapped silently).
+        // Recovery is the selection the colon meant, so no embedded
+        // SequenceSpread survives and following declarations keep parsing.
         var parse = Parser.Parse("values = (1, 2)\nvalues*:0\nAfter = 5\nAfter");
         Assert.True(parse.HasErrors);
 
         var error = Assert.Single(parse.Diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
-        Assert.Equal(
-            "Selection cannot be applied directly to a spread expression — a spread supplies items to the surrounding item supply, not one selectable value. Write `(A:0)*` to select first and then spread the selected value, or `(A*):0` to capture the spread items as one sequence value and then select; the two forms have different meanings.",
-            error.Message);
-        Assert.Equal(new SourceSpan(2, 1, 2, 8), error.Span); // covers `values*`
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, error.Code);
+        Assert.Equal(new SourceSpan(2, 8, 2, 10), error.Span); // covers `:0`
 
-        // Recovery unwraps the spread (no embedded SequenceSpread survives):
-        // the recovered row is the ordinary index `values:0`, and following
-        // declarations continue to parse.
         var recoveredRow = Assert.IsType<Expr.Index>(parse.Root.Output[0]);
         Assert.IsType<Expr.Resolve>(recoveredRow.Target);
-        var selector = Assert.IsType<Expr.Num>(recoveredRow.Selector);
+        var selector = Assert.IsType<Expr.Num>(Assert.Single(recoveredRow.Selectors));
         Assert.Equal(0m, selector.Value);
         Assert.Contains(parse.Root.Properties, static p => p.Name == "After");
         Assert.Equal(2, parse.Root.Output.Count);
@@ -1496,15 +1491,38 @@ public class StarSyntaxTests
     }
 
     [Fact]
-    public void SelectionOnRepeatedSpread_ReportsOneDiagnosticAndUnwrapsAllLayers()
+    public void RetiredColonSelectionOnRepeatedSpread_ReportsOneDiagnosticAndUnwrapsAllLayers()
     {
         var parse = Parser.Parse("values = (1, 2)\nvalues**:0");
         Assert.True(parse.HasErrors);
         var error = Assert.Single(parse.Diagnostics);
-        Assert.Contains("Selection cannot be applied directly to a spread expression", error.Message);
+        Assert.Equal(DiagnosticCode.RetiredColonSelection, error.Code);
 
         var recoveredRow = Assert.IsType<Expr.Index>(Assert.Single(parse.Root.Output));
         Assert.IsType<Expr.Resolve>(recoveredRow.Target);
+    }
+
+    [Fact]
+    public void BracketAfterAStar_IsMultiplication_NeverASelectionOfTheSpread()
+    {
+        // The star disambiguation is unchanged by postfix selection: '[' begins
+        // a multiplication operand (a list literal), so `values*[0]` is the
+        // multiplication `values * [0]` — on the same line, with spaces, and
+        // across a newline — never a selection applied to a spread.
+        foreach (var source in new[] { "values = (1, 2)\nvalues*[0]", "values = (1, 2)\nvalues *[0]", "values = (1, 2)\nvalues*\n[0]" })
+        {
+            var parse = Parser.Parse(source);
+            Assert.Empty(parse.Diagnostics);
+            var product = Assert.IsType<Expr.Binary>(Assert.Single(parse.Root.Output));
+            Assert.Equal(BinaryOp.Mul, product.Op);
+            Assert.IsType<Expr.ListLiteral>(product.Right);
+        }
+
+        // Capture-then-select, select-then-spread and a spread SELECTOR slot are
+        // the spellings of the other intentions.
+        Assert.Equal("1", Display("values = (1, 2)\n(values*)[0]"));
+        Assert.Equal("1\n2", Display("values = [[1, 2], 3]\nvalues[0]*"));
+        Assert.Equal("(2, 1)", Display("values = (1, 2)\nIs = [1, 0]\nvalues[Is*]"));
     }
 
     [Fact]
@@ -1533,8 +1551,10 @@ public class StarSyntaxTests
                 case Expr.Unary(_, var operand):
                     FoundEmbeddedSpread |= operand is Expr.SequenceSpread;
                     break;
-                case Expr.Index(var target, var selector):
-                    FoundEmbeddedSpread |= target is Expr.SequenceSpread || selector is Expr.SequenceSpread;
+                // A spread is a legal selector SLOT (`Data[Indexes*]`); only a
+                // spread receiver would be embedded.
+                case Expr.Index(var target, _):
+                    FoundEmbeddedSpread |= target is Expr.SequenceSpread;
                     break;
             }
 

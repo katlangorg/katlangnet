@@ -225,10 +225,10 @@ internal sealed partial class ModuleLoader
                 ? interpolated
                 : interpolated with { Links = links, Span = null },
 
-            Expr.Index index => (Rewrite(index.Target), Rewrite(index.Selector)) is var (target, selector)
-                && ReferenceEquals(target, index.Target) && ReferenceEquals(selector, index.Selector) && index.Span is null
+            Expr.Index index => (Rewrite(index.Target), RewriteBundle(index.Selectors)) is var (target, selectors)
+                && ReferenceEquals(target, index.Target) && ReferenceEquals(selectors, index.Selectors) && index.Span is null
                 ? index
-                : index with { Target = target, Selector = selector, Span = null },
+                : index with { Target = target, Selectors = selectors, Span = null },
 
             Expr.SequenceConstruct join => (Rewrite(join.Left), Rewrite(join.Right)) is var (left, right)
                 && ReferenceEquals(left, join.Left) && ReferenceEquals(right, join.Right) && join.Span is null

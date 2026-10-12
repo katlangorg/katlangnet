@@ -1,12 +1,12 @@
 # Nested repeated call shape for Stage 2 loop planning.
 Test = {
     Step = k + 1, k <= 100
-    Step.while(2):0
+    Step.while(2)[0]
 }
 
 Run(n) = {
     Step = value + 1, total + Test()
-    Step.repeat(n, 1, 0):1
+    Step.repeat(n, 1, 0)[1]
 }
 
 Run(10000)

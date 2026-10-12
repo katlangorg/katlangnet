@@ -674,7 +674,7 @@ structure SequenceBuiltinSuffixArgDescriptor where
     (Q-27): an ordinary input (`allowEmpty`), outside an aggregate's domain
     (`requireAnyItem`, `illegalInEval` — `min`, `max`, `avg`), or a SELECTION
     that has no position to select (`requireSelectablePosition`, `badIndex` —
-    `first`, `last`, exactly as `collection:0`, SEQ-04).
+    `first`, `last`, exactly as `collection[0]`, SEQ-04).
     C#: `SequenceBuiltinEmptyPolicy`. -/
 inductive SequenceBuiltinEmptyPolicy where
   | allowEmpty
@@ -1186,7 +1186,21 @@ mutual
     --   with no links evaluates its first operand and is `true`.
     --   C#: `Expr.Comparison`.
     | comparison : Expr -> List ComparisonLink -> Expr
-    | index   : Expr -> Expr -> Expr
+    -- * index: VARIADIC POSTFIX SELECTION `receiver[s1, …, sn]` (October 2026,
+    --   replacing the retired colon form `receiver:s`). The selector list is an
+    --   ordinary written expression list (spread slots included) over the
+    --   receiver. PARENTHESES INVOKE A COMPUTATION; POSTFIX BRACKETS SELECT FROM
+    --   A VALUE; selection never changes how its receiver obtains that value.
+    --   Evaluation (the `.index` arm of `evalCounted`): demand the receiver
+    --   ONCE through its ordinary value path; form the selector supply exactly
+    --   like a call's (`formNeedSupply`: explicit spreads run, ordinary selectors
+    --   stay suspended cells); demand, validate and select each supplied index
+    --   LEFT TO RIGHT, stopping at the first failure (`selectWith`); capture the
+    --   selected values canonically (`combineOutputSlots`: zero → `()`, one →
+    --   the value itself, several → one sequence of the values kept whole). The
+    --   positional view is the ONE immediate view `count`/`first`/`last` read
+    --   (`Result.projectionItems`). No callable identity. C#: `Expr.Index`.
+    | index   : Expr -> List Expr -> Expr
     -- * sequenceConstruct: INTERNAL sequence-join node retained for semantic
     --   AST compatibility (surface spreading is the attached postfix spread marker `expr*`,
     --   `sequenceSpread`, and never builds this node).
@@ -1643,8 +1657,8 @@ namespace Result
       explicit openers are the spread marker (`spreadItems`, which assignment
       deconstruction's elaboration also uses), the kind-specific structural
       patterns (`sequencePatternItems?` for `(…)`, `listPatternItems?` for
-      `[…]`), the indexing `:` TARGET position view (`projectionItems` — the
-      target's positions, never the selected element), and the post-binding
+      `[…]`), the selection RECEIVER position view (`projectionItems` — the
+      receiver's positions, never the selected element), and the post-binding
       builtin collection view (`builtinCollectionItems`, applied to the bound
       `collection` argument). Every opener except the structural patterns opens
       a sequence and a list alike; a structural pattern opens only its own
@@ -1720,30 +1734,35 @@ namespace Result
     | sequenceValue [] => 0
     | _ => 1
 
-  /-- Selectable-position view of an indexing `:` TARGET: a sequence value or
+  /-- The IMMEDIATE POSITIONAL VIEW of a selection receiver: a sequence value or
       exact list value offers its immediate elements as positions; every other
-      value follows `toItems` (a scalar offers itself as the single position).
-      This view decides WHICH positions exist and never opens the selected
-      element, which `select?` returns exactly as stored (a nested list element
-      stays one opaque list, a nested sequence element one sequence value).
-      C#: `Result.ProjectionItems`. -/
+      value follows `toItems` (a number, a Boolean or a string offers ITSELF as
+      the single position — a string, the empty string included, is never
+      decomposed into characters). It is the ONE view `count`, `first`, `last`
+      and postfix selection share (`positional_view_is_shared`: it equals the
+      post-binding collection view `builtinCollectionItems`); an empty list or
+      sequence has no positions. This view decides WHICH positions exist and
+      never opens the selected element, which `select?` returns exactly as
+      stored (a nested list element stays one opaque list, a nested sequence
+      element one sequence value). C#: `Result.ProjectionItems`. -/
   def projectionItems : Result -> List Result
     | listValue rs => rs
     | r => r.toItems
 
-  /-- SELECTION IS A VALUE BOUNDARY (September 2026): `:` selects one
-      top-level position of a sequence or exact list target and returns the
-      stored element as ONE value — it never opens it. A selected sequence
-      value stays one sequence value, a selected list stays one exact list, and
-      the selected value's origin is forgotten: the `.index` arm of
-      `evalCounted` re-counts it through the ordinary value boundary
-      (`Result.valueCount`), so `()` selected through any route emits zero
-      values and everything else emits one. Only the spread marker
-      (`spreadItems`) opens a selected value. `first`/`last`
-      (`evalFirstCounted`/`evalLastCounted`) and higher-order callback items
-      (`countedSequenceCallbackItem`) select through the same rule. Laws:
-      `select_is_a_value_boundary`, `first_is_select_zero`, `last_is_select_last`
-      in `KatLangArityLaws.lean`. C#: `Result.Index`. -/
+  /-- SELECTION IS A VALUE BOUNDARY (September 2026): one supplied selector of
+      a postfix selection `receiver[i]` selects one immediate position of the
+      receiver and returns the stored element as ONE value — it never opens
+      it. A selected sequence value stays one sequence value, a selected list
+      stays one exact list, and the selected value's origin is forgotten: the
+      `.index` arm of `evalCounted` applies this once per supplied selector
+      (`selectPosition`) and captures the selected values canonically
+      (`selectionResult`), so a single selection of `()` emits zero values and
+      everything else emits one. Only the spread marker (`spreadItems`) opens a
+      selected value. `first`/`last` (`evalFirstCounted`/`evalLastCounted`) and
+      higher-order callback items (`countedSequenceCallbackItem`) select through
+      the same rule. Laws: `select_is_a_value_boundary`,
+      `first_is_selection_at_zero`, `last_is_selection_at_count_minus_one` in
+      `KatLangArityLaws.lean`. C#: `Result.Index`. -/
   def select? (r : Result) (i : Nat) : Option Result :=
     r.projectionItems[i]?
 
@@ -2619,34 +2638,29 @@ def Expr.kind : Expr -> String
 def emptySequenceText (depth : Nat) : String :=
   String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
 
-/-- This MINIMAL renderer models only structural reference forms; every other
+/-- Extract a descriptive name from an open expression for error messages.
+  This MINIMAL renderer models only structural reference forms; every other
   kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
   C#'s merged `OpenExprName` prints more detail for them. That gap is
   pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
   `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
-  coverage, not of indexing. -/
-def openExprNameIndexSelectorNeedsParens : Expr -> Bool
-  | .dotMember _ _ _ _ => true
-  | .index _ _        => true
-  | .sequenceSpread _ => true
-  | _                 => false
-
-/-- Extract a descriptive name from an open expression for error messages.
-  See `openExprNameIndexSelectorNeedsParens` for this renderer's coverage gap. -/
+  coverage, not of selection. -/
 def openExprName (e : Expr) : String :=
   match e with
   | .resolve n => n
   | .dotMember o n _ _ =>
       openExprName o ++ "." ++ n
-  -- Indexing is source-faithful postfix `target:selector`, never the `(index)`
-  -- kind fallback. Only the forms this renderer prints BARE can continue the
-  -- postfix chain and rebind; every unmodelled kind is already self-delimiting
-  -- as `(kind)`, so parenthesizing it again would only double the parentheses.
-  | .index target selector =>
-      let selectorName := openExprName selector
-      openExprName target ++ ":" ++
-        (if openExprNameIndexSelectorNeedsParens selector then "(" ++ selectorName ++ ")"
-         else selectorName)
+  -- Selection is source-faithful postfix `target[s1, …, sn]`, never the `(index)`
+  -- kind fallback. Every selector sits inside the brackets' own expression list,
+  -- so none needs parentheses; a spread TARGET does (`(A*)[0]`), since `A*[0]`
+  -- reads back as multiplication. Every unmodelled kind is already
+  -- self-delimiting as `(kind)`.
+  | .index target selectors =>
+      let targetName := openExprName target
+      (match target with
+       | .sequenceSpread _ => "(" ++ targetName ++ ")"
+       | _ => targetName)
+        ++ "[" ++ String.intercalate ", " (selectors.map openExprName) ++ "]"
   | .algorithmExpr _ => "(inline library)"
   | .capture _ => "(inline library)"
   -- SequenceConstruct is an internal value node; ';' is not surface syntax,
@@ -2768,7 +2782,7 @@ mutual
     | .unary _ operand => operand.aliasCount
     | .binary _ left right => left.aliasCount + right.aliasCount
     | .comparison first links => first.aliasCount + (links.map (fun link => link.operand.aliasCount)).sum
-    | .index target selector => target.aliasCount + selector.aliasCount
+    | .index target selectors => target.aliasCount + (selectors.map Expr.aliasCount).sum
     | .sequenceConstruct left right => left.aliasCount + right.aliasCount
     | .sequenceSpread operand => operand.aliasCount
     | .listLiteral items => (items.map Expr.aliasCount).sum
@@ -2865,9 +2879,9 @@ mutual
     | .comparison first links => do
         validateExprTree first chain aliases
         links.forM (fun link => validateExprTree link.operand chain aliases)
-    | .index target selector => do
+    | .index target selectors => do
         validateExprTree target chain aliases
-        validateExprTree selector chain aliases
+        selectors.forM (fun selector => validateExprTree selector chain aliases)
     | .sequenceConstruct left right => do
       validateExprTree left chain aliases
       validateExprTree right chain aliases
@@ -3007,7 +3021,7 @@ mutual
     | .comparison first links =>
         .comparison (cacheExprShape first)
           (links.map (fun link => { link with operand := cacheExprShape link.operand }))
-    | .index a b => .index (cacheExprShape a) (cacheExprShape b)
+    | .index a bs => .index (cacheExprShape a) (bs.map cacheExprShape)
     | .sequenceConstruct a b => .sequenceConstruct (cacheExprShape a) (cacheExprShape b)
     | .sequenceSpread e => .sequenceSpread (cacheExprShape e)
     | .listLiteral es => .listLiteral (es.map cacheExprShape)
@@ -3529,6 +3543,48 @@ def combineOutputSlots : List Result -> Result
   | [r] => r
   | rs => Result.sequenceValue rs
 
+/-- VARIADIC POSTFIX SELECTION — ONE supplied selector (October 2026): validate the
+    selector VALUE against the receiver and select that position. The checks are the
+    retired colon form's, unchanged: a selector that is not a number is the kind failure
+    `typeMismatch` (`expectInt`), a negative one names no position, and a position past
+    the receiver's positional view (`Result.select?` over `Result.projectionItems`, the
+    ONE immediate view `count`, `first` and `last` read) is `badIndex`. The stored
+    element is returned whole — never opened. C#: `Evaluator.SelectPosition`. -/
+def selectPosition (receiver : Result) (selector : Result) : EvalM Result := do
+  let n <- expectInt selector
+  if n < 0 then
+    .error Error.badIndex
+  else
+    match Result.select? receiver (Int.toNat n) with
+    | some selected => pure selected
+    | none => .error Error.badIndex
+
+/-- VARIADIC POSTFIX SELECTION — the supplied selectors (October 2026). Each supplied
+    selector is DEMANDED, validated and selected LEFT TO RIGHT (`selectPosition`), and
+    the first failure — of a demand or of a position — ends the selection: no later
+    selector is demanded (`selectWith_stops_at_first_failure`). Repeated selectors
+    repeat stored values, never a computation; the receiver is a value already in hand.
+    TOTAL and parametrized by the demand, so its laws are theorems; the `.index` arm of
+    `evalCounted` instantiates it with `demandNeed` over the formed supply.
+    C#: the Index case of `Evaluator.EvalExpressionSpineCounted` and its async twin. -/
+def selectWith {α : Type} (demand : α -> EvalM Result) (receiver : Result) :
+    List α -> EvalM (List Result)
+  | [] => pure []
+  | cell :: rest => do
+      let selected <- selectPosition receiver (<- demand cell)
+      let tail <- selectWith demand receiver rest
+      pure (selected :: tail)
+
+/-- The value of a completed selection: the selected values captured by ordinary
+    sequence normalization of the RESULT GROUPING only (`combineOutputSlots`) — zero
+    selections are `()`, one is the selected value itself, several are one sequence of
+    the selected values kept whole (a selected `()` or `[]` stays an element). It
+    crosses the ordinary value boundary (`Result.valueCount`) and keeps no record of how
+    many selectors produced it. C#: `Evaluator.MakeCheckedSequenceCapture`. -/
+def selectionResult (selected : List Result) : CountedResult :=
+  let value := combineOutputSlots selected
+  (value, Result.valueCount value)
+
 /-- Materialize a collection-producing builtin's kept/projected items as ONE
     list value. Unlike canonical arity capture (ordinary
     construction via `Result.normalize`, `combineOutputSlots`), the list
@@ -3841,35 +3897,21 @@ def Expr.isOpenForm (e : Expr) : Bool :=
   (Expr.openForm? e).isSome
 
 /-- Diagnostic expression names use KatLang source syntax; `.index` renders as
-  `target:selector`, never `target[selector]` (`[...]` is exact list literal
-  syntax). Indexing is postfix and binds tighter than unary and every binary
-  operator, so those operands need parentheses in target position: `-A:0` reads
-  as `-(A:0)`, so the target of an index over a unary must render `(-A):0`.
-  Postfix targets are left-associative and render faithfully bare (`A:0:1`).
-  C#: `Evaluator.OpenExprIndexTargetName`. -/
+  postfix selection `target[s1, …, sn]`. Selection is postfix and binds tighter
+  than unary and every binary operator, so those operands need parentheses in
+  target position: `-A[0]` reads as `-(A[0])`, so the target of a selection over
+  a unary must render `(-A)[0]`. A spread target renders `(A*)[0]`, because
+  `A*[0]` reads back as the multiplication `A * [0]`. Postfix targets are
+  left-associative and render faithfully bare (`A[0][1]`, `F(x)[0]`, `A.B[0]`).
+  The selectors sit inside the brackets' own expression list and never need
+  parentheses. C#: `ExprNameRenderer` (the Index arm). -/
 def indexTargetNeedsParens : Expr -> Bool
   | .unary _ _    => true
   | .binary _ _ _ => true
   | .comparison _ _ => true
+  | .sequenceSpread _ => true
   | .num v       => decide (v < 0)
   | _             => false
-
-/-- The index selector is a primary in source syntax, so any form that would
-  continue the postfix chain rebinds to the target instead (`A:B.C` reads as
-  `(A:B).C`, `A:B:C` as `(A:B):C`, while `A:f(0)` leaves an
-  unseparated same-line group after `A:f` and is rejected), and a bare negative
-  literal (`A:-1`) is not selector syntax at all.
-  C#: `Evaluator.OpenExprIndexSelectorName`. -/
-def indexSelectorNeedsParens : Expr -> Bool
-  | .unary _ _      => true
-  | .binary _ _ _   => true
-  | .comparison _ _ => true
-  | .call _ _       => true
-  | .dotMember _ _ _ _ => true
-  | .index _ _      => true
-  | .sequenceSpread _ => true
-  | .num v          => decide (v < 0)
-  | _               => false
 
 /-- Precedence tiers of the diagnostic-name renderer — the ONE parenthesization
   rule: a rendered name must read back as the AST it was rendered from, so an
@@ -3973,21 +4015,6 @@ def escapeDoubleQuotedText (text : String) : String :=
     | '}' => "}}"
     | other => other.toString)
 
-/-- Whether an interpolation hole's operand-shape name could contain a `:` outside every
-    delimiter: an index reachable along the operator and postfix spine, which a hole would
-    refuse. Conservative — the parentheses it asks for are redundant grouping.
-    C#: `ExprNameRenderer.MayRenderHoleLevelColon`. -/
-partial def holeMayRenderTopLevelColon : Expr -> Bool
-  | .index _ _ => true
-  | .unary _ operand => holeMayRenderTopLevelColon operand
-  | .binary _ left right => holeMayRenderTopLevelColon left || holeMayRenderTopLevelColon right
-  | .comparison first links =>
-      holeMayRenderTopLevelColon first || links.any (fun link => holeMayRenderTopLevelColon link.operand)
-  | .dotMember target _ _ _ => holeMayRenderTopLevelColon target
-  | .call fn _ => holeMayRenderTopLevelColon fn
-  | .sequenceSpread operand => holeMayRenderTopLevelColon operand
-  | _ => false
-
 /-- Whether an interpolation hole's operand-shape name could BEGIN with a brace: a block at the
     left end of the operator and postfix spine (`{...}.X`, `{...} + 2`, the block itself). Such a
     hole is written with spaces, `"{ {...}.X }"`, so `{{` never reads back as a literal brace.
@@ -4017,16 +4044,15 @@ partial def exprDiagnosticName : Expr -> String
       if canWriteSingleQuoted value then "'" ++ value ++ "'"
       else "\"" ++ escapeDoubleQuotedText value ++ "\""
   -- An interpolated string renders as written: each text run re-escaped, each hole in
-  -- operand shape, parenthesized when it could render a hole-level `:` (redundant grouping
-  -- never changes a hole) and spaced when its name could begin with a brace. C#:
-  -- `PushInterpolationLink`.
+  -- operand shape, spaced when its name could begin with a brace. No rendered expression
+  -- writes a hole-level `:` (selection renders brackets), so a hole never needs grouping.
+  -- C#: `PushInterpolationLink`.
   | .interpolatedString head links =>
       "\"" ++ escapeDoubleQuotedText head
         ++ String.join (links.map (fun link =>
             let holeName := exprDiagnosticName link.hole
             let hole :=
-              if holeMayRenderTopLevelColon link.hole then "{(" ++ holeName ++ ")}"
-              else if holeMayRenderLeadingBrace link.hole then "{ " ++ holeName ++ " }"
+              if holeMayRenderLeadingBrace link.hole then "{ " ++ holeName ++ " }"
               else "{" ++ holeName ++ "}"
             hole ++ escapeDoubleQuotedText link.text))
         ++ "\""
@@ -4059,20 +4085,13 @@ partial def exprDiagnosticName : Expr -> String
   | .comparison first links =>
       comparisonOperandName first
         ++ String.join (links.map (fun link => " " ++ link.op.symbol ++ " " ++ comparisonOperandName link.operand))
-  -- Source-faithful postfix indexing `target:selector`; operands that would
-  -- rebind under the real precedence are parenthesized. This renderer prints
-  -- binary bare, so a binary index operand is parenthesized here; C# reaches
-  -- the same text via `OpenExprName`, which self-parenthesizes binary. The two
-  -- agree on a simple operand (`(A + B):0`) but not on a NESTED one, where C#
-  -- also parenthesizes the inner binary (`((A + B) + C):0` vs `(A + B + C):0`).
-  -- That difference is inherited from each renderer's own binary convention,
-  -- is independent of indexing, and is unambiguous either way.
-  | .index target selector =>
+  -- Source-faithful postfix selection `target[s1, …, sn]`; a target that would
+  -- rebind under the real precedence is parenthesized (`indexTargetNeedsParens`),
+  -- and every selector is written whole inside the brackets' expression list.
+  | .index target selectors =>
       let targetName := exprDiagnosticName target
-      let selectorName := exprDiagnosticName selector
       (if indexTargetNeedsParens target then "(" ++ targetName ++ ")" else targetName)
-        ++ ":" ++
-        (if indexSelectorNeedsParens selector then "(" ++ selectorName ++ ")" else selectorName)
+        ++ "[" ++ String.intercalate ", " (selectors.map exprDiagnosticName) ++ "]"
   -- Internal SequenceConstruct renders as one sequence value; ';' is not surface syntax.
   | .sequenceConstruct left right => "(" ++ exprDiagnosticName left ++ ", " ++ exprDiagnosticName right ++ ")"
   -- Empty sequence value `()` and its nested forms.
@@ -4552,7 +4571,7 @@ def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := 
 
 /-- The counted view of one iterated collection item as the callback receives
     it. A callback item is a SELECTED value, so it crosses the same ordinary
-    value boundary as `S:i` / `first` / `last` (`reCountValueBoundary`): the
+    value boundary as `S[i]` / `first` / `last` (`reCountValueBoundary`): the
     item keeps its stored shape (a nested sequence or list stays one value for
     pattern matching and for every count-sensitive reader inside the body — a
     bare `x` output row, `x.Coll` on a collecting receiver), a `()` item emits
@@ -4903,11 +4922,11 @@ def evalDistinctCounted (items : List Result) : EvalM CountedResult := do
 /-- Evaluate `first(collection)`: SELECT the first top-level collection
     element. The element is returned exactly as stored and re-counted through
     the ordinary value boundary (`Result.valueCount`), exactly like
-    `collection:0` — a selected sequence or list stays one value, a selected
+    `collection[0]` — a selected sequence or list stays one value, a selected
     `()` emits zero values, and only an explicit spread opens the selection.
     An empty collection has no position to select: `badIndex`, the outcome of
-    `collection:0` (SEQ-04, Q-27; the empty policy reports it first).
-    Laws: `first_is_select_zero`, `first_empty_is_badIndex`.
+    `collection[0]` (SEQ-04, Q-27; the empty policy reports it first).
+    Laws: `first_is_select_zero`, `first_empty_is_badIndex`, `first_is_selection_at_zero`.
     C#: `EvalFirstCounted`. -/
 def evalFirstCounted (items : List Result) : EvalM CountedResult := do
   match items with
@@ -4916,8 +4935,9 @@ def evalFirstCounted (items : List Result) : EvalM CountedResult := do
 
 /-- Evaluate `last(collection)`: SELECT the last top-level collection element
     through the same value boundary as `evalFirstCounted` and
-    `collection:(count - 1)`. An empty collection has no position to select:
-    `badIndex`. Laws: `last_is_select_last`, `last_empty_is_badIndex`.
+    `collection[count - 1]`. An empty collection has no position to select:
+    `badIndex`. Laws: `last_is_select_last`, `last_empty_is_badIndex`,
+    `last_is_selection_at_count_minus_one`.
     C#: `EvalLastCounted`. -/
 def evalLastCounted (items : List Result) : EvalM CountedResult := do
   match items.getLast? with
@@ -6476,7 +6496,7 @@ mutual
 
       This is the shared callback-binding path for higher-order sequence
       builtins. Each callback item is a selected value, so inside the callback
-      body it behaves exactly like `S:i` — one value, never opened — and it is
+      body it behaves exactly like `S[i]` — one value, never opened — and it is
       bound as one ordinary argument (`evalUserCallbackCallCounted`). -/
   partial def evalResolvedCallbackCallCounted (callee : Algorithm)
       (args : List CountedResult)
@@ -6744,7 +6764,7 @@ mutual
       October 2026) — the one value the call boundary delivers: several rows
       arrive as one sequence value, `()` and `[]` are ordinary values — and
       becomes ONE element of the list result, never flattened into it, so
-      `map(L, F)` is `[F(L:0), …, F(L:n-1)]`. Empty collections yield `[]`, and
+      `map(L, F)` is `[F(L[0]), …, F(L[n - 1])]`. Empty collections yield `[]`, and
       the output preserves the original element order and element count. -/
   partial def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -7717,21 +7737,21 @@ mutual
                   let counted <- evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
                   pure (counted.fst, Result.valueCount counted.fst)
         | [] => .error (Error.unknownName n)
-    | .index a i => do
-        let ar <- eval a ctx env
-        let ir <- eval i ctx env
-        let n  <- expectInt ir
-        if n < 0 then
-          .error Error.badIndex
-        else
-          -- SELECTION IS A VALUE BOUNDARY: the selected element is returned
-          -- exactly as stored and re-counted like any other plain value
-          -- (`Result.valueCount`) — a selected sequence or list is ONE value, a
-          -- selected `()` emits zero values, and only an explicit spread opens
-          -- it. C#: the Index case of `EvalExpressionSpineCounted`.
-          match Result.select? ar (Int.toNat n) with
-          | some selected => pure (selected, Result.valueCount selected)
-          | none => .error Error.badIndex
+    | .index receiver selectors => do
+        -- VARIADIC POSTFIX SELECTION (October 2026). (1) The receiver is demanded
+        -- ONCE through its ordinary value path (`Data` is the cached property
+        -- read, `Data()` one fresh call), even when no selector is supplied.
+        let value <- eval receiver ctx env
+        -- (2) The selector supply is formed exactly like a call's: explicit
+        -- spreads run during formation, ordinary selectors stay suspended cells.
+        let cells <- formNeedSupply selectors ctx env
+        -- (3) Each supplied selector is demanded, validated and selected left to
+        -- right; the first failure ends the selection.
+        let selected <- selectWith (fun cell => Prod.fst <$> demandNeed cell) value cells
+        -- (4) SELECTION IS A VALUE BOUNDARY: the selected values are captured by
+        -- ordinary normalization of the result grouping and re-counted.
+        -- C#: the Index case of `EvalExpressionSpineCounted`.
+        pure (selectionResult selected)
     | .dotMember o n fallback argsOpt => withCtx (CtxMsg.dotCall o n) do
         evalDotCallCounted o n fallback argsOpt ctx env
     | .call f args =>
@@ -8078,7 +8098,7 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    the same day's Q-72 refusal): the referencing body receives ONE parameter
    per name (first occurrence first, skipping names already bound, inside a
    group too), and the rewritten call supplies that one binding to every
-   occurrence — `P(x, x) = x` / `D = [P]:0` becomes `D(x) = [P(x, x)]:0`,
+   occurrence — `P(x, x) = x` / `D = [P][0]` becomes `D(x) = [P(x, x)][0]`,
    exactly as `H = F + G` with `F(x)` and `G(x)` becomes
    `H(x) = F(x) + G(x)`. The evaluator binds `P`'s two slots as it binds any
    call: both read the same caller binding, so nothing is merged — the
@@ -8617,7 +8637,7 @@ inductive ForwardingSource where
     occurs in the callee's parameter patterns: every capture occurrence of `name`
     receives the one source this function returns, so a callee that repeats a
     name (`P(x, x)`, `P((x, a), x)`) receives the caller's ONE binding at every
-    occurrence — `D = [P]:0` is `D(x) = [P(x, x)]:0` — the rule by-name sharing
+    occurrence — `D = [P][0]` is `D(x) = [P(x, x)][0]` — the rule by-name sharing
     ACROSS callees already follows (`H = F + G` is `H(x) = F(x) + G(x)`). Each
     occurrence is then an ordinary argument slot reading that binding; the
     binder's repeated-name constraint (Q-05) concerns independently supplied
@@ -8670,8 +8690,8 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    never evaluated by the loop itself) and becomes exactly one initial state
    slot.  Therefore `repeat(Step, 3, a, b)` starts with two
    slots, while `repeat(Step, 3, Pair)` starts with one slot even if `Pair`
-   evaluates to multiple values.  Use explicit selections such as `Pair:0,
-   Pair:1` when the intended initial state is two slots.
+   evaluates to multiple values.  Use explicit selections such as `Pair[0],
+   Pair[1]` (or the spread `Pair*`) when the intended initial state is two slots.
 
    DotCall lexical fallback (`Step.repeat(...)` / `Step.while(...)`) injects
    the receiver as the step argument and keeps the remaining explicit args in
@@ -8900,7 +8920,7 @@ mutual
         return .comparison (<- identifyPropertyExpr first)
           (<- links.mapM (fun link => do
             return { link with operand := (<- identifyPropertyExpr link.operand) }))
-    | .index a b => return .index (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
+    | .index a bs => return .index (<- identifyPropertyExpr a) (<- bs.mapM identifyPropertyExpr)
     | .sequenceConstruct a b => return .sequenceConstruct (<- identifyPropertyExpr a) (<- identifyPropertyExpr b)
     | .sequenceSpread e => return .sequenceSpread (<- identifyPropertyExpr e)
     | .listLiteral es => return .listLiteral (<- es.mapM identifyPropertyExpr)
@@ -8988,7 +9008,7 @@ open Expr
 
 def param (s : Ident) : Expr := .param s
 def num (n : Int) : Expr := .num n
-def index (a i : Expr) : Expr := .index a i
+def index (a : Expr) (selectors : List Expr) : Expr := .index a selectors
 def resolve (n : Ident) : Expr := .resolve n
 def algorithmExpr (a : Algorithm) : Expr := .algorithmExpr a
 def capture (rows : OutputBundle) : Expr := .capture rows
@@ -9112,7 +9132,7 @@ partial def postElabInvariant : Expr -> Bool
   | .unary _ e       => postElabInvariant e
   | .binary _ a b    => postElabInvariant a && postElabInvariant b
   | .comparison first links => postElabInvariant first && links.all (fun link => postElabInvariant link.operand)
-  | .index a b       => postElabInvariant a && postElabInvariant b
+  | .index a bs      => postElabInvariant a && bs.all postElabInvariant
   | .sequenceConstruct a b  => postElabInvariant a && postElabInvariant b
   | .sequenceSpread a       => postElabInvariant a
   | .listLiteral items      => items.all postElabInvariant

@@ -1218,6 +1218,36 @@ internal sealed partial class ModuleLoader
     }
 
     /// <summary>
+    /// The selection arm of <see cref="ProcessExpr"/>, kept out of that calibrated frame: the
+    /// receiver and every selector slot are RUNTIME expressions (a <c>load</c> there is refused
+    /// like one in an operator operand), rewritten one level down in written order — receiver
+    /// first, then the selectors left to right.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private Expr ProcessSelection(Expr.Index index, int depth)
+    {
+        var target = ProcessExpr(index.Target, LoadContext.RuntimeExpr, depth + 1);
+        var selectors = new List<Expr>(index.Selectors.Count);
+        foreach (var selector in index.Selectors)
+            selectors.Add(ProcessExpr(selector, LoadContext.RuntimeExpr, depth + 1));
+        return index with { Target = target, Selectors = selectors };
+    }
+
+    /// <summary>
+    /// MIRROR OF <see cref="ProcessSelection"/> for the async walk (the selector loop awaits,
+    /// so it lives in its own state machine rather than enlarging
+    /// <see cref="ProcessExprAsync"/>'s calibrated frame).
+    /// </summary>
+    private async ValueTask<Expr> RouteSelectionAsync(Expr.Index index, int depth)
+    {
+        var target = await RouteExprAsync(index.Target, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false);
+        var selectors = new List<Expr>(index.Selectors.Count);
+        foreach (var selector in index.Selectors)
+            selectors.Add(await RouteExprAsync(selector, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false));
+        return index with { Target = target, Selectors = selectors };
+    }
+
+    /// <summary>
     /// The interpolated-string arm of <see cref="ProcessExpr"/>, kept out of that calibrated
     /// frame: every hole is a RUNTIME expression — a value computed when the string is
     /// evaluated, never a position a <c>load</c> directive may stand in, so a <c>load</c> written
@@ -1329,11 +1359,7 @@ internal sealed partial class ModuleLoader
 
             Expr.Unary unary => unary with { Operand = ProcessExpr(unary.Operand, LoadContext.RuntimeExpr, depth + 1) },
 
-            Expr.Index index => index with
-            {
-                Target = ProcessExpr(index.Target, LoadContext.RuntimeExpr, depth + 1),
-                Selector = ProcessExpr(index.Selector, LoadContext.RuntimeExpr, depth + 1),
-            },
+            Expr.Index index => ProcessSelection(index, depth),
 
             // `with` keeps the stored spread-marker span intact alongside the node span.
             Expr.SequenceSpread spread => spread with { Operand = ProcessExpr(spread.Operand, context, depth + 1) },
@@ -1482,11 +1508,7 @@ internal sealed partial class ModuleLoader
                 break;
 
             case Expr.Index index:
-                result = index with
-                {
-                    Target = await RouteExprAsync(index.Target, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
-                    Selector = await RouteExprAsync(index.Selector, LoadContext.RuntimeExpr, depth + 1).ConfigureAwait(false),
-                };
+                result = await RouteSelectionAsync(index, depth).ConfigureAwait(false);
                 break;
 
             case Expr.SequenceSpread spread:

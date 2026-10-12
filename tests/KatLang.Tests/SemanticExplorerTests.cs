@@ -406,7 +406,7 @@ public class SemanticExplorerTests
                 $"expected {SemanticExplorerHarness.Neutral(expectedSplice)}, observed {spreadInSeq.Neutral}"));
         }
 
-        // Indexing is a VALUE BOUNDARY: `x:i` returns the selected element
+        // Indexing is a VALUE BOUNDARY: `x[i]` returns the selected element
         // exactly as stored and re-counts it as one plain value, so a lone
         // root row always shows exactly ONE row — a selected sequence or list
         // is never opened, and the documented root bump keeps a selected `()`
@@ -725,12 +725,12 @@ public class SemanticExplorerTests
         { "take([[1, 2], [3, 4]], 1)", "ok raw=L[L[1, 2]] n=1" },
         // SELECTION IS A VALUE BOUNDARY: a selected pair is ONE value (n=1) however
         // it is selected; only the spread marker opens it.
-        { "x = ((1, 2), (3, 4))\nx:0", "ok raw=S[1, 2] n=1" },
+        { "x = ((1, 2), (3, 4))\nx[0]", "ok raw=S[1, 2] n=1" },
         { "x = ((1, 2), (3, 4))\nfirst(x)", "ok raw=S[1, 2] n=1" },
         { "x = ((3, 4), (1, 2))\nlast(x)", "ok raw=S[1, 2] n=1" },
-        { "x = ((1, 2), (3, 4))\n(x:0)*", "ok raw=S[1, 2] n=2" },
+        { "x = ((1, 2), (3, 4))\n(x[0])*", "ok raw=S[1, 2] n=2" },
         { "x = ((1, 2), (3, 4))\n(first(x))*", "ok raw=S[1, 2] n=2" },
-        { "x = ((), ())\nx:0", "ok raw=S[] n=1" },
+        { "x = ((), ())\nx[0]", "ok raw=S[] n=1" },
         { "x = ((), ())\nfirst(x)", "ok raw=S[] n=1" },
         // DOT-CALL PASSES A VALUE and THE EXACT COLLECTOR LAW collects it: the
         // selected `()` is ONE argument in the dotted spelling exactly as in the
@@ -738,11 +738,11 @@ public class SemanticExplorerTests
         // argument; only its spread supplies nothing, and a selected list is the
         // same rule.
         { "Coll(*xs) = xs\nx = ((), 1)\nfirst(x).Coll", "ok raw=L[S[]] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nx:0.Coll", "ok raw=L[S[]] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0)", "ok raw=L[S[]] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x:0, 1)", "ok raw=L[S[], 1] n=1" },
-        { "Coll(*xs) = xs\nx = ((), 1)\n(x:0)*.Coll", "ok raw=L[] n=1" },
-        { "Coll(*xs) = xs\nx = ([], 1)\nx:0.Coll", "ok raw=L[L[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nx[0].Coll", "ok raw=L[S[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x[0])", "ok raw=L[S[]] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\nColl(x[0], 1)", "ok raw=L[S[], 1] n=1" },
+        { "Coll(*xs) = xs\nx = ((), 1)\n(x[0])*.Coll", "ok raw=L[] n=1" },
+        { "Coll(*xs) = xs\nx = ([], 1)\nx[0].Coll", "ok raw=L[L[]] n=1" },
         { "Coll(*xs) = xs\n(1, 2).Coll", "ok raw=L[S[1, 2]] n=1" },
         { "Coll(*xs) = xs\n(1, 2).Coll(3)", "ok raw=L[S[1, 2], 3] n=1" },
         { "Coll(*xs) = xs\n[1, 2].Coll", "ok raw=L[L[1, 2]] n=1" },

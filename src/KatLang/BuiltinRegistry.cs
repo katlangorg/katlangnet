@@ -37,7 +37,7 @@ internal enum SequenceBuiltinEmptyPolicy
 
     /// <summary>
     /// A SELECTION (<c>first</c>, <c>last</c>, SEQ-04): the empty collection has no position to
-    /// select, <c>BadIndex</c> — the very outcome of <c>A:0</c> on it.
+    /// select, <c>BadIndex</c> — the very outcome of <c>A[0]</c> on it.
     /// </summary>
     RequireSelectablePosition,
 }

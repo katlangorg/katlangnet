@@ -406,7 +406,7 @@ public class BuiltinArgumentRoleTests
     [InlineData("filter([], 1 / 0)", "L[]")]
     [InlineData("reduce([], 1 / 0, 7)", "7")]
     [InlineData("Bad = trace(1) / 0\nmap([], Bad)", "L[]")]
-    [InlineData("Bad = [1]:5\n[].filter(Bad).count", "0")]
+    [InlineData("Bad = [1][5]\n[].filter(Bad).count", "0")]
     public async Task UnusedCallback_CannotFail(string program, string value)
         => AssertOk(await OnEveryRouteAsync(program), value);
 
@@ -468,7 +468,7 @@ public class BuiltinArgumentRoleTests
     public async Task FailedSpread_PropagatesItsOwnFailure(string row, KatLangErrorCode code)
     {
         var observation = await OnEveryRouteAsync(
-            "Bad = 1 / 0\nBadT = 1 + 'a'\nBadI = [1]:5\nG = {\n    public X = 1\n}\nH = G + 1\n" + row);
+            "Bad = 1 / 0\nBadT = 1 + 'a'\nBadI = [1][5]\nG = {\n    public X = 1\n}\nH = G + 1\n" + row);
         AssertFails(observation, code);
         Assert.DoesNotContain("but was called with", Message(observation));
     }
@@ -527,7 +527,7 @@ public class BuiltinArgumentRoleTests
         // The failing spread draws once and fails; formerly the swallowed failure let the run
         // continue and print a later draw.
         AssertFails(
-            await OnEveryRouteAsync("R = [1, 2]:(randomInt(2, 3))\nmap([], R*), randomInt(0, 1000)", seed: 5),
+            await OnEveryRouteAsync("R = [1, 2][randomInt(2, 3)]\nmap([], R*), randomInt(0, 1000)", seed: 5),
             KatLangErrorCode.BadIndex);
     }
 
@@ -605,7 +605,7 @@ public class BuiltinArgumentRoleTests
 
     public static IEnumerable<object[]> ValueSlotExpressions()
     {
-        foreach (var expression in new[] { "trace(1) / 0", "trace(4) + 1", "if(trace(true), 1 / 0, 2)", "[trace(1)]:3", "trace(9)" })
+        foreach (var expression in new[] { "trace(1) / 0", "trace(4) + 1", "if(trace(true), 1 / 0, 2)", "[trace(1)][3]", "trace(9)" })
             yield return [expression];
     }
 
@@ -674,7 +674,7 @@ public class BuiltinArgumentRoleTests
     [MemberData(nameof(SpreadOperands))]
     public async Task BuiltinSpread_ObeysTheUserCallSpreadLaw(string operand)
     {
-        const string prelude = "Bad = trace(1) / 0\nBadT = 1 + 'a'\nBadI = [1]:5\nG = {\n    public X = 1\n}\nH = G + 1\nInc(x) = x + 1\nColl(*xs) = xs\n";
+        const string prelude = "Bad = trace(1) / 0\nBadT = 1 + 'a'\nBadI = [1][5]\nG = {\n    public X = 1\n}\nH = G + 1\nInc(x) = x + 1\nColl(*xs) = xs\n";
         var viaUser = await OnEveryRouteAsync(prelude + $"Coll({operand}*)");
 
         // Two builtin shapes where a phantom item would matter: the spread alone decides

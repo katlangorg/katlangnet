@@ -183,7 +183,7 @@ public class ComparisonChainAuditTests
     [Fact]
     public void TheEditorModel_ClassifiesEveryChainOperand_AtItsSite()
     {
-        const string source = "P = 2\nF(x) = x + 1\nObj = { V = 3 }\nXs = [1, 2]\nCheck(y) = F(P) < Obj.V <= Xs:1 == P != y\nCheck(9)";
+        const string source = "P = 2\nF(x) = x + 1\nObj = { V = 3 }\nXs = [1, 2]\nCheck(y) = F(P) < Obj.V <= Xs[1] == P != y\nCheck(9)";
         var parsed = SourceProvenance.ParseValid(source).Parsed;
         var check = Assert.Single(parsed.Root.Properties, property => property.Name == "Check");
         var chain = Assert.IsType<Expr.Comparison>(Assert.Single(check.Value.Output));

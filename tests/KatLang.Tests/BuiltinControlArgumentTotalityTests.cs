@@ -234,7 +234,7 @@ public class BuiltinControlArgumentTotalityTests
                 $"[1, 2, 3].contains({max})",
                 $"[1, 2, 3].contains(0 - {max})",
                 $"sum([{max}, 0])",
-                $"[{max}]:0",
+                $"[{max}][0]",
             };
             return data;
         }

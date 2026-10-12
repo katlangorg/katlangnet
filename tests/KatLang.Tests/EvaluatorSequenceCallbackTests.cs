@@ -122,7 +122,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Filter_SequenceValueElements_ArePreservedWhole()
     {
         var source = """
-            KeepPair = pair:0 mod 2 == 0
+            KeepPair = pair[0] mod 2 == 0
             filter(((1, 10), (2, 20), (3, 30), (4, 40)), KeepPair)
             """;
 
@@ -335,7 +335,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Map_SequenceValueElements_ArePassedWhole()
     {
         var source = """
-            TakeValue = pair:1
+            TakeValue = pair[1]
             map(((1, 10), (2, 20), (3, 30)), TakeValue)
             """;
 
@@ -460,10 +460,10 @@ public class EvaluatorSequenceCallbackTests
 
             CountMatchStep(element, tt) = {
                 T = atoms(tt)
-                (T.first, T:1 + if(element == T.first, 1, 0))
+                (T.first, T[1] + if(element == T.first, 1, 0))
             }
 
-            MatchCount = reduce(Right, CountMatchStep, (value, 0)):1
+            MatchCount = reduce(Right, CountMatchStep, (value, 0))[1]
             SimilarityAt = value * MatchCount(value)
             Part2 = Left.map(SimilarityAt).sum
             Part2
@@ -603,7 +603,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Reduce_SequenceValueAccumulator_IsAccepted()
     {
         var source = """
-            Stats(x, acc) = (x + acc:0, acc:1 + 1)
+            Stats(x, acc) = (x + acc[0], acc[1] + 1)
             reduce((1, 2, 3, 4), Stats, (0, 0))
             """;
 
@@ -719,8 +719,8 @@ public class EvaluatorSequenceCallbackTests
         var source = """
             Add = x + total
             Data = (7, 6, 4, 2, 1), (1, 2, 3, 4, 5)
-            reduce(Data:0, Add, 0)
-            (Data:0).reduce(Add, 0)
+            reduce(Data[0], Add, 0)
+            (Data[0]).reduce(Add, 0)
             """;
 
         AssertEval(source, 20, 20);
@@ -732,10 +732,10 @@ public class EvaluatorSequenceCallbackTests
         var source = """
             Signature(current, acc) = acc * 100 + current.count * 10 + current.sum
             Items = (1, 2), (3, 4)
-            (Items:0).count
-            (Items:0).sum
-            (Items:1).count
-            (Items:1).sum
+            (Items[0]).count
+            (Items[0]).sum
+            (Items[1]).count
+            (Items[1]).sum
             Items.reduce(Signature, 0)
             reduce(((1, 2), (3, 4)), Signature, 0)
             """;
@@ -747,9 +747,9 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Reduce_CurrentItem_PreservesNestedValue()
     {
         var source = """
-            Signature(current, acc) = acc * 100 + current.count * 10 + (current:0).count
+            Signature(current, acc) = acc * 100 + current.count * 10 + (current[0]).count
             Items = ((1, 2), (3, 4))
-            (Items:0).count
+            (Items[0]).count
             Items.reduce(Signature, 0)
             reduce(((1, 2), (3, 4)), Signature, 0)
             """;
@@ -761,7 +761,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Reduce_Accumulator_DoesNotAutoOpen()
     {
         var source = """
-            Signature(current, acc) = (acc:0 * 100 + current.count * 10 + acc.count, acc.count)
+            Signature(current, acc) = (acc[0] * 100 + current.count * 10 + acc.count, acc.count)
             Items = (1, 2), (3, 4)
             Items.reduce(Signature, (0, 9, 8))
             """;
@@ -1139,7 +1139,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Filter_SequenceValueReceiver_DotCallIteratesSequenceItems()
     {
         var source = """
-            KeepSecondEven(pair) = pair:1 mod 2 == 0
+            KeepSecondEven(pair) = pair[1] mod 2 == 0
             Values = (1, 2), (3, 5)
             Values.filter(KeepSecondEven)
             """;
@@ -1190,7 +1190,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Map_SequenceValueReceiver_DotCall_ReceivesCallbackItemAsSelectedValue()
     {
         var source = """
-            TakeFirst(x) = x:0
+            TakeFirst(x) = x[0]
             Values = (1, 2, 3)
             Values.map(TakeFirst)
             """;
@@ -1204,8 +1204,8 @@ public class EvaluatorSequenceCallbackTests
         var source = """
             Items = range(1, 3), 7
             Items.count
-            (Items:0).count
-            (Items:1).count
+            (Items[0]).count
+            (Items[1]).count
             Items.map{x.count}
             """;
 
@@ -1217,12 +1217,12 @@ public class EvaluatorSequenceCallbackTests
     {
         var source = """
             Items = range(1, 3), 7
-            Items.map{x:0}
+            Items.map{x[0]}
             Items.filter{x.count == 3}.count
             """;
 
         // range(1, 3) is an exact list item bound whole to the callback param:
-        // `x:0` selects its first stored element (1), while the scalar item 7
+        // `x[0]` selects its first stored element (1), while the scalar item 7
         // selects itself, so the map materializes [1, 7]. filter keeps the
         // one list item whose opened count is 3, and .count reports the
         // kept-item count 1.
@@ -1248,7 +1248,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Map_CallbackItem_FirstSelectionMatchesIndexing()
     {
         var source = """
-            TakeFirst(report) = report:0
+            TakeFirst(report) = report[0]
             map(((7, 6, 4, 2, 1), (1, 2, 7, 8, 9)), TakeFirst)
             """;
 
@@ -1259,7 +1259,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Map_SequenceValuePairs_SelectEachFirstElement()
     {
         var source = """
-            TakeFirst(x) = x:0
+            TakeFirst(x) = x[0]
             map(((1, 2), (3, 4)), TakeFirst)
             """;
 
@@ -1271,14 +1271,14 @@ public class EvaluatorSequenceCallbackTests
     {
         var source = """
             IsSafe(report) =
-                report:0 > report:(0 + 1) and
-                report:1 > report:(1 + 1) and
-                report:2 > report:(2 + 1) and
-                report:3 > report:(3 + 1) and
-                report:0 - report:(0 + 1) <= 3 and
-                report:1 - report:(1 + 1) <= 3 and
-                report:2 - report:(2 + 1) <= 3 and
-                report:3 - report:(3 + 1) <= 3
+                report[0] > report[0 + 1] and
+                report[1] > report[1 + 1] and
+                report[2] > report[2 + 1] and
+                report[3] > report[3 + 1] and
+                report[0] - report[0 + 1] <= 3 and
+                report[1] - report[1 + 1] <= 3 and
+                report[2] - report[2 + 1] <= 3 and
+                report[3] - report[3 + 1] <= 3
             filter(((7, 6, 4, 2, 1), (1, 2, 7, 8, 9)), IsSafe)
             """;
 
@@ -1298,9 +1298,9 @@ public class EvaluatorSequenceCallbackTests
             TopLevelItemCount(item) = item.count
             AddTopLevelItemCount(item, acc) = item.count + acc
             Bags = ((1, 2), (3, 4)), ((5, 6), (7, 8))
-            (Bags:0).count
-            (Bags:0).map(TopLevelItemCount)
-            (Bags:0).reduce(AddTopLevelItemCount, 0)
+            (Bags[0]).count
+            (Bags[0]).map(TopLevelItemCount)
+            (Bags[0]).reduce(AddTopLevelItemCount, 0)
             """;
 
         AssertEval(source, 2, 2, 2, 4);
@@ -1312,7 +1312,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Filter_WrapperSequenceOutput_IteratesSequenceValueItems()
     {
         var source = """
-            KeepSecondEven(pair) = pair:1 mod 2 == 0
+            KeepSecondEven(pair) = pair[1] mod 2 == 0
             Values = (1, 2), (3, 5)
             filter(Values, KeepSecondEven)
             """;
@@ -1330,7 +1330,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Map_WrapperSequenceOutput_MapsSequenceValueItems()
     {
         var source = """
-            TakeValue(pair) = pair:1
+            TakeValue(pair) = pair[1]
             Values = ((1, 2), (3, 4))
             map(Values, TakeValue)
             """;
@@ -1342,7 +1342,7 @@ public class EvaluatorSequenceCallbackTests
     public void Eval_Reduce_WrapperSingleSequenceValueOutput_FoldsWholeGroupOnce()
     {
         var source = """
-            AddValue(pair, total) = total + pair:1
+            AddValue(pair, total) = total + pair[1]
             Values = ((1, 2), (3, 4))
             reduce(Values, AddValue, 0)
             """;

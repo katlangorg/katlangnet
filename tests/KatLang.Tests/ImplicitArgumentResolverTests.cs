@@ -232,7 +232,7 @@ public class ImplicitArgumentResolverTests
     [Theory]
     [InlineData("Use = CountItems + 1")]
     [InlineData("Use(*values) = Math.Abs(CountItems)")]
-    [InlineData("Use(*values) = [CountItems]:0")]
+    [InlineData("Use(*values) = [CountItems][0]")]
     public void Resolve_ZeroArgumentVariadicHelper_IsNeverLifted(string use)
     {
         // Q-03: `CountItems(*items)` accepts zero supplied arguments, so its bare name in a
@@ -489,8 +489,8 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
-            Add = a + 1, total + Numbers:a
-            Sum = repeat(Add, (6), 0, 0) : 1
+            Add = a + 1, total + Numbers[a]
+            Sum = repeat(Add, (6), 0, 0)[1]
             Sum
             """;
         AssertEval(source, 24);
@@ -501,7 +501,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             Fib = a + b, a
-            repeat(Fib, (10), 1, 0):0
+            repeat(Fib, (10), 1, 0)[0]
             """;
         AssertEval(source, 89);
     }
@@ -511,7 +511,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             F = a, a * 2
-            G = F:0 + b
+            G = F[0] + b
             G(3, 10)
             """;
         AssertEval(source, 13);
@@ -579,7 +579,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             CountSequenceValue((*values)) = values.count
-            Use(*values) = [CountSequenceValue]:0
+            Use(*values) = [CountSequenceValue][0]
             Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
@@ -590,7 +590,7 @@ public class ImplicitArgumentResolverTests
     {
         var source = """
             CountSequenceValue((*items)) = items.count
-            Use(*values) = [CountSequenceValue]:0
+            Use(*values) = [CountSequenceValue][0]
             Use((1, 2, 3)*)
             """;
         AssertEval(source, 3);
@@ -1003,7 +1003,7 @@ public class ImplicitArgumentResolverTests
         Assert.Equal("items", Assert.IsType<Expr.Param>(spread.Operand).Name);
     }
 
-    /// <summary>The one element of a list-element formula row <c>[e]:0</c>: an ordinary value position.</summary>
+    /// <summary>The one element of a list-element formula row <c>[e][0]</c>: an ordinary value position.</summary>
     private static Expr ListElement(Expr row)
         => Assert.Single(Assert.IsType<Expr.ListLiteral>(Assert.IsType<Expr.Index>(row).Target).Items);
 
@@ -1016,7 +1016,7 @@ public class ImplicitArgumentResolverTests
             """);
         var unwrapped = Resolve("""
             Target((*xs)) = xs.count
-            Use(*items) = [Target]:0
+            Use(*items) = [Target][0]
             """);
 
         Assert.IsType<Expr.Call>(ListElement(PropertyOutputRow(unwrapped, "Use")));
@@ -1038,7 +1038,7 @@ public class ImplicitArgumentResolverTests
         AssertEval(
             """
             Target((*xs)) = xs.count
-            Use(*items) = [Target]:0
+            Use(*items) = [Target][0]
             Use(1, 2, 3)
             """,
             3);
@@ -1206,7 +1206,7 @@ public class ImplicitArgumentResolverTests
         var unwrapped = Resolve("""
             A = y + 1
             G = {
-              F(x) = [A]:0
+              F(x) = [A][0]
               F(1) + y
             }
             """);
@@ -1223,7 +1223,7 @@ public class ImplicitArgumentResolverTests
 
     [Theory]
     [InlineData("F(x) = Math.Abs(A)")]
-    [InlineData("F(x) = [A]:0")]
+    [InlineData("F(x) = [A][0]")]
     public void Eval_ClosedExplicitParameterList_ReadsTheCapturedAncestorParameter(string f)
     {
         // Q-04: `A`'s `y` is G's `y` (10) — the binding a `y` written in F denotes — so F(1) is

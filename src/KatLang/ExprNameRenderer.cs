@@ -4,7 +4,7 @@ namespace KatLang;
 /// The rendering mode for one expression position inside a diagnostic name.
 /// Modes reproduce the established context-sensitive parenthesization rules:
 /// <see cref="Open"/> is the base spelling (every binary and comparison-chain name
-/// self-parenthesizes); the operand/target/selector modes wrap forms whose bare
+/// self-parenthesizes); the operand/target modes wrap forms whose bare
 /// rendering would rebind in source syntax; and <see cref="DiagnosticName"/> is the
 /// operand-shape spelling used by operand-shape contexts (the "while evaluating
 /// `…`" frames): operators render bare and every operand keeps exactly the
@@ -40,20 +40,15 @@ internal enum ExprNameMode
     SpreadOperand,
 
     /// <summary>
-    /// Index target position. Indexing is postfix and binds tighter than unary, so
-    /// <c>-A:0</c> reads as <c>-(A:0)</c> and a unary target needs <c>(-A):0</c>.
-    /// Postfix targets (<c>A:0:1</c>, <c>A.B:0</c>, <c>f(...):0</c>) are
-    /// left-associative and render faithfully bare. Lean: indexTargetNeedsParens.
+    /// Selection receiver position. Postfix selection binds tighter than unary, so
+    /// <c>-A[0]</c> reads as <c>-(A[0])</c> and a unary receiver needs <c>(-A)[0]</c>; a
+    /// spread receiver needs <c>(A*)[0]</c>, because <c>A*[0]</c> reads back as the
+    /// multiplication <c>A * [0]</c>. Postfix receivers (<c>A[0][1]</c>, <c>A.B[0]</c>,
+    /// <c>f(...)[0]</c>) are left-associative and render faithfully bare. The selectors sit
+    /// inside the brackets' own expression list and never need parentheses. Lean:
+    /// indexTargetNeedsParens.
     /// </summary>
     IndexTarget,
-
-    /// <summary>
-    /// Index selector position. The selector is a primary in source syntax, so any
-    /// form that would continue the postfix chain rebinds to the target instead
-    /// (<c>A:B.C</c> reads as <c>(A:B).C</c>), and a bare negative literal
-    /// (<c>A:-1</c>) is not selector syntax at all. Lean: indexSelectorNeedsParens.
-    /// </summary>
-    IndexSelector,
 }
 
 /// <summary>
@@ -646,6 +641,13 @@ internal static class ExprNameRenderer
                         pending.Push(new Piece(unaryOp == UnaryOp.Minus ? "-" : "not "));
                         return true;
 
+                    // A selection renders its receiver in receiver position and every
+                    // selector slot in operand shape inside the brackets' own expression
+                    // list (`Rows[i + 1]`), exactly as Lean's exprDiagnosticName.
+                    case Expr.Index(var target, var selectors):
+                        PushSelection(pending, target, selectors, ExprNameMode.DiagnosticName);
+                        return true;
+
                     // The internal SequenceConstruct join renders as one sequence
                     // value; ';' is not surface syntax.
                     case Expr.SequenceConstruct(var left, var right):
@@ -669,23 +671,13 @@ internal static class ExprNameRenderer
                 break;
 
             case ExprNameMode.SpreadOperand:
-            case ExprNameMode.IndexTarget:
                 if (BindingTier(node, ExprNameMode.Open) < PostfixTier)
                     return PushParenthesized(pending, node);
                 break;
 
-            case ExprNameMode.IndexSelector:
-                // The shared rendered-sign predicate matches exactly the literals whose
-                // text begins with a minus (including -0 and -Infinity), which is what
-                // needs parenthesizing in selector position; NaN renders unsigned.
-                if (node is Expr.Unary or Expr.Call or Expr.DotCall or Expr.Index
-                    or Expr.SequenceSpread
-                    || (node is Expr.Num negativeLiteral
-                        && NumericLiteralRendersWithLeadingMinus(negativeLiteral.Value)))
-                {
+            case ExprNameMode.IndexTarget:
+                if (node is Expr.SequenceSpread || BindingTier(node, ExprNameMode.Open) < PostfixTier)
                     return PushParenthesized(pending, node);
-                }
-
                 break;
         }
 
@@ -754,14 +746,11 @@ internal static class ExprNameRenderer
                 pending.Push(new Piece("("));
                 return true;
 
-            // Diagnostic expression names use KatLang source syntax: indexing is
-            // postfix `target:selector`, never `target[selector]` (`[...]` is exact
-            // list literal syntax, so bracket text would read back as a list
-            // literal after the target, not as an index).
-            case Expr.Index(var target, var selector):
-                pending.Push(new Piece(selector, ExprNameMode.IndexSelector));
-                pending.Push(new Piece(":"));
-                pending.Push(new Piece(target, ExprNameMode.IndexTarget));
+            // Diagnostic expression names use KatLang source syntax: selection is
+            // postfix `target[s1, s2]`, every selector written whole inside the
+            // brackets' expression list (Lean: openExprName).
+            case Expr.Index(var target, var selectors):
+                PushSelection(pending, target, selectors, ExprNameMode.Open);
                 return true;
 
             case Expr.DotCall(var target, var name, var argsOpt) dot:
@@ -870,12 +859,24 @@ internal static class ExprNameRenderer
     }
 
     /// <summary>
+    /// Schedules a selection <c>target[s1, s2]</c>: the receiver in receiver position
+    /// (<see cref="ExprNameMode.IndexTarget"/>), then the selector slots in
+    /// <paramref name="selectorMode"/>, comma-separated and bounded like list elements.
+    /// </summary>
+    private static void PushSelection(Stack<Piece> pending, Expr target, OutputBundle selectors, ExprNameMode selectorMode)
+    {
+        pending.Push(new Piece("]"));
+        pending.Push(new Piece(selectors, 0, selectorMode));
+        pending.Push(new Piece("["));
+        pending.Push(new Piece(target, ExprNameMode.IndexTarget));
+    }
+
+    /// <summary>
     /// Schedules the interpolation hole at <paramref name="index"/>: <c>{</c>, the hole in
     /// operand shape, <c>}</c>, its re-escaped text, then the cursor for the next link. A hole is
-    /// written in parentheses when its operand-shape name could contain a hole-level <c>:</c>
-    /// (<see cref="MayRenderHoleLevelColon"/>; parentheses never change a hole's meaning, since a
-    /// redundant group is its content), and with spaces when it would begin with a brace, so
-    /// <c>{{</c> never reads back as a literal brace. Lean: the <c>.interpolatedString</c> arm of
+    /// written with spaces when it would begin with a brace, so <c>{{</c> never reads back as a
+    /// literal brace. No rendered expression writes a hole-level <c>:</c> (selection renders
+    /// brackets), so a hole never needs grouping. Lean: the <c>.interpolatedString</c> arm of
     /// <c>exprDiagnosticName</c>.
     /// </summary>
     private static void PushInterpolationLink(Stack<Piece> pending, IReadOnlyList<InterpolationLink> links, int index)
@@ -883,13 +884,7 @@ internal static class ExprNameRenderer
         var link = links[index];
         pending.Push(new Piece(links, index + 1));
         pending.Push(new Piece(EscapeDoubleQuotedText(link.Text)));
-        if (MayRenderHoleLevelColon(link.Hole))
-        {
-            pending.Push(new Piece(")}"));
-            pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
-            pending.Push(new Piece("{("));
-        }
-        else if (MayRenderLeadingBrace(link.Hole))
+        if (MayRenderLeadingBrace(link.Hole))
         {
             pending.Push(new Piece(" }"));
             pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
@@ -901,60 +896,6 @@ internal static class ExprNameRenderer
             pending.Push(new Piece(link.Hole, ExprNameMode.DiagnosticName));
             pending.Push(new Piece("{"));
         }
-    }
-
-    /// <summary>
-    /// Whether a hole's operand-shape name could contain a <c>:</c> outside every delimiter —
-    /// an index reachable along the operator and postfix spine, which a hole would refuse as a
-    /// hole-level <c>:</c>. Conservative (it may parenthesize a hole the renderer already
-    /// delimits), never wrong: the parentheses it adds are redundant grouping. Lean:
-    /// <c>holeMayRenderTopLevelColon</c>.
-    /// </summary>
-    private static bool MayRenderHoleLevelColon(Expr hole)
-    {
-        var pending = new Stack<Expr>();
-        pending.Push(hole);
-        var visited = 0;
-        while (pending.Count > 0)
-        {
-            // Bounded like every rendering walk: a hostile spine is simply parenthesized.
-            if (++visited > MaxWorkItems)
-                return true;
-
-            switch (pending.Pop())
-            {
-                case Expr.Index:
-                    return true;
-                case Expr.Unary(_, var operand):
-                    pending.Push(operand);
-                    break;
-                case Expr.Binary(_, var left, var right):
-                    pending.Push(right);
-                    pending.Push(left);
-                    break;
-                case Expr.Comparison(var first, var comparisonLinks):
-                    // Count scheduled work too: eagerly queuing a wide chain before
-                    // the visit cap runs would read and allocate for every sibling.
-                    // When the remaining walk cannot fit, redundant grouping is safe.
-                    if (comparisonLinks.Count >= MaxWorkItems - visited - pending.Count)
-                        return true;
-                    foreach (var link in comparisonLinks)
-                        pending.Push(link.Operand);
-                    pending.Push(first);
-                    break;
-                case Expr.DotCall dotCall:
-                    pending.Push(dotCall.Target);
-                    break;
-                case Expr.Call call:
-                    pending.Push(call.Function);
-                    break;
-                case Expr.SequenceSpread spread:
-                    pending.Push(spread.Operand);
-                    break;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

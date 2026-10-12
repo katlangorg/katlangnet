@@ -44,7 +44,7 @@ public class ComparisonChainParserTests
         Expr.Binary(var op, var left, var right) => $"{ExprNameRenderer.BinaryOpText(op)}({Shape(left)}, {Shape(right)})",
         Expr.Unary(UnaryOp.Not, var operand) => $"not({Shape(operand)})",
         Expr.Unary(_, var operand) => $"neg({Shape(operand)})",
-        Expr.Index(var target, var selector) => $"index({Shape(target)}, {Shape(selector)})",
+        Expr.Index(var target, var selectors) => $"index({Shape(target)}, {string.Join(", ", selectors.Select(Shape))})",
         Expr.Call(var function, var args) => $"call({Shape(function)}; {string.Join(", ", args.Select(Shape))})",
         Expr.DotCall dot => $"dot({Shape(dot.Target)}.{dot.Name})",
         Expr.Resolve(var name) => name,
@@ -134,7 +134,7 @@ public class ComparisonChainParserTests
     [InlineData("a < b + c", "cmp[<](a, +(b, c))")]
     [InlineData("a < b + c < d", "cmp[< <](a, +(b, c), d)")]
     [InlineData("a * b == c mod d != e - f", "cmp[== !=](*(a, b), mod(c, d), -(e, f))")]
-    [InlineData("a:0 < b.c < f(d)", "cmp[< <](index(a, 0), dot(b.c), call(f; d))")]
+    [InlineData("a[0] < b.c < f(d)", "cmp[< <](index(a, 0), dot(b.c), call(f; d))")]
     [InlineData("not a < b and not c == d", "and(not(cmp[<](a, b)), not(cmp[==](c, d)))")]
     [InlineData("not not a < b", "not(not(cmp[<](a, b)))")]
     [InlineData("-a < -b", "cmp[<](neg(a), neg(b))")]

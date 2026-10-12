@@ -34,7 +34,7 @@ internal static class BoundaryFamilies
     {
         Expr e = new Expr.Num(5);
         for (var i = 0; i < layers; i++)
-            e = new Expr.Index(new Expr.Capture([e]), new Expr.Num(0));
+            e = new Expr.Index(new Expr.Capture([e]), [new Expr.Num(0)]);
         return e;
     }
 

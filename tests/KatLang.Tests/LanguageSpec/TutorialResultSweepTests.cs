@@ -229,7 +229,7 @@ public class TutorialResultSweepTests
                 Lib.X + 3
 
                 # Use the second output value of the loaded algorithm (index 1):
-                Lib:1 + 10
+                Lib[1] + 10
                 """,
                 TutorialClaimKind.FencedRows,
                 "23\n16",

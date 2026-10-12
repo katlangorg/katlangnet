@@ -591,7 +591,7 @@ public class ComparisonChainDifferentialOracleTests
             Negation negation => "-" + Slot(negation.Operand, 8),
             Complement complement => "not " + Slot(complement.Operand, 4),
             Arithmetic arithmetic => Slot(arithmetic.Left, Tier(arithmetic)) + $" {arithmetic.Op} " + Slot(arithmetic.Right, Tier(arithmetic) + 1),
-            Selection selection => Slot(selection.Target, 10) + ":0",
+            Selection selection => Slot(selection.Target, 10) + "[0]",
             _ => throw new InvalidOperationException(tree.ToString()),
         };
     }
@@ -621,7 +621,7 @@ public class ComparisonChainDifferentialOracleTests
         Expr.Unary(UnaryOp.Minus, var operand) => $"neg({ParsedShape(operand)})",
         Expr.Unary(UnaryOp.Not, var operand) => $"not({ParsedShape(operand)})",
         Expr.Binary(var op, var left, var right) => $"{ExprNameRenderer.BinaryOpText(op)}({ParsedShape(left)}, {ParsedShape(right)})",
-        Expr.Index(var target, var selector) => $"index({ParsedShape(target)}, {ParsedShape(selector)})",
+        Expr.Index(var target, var selectors) => $"index({ParsedShape(target)}, {string.Join(", ", selectors.Select(ParsedShape))})",
         _ => $"<{expr.GetType().Name}>",
     };
 
@@ -911,7 +911,7 @@ public class ComparisonChainDifferentialOracleTests
     [InlineData("1 < (2 < 3)", "cmp[<](1, cmp[<](2, 3))", "type")]
     [InlineData("(1 < 2) == true", "cmp[==](cmp[<](1, 2), true)", "true")]
     [InlineData("1 == (1 < 2)", "cmp[==](1, cmp[<](1, 2))", "false")]
-    [InlineData("(1 < 2 < 3):0 == true", "cmp[==](index(cmp[< <](1, 2, 3), 0), true)", "true")]
+    [InlineData("(1 < 2 < 3)[0] == true", "cmp[==](index(cmp[< <](1, 2, 3), 0), true)", "true")]
     public void NamedForms_ParseAndEvaluateAsTheLadderPrescribes(string source, string shape, string value)
     {
         Assert.Equal(shape, ParsedShape(Assert.Single(SourceProvenance.ParseValid(source).Root.Output)));

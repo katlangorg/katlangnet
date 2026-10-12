@@ -300,7 +300,7 @@ public class Fe3HostileReviewTests
         var wrappers = new Func<Expr, Expr>[] {
             e => new Expr.Unary(UnaryOp.Minus, e), e => new Expr.Binary(BinaryOp.Add, leaf, e),
             e => new Expr.Comparison(leaf, [new ComparisonLink(ComparisonOp.Eq, e)]),
-            e => new Expr.Index(leaf, e), e => new Expr.SequenceConstruct(leaf, e),
+            e => new Expr.Index(leaf, [e]), e => new Expr.SequenceConstruct(leaf, e),
             e => new Expr.SequenceSpread(e), e => new Expr.ListLiteral([leaf, e]),
             e => new Expr.DotCall(leaf, "F", [e]), e => new Expr.DotCall(e, "F"),
             e => new Expr.Grace(e, 1), e => new Expr.Capture([leaf, e]),

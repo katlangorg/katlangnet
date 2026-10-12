@@ -699,7 +699,7 @@ theorem forwarding_resupplies_the_collected_items (xs : List Result) :
 
 /-- Origin independence: the collector reads only the supplied values — two
 written arguments holding equal values (a literal, a property read, a call
-result, an `if` branch, `A:0`, `first(A)`) bind identically. -/
+result, an `if` branch, `A[0]`, `first(A)`) bind identically. -/
 theorem selection_origin_does_not_change_collector_binding (v w : Result) (h : v = w) :
     runEvalM (bindParameterPatternList
       [.capture { name := "x", kind := .collecting }]
@@ -1619,8 +1619,8 @@ Exact list values (`Result.listValue`) join the deconstruction opening rule but
 remain opaque at ordinary value and call boundaries: `Result.toItems` keeps a
 list as one item, while the spread marker (`Result.spreadItems`, which
 assignment deconstruction opens its right-hand side with), the LIST pattern
-(`Result.listPatternItems?` — never the sequence pattern), the indexing `:`
-TARGET position view (`Result.projectionItems` — the selected element itself is
+(`Result.listPatternItems?` — never the sequence pattern), the selection
+RECEIVER position view (`Result.projectionItems` — the selected element itself is
 never opened), and the post-binding builtin collection view open one list
 boundary in their documented contexts. The laws below pin
 each decision over the real model, mirroring the sequence laws above.
@@ -1638,15 +1638,15 @@ theorem spreadItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).spreadItems = xs := rfl
 
 /-- The non-spread item view keeps a list OPAQUE: a list is one item, so
-value boundaries and call binding never open it. (Indexing `:` opens its
-TARGET's positions through `projectionItems` and the post-binding builtin
+value boundaries and call binding never open it. (Postfix selection opens its
+RECEIVER's positions through `projectionItems` and the post-binding builtin
 collection view opens the bound list through `builtinCollectionItems`, not
 through `toItems` — see `projectionItems_listValue` and
 `builtinCollectionItems_list` below.) -/
 theorem toItems_listValue_opaque (xs : List Result) :
     (Result.listValue xs).toItems = [Result.listValue xs] := rfl
 
-/-- The indexing `:` target position view offers a list target's immediate
+/-- The selection receiver position view offers a list receiver's immediate
 elements as positions, exactly like a sequence target. -/
 theorem projectionItems_listValue (xs : List Result) :
     (Result.listValue xs).projectionItems = xs := rfl
@@ -1655,30 +1655,30 @@ theorem projectionItems_listValue (xs : List Result) :
 theorem projectionItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).projectionItems = xs := rfl
 
-/-- The empty list has no selectable positions (`[]:0` is out of range). -/
+/-- The empty list has no selectable positions (`[][0]` is out of range). -/
 theorem projectionItems_empty_list :
     (Result.listValue []).projectionItems = [] := rfl
 
 /-- Scalar targets are unchanged: an atom offers itself as the single
-position, so `7:0` stays `7`. -/
+position, so `7[0]` stays `7`. -/
 theorem projectionItems_atom (n : Int) :
     (Result.atom n).projectionItems = [Result.atom n] := rfl
 
-/-- `:` selects one immediate list element and returns it exactly as stored:
-`[1, 2, 3]:0` is `1`. -/
+/-- Selection selects one immediate list element and returns it exactly as stored:
+`[1, 2, 3][0]` is `1`. -/
 theorem select_list_first :
     Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 0
       = some (Result.atom 1) := by
   simp [Result.select?, Result.projectionItems]
 
-/-- `[1, 2, 3]:2` selects the upper-bound element. -/
+/-- `[1, 2, 3][2]` selects the upper-bound element. -/
 theorem select_list_last :
     Result.select? (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) 2
       = some (Result.atom 3) := by
   simp [Result.select?, Result.projectionItems]
 
 /-- A selected LIST element stays one exact opaque list:
-`[[1, 2], [3, 4]]:0` is `[1, 2]`, never flattened or reopened. -/
+`[[1, 2], [3, 4]][0]` is `[1, 2]`, never flattened or reopened. -/
 theorem select_nested_list_element_stays_list :
     Result.select?
       (Result.listValue
@@ -1687,8 +1687,8 @@ theorem select_nested_list_element_stays_list :
       = some (Result.listValue [Result.atom 1, Result.atom 2]) := by
   simp [Result.select?, Result.projectionItems]
 
-/-- Chained selection peels one boundary per `:`:
-`[[1, 2], [3, 4]]:1:0` is `3`. -/
+/-- Chained selection peels one boundary per bracket:
+`[[1, 2], [3, 4]][1][0]` is `3`. -/
 theorem select_list_chained :
     (Result.select?
       (Result.listValue
@@ -1707,7 +1707,7 @@ theorem select_sequence_element_in_list_stays_sequence :
       = some (Result.sequenceValue [Result.atom 1, Result.atom 2]) := by
   simp [Result.select?, Result.projectionItems]
 
-/-- Out-of-range list selection is a miss (`[]:0` and `[1, 2]:2` are the
+/-- Out-of-range list selection is a miss (`[][0]` and `[1, 2][2]` are the
 existing index out-of-range error). -/
 theorem select_empty_list_out_of_range :
     Result.select? (Result.listValue []) 0 = none := by
@@ -1720,7 +1720,7 @@ theorem select_list_past_end_out_of_range :
 /-
 ## Selection laws (selection is a value boundary)
 
-SELECTION CHOOSES A VALUE; SPREAD OPENS A VALUE (September 2026). `A:i`,
+SELECTION CHOOSES A VALUE; SPREAD OPENS A VALUE (September 2026). `A[i]`,
 `first(A)`, and `last(A)` return the selected element exactly as stored and
 re-count it through the ONE ordinary value boundary (`Result.valueCount`):
 a selected sequence value or exact list is one emitted value, a selected `()`
@@ -1768,7 +1768,7 @@ it executably.) -/
 theorem select_is_a_value_boundary (selected : Result) (n : Nat) :
     reCountValueBoundary (selected, n) = (selected, Result.valueCount selected) := rfl
 
-/-- `first(A)` is the selection `A:0` under the same value boundary: for every
+/-- `first(A)` is the selection `A[0]` under the same value boundary: for every
 non-empty collection view `x :: xs`, `evalFirstCounted` yields exactly
 `(x, valueCount x)` — the pair the `.index` arm of `evalCounted` emits for
 `select? (sequenceValue (x :: xs)) 0`. -/
@@ -1780,7 +1780,7 @@ theorem first_is_select_zero (x : Result) (xs : List Result) (s : EvalState) :
   · rfl
   · simp [Result.select?, Result.projectionItems, Result.toItems]
 
-/-- `last(A)` is the selection `A:(count - 1)` under the same value boundary:
+/-- `last(A)` is the selection `A[count - 1]` under the same value boundary:
 for every non-empty collection view `xs ++ [x]`, `evalLastCounted` yields
 `(x, valueCount x)` and `select?` at the last position yields `x`. -/
 theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
@@ -1794,7 +1794,7 @@ theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
 
 /-- `first` and `last` ARE selections (SEQ-04), so on an empty collection they
 report the selection's own missing position, `badIndex` — the outcome of
-`():0` — and never a count of their own (Q-27, decided 2026-10-05). -/
+`()[0]` — and never a count of their own (Q-27, decided 2026-10-05). -/
 theorem first_empty_is_badIndex (s : EvalState) :
     (evalFirstCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
@@ -1802,7 +1802,7 @@ theorem last_empty_is_badIndex (s : EvalState) :
     (evalLastCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
 /-- SEQ-04 made TOTAL (Q-27, decided 2026-10-05): over EVERY collection view,
-the empty one included, `first(A)` is the selection `A:0` — the same element
+the empty one included, `first(A)` is the selection `A[0]` — the same element
 under the same value boundary, or, when the view names no position 0, the same
 `badIndex` the `.index` arm of `evalCounted` reports for `select? … = none`. -/
 theorem first_is_select_zero_total (items : List Result) (s : EvalState) :
@@ -1815,7 +1815,7 @@ theorem first_is_select_zero_total (items : List Result) (s : EvalState) :
   | nil => rfl
   | cons x xs => simp [evalFirstCounted, Result.select?, Result.projectionItems, Result.toItems]; rfl
 
-/-- `last(A)` is the selection `A:(count(A) - 1)` over EVERY collection view, the
+/-- `last(A)` is the selection `A[count(A) - 1]` over EVERY collection view, the
 empty one included: on the empty view the index is `-1`, which the `.index` arm
 rejects as `badIndex` before selecting, and `last` reports that same `badIndex`;
 on every other view both select the last element under the same value
@@ -1886,6 +1886,371 @@ theorem spread_of_selected_list_opens_one_boundary (xs ys : List Result) :
         Result.spreadItems
       = some xs := by
   simp [Result.select?, Result.projectionItems, Result.toItems, Result.spreadItems]
+
+/-!
+## Variadic postfix selection (October 2026)
+
+`receiver[s1, …, sn]` replaces the retired colon form. PARENTHESES INVOKE A
+COMPUTATION; POSTFIX BRACKETS SELECT FROM A VALUE; selection never changes how its
+receiver obtains that value. The `.index` arm of `evalCounted` demands the receiver
+once, forms the selector supply like a call's (`formNeedSupply`), and instantiates
+the TOTAL core below (`selectWith`) with `demandNeed`; these laws are about that core
+and the ONE positional view it shares with `count`, `first` and `last`. The arm
+itself lives in the partial evaluator block: CoreTests `VariadicSelection` pins the
+instantiation (receiver once, spreads during formation, left-to-right demand, first
+failure) executably, and the C# twin pins the same traces.
+-/
+
+/-! ### One immediate positional view -/
+
+/-- COUNTING AND SELECTION SHARE ONE IMMEDIATE POSITIONAL VIEW: the post-binding
+collection view `count`, `first` and `last` read IS the positional view selection
+reads, for every value. -/
+theorem positional_view_is_shared (v : Result) :
+    builtinCollectionItems v = Result.projectionItems v := by
+  cases v <;> rfl
+
+/-- KatLang's `count` counts values, not their internal components: a string is ONE
+position — the empty string included — and is never decomposed into characters,
+code units, code points or graphemes. -/
+theorem a_string_is_one_position (s : String) :
+    Result.projectionItems (.str s) = [.str s] := rfl
+
+theorem the_empty_string_is_one_position :
+    (Result.projectionItems (.str "")).length = 1 := rfl
+
+/-- Numbers and Booleans are each one position. -/
+theorem a_number_is_one_position (n : Int) :
+    Result.projectionItems (.atom n) = [.atom n] := rfl
+
+theorem a_boolean_is_one_position (b : Bool) :
+    Result.projectionItems (.bool b) = [.bool b] := rfl
+
+/-- An empty list and an empty sequence have no positions. -/
+theorem empty_collections_have_no_positions :
+    Result.projectionItems (.sequenceValue []) = [] ∧ Result.projectionItems (.listValue []) = [] :=
+  ⟨rfl, rfl⟩
+
+/-- A list's positions are its IMMEDIATE elements, never their components and never
+recursively flattened: a list of strings counts its strings, a nested list is one
+position. -/
+theorem a_list_counts_its_immediate_elements (xs : List Result) :
+    (builtinCollectionItems (.listValue xs)).length = xs.length := rfl
+
+theorem a_list_of_strings_counts_its_strings (xs : List String) :
+    (builtinCollectionItems (.listValue (xs.map Result.str))).length = xs.length := by
+  simp [builtinCollectionItems]
+
+/-! ### One supplied selector (`selectPosition`) -/
+
+/-- A supplied whole number naming a position selects the stored element, whole. -/
+theorem selectPosition_selects_a_named_position (receiver : Result) (i : Int) (v : Result)
+    (hi : 0 ≤ i) (h : Result.select? receiver i.toNat = some v) (s : EvalState) :
+    (selectPosition receiver (.atom i)).runState s = (.ok v, s) := by
+  simp [selectPosition, expectInt, Result.asInt?, Int.not_lt.mpr hi, h]
+  rfl
+
+/-- A position past the receiver's positional view is `badIndex`. -/
+theorem selectPosition_past_the_view_is_badIndex (receiver : Result) (i : Int) (hi : 0 ≤ i)
+    (h : Result.select? receiver i.toNat = none) (s : EvalState) :
+    (selectPosition receiver (.atom i)).runState s = (.error Error.badIndex, s) := by
+  simp [selectPosition, expectInt, Result.asInt?, Int.not_lt.mpr hi, h]
+  rfl
+
+/-- A negative selector names no position (`badIndex`): there is no from-the-end
+selection. -/
+theorem selectPosition_negative_is_badIndex (receiver : Result) (n : Int) (h : n < 0) (s : EvalState) :
+    (selectPosition receiver (.atom n)).runState s = (.error Error.badIndex, s) := by
+  simp [selectPosition, expectInt, Result.asInt?, h]
+  rfl
+
+/-- A selector of the wrong kind is the kind failure `typeMismatch` — never a Boolean
+conversion and never an index error. -/
+theorem selectPosition_string_selector_is_typeMismatch (receiver : Result) (t : String) (s : EvalState) :
+    (selectPosition receiver (.str t)).runState s
+      = (.error (Error.typeMismatch "Expected a number, got a string"), s) := rfl
+
+theorem selectPosition_boolean_selector_is_typeMismatch (receiver : Result) (b : Bool) (s : EvalState) :
+    (selectPosition receiver (.bool b)).runState s
+      = (.error (Error.typeMismatch "Expected a number, got a Boolean value"), s) := rfl
+
+/-- A list-valued selector is ONE value of the wrong kind: `Data[[0, 1]]` is no index
+vector (only `Data[[0, 1]*]` supplies two indices). -/
+theorem selectPosition_list_selector_is_typeMismatch (receiver : Result) (xs : List Result)
+    (s : EvalState) :
+    ∃ msg, (selectPosition receiver (.listValue xs)).runState s = (.error (Error.typeMismatch msg), s) :=
+  ⟨_, rfl⟩
+
+/-- A string selects ITSELF at position zero — `'abc'[0]` is `'abc'`, `''[0]` is `''` —
+and has no position one: postfix selection never extracts characters. -/
+theorem a_string_selects_itself_at_zero (t : String) (s : EvalState) :
+    (selectPosition (.str t) (.atom 0)).runState s = (.ok (.str t), s) :=
+  selectPosition_selects_a_named_position (.str t) 0 (.str t) (by decide) rfl s
+
+theorem a_string_has_no_position_one (t : String) (s : EvalState) :
+    (selectPosition (.str t) (.atom 1)).runState s = (.error Error.badIndex, s) :=
+  selectPosition_past_the_view_is_badIndex (.str t) 1 (by decide) rfl s
+
+/-- Every scalar selects itself at zero: `42[0]` is `42`, `true[0]` is `true`. -/
+theorem a_number_selects_itself_at_zero (n : Int) (s : EvalState) :
+    (selectPosition (.atom n) (.atom 0)).runState s = (.ok (.atom n), s) :=
+  selectPosition_selects_a_named_position (.atom n) 0 (.atom n) (by decide) rfl s
+
+theorem a_boolean_selects_itself_at_zero (b : Bool) (s : EvalState) :
+    (selectPosition (.bool b) (.atom 0)).runState s = (.ok (.bool b), s) :=
+  selectPosition_selects_a_named_position (.bool b) 0 (.bool b) (by decide) rfl s
+
+/-- Both empty collection kinds fail at position zero (`[][0]`, `()[0]`). -/
+theorem empty_collections_fail_at_zero (s : EvalState) :
+    (selectPosition (.sequenceValue []) (.atom 0)).runState s = (.error Error.badIndex, s)
+    ∧ (selectPosition (.listValue []) (.atom 0)).runState s = (.error Error.badIndex, s) :=
+  ⟨selectPosition_past_the_view_is_badIndex _ 0 (by decide) rfl s,
+   selectPosition_past_the_view_is_badIndex _ 0 (by decide) rfl s⟩
+
+/-! ### The supplied selectors (`selectWith`) -/
+
+theorem selectWith_nil {α : Type} (demand : α → EvalM Result) (receiver : Result) :
+    selectWith demand receiver [] = pure [] := rfl
+
+/-- One step: the FIRST supplied selector is demanded and its position selected, and
+only then do the remaining selectors run. -/
+theorem selectWith_step {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cell : α) (rest : List α) :
+    selectWith demand receiver (cell :: rest)
+      = (do
+          let selected <- selectPosition receiver (<- demand cell)
+          let tail <- selectWith demand receiver rest
+          pure (selected :: tail)) := rfl
+
+/-- A selector whose DEMAND fails ends the selection with that error and state. -/
+theorem selectWith_failing_demand_ends_it {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cell : α) (rest : List α) (err : Error) (state state' : EvalState)
+    (h : (demand cell).runState state = (.error err, state')) :
+    (selectWith demand receiver (cell :: rest)).runState state = (.error err, state') := by
+  show ((demand cell).runState >>= fun a => _) state = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, h]
+  rfl
+
+/-- A selector whose POSITION fails ends the selection with that error and state. -/
+theorem selectWith_failing_position_ends_it {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cell : α) (rest : List α) (value : Result) (err : Error) (state state' state'' : EvalState)
+    (hd : (demand cell).runState state = (.ok value, state'))
+    (hp : (selectPosition receiver value).runState state' = (.error err, state'')) :
+    (selectWith demand receiver (cell :: rest)).runState state = (.error err, state'') := by
+  show ((demand cell).runState >>= fun a => _) state = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, hd]
+  show ((selectPosition receiver value).runState >>= fun a => _) state' = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, hp]
+  rfl
+
+/-- A selector that succeeds hands its selected value and state to the rest of the run. -/
+theorem selectWith_successful_selector_continues {α : Type} (demand : α → EvalM Result)
+    (receiver : Result) (cell : α) (rest : List α) (value selected : Result)
+    (state state' state'' : EvalState)
+    (hd : (demand cell).runState state = (.ok value, state'))
+    (hp : (selectPosition receiver value).runState state' = (.ok selected, state'')) :
+    (selectWith demand receiver (cell :: rest)).runState state
+      = (((selectWith demand receiver rest).runState state'').1.map (selected :: ·),
+         ((selectWith demand receiver rest).runState state'').2) := by
+  show ((demand cell).runState >>= fun a => _) state = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, hd]
+  show ((selectPosition receiver value).runState >>= fun a => _) state' = _
+  simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, hp]
+  cases h : (selectWith demand receiver rest).runState state'' with
+  | mk result final =>
+      cases result <;> rfl
+
+/-- The explicit trace of a selection run in `EvalM`: each supplied selector is
+demanded ONCE, in supplied order, from the state its predecessor left, and its
+position selected at once; the first failure — of a demand or of a position — ends
+the run with that error and state. -/
+def selectionTrace {α : Type} (demand : α → EvalM Result) (receiver : Result) :
+    List α → EvalState → Except Error (List Result) × EvalState
+  | [], state => (.ok [], state)
+  | cell :: rest, state =>
+      match (demand cell).runState state with
+      | (.error err, state') => (.error err, state')
+      | (.ok value, state') =>
+          match (selectPosition receiver value).runState state' with
+          | (.error err, state'') => (.error err, state'')
+          | (.ok selected, state'') =>
+              ((selectionTrace demand receiver rest state'').1.map (selected :: ·),
+               (selectionTrace demand receiver rest state'').2)
+
+/-- LEFT TO RIGHT, EACH SELECTOR ONCE, FIRST FAILURE STOPS: running the selection core
+IS its explicit trace (`selectionTrace`), for every demand channel. -/
+theorem selectWith_runs_as_its_trace {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cells : List α) (state : EvalState) :
+    (selectWith demand receiver cells).runState state = selectionTrace demand receiver cells state := by
+  induction cells generalizing state with
+  | nil => rfl
+  | cons cell rest ih =>
+      cases hd : (demand cell).runState state with
+      | mk r state' =>
+          cases r with
+          | error err =>
+              rw [selectWith_failing_demand_ends_it demand receiver cell rest err state state' hd]
+              simp [selectionTrace, hd]
+          | ok value =>
+              cases hp : (selectPosition receiver value).runState state' with
+              | mk r' state'' =>
+                  cases r' with
+                  | error err =>
+                      rw [selectWith_failing_position_ends_it demand receiver cell rest value err
+                        state state' state'' hd hp]
+                      simp [selectionTrace, hd, hp]
+                  | ok selected =>
+                      rw [selectWith_successful_selector_continues demand receiver cell rest value
+                        selected state state' state'' hd hp, ih]
+                      simp [selectionTrace, hd, hp]
+
+/-- LATER SELECTORS ARE NOT DEMANDED AFTER A FAILURE: once a selector fails, the run —
+its error AND its final state — is exactly the run of that selector alone, whatever
+selectors follow it, so no later demand contributes an effect. -/
+theorem selectWith_stops_at_first_failure {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cell : α) (rest : List α) (state : EvalState) (err : Error) (final : EvalState)
+    (hfail : (selectWith demand receiver [cell]).runState state = (.error err, final)) :
+    (selectWith demand receiver (cell :: rest)).runState state = (.error err, final) := by
+  cases hd : (demand cell).runState state with
+  | mk r state' =>
+      cases r with
+      | error e =>
+          rw [selectWith_failing_demand_ends_it demand receiver cell [] e state state' hd] at hfail
+          rw [selectWith_failing_demand_ends_it demand receiver cell rest e state state' hd]
+          exact hfail
+      | ok value =>
+          cases hp : (selectPosition receiver value).runState state' with
+          | mk r' state'' =>
+              cases r' with
+              | error e =>
+                  rw [selectWith_failing_position_ends_it demand receiver cell [] value e state state'
+                    state'' hd hp] at hfail
+                  rw [selectWith_failing_position_ends_it demand receiver cell rest value e state state'
+                    state'' hd hp]
+                  exact hfail
+              | ok selected =>
+                  rw [selectWith_successful_selector_continues demand receiver cell [] value selected
+                    state state' state'' hd hp] at hfail
+                  simp [selectWith] at hfail
+                  cases hfail
+
+/-- With a pure demand, the selected values are the stored elements at the supplied
+positions, in SUPPLIED order, repetitions included — `Data[2, 0, 2]` is
+`(30, 10, 30)` — and the run touches no state. -/
+theorem selectWith_pure_preserves_order_and_repetition (receiver : Result)
+    (positions : List Nat) (s : EvalState)
+    (h : ∀ i ∈ positions, i < (Result.projectionItems receiver).length) :
+    (selectWith (fun (i : Nat) => (pure (Result.atom (Int.ofNat i)) : EvalM Result)) receiver positions).runState s
+      = (.ok (positions.map (fun i => (Result.projectionItems receiver).getD i (.sequenceValue []))), s) := by
+  induction positions with
+  | nil => rfl
+  | cons i rest ih =>
+      have hi : i < (Result.projectionItems receiver).length := h i (List.mem_cons_self ..)
+      have hsel : Result.select? receiver (Int.ofNat i).toNat
+          = some ((Result.projectionItems receiver).getD i (.sequenceValue [])) := by
+        simp [Result.select?, hi]
+      have hp := selectPosition_selects_a_named_position receiver (Int.ofNat i) _ (by simp) hsel s
+      rw [selectWith_successful_selector_continues _ receiver i rest (.atom (Int.ofNat i)) _ s s s rfl hp,
+        ih (fun j hj => h j (List.mem_cons_of_mem _ hj))]
+      rfl
+
+/-! ### The selection result (`selectionResult`) -/
+
+/-- Zero selections are the successful empty sequence `()` (emitting zero values) —
+not the whole receiver, not `[]`, not a missing output. -/
+theorem selection_of_nothing_is_the_empty_sequence :
+    selectionResult [] = (.sequenceValue [], 0) := rfl
+
+/-- One selection is the selected value itself. -/
+theorem selection_of_one_is_the_value (v : Result) :
+    selectionResult [v] = (v, Result.valueCount v) := rfl
+
+/-- Several selections are ONE sequence of the selected values, kept whole. -/
+theorem selection_of_several_is_one_sequence (a b : Result) (rest : List Result) :
+    selectionResult (a :: b :: rest) = (.sequenceValue (a :: b :: rest), 1) := rfl
+
+/-- Selected empty values stay elements: `Nested[2, 3]` is `((), [])` — never `[]`,
+never flattened, never dropped. -/
+theorem selected_empty_values_stay_elements :
+    selectionResult [.sequenceValue [], .listValue []]
+      = (.sequenceValue [.sequenceValue [], .listValue []], 1) := rfl
+
+/-- BRACKETS SOLVE THE INVOCATION AMBIGUITY; THEY DO NOT REMOVE THE ORDINARY
+CONSEQUENCES OF SINGLETON NORMALIZATION: selecting one sequence-valued element gives
+that sequence itself, so a spread opens IT (`[Data[0]*]` with `Data = [(10, 20), 30]`
+is `[10, 20]`) — no selection count survives to recover an outer wrapper. -/
+theorem single_selection_keeps_no_wrapper (a b : Result) :
+    (selectionResult [.sequenceValue [a, b]]).1.spreadItems = [a, b] := rfl
+
+/-! ### `first` and `last` are selections -/
+
+/-- The selection pipeline over an already evaluated receiver: the `.index` arm's
+steps (3) and (4) with the selector values already in hand. -/
+def selectionOf (receiver : Result) (selectors : List Result) : EvalM CountedResult := do
+  let selected <- selectWith (fun (x : Result) => (pure x : EvalM Result)) receiver selectors
+  pure (selectionResult selected)
+
+theorem selectionOf_single (receiver selector : Result) (s : EvalState) :
+    (selectionOf receiver [selector]).runState s
+      = match (selectPosition receiver selector).runState s with
+        | (.ok selected, s') => (.ok (selectionResult [selected]), s')
+        | (.error e, s') => (.error e, s') := by
+  cases h : (selectPosition receiver selector).runState s with
+  | mk r s' =>
+      cases r with
+      | ok selected =>
+          show ((selectWith _ receiver [selector]).runState >>= fun a => _) s = _
+          show (((pure selector : EvalM Result).runState >>= fun a => _) >>= fun a => _) s = _
+          simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, pure, ExceptT.pure,
+            StateT.pure, h, selectWith]
+      | error e =>
+          show ((selectWith _ receiver [selector]).runState >>= fun a => _) s = _
+          show (((pure selector : EvalM Result).runState >>= fun a => _) >>= fun a => _) s = _
+          simp [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind, pure, ExceptT.pure,
+            StateT.pure, h]
+
+/-- `first(v) ≡ v[0]` for EVERY evaluated receiver value `v` — a scalar, a string
+(`''` included), a sequence, a list, empty or not: the same value under the same value
+boundary, or the same `badIndex` when `v` has no positions. A law about one value in
+hand, not a rewrite of effectful expressions: `first(BuildData())` invokes once. -/
+theorem first_is_selection_at_zero (v : Result) (s : EvalState) :
+    (evalFirstCounted (builtinCollectionItems v)).runState s = (selectionOf v [.atom 0]).runState s := by
+  rw [positional_view_is_shared, selectionOf_single]
+  cases hv : Result.projectionItems v with
+  | nil =>
+      rw [selectPosition_past_the_view_is_badIndex v 0 (by decide) (by simp [Result.select?, hv]) s]
+      rfl
+  | cons x xs =>
+      rw [selectPosition_selects_a_named_position v 0 x (by decide) (by simp [Result.select?, hv]) s]
+      rfl
+
+/-- `last(v) ≡ v[count(v) - 1]` for EVERY evaluated receiver value `v`: on a value with
+no positions the index is `-1`, which selection rejects as `badIndex` — exactly what
+`last` reports; otherwise both select the last element under the same value boundary.
+Same caveat: a law about one value in hand (`last(BuildData())` invokes once, while
+`BuildData()[count(BuildData()) - 1]` invokes twice). -/
+theorem last_is_selection_at_count_minus_one (v : Result) (s : EvalState) :
+    (evalLastCounted (builtinCollectionItems v)).runState s
+      = (selectionOf v [.atom (Int.ofNat (builtinCollectionItems v).length - 1)]).runState s := by
+  rw [positional_view_is_shared, selectionOf_single]
+  cases hv : Result.projectionItems v with
+  | nil =>
+      rw [selectPosition_negative_is_badIndex v _ (by decide) s]
+      rfl
+  | cons x xs =>
+      have hidx : Int.ofNat (x :: xs).length - 1 = Int.ofNat xs.length := by simp
+      have hsel : Result.select? v (Int.ofNat xs.length).toNat = some ((x :: xs).getLast (by simp)) := by
+        simp [Result.select?, hv, List.getLast_eq_getElem]
+      rw [hidx, selectPosition_selects_a_named_position v _ _ (by simp) hsel s]
+      simp [evalLastCounted, List.getLast?_eq_some_getLast]
+      rfl
+
+/-- `count(v)` is the number of positions selection can name. -/
+theorem count_is_the_number_of_positions (v : Result) (s : EvalState) :
+    (evalCountCounted (builtinCollectionItems v)).runState s
+      = (.ok (.atom (Int.ofNat (Result.projectionItems v).length), 1), s) := by
+  rw [positional_view_is_shared]
+  rfl
 
 /-- The openable-structure view opens a received list to its items. -/
 theorem structureItems_listValue (xs : List Result) :

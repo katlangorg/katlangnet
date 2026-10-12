@@ -1171,9 +1171,10 @@ internal static class ImplicitArgumentResolver
                 CollectReferenceNames(operand, names, visited, run);
                 break;
 
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
                 CollectReferenceNames(target, names, visited, run);
-                CollectReferenceNames(selector, names, visited, run);
+                foreach (var selector in selectors)
+                    CollectReferenceNames(selector, names, visited, run);
                 break;
 
             case Expr.SequenceSpread(var operand):
@@ -3488,8 +3489,8 @@ internal static class ImplicitArgumentResolver
     /// source into a collecting destination re-spread — never wrapped in a structure of its own;
     /// and a callee structural pattern is rebuilt around those bindings as the SAME kind it
     /// matches (<see cref="BuildPatternArgument"/>): a sequence pattern as a sequence, a list
-    /// pattern as a list — never the other kind. So <c>Add((x, y))</c> / <c>A = [Add]:0</c> is
-    /// <c>A((x, y)) = [Add((x, y))]:0</c> and <c>Single([x])</c> / <c>B = Single + 0</c> is
+    /// pattern as a list — never the other kind. So <c>Add((x, y))</c> / <c>A = [Add][0]</c> is
+    /// <c>A((x, y)) = [Add((x, y))][0]</c> and <c>Single([x])</c> / <c>B = Single + 0</c> is
     /// <c>B([x]) = Single([x]) + 0</c>. The rebuilt group is the tree the explicit written call
     /// has, so implicit forwarding is observationally the explicit call that writes the same
     /// bindings into the callee's pattern.</para>
@@ -4110,9 +4111,13 @@ internal static class ImplicitArgumentResolver
                 CollectImplicitDeps(operand, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
-            case Expr.Index(var target, var selector):
+            case Expr.Index(var target, var selectors):
+                // The receiver and EVERY selector slot are VALUE uses (a spread slot's
+                // operand through its own arm). A selection has no callee, so its slots are
+                // never classified by a callee's argument roles.
                 CollectImplicitDeps(target, paramMap, seen, deps, LiftingRole.Value, memo);
-                CollectImplicitDeps(selector, paramMap, seen, deps, LiftingRole.Value, memo);
+                foreach (var selector in selectors)
+                    CollectImplicitDeps(selector, paramMap, seen, deps, LiftingRole.Value, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
@@ -4274,10 +4279,11 @@ internal static class ImplicitArgumentResolver
                 Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
+            // The receiver and every selector slot are VALUE uses (CollectImplicitDeps).
             Expr.Index index => index with
             {
                 Target = RewriteImplicitCalls(index.Target, paramMap, context, LiftingRole.Value, memos),
-                Selector = RewriteImplicitCalls(index.Selector, paramMap, context, LiftingRole.Value, memos),
+                Selectors = index.Selectors.Select(selector => RewriteImplicitCalls(selector, paramMap, context, LiftingRole.Value, memos)).ToList(),
             },
 
             Expr.SequenceSpread spread => spread with
@@ -4642,7 +4648,7 @@ internal static class ImplicitArgumentResolver
             Expr.Index index => index with
             {
                 Target = ProcessExprNested(index.Target, paramMap, memos),
-                Selector = ProcessExprNested(index.Selector, paramMap, memos),
+                Selectors = index.Selectors.Select(selector => ProcessExprNested(selector, paramMap, memos)).ToList(),
             },
             Expr.SequenceSpread spread => spread with { Operand = ProcessExprNested(spread.Operand, paramMap, memos) },
             Expr.SequenceConstruct construct => construct with

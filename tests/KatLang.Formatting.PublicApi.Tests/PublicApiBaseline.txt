@@ -325,6 +325,7 @@ public enum KatLang.DiagnosticCode : int
   UnterminatedInterpolationHole = 55
   InvalidInterpolationHole = 56
   InterpolationNotAllowedHere = 57
+  RetiredColonSelection = 58
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1132,12 +1133,12 @@ public sealed record KatLang.Expr.Grace : KatLang.Expr, System.IEquatable<KatLan
   operator public static bool op_Inequality(KatLang.Expr.Grace? left, KatLang.Expr.Grace? right)
 
 public sealed record KatLang.Expr.Index : KatLang.Expr, System.IEquatable<KatLang.Expr.Index>
-  ctor     public Index(KatLang.Expr Target, KatLang.Expr Selector)
+  ctor     public Index(KatLang.Expr Target, KatLang.OutputBundle Selectors)
   property protected override System.Type EqualityContract { get; }
-  property public KatLang.Expr Selector { get; init; }
+  property public KatLang.OutputBundle Selectors { get; init; }
   property public KatLang.Expr Target { get; init; }
   method   public virtual KatLang.Expr.Index <Clone>$()
-  method   public void Deconstruct(out KatLang.Expr Target, out KatLang.Expr Selector)
+  method   public void Deconstruct(out KatLang.Expr Target, out KatLang.OutputBundle Selectors)
   method   public bool Equals(KatLang.Expr.Index? other)
   method   public override bool Equals(object? obj)
   method   public sealed override bool Equals(KatLang.Expr? other)
@@ -1485,6 +1486,7 @@ public enum KatLang.KatLangErrorCode : int
   UnterminatedInterpolationHole = 77
   InvalidInterpolationHole = 78
   InterpolationNotAllowedHere = 79
+  RetiredColonSelection = 80
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

@@ -351,11 +351,12 @@ public class EvaluatorExpressionListTests
         => AssertEval("(1, 2, 3)\n.map { n * 2 }\n.sum", 12);
 
     [Theory]
-    [InlineData("Pair = 1, 2\nP = Pair:0\nP")]
-    [InlineData("Pair = 1, 2\nP = Pair : 0\nP")]
-    public void Eval_SameLineIndexing_SelectsIndexedItem(string source)
-        // Same-line whitespace around ':' is insignificant; postfix indexing
-        // continues the expression before it.
+    [InlineData("Pair = 1, 2\nP = Pair[0]\nP")]
+    [InlineData("Pair = 1, 2\nP = Pair [0]\nP")]
+    [InlineData("Pair = 1, 2\nP = Pair\t[ 0 ]\nP")]
+    public void Eval_SameLineSelection_SelectsTheItem(string source)
+        // Same-line spaces and tabs before the selection bracket are
+        // insignificant; postfix selection continues the expression before it.
         => AssertEval(source, 1);
 
     [Fact]

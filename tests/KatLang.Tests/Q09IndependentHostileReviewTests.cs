@@ -138,7 +138,7 @@ public class Q09IndependentHostileReviewTests
             "Ignore(a, b) = b\nStep(s) = Ignore(trace(randomInt(0, 99)), s + 1)\nrepeat(Step, 4, 0)",
             "Step(s) = if(true, s, s)\nrepeat(Step, 2, { trace(7) })",
             "Step(s) = if(s, 2, 3)\nrepeat(Step, 1, { true })",
-            "Step(s) = s:0\nrepeat(Step, 1, [trace(7)])",
+            "Step(s) = s[0]\nrepeat(Step, 1, [trace(7)])",
             "Id(v) = v\nStep(s) = Id(s)\nrepeat(Step, 1, { trace(7) })",
             "Z = trace(randomInt(0, 99))\nA = Z\nStep(s) = s + A - Z\nrepeat(Step, 3, 0)",
             "Step(s) = range(1, 8).filter({ x < 5 }).count + s\nrepeat(Step, 2, 0)",
@@ -432,7 +432,7 @@ public class Q09IndependentHostileReviewTests
     [Theory]
     [InlineData("Step(s) = if(s == 2, (trace(s), trace(8)), trace(s + 1))\nrepeat(Step, 3, 0)")]
     [InlineData("Step(s) = if(s == 2, (), trace(s + 1))\nrepeat(Step, 3, 0)")]
-    [InlineData("Step(s) = [(1, 2)]:0\nrepeat(Step, 3, 0)")]
+    [InlineData("Step(s) = [(1, 2)][0]\nrepeat(Step, 3, 0)")]
     public async Task FinalIterationHandover_DoesNotStartAnotherGenericIteration(string source)
     {
         var baseline = await Run(source, 0);

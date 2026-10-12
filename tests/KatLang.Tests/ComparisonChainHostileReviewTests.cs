@@ -25,7 +25,7 @@ public class ComparisonChainHostileReviewTests
     [Theory]
     [InlineData("(-2).abs < true", "(-2).abs < true")]
     [InlineData("(not true).count < false", "(not true).count < false")]
-    [InlineData("(-2).abs:0 < true", "(-2).abs:0 < true")]
+    [InlineData("(-2).abs[0] < true", "(-2).abs[0] < true")]
     public void FailingLinkNames_PreservePostfixReceiverGrouping(string source, string expected)
     {
         SourceProvenance.ParseValid(source);
@@ -45,7 +45,7 @@ public class ComparisonChainHostileReviewTests
         // Both user-facing spellings read back: the operand-shape name of the
         // "while evaluating `…`" frames and the Open name of argument, callee, and
         // receiver descriptions.
-        var atoms = new List<string> { "a", "not a", "-a", "-a ^ b", "a < b == c", "(-a).f", "(not a).f", "a:(b < c)", "(a < b):0" };
+        var atoms = new List<string> { "a", "not a", "-a", "-a ^ b", "a < b == c", "(-a).f", "(not a).f", "a[b < c]", "(a < b)[0]" };
         atoms.AddRange(RoundTripOperators.Select(op => $"a {op} b"));
         foreach (var child in atoms)
         {
@@ -58,7 +58,7 @@ public class ComparisonChainHostileReviewTests
             Check($"not ({child})");
             Check($"-({child})");
             Check($"({child}).f");
-            Check($"({child}):0");
+            Check($"({child})[0]");
         }
 
         static void Check(string source)
@@ -80,7 +80,7 @@ public class ComparisonChainHostileReviewTests
         // output`). A bare prefix form would rebind there — `-2.f` is `-(2.f)`, `not a.f`
         // is `not (a.f)` — so the description is written in postfix position and the
         // composition is exactly the edge's own name.
-        var receivers = new List<string> { "a", "2", "-a", "not a", "-(-a)", "-a ^ b", "not a < b", "-a.f", "(-a).f", "a < b == c", "(1, 2)", "a:0", "(-a):0", "a.f" };
+        var receivers = new List<string> { "a", "2", "-a", "not a", "-(-a)", "-a ^ b", "not a < b", "-a.f", "(-a).f", "a < b == c", "(1, 2)", "a[0]", "(-a)[0]", "a.f" };
         receivers.AddRange(RoundTripOperators.Select(op => $"a {op} b"));
         foreach (var source in receivers)
         {
@@ -126,7 +126,7 @@ public class ComparisonChainHostileReviewTests
     [InlineData("[a < b <= c]")]
     [InlineData("P = a < b <= c")]
     [InlineData("Outer = { Inner = a < b <= c\nInner }")]
-    [InlineData("xs:(a < b <= c)")]
+    [InlineData("xs[a < b <= c]")]
     [InlineData("xs.map{ a < b <= c }")]
     [InlineData("if(a < b <= c, 1, 0)")]
     [InlineData("F(0) = a < b <= c\nF(x) = false")]
@@ -160,7 +160,7 @@ public class ComparisonChainHostileReviewTests
         Expr.Unary u => $"{u.Op}({Shape(u.Operand)})",
         Expr.Binary b => $"{b.Op}({Shape(b.Left)},{Shape(b.Right)})",
         Expr.Comparison c => $"cmp({Shape(c.First)};{string.Join(';', c.Links.Select(l => $"{l.Op}:{Shape(l.Operand)}"))})",
-        Expr.Index i => $"index({Shape(i.Target)},{Shape(i.Selector)})",
+        Expr.Index i => $"index({Shape(i.Target)},{string.Join(",", i.Selectors.Select(Shape))})",
         Expr.DotCall d => $"dot({Shape(d.Target)},{d.Name})",
         Expr.Capture c => $"capture({string.Join(';', c.Body.Select(Shape))})",
         _ => throw new InvalidOperationException($"Unexpected round-trip test node {expr.GetType().Name}"),
@@ -173,7 +173,7 @@ public class ComparisonChainHostileReviewTests
         foreach (var mode in new[] { ExprNameMode.Open, ExprNameMode.DiagnosticName })
         {
             Assert.Equal("(-2).abs", ExprNameRenderer.Render(new Expr.DotCall(negative, "abs", null), mode));
-            Assert.Equal("(-2):0", ExprNameRenderer.Render(new Expr.Index(negative, new Expr.Num(0)), mode));
+            Assert.Equal("(-2)[0]", ExprNameRenderer.Render(new Expr.Index(negative, [new Expr.Num(0)]), mode));
             Assert.Equal("(-2)*", ExprNameRenderer.Render(new Expr.SequenceSpread(negative), mode));
             Assert.Equal("(-2)(...)", ExprNameRenderer.Render(new Expr.Call(negative, OutputBundle.Empty), mode));
         }

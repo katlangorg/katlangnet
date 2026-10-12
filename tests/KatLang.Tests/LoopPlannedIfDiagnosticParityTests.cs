@@ -207,7 +207,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // planned too, so pin the loop kind that reaches the plan by a second route.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0), n <= 10
-            S.while(1):0
+            S.while(1)[0]
             """;
 
         var error = AssertOptimizerTransparentFailure(source);

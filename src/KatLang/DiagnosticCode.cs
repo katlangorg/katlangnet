@@ -148,8 +148,9 @@ public enum DiagnosticCode
     InvalidCollectingBinding = 19,
 
     /// <summary>
-    /// A spread expression used as a scalar operand (unary/binary operand,
-    /// indexing target or selector) instead of a whole expression-list slot.
+    /// A spread expression used as a scalar operand (a unary, binary or comparison
+    /// operand, or a whole interpolation hole) instead of a whole expression-list slot
+    /// (a selector slot of a postfix selection is such a slot: <c>Data[Indexes*]</c>).
     /// </summary>
     MisplacedSpread = 20,
 
@@ -284,7 +285,7 @@ public enum DiagnosticCode
     /// as preceding content without the required slot separator or
     /// declaration row boundary (SYN-07A: whitespace never
     /// creates a slot boundary; <c>1 2</c>, <c>F(1 2)</c>, <c>2(3)</c>,
-    /// <c>A[1]</c>, <c>P = a b</c>, <c>x = 1 y = 2</c>, and the clause head
+    /// <c>A[0](1)</c>, <c>P = a b</c>, <c>x = 1 y = 2</c>, and the clause head
     /// <c>F(a b) = a + b</c>). Same-line slots need
     /// <c>,</c>, a continuation needs an operator, and a declaration begins a
     /// new line; inside a parameter-pattern list the comma is the only repair,
@@ -462,8 +463,8 @@ public enum DiagnosticCode
     /// <summary>
     /// An interpolation hole that is not exactly one expression: an empty hole (<c>"{}"</c>),
     /// a hole holding several expressions or a trailing token (<c>"{a, b}"</c>, <c>"{a b}"</c>),
-    /// a hole-level <c>:</c> (interpolation has no format specifiers; a selection is written in
-    /// parentheses, <c>"{(xs:0)}"</c>) or <c>=</c>, or a <c>#</c> inside a hole (a comment would
+    /// a hole-level <c>:</c> (interpolation has no format specifiers; a selection is written with
+    /// brackets, <c>"{xs[0]}"</c>) or <c>=</c>, or a <c>#</c> inside a hole (a comment would
     /// swallow the rest of the line). Reported at the offending token.
     /// </summary>
     InvalidInterpolationHole = 56,
@@ -475,4 +476,16 @@ public enum DiagnosticCode
     /// is an ordinary string literal and is valid in both positions. Reported over the string.
     /// </summary>
     InterpolationNotAllowedHere = 57,
+
+    /// <summary>
+    /// The RETIRED colon selection (October 2026): <c>:</c> is not KatLang syntax. Selection is
+    /// written with postfix brackets on the receiver's line — <c>Pair[0]</c> for <c>Pair:0</c>,
+    /// <c>Grid[0][1]</c> for <c>Grid:0:1</c>, <c>Data()[0]</c> for <c>Data():0</c>. Reported over
+    /// the <c>:</c> and its old selector (a same-line <c>expr:selector</c>, recovered as the
+    /// equivalent selection) or at a <c>:</c> with no receiver. A <c>:</c> that begins an
+    /// interpolation hole or follows the hole's completed expression is
+    /// <see cref="InvalidInterpolationHole"/> instead (a <c>:</c> where the hole's expression still
+    /// needs an operand, <c>"{a + :0}"</c>, stays this code).
+    /// </summary>
+    RetiredColonSelection = 58,
 }

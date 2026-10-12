@@ -46,7 +46,7 @@ public class InferredSignatureValidityTests
     {
         { "binary", Callees + "K = C1 + C2\n0", 3, 10, 2 },
         { "list", Callees + "K = [C1, C2]\n0", 3, 10, 2 },
-        { "index", Callees + "K = C1:0 + C2:0\n0", 3, 12, 2 },
+        { "index", Callees + "K = C1[0] + C2[0]\n0", 3, 13, 2 },
         { "math-arguments", Callees + "K = abs(C1) + abs(C2)\n0", 3, 19, 2 },
         { "nested-string-receiver", Callees + "K = (C1 + C2).string\n0", 3, 11, 2 },
         { "comparison", Callees + "K = C1 < C2\n0", 3, 10, 2 },

@@ -139,7 +139,7 @@ def consumerReusesTheRead (consumer : KatLang.Expr) (ownCalls : Nat) : Bool :=
 #guard consumerReusesTheReadOf "N" (.call (resolve "Show") [resolve "N"]) 1
 #guard consumerReusesTheReadOf "N" (.dotCall (resolve "N") "Show" none) 1
 -- Value positions that always read the cache.
-#guard consumerReusesTheRead (.index (resolve "A") (num 0)) 0
+#guard consumerReusesTheRead (.index (resolve "A") [num 0]) 0
 #guard consumerReusesTheRead (.listLiteral [resolve "A", resolve "A"]) 0
 #guard consumerReusesTheRead (.capture [resolve "A", resolve "A"]) 0
 #guard consumerReusesTheRead (.compare .eq (resolve "A") (resolve "A")) 0

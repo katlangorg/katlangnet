@@ -338,7 +338,7 @@ public class ModuleLawPostCommitReviewTests
     [Theory]
     [InlineData("X < X < X", 3)]
     [InlineData("not X or X", 2)]
-    [InlineData("[X*]:X", 2)]
+    [InlineData("[X*][X]", 2)]
     [InlineData("if(false, X(1), 5)", 1)]
     [InlineData("map([], { X + 0 })", 1)]
     [InlineData("F(0) = X\nF(k) = k\nF(1)", 1)]
