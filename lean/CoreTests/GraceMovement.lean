@@ -20,8 +20,10 @@ The `#guard move [w…] == [order…]` table below is shared with C#: the test
 real front end against it.
 
 Proved: the result is a permutation of the identities (`move_perm`), and a list without weights is
-unchanged (`move_unweighted`). Every definition is total by construction (a turn has fuel `n`; a
-turn makes at most `n − 1` exchanges, since its mover moves one way). Checked by `#guard` over the
+unchanged (`move_unweighted`). Every definition is total by construction (each turn is bounded by
+its fuel `n`). That fuel `n` suffices — a turn makes at most `n − 1` exchanges, since its mover
+moves one way — is an informal argument, `#guard`-checked below as fuel sufficiency, not proved.
+Checked by `#guard` over the
 finite domain of every weight vector of length 1–4 with weights −2…2 (evaluation, not proof): the
 single-mover law, equal-weight order, own-direction monotonicity, final-state blocking, fuel
 sufficiency, and agreement with the source-order-with-yielding formulation (`yieldMove`). General

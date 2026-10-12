@@ -113,21 +113,27 @@ allocated first and the collector collects the rest: `F(x, *rest)` on
 `F(1, (2, 3))` binds `rest = [(2, 3)]`, on `F(1, (2, 3), 4)` it binds
 `rest = [(2, 3), 4]`, and a lone sequence against a fixed position stays one
 value (`Add((1, 2))` is an arity error, `Id((1, 2))` binds the pair). The
-collector laws are `collector_lone_sequence_is_one_item`,
-`collector_lone_list_is_one_item`, `collector_lone_empty_values_are_one_item`,
-`collector_many_items_are_exact`, `collector_spread_supply_is_collected`,
-`collector_spread_opening_is_one_level`, the
-`collector_*_segment_*_is_exact` allocation instances,
-`collector_lone_middle_is_exact_and_spread_opens`,
-`collector_lone_argument_is_one_item` / `collector_spread_argument_is_its_items`
-(stated over `bindArgs`), and `forwarding_resupplies_the_collected_supply`
-(`spread(collect(S)) = S` through a forwarding collector).
+algebra's collector theorems (all in `CoreArityAlgebraProofs.lean`, namespace
+`CoreArityAlgebra`, stated over `bindArgs`) are the general forms
+`collector_lone_argument_is_one_item` / `collector_spread_argument_is_its_items` /
+`bindArgs_lone_collecting` and `forwarding_resupplies_the_collected_supply`
+(`spread(collect(S)) = S` through a lone collector), with the decided concrete checks
+`collector_lone_sequence_is_one_item`, `collector_lone_list_is_one_item`,
+`collector_lone_empty_values_are_one_item`, `collector_many_items_are_exact`,
+`collector_spread_supply_is_collected`, `collector_spread_opening_is_one_level`, the
+`collector_*_segment_*_is_exact` allocation instances and
+`collector_lone_middle_is_exact_and_spread_opens`. (`KatLangArityLaws.lean` has the
+production allocation laws `lone_collector_collects_every_supplied_cell` /
+`lone_collecting_head_allocates_one_collector_over_its_supply`; the algebra theorems reach
+production only through `algebra_binder_is_the_production_allocation`, as ALLOCATION.)
 
-**The callback law** is the same binder: a callback operation supplies each
+**The callback law** is the same binder in the algebra: a callback operation supplies each
 value it passes — a `map`/`filter` element, a `reduce` element and accumulator
-— as ONE ordinary argument, so `map(xs, F)` binds `bindCallback ps [e]`,
-exactly the direct call `F(e)` (`callback_is_the_ordinary_call`,
-`callback_element_is_one_ordinary_argument`). A structured element is one
+— as ONE ordinary argument, so `map(xs, F)` is modelled by `bindCallback ps [e]`, which is
+`bindArgs ps [e]` by definition, the direct call `F(e)` (`bindCallback_eq_bindArgs`,
+`callback_element_is_one_ordinary_argument`). In production,
+`evalUserCallbackCallCounted` reaches the ordinary `bindNeedPatterns` — a cross-checked source
+fact; only its allocation step is proved (see Faithfulness). A structured element is one
 argument, so a two-fixed flat callee rejects it
 (`callback_two_fixed_rejects_structured_element`: `map([(1, 2)], Add)` fails
 like `Add((1, 2))`), and the reducer's accumulator is one argument beside the
@@ -172,7 +178,8 @@ deconstruction receiver runs. For the minimal boundary-sensitive case
 it fails arity; `x, y = A*` spreads that row into the capture boundary,
 whose singleton normalization returns `(1, 2)`, and the receiver then opens
 the row and succeeds. `deconstruct_spread_capture_can_open_further` pins this
-counterexample in the extraction, while `CoreTests.lean` and
+counterexample in the extraction, while `CoreTests/CollectingBindings.lean`
+(`deconSpreadCaptureCanOpenSingletonStructuredElementFurther`) and
 `CollectingBindingTests.cs` pin the authoritative Lean/C# surface behavior.
 
 `openLoneStructure` models a common one-boundary transformation applied after
@@ -193,7 +200,7 @@ domain:
 ```text
 spread ∘ collect = id  on supplies                    (items_collect)
 collect ∘ spread = id  on exact list values           (collect_items_list)
-capture ∘ spread = id  on canonical non-list values   (capture_items_of_canonical)
+capture ∘ spread = id  on canonical non-list values   (capture_items_of_canonical_non_list)
 ```
 
 The `capture` restriction is real: spreading a list and re-CAPTURING converts
@@ -397,8 +404,8 @@ invariant is closed under the algebra's operations:
   already canonical, with `collect_orphanFree_of_elements` as the
   orphan-freedom face and `normalize_collect_items_of_canonical` as the
   end-to-end composition. This is the precise sense in which `collect` needs
-  no normalization of its own — and the full model's `collectSegment` / the C#
-  `CollectSegment` likewise store their supply unchanged.
+  no normalization of its own — and the full model's `collectSegment` (and the C#
+  collector cell's materialization) likewise store their supply unchanged.
 
 ## Zero-item spreads are neutral
 
@@ -420,8 +427,9 @@ never of the value itself.
 
 ## Faithfulness
 
-**Proved correspondence (FORMAL-07, October 2026).** The binder half of the
-algebra is no longer only cross-checked: `KatLangArityLaws.lean`
+**Proved correspondence (FORMAL-07, October 2026).** The ALLOCATION step of the
+algebra's shared binder `bindPats` (hence `bindArgs` and `bindCallback`) is no longer only
+cross-checked, under its guard: `KatLangArityLaws.lean`
 (§ Model-C production binder laws) proves
 `algebra_binder_is_the_production_allocation`, which states that
 `bindPats ps xs` — hence `bindArgs` and `bindCallback`, which are it by
@@ -435,28 +443,30 @@ the evaluator calls — not about the binder's result. The algebra models no
 repeated-name constraint (a `Pat` list may repeat a name, and `bindPats` then
 binds every occurrence positionally, while the production binder compares the
 occurrences, NEED-04, so on such a head `bindPats` success says nothing about
-production success), no structural or literal pattern, and no `demandNeed`
-(the collector cell's VALUE is `collect` of its slice by definition and
-executable guards, not by a theorem). `bindDeconstruct`'s
+production success), no structural or literal pattern, and no `demandNeed`. That `demandNeed`'s
+collector arm materializes through `makeCollectionListResult` is a source fact;
+`makeCollectionListResult = (collectSegment ·, 1)` is a theorem
+(`make_collection_list_result_is_collect_segment`); `collect` corresponds to `collectSegment` by
+construction and executable guards. `bindDeconstruct`'s
 `openLoneStructure` is not covered either: production deconstruction is the
 unpacking arm of `bindNeedOne` (`Result.spreadItems` of the demanded value),
 cross-checked only.
 
 Every other behaviour encoded as a theorem was cross-checked against the real
-evaluator in `KatLang.lean`, including the subtle points (the C# names and the
-Ready binders mentioned below are historical: Model C deleted `CollectSegment`,
-`CreateCollectingCapture`, `BuildCallArgumentInputs` and
-`collectVariadicCallItems`; the Ready binders survive only in
-`HistoricalReadyBinding.lean`; production collectors materialize through
+evaluator in `KatLang.lean`, including the subtle points (the C# names mentioned
+below are historical: Model C deleted `CollectSegment`, `CreateCollectingCapture`,
+`BuildCallArgumentInputs` and `collectVariadicCallItems`, and the Lean pre-Model-C Ready
+binders were retired on 2026-10-12; production collectors materialize through
 `makeCollectionListResult`, which is `(collectSegment ·, 1)` by
-`collector_materialization_is_collect_segment`):
+`make_collection_list_result_is_collect_segment`):
 
 * `collect` is exact: a collecting parameter that collects exactly one item binds the
   one-element list (`H(x, *rest) = rest` on `H(1, 2)` gives `rest = [2]`),
   the empty segment is the empty list (`H(1)` gives `rest = []`), and
   two-or-more items stay `[…]`. In `KatLang.lean` the shared helper is
-  `collectSegment`; in the C# runtime it is `CollectSegment` inside
-  `CreateCollectingCapture`.
+  `collectSegment` (reached through `makeCollectionListResult`); the C# collector cell
+  (`Evaluator.CollectorCell`) materializes the same exact list (the former `CollectSegment` /
+  `CreateCollectingCapture` were deleted with Model C).
 * `bindArgs` consumes the call's supplied slots exactly, with no exception:
   `F(A)` is ONE argument, while `F(A*)` explicitly spreads `A` into its items
   before binding. A single stored sequence or list value against fixed
@@ -464,12 +474,12 @@ Ready binders mentioned below are historical: Model C deleted `CollectSegment`,
   value whole), and a single-collecting call distinguishes `F(A)`
   (`rest = [A]`) from `F(A*)` (`rest = [a₁, …]`) for a stored sequence and a
   stored list alike (`Coll(((1, 2), 3))` is `[((1, 2), 3)]`). In `KatLang.lean`
-  the binders `bindParameterPatternList` / `bindCountedParameterPatternList`
-  collect the segment they allocate through `collectSegment`, fed by
-  `collectVariadicCallItems` (one item per non-spread argument); in the C#
-  runtime the same two binders use `CollectSegment`, fed by
-  `BuildCallArgumentInputs`. Callbacks bind through the same counted binder
-  (`evalUserCallbackCallCounted`), which is `bindCallback = bindArgs`.
+  every user-algorithm call, callbacks included (`evalUserCallbackCallCounted` feeds `readyNeed`
+  cells to `evalNeedUserSupply`), and every clause-family attempt (`selectNeedFamilyBranch`,
+  family mode) binds through the Model-C binder `bindNeedPatterns`; builtin callees bind by
+  their argument roles instead. The binder's allocation `needLevelSources` is proved to be
+  `bindPats` under its guard (`algebra_binder_is_the_production_allocation`), and its collector
+  cell materializes through `makeCollectionListResult = (collectSegment ·, 1)`.
 * `bindDeconstruct` is `bindPats ∘ openLoneStructure`: assignment
   deconstruction is an unpacking receiver, so a single sequence- or
   list-valued right-hand side is opened and matched element-by-element.
@@ -491,9 +501,9 @@ Ready binders mentioned below are historical: Model C deleted `CollectSegment`,
 * `structureItems?` mirrors the authoritative `Result.structureItems?`, and
   `openLoneStructure [v]` is definitionally
   `(structureItems? v).getD [v]`
-  (`openLoneStructure_single_eq_structureItems?_getD`) — which the full model
-  proves equal to `Result.spreadItems v` (`spreadItems_extends_structureItems`),
-  the view its deconstruction receiver opens with.
+  (`openLoneStructure_single_eq_structureItems?_getD`); the full model proves the analogous
+  `Result` identity `(Result.structureItems? v).getD [v] = Result.spreadItems v`
+  (`spreadItems_extends_structureItems`), the view its deconstruction receiver opens with.
 * Repeated spread is capture-mediated: the authoritative evaluator applies
   each extra written star by re-capturing the previous star's supply
   (`Result.normalize ∘ Result.sequenceValue`) and re-spreading
@@ -502,15 +512,15 @@ Ready binders mentioned below are historical: Model C deleted `CollectSegment`,
   and `capture` is `normalize ∘ Val.seq`. The guards
   `stackedSpreadAgreesWithGroupedCompositionalForm`,
   `stackedSpreadMultiItemFixedPoint`, and
-  `stackedSpreadMixedSupplyStaysUnopened` in `CoreTests.lean` pin the same
+  `stackedSpreadMixedSupplyStaysUnopened` in `CoreTests/ListValues.lean` (CoreTests target) pin the same
   behavior end to end through the real spread evaluation path, including
   the direct `A**` = `(A*)*` equality on the multi-item fixed point.
 
 See the provenance table in the file header for the exact `KatLang.lean`
-correspondences, and `KatLangArityLaws.lean` for the bridge theorems proved
-over the real `Result` model (binder-path collection laws, receiver-contrast
-laws for both structure kinds, round trips, and canonicality of collected
-lists).
+correspondences, and `KatLangArityLaws.lean` for the theorems over the real `Result` model
+(value-level collection, round trips and canonicality of collected lists) and the FORMAL-07
+Model-C production binder laws (allocation, cardinality gate, plain binding, and the production
+collector laws).
 
 ## Build / validate
 

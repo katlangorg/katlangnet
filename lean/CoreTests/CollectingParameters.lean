@@ -1869,14 +1869,13 @@ def restErroredValuePropertyArgumentSurfacesRealError : Bool :=
 
 -- Q-03: callable-shaped means "an ordinary zero-argument call cannot bind it" (the
 -- zero-argument law's own `acceptsZeroSuppliedArguments`), never "declares parameters".
--- (`Algorithm.isFunctionShaped` is consulted only by the historical Ready-input binder
--- of `HistoricalReadyBinding.lean`; the production collector never asks it.)
--- A collecting-only algorithm accepts zero supplied arguments, so reading the collected
--- list evaluates it and its genuine error surfaces.
-#guard (alg [] [] [] [.num 1]).isFunctionShaped == false
-#guard (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 1]).isFunctionShaped == false
-#guard (algWithParameters [{ name := "x" }] [] [] [.num 1]).isFunctionShaped == true
-#guard (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.num 1]).isFunctionShaped == true
+-- The production collector never asks it: a collected element is read by its own VALUE
+-- demand. A collecting-only algorithm accepts zero supplied arguments, so reading the
+-- collected list evaluates it and its genuine error surfaces.
+#guard (alg [] [] [] [.num 1]).acceptsZeroSuppliedArguments == true
+#guard (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 1]).acceptsZeroSuppliedArguments == true
+#guard (algWithParameters [{ name := "x" }] [] [] [.num 1]).acceptsZeroSuppliedArguments == false
+#guard (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.num 1]).acceptsZeroSuppliedArguments == false
 
 def restErroredCollectingOnlyArgumentSurfacesRealError : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [

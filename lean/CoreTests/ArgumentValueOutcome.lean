@@ -19,10 +19,11 @@ open KatLang (resolve param num)
 -- (`supplyNeed`, `demandNeed`, `EvalState.needs`; the `.param` arm of
 -- `evalCounted` demands it first). `AlgBinding.valueFailure?` and
 -- `parameterValueFailure?` remain as legacy Ready-tier readers with no
--- production writer; the former `resolveArgAlgExpr` is gone (builtin argument
+-- production writer (only a host-built context, like the one below, records such
+-- a failure); the former `resolveArgAlgExpr` is gone (builtin argument
 -- resolution now supplies need cells, `resolveArgAlgsWithSequenceSpread`), and
--- the eager writer `slotAlgorithmBinding` survives only in the historical
--- fixture `HistoricalReadyBinding.lean`.
+-- the eager writer `slotAlgorithmBinding` was deleted with Model C (its last Lean
+-- copy, the pre-Model-C Ready binder, was retired on 2026-10-12).
 --
 -- Evidence without host operations: `Bad = Id(1) / 0` and `A = Id(5)` open
 -- exactly ONE binding context per evaluation of their bodies (the `Id` call;

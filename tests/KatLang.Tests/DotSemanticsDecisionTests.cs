@@ -33,7 +33,7 @@ namespace KatLang.Tests;
 /// Runtime cases run on the six established routes (sync and async engines, the engine's suspending
 /// twin, the generic and optimized evaluators, the forced twin) and require the same value, errors
 /// and host-call log on all of them and identical budget counters on the three evaluator routes
-/// (Q-09). Lean: <c>CoreTests/DotIdentity.lean</c>, law <c>callee_projection_is_supplied_projection</c>.
+/// (Q-09). Lean: <c>CoreTests/DotIdentity.lean</c>, law <c>dot_callee_resolution_is_structural_projection_then_alias</c>.
 /// </summary>
 public class DotSemanticsDecisionTests
 {

@@ -20,8 +20,8 @@ global using ValEnv =
 // by the cell's first demand and reused by every later demand (AT-MOST-ONCE ARGUMENT
 // VALUE EVALUATION). The pre-Model-C eager writer, Evaluator.SlotAlgorithmBinding, was
 // deleted; the field and its readers (ParameterValueFailure, ParameterSlotFailure) remain
-// for the legacy Ready tier, as Lean keeps valueFailure? (whose eager writer survives only
-// in lean/HistoricalReadyBinding.lean). A resource limit is never recorded here: a
+// for the legacy Ready tier, as Lean keeps valueFailure? (whose eager writer is deleted
+// there too). A resource limit is never recorded here: a
 // demanded computation that reaches one ends the run (RESOURCE LIMITS ARE TERMINAL).
 global using AlgEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Algorithm Value, KatLang.EvalError? ValueError)>;

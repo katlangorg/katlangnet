@@ -39,6 +39,7 @@ public class MaintainedDocumentationConsistencyTests
         "docs/design/language-rules/ownership-and-lookup.md",
         "docs/design/language-rules/evaluator-and-hosting.md",
         "docs/design/language-rules/editor-semantics.md",
+        "docs/design/language-rules/call-by-need.md",
         "src/KatLang/CALLABLES.md",
         "src/KatLang/BINDING-ARCHITECTURE.md",
     ];
@@ -245,6 +246,75 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bfirst\s+successful\s+completion\s+owns\b", "the first successful completion owning the cache entry (before Q-37)" },
         { @"\bre-?entrant\s+reads?\b[^.]{0,80}\bnever\s+replaces?\b", "re-entrant reads that merely never replace the first entry (before Q-37)" },
         { @"\bnot\s+replace\s+the\s+first\s+successful\s+entry\b", "recursive reads that do not replace the first successful entry (before Q-37)" },
+        // R8/X-13 (2026-10-12): Lean theorem names retired because the name claimed more than the
+        // statement proved (a dot-call, forwarding or selection law that was argument preparation, a
+        // congruence or a historical-binder instance), or renamed to state their scope. Current-rule
+        // text cites the current names; the old-to-new mapping lives in the dated R8 entry of
+        // SEMANTIC-ALIGNMENT.md. Names still borne by CoreArityAlgebraProofs algebra checks are not listed.
+        {
+            @"(?<![\w?])(?:"
+            + "a_number_is_one_position|alias_cache_key_is_alias_binding|alias_chain_normalizes|"
+            + "alias_of_builtin_forwards_by_the_builtin_names|alias_roles_are_target_roles|"
+            + "alias_without_forwarding_contract_cannot_bare_forward|alias_zero_parameter_target_is_read|"
+            + "asBool_pair_none|bare_forwarding_source_kind_decides_the_spread|"
+            + "bare_reference_lifts_iff_not_cacheable|binder_accepts_empty_supply_iff_minimum_zero|"
+            + "builtin_minimum_payload_is_the_first_accepted_supply|call_fixed_single_list_rejected|"
+            + "call_fixed_single_sequence_rejected|call_variadic_single_list_preserved|"
+            + "call_variadic_single_sequence_preserved|callback_is_the_ordinary_call|"
+            + "callee_projection_is_supplied_projection|capture_eq_normalize_sequenceValue|"
+            + "capture_items_of_canonical|collector_binder_empty_supply_is_empty_list|"
+            + "collector_binder_empty_supply_rejects_required_prefix|"
+            + "collector_binder_lone_segment_after_suffix_is_exact|"
+            + "collector_binder_multi_item_segment_after_suffix_is_exact|"
+            + "collector_binder_two_written_items_are_exact|collector_collects_spread_items_exactly|"
+            + "collector_fixed_parameter_binds_value_unchanged|collector_materialization_is_collect_segment|"
+            + "collectors_in_their_own_groups_are_valid|deconstruct_scalar_is_one_item|"
+            + "deconstruct_valueless_right_hand_side_is_its_own_failure|"
+            + "dot_call_uses_same_collector_binding_as_plain_call|dot_receiver_count_never_satisfies_arity|"
+            + "dot_receiver_fixed_binds_value|dot_receiver_is_one_collected_item|"
+            + "dot_receiver_with_suffix_is_one_collected_item|empty_sequence_depth_is_canonical|"
+            + "empty_sequence_is_sequenceValue_empty|"
+            + "failed_slot_binds_its_failure_beside_the_algorithm_channel|"
+            + "fixed_binder_empty_supply_rejects_with_exact_count|flat_binding_arity_reports_complete_supply|"
+            + "flat_fixed_parameter_preserves_supplied_value|forwarding_resupplies_the_collected_items|"
+            + "lone_collecting_list_call_and_deconstruct_differ|"
+            + "lone_collecting_list_call_grouped_and_spread_differ|"
+            + "lone_collecting_seq_call_and_deconstruct_differ|"
+            + "lone_collecting_seq_call_grouped_and_spread_differ|nameable_family_reference_lifts|"
+            + "nested_list_collector_collects_every_cardinality|nested_list_pattern_binds_one_element|"
+            + "nested_list_pattern_rejects_sequence|nested_pair_pattern_rejects_three_element_sequence|"
+            + "nested_sequence_pattern_rejects_list|nested_sequence_pattern_rejects_scalar|"
+            + "repeated_capture_success_requires_every_value|"
+            + "repeated_capture_valueless_first_fails_with_its_own_outcome|"
+            + "repeated_capture_valueless_second_fails_with_its_own_outcome|"
+            + "repeated_name_complete_binding_is_permutation_invariant|"
+            + "repeated_name_failure_is_permutation_invariant|repeated_name_success_callables_agree|"
+            + "repeated_name_success_has_no_callable_identity_conflict|"
+            + "repeated_name_with_a_collector_is_invalid_while_fixed_repeats_are_constraints|"
+            + "selection_origin_does_not_change_collector_binding|shared_collecting_name_is_one_valid_binding|"
+            + "unknown_builtin_position_is_a_value_only_when_every_slot_is|"
+            + "value_control_reports_its_recorded_failure|valued_slot_binds_its_value_and_no_failure|"
+            + "variadic_is_lone_collecting|variadic_single_collecting_binds_collect"
+            + @")(?![\w?])",
+            "a Lean theorem name retired by R8/X-13"
+        },
+        // Historical Ready-binder retirement (owner decision, 2026-10-12): the pre-Model-C
+        // completed-input fixture lean/HistoricalReadyBinding.lean, every theorem stated over it
+        // (the historical_* and bindParameterPatternList_* families, wildcard spellings included),
+        // the laws-only definitions left without a user (bindCallableArguments and its theorems,
+        // CallableArgumentBindings, isFunctionShaped, repeatsAtLevel, bindsName / anyBindsName, the
+        // fixture's findCollecting, repeatedMergeStep, the laws-file fixtures) and the retired
+        // two-binder guard are deleted; git history keeps them. Current-rule text cites the
+        // production Model-C laws instead; the dated R8 and retirement entries of
+        // SEMANTIC-ALIGNMENT.md (not scanned) keep the record.
+        {
+            @"\bHistoricalReadyBinding\b|(?<![\w?])(?:historical_(?:(?:binder|bind_params|repeated_name)\w*|\*)|"
+            + @"bindParameterPatternList_(?:\w+|\*)|bindCallableArguments(?:_(?:\w+|\*))?|CallableArgumentBindings|"
+            + "isFunctionShaped|repeatsAtLevel|bindsName|anyBindsName|findCollecting|repeatedMergeStep|"
+            + "singleVariadicSignatureForArityLaw|mixedVariadicSignatureForArityLaw|RepeatedBindingChannelAgreement|"
+            + @"repeatedCapturePair|realCallbackBinderMatchesOrdinaryValueSupply)(?![\w?])",
+            "the retired historical Ready binder, one of its theorems, or a laws-only definition retired with it (2026-10-12)"
+        },
     };
 
     [Theory]

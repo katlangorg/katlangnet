@@ -1,4 +1,3 @@
-import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
 
@@ -22,12 +21,14 @@ open KatLang (resolve param num)
 --
 -- Lean: `formNeedSupply` (one cell per non-spread slot), `bindNeedPatterns` (the
 -- collector cell, materialized by `demandNeed`), `evalUserCallbackCallCounted`;
--- value-level laws in `KatLangArityLaws.lean` ("Exact collector laws", over the
--- historical binders of `HistoricalReadyBinding.lean`). C#: `FormNeedSupply`,
+-- laws in `KatLangArityLaws.lean`: the value-level "Segment collection laws" and the
+-- production collector laws (`lone_collector_collects_every_supplied_cell`,
+-- `collector_before_a_fixed_pattern_takes_all_but_the_last_cell`,
+-- `lone_collecting_head_allocates_one_collector_over_its_supply`). C#: `FormNeedSupply`,
 -- `CollectorCell`, `BindNeedPatterns` (the one binder callbacks use too);
 -- `ExplicitValueOpeningTests`. (Formerly `collectVariadicCallItems`,
--- `bindParameterPatternList` / `bindCountedParameterPatternList`,
--- `BuildCallArgumentInputs` and `CollectSegment`, deleted or retired by Model C.)
+-- `BuildCallArgumentInputs` and `CollectSegment`, deleted by Model C; the Lean pre-Model-C
+-- Ready binders were retired on 2026-10-12.)
 
 -- Coll(*xs) = xs
 def collAlg : Algorithm :=
@@ -951,47 +952,59 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
 
 #guard selectionFeedsEveryConsumerAsOneValue
 
--- Independent C-full review: the historical Ready flat binder (`HistoricalReadyBinding.bindParams`) must report the original
--- argument supply, just as the counted callback binder and the C# binder do.
-#guard match KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParams ["x", "y"] [seq12]) with
-  | .error (.arityMismatch 2 1) => true
-  | _ => false
-
--- The algebra aliases callback binding to ordinary binding. This executable
--- guard checks the two HISTORICAL Ready binders of `HistoricalReadyBinding.lean`
--- (the evaluator's binders until Model C, which replaced both with the one
--- `bindNeedPatterns`), including exact error payloads, empty/structured values,
--- mixed collectors, and repeated names.
--- Count provenance is deliberately varied before the callback value boundary.
-def realCallbackBinderMatchesOrdinaryValueSupply : Bool := Id.run do
+-- A callback is the ordinary call over its supplied cells (THE CALLBACK LAW; Q-66 item 3: no
+-- theorem states callback ≡ direct call over formed cells). This guard compares two production
+-- routes for EVERY parameter-pattern shape of the matrix — no parameter, fixed, a top-level
+-- collector before, between or after fixed parameters, sequence and list patterns (nested and
+-- empty), and a name repeated across the two supplied cells:
+--   * a `map` transform over one element: `map([E], F)` is `[F(E)]`;
+--   * a `reduce` reducer over one element and the accumulator: `reduce([E], F, A)` is
+--     `F(E, A)` (the reducer receives the element first, then the accumulator).
+-- The callback route binds Ready item cells (`evalUserCallbackCallCounted` → `readyNeed` →
+-- `evalNeedUserSupply`); the direct route binds suspended argument cells (`formNeedSupply`).
+-- A success must be the same value; a failure must have the same root error. The body
+-- observes every name the head binds, so each binding is compared, not just the cardinality.
+-- (Until 2026-10-12 a guard here compared the two pre-Model-C Ready binders on completed
+-- inputs; it was retired with them.)
+def callbackShapeMatrixAgreesWithTheDirectCall : Bool := Id.run do
+  let rec rootError : Error → Error
+    | .withContext _ inner => rootError inner
+    | error => error
   let x : KatLang.ParameterPattern := .capture { name := "x" }
   let y : KatLang.ParameterPattern := .capture { name := "y" }
   let rest : KatLang.ParameterPattern := .capture { name := "rest", kind := .collecting }
   let pair : KatLang.ParameterPattern := .sequenceValue [x, y]
   let listPair : KatLang.ParameterPattern := .listValue [x, y]
-  let patterns := [[], [x], [x, y], [rest], [x, rest], [rest, y], [x, rest, y],
-    [pair], [pair, y], [x, pair], [.sequenceValue [rest]],
+  let heads : List (List KatLang.ParameterPattern) := [[], [x], [x, y], [rest], [x, rest], [rest, y],
+    [x, rest, y], [pair], [pair, y], [x, pair], [.sequenceValue [rest]],
     [.sequenceValue [x, rest]], [.sequenceValue [x, x]], [x, rest, x],
-    -- The kind-specific structural patterns (September 2026): list patterns of
-    -- every cardinality, the empty sequence pattern, and mixed nesting.
     [listPair], [listPair, y], [.listValue [x]], [.listValue [rest]],
     [.listValue [x, rest]], [.listValue []], [.sequenceValue []],
     [.sequenceValue [listPair, y]], [.listValue [pair, y]]]
-  let values : List Result := [.atom 1, .sequenceValue [], .listValue [], seq12, list12,
-    .sequenceValue [seq12, .atom 3], .listValue [list12, .atom 3],
-    .listValue [seq12], .listValue [.sequenceValue []]]
-  let supplies := [[]] ++ values.map (fun v => [v]) ++
-    values.flatMap (fun v => values.map (fun w => [v, w]))
-  return patterns.all fun ps => supplies.all fun supply => [0, 1, 4].all fun history =>
-    let ordinary := KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParameterPatternList ps
-      (supply.map fun v => { value? := some v }) false)
-    let callback := KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindCountedParameterPatternList ps
-      (supply.map fun v => KatLang.countedSequenceCallbackItem (v, history)))
-    match ordinary, callback with
-    | .ok a, .ok b => a.argEnv == b.countedParamEnv.map (fun (name, value) => (name, value.fst))
-    | .error a, .error b => reprStr a == reprStr b
+  let elements : List KatLang.Expr := [.num 1, .emptySequence 0, .listLiteral [], pair12,
+    .listLiteral [.num 1, .num 2], .capture [pair12, .num 3],
+    .listLiteral [.listLiteral [.num 1, .num 2], .num 3], .listLiteral [pair12],
+    .listLiteral [.emptySequence 0]]
+  let observe (head : List KatLang.ParameterPattern) : List KatLang.Expr :=
+    let names := ["x", "y", "rest"].filter (fun n =>
+      head.any (fun p => KatLang.ParameterPattern.nameOccurrences n p > 0))
+    [.listLiteral (names.map KatLang.Expr.param ++ [.num 0])]
+  let run (head : List KatLang.ParameterPattern) (out : KatLang.Expr) : Except Error Result :=
+    runResult (.algorithmExpr (algPrivate [] []
+      [("F", algWithParameterPatterns head [] [] (observe head))] [out]))
+  let agree (callback direct : Except Error Result) (wrap : Result → Result) : Bool :=
+    match callback, direct with
+    | .ok c, .ok d => c == wrap d
+    | .error c, .error d => reprStr (rootError c) == reprStr (rootError d)
     | _, _ => false
+  return heads.all fun head =>
+    elements.all (fun e =>
+      agree (run head (.call (resolve "map") [.listLiteral [e], resolve "F"]))
+            (run head (.call (resolve "F") [e])) (fun d => .listValue [d])) &&
+    elements.all (fun acc => elements.all fun e =>
+      agree (run head (.call (resolve "reduce") [.listLiteral [e], resolve "F", acc]))
+            (run head (.call (resolve "F") [e, acc])) id)
 
-#guard realCallbackBinderMatchesOrdinaryValueSupply
+#guard callbackShapeMatrixAgreesWithTheDirectCall
 
 end KatLangTests

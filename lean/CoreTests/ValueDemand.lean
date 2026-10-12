@@ -1,8 +1,5 @@
-import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
-
-open KatLang.HistoricalReadyBinding
 
 namespace KatLangTests
 open KatLang (alg algWithParameters algWithParameterPatterns algPrivate runFlat runResult Algorithm Error Result)
@@ -422,13 +419,20 @@ def blockSlotDemandAgrees (a : Algorithm) : Bool :=
 #guard blockSlotDemandAgrees zeroArityFamily
 #guard blockSlotDemandAgrees onlyAlg
 
--- Connect the acceptance predicate to the ACTUAL binder, independently of body
--- evaluation and across every user-pattern shape in the hand-authored matrix.
+-- Connect the acceptance predicate to the ACTUAL Model-C binder (`bindNeedPatterns` over the
+-- EMPTY supply), independently of body evaluation and across every user-pattern shape in the
+-- hand-authored matrix. The gate half is proved for every signature with at most one top-level
+-- collector — acceptance equals the binder's cardinality gate on the empty supply
+-- (`zero_argument_acceptance_is_the_binder_gate`), and a refused count is rejected before any
+-- effect (`binder_rejects_unaccepted_supply_before_any_effect`); that an ACCEPTED empty supply
+-- then binds without error is checked here, not proved.
 #guard signatureFamilies.all (fun (_, a) => match a with
   | .mk _ patterns _ _ _ _ =>
-      let binds := match runEvalM (bindParameterPatternList patterns [] true) with
-        | .ok _ => true
-        | .error _ => false
+      let binds := match runEvalM (KatLang.bindNeedPatterns
+          ⟨KatLang.demandNeed, KatLang.projectNeedCallable⟩
+          (patterns.map KatLang.NeedPattern.ofParameter) []) with
+        | .ok (some _) => true
+        | _ => false
       binds == Algorithm.acceptsZeroSuppliedArguments a
   | _ => true)
 

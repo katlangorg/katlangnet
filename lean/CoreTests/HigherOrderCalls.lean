@@ -1,4 +1,3 @@
-import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
 
@@ -1455,16 +1454,38 @@ def repeatedGenuineAliasesKeepCompleteBinding : Bool :=
 
 #guard repeatedGenuineAliasesKeepCompleteBinding
 
--- The counted channel is the WHOLE pair. Equal values with different counts
--- may not silently retain whichever count occurs first, even at the helper boundary.
+-- The counted channel is the WHOLE pair (NEED-04): the production binder compares every
+-- repeated occurrence's complete counted value (`bindNeedName`: `before == value` over
+-- `CountedResult`; C# `Evaluator.BindNeedPatterns` compares the emitted count and the value).
+-- Equal values with different counts conflict in every order with the repeated-parameter
+-- `badArity`, while equal pairs bind the name to the FIRST occurrence's cell (two Ready cells
+-- project no callable, so neither contribution is richer). The cells are hand-built Ready
+-- cells: a source program's cell count follows its value, so this is a unit check of the
+-- binder's comparison.
+def repeatedCountedBindingChecksTheCompletePairM : KatLang.EvalM Bool := do
+  let channels : KatLang.NeedChannels := ⟨KatLang.demandNeed, KatLang.projectNeedCallable⟩
+  let bindF (cells : List Nat) : KatLang.EvalM (Except Error (Option KatLang.NeedEnv)) :=
+    KatLang.evalAttempt (KatLang.bindNeedPatterns channels
+      (cells.map fun _ => KatLang.NeedPattern.bind "f") cells)
+  let isRepeatedConflict : Except Error (Option KatLang.NeedEnv) -> Bool
+    | .error err => innermostIsBadArity err
+    | _ => false
+  let pairs : List (KatLang.CountedResult × KatLang.CountedResult) :=
+    [((.atom 5, 1), (.atom 5, 2)), ((.sequenceValue [], 0), (.sequenceValue [], 1))]
+  pairs.allM fun (a, b) => do
+    let one <- KatLang.readyNeed a
+    let oneAgain <- KatLang.readyNeed a
+    let two <- KatLang.readyNeed b
+    let conflicts <- [ [one, two], [two, one], [one, two, one], [two, one, one],
+        [one, oneAgain, one, two, one], [two, one, oneAgain, one, one] ].allM
+      (fun cells => isRepeatedConflict <$> bindF cells)
+    let agrees <- bindF [one, oneAgain, oneAgain]
+    pure (conflicts && match agrees with
+      | .ok (some bound) => bound == [("f", one)]
+      | _ => false)
+
 def repeatedCountedBindingChecksTheCompletePair : Bool :=
-  let one : KatLang.HistoricalReadyBinding.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 1))] }
-  let two : KatLang.HistoricalReadyBinding.ParameterPatternBindings := { countedParamEnv := [("f", (.atom 5, 2))] }
-  [ [one, two], [two, one], [one, two, one], [two, one, one],
-    [one, one, one, two, one], [two, one, one, one, one] ].all
-      (fun cs => match KatLang.HistoricalReadyBinding.repeatedNameFailure ["f"] cs with | some .badArity => true | _ => false) &&
-  (match KatLang.HistoricalReadyBinding.repeatedNameFailure ["f"] [one, one, one] with | none => true | _ => false) &&
-  KatLang.lookupAssoc "f" (KatLang.HistoricalReadyBinding.mergeFirstOccurrences [one, one, one]).countedParamEnv == some (.atom 5, 1)
+  (KatLang.runEvalM repeatedCountedBindingChecksTheCompletePairM).toOption == some true
 
 #guard repeatedCountedBindingChecksTheCompletePair
 
@@ -1599,10 +1620,11 @@ def repeatedSequenceValueConditionalFallbackWorks : Bool :=
 #guard repeatedSequenceValueConditionalFallbackWorks
 
 -- Repeated-bind equality must also hold on the counted callback path
--- (map/filter/reduce), not only on direct user calls. The non-counted guards
--- above exercise `repeatedNameValueConflict` / `matchCallPattern`; these guards exercise
--- the counted matchers (`repeatedNameCountedConflict`, `matchCountedPatternInto`)
--- so both paths stay aligned with C# EvaluatorTests.Eval_Callback_Repeated*.
+-- (map/filter/reduce), not only on direct user calls. The guards above exercise the
+-- binder's repeated-name check (`bindNeedName`, via `bindNeedPatterns`) over argument
+-- cells; these guards exercise the same check over callback item cells
+-- (`evalResolvedCallbackCallCounted` -> `bindNeedPatterns`), so both paths stay aligned
+-- with C# EvaluatorTests.Eval_Callback_Repeated*.
 
 -- Ordinary sequenceValue repeated binder reused as a map callback: equal pair items
 -- bind once and project the shared value.

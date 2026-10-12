@@ -190,8 +190,8 @@ public class BuiltinRegistryParityTests
             "Callable signature `Bad` contains duplicate parameter name `x`.");
 
         // The parameter-name rule is identifier SHAPE only, mirroring Lean
-        // `callableParameterNameIsIdentifierLike` (which validates inside the
-        // modeled call binder): a reserved keyword spelling stays a
+        // `callableParameterNameIsIdentifierLike` (which Lean's signature-metadata
+        // validator `CallableSignature.validationError?` applies): a reserved keyword spelling stays a
         // structurally valid parameter name for a host-built AST — parsed
         // source can never produce one — and the shipped charset is the
         // lexer's Unicode per-UTF-16-code-unit rule, so a non-ASCII letter

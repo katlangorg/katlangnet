@@ -220,8 +220,7 @@ namespace ParameterPattern
       re-derive it (the Model-C binder reads the same count over need patterns,
       `needMinimumSuppliedSlots` in `bindNeedLevel`, which EQUALS this one whenever a
       level holds at most one collector — every signature the X-02 gate admits —
-      by the theorem `binder_minimum_is_the_signature_minimum`, `KatLangArityLaws.lean`;
-      formerly `bindParameterPatternList`):
+      by the theorem `binder_minimum_is_the_signature_minimum`, `KatLangArityLaws.lean`):
 
       * every pattern consumes exactly ONE supplied slot, whatever it contains —
         a structural pattern (sequence or list) is one slot that the binder
@@ -237,38 +236,6 @@ namespace ParameterPattern
       lower minimum. C#: `ParameterPattern.MinimumSuppliedSlots`. -/
   def minimumSuppliedSlots (patterns : List ParameterPattern) : Nat :=
     if hasCollectingCaptureAtCurrentLevel patterns then patterns.length - 1 else patterns.length
-
-  mutual
-    /-- Whether a pattern binds `name` at any depth — the STATIC fact the
-        historical Ready binders read to tell whether every contribution of a
-        repeated name at one level is already known (`settlePatternRange`,
-        `HistoricalReadyBinding.lean`). Total, so the binder bridge laws can
-        unfold it. It has no C# twin (the pointer `ParameterPatternBindsName`
-        named a function that never existed). -/
-    def bindsName (name : Ident) : ParameterPattern -> Bool
-      | .capture parameter => parameter.name == name
-      | .sequenceValue items => anyBindsName name items
-      | .listValue items => anyBindsName name items
-      | .unpacking items => anyBindsName name items
-
-    /-- Whether any pattern of a list binds `name` at any depth. -/
-    def anyBindsName (name : Ident) : List ParameterPattern -> Bool
-      | [] => false
-      | pattern :: rest => bindsName name pattern || anyBindsName name rest
-  end
-
-  /-- REPEATED NAMES ARE CONSTRAINTS, NOT MERGES (September 2026, Q-05): whether
-      TWO OR MORE patterns of one pattern level bind `name` (at any depth inside
-      each) — a REPEATED name of that level. Every occurrence of such a name is an
-      independent contribution to an equality constraint, so a top-level capture of
-      it must supply its OWN value; another occurrence can never stand in for a
-      value it lacks. Since Model C the binder computes repeated names itself and
-      demands each occurrence's own cell when it visits it (`bindNeedPatterns`,
-      `bindNeedName`); this predicate serves the historical Ready binder
-      (`bindParameterPattern`, `HistoricalReadyBinding.lean`) and the laws. Its C#
-      twin `Evaluator.RepeatsAtLevel` was deleted with Model C. -/
-  def repeatsAtLevel (name : Ident) (level : List ParameterPattern) : Bool :=
-    2 ≤ (level.filter (bindsName name)).length
 
   def topLevelCaptureKind? (name : Ident) : List ParameterPattern -> Option ParameterKind
     | [] => none
@@ -353,9 +320,9 @@ namespace ParameterPattern
   end
 
   /-- AT MOST ONE COLLECTING CAPTURE PER PATTERN LEVEL: whether a pattern list,
-      or some level nested in it, holds more than one. The binders allocate a
-      level's supply around ONE movable collector (`findCollecting`), so a second
-      collector at the same level leaves the allocation undefined: such a list is
+      or some level nested in it, holds more than one. The binder allocates a
+      level's supply around ONE collector, the level's first (`needLevelSources`), so a
+      second collector at the same level leaves the allocation undefined: such a list is
       a rejected signature, never a lower minimum (`minimumSuppliedSlots`).
       C#: `ParameterPattern.HasMultipleCollectingCapturesAtAnyLevel`. -/
   def hasMultipleCollectingCapturesAtAnyLevel (patterns : List ParameterPattern) : Bool :=
@@ -456,6 +423,12 @@ def CallableSignature.duplicateParameterName? (signature : CallableSignature) : 
           go (parameter.name :: seen) rest
   go [] signature.parameters
 
+/-- The validity of callable SIGNATURE METADATA, with its message: at most one collecting
+    parameter, and no empty, non-identifier-shaped or duplicate parameter name. It is part of no
+    binder and no evaluation path calls it (the Model-C binder reads parameter PATTERNS, whose
+    validity is X-02's `ParameterPattern.signatureViolation?`). C#: `CallableSignature.ValidateMessage`
+    (with `Validate` / `ValidateOrThrow`), which the builtin registry applies to every builtin
+    signature at registration; pinned by `CoreTests.CallableSignatures`. -/
 def CallableSignature.validationError? (signature : CallableSignature) : Option String :=
   if !signature.hasAtMostOneCollecting then
     some s!"Callable signature `{signature.name}` cannot contain more than one collecting parameter."
@@ -490,12 +463,6 @@ def CallableSignature.acceptsItemCount (signature : CallableSignature) (count : 
   match signature.collectingIndex? with
   | some _ => count >= signature.requiredNormalParameterCount
   | none => count == signature.parameters.length
-
-structure CallableArgumentBindings (α : Type) where
-  normalBindings : List (Prod Ident α)
-  collectingName? : Option Ident := none
-  collectingItems : List α := []
-  deriving Repr
 
 /-- Exposure classification of a `PropDef`: an INPUT to lookup, computed by the C# front
     end and never derived here. SELECTION never depends on it: `open` selects public
@@ -557,57 +524,12 @@ inductive Error where
 -- Lean requires `Nonempty` for the function types of partial defs.
 instance : Nonempty Error := Nonempty.intro Error.badArity
 
+/-- `CallableSignature.validationError?` as an evaluation error (`illegalInEval`), the shape
+    the C# `CallableSignature.Validate` reports. -/
 def CallableSignature.validate (signature : CallableSignature) : Except Error Unit :=
   match signature.validationError? with
   | some message => .error (Error.illegalInEval message)
   | none => .ok ()
-
-/-- Variable-middle collecting-parameter binding over completed items, used by the arity laws (no production
-    caller since Model C; its former C# mirror `BindCallableArguments` was deleted with it). The fixed
-    prefix binds from the front, the fixed suffix from the back, and the collecting
-    captures the remaining middle items (zero or more). The minimum is the FIXED
-    (non-collecting) parameter count: like every other collecting binding, the collecting parameter may
-    collect ZERO items (an empty collected segment is the exact list `[]`) — the same rule the
-    shared pattern binder applies (`needMinimumSuppliedSlots`: required =
-    patterns - 1; formerly `bindParameterPatternList`).
-    (Collection builtins no longer bind here: they are ordinary fixed-arity
-    callables bound in `bindSequenceBuiltinArguments`.) -/
-def bindCallableArguments (signature : CallableSignature) (items : List α)
-    (arityMismatch : Nat -> Nat -> Error)
-    : Except Error (CallableArgumentBindings α) :=
-  match signature.validate with
-  | .error err => .error err
-  | .ok () =>
-      match signature.collectingIndex? with
-      | none =>
-          if items.length == signature.parameters.length then
-            .ok {
-              normalBindings := List.zip (signature.parameters.map (fun parameter => parameter.name)) items
-            }
-          else
-            .error (arityMismatch signature.parameters.length items.length)
-      | some collectingIndex =>
-          -- Minimum = fixed (non-collecting) parameter count, so the collecting binding may
-          -- collect zero items (empty collected segment = `[]`) at every receiver,
-          -- including loop-state binding.
-          let minimum := signature.parameters.length - 1
-          if items.length < minimum then
-            .error (arityMismatch minimum items.length)
-          else
-            let suffixParameters := signature.parameters.drop (collectingIndex + 1)
-            let suffixCount := suffixParameters.length
-            let suffixStart := items.length - suffixCount
-            let prefixParameters := signature.parameters.take collectingIndex
-            let prefixItems := items.take collectingIndex
-            let suffixItems := items.drop suffixStart
-            let middleItems := (items.drop collectingIndex).take (suffixStart - collectingIndex)
-            .ok {
-              normalBindings :=
-                (List.zip (prefixParameters.map (fun parameter => parameter.name)) prefixItems) ++
-                (List.zip (suffixParameters.map (fun parameter => parameter.name)) suffixItems)
-              collectingName? := (signature.parameters.drop collectingIndex).head?.map (fun parameter => parameter.name)
-              collectingItems := middleItems
-            }
 
 --------------------------------------------------------------------------------
 -- Operators
@@ -1703,8 +1625,7 @@ namespace Result
       callbacks, loop steps and clause families alike) and the literal-pattern
       matchers (`matchPatternInto`, `matchCountedPatternInto`), so a callback that
       supplies one value `V` to a pattern `P` binds exactly as the ordinary call
-      `P(V)` does (formerly also the Ready binders `bindParameterPattern` /
-      `bindCountedParameterPattern`, now in `HistoricalReadyBinding.lean`). A
+      `P(V)` does. A
       sequence value has 0 or at least 2 elements (there is no one-item
       sequence), which is why a one-item sequence pattern is invalid.
       C#: `Result.SequencePatternItems`. -/
@@ -1845,11 +1766,13 @@ abbrev ValEnv := Assoc Ident Result
     outcome, which every later demand reuses, and the `.param` arm of
     `evalCounted` demands the cell before any tier below it. No production
     binding path writes `valueFailure?` any more: its eager writer — the slot
-    evaluated at assembly, its failure recorded here — survives only in the
-    historical fixture `HistoricalReadyBinding.lean` (`slotAlgorithmBinding`).
-    The field and its readers (the `.param` arm's algorithm-tier fallback,
-    `parameterValueFailure?`, `evalDotCallCounted`'s `string` arm) remain for
-    that legacy Ready tier, and none of them evaluates `algorithm`. The
+    evaluated at assembly, its failure recorded here (`slotAlgorithmBinding`) —
+    was deleted with Model C, and its last Lean copy, the pre-Model-C Ready
+    binder, was retired on 2026-10-12 (git history keeps it). The field and its
+    readers (the `.param` arm's algorithm-tier fallback, `parameterValueFailure?`,
+    `evalDotCallCounted`'s `string` arm) remain for that legacy Ready tier, which
+    only a host-built context can populate (CoreTests `ArgumentValueOutcome`),
+    and none of them evaluates `algorithm`. The
     algorithm channel remains what it is for: invocation (`f(x)`, an invoking
     builtin slot), structural member access, and forwarding.
     `valueFailure?` is `none` exactly when the value tier holds the
@@ -3202,9 +3125,9 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
     `none` when the parameter has a value (a value binding always wins, as in
     that read) or no failed algorithm-channel binding. Under Model C no
     production path records such a failure — a parameter's outcome is its
-    need cell's (`demandNeed`), and the eager writer survives only in
-    `HistoricalReadyBinding.lean` — so for every source program this is
-    `none`. C#: `Evaluator.ParameterValueFailure`. -/
+    need cell's (`demandNeed`), and the eager writer is deleted — so for every
+    source program this is `none`; only a host-built context can carry one.
+    C#: `Evaluator.ParameterValueFailure`. -/
 def parameterValueFailure? (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option Error) := do
   let (parameterCtx, values) <- parameterContext name ctx env
   if (parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome then
@@ -3650,25 +3573,6 @@ def selectionResult (selected : List Result) : CountedResult :=
     C#: `MakeCollectionListResult`. -/
 def makeCollectionListResult (items : List Result) : CountedResult :=
   (Result.listValue items, 1)
-
-/-- True when an argument's resolved algorithm meaning is genuinely
-    callable-shaped: an ordinary call supplying ZERO arguments cannot bind it
-    (a builtin, a clause family without a zero-arity branch, or a signature that
-    requires a supplied slot). Declaring a parameter does not by itself make a
-    callable (Q-03): a zero-parameter property and any callable that accepts zero
-    supplied arguments, a collecting-only one included, are VALUES that merely
-    resolved through the dual algorithm channel, so the test is the zero-argument
-    law's own `acceptsZeroSuppliedArguments` (the rule the surface pass's
-    `liftsBareValueReference` also reads). HISTORICAL: only the eager, value-only
-    collector of `HistoricalReadyBinding` consults it (its former targeted
-    "collects values, but ... is a callable" diagnostic). The production Model-C
-    binder never does: a collecting parameter binds a lazy slice of the supplied
-    cells, `xs*` re-supplies those cells with their VALUE/CALLABLE channels, and
-    reading the collected list demands each element, which reports its own
-    zero-argument demand failure (NEED-07/08; VAR-03 as reconciled 2026-10-09).
-    The former C# twin `IsFunctionShapedAlgorithm` is deleted. -/
-def Algorithm.isFunctionShaped (a : Algorithm) : Bool :=
-  !a.acceptsZeroSuppliedArguments
 
 /-- Collect the item segment assigned to a collecting binding as ONE list value.
 
@@ -5101,7 +5005,9 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
     independent of the resolved callee: the receiver is never pre-expanded,
     never unwrapped, never given a supply of its own, and no parameter shape
     is inspected; a spread receiver is the ordinary spread slot `F(R*, …)`.
-    Laws: `dot_receiver_is_ordinary_leading_argument`,
+    Laws (argument PREPARATION only; that the bundle then reaches the ordinary funnel
+    `evalResolvedCallCounted` is a fact of the `partial` caller):
+    `dot_receiver_is_ordinary_leading_argument`,
     `spread_dot_receiver_is_ordinary_spread_argument` (`KatLangArityLaws.lean`).
     C#: `BuildLexicalReceiverCallArgs`. -/
 def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle)
@@ -8141,9 +8047,10 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    operator, list, index, spread, strict-Math or alias position became the
    fresh call `Roll(xs*)` and bypassed the cache that its neutral positions
    read. The evaluator was never involved: it evaluates whichever tree the
-   surface pass produces, and the law `bare_reference_lifts_iff_not_cacheable`
-   (`KatLangArityLaws.lean`) states that an unlifted reference is always a
-   cacheable demand.
+   surface pass produces, and the specification identity
+   `lifts_bare_value_reference_iff_not_cacheable` (`KatLangArityLaws.lean`, definitional) states
+   that a signature the specification leaves unlifted is one the cache eligibility predicate
+   admits (the C# resolver's agreement rests on tests).
 
    Formula lifting is by BINDING NAME, regardless of how many times a name
    occurs in the sibling's parameter patterns (decided 2026-09-29, reversing
@@ -8154,8 +8061,8 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    exactly as `H = F + G` with `F(x)` and `G(x)` becomes
    `H(x) = F(x) + G(x)`. The evaluator binds `P`'s two slots as it binds any
    call: both read the same caller binding, so nothing is merged — the
-   repeated-name constraint (Q-05; the binder's `bindNeedName`, formerly
-   `bindParameterPattern`) concerns independently supplied arguments.
+   repeated-name constraint (Q-05; the binder's `bindNeedName`) concerns
+   independently supplied arguments.
 
    THE ALIAS AND BARE-FORWARDING RULES (FWD-02, decided 2026-09-29–30; binding
    indirection 2026-10-01) come first: a body whose ONE written row is a bare
@@ -8241,8 +8148,8 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
     is nonzero. A signature that accepts zero supplied arguments (no pattern, or
     only a top-level collecting capture) is never lifted: its reference stays
     the cached zero-argument value demand. One predicate therefore decides both
-    halves, and they cannot disagree about a callable (see
-    `bare_reference_lifts_iff_not_cacheable`).
+    halves, and they cannot disagree about a callable (see the definitional identity
+    `lifts_bare_value_reference_iff_not_cacheable`).
 
     The argument is the callee's LIFTING signature (`Algorithm.liftingSignature?`,
     one contract for every kind since the unified formula-lifting law of
@@ -8313,10 +8220,10 @@ def Builtin.isLoop : Builtin -> Bool
   | _ => false
 
 /-- The role of supplied position `position` of a builtin: only a callback keeps its callable
-    identity. The collection, the value controls and a SURPLUS position beyond the signature are
-    values — a surplus slot is value-evaluated like a value slot before the arity verdict, just as
-    every argument of a Math member, a host operation and a clause family is a value whatever the
-    call's arity, so no role depends on how many arguments a call supplies. A loop's step is
+    identity. The collection, the value controls and a SURPLUS position beyond the signature have
+    the static VALUE role (at run time a surplus slot is never demanded: cardinality fails first),
+    just as every argument of a Math member, a host operation and a clause family is a value
+    whatever the call's arity, so no role depends on how many arguments a call supplies. A loop's step is
     invoked and every later position is a value; `if`, `atoms` and `range` take values only. -/
 def builtinLiftingSlotRole (b : Builtin) (position : Nat) : LiftingRole :=
   match sequenceBuiltinMetadata? b with
@@ -8330,9 +8237,10 @@ def builtinEverySlotIsValue (b : Builtin) : Bool :=
   | some metadata => metadata.suffixArgs.all (fun suffix => suffix.kind != .algorithm)
   | none => !b.isLoop
 
-/-- THE ROLE TABLE of a call's supplied positions (C#: `FormulaLiftingRoles.SlotRole`): a clause
-    family, a Math member and a host operation demand every argument's value (a family before any
-    clause is tried, PAT-07); a builtin reads its registry role; a user callable's argument stays
+/-- THE ROLE TABLE of a call's supplied positions (C#: `FormulaLiftingRoles.SlotRole`): every
+    argument of a clause family, a Math member and a host operation has the static VALUE role (for
+    a family a role retained by NEED-05: at run time it demands only what its patterns inspect or
+    its selected body consumes, PAT-07/NEED-04); a builtin reads its registry role; a user callable's argument stays
     NEUTRAL — its binder decides at run time, a plain capture keeping both channels — and so does
     a callee known only at run time. `positionKnown` is false once a spread slot precedes it. -/
 def liftingSlotRole (callee : LiftingCalleeKind) (position : Nat) (positionKnown : Bool) : LiftingRole :=
@@ -8514,7 +8422,8 @@ inductive BareForwardingVerdict where
 /-- The argument that forwards an existing binding named like the capture
     `destination`: a collecting SOURCE binding re-spreads into a collecting destination
     (FWD-01, `spread (collect S) = S`); every other pair passes the binding as ONE
-    argument, unchanged — only the source binding's kind decides a spread (FWD-02). -/
+    argument, unchanged — a re-spread needs BOTH a collecting source and a collecting
+    destination (FWD-02; `bare_forwarding_mixed_kind_pairs_pass_the_binding_whole`). -/
 def bareForwardedBinding (destination : CallableParameter) (sourceKind : ParameterKind) : Expr :=
   if destination.kind == .collecting && sourceKind == .collecting then
     .sequenceSpread (.param destination.name)

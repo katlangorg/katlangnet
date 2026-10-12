@@ -1,11 +1,9 @@
-import HistoricalReadyBinding
 import KatLang
 import CoreTests.Common
 
 namespace KatLangTests
 open KatLang (alg algWithParameterPatterns algPrivate runResultM Algorithm Error Result EvalState
   ParameterPattern)
-open KatLang.HistoricalReadyBinding (ParameterPatternInput ParameterPatternBindings)
 open KatLang (resolve param num)
 
 --------------------------------------------------------------------------------
@@ -14,7 +12,7 @@ open KatLang (resolve param num)
 -- THE RULE: a repeated parameter name is a compatibility constraint over
 -- INDEPENDENTLY supplied arguments. Every occurrence must supply its OWN value
 -- (the Model-C binder demands each occurrence's own cell when it visits it,
--- `bindNeedName`; formerly `bindParameterPattern` / `ParameterPattern.repeatsAtLevel`);
+-- `bindNeedName`);
 -- the values must be equal; a failed required value propagates as the slot's own
 -- completed outcome;
 -- a callable-only argument cannot satisfy the constraint (its value demand is its
@@ -309,29 +307,50 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnFailsWith innermostIsBadArity [rnCall "Q2" [num 1, num 2, resolve "Inc", resolve "Inc"]]
 #guard rnFailsWith innermostIsBadArity [rnCall "Q2" [num 1, num 2, num 3, num 3]]
 
--- 14. The binder itself: the kept binding of a successful repeated name is the one its
---     valued argument supplied (value and algorithm, NO recorded failure), in both orders;
---     a valueless contribution fails with its own outcome in either position.
-def rnBind (inputs : List ParameterPatternInput) : Except Error ParameterPatternBindings :=
-  KatLang.runEvalM (KatLang.HistoricalReadyBinding.bindParameterPatternList [rnCap "x", rnCap "x"] inputs true)
+-- 14. The binder itself (the production `bindNeedPatterns` over `P(x, x)`'s two argument cells,
+--     formed exactly as a call forms them): the kept binding of a successful repeated name is the
+--     RICHEST contribution — an argument with a value AND a callable (`A`) beats a value-only one,
+--     in either position (NEED-04, Q-28) — and a valueless contribution (a failing value, or a
+--     callable-only `Inc` whose value demand is its own arity rejection) fails the binding with
+--     ITS OWN outcome in either position; the other occurrence's value never stands in (Q-05).
+def rnBindCtx : KatLang.EvalCtx :=
+  { KatLang.EvalCtx.empty with callStack :=
+      [algPrivate [] [] [("Id", rnIdAlg), ("A", rnAAlg), ("Bad", rnBadAlg), ("Inc", rnIncAlg)] []] }
 
-def rnKeptBindingIs (inputs : List ParameterPatternInput) (value : Result) : Bool :=
-  match rnBind inputs with
-  | .ok bindings =>
-      KatLang.lookupAssoc "x" bindings.argEnv == some value
-        && (match bindings.algEnv.lookupBinding "x" with
-            | some binding => binding.valueFailure?.isNone
-            | none => false)
+/-- Bind `P(x, x)` over the given argument expressions through the production binder, returning
+    the outcome and the argument cells. -/
+def rnNeedBind (arguments : List KatLang.Expr) :
+    KatLang.EvalM (Except Error (Option KatLang.NeedEnv) × List Nat) := do
+  let addresses <- arguments.mapM (fun argument => KatLang.supplyNeed argument rnBindCtx [])
+  let outcome <- KatLang.evalAttempt (KatLang.bindNeedPatterns
+    ⟨KatLang.demandNeed, KatLang.projectNeedCallable⟩ [.bind "x", .bind "x"] addresses)
+  pure (outcome, addresses)
+
+/-- The repeated name binds the cell of argument `keptIndex`, whose value is `5` and which
+    projects a callable. -/
+def rnNeedKeeps (arguments : List KatLang.Expr) (keptIndex : Nat) : Bool :=
+  match KatLang.runEvalM (do
+      let (outcome, addresses) <- rnNeedBind arguments
+      match outcome with
+      | .ok (some [("x", address)]) =>
+          let value <- KatLang.demandNeed address
+          let callable <- KatLang.projectNeedCallable address
+          pure (addresses[keptIndex]? == some address && value == (.atom 5, 1) && callable.isSome)
+      | _ => pure false) with
+  | .ok kept => kept
   | .error _ => false
 
-#guard rnKeptBindingIs [{ value? := some (.atom 5), algorithm? := some rnAAlg }, { value? := some (.atom 5) }] (.atom 5)
-#guard rnKeptBindingIs [{ value? := some (.atom 5) }, { value? := some (.atom 5), algorithm? := some rnAAlg }] (.atom 5)
-#guard match rnBind [{ algorithm? := some rnIncAlg, error? := some .divByZero }, { value? := some (.atom 1) }] with
-  | .error .divByZero => true
+def rnNeedFails (arguments : List KatLang.Expr) (check : Error -> Bool) : Bool :=
+  match KatLang.runEvalM (do let (outcome, _) <- rnNeedBind arguments; pure outcome) with
+  | .ok (.error err) => check err
   | _ => false
-#guard match rnBind [{ value? := some (.atom 1) }, { algorithm? := some rnIncAlg, error? := some .divByZero }] with
-  | .error .divByZero => true
-  | _ => false
+
+#guard rnNeedKeeps [resolve "A", num 5] 0
+#guard rnNeedKeeps [num 5, resolve "A"] 1
+#guard rnNeedFails [resolve "Bad", num 1] innermostIsDivByZero
+#guard rnNeedFails [num 1, resolve "Bad"] innermostIsDivByZero
+#guard rnNeedFails [resolve "Inc", num 1] rnIncFailure
+#guard rnNeedFails [num 1, resolve "Inc"] rnIncFailure
 
 --------------------------------------------------------------------------------
 -- Formula lifting is by binding name; an alias IS its callee

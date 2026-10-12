@@ -1,29 +1,55 @@
 import CoreArityAlgebra
-import HistoricalReadyBinding
 import KatLang
 
 open KatLang
-open KatLang.HistoricalReadyBinding
 
 /-
 # KatLangArityLaws
 
-Arity laws over the authoritative value algebra, plus explicitly historical
-Ready-binding proofs imported from `HistoricalReadyBinding`.
+Arity laws over the authoritative value algebra, the total helpers of `KatLang.lean` and the
+total Model-C binder.
 
 `CoreArityAlgebra.lean` defines the small paper-facing algebra, while
 `CoreArityAlgebraProofs.lean` proves its small laws and executable checks.
-This file is the bridge: it proves the load-bearing laws over real KatLang
-`Result` constructors, normalization, lone-structure item-supply opening, and
-value operations. Historical binder theorems describe completed inputs only;
-they do not prove Model-C acquisition, demand order, or failure precedence.
+This file proves laws over real KatLang `Result` constructors, normalization,
+value views and the total helpers of `KatLang.lean`.
+
+EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
+
+* a PRODUCTION theorem — about TOTAL definitions of `KatLang.lean` that the evaluator
+  calls (value views such as `Result.normalize`, `Result.spreadItems`,
+  `Result.projectionItems`, `reCountValueBoundary`; the selection core `selectPosition` /
+  `selectWith` / `selectionResult`; `prepareLexicalDotCallArgs`; the Model-C binder
+  `bindNeedPatterns` and its allocation `needLevelSources`). It says nothing about the
+  `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeed`,
+  `formNeedSupply`, `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
+  a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
+  guards and the Lean/C# differential corpora, never a kernel fact;
+* a SPECIFICATION theorem — about a Lean specification of a C#-only front-end decision that
+  the evaluator never calls (`liftsBareValueReference`, `forwardingSource`,
+  `bareForwarding*`, `liftingSlotRole`, `familyLiftingSignature?`, the static alias chase
+  `staticAliasTarget?`). It proves the specification, never the C# implementation, whose
+  agreement rests on tests;
+* a LOCAL theorem — about a helper defined in this file (`captureForArityLaw`,
+  `selectionOf`, `selectionTrace`, `plainNeedBinding`, `atomsBuiltinResultForLaw`, …),
+  whose docstring names the production definitions it wraps;
+* the ALGEBRA CORRESPONDENCE `algebra_binder_is_the_production_allocation` — the paper
+  algebra's binder is the production ALLOCATION under its guard, not the binder's result.
+
+The superseded pre-Model-C Ready binder (completed inputs) and every theorem stated over it
+were retired on 2026-10-12 (owner decision; git history keeps them): no theorem here is about
+that model.
+
 The PRODUCTION binder's own laws — its top-level cardinality gate before every effect,
 its allocation of a level's supply (any lengths), plain binding demanding nothing, and
 the arity algebra as its allocation — are proved in § Model-C production binder laws
-(FORMAL-07, October 2026); its demand order, failure precedence and repeated-name binding are
-executed by the `bindNeedPatterns` guards in CoreTests.ModelC. The final section, § String
-interpolation (STR-02), proves the interpolation combinator's laws — left to right, each hole
-once, the first failure stops — for every hole channel, and the structural value text.
+(FORMAL-07, October 2026), with the production collector and dot-receiver laws after them
+(R8/X-13); its demand order, failure precedence and repeated-name binding are executed by
+the `bindNeedPatterns` guards in CoreTests.ModelC and CoreTests.RepeatedNameConstraints (no
+theorem: a demand-order trace and repeated-name laws over the Model-C binder are open
+formalization work). The final section,
+§ String interpolation (STR-02), proves the interpolation combinator's laws — left to right,
+each hole once, the first failure stops — for every hole channel, and the structural value text.
 -/
 
 /--
@@ -32,41 +58,24 @@ ORDINARY captured item supplies: `Result.normalize (Result.sequenceValue xs)`.
 
 This is `capture : Supply -> Value` — the normalizing value/output capture
 boundary (`x = 1, 2, 3`). It is NOT the collecting-binding operation: collecting binding
-uses `collect : Supply -> ListValue` (`collectSegment`, exact list),
-and the spread marker is `spread : Value -> Supply` (`Result.spreadItems`). The
-binder-path theorems below pin which operation each receiver applies.
+materializes `collect : Supply -> ListValue` (value-level definition `collectSegment`; in
+production, `makeCollectionListResult` on the collector cell's VALUE demand), and the spread
+marker is `spread : Value -> Supply` (`Result.spreadItems`). The laws below relate the three
+operations at the value level; which operation a receiver applies is the evaluator's (a fact
+of its `partial` source, pinned by guards), proved here only for the collector's allocation
+over the production binder (`lone_collector_collects_every_supplied_cell`).
 -/
 def captureForArityLaw (xs : List Result) : Result :=
   Result.normalize (Result.sequenceValue xs)
 
-/-- Single-variadic signature used to expose the non-opaque variadic splitter. -/
-def singleVariadicSignatureForArityLaw : CallableSignature :=
-  { name := "F", parameters := [{ name := "x", kind := .collecting }] }
-
-theorem empty_sequence_is_sequenceValue_empty :
-    buildEmptySequenceValue 0 = Result.sequenceValue [] := by
-  rfl
-
-/-- The flat binder's arity payload describes the complete supply. In
-particular, binding a prefix never subtracts it from the reported counts. -/
-theorem flat_binding_arity_reports_complete_supply (ps : List Ident) (vs : List Result)
-    (h : ps.length ≠ vs.length) :
-    runEvalM (bindParams ps vs) = .error (Error.arityMismatch ps.length vs.length) := by
-  simp [bindParams, h, runEvalM]
-  rfl
-
-/-- A fixed parameter keeps its allocated value, independent of its kind. -/
-theorem flat_fixed_parameter_preserves_supplied_value (name : Ident) (v : Result) :
-    runEvalM (bindParams [name] [v]) = .ok [(name, v)] := by
-  rfl
+/-- Every depth of written empty-sequence grouping builds the one canonical `()` (the total
+helper the `partial` evaluator's `.emptySequence` arm calls; that call is a source fact). -/
+theorem build_empty_sequence_value_is_empty_sequence (depth : Nat) :
+    buildEmptySequenceValue depth = Result.sequenceValue [] := rfl
 
 theorem normalize_empty_sequenceValue :
     Result.normalize (Result.sequenceValue []) = Result.sequenceValue [] := by
   simp [Result.normalize]
-
-theorem empty_sequence_depth_is_canonical :
-    buildEmptySequenceValue 1 = Result.sequenceValue [] := by
-  rfl
 
 theorem normalize_nested_empty_sequence :
     Result.normalize (Result.sequenceValue [Result.sequenceValue []]) = Result.sequenceValue [] := by
@@ -77,19 +86,14 @@ theorem toItems_sequenceValue (xs : List Result) :
   rfl
 
 /-
-The real model uses capture = Result.normalize after Result.sequenceValue.
+`captureForArityLaw` is `Result.normalize` after `Result.sequenceValue`.
 This alias theorem is intentionally small; capture is the ORDINARY
-value/output construction boundary only. Collecting bindings never use it — the
-binder-path theorems `bindParameterPatternList_single_collecting_binds_collect` and
-the leading/middle/trailing bridge family below connect the historical Ready binder to
-`collectSegment` instead. Capture is not raw grouping: singleton capture
-collapses, while a singleton collected segment stays `[item]`.
+value/output construction boundary only. Collecting bindings never use it — a collector's
+value is `collectSegment` (`make_collection_list_result_is_collect_segment`), and the production
+collector's allocation is `lone_collector_collects_every_supplied_cell`. Capture is not raw
+grouping: singleton capture collapses, while a singleton collected segment stays `[item]`.
 -/
 theorem captureForArityLaw_eq_normalize_sequenceValue (xs : List Result) :
-    captureForArityLaw xs = Result.normalize (Result.sequenceValue xs) := by
-  rfl
-
-theorem capture_eq_normalize_sequenceValue (xs : List Result) :
     captureForArityLaw xs = Result.normalize (Result.sequenceValue xs) := by
   rfl
 
@@ -122,7 +126,8 @@ Call parameter binding never uses this view. Assignment
 deconstruction opens its single right-hand side value through a different
 mechanism: its unpacking receiver (`.unpacking`, which opens with the
 equivalent one-level view `Result.spreadItems`), not the builtin collection
-view (see the deconstruction bridge laws later in this file).
+view; in production the unpacking level is `bindNeedLevel` itself
+(`nested_unpack_level_is_bind_need_level`).
 -/
 theorem builtinCollectionItems_sequence (xs : List Result) :
     builtinCollectionItems (Result.sequenceValue xs) = xs := rfl
@@ -136,48 +141,22 @@ theorem builtinCollectionItems_nested_pair_opens_one_boundary :
 theorem builtinCollectionItems_atom (n : Int) :
     builtinCollectionItems (Result.atom n) = [Result.atom n] := rfl
 
-private theorem collectValues_valueInputs (xs : List Result) :
-    bindParameterPatternList.collectValues
-      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
-      = pure xs := by
-  induction xs with
-  | nil => rfl
-  | cons x xs ih =>
-      simp [bindParameterPatternList.collectValues, ih]
-
-private theorem drop_length_valueInputs (xs : List Result) :
-    List.drop xs.length
-      (xs.map (fun value => { value? := some value : ParameterPatternInput })) = [] := by
-  induction xs with
-  | nil => rfl
-  | cons x xs ih => simp [ih]
-
-private theorem take_length_valueInputs (xs : List Result) :
-    List.take xs.length
-      (xs.map (fun value => { value? := some value : ParameterPatternInput })) =
-      xs.map (fun value => { value? := some value : ParameterPatternInput }) := by
-  induction xs with
-  | nil => rfl
-  | cons x xs ih => simp [ih]
-
-private theorem bindPairs_nil_nil
-    (outerPatterns : List ParameterPattern) (outerInputs : List ParameterPatternInput)
-    (allowAlgorithmBindings : Bool) :
-    bindParameterPatternList.bindPairs outerPatterns outerInputs allowAlgorithmBindings [] [] =
-      pure [] := by
-  simp [bindParameterPatternList.bindPairs]
-
 /-
 ## Segment collection laws (`collect : Supply -> ListValue`)
 
-`collectSegment` is the single collecting-binding materialization operation: every collecting binding
-— deconstruction collecting bindings, single collecting parameters, and mixed
-prefix/collecting/suffix parameter lists — binds its assigned middle supply through
-it, after receiver-specific supply preparation. The laws below establish the
-required exactness properties.
+`collectSegment` is the VALUE-LEVEL definition of collecting-binding materialization. The
+production Model-C binder allocates ONE suspended collector cell over the collector's slice of
+supply cells
+(`lone_collector_collects_every_supplied_cell`, `need_level_sources_around_the_collector`), and
+`demandNeed`'s `.collector` arm materializes that cell's VALUE as `makeCollectionListResult` of the
+demanded slice values, which IS `collectSegment` at emitted count 1
+(`make_collection_list_result_is_collect_segment`; that `demandNeed` applies it is a fact of its
+`partial` source, pinned by CoreTests.ModelC). Deconstruction and nested structural patterns
+open their one value before allocation. The laws below are the value-level exactness
+properties of that materialization.
 -/
 
-/-- Stable result kind + exact elements: a collecting binding is ALWAYS the exact
+/-- Stable result kind + exact elements: the materialized collection is ALWAYS the exact
 immutable list of precisely the assigned items, in order. This is the closed
 form of `collect`; length preservation and element exactness are immediate. -/
 theorem collectSegment_eq_listValue (xs : List Result) :
@@ -228,23 +207,26 @@ theorem collectSegment_singleton_ne_item (v : Result) :
   intro he
   exact absurd he.symm (mem_ne_listValue List.mem_cons_self)
 
-/-- Open/collect round trip: spread (`open`, `Result.spreadItems`)
-re-supplies EXACTLY the collected items, so variadic forwarding
-(`Forward(*items) = Target(items*)`) is ordinary list spread with no
-hidden raw-supply metadata. -/
+/-- Open/collect round trip at the VALUE level: the spread view (`open`, `Result.spreadItems`)
+of a collected list is EXACTLY the collected items. This is the value-level face of
+collecting-parameter forwarding (`Forward(*items) = Target(items*)`, FWD-01): read through
+`make_collection_list_result_is_collect_segment`, spreading a materialized collector gives back
+its demanded element values. Production forwarding itself transports the collector's own slice
+CELLS, unforced (`formNeedSupply`'s `.collector` arm, `partial`; CoreTests.ModelC
+`sliceTransport`), and the target's collector then collects exactly the cells supplied
+(`lone_collecting_head_allocates_one_collector_over_its_supply`). -/
 theorem spreadItems_collectSegment (xs : List Result) :
     (collectSegment xs).spreadItems = xs := rfl
 
-/-- A collected list is one visible value: emitted count 1 at every boundary,
-including the empty collected list `[]`. -/
+/-- A collected list is one visible value: its `Result.valueCount` is 1, the empty collected
+list `[]` included. (That a boundary emits `valueCount` is the evaluator's source fact.) -/
 theorem valueCount_collectSegment (xs : List Result) :
     (collectSegment xs).valueCount = 1 := rfl
 
-/-- Provenance independence: `collect` depends only on the assembled item
-supply, never on which structures were spread to produce it — collecting the
-concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, *rest = 1, [2, 3]*, (4, 5)*` gives
-`rest = [2, 3, 4, 5]`). -/
+/-- Collecting the concatenation of two spread views is exactly the list of those items — an
+instance of `collectSegment_eq_listValue` (`collect` takes a supply, which records no
+provenance; the deconstruction example `first, *rest = 1, [2, 3]*, (4, 5)*` giving
+`rest = [2, 3, 4, 5]` is evaluator behaviour, pinned by guards). -/
 theorem collectSegment_spread_concat_exact (a b : Result) :
     collectSegment (a.spreadItems ++ b.spreadItems)
       = Result.listValue (a.spreadItems ++ b.spreadItems) := rfl
@@ -271,9 +253,9 @@ private theorem map_normalize_id_of_canonical : ∀ {xs : List Result},
         (fun q hq => h q (List.mem_cons_of_mem r hq))
       simp [hr, ih]
 
-/-- Canonical-supply invariant at the real collect boundary: when every supplied
-value is already canonical — which observable runtime supplies are, since
-every construction/capture boundary normalizes before storing — the collected
+/-- Canonical-supply invariant at the collect boundary: when every supplied
+value is already canonical (observable runtime supplies are intended to be; that the
+evaluator's construction sites normalize is assumed here, not proved), the collected
 list is itself a `Result.normalize` fixed point. `collectSegment` performs no
 normalization of its own (`collectSegment xs = Result.listValue xs` stores the
 supply unchanged); canonicality of the result comes entirely from the input
@@ -284,243 +266,64 @@ theorem collectSegment_canonical_of_canonical_elements {xs : List Result}
     (collectSegment xs).normalize = collectSegment xs := by
   rw [collectSegment_normalize_elementwise, map_normalize_id_of_canonical h]
 
-/--
-The historical Ready parameter-pattern binder (`HistoricalReadyBinding.bindParameterPatternList`,
-not the Model-C `bindNeedPatterns`) uses `collectSegment` directly for a single
-top-level variadic capture. This is the binder-path bridge theorem: the
-successful binding records `x` as the exact list of the supplied
-items, with emitted count 1.
--/
-theorem bindParameterPatternList_single_collecting_binds_collect
-    (xs : List Result) (allowAlgorithmBindings : Bool) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
-      allowAlgorithmBindings)
-      = .ok { argEnv := [("x", Result.listValue xs)],
-              countedParamEnv := [("x", (Result.listValue xs, 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindPairs_nil_nil, collectValues_valueInputs, drop_length_valueInputs, take_length_valueInputs,
-    runEvalM,
-    collectSegment]
-  rfl
-
-theorem variadic_single_collecting_binds_collect (xs : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = .ok { argEnv := [("x", collectSegment xs)],
-              countedParamEnv := [("x", (collectSegment xs, 1))],
-              algEnv := [] } := by
-  simpa [collectSegment] using
-    bindParameterPatternList_single_collecting_binds_collect xs false
-
-theorem bindCallableArguments_single_variadic_items (xs : List Result) :
-    bindCallableArguments
-      singleVariadicSignatureForArityLaw
-      xs
-      (fun required actual => Error.arityMismatch required actual)
-      = .ok { normalBindings := [], collectingName? := some "x", collectingItems := xs } := by
-  unfold singleVariadicSignatureForArityLaw
-  have hvalid :
-      CallableSignature.validationError?
-        { name := "F", parameters := [{ name := "x", kind := .collecting }] } = none := by
-    decide
-  simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
-
-theorem bindCallableArguments_variadic_items_then_collect (xs : List Result) :
-    (match bindCallableArguments
-        singleVariadicSignatureForArityLaw
-        xs
-        (fun required actual => Error.arityMismatch required actual) with
-    | .ok bindings => Except.ok (collectSegment bindings.collectingItems)
-    | .error err => Except.error err)
-      = Except.ok (collectSegment xs) := by
-  simp [bindCallableArguments_single_variadic_items]
-
-/-- Mixed prefix/collecting/suffix signature used to expose the loop-state binder's
-empty-segment rule. -/
-def mixedVariadicSignatureForArityLaw : CallableSignature :=
-  { name := "F",
-    parameters :=
-      [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] }
-
-/-- EMPTY LOOP-STATE SEGMENT over the real flat-variadic binder: supplying exactly
-the fixed parameters binds them from the ends and the collecting parameter is assigned ZERO
-middle items — the same `collectSegment [] = []` rule as every other collecting-binding
-receiver (`bindParameterPatternList`: required = patterns - 1). This pins the
-uniform minimum (fixed parameter count), replacing the old loop-only
-"the collecting parameter collects at least one slot" restriction. -/
-theorem bindCallableArguments_mixed_fixed_only_empty_segment (a b : Result) :
-    bindCallableArguments
-      mixedVariadicSignatureForArityLaw
-      [a, b]
-      (fun required actual => Error.arityMismatch required actual)
-      = .ok {
-          normalBindings := [("first", a), ("last", b)],
-          collectingName? := some "rest",
-          collectingItems := [] } := by
-  unfold mixedVariadicSignatureForArityLaw
-  have hvalid :
-      CallableSignature.validationError?
-        { name := "F",
-          parameters :=
-            [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] } = none := by
-    decide
-  simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
-
-/-- Below the fixed minimum the mixed binder fails with the fixed parameter
-count — one state slot cannot bind `first` and `last`. -/
-theorem bindCallableArguments_mixed_below_fixed_minimum_fails (a : Result) :
-    bindCallableArguments
-      mixedVariadicSignatureForArityLaw
-      [a]
-      (fun required actual => Error.arityMismatch required actual)
-      = .error (Error.arityMismatch 2 1) := by
-  unfold mixedVariadicSignatureForArityLaw
-  have hvalid :
-      CallableSignature.validationError?
-        { name := "F",
-          parameters :=
-            [{ name := "first" }, { name := "rest", kind := .collecting }, { name := "last" }] } = none := by
-    decide
-  simp [bindCallableArguments, CallableSignature.validate, hvalid,
-    CallableSignature.collectingIndex?, CallableSignature.collectingIndex?.go.eq_2]
-
-/-
-## Generic mixed-pattern bridge theorems
-
-For every supported flat variadic shape — leading variadic (`Init(*init, last)`),
-middle variadic (`F(x, *y, z)`), trailing variadic (`Tail(first, *rest)`); the
-lone-variadic shape is `bindParameterPatternList_single_collecting_binds_collect` above —
-a successful bind through the historical Ready shared binder (`bindParameterPatternList`) records the collecting parameter's name as
-`collectSegment` of exactly the allocated middle supply. The middle supply `mid`
-is universally quantified, so each theorem covers the empty, singleton, and
-multiple-item segments uniformly, and the fixed captures around the collecting parameter keep
-their front/back argument boundaries unchanged.
-
-Honest limitation: the front/back capture lists are one fixed capture per
-side (the general shape families), not arbitrary-length name-generic capture
-lists — a fully name-generic theorem would need induction through the
-duplicate-name merge machinery disproportionate to what it would pin. The
-wider-arity content is carried by the executable matrices in `CoreTests.lean`
-and the generated differential corpora. (The PRODUCTION allocation is proved for
-arbitrary lengths — it is position-only, so names play no part; repeated-name binding is not
-covered: `need_level_sources_around_the_collector` and
-`need_level_sources_conserve_the_supply`, final section.)
--/
-
-/-- Trailing variadic (`Tail(first, *rest)`): for EVERY middle supply — empty,
-singleton, or multiple — the collecting parameter binds `collectSegment mid` and the leading
-fixed capture keeps the front argument boundary. -/
-theorem bindParameterPatternList_trailing_collecting_binds_collect
-    (x : Result) (mid : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "a", kind := .normal },
-       .capture { name := "r", kind := .collecting }]
-      ((x :: mid).map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = .ok { argEnv := [("a", x), ("r", collectSegment mid)],
-              countedParamEnv := [("r", (collectSegment mid, 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
-    take_length_valueInputs, drop_length_valueInputs,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- Leading variadic (`Init(*init, last)`): for EVERY middle supply the variadic
-parameter binds `collectSegment mid` and the trailing fixed capture keeps the back
-argument boundary. -/
-theorem bindParameterPatternList_leading_collecting_binds_collect
-    (y : Result) (mid : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      ((mid ++ [y]).map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = .ok { argEnv := [("r", collectSegment mid), ("z", y)],
-              countedParamEnv := [("r", (collectSegment mid, 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- Middle variadic (`F(x, *y, z)`): for EVERY middle supply the collecting parameter binds
-`collectSegment mid` between the preserved front and back fixed boundaries. -/
-theorem bindParameterPatternList_middle_collecting_binds_collect
-    (x y : Result) (mid : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "a", kind := .normal },
-       .capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      ((x :: (mid ++ [y])).map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = .ok { argEnv := [("a", x), ("r", collectSegment mid), ("z", y)],
-              countedParamEnv := [("r", (collectSegment mid, 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_valueInputs,
-    runEvalM,
-    collectSegment]
-  rfl
-
 /-
 ## Dot-receiver bridge laws (dot-call passes a value)
 
-For extension-call fallback, `receiver.F(args)` is exactly the written call
-`F(receiver, args)`: `prepareLexicalDotCallArgs` places the ORIGINAL receiver
-expression as the ordinary first argument slot, and `callLexicalWithReceiverCounted`
-hands that bundle to the ONE `evalResolvedCallCounted` funnel every written
-call uses. There is no receiver-specific assembly, no receiver supply, and no
-callee inspection: the receiver is one written argument, so the ordinary
-argument laws apply to it unchanged —
+For extension-call fallback (a structural MISS: `evalDotCallCounted` tries a declared member
+first), `receiver.F(args)` is the written call `F(receiver, args)`. What is PROVED here is the
+argument PREPARATION: `prepareLexicalDotCallArgs` places the ORIGINAL receiver expression as the
+ordinary first slot of the bundle, adding nothing else. Everything after preparation is
+`partial` and therefore a fact of the source, executed by CoreTests `DotReceiverSegments` /
+`DotCallSemantics` and the Lean/C# differential corpora, not a theorem:
+`callLexicalWithReceiverCounted` hands the bundle to the ONE `evalResolvedCallCounted` funnel
+every written call uses, and `formNeedSupply` forms one supply cell per non-spread slot. No
+dot-call ≡ direct-call evaluator theorem exists (Q-66 keeps the dot-funnel obligation open).
 
-- a written non-spread argument reifies to ONE value (`()` included), so a
-  collecting parameter collects the receiver as exactly one item whatever its
-  value (`dot_call_uses_same_collector_binding_as_plain_call`);
-- the receiver is ONE input for arity checking and fixed prefix/suffix
-  allocation (its item count never satisfies arity);
-- a FIXED parameter binds the receiver's one value;
-- only the spread marker opens a receiver: `R*.F(args)` is the ordinary spread
-  slot of `F(R*, args)`.
+Given those source facts, the ordinary argument laws apply to the receiver unchanged, and the
+binder half of each is a production theorem over the cell the receiver forms (§ Production
+collector and dot-receiver laws, after the FORMAL-07 section):
+
+- a collecting parameter collects the receiver's ONE cell as exactly one item whatever its
+  value (`lone_collector_collects_every_supplied_cell`,
+  `lone_collecting_head_allocates_one_collector_over_its_supply`);
+- the receiver is ONE cell for arity checking and fixed prefix/suffix allocation — its item
+  count never satisfies arity, and the gate fails before any demand
+  (`one_cell_supply_fails_two_fixed_patterns_before_any_effect`);
+- a FIXED parameter after a collector takes the last cell, the receiver's when it is the only
+  one (`collector_before_a_fixed_pattern_takes_all_but_the_last_cell`);
+- only the spread marker opens a receiver: `R*.F(args)` is the ordinary spread slot of
+  `F(R*, args)` (the C# parser lowers the surface form to that call; preparation keeps a
+  host-built spread receiver unopened).
 -/
 
-/-- `receiver.F(args)` assembles exactly the argument bundle of the written
-call `F(receiver, args)`: the receiver is the ordinary leading argument. -/
+/-- Argument PREPARATION for extension-call fallback: `receiver.F(args)` prepares exactly the
+argument bundle of the written call `F(receiver, args)` — the receiver is the ordinary leading
+slot. (That the bundle then reaches the ordinary call funnel is a `partial`-source fact.) -/
 theorem dot_receiver_is_ordinary_leading_argument (receiver : Expr) (args : OutputBundle) :
     prepareLexicalDotCallArgs receiver (some args) = receiver :: args := rfl
 
-/-- The argumentless dotted spelling `receiver.F` is the one-argument written
-call `F(receiver)`. -/
+/-- Argument PREPARATION for the argumentless dotted spelling: on extension-call fallback,
+`receiver.F` prepares the one-slot bundle of the written call `F(receiver)`. -/
 theorem argumentless_dot_receiver_is_the_one_argument (receiver : Expr) :
     prepareLexicalDotCallArgs receiver none = [receiver] := rfl
 
-/-- `R*.F(args)` is the written spread call `F(R*, args)`: the spread receiver
-is an ordinary spread slot, opened by the ONE call-item assembly like every
-other spread slot — never by a receiver-specific rule. -/
+/-- Argument PREPARATION keeps a spread receiver unopened: `R*.F(args)` prepares the bundle of
+the written spread call `F(R*, args)`, the spread slot left for supply formation to open like
+every other spread slot (`formNeedSupply`, `partial`). Surface `R*.F(args)` is lowered to that
+call by the C# parser, so this concerns host-built trees. -/
 theorem spread_dot_receiver_is_ordinary_spread_argument (operand : Expr) (args : OutputBundle) :
     prepareLexicalDotCallArgs (.sequenceSpread operand) (some args)
       = .sequenceSpread operand :: args := rfl
 
-/-- A dot expression carries ONE callable identity in every algorithm-capable position
-(DOT-09; Q-18 C-B3): in CALLEE position it is exactly the structural projection a
-supplied argument reads (`projectNeedStructuralMember`, then alias normalization —
-`projectNeedCallable`'s dot arm), never the receiver carrier `resolveAlg (.dotMember …)`:
-an argumentless structural path is its member's own callable, and a computed dot value
-has none. So `(Box.G)(2)` is the member call `Box.G(2)`, and `(Box.V)()` the fresh call
-`Box.V()`. -/
-theorem callee_projection_is_supplied_projection
+/-- CALLEE-position dot resolution unfolds to the structural projection followed by alias
+normalization (DOT-09; Q-18 C-B3): `resolveCalleeAlg` of a dot callee is
+`projectNeedStructuralMember`, then `resolveAliasTarget`, and a computed dot value with no
+structural member is `notAnAlgorithm`. This is the definition of the total `resolveCalleeAlg`'s
+dot arm; both composed functions are `partial`. That the supplied-argument projection
+(`projectNeedCallable`'s dot arm, `partial`) agrees with it — the single callable identity in
+every position, `(Box.G)(2)` as the member call `Box.G(2)` — is a source fact pinned by guards,
+not part of this statement. -/
+theorem dot_callee_resolution_is_structural_projection_then_alias
     (receiver : Expr) (name : Ident) (fallback : Expr) (args : Option OutputBundle) (ctx : EvalCtx) :
     resolveCalleeAlg (.dotMember receiver name fallback args) ctx =
       (do
@@ -528,257 +331,55 @@ theorem callee_projection_is_supplied_projection
         | some algorithm => resolveAliasTarget algorithm ctx
         | none => .error (Error.notAnAlgorithm computedDotCalleeDescription)) := rfl
 
-private theorem collectValues_single (v : Result) :
-    bindParameterPatternList.collectValues [{ value? := some v : ParameterPatternInput }]
-      = pure [v] := by
-  simp [bindParameterPatternList.collectValues]
-
-/-- The receiver is one written argument, so a collecting parameter collects
-it as exactly ONE item whatever its value: `(1, 2).Gather` is
-`Gather((1, 2))`, `[(1, 2)]`; `().Gather` is `[()]`; `[1, 2].Gather` is
-`[[1, 2]]`. -/
-theorem dot_receiver_is_one_collected_item (v : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some v : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [v])],
-              countedParamEnv := [("x", (collectSegment [v], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindPairs_nil_nil, collectValues_single,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- With an extra written argument, the fixed suffix binds from the back and
-the collector's segment is the receiver alone — collected as that one item
-(a sequence, a list, a scalar, and an empty value alike). -/
-theorem dot_receiver_with_suffix_is_one_collected_item (v y : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput },
-       { value? := some y : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("r", collectSegment [v]), ("z", y)],
-              countedParamEnv := [("r", (collectSegment [v], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, collectValues_single,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- A FIXED parameter binds the receiver's one value: with the receiver as the
-only slot, the suffix takes it whole and the collector collects nothing. -/
-theorem dot_receiver_fixed_binds_value (v : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("r", collectSegment []), ("z", v)],
-              countedParamEnv := [("r", (collectSegment [], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, bindParameterPatternList.collectValues,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- The receiver is ONE input for arity checking whatever it holds: a mixed
-prefix/collecting/suffix list requiring two fixed inputs rejects a lone
-receiver even when the receiver's value has enough items. -/
-theorem dot_receiver_count_never_satisfies_arity (v : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "a", kind := .normal },
-       .capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      [{ value? := some v : ParameterPatternInput }]
-      false)
-      = .error (Error.arityMismatch 2 1) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
-  rfl
-
 /-
 ## Exact collector laws (September 2026)
 
 VALUES STAY VALUES. A collecting parameter collects exactly the items the
 binder allocated to it (after fixed prefix/suffix allocation) as ONE exact list
-(`collectSegment`) and never inspects or opens an item: every non-spread
-written argument is ONE item whatever its value, so a lone sequence, list,
-`()`, or `[]` is collected as that one value. Only an explicit spread (the
-caller's `v*`) or an explicit structural pattern (the callee's `((*xs))` or `([*xs])`)
-turns one value into several items. The laws below are stated over the real
-binder `bindParameterPatternList`, so they pin the rule at the layer that owns
-it — collector binding, never dot-call, selection, or grouping.
+and never inspects or opens an item: every non-spread written argument is ONE item
+whatever its value, so a lone sequence, list, `()`, or `[]` is collected as that one
+value. Only an explicit spread (the caller's `v*`) or an explicit structural pattern (the
+callee's `((*xs))` or `([*xs])`) turns one value into several items.
+
+EVIDENCE. The PRODUCTION Model-C binder binds supply CELLS, never values, and its collector
+law is value-blind: `lone_collector_collects_every_supplied_cell`,
+`collector_before_a_fixed_pattern_takes_all_but_the_last_cell`,
+`lone_collecting_head_allocates_one_collector_over_its_supply` (§ Production collector and
+dot-receiver laws), with `need_level_sources_around_the_collector` and
+`need_level_sources_without_collector` for every level and length; the collector cell's value is
+`make_collection_list_result_is_collect_segment`. That a written argument forms ONE cell, and
+that a spread slot forms one cell per spread item, is supply formation (`formNeedSupply`,
+`partial`), pinned by CoreTests `ExplicitValueOpening` / `ModelC`. Dot-call and selection add
+nothing to the collector: a dot receiver is an ordinary leading slot
+(`dot_receiver_is_ordinary_leading_argument`) and a selection's result is the selected value
+itself (`select_is_a_value_boundary`). The one law of this section is the spread VIEW that supply
+formation reads.
 -/
 
-/-- A lone written SEQUENCE is one collected item: `Coll((1, 2))` is
-`[(1, 2)]` — the collector never opens it (`Coll((1, 2)*)` is the spread
-form). -/
-theorem collector_lone_sequence_is_one_item (items : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some (.sequenceValue items) : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [.sequenceValue items])],
-              countedParamEnv := [("x", (collectSegment [.sequenceValue items], 1))],
-              algEnv := [] } :=
-  dot_receiver_is_one_collected_item (.sequenceValue items)
-
-/-- A lone written LIST is one collected item, exactly like a sequence:
-`Coll([1, 2])` is `[[1, 2]]` (there is no kind-dependent opening). -/
-theorem collector_lone_list_is_one_item (items : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some (.listValue items) : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [.listValue items])],
-              countedParamEnv := [("x", (collectSegment [.listValue items], 1))],
-              algEnv := [] } :=
-  dot_receiver_is_one_collected_item (.listValue items)
-
-/-- An empty value is still a value: `Coll(())` is `[()]` and `Coll([])` is
-`[[]]` — ONE supplied item each, never the zero-item supply of `Coll()`. -/
-theorem collector_lone_empty_values_are_one_item :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some (.sequenceValue []) : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [.sequenceValue []])],
-              countedParamEnv := [("x", (collectSegment [.sequenceValue []], 1))],
-              algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some (.listValue []) : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [.listValue []])],
-              countedParamEnv := [("x", (collectSegment [.listValue []], 1))],
-              algEnv := [] } :=
-  ⟨dot_receiver_is_one_collected_item _, dot_receiver_is_one_collected_item _⟩
-
-/-- Explicit spread is THE value-to-supply operation: it opens a sequence and a
-list alike, exactly one level (`Coll((1, 2)*)` and `Coll([1, 2]*)` both supply
-`1, 2`), and a scalar supplies itself. -/
+/-- The spread VIEW opens a sequence and a list alike, exactly one level, and an atom gives
+itself: `Result.spreadItems`, which the `partial` spread arms of the evaluator read (a source
+fact; `Coll((1, 2)*)` and `Coll([1, 2]*)` both supply `1, 2` by supply formation, pinned by
+guards). Since Model C a spread of a collecting PARAMETER transports its cells instead
+(`formNeedSupply`'s `.collector` arm). -/
 theorem explicit_spread_opens_one_level (items : List Result) (n : Int) :
     (Result.sequenceValue items).spreadItems = items
     ∧ (Result.listValue items).spreadItems = items
     ∧ (Result.atom n).spreadItems = [.atom n] := ⟨rfl, rfl, rfl⟩
-
-/-- The collector collects spread-produced items exactly and never reopens
-them: `Coll([(1, 2)]*)` is `[(1, 2)]`, `Coll([()]*)` is `[()]`,
-`Coll(((1, 2), 3)*)` is `[(1, 2), 3]` — opening is one level. -/
-theorem collector_collects_spread_items_exactly (v : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      (v.spreadItems.map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = .ok { argEnv := [("x", collectSegment v.spreadItems)],
-              countedParamEnv := [("x", (collectSegment v.spreadItems, 1))],
-              algEnv := [] } :=
-  variadic_single_collecting_binds_collect v.spreadItems
-
-/-- FORWARDING LAW: `Forward(*xs) = Target(xs*)` re-supplies exactly the
-collected items — `spread (collect S) = S` (`spreadItems_collectSegment`) — so
-a collecting target re-collects the identical list, whatever the supply held
-(nothing, `()`, `[]`, nested sequences or lists). -/
-theorem forwarding_resupplies_the_collected_items (xs : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      ((collectSegment xs).spreadItems.map (fun value => { value? := some value : ParameterPatternInput }))
-      false)
-      = runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      (xs.map (fun value => { value? := some value : ParameterPatternInput }))
-      false) := by
-  rw [spreadItems_collectSegment]
-
-/-- Origin independence: the collector reads only the supplied values — two
-written arguments holding equal values (a literal, a property read, a call
-result, an `if` branch, `A[0]`, `first(A)`) bind identically. -/
-theorem selection_origin_does_not_change_collector_binding (v w : Result) (h : v = w) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some v : ParameterPatternInput }] false)
-      = runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some w : ParameterPatternInput }] false) := by
-  subst h; rfl
-
-/-- `R.F(args)` and `F(R, args)` hand the binder the SAME bundle, so the
-collector cannot distinguish the two spellings: dot-call is ordinary receiver
-injection. -/
-theorem dot_call_uses_same_collector_binding_as_plain_call (receiver : Expr) (args : OutputBundle) :
-    prepareLexicalDotCallArgs receiver (some args) = receiver :: args := rfl
-
-/-- Through the real binder: two written items are collected exactly
-(`Coll((1, 2), 3)` is `[(1, 2), 3]`). -/
-theorem collector_binder_two_written_items_are_exact (items : List Result) (y : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .collecting }]
-      [{ value? := some (.sequenceValue items) : ParameterPatternInput },
-       { value? := some y : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", collectSegment [.sequenceValue items, y])],
-              countedParamEnv := [("x", (collectSegment [.sequenceValue items, y], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindPairs_nil_nil, bindParameterPatternList.collectValues,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- AFTER allocation the collector's segment is still collected exactly:
-`F(*xs, z)` with `F((1, 2), 3)` binds `z = 3` and `xs = [(1, 2)]` — a lone
-segment is never opened. -/
-theorem collector_binder_lone_segment_after_suffix_is_exact (items : List Result) (y : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      [{ value? := some (.sequenceValue items) : ParameterPatternInput },
-       { value? := some y : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("r", collectSegment [.sequenceValue items]), ("z", y)],
-              countedParamEnv := [("r", (collectSegment [.sequenceValue items], 1))],
-              algEnv := [] } :=
-  dot_receiver_with_suffix_is_one_collected_item (.sequenceValue items) y
-
-/-- Through the real binder, AFTER allocation: `F(*xs, z)` with
-`F((1, 2), 3, 4)` gives the suffix `4` and a two-item collector segment,
-collected exactly — `xs = [(1, 2), 3]`. -/
-theorem collector_binder_multi_item_segment_after_suffix_is_exact (items : List Result) (y z : Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "r", kind := .collecting },
-       .capture { name := "z", kind := .normal }]
-      [{ value? := some (.sequenceValue items) : ParameterPatternInput },
-       { value? := some y : ParameterPatternInput },
-       { value? := some z : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("r", collectSegment [.sequenceValue items, y]), ("z", z)],
-              countedParamEnv := [("r", (collectSegment [.sequenceValue items, y], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    bindPairs_nil_nil, bindParameterPatternList.collectValues,
-    runEvalM,
-    collectSegment]
-  rfl
 
 /-
 ## Zero-supply acceptance laws (September 2026)
 
 A callable may satisfy a ZERO-ARGUMENT VALUE DEMAND exactly when an ordinary
 call supplying zero arguments can bind it. Both sides read the ONE rule
-`ParameterPattern.minimumSuppliedSlots`, which is the arity check
-`bindParameterPatternList` itself enforces: every pattern consumes one supplied
-slot, except that a collecting capture at THAT level consumes none.
+`ParameterPattern.minimumSuppliedSlots`: every pattern consumes one supplied slot, except
+that the (single) collecting capture at that level consumes none. On every signature with at
+most one top-level collector — every X-02-valid signature — it IS the production binder's own
+count `needMinimumSuppliedSlots` (`binder_minimum_is_the_signature_minimum`).
 
-The laws below pin (1) the rule's values, (2) that the REAL binder accepts
-exactly the parameter lists whose minimum is zero, and (3) that the demand law
+The laws below pin (1) the rule's values, (2) that a user algorithm accepts zero supplied
+arguments exactly when that minimum is zero (the production gate's laws are
+`cardinality_gate_accepts_empty_supply_iff_minimum_zero` and
+`zero_argument_acceptance_is_the_binder_gate`), and (3) that the demand law
 (`zeroArgumentDemandError?`) accepts exactly those callables and reports that
 minimum when it does not.
 -/
@@ -820,7 +421,9 @@ theorem minimum_supplied_slots_group_then_collector (items : List ParameterPatte
     ParameterPattern.minimumSuppliedSlots
       [.sequenceValue items, .capture { name := r, kind := .collecting }] = 1 := rfl
 
-/-- Acceptance is the minimum being zero. -/
+/-- A collecting-only user algorithm accepts zero supplied arguments (acceptance is the
+minimum being zero; the general production statement is
+`zero_argument_acceptance_is_the_binder_gate`). -/
 theorem accepts_zero_collecting_only
     (name : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
     Algorithm.acceptsZeroSuppliedArguments
@@ -845,45 +448,6 @@ theorem rejects_zero_required_suffix
 its rejection stays owned by `evalBuiltinValueCounted`. -/
 theorem builtin_never_accepts_zero_supply (b : Builtin) :
     Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false := rfl
-
-/-- Through the REAL binder: a collecting-only parameter list binds the EMPTY
-supply to the exact empty list. This is what makes `Only()` legal, and therefore
-what makes bare `Only` a zero-argument value. -/
-theorem collector_binder_empty_supply_is_empty_list (name : Ident) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := name, kind := .collecting }] [] true)
-      = .ok { argEnv := [(name, collectSegment [])],
-              countedParamEnv := [(name, (collectSegment [], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindPairs_nil_nil, bindParameterPatternList.collectValues,
-    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
-    runEvalM,
-    collectSegment]
-  rfl
-
-/-- Through the REAL binder: a required fixed parameter beside a collector still
-rejects the empty supply, and reports the MINIMUM (1) rather than the two
-declared captures — the very count the zero-argument demand rejection reports. -/
-theorem collector_binder_empty_supply_rejects_required_prefix (x r : Ident) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := x }, .capture { name := r, kind := .collecting }] [] true)
-      = .error (Error.arityMismatch 1 0) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
-    runEvalM, EvalM.error]
-  rfl
-
-/-- Through the REAL binder: a fixed-only list rejects the empty supply with its
-exact count. -/
-theorem fixed_binder_empty_supply_rejects_with_exact_count (x y : Ident) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := x }, .capture { name := y }] [] true)
-      = .error (Error.arityMismatch 2 0) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel,
-    runEvalM, EvalM.error]
-  rfl
 
 /-- ELIGIBILITY EQUIVALENCE. Away from builtins (whose rejection the law
 deliberately leaves to `evalBuiltinValueCounted`), the zero-argument value-demand
@@ -940,7 +504,9 @@ algorithm's arity, a family's `noMatchingBranch`, a builtin's pass-through. A wr
 block that is NOT an alias keeps the block's own `unresolvedImplicitParams`.
 -/
 
-/-- An inline alias of a NAME is demanded exactly as that name is. -/
+/-- For the same demanded algorithm, the zero-argument demand law gives an inline alias of a
+NAME the same verdict and report as the name itself. (That the alias's demanded algorithm is
+the name's target is `resolveAliasTarget`'s, a `partial` source fact pinned by guards.) -/
 theorem inline_alias_demand_reports_as_its_name_reference
     (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (name : Ident)
     (id : Option PropertyIdentity) (a : Algorithm) :
@@ -948,7 +514,8 @@ theorem inline_alias_demand_reports_as_its_name_reference
       = zeroArgumentDemandError? (some (.resolve name)) a := by
   cases a <;> rfl
 
-/-- An inline alias of a declared MEMBER PATH is demanded exactly as that path is. -/
+/-- For the same demanded algorithm, the zero-argument demand law gives an inline alias of a
+declared MEMBER PATH the same verdict and report as the path itself. -/
 theorem inline_alias_demand_reports_as_its_member_reference
     (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (receiver fallback : Expr)
     (member : Ident) (id : Option PropertyIdentity) (a : Algorithm) :
@@ -980,41 +547,49 @@ theorem written_block_reports_its_own_unresolved_implicit_params
 /-
 ## Implicit-lifting eligibility follows zero-argument acceptance (Q-03, September 2026)
 
-The surface pass lifts a bare value-position reference into an implicit
-forwarding call exactly when the callee REQUIRES supplied arguments
-(`liftsBareValueReference`, over the same `minimumSuppliedSlots` the binder
-enforces). A callee that accepts zero supplied arguments — no parameter, or only
-a top-level collector — is never lifted: its reference stays the zero-argument
-value demand, which the property cache serves. The laws below pin the decision
-table and connect it to the evaluator: for a user algorithm, "lifted" and
-"cacheable demand" are exact complements, so a reference the front end leaves
-bare is always an accepted, cacheable demand.
+The C# surface pass lifts a bare value-position reference into an implicit
+forwarding call exactly when the callee REQUIRES supplied arguments. Lean states that
+decision as the SPECIFICATION predicate `liftsBareValueReference` (over the same
+`minimumSuppliedSlots` rule as the zero-argument law); the Lean evaluator never calls it and no
+Lean model of the C# resolver exists, so these are specification laws — the C# resolver's
+agreement rests on `ZeroArgumentReferenceLiftingTests` and CoreTests `PropertyCacheConsumers`.
+A callee that accepts zero supplied arguments — no parameter, or only a top-level collector —
+is not lifted by the specification. The laws below pin the decision table and relate the
+specification predicate to the evaluator's TOTAL eligibility predicates: for a user algorithm,
+"lifted" and "cacheable demand" are exact complements (by definition: both read
+`minimumSuppliedSlots`), so a reference the specification leaves bare is a demand the
+zero-argument law accepts and the cache eligibility predicate admits. No theorem models the
+cache lookup itself.
 -/
 
 theorem lifting_skips_parameterless_signature :
     liftsBareValueReference [] = false := rfl
 
-/-- `Roll(*xs)` works with no arguments, so its bare name is never lifted. -/
+/-- `Roll(*xs)` works with no arguments, so the specification does not lift its bare name. -/
 theorem lifting_skips_collecting_only_signature (name : Ident) :
     liftsBareValueReference [.capture { name := name, kind := .collecting }] = false := rfl
 
-/-- `Inc(x)` requires its argument, so its bare name still lifts. -/
+/-- `Inc(x)` requires its argument, so the specification lifts its bare name. -/
 theorem lifting_keeps_required_parameter (x : Ident) :
     liftsBareValueReference [.capture { name := x }] = true := rfl
 
-/-- `Head(x, *rest)` requires ONE supplied value beside the collector: it lifts. -/
+/-- `Head(x, *rest)` requires ONE supplied value beside the collector: the specification
+lifts it. -/
 theorem lifting_keeps_required_prefix (x r : Ident) :
     liftsBareValueReference
       [.capture { name := x }, .capture { name := r, kind := .collecting }] = true := rfl
 
-/-- A group holding a collector, `H((*xs))`, is one required slot: it lifts. -/
+/-- Any lone sequence pattern — a group holding a collector, `H((*xs))`, included — is one
+required slot: the specification lifts it (whatever `items` holds). -/
 theorem lifting_keeps_grouped_collector (items : List ParameterPattern) :
     liftsBareValueReference [.sequenceValue items] = true := rfl
 
-/-- THE Q-03 LAW. For a user algorithm, the front end lifts a bare value
-reference exactly when the property cache could NOT serve it as a zero-argument
-demand: lifting and cache eligibility are complements of ONE rule. -/
-theorem bare_reference_lifts_iff_not_cacheable
+/-- Q-03 as a SPECIFICATION IDENTITY. For a user algorithm, the specification predicate
+`liftsBareValueReference` holds exactly when the evaluator's cache eligibility predicate
+`isCacheableZeroArgPropertyAlgorithm` does NOT: lifting and cache eligibility are complements
+of ONE rule. Definitional (`rfl`): both sides read `minimumSuppliedSlots`. It proves neither the
+C# resolver's lifting decision nor a cache lookup. -/
+theorem lifts_bare_value_reference_iff_not_cacheable
     (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
     (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
     liftsBareValueReference ps
@@ -1024,9 +599,10 @@ private theorem bool_true_of_not_eq_false {b : Bool} (h : (!b) = false) : b = tr
   revert h
   cases b <;> decide
 
-/-- Consequently a reference the front end leaves bare is always a demand the
-zero-argument law ACCEPTS and the run cache serves — never a rejection, and
-never a fresh evaluation. -/
+/-- Consequently, for a user signature the specification does not lift, the zero-argument
+demand law ACCEPTS the callable (never a rejection) and the cache eligibility predicate admits
+it (it is never lifted into a fresh call). That the C# resolver leaves such a reference bare,
+and that the run cache then serves it, are not stated here. -/
 theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
     (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
     (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity)
@@ -1035,7 +611,7 @@ theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
       ∧ isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = true := by
   have hc : isCacheableZeroArgPropertyAlgorithm (Algorithm.mk p ps op pr out id) = true :=
     bool_true_of_not_eq_false
-      ((bare_reference_lifts_iff_not_cacheable p ps op pr out id).symm.trans h)
+      ((lifts_bare_value_reference_iff_not_cacheable p ps op pr out id).symm.trans h)
   refine ⟨?_, hc⟩
   rw [zero_argument_value_demand_accepts_exactly_zero_supply_callables _
     (fun b hb => by cases hb)]
@@ -1045,8 +621,10 @@ theorem unlifted_bare_reference_is_an_accepted_cacheable_demand
 ## Automatic parameter forwarding preserves existing bindings (Q-04, decided 2026-09-28)
 
 THE LAW: automatic parameter forwarding must not change what an existing name refers
-to. `forwardingSource` (KatLang.lean) is the surface pass's one forwarding decision;
-these laws pin its two halves over arbitrary owner chains: forwarding reuses exactly
+to. `forwardingSource` (KatLang.lean) is the SPECIFICATION of the C# surface pass's one
+forwarding decision (`ImplicitArgumentResolver.ForwardableParameters`; the evaluator never calls
+it); these SPECIFICATION laws pin its two halves over arbitrary owner chains (C# agreement:
+`AutomaticForwardingBindingTests`, `OwnershipConformanceTests`): forwarding reuses exactly
 the PARAMETER binding a written occurrence of the name would denote (and nothing else:
 never a property, an opened name, or a builtin), and the parameter it adds when no
 binding exists changes the binding of no written name.
@@ -1108,7 +686,7 @@ private theorem select_from_ignores_forwarded (i : Nat) (level : OwnerLevel) (ou
       = selectOwnedDeclarationFrom i (level :: outer) m := by
   simp [selectOwnedDeclarationFrom]
 
-/-- THE BINDING-PRESERVATION LAW. Adding the parameter forwarding creates changes the
+/-- THE BINDING-PRESERVATION LAW (of the specification). Adding the parameter forwarding creates changes the
 binding of NO name: every written occurrence, of that name or any other, selects
 exactly what it selected before. (The superseded rule added the lifted name to the
 body's name-resolution parameters instead; `CoreTests/ForwardingBindings.lean` keeps
@@ -1122,9 +700,10 @@ theorem forwarded_parameter_changes_no_written_binding
     unfold forwardParameter selectOwnedDeclaration
     exact select_from_ignores_forwarded 0 level outer _ m
 
-/-- The declaration-validity rule still sees a forwarded parameter: a property of the
-same owner, or of a body nested in it, that shares its name is the ordinary
-parameter/property collision. -/
+/-- The declaration-validity specification (`conflictingOwnedNames`, of the C#
+`ParameterPropertyCollisionValidator`) still sees a forwarded parameter: a property of the
+SAME owner that shares its name is the ordinary parameter/property collision. (The nested-body
+case is the same rule over the ancestor levels, pinned by the C# validator tests.) -/
 theorem forwarded_parameter_still_conflicts_with_a_same_named_property (name : Ident) :
     conflictingOwnedNames { parameters := [], properties := [name], forwarded := [name] } = [name] := by
   simp [conflictingOwnedNames, OwnerLevel.signature]
@@ -1141,8 +720,17 @@ callable use resolves to the NORMALIZED TARGET in the alias's own scope
 written parameter list or a clause branch — is bare forwarding: each of the target's
 parameters is supplied from an EXISTING compatible binding of the same name
 (`bareForwardingArgument`, `bareForwardingRow`), and a target with no forwarding contract
-at all is the front-end error (`bareForwardingRowOf`, narrowed Q-77). The laws below pin
-the reconstruction bare forwarding shares with formula lifting (one argument per top-level
+at all is the front-end error (`bareForwardingRowOf`, narrowed Q-77).
+
+EVIDENCE. Except for the `requiresArguments` / `resolveOpen`, `zeroArgPropertyCacheKey` and
+`parameterPatterns` facts, the laws below are SPECIFICATION theorems: about the surface-pass
+specification functions (`sourceArgument`, `bareForwarding*`, `forwardingSource`,
+`declaresParameterizedStructure`, `liftsBareValueReference`, `liftingSignature?`,
+`liftingCalleeKind?`, `liftingSlotRole`) and the static chase `staticAliasTarget?`, none of which
+the evaluator calls. The evaluator's alias chase `resolveAliasTarget` is `partial`; no theorem
+covers it, and `CoreTests/AliasForwarding.lean` checks it executably. The C# reconstruction
+(`BuildPatternArgument`) is shared with formula lifting; in Lean `sourceArgument` is called only by
+`bareForwardingArgument`. The laws pin the reconstruction (one argument per top-level
 pattern, each capture as its own binding, a collector re-spread, each structural pattern
 as its own kind), the bare-forwarding decision (by name, never renamed, never positional,
 never added to a closed list, never reshaped from same-named leaves), its distinction from
@@ -1156,8 +744,8 @@ families and alias chains through an alias against the direct call.
 theorem source_argument_fixed_capture_is_its_binding (x : Ident) :
     ParameterPattern.sourceArgument (.capture { name := x }) = .param x := rfl
 
-/-- A collecting capture forwards the items it collected, `xs*`: the source's supplied
-range reaches the callee as that many arguments. -/
+/-- A collecting capture is rebuilt as the spread of its binding, `xs*` (that the spread then
+re-supplies the collected range is supply formation, `partial`; FWD-01, NEED-07/08). -/
 theorem source_argument_collector_is_respread (xs : Ident) :
     ParameterPattern.sourceArgument (.capture { name := xs, kind := .collecting })
       = .sequenceSpread (.param xs) := rfl
@@ -1214,19 +802,72 @@ theorem bare_forwarding_same_name_is_supplied (p : Ident) :
       = .supplied (.param p) := by
   simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
 
-/-- NO RENAMING: `F(q) = q * 2` / `A(p) = F` is rejected — A's `p` never becomes F's `q`,
-whatever the arity. -/
-theorem bare_forwarding_never_renames (p q : Ident) (distinct : p ≠ q) :
+/-- NO RENAMING, in general: whatever the body's own patterns, enclosing bindings and names, a
+callee capture `n` that bare forwarding supplies is supplied by a binding of the SAME name —
+`n` itself or its re-spread `n*` — never by a differently named binding. -/
+theorem bare_forwarding_never_renames (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) (parameter : CallableParameter) (argument : Expr)
+    (h : bareForwardingArgument own ownNames captured (.capture parameter) = .supplied argument) :
+    argument = .param parameter.name ∨ argument = .sequenceSpread (.param parameter.name) := by
+  have hb : ∀ kind, bareForwardedBinding parameter kind = .param parameter.name
+      ∨ bareForwardedBinding parameter kind = .sequenceSpread (.param parameter.name) := by
+    intro kind
+    unfold bareForwardedBinding
+    split <;> simp
+  simp only [bareForwardingArgument] at h
+  split at h
+  · cases h; exact hb _
+  · split at h
+    · cases h
+    · split at h
+      · cases h; exact hb _
+      · split at h <;> cases h
+
+/-- Example: `F(q) = q * 2` / `A(p) = F` is rejected — A's `p` never becomes F's `q`. -/
+theorem bare_forwarding_rejects_a_differently_named_fixed_parameter (p q : Ident) (distinct : p ≠ q) :
     bareForwardingArgument [.capture { name := p }] [p] [] (.capture { name := q }) = .unforwardable := by
   simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, distinct, Ne.symm distinct]
 
+/-- A fixed callee capture that neither the body's own top-level patterns, nor its names,
+nor an enclosing binding supply is unforwardable. -/
+theorem bare_forwarding_unbound_fixed_capture_is_unforwardable (own : List ParameterPattern)
+    (ownNames : List Ident) (captured : List CallableParameter) (name : Ident)
+    (hnone : ParameterPattern.topLevelCaptureKind? name own = none)
+    (hfree : ownNames.contains name = false)
+    (huncaptured : captured.find? (fun binding => binding.name == name) = none) :
+    bareForwardingArgument own ownNames captured (.capture { name := name }) = .unforwardable := by
+  have hmem : name ∉ ownNames := by simpa using hfree
+  simp [bareForwardingArgument, hnone, hmem, huncaptured]
+
+/-- ONE unforwardable callee parameter rejects the whole signature: bare forwarding never
+drops, skips or invents a parameter. -/
+theorem bare_forwarding_rejects_a_signature_with_an_unforwardable_parameter
+    (own : List ParameterPattern) (ownNames : List Ident) (captured : List CallableParameter)
+    (signature : List ParameterPattern) (parameter : ParameterPattern) (hin : parameter ∈ signature)
+    (hbad : bareForwardingArgument own ownNames captured parameter = .unforwardable) :
+    bareForwardingArguments own ownNames captured signature = none := by
+  induction signature with
+  | nil => cases hin
+  | cons first rest ih =>
+      cases List.mem_cons.mp hin with
+      | inl heq =>
+          subst heq
+          simp [bareForwardingArguments, hbad]
+      | inr hrest =>
+          have := ih hrest
+          simp only [bareForwardingArguments, this]
+          cases bareForwardingArgument own ownNames captured first <;> rfl
+
 /-- A CLOSED LIST NEVER GAINS A PARAMETER: `F(p, q) = p + q` / `A(p) = F` is rejected,
-never an inferred `q`. -/
+never an inferred `q` — the instance of the two general laws above. -/
 theorem bare_forwarding_never_adds_a_parameter (p q : Ident) (distinct : p ≠ q) :
     bareForwardingArguments [.capture { name := p }] [p] []
-      [.capture { name := p }, .capture { name := q }] = none := by
-  simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
-    bareForwardedBinding, distinct, Ne.symm distinct]
+      [.capture { name := p }, .capture { name := q }] = none :=
+  bare_forwarding_rejects_a_signature_with_an_unforwardable_parameter _ _ _ _
+    (.capture { name := q }) (by simp)
+    (bare_forwarding_unbound_fixed_capture_is_unforwardable _ _ _ q
+      (by simp [ParameterPattern.topLevelCaptureKind?, distinct])
+      (by simp [Ne.symm distinct]) rfl)
 
 /-- An UNUSED parameter stays unused: `F(p)` / `A(p, unused) = F` forwards `p` alone. -/
 theorem bare_forwarding_ignores_an_unused_parameter (p unused : Ident) :
@@ -1243,8 +884,23 @@ theorem bare_forwarding_is_not_positional (x y : Ident) (distinct : x ≠ y) :
   simp [bareForwardingArguments, bareForwardingArgument, ParameterPattern.topLevelCaptureKind?,
     bareForwardedBinding, distinct]
 
-/-- STRUCTURAL COMPATIBILITY IS WHOLE-PATTERN: `Single([x])` / `G(x) = Single` is rejected —
-G's whole `x` never builds Single's `[x]` because the leaf names coincide. -/
+/-- STRUCTURAL COMPATIBILITY IS WHOLE-PATTERN, in general: a structural callee parameter (any
+non-capture pattern) that no own top-level pattern of the SAME contract supplies is
+unforwardable — never assembled from same-named leaves, never from enclosing bindings. The four
+named instances below are its examples. -/
+theorem bare_forwarding_structural_parameter_needs_a_same_contract_own_pattern
+    (own : List ParameterPattern) (ownNames : List Ident) (captured : List CallableParameter)
+    (pattern : ParameterPattern) (hnot : ∀ parameter, pattern ≠ .capture parameter)
+    (hno : own.any (ParameterPattern.sameContract pattern) = false) :
+    bareForwardingArgument own ownNames captured pattern = .unforwardable := by
+  cases pattern with
+  | capture parameter => exact absurd rfl (hnot parameter)
+  | sequenceValue items => simp [bareForwardingArgument, hno]
+  | listValue items => simp [bareForwardingArgument, hno]
+  | unpacking items => simp [bareForwardingArgument, hno]
+
+/-- Instance: `Single([x])` / `G(x) = Single` is rejected — G's whole `x` never builds
+Single's `[x]` because the leaf names coincide. -/
 theorem bare_forwarding_never_reshapes_a_leaf (x : Ident) :
     bareForwardingArgument [.capture { name := x }] [x] [] (.listValue [.capture { name := x }])
       = .unforwardable := by
@@ -1258,21 +914,34 @@ theorem bare_forwarding_same_pattern_is_supplied (x : Ident) :
   simp [bareForwardingArgument, ParameterPattern.sameContract, ParameterPattern.sameContracts,
     ParameterPattern.sourceArgument, ParameterPattern.sourceArguments]
 
-/-- The same leaf names in another shape are another contract: `F((x, y))` / `G(x, y) = F`
-never manufactures the pair. -/
+/-- Instance: the same leaf names in another shape are another contract — `F((x, y))` /
+`G(x, y) = F` is rejected, the pair never manufactured. -/
 theorem bare_forwarding_never_manufactures_a_sequence (x y : Ident) :
     bareForwardingArgument [.capture { name := x }, .capture { name := y }] [x, y] []
       (.sequenceValue [.capture { name := x }, .capture { name := y }]) = .unforwardable := by
   simp [bareForwardingArgument, ParameterPattern.sameContract]
 
-/-- A WHOLE VALUE NEEDS A TOP-LEVEL BINDING: `F(x)` / `G([x]) = F` is rejected — the `x`
-inside G's list pattern is an element, not G's parameter. -/
-theorem bare_forwarding_whole_value_needs_a_top_level_binding (x : Ident) :
-    bareForwardingArgument [.listValue [.capture { name := x }]] [x] [] (.capture { name := x })
-      = .unforwardable := by
-  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?]
+/-- A WHOLE VALUE NEEDS A TOP-LEVEL BINDING, in general: a callee capture whose name the body
+binds only INSIDE one of its patterns (no own top-level capture of that name) is unforwardable —
+that inner name is an element, not a whole-value parameter, and no enclosing binding of the
+name is consulted. -/
+theorem bare_forwarding_whole_value_needs_a_top_level_binding (own : List ParameterPattern)
+    (ownNames : List Ident) (captured : List CallableParameter) (parameter : CallableParameter)
+    (hnone : ParameterPattern.topLevelCaptureKind? parameter.name own = none)
+    (hbound : ownNames.contains parameter.name = true) :
+    bareForwardingArgument own ownNames captured (.capture parameter) = .unforwardable := by
+  have hmem : parameter.name ∈ ownNames := by simpa using hbound
+  simp [bareForwardingArgument, hnone, hmem]
 
-/-- Positions inside a structural pattern are never renamed either: `F([a, b])` /
+/-- Example: `F(x)` / `G([x]) = F` is rejected — the `x` inside G's list pattern is an
+element, not G's parameter. -/
+example (x : Ident) :
+    bareForwardingArgument [.listValue [.capture { name := x }]] [x] [] (.capture { name := x })
+      = .unforwardable :=
+  bare_forwarding_whole_value_needs_a_top_level_binding _ _ _ _
+    (by simp [ParameterPattern.topLevelCaptureKind?]) (by simp)
+
+/-- Instance: positions inside a structural pattern are never renamed either — `F([a, b])` /
 `A([x, y]) = F` is rejected. -/
 theorem bare_forwarding_never_renames_inside_a_pattern (a b x y : Ident) (distinct : a ≠ x) :
     bareForwardingArgument [.listValue [.capture { name := x }, .capture { name := y }]] [x, y] []
@@ -1286,9 +955,11 @@ theorem bare_forwarding_collector_respreads (xs : Ident) :
       (.capture { name := xs, kind := .collecting }) = .supplied (.sequenceSpread (.param xs)) := by
   simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
 
-/-- Only the SOURCE binding's kind decides a spread: a fixed binding reaches a collector as
-one item, and a collected list reaches a fixed parameter whole. -/
-theorem bare_forwarding_source_kind_decides_the_spread (xs : Ident) :
+/-- MIXED KINDS NEVER SPREAD: a re-spread needs BOTH a collecting source and a collecting
+destination (`bareForwardedBinding`), so a fixed binding reaches a collector as one item and a
+collected list reaches a fixed parameter whole — the source binding's kind alone does not
+decide a spread. -/
+theorem bare_forwarding_mixed_kind_pairs_pass_the_binding_whole (xs : Ident) :
     bareForwardingArgument [.capture { name := xs }] [xs] []
         (.capture { name := xs, kind := .collecting }) = .supplied (.param xs)
       ∧ bareForwardingArgument [.capture { name := xs, kind := .collecting }] [xs] []
@@ -1296,7 +967,8 @@ theorem bare_forwarding_source_kind_decides_the_spread (xs : Ident) :
   constructor <;> simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
 
 /-- A collector nothing of its name supplies receives no argument, and a callee that then
-receives nothing is its bare name — Q-03's cached value read, never an invented call. -/
+receives nothing elaborates to its bare name `.resolve callee`, never an invented call (how the
+evaluator reads that row — Q-03's cached zero-argument demand — is not proved here). -/
 theorem bare_forwarding_unsupplied_collector_is_read (callee p xs : Ident) (distinct : p ≠ xs) :
     bareForwardingRow callee [.capture { name := p }] [p] []
       [.capture { name := xs, kind := .collecting }] = some (.resolve callee) := by
@@ -1312,21 +984,33 @@ theorem bare_forwarding_reuses_an_enclosing_binding (x y : Ident) (distinct : y 
   simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding,
     distinct, Ne.symm distinct]
 
-/-- ... but the body's OWN binding is nearer: an own fixed `x` beats an enclosing
-collecting `x`, so nothing is re-spread. -/
-theorem bare_forwarding_own_binding_beats_an_enclosing_one (x : Ident) :
+/-- ... but the body's OWN binding is nearer, in general: a callee capture the body binds at
+its own top level is supplied from that binding, whatever enclosing bindings exist. -/
+theorem bare_forwarding_own_binding_beats_an_enclosing_one (own : List ParameterPattern)
+    (ownNames : List Ident) (captured : List CallableParameter) (parameter : CallableParameter)
+    (kind : ParameterKind) (hown : ParameterPattern.topLevelCaptureKind? parameter.name own = some kind) :
+    bareForwardingArgument own ownNames captured (.capture parameter)
+      = .supplied (bareForwardedBinding parameter kind) := by
+  simp [bareForwardingArgument, hown]
+
+/-- Example: an own fixed `x` beats an enclosing collecting `x`, so nothing is re-spread. -/
+example (x : Ident) :
     bareForwardingArgument [.capture { name := x }] [x] [{ name := x, kind := .collecting }]
       (.capture { name := x, kind := .collecting }) = .supplied (.param x) := by
-  simp [bareForwardingArgument, ParameterPattern.topLevelCaptureKind?, bareForwardedBinding]
+  rw [bare_forwarding_own_binding_beats_an_enclosing_one _ _ _ _ .normal
+    (by simp [ParameterPattern.topLevelCaptureKind?])]
+  simp [bareForwardedBinding]
 
-/-- An enclosing binding is a plain named value: it never supplies a structural parameter. -/
+/-- Instance: an enclosing binding is a plain named value — it never supplies a structural
+parameter. -/
 theorem bare_forwarding_enclosing_binding_supplies_no_pattern (x : Ident) :
     bareForwardingArgument [] [] [{ name := x }] (.listValue [.capture { name := x }]) = .unforwardable := by
   simp [bareForwardingArgument]
 
 /-- REPEATED NAMES follow the by-name rule: `P(x, x) = x` / `Q(x) = P` hands Q's ONE binding
-`x` to both occurrences, `P(x, x)` — the two slots are then ordinary independent arguments
-that happen to read one binding (Q-05 compares them, merges nothing). -/
+`x` to both occurrences, `P(x, x)`. (Design context, not proved here: the two slots are then
+ordinary independent arguments that happen to read one binding, which the Model-C binder's
+repeated-name check compares, Q-05.) -/
 theorem bare_forwarding_repeated_name_reuses_one_binding (x : Ident) :
     bareForwardingArguments [.capture { name := x }] [x] []
       [.capture { name := x }, .capture { name := x }] = some [.param x, .param x] := by
@@ -1334,15 +1018,17 @@ theorem bare_forwarding_repeated_name_reuses_one_binding (x : Ident) :
     bareForwardedBinding]
 
 /-- FORMULA LIFTING IS A DIFFERENT MECHANISM: the name bare forwarding refuses to add to a
-closed list (`bare_forwarding_never_renames`) is exactly the one a formula in an OPEN body
-lifts — `F(q)` / `A = F + 1` gives `A(q)` — while a closed formula `A(p) = F + 1` adds
-nothing either (§57: the reference stays F's zero-argument demand). -/
+closed list (`bare_forwarding_rejects_a_differently_named_fixed_parameter`) is exactly the one
+`forwardingSource` gives an OPEN inferring level as a new forwarded parameter
+(`.forwardedParameter`: `F(q)` / `A = F + 1` gives `A(q)`), while a closed level gets nothing
+either (`.unavailable`; Q-15 / PAR-04: the reference stays F's zero-argument demand, a runtime
+fact not proved here). -/
 theorem formula_lifting_infers_what_bare_forwarding_rejects (p q : Ident) (distinct : p ≠ q) :
     forwardingSource [{ parameters := [], properties := [] }] true q = .forwardedParameter
       ∧ forwardingSource [{ parameters := [p], properties := [] }] false q = .unavailable
       ∧ bareForwardingArgument [.capture { name := p }] [p] [] (.capture { name := q })
         = .unforwardable := by
-  refine ⟨?_, ?_, bare_forwarding_never_renames p q distinct⟩
+  refine ⟨?_, ?_, bare_forwarding_rejects_a_differently_named_fixed_parameter p q distinct⟩
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom]
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom, Ne.symm distinct]
 
@@ -1355,14 +1041,16 @@ theorem user_alias_target_iff_declares_parameters (p : Option ScopeCtx) (ps : Li
     (Algorithm.mk p ps op pr out id).declaresParameterizedStructure = true ↔ ps ≠ [] := by
   cases ps <;> simp [Algorithm.declaresParameterizedStructure]
 
-/-- A ZERO-PARAMETER TARGET IS READ, never aliased: `A = Z` stays an ordinary property whose
-body reads `Z`, cached like any property (`A`, `Z`, `A` reads each binding once). -/
-theorem alias_zero_parameter_target_is_read (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+/-- A ZERO-PARAMETER user algorithm is not an alias target (the `ps = []` corollary of
+`user_alias_target_iff_declares_parameters`): `A = Z` stays an ordinary property whose body
+reads `Z`. (That it is then cached like any property is evaluator behaviour, guard-checked in
+`CoreTests/AliasForwarding.lean`.) -/
+theorem zero_parameter_user_algorithm_is_not_an_alias_target (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
     (out : List Expr) (id : Option PropertyIdentity) :
     (Algorithm.mk p [] op pr out id).declaresParameterizedStructure = false := rfl
 
-/-- `Only(*xs)` works with no arguments, so a bare reference to it is never LIFTED (Q-03) —
-but as a lone row it IS aliased: the alias rule reads declared structure. -/
+/-- `Only(*xs)` works with no arguments, so the specification never LIFTS a bare reference to
+it (Q-03) — but it IS an alias target: the alias rule reads declared structure. -/
 theorem collecting_only_callee_is_aliased_not_lifted (xs : Ident) (p : Option ScopeCtx) (op : List Expr)
     (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
     (Algorithm.mk p [.capture { name := xs, kind := .collecting }] op pr out id).declaresParameterizedStructure = true
@@ -1379,8 +1067,9 @@ theorem lifting_signature_is_an_alias_signature (p : Option ScopeCtx) (ps : List
   | nil => exact absurd lifts (by decide)
   | cons pattern rest => rfl
 
-/-- EVERY BUILTIN is an alias target — `if`, the callback builtins and the loops included: its
-callable is used directly, so `I = if` keeps `if`'s laziness and `R = repeat` its minimum arity. -/
+/-- EVERY BUILTIN is an alias target — `if`, the callback builtins and the loops included.
+(Design consequence, guard-checked in `CoreTests/AliasForwarding.lean`: the builtin's callable is
+used directly, so `I = if` keeps `if`'s laziness and `R = repeat` its minimum arity.) -/
 theorem every_builtin_is_an_alias_target (b : Builtin) :
     (Algorithm.builtin b).declaresParameterizedStructure = true := rfl
 
@@ -1404,23 +1093,34 @@ theorem unnameable_family_can_be_aliased :
   ⟨rfl, rfl⟩
 
 /-- A CALLABLE WITHOUT A FORWARDING CONTRACT CANNOT BARE-FORWARD (narrowed Q-77, decided
-2026-10-01): a closed lone row `W(x) = SA` whose normalized target is the unnameable family is the
-front-end error — never a silent zero-argument demand. -/
-theorem alias_without_forwarding_contract_cannot_bare_forward (callee x : Ident) :
-    bareForwardingRowOf callee [.capture { name := x }] [x] [] aliasLawSign = .error .noForwardingContract :=
-  rfl
+2026-10-01), in general: whatever the closed body, a normalized target with no lifting
+signature is the front-end error `noForwardingContract` — never a silent zero-argument demand. -/
+theorem bare_forwarding_target_without_lifting_signature_has_no_forwarding_contract
+    (callee : Ident) (own : List ParameterPattern) (ownNames : List Ident)
+    (captured : List CallableParameter) (target : Algorithm) (h : target.liftingSignature? = none) :
+    bareForwardingRowOf callee own ownNames captured target = .error .noForwardingContract := by
+  simp [bareForwardingRowOf, h]
 
-/-- ... while a target WITH a contract forwards by its own names, whatever the route that reached
-it: `C = count` / `W(collection) = C` is `W(collection) = C(collection)`, the call `count` itself
-would receive. -/
-theorem alias_of_builtin_forwards_by_the_builtin_names (callee : Ident) :
+/-- Instance: a closed lone row `W(x) = SA` whose normalized target is the unnameable family
+`S` is that error. (No alias appears in the statement, which takes the already-normalized
+target.) -/
+theorem unnameable_family_target_cannot_bare_forward (callee x : Ident) :
+    bareForwardingRowOf callee [.capture { name := x }] [x] [] aliasLawSign = .error .noForwardingContract :=
+  bare_forwarding_target_without_lifting_signature_has_no_forwarding_contract _ _ _ _ _ rfl
+
+/-- ... while a target WITH a contract forwards by its own names. Example with the normalized
+target `count` (whatever route reached it): `C = count` / `W(collection) = C` is
+`W(collection) = C(collection)`, the call `count` itself would receive. -/
+theorem count_target_bare_forwards_by_its_collection_name (callee : Ident) :
     bareForwardingRowOf callee [.capture { name := "collection" }] ["collection"] []
         (Algorithm.builtin .countBuiltin)
       = .ok (.call (.resolve callee) [.param "collection"]) := by
   rfl
 
-/-- An alias has NO lifting signature and NO callee kind of its OWN: every callable question —
-lifting, forwarding, the roles of a call's arguments — is asked of its normalized target. -/
+/-- An alias has NO lifting signature, NO callee kind and NO parameter patterns of its OWN, so in
+these specification functions every callable question — lifting, forwarding, the roles of a
+call's arguments — must be asked of its normalized target (that callers do so is the source of
+the surface pass and of the `partial` `resolveAliasTarget`). -/
 theorem alias_has_no_callable_surface_of_its_own (p : Option ScopeCtx) (op : List Expr)
     (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) :
     (Algorithm.alias p op pr target id).liftingSignature? = none
@@ -1428,23 +1128,35 @@ theorem alias_has_no_callable_surface_of_its_own (p : Option ScopeCtx) (op : Lis
       ∧ (Algorithm.alias p op pr target id).parameterPatterns = [] :=
   ⟨rfl, rfl, rfl⟩
 
-/-- WRITTEN `open A` NEVER TURNS A CALLABLE ALIAS INTO A NAMESPACE: an alias is never an `open`
-provider, whatever its target. -/
-theorem alias_is_never_an_open_provider (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) :
-    (Algorithm.alias p op pr target id).requiresArguments = true := rfl
+/-- WRITTEN `open A` NEVER TURNS A CALLABLE ALIAS INTO A NAMESPACE: whatever its target, when
+the open target resolves to an alias, the production `resolveOpen` refuses it with
+`illegalInOpen` (its gate reads `Algorithm.requiresArguments`, `true` for every alias), leaving
+the state the resolution reached. (Strengthened from the `requiresArguments` fact alone,
+R8/X-13; the resolution `resolveAlgForOpen` itself is `partial`.) -/
+theorem alias_is_never_an_open_provider (e : Expr) (ctx : EvalCtx) (p : Option ScopeCtx)
+    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
+    (state state' : EvalState)
+    (h : (resolveAlgForOpen e ctx).runState state = (.ok (.alias p op pr target id), state')) :
+    (resolveOpen e ctx).runState state
+      = (.error (Error.illegalInOpen
+          (openTargetRequiresArgumentsMessage (openExprName e) (.alias p op pr target id))), state') := by
+  show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
+  simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
+  rw [h]
+  rfl
 
-/-- THE CACHE KEY IS THE ALIAS BINDING'S: the zero-argument property cache key reads the BINDING —
-never the callable it resolves to — so a bare read of an alias `A` is keyed by `A`'s own property,
-an entry separate from its target's, while its value is the target's zero-supply demand. -/
-theorem alias_cache_key_is_alias_binding (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+/-- THE CACHE KEY CARRIES THE BINDING'S NAME: `zeroArgPropertyCacheKey` reads the BINDING —
+never the callable it resolves to — so two differently named bindings (an alias `A` and its
+target) get different keys. (That a bare read of an alias then evaluates its target's zero-supply
+demand under `A`'s entry is evaluator behaviour, guard-checked.) -/
+theorem zero_arg_cache_key_carries_the_binding_name (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (alias target : PropDef) (ctx : EvalCtx) (env : ValEnv) (distinct : alias.name ≠ target.name) :
     (zeroArgPropertyCacheKey k owner alias ctx env).propertyName = alias.name
       ∧ zeroArgPropertyCacheKey k owner alias ctx env ≠ zeroArgPropertyCacheKey k owner target ctx env :=
   ⟨rfl, fun same => distinct (congrArg ZeroArgPropertyCacheKey.propertyName same)⟩
 
 /-- `F(x) = x`, `A = F`, `B = A`, `C = B` and the family `Fam(0) = 0` / `Fam(n) = n` with its alias
-`AF = Fam`: the static chains the next two laws normalize. -/
+`AF = Fam`: the static chains the next two EXAMPLES normalize. -/
 private def aliasLawRoot : Algorithm :=
   algPrivate [] []
     [ ("F", alg ["x"] [] [] [param "x"])
@@ -1454,163 +1166,44 @@ private def aliasLawRoot : Algorithm :=
     , ("AF", .alias none [] [] (.resolve "Fam")) ]
     []
 
-/-- AN ALIAS CHAIN NORMALIZES: `C -> B -> A -> F` resolves to the one callable `F` — its single
+/-- EXAMPLE over the STATIC chase `staticAliasTarget?` (not the evaluator's `partial`
+`resolveAliasTarget`): the chain `C -> B -> A -> F` reaches the one callable `F` — its single
 parameter `x` — without copying a signature into any link. -/
-theorem alias_chain_normalizes :
+theorem static_alias_chain_example_reaches_its_target :
     ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "B"))).map
         fun target => target.parameterPatterns.length) = some 1
       ∧ (staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "B"))).isSome := by
   decide
 
-/-- ALIAS ROLES ARE TARGET ROLES: a call through `AF = Fam` takes the family's roles (every argument
-a value slot), a call through `A = F` the user callable's (neutral) — the kind is read off the
-normalized target, never off the alias. -/
-theorem alias_roles_are_target_roles :
+/-- EXAMPLE over the static chase: the role read off the normalized target of `AF = Fam` is the
+family's (position 0 a value slot) and that of `A = F` the user callable's (neutral) — an alias
+has no kind of its own (`alias_has_no_callable_surface_of_its_own`). -/
+theorem static_alias_target_roles_example :
     ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "Fam"))).bind
         Algorithm.liftingCalleeKind?).map (fun kind => liftingSlotRole kind 0 true) = some .value
       ∧ ((staticAliasTarget? 3 [aliasLawRoot] (.alias none [] [] (.resolve "F"))).bind
         Algorithm.liftingCalleeKind?).map (fun kind => liftingSlotRole kind 0 true) = some .callable := by
   decide
 
-/-- A FIXED parameter binds its one argument unchanged: `Id((1, 2))` binds
-the sequence whole. -/
-theorem collector_fixed_parameter_binds_value_unchanged (items : List Result) :
-    runEvalM (bindParameterPatternList
-      [.capture { name := "x", kind := .normal }]
-      [{ value? := some (.sequenceValue items) : ParameterPatternInput }]
-      false)
-      = .ok { argEnv := [("x", .sequenceValue items)], countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern,
-    runEvalM,
-    ]
-  rfl
-
 /-
-## Deconstruction bridge laws (unpacking receiver)
+## Deconstruction (unpacking receiver)
 
 Assignment deconstruction (`x, *y, z = RHS`) is parser-elaborated into a helper
 whose single parameter is the UNPACKING RECEIVER (`.unpacking [captures]`) applied
-to the right-hand side value as one argument. Binding through the real
-`bindParameterPatternList`, that pattern OPENS its single received value one level
-(`Result.spreadItems`: a sequence or a list opens, any other value is one item)
-and matches the items element-by-element — so `x, y, z = A` unpacks a stored
-sequence or list value `A`. This opening is deconstruction-specific: the written
-structural patterns open only their own kind.
-
-Call parameter binding, by contrast, is a flat capture list
-(`[.capture x, .capture y]`) bound over the SUPPLIED argument supply, which does NOT
-open a single sequence argument. The two groups of laws below pin that contrast over
-the real binder: deconstruction (the `.unpacking` receiver) opens, while a call
-(the flat capture list) preserves the single argument.
-
-The single supplied item is the value `A` (a stored sequence value).
+to the right-hand side value as one argument. That pattern OPENS its single received value
+one level (`Result.spreadItems`: a sequence or a list opens, any other value is one item) and
+matches the items element-by-element — so `x, y, z = A` unpacks a stored sequence or list value
+`A`. This opening is deconstruction-specific: the written structural patterns open only their
+own kind. In production the unpacking level is `bindNeedOne`'s `.unpack` arm, whose nested level
+is `bindNeedLevel` itself (`nested_unpack_level_is_bind_need_level`), after the right-hand side's
+VALUE demand; a flat call pattern binds whole supply cells
+(`call_binder_rejects_unaccepted_supply_before_any_effect`,
+`need_level_sources_around_the_collector`). The receiver is not a written structural pattern —
+it has no delimiter to select a kind — so it opens both kinds alike; the end-to-end contrast
+(deconstruction opens a lone value, a call keeps it whole) concerns the `partial` evaluator and is
+guard-checked (CoreTests `ListValues`, `ExplicitValueOpening`). These theorems live with the
+production binder laws; this section only states the rule.
 -/
-
--- Calls: a flat capture list does NOT open a single sequence argument.
-
-/-- `Add(A)`: one supplied item (the stored sequence value) against two fixed
-parameters is an arity mismatch. The call binder does not open `A`. -/
-theorem call_fixed_single_sequence_rejected :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "x", kind := .normal }, .capture { name := "y", kind := .normal }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .error (Error.arityMismatch 2 1) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
-  rfl
-
-/-- `G(A)` mixed fixed/variadic call: one supplied item, so fixed allocation
-gives `first` the whole stored sequence value and `rest` collects the empty
-segment `[]` — the collector collects only the segment left AFTER fixed
-allocation, and a fixed parameter binds its slot whole. -/
-theorem call_variadic_single_sequence_preserved :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("first", Result.sequenceValue [Result.atom 1, Result.atom 2]),
-                         ("rest", Result.listValue [])],
-              countedParamEnv := [("rest", (Result.listValue [], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM,
-    collectSegment]
-  rfl
-
--- Assignment deconstruction binds through its UNPACKING RECEIVER: the elaborated
--- helper's single parameter pattern `.unpacking [targets]`, applied to the one
--- shared right-hand-side value, binds the targets against that value's ONE-LEVEL
--- items (`Result.spreadItems`): a lone sequence or list opens one level and any
--- other value is one item. It is not a written structural pattern — it has no
--- delimiter to select a kind — so it opens both kinds alike.
-
-/-- `x, y = A`: the unpacking receiver opens the single right-hand-side value,
-binding `x = 1`, `y = 2`. -/
-theorem deconstruct_fixed_single_sequence_opens :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "x", kind := .normal },
-                     .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
-              countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.spreadItems, Result.toItems]
-  rfl
-
-/-- `first, *rest = A`: the unpacking receiver opens `A`, so `first = 1` and
-`rest` COLLECTS the matched items as one exact immutable list `[2, 3]`. -/
-theorem deconstruct_collecting_single_sequence_opens :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "first", kind := .normal },
-                     .capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
-        true)
-      = .ok { argEnv := [("first", Result.atom 1),
-                         ("rest", Result.listValue [Result.atom 2, Result.atom 3])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
-    collectSegment]
-  rfl
-
-/-- `x, *rest = 1`: a scalar right-hand side is ONE item for the unpacking
-receiver (never a structure it opens): `x = 1` and `rest` collects the empty
-list. -/
-theorem deconstruct_scalar_is_one_item :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "x", kind := .normal },
-                     .capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.atom 1) }]
-        true)
-      = .ok { argEnv := [("x", Result.atom 1), ("rest", Result.listValue [])],
-              countedParamEnv := [("rest", (Result.listValue [], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
-    collectSegment]
-  rfl
-
-/-- The unpacking receiver DEMANDS its one right-hand-side value like any
-pattern that opens a value: a slot with no value fails with its OWN recorded
-outcome — a right-hand side without output is that `missingOutput`, never a
-spread failure (no spread is involved). -/
-theorem deconstruct_valueless_right_hand_side_is_its_own_failure :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "x", kind := .normal },
-                     .capture { name := "y", kind := .normal }]]
-        [{ value? := none, error? := some Error.missingOutput }]
-        true)
-      = .error Error.missingOutput := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM]
-  rfl
 
 /-
 ## List bridge laws (exact list values)
@@ -1623,7 +1216,7 @@ assignment deconstruction opens its right-hand side with), the LIST pattern
 RECEIVER position view (`Result.projectionItems` — the selected element itself is
 never opened), and the post-binding builtin collection view open one list
 boundary in their documented contexts. The laws below pin
-each decision over the real model, mirroring the sequence laws above.
+each decision for these total views, mirroring the sequence laws above.
 -/
 
 /-- Spread opens exactly one list boundary: `[1, 2, 3]*` supplies the items. -/
@@ -1637,8 +1230,9 @@ theorem spreadItems_empty_list : (Result.listValue []).spreadItems = [] := rfl
 theorem spreadItems_sequenceValue (xs : List Result) :
     (Result.sequenceValue xs).spreadItems = xs := rfl
 
-/-- The non-spread item view keeps a list OPAQUE: a list is one item, so
-value boundaries and call binding never open it. (Postfix selection opens its
+/-- The non-spread item view keeps a list OPAQUE: a list is one item (the boundary helper
+`countedTopLevelValues` falls back to this view; Model-C call binding binds whole supply cells
+and never consults it). (Postfix selection opens its
 RECEIVER's positions through `projectionItems` and the post-binding builtin
 collection view opens the bound list through `builtinCollectionItems`, not
 through `toItems` — see `projectionItems_listValue` and
@@ -1728,6 +1322,14 @@ emits zero values, and the selected value's origin is forgotten. No selection
 form opens what it selects — only the spread marker (`Result.spreadItems`)
 does, exactly one boundary. Higher-order callback items are selected values
 under the same rule (`countedSequenceCallbackItem`).
+
+EVIDENCE. These laws are about the TOTAL helpers `Result.select?`, `Result.projectionItems`,
+`Result.valueCount`, `Result.spreadItems`, `reCountValueBoundary`, `evalFirstCounted` /
+`evalLastCounted`, `countedSequenceCallbackItem` and `projectInvokingSlot`, and — in § Variadic
+postfix selection below — the selection core `selectPosition` / `selectWith` / `selectionResult`.
+The `.index` arm of `evalCounted`, the `first`/`last` builtin dispatch (with its empty policy,
+`applySequenceBuiltinEmptyPolicy`) and the callback dispatch are `partial`; that they apply these
+helpers is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
 -/
 
 /-- `select?` never rebuilds, normalizes, or opens the selected element: it
@@ -1742,8 +1344,8 @@ theorem select_sequence_element_stays_sequence (xs ys : List Result) :
       = some (Result.sequenceValue xs) := by
   simp [Result.select?, Result.projectionItems, Result.toItems]
 
-/-- A selected `()` element is the empty sequence value itself, which the
-value boundary counts as ZERO emitted values — whatever route selected it. -/
+/-- A `()` element selected by `select?` is the empty sequence value itself, whose
+`Result.valueCount` is ZERO. -/
 theorem select_empty_element_recounts_to_zero (ys : List Result) :
     (Result.select? (Result.sequenceValue (Result.sequenceValue [] :: ys)) 0).map
         Result.valueCount
@@ -1758,20 +1360,10 @@ theorem select_empty_list_element_recounts_to_one (ys : List Result) :
       = some 1 := by
   simp [Result.select?, Result.projectionItems, Result.toItems, Result.valueCount]
 
-/-- The counted result of a selection is the value-boundary re-count of the
-stored element — the exact pair the `.index` arm of `evalCounted` emits
-(`(selected, Result.valueCount selected)`), which is what `reCountValueBoundary`
-produces for every other value boundary WHATEVER count the value carried
-before: the selected value's origin is forgotten. (The `.index` arm itself
-lives in the partial evaluator block; CoreTests `SelectionValueBoundary` pins
-it executably.) -/
-theorem select_is_a_value_boundary (selected : Result) (n : Nat) :
-    reCountValueBoundary (selected, n) = (selected, Result.valueCount selected) := rfl
-
-/-- `first(A)` is the selection `A[0]` under the same value boundary: for every
-non-empty collection view `x :: xs`, `evalFirstCounted` yields exactly
-`(x, valueCount x)` — the pair the `.index` arm of `evalCounted` emits for
-`select? (sequenceValue (x :: xs)) 0`. -/
+/-- The helper `evalFirstCounted` on a non-empty view `x :: xs` yields `(x, valueCount x)`, and
+`select?` at position 0 of that view is `x`: two facts about total helpers sharing `x`. (The
+relation of `first` to the selection core itself is `first_is_selection_at_zero`; this theorem
+is subsumed by `first_is_select_zero_total`.) -/
 theorem first_is_select_zero (x : Result) (xs : List Result) (s : EvalState) :
     (evalFirstCounted (x :: xs)).run s
       = (Except.ok ((x, Result.valueCount x), s) : Except Error (CountedResult × EvalState))
@@ -1780,9 +1372,9 @@ theorem first_is_select_zero (x : Result) (xs : List Result) (s : EvalState) :
   · rfl
   · simp [Result.select?, Result.projectionItems, Result.toItems]
 
-/-- `last(A)` is the selection `A[count - 1]` under the same value boundary:
-for every non-empty collection view `xs ++ [x]`, `evalLastCounted` yields
-`(x, valueCount x)` and `select?` at the last position yields `x`. -/
+/-- The helper `evalLastCounted` on a non-empty view `xs ++ [x]` yields `(x, valueCount x)`, and
+`select?` at the last position of that view is `x` (subsumed by `last_is_select_last_total`; the
+relation to the selection core is `last_is_selection_at_count_minus_one`). -/
 theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
     (evalLastCounted (xs ++ [x])).run s
       = (Except.ok ((x, Result.valueCount x), s) : Except Error (CountedResult × EvalState))
@@ -1792,19 +1384,23 @@ theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
     rfl
   · simp [Result.select?, Result.projectionItems, Result.toItems]
 
-/-- `first` and `last` ARE selections (SEQ-04), so on an empty collection they
-report the selection's own missing position, `badIndex` — the outcome of
-`()[0]` — and never a count of their own (Q-27, decided 2026-10-05). -/
+/-- `first` and `last` ARE selections (SEQ-04): the helpers' empty arms report the selection's
+own missing position, `badIndex` — the outcome of `()[0]` — never a count of their own (Q-27,
+decided 2026-10-05). In production the `first`/`last` builtins reach this through their empty
+policy first (`applySequenceBuiltinEmptyPolicy` reports `badIndex` with a "selects from an empty
+collection" context before the helper runs; a source fact pinned by CoreTests `ErrorTaxonomy`). -/
 theorem first_empty_is_badIndex (s : EvalState) :
     (evalFirstCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
+/-- The `last` twin of `first_empty_is_badIndex`. -/
 theorem last_empty_is_badIndex (s : EvalState) :
     (evalLastCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
-/-- SEQ-04 made TOTAL (Q-27, decided 2026-10-05): over EVERY collection view,
-the empty one included, `first(A)` is the selection `A[0]` — the same element
-under the same value boundary, or, when the view names no position 0, the same
-`badIndex` the `.index` arm of `evalCounted` reports for `select? … = none`. -/
+/-- SEQ-04 made TOTAL (Q-27, decided 2026-10-05), at the helper level: over EVERY collection
+view, the empty one included, `evalFirstCounted` is `select?` at position 0 under the same value
+boundary, or the `badIndex` that `selectPosition` reports when `select?` names no position
+(`selectPosition_past_the_view_is_badIndex`). The relation to the selection core is
+`first_is_selection_at_zero`. -/
 theorem first_is_select_zero_total (items : List Result) (s : EvalState) :
     (evalFirstCounted items).run s
       = (match Result.select? (Result.sequenceValue items) 0 with
@@ -1815,11 +1411,10 @@ theorem first_is_select_zero_total (items : List Result) (s : EvalState) :
   | nil => rfl
   | cons x xs => simp [evalFirstCounted, Result.select?, Result.projectionItems, Result.toItems]; rfl
 
-/-- `last(A)` is the selection `A[count(A) - 1]` over EVERY collection view, the
-empty one included: on the empty view the index is `-1`, which the `.index` arm
-rejects as `badIndex` before selecting, and `last` reports that same `badIndex`;
-on every other view both select the last element under the same value
-boundary. -/
+/-- `evalLastCounted` over EVERY collection view, the empty one included: `badIndex` on the empty
+view (where the selection core rejects the index `-1`, `selectPosition_negative_is_badIndex`),
+otherwise `select?` at the last position under the same value boundary. The relation to the
+selection core is `last_is_selection_at_count_minus_one`. -/
 theorem last_is_select_last_total (items : List Result) (s : EvalState) :
     (evalLastCounted items).run s
       = (if items.length = 0 then Except.error Error.badIndex
@@ -1834,10 +1429,10 @@ theorem last_is_select_last_total (items : List Result) (s : EvalState) :
         List.getLast?_eq_getElem?]
       rfl
 
-/-- The empty policy follows what a builtin IS (Q-27): `first` and `last` select,
-so their empty collection names no position (`badIndex`); `min`, `max` and
-`avg` aggregate, so theirs is outside the domain (`illegalInEval`). No policy
-is decided by a builtin's identity at run time. -/
+/-- The empty policy follows what a builtin IS (Q-27): the metadata gives `first` and `last`
+the selection policy (their empty collection names no position, `badIndex`) and `min`, `max` and
+`avg` the aggregate policy (outside the domain, `illegalInEval`). `applySequenceBuiltinEmptyPolicy`
+branches on this metadata policy; the builtin only names the message. -/
 theorem empty_policy_follows_what_the_builtin_is :
     (sequenceBuiltinMetadata? .firstBuiltin).map (·.emptyPolicy) = some .requireSelectablePosition
     ∧ (sequenceBuiltinMetadata? .lastBuiltin).map (·.emptyPolicy) = some .requireSelectablePosition
@@ -1846,11 +1441,11 @@ theorem empty_policy_follows_what_the_builtin_is :
     ∧ (sequenceBuiltinMetadata? .avgBuiltin).map (·.emptyPolicy) = some .requireAnyItem :=
   ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- Q-06 (decided 2026-10-05): an invoking builtin slot — a callback or a loop
-step — whose argument has no CALLABLE identity is `notAnAlgorithm`, whatever
-the consumer; a slot with callable identity is that callable, kept for the
-ordinary binder. The projection is reached only when an invocation is
-required, and it reads no VALUE. -/
+/-- Q-06 (decided 2026-10-05): `projectInvokingSlot` — the projection the callback and loop-step
+slots call (`expectPreparedSequenceBuiltinAlgorithmSuffixArg`, the `while`/`repeat` steps; a
+source fact pinned by CoreTests `ErrorTaxonomy`) — makes an argument with no CALLABLE identity
+`notAnAlgorithm` named by its role, and reads no VALUE (its input is the slot's optional
+callable). -/
 theorem invoking_slot_without_callable_is_notAnAlgorithm (role : String) (s : EvalState) :
     (projectInvokingSlot role none).run s
       = (Except.error (Error.notAnAlgorithm role) : Except Error (Algorithm × EvalState)) := rfl
@@ -1867,8 +1462,9 @@ theorem invoking_slot_roles_follow_the_shared_vocabulary :
       invokingSlotRole .whileBuiltin] =
     ["map transform", "filter predicate", "reduce reducer", "repeat step", "while step"] := rfl
 
-/-- A higher-order callback item is a selected value: whatever count the
-iteration supplied, the callback observes the value-boundary re-count. -/
+/-- The helper the callback builtins apply to each iterated item (`countedSequenceCallbackItem`)
+re-counts it at the ordinary value boundary, whatever count the iteration supplied. (That the
+`partial` callback dispatch applies it is a source fact.) -/
 theorem callback_item_is_a_value_boundary (item : Result) (n : Nat) :
     countedSequenceCallbackItem (item, n) = (item, Result.valueCount item) := rfl
 
@@ -1910,6 +1506,15 @@ theorem positional_view_is_shared (v : Result) :
     builtinCollectionItems v = Result.projectionItems v := by
   cases v <;> rfl
 
+/-- THE ONE-LEVEL VIEWS ARE ONE FUNCTION (Q-66 "view equality", R8/X-13): the spread view
+`Result.spreadItems` — what an explicit spread and the deconstruction unpacking receiver open —
+IS the positional view, hence (`positional_view_is_shared`) the post-binding collection view, for
+every value. (That each evaluator consumer reads its view is a source fact; the C# twins agree by
+inspection and tests.) -/
+theorem spread_view_is_the_positional_view (v : Result) :
+    Result.spreadItems v = Result.projectionItems v := by
+  cases v <;> rfl
+
 /-- KatLang's `count` counts values, not their internal components: a string is ONE
 position — the empty string included — and is never decomposed into characters,
 code units, code points or graphemes. -/
@@ -1919,10 +1524,7 @@ theorem a_string_is_one_position (s : String) :
 theorem the_empty_string_is_one_position :
     (Result.projectionItems (.str "")).length = 1 := rfl
 
-/-- Numbers and Booleans are each one position. -/
-theorem a_number_is_one_position (n : Int) :
-    Result.projectionItems (.atom n) = [.atom n] := rfl
-
+/-- A Boolean is one position, like a number (`projectionItems_atom`). -/
 theorem a_boolean_is_one_position (b : Bool) :
     Result.projectionItems (.bool b) = [.bool b] := rfl
 
@@ -1931,9 +1533,9 @@ theorem empty_collections_have_no_positions :
     Result.projectionItems (.sequenceValue []) = [] ∧ Result.projectionItems (.listValue []) = [] :=
   ⟨rfl, rfl⟩
 
-/-- A list's positions are its IMMEDIATE elements, never their components and never
-recursively flattened: a list of strings counts its strings, a nested list is one
-position. -/
+/-- Length corollary of `builtinCollectionItems_list` (whose identity proves that a list's
+positions are its IMMEDIATE elements, never their components, never recursively flattened):
+a list counts its elements, a list of strings its strings. -/
 theorem a_list_counts_its_immediate_elements (xs : List Result) :
     (builtinCollectionItems (.listValue xs)).length = xs.length := rfl
 
@@ -2104,39 +1706,52 @@ theorem selectWith_runs_as_its_trace {α : Type} (demand : α → EvalM Result) 
                         selected state state' state'' hd hp, ih]
                       simp [selectionTrace, hd, hp]
 
-/-- LATER SELECTORS ARE NOT DEMANDED AFTER A FAILURE: once a selector fails, the run —
-its error AND its final state — is exactly the run of that selector alone, whatever
-selectors follow it, so no later demand contributes an effect. -/
-theorem selectWith_stops_at_first_failure {α : Type} (demand : α → EvalM Result) (receiver : Result)
-    (cell : α) (rest : List α) (state : EvalState) (err : Error) (final : EvalState)
-    (hfail : (selectWith demand receiver [cell]).runState state = (.error err, final)) :
-    (selectWith demand receiver (cell :: rest)).runState state = (.error err, final) := by
-  cases hd : (demand cell).runState state with
-  | mk r state' =>
-      cases r with
-      | error e =>
-          rw [selectWith_failing_demand_ends_it demand receiver cell [] e state state' hd] at hfail
-          rw [selectWith_failing_demand_ends_it demand receiver cell rest e state state' hd]
-          exact hfail
-      | ok value =>
-          cases hp : (selectPosition receiver value).runState state' with
-          | mk r' state'' =>
-              cases r' with
-              | error e =>
-                  rw [selectWith_failing_position_ends_it demand receiver cell [] value e state state'
-                    state'' hd hp] at hfail
-                  rw [selectWith_failing_position_ends_it demand receiver cell rest value e state state'
-                    state'' hd hp]
-                  exact hfail
-              | ok selected =>
-                  rw [selectWith_successful_selector_continues demand receiver cell [] value selected
-                    state state' state'' hd hp] at hfail
-                  simp [selectWith] at hfail
-                  cases hfail
+private theorem selection_trace_stops_at_a_failing_prefix {α : Type} (demand : α → EvalM Result)
+    (receiver : Result) (cells rest : List α) (state : EvalState) (err : Error) (final : EvalState)
+    (hfail : selectionTrace demand receiver cells state = (.error err, final)) :
+    selectionTrace demand receiver (cells ++ rest) state = (.error err, final) := by
+  induction cells generalizing state with
+  | nil => simp [selectionTrace] at hfail
+  | cons cell more ih =>
+      simp only [List.cons_append, selectionTrace] at hfail ⊢
+      cases hd : (demand cell).runState state with
+      | mk r state' =>
+          cases r with
+          | error e => simp only [hd] at hfail ⊢; exact hfail
+          | ok value =>
+              simp only [hd] at hfail ⊢
+              cases hp : (selectPosition receiver value).runState state' with
+              | mk r' state'' =>
+                  cases r' with
+                  | error e => simp only [hp] at hfail ⊢; exact hfail
+                  | ok selected =>
+                      simp only [hp] at hfail ⊢
+                      cases ht : selectionTrace demand receiver more state'' with
+                      | mk tr tf =>
+                          rw [ht] at hfail
+                          cases tr with
+                          | error e =>
+                              simp [Except.map] at hfail
+                              obtain ⟨rfl, rfl⟩ := hfail
+                              rw [ih state'' ht]
+                              rfl
+                          | ok vs => simp [Except.map] at hfail
 
-/-- With a pure demand, the selected values are the stored elements at the supplied
-positions, in SUPPLIED order, repetitions included — `Data[2, 0, 2]` is
-`(30, 10, 30)` — and the run touches no state. -/
+/-- LATER SELECTORS ARE NOT DEMANDED AFTER A FAILURE: once a run of supplied selectors fails,
+appending further selectors changes nothing — the run's error AND its final state are exactly
+those of the failing prefix, whatever selectors follow it, so no later demand contributes an
+effect (generalized from a failing HEAD selector to any failing prefix, R8/X-13). -/
+theorem selectWith_stops_at_first_failure {α : Type} (demand : α → EvalM Result) (receiver : Result)
+    (cells rest : List α) (state : EvalState) (err : Error) (final : EvalState)
+    (hfail : (selectWith demand receiver cells).runState state = (.error err, final)) :
+    (selectWith demand receiver (cells ++ rest)).runState state = (.error err, final) := by
+  rw [selectWith_runs_as_its_trace] at hfail ⊢
+  exact selection_trace_stops_at_a_failing_prefix demand receiver cells rest state err final hfail
+
+/-- With the fixed pure demand that reads each `Nat` as its whole-number selector, the selected
+values are the stored elements at the supplied positions, in SUPPLIED order, repetitions
+included — `Data[2, 0, 2]` selects `30, 10, 30` (whose `selectionResult` is `(30, 10, 30)`) —
+and the run touches no state. -/
 theorem selectWith_pure_preserves_order_and_repetition (receiver : Result)
     (positions : List Nat) (s : EvalState)
     (h : ∀ i ∈ positions, i < (Result.projectionItems receiver).length) :
@@ -2175,6 +1790,31 @@ theorem selected_empty_values_stay_elements :
     selectionResult [.sequenceValue [], .listValue []]
       = (.sequenceValue [.sequenceValue [], .listValue []], 1) := rfl
 
+/-- SELECTION IS A VALUE BOUNDARY, over the production selection core: for EVERY demand
+channel, when one supplied selector's demand yields the whole number `i` naming a stored
+position of the receiver, the selection core's steps (3) and (4) — `selectWith` over that one
+cell, then `selectionResult` — give exactly the value-boundary re-count of the STORED element,
+`reCountValueBoundary (selected, n)` for every count `n` the element carried: the stored value
+itself with `Result.valueCount`, its origin forgotten. The `.index` arm of `evalCounted`
+instantiates `demand` with `demandNeed` over the formed selector supply and demands the receiver
+first; that arm is `partial`, so the instantiation (and that every evaluator selection route uses
+this core) is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
+(Strengthened from a restatement of `reCountValueBoundary_recounts` that never mentioned
+selection, R8/X-13.) -/
+theorem select_is_a_value_boundary {α : Type} (demand : α → EvalM Result)
+    (receiver selected : Result) (cell : α) (i : Int) (n : Nat)
+    (hi : 0 ≤ i) (h : Result.select? receiver i.toNat = some selected) (s s' : EvalState)
+    (hd : (demand cell).runState s = (.ok (.atom i), s')) :
+    (do let chosen <- selectWith demand receiver [cell]; pure (selectionResult chosen)
+      : EvalM CountedResult).runState s
+      = (.ok (reCountValueBoundary (selected, n)), s') := by
+  have hp := selectPosition_selects_a_named_position receiver i selected hi h s'
+  have hrun := selectWith_successful_selector_continues demand receiver cell [] (.atom i) selected s s' s' hd hp
+  show ((selectWith demand receiver [cell]).runState >>= fun a => _) s = _
+  simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
+  rw [hrun]
+  rfl
+
 /-- BRACKETS SOLVE THE INVOCATION AMBIGUITY; THEY DO NOT REMOVE THE ORDINARY
 CONSEQUENCES OF SINGLETON NORMALIZATION: selecting one sequence-valued element gives
 that sequence itself, so a spread opens IT (`[Data[0]*]` with `Data = [(10, 20), 30]`
@@ -2210,9 +1850,12 @@ theorem selectionOf_single (receiver selector : Result) (s : EvalState) :
             StateT.pure, h]
 
 /-- `first(v) ≡ v[0]` for EVERY evaluated receiver value `v` — a scalar, a string
-(`''` included), a sequence, a list, empty or not: the same value under the same value
-boundary, or the same `badIndex` when `v` has no positions. A law about one value in
-hand, not a rewrite of effectful expressions: `first(BuildData())` invokes once. -/
+(`''` included), a sequence, a list, empty or not — at the level of the helpers: the `first`
+helper over `v`'s collection view equals the selection core over `v` with the selector `0`
+(`selectionOf`, the pure-demand pipeline): the same value under the same value boundary, or the
+same `badIndex` when `v` has no positions. A law about one value in hand, not a rewrite of
+effectful expressions (`first(BuildData())` invokes once); the builtin's empty policy, which
+reports first on an empty collection, and the `partial` dispatch are guard-checked. -/
 theorem first_is_selection_at_zero (v : Result) (s : EvalState) :
     (evalFirstCounted (builtinCollectionItems v)).runState s = (selectionOf v [.atom 0]).runState s := by
   rw [positional_view_is_shared, selectionOf_single]
@@ -2224,11 +1867,12 @@ theorem first_is_selection_at_zero (v : Result) (s : EvalState) :
       rw [selectPosition_selects_a_named_position v 0 x (by decide) (by simp [Result.select?, hv]) s]
       rfl
 
-/-- `last(v) ≡ v[count(v) - 1]` for EVERY evaluated receiver value `v`: on a value with
-no positions the index is `-1`, which selection rejects as `badIndex` — exactly what
-`last` reports; otherwise both select the last element under the same value boundary.
-Same caveat: a law about one value in hand (`last(BuildData())` invokes once, while
-`BuildData()[count(BuildData()) - 1]` invokes twice). -/
+/-- `last(v) ≡ v[count(v) - 1]` for EVERY evaluated receiver value `v`, at the level of the
+helpers: on a value with no positions the index is `-1`, which the selection core rejects as
+`badIndex` — exactly what the `last` helper reports; otherwise both select the last element
+under the same value boundary. Same caveats: a law about one value in hand
+(`last(BuildData())` invokes once, while `BuildData()[count(BuildData()) - 1]` invokes twice),
+and the builtin's empty policy and `partial` dispatch are guard-checked. -/
 theorem last_is_selection_at_count_minus_one (v : Result) (s : EvalState) :
     (evalLastCounted (builtinCollectionItems v)).runState s
       = (selectionOf v [.atom (Int.ofNat (builtinCollectionItems v).length - 1)]).runState s := by
@@ -2275,13 +1919,16 @@ theorem spreadItems_extends_structureItems (v : Result) :
 ## Structural patterns select the value kind they destructure (September 2026)
 
 `Result.sequencePatternItems?` and `Result.listPatternItems?` are the ONE rules
-by which a structural pattern opens the value its slot supplies, shared by the
-ordinary binder (`bindParameterPattern`), the counted callback binder
-(`bindCountedParameterPattern`, a `partial def`, pinned by the guards in
-`CoreTests/StructuralPatterns.lean`) and the family matchers. A sequence
+by which a structural pattern opens the value its slot supplies: the production Model-C
+binder `bindNeedOne` reads them (`nested_sequence_level_is_bind_need_level`,
+`nested_list_level_is_bind_need_level`; a structural CLAUSE pattern reaches it through
+`NeedPattern.ofClause`). A sequence
 pattern `(…)` opens a SEQUENCE value only and a list pattern `[…]` a LIST value
 only; neither opens the other kind, and no scalar is a one-item structure — the
-only pattern that takes a value whole is a bare binder.
+only pattern that takes a value whole is a bare binder. The view laws below are production
+theorems; the binder's outcomes on a wrong kind or a wrong length (the binding's kind mismatch,
+the group's arity error, a family's non-match) are guard-checked in
+`CoreTests/StructuralPatterns.lean`.
 -/
 
 theorem sequence_pattern_items_sequence (xs : List Result) :
@@ -2314,148 +1961,116 @@ theorem structural_pattern_kinds_are_disjoint (v : Result) :
     Result.sequencePatternItems? v = none ∨ Result.listPatternItems? v = none := by
   cases v <;> simp [Result.sequencePatternItems?, Result.listPatternItems?]
 
-/-- A scalar is never a one-item structure: `P((x, *rest))` rejects the scalar `n`
-with the pattern's kind mismatch through the binder itself (formerly the scalar
-one-item fallback bound `x = n`, `rest = []`). -/
-theorem nested_sequence_pattern_rejects_scalar (n : Int) :
-    runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "x", kind := .normal },
-                         .capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.atom n) }]
-        false)
-      = .error (structuralPatternKindMismatch
-          (.sequenceValue [.capture { name := "x", kind := .normal },
-                           .capture { name := "rest", kind := .collecting }])
-          (Result.atom n)) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
-  rfl
-
-/-- A sequence pattern never opens a list: `P((x, y))` rejects `[a, b]` with its
-kind mismatch (formerly it opened the list). -/
-theorem nested_sequence_pattern_rejects_list (a b : Result) :
-    runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "x", kind := .normal },
-                         .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.listValue [a, b]) }]
-        false)
-      = .error (structuralPatternKindMismatch
-          (.sequenceValue [.capture { name := "x", kind := .normal },
-                           .capture { name := "y", kind := .normal }])
-          (Result.listValue [a, b])) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
-  rfl
-
-/-- The list pattern `[x]` binds the one element of a one-element list — the
-one-element structural pattern (`Only([x])` on `[[7]]` binds `x = [7]`). -/
-theorem nested_list_pattern_binds_one_element (v : Result) :
-    runEvalM (bindParameterPatternList
-        [.listValue [.capture { name := "x", kind := .normal }]]
-        [{ value? := some (Result.listValue [v]) }]
-        false)
-      = .ok { argEnv := [("x", v)], countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.listPatternItems?, ParameterPattern.minimumSuppliedSlots]
-  rfl
-
-/-- A list pattern never opens a sequence: `P([x, y])` rejects `(a, b)` with its
-kind mismatch. -/
-theorem nested_list_pattern_rejects_sequence (a b : Result) :
-    runEvalM (bindParameterPatternList
-        [.listValue [.capture { name := "x", kind := .normal },
-                     .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.sequenceValue [a, b]) }]
-        false)
-      = .error (structuralPatternKindMismatch
-          (.listValue [.capture { name := "x", kind := .normal },
-                       .capture { name := "y", kind := .normal }])
-          (Result.sequenceValue [a, b])) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.listPatternItems?, ParameterPattern.minimumSuppliedSlots]
-  rfl
-
-/-- A list collector `[*xs]` collects every list cardinality exactly: `[]`,
-`[v]` and `[v, w]` bind `xs = []`, `[v]`, `[v, w]`. -/
-theorem nested_list_collector_collects_every_cardinality (v w : Result) :
-    runEvalM (bindParameterPatternList
-        [.listValue [.capture { name := "xs", kind := .collecting }]]
-        [{ value? := some (Result.listValue []) }] false)
-      = .ok { argEnv := [("xs", Result.listValue [])],
-              countedParamEnv := [("xs", (Result.listValue [], 1))], algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.listValue [.capture { name := "xs", kind := .collecting }]]
-        [{ value? := some (Result.listValue [v]) }] false)
-      = .ok { argEnv := [("xs", Result.listValue [v])],
-              countedParamEnv := [("xs", (Result.listValue [v], 1))], algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.listValue [.capture { name := "xs", kind := .collecting }]]
-        [{ value? := some (Result.listValue [v, w]) }] false)
-      = .ok { argEnv := [("xs", Result.listValue [v, w])],
-              countedParamEnv := [("xs", (Result.listValue [v, w], 1))], algEnv := [] } := by
-  refine ⟨?_, ?_, ?_⟩ <;>
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      bindParameterPattern, runEvalM, Result.listPatternItems?, collectSegment]
-    rfl
-
 /-- The singleton rule (`ParameterPattern.isSingletonSequenceItems`): a sequence
-pattern of one non-collecting item is invalid, the collector-only `(*xs)` and
-every list pattern are valid. -/
+pattern of one non-collecting item — a capture, a nested sequence or a nested list — is flagged.
+(The collector-only `(*xs)` and the one-element list `[x]` are valid signatures: the next two
+theorems.) -/
 theorem singleton_sequence_pattern_is_invalid (x : Ident) (inner : List ParameterPattern) :
     ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.capture { name := x }]) = true
     ∧ ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.sequenceValue inner]) = true
     ∧ ParameterPattern.hasSingletonSequenceGroup (.sequenceValue [.listValue inner]) = true := by
   simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems]
 
+/-- The collector-only sequence pattern `(*xs)` is not flagged by the singleton rule AND is a
+valid signature (`signatureViolation? = none`; strengthened from the singleton check alone,
+R8/X-13). -/
 theorem collector_only_sequence_pattern_is_valid (xs : Ident) :
     ParameterPattern.hasSingletonSequenceGroup
-      (.sequenceValue [.capture { name := xs, kind := .collecting }]) = false := by
-  simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems,
-    ParameterPattern.anyHasSingletonSequenceGroup]
+        (.sequenceValue [.capture { name := xs, kind := .collecting }]) = false
+    ∧ ParameterPattern.signatureViolation?
+        [.sequenceValue [.capture { name := xs, kind := .collecting }]] = none := by
+  constructor
+  · simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems,
+      ParameterPattern.anyHasSingletonSequenceGroup]
+  · simp [ParameterPattern.signatureViolation?, ParameterPattern.anyHasSingletonSequenceGroup,
+      ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.isSingletonSequenceItems,
+      ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel,
+      ParameterPattern.collectingCaptureCountAtCurrentLevel,
+      ParameterPattern.anyHasMultipleCollectingLevel, ParameterPattern.hasMultipleCollectingLevel,
+      ParameterPattern.hasRepeatedCaptureNameIncludingCollecting, ParameterPattern.anyCollectingNames,
+      ParameterPattern.collectingNames, ParameterPattern.anyNameOccurrences,
+      ParameterPattern.nameOccurrences]
 
+/-- The one-element list pattern `[x]` is not flagged by the singleton rule AND is a valid
+signature (strengthened, R8/X-13). -/
 theorem one_element_list_pattern_is_valid (x : Ident) :
-    ParameterPattern.hasSingletonSequenceGroup (.listValue [.capture { name := x }]) = false := by
-  simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.anyHasSingletonSequenceGroup]
+    ParameterPattern.hasSingletonSequenceGroup (.listValue [.capture { name := x }]) = false
+    ∧ ParameterPattern.signatureViolation? [.listValue [.capture { name := x }]] = none := by
+  constructor
+  · simp [ParameterPattern.hasSingletonSequenceGroup, ParameterPattern.anyHasSingletonSequenceGroup]
+  · simp [ParameterPattern.signatureViolation?, ParameterPattern.anyHasSingletonSequenceGroup,
+      ParameterPattern.hasSingletonSequenceGroup,
+      ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel,
+      ParameterPattern.collectingCaptureCountAtCurrentLevel,
+      ParameterPattern.anyHasMultipleCollectingLevel, ParameterPattern.hasMultipleCollectingLevel,
+      ParameterPattern.hasRepeatedCaptureNameIncludingCollecting, ParameterPattern.anyCollectingNames,
+      ParameterPattern.collectingNames, ParameterPattern.anyNameOccurrences,
+      ParameterPattern.nameOccurrences]
 
 /-
 ## Inferred signatures are held to the rules of written ones (X-02, September 30 2026)
 
 `ParameterPattern.signatureViolation?` is THE validity of a parameter-pattern list as a callable
 signature — the singleton rule, at most one collecting capture per pattern level, and no repeated
-name that includes a collecting binding — and the C# front end holds every INFERRED signature to
-it: formula lifting that would compose `K(a, *p, b, *q)` from `C1(a, *p)` and `C2(b, *q)` is the
-definition's front-end error, never a signature that reaches a binder. The laws pin the X-02
-composition as invalid at every top-level position, the controls as valid (a collecting name two
-callees share is ONE binding; a collector nested in its own group is that group's level), and the
-bridge the binders rely on: a valid signature has at most one collecting capture at its top level,
-so the binder's collector search finds THE collector.
+name that includes a collecting binding. It is a PRODUCTION definition: the pre-evaluation gate
+`validateAlgorithmTree` reads it (a `partial` def, so "enforced before evaluation" is a source fact
+pinned by CoreTests `StructuralPatterns`). The C# front end holds every INFERRED signature to the
+same rules (`ParameterPattern.FindSignatureViolation`; agreement rests on C# tests): formula
+lifting that would compose `K(a, *p, b, *q)` from `C1(a, *p)` and `C2(b, *q)` is the definition's
+front-end error. The laws prove two collectors at one level invalid IN GENERAL (top level and
+nested), pin the controls as valid (one collector between fixed captures — a collecting name two
+callees share is ONE binding in C#'s formula-lifting merge, which Lean does not model; collectors
+in their own groups), and the bridge to the binders' precondition: a valid signature has at most
+one collecting capture at its top level.
 -/
 
 private abbrev lawCapture (name : Ident) : ParameterPattern := .capture { name := name }
 private abbrev lawCollecting (name : Ident) : ParameterPattern := .capture { name := name, kind := .collecting }
 
-theorem x02_distinct_top_level_collectors_are_an_invalid_signature :
-    ParameterPattern.signatureViolation?
-        [lawCapture "a", lawCollecting "p", lawCapture "b", lawCollecting "q"]
-      = some .multipleCollectingAtOneLevel
-    ∧ ParameterPattern.signatureViolation?
-        [lawCollecting "p", lawCapture "a", lawCapture "b", lawCollecting "q"]
-      = some .multipleCollectingAtOneLevel
-    ∧ ParameterPattern.signatureViolation?
-        [lawCapture "a", lawCollecting "p", lawCapture "c", lawCapture "b", lawCollecting "q"]
-      = some .multipleCollectingAtOneLevel := by
-  decide
+/-- TWO COLLECTORS AT ONE LEVEL ARE AN INVALID SIGNATURE, at any level: once no singleton
+sequence pattern is present (the first rule), a list with more than one collecting capture at
+some pattern level is the violation `multipleCollectingAtOneLevel`. -/
+theorem two_collectors_at_one_level_are_an_invalid_signature (ps : List ParameterPattern)
+    (hs : ParameterPattern.anyHasSingletonSequenceGroup ps = false)
+    (hm : ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel ps = true) :
+    ParameterPattern.signatureViolation? ps = some .multipleCollectingAtOneLevel := by
+  simp [ParameterPattern.signatureViolation?, hs, hm]
 
-theorem shared_collecting_name_is_one_valid_binding :
+/-- The X-02 composition in general: two (or more) TOP-LEVEL collectors, at any positions, are
+an invalid signature (strengthened from three decided instances, R8/X-13; the instances follow
+as examples). -/
+theorem x02_distinct_top_level_collectors_are_an_invalid_signature (ps : List ParameterPattern)
+    (hs : ParameterPattern.anyHasSingletonSequenceGroup ps = false)
+    (h2 : 2 ≤ ParameterPattern.collectingCaptureCountAtCurrentLevel ps) :
+    ParameterPattern.signatureViolation? ps = some .multipleCollectingAtOneLevel :=
+  two_collectors_at_one_level_are_an_invalid_signature ps hs (by
+    simp only [ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel, Bool.or_eq_true,
+      decide_eq_true_eq]
+    omega)
+
+example : ParameterPattern.signatureViolation?
+    [lawCapture "a", lawCollecting "p", lawCapture "b", lawCollecting "q"]
+    = some .multipleCollectingAtOneLevel :=
+  x02_distinct_top_level_collectors_are_an_invalid_signature _ (by decide) (by decide)
+example : ParameterPattern.signatureViolation?
+    [lawCollecting "p", lawCapture "a", lawCapture "b", lawCollecting "q"]
+    = some .multipleCollectingAtOneLevel :=
+  x02_distinct_top_level_collectors_are_an_invalid_signature _ (by decide) (by decide)
+example : ParameterPattern.signatureViolation?
+    [lawCapture "a", lawCollecting "p", lawCapture "c", lawCapture "b", lawCollecting "q"]
+    = some .multipleCollectingAtOneLevel :=
+  x02_distinct_top_level_collectors_are_an_invalid_signature _ (by decide) (by decide)
+
+/-- One collector between two fixed captures, `[a, *rest, b]`, is a valid signature (the shape
+C#'s formula-lifting merge gives two callees that share the collecting name `rest`). -/
+theorem one_collector_between_fixed_captures_is_a_valid_signature :
     ParameterPattern.signatureViolation? [lawCapture "a", lawCollecting "rest", lawCapture "b"] = none := by
   decide
 
-theorem collectors_in_their_own_groups_are_valid :
+/-- Witnesses that a collector in its OWN group is that group's level: `[(a, *p), (b, *q)]` and
+`[(a, *p), d, *r]` are valid. (Not a general law: `[(a, *p), (b, *p)]` repeats a collecting name
+across levels and is `repeatedNameIncludesCollecting`.) -/
+theorem x02_one_collector_per_group_witnesses_are_valid :
     ParameterPattern.signatureViolation?
         [.sequenceValue [lawCapture "a", lawCollecting "p"], .sequenceValue [lawCapture "b", lawCollecting "q"]]
       = none
@@ -2464,20 +2079,32 @@ theorem collectors_in_their_own_groups_are_valid :
       = none := by
   decide
 
-theorem nested_level_with_two_collectors_is_invalid :
-    ParameterPattern.signatureViolation? [.listValue [lawCollecting "r", lawCollecting "s"]]
-      = some .multipleCollectingAtOneLevel := by
-  decide
+/-- Two collectors at one NESTED level are an invalid signature, in general (strengthened from
+the decided instance `[[*r, *s]]`, R8/X-13, which follows as an example). -/
+theorem nested_level_with_two_collectors_is_invalid (ps : List ParameterPattern)
+    (hs : ParameterPattern.anyHasSingletonSequenceGroup ps = false)
+    (hn : ParameterPattern.anyHasMultipleCollectingLevel ps = true) :
+    ParameterPattern.signatureViolation? ps = some .multipleCollectingAtOneLevel :=
+  two_collectors_at_one_level_are_an_invalid_signature ps hs (by
+    simp [ParameterPattern.hasMultipleCollectingCapturesAtAnyLevel, hn])
 
-theorem repeated_name_with_a_collector_is_invalid_while_fixed_repeats_are_constraints :
+example : ParameterPattern.signatureViolation? [.listValue [lawCollecting "r", lawCollecting "s"]]
+    = some .multipleCollectingAtOneLevel :=
+  nested_level_with_two_collectors_is_invalid _ (by decide) (by decide)
+
+/-- A repeated name that includes a collector is invalid, while a repeated FIXED name is a valid
+signature (`[x, *x]` versus `[x, x]`; that the valid repeat then binds as Q-05 equality
+constraints is the binder's, not part of this statement). -/
+theorem repeated_name_with_a_collector_is_invalid_while_fixed_repeats_are_valid :
     ParameterPattern.signatureViolation? [lawCapture "x", lawCollecting "x"]
       = some .repeatedNameIncludesCollecting
     ∧ ParameterPattern.signatureViolation? [lawCapture "x", lawCapture "x"] = none := by
   decide
 
-/-- The bridge the binders rely on: a VALID signature has at most one collecting capture at its
-top level, so `bindParameterPatternList`'s collector search finds THE collector (the prefix and
-suffix around it are fixed). -/
+/-- The bridge to the binders' precondition: a VALID signature has at most one collecting
+capture at its top level — the condition `binder_minimum_is_the_signature_minimum` and the
+production allocation laws assume (a corollary of `collector_gate_bounds_the_top_level`'s
+weaker hypothesis). -/
 theorem valid_signature_has_at_most_one_top_level_collector (ps : List ParameterPattern)
     (h : ParameterPattern.signatureViolation? ps = none) :
     ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1 := by
@@ -2491,255 +2118,29 @@ theorem valid_signature_has_at_most_one_top_level_collector (ps : List Parameter
       omega
 
 /-
-## Historical total repeated-name compatibility helper (September 2026; scope clarified 2026-10-07)
+## Collection views and list normalization
 
-A repeated name is decided ONCE per pattern level, when its last contribution joins, by
-`repeatedNameFailure`: every PAIR of its contributions must be compatible (equal values;
-equal counted values; the same callable identity for two algorithm-channel bindings).
-Every contribution carries its own value — the binder fails a valueless one first
-(Q-05, see "Repeated names are constraints, not merges" below).
-The total HistoricalReadyBinding helper returns Option Error from already-evaluated
-contributions: it globally checks value/count conflicts before identity conflicts.
-Its theorem proves equality of that entire Option Error, including its constructor,
-under permutation (not merely existence of a failure). For the current language,
-"verdict" means only success versus failure. The historical helper is not the
-Model-C evaluator and its global priority is not the current failure-order law. This
-is not a theorem about Model-C's ordered bindNeedName inspection: a callable conflict
-can stop it before a later unequal value, whereas another order meets that unequal
-value first (CoreTests.ModelC.mixedRepeatedConflicts). A SUCCESSFUL compatible binding is
-permutation-invariant up to `==` (`BEq`) on its value channels and up to callable identity on
-its algorithm channel (`repeated_name_complete_binding_is_permutation_invariant`). On the C#
-Decimal128 tier, `==`-equal numbers may carry different representations (quantum, zero sign);
-there the FIRST written among equally rich contributions supplies the retained representation
-(Q-28, N-F, 2026-10-07) — an observation the Int model, with one representation per value,
-cannot make. The compatible-success observation agrees with C# up to `==`; the total
-helper's error-category theorem must not be extended to ordered Model-C failures.
+Repeated-name binding (Q-05, NEED-04, Q-28) has NO theorem (open formalization work): the production binder
+compares each repeated occurrence with the retained earlier one as it inspects it (`bindNeedName`,
+`KatLang.lean`), so its outcomes are executed by guards — CoreTests `HigherOrderCalls`
+(`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
+`repeatedSuccessfulCallablePermutationsKeepBothChannels`,
+`repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
+`repeatedBindingKeepsTheCallableContribution`) and `RepeatedNameConstraints`, and on the C#
+Decimal128 tier (Q-28, N-F: the first written among equally rich contributions supplies the
+retained representation) `NumericRepresentativeSelectionTests`. The laws of this section are the
+post-binding builtin collection view, the exact lists collection-producing builtins return, and
+the normalization of list values.
 -/
-
-private theorem perm_any_eq {α} {l₁ l₂ : List α} (h : l₁.Perm l₂) (f : α → Bool) :
-    l₁.any f = l₂.any f := by
-  apply Bool.eq_iff_iff.mpr
-  simp only [List.any_eq_true]
-  exact ⟨fun ⟨x, hx, hf⟩ => ⟨x, h.mem_iff.mp hx, hf⟩,
-    fun ⟨x, hx, hf⟩ => ⟨x, h.mem_iff.mpr hx, hf⟩⟩
-
-private theorem pairwise_any_perm {α} {l₁ l₂ : List α} (h : l₁.Perm l₂) (f : α → α → Bool) :
-    l₁.any (fun a => l₁.any (fun b => f a b)) = l₂.any (fun a => l₂.any (fun b => f a b)) := by
-  rw [perm_any_eq h]
-  congr 1
-  funext a
-  exact perm_any_eq h _
-
-theorem repeated_name_failure_is_permutation_invariant (names : List Ident)
-    {contributions permuted : List ParameterPatternBindings} (h : contributions.Perm permuted) :
-    repeatedNameFailure names contributions = repeatedNameFailure names permuted := by
-  have hValue : ∀ name, repeatedNameValueConflict name contributions
-      = repeatedNameValueConflict name permuted := fun name => by
-    simp only [repeatedNameValueConflict]
-    exact pairwise_any_perm (h.filterMap _) _
-  have hCounted : ∀ name, repeatedNameCountedConflict name contributions
-      = repeatedNameCountedConflict name permuted := fun name => by
-    simp only [repeatedNameCountedConflict]
-    exact pairwise_any_perm (h.filterMap _) _
-  have hIdentity : ∀ name, repeatedNameCallableIdentityConflict name contributions
-      = repeatedNameCallableIdentityConflict name permuted := fun name => by
-    simp only [repeatedNameCallableIdentityConflict]
-    exact pairwise_any_perm (h.filterMap _) _
-  simp only [repeatedNameFailure, hValue, hCounted, hIdentity]
-
-/-- A successful repeated-name verdict also excludes different callable identities.
-    The permutation theorem alone did not constrain the callable kept by the merge. -/
-theorem repeated_name_success_has_no_callable_identity_conflict (names : List Ident)
-    (contributions : List ParameterPatternBindings)
-    (success : repeatedNameFailure names contributions = none) :
-    names.any (fun name => repeatedNameCallableIdentityConflict name contributions) = false := by
-  unfold repeatedNameFailure at success
-  split at success <;> try contradiction
-  split at success <;> try contradiction
-  split at success <;> simp_all
-
-/-- Any two callable contributions of a successful name have the same identity.
-    Thus choosing a first callable cannot choose between distinct declarations or
-    captured activations. Declaration identity presumes an identified executable
-    program, just as the evaluator's ownership and cache identities do. -/
-theorem repeated_name_success_callables_agree (names : List Ident)
-    (contributions : List ParameterPatternBindings) (name : Ident)
-    (success : repeatedNameFailure names contributions = none) (member : name ∈ names)
-    (left right : Algorithm)
-    (hl : left ∈ contributions.filterMap (fun c => c.algEnv.lookup name))
-    (hr : right ∈ contributions.filterMap (fun c => c.algEnv.lookup name)) :
-    sameRepeatedCallableIdentity left right = true := by
-  have h := repeated_name_success_has_no_callable_identity_conflict names contributions success
-  have hn : repeatedNameCallableIdentityConflict name contributions = false := by
-    simpa using (List.any_eq_false.mp h) name member
-  unfold repeatedNameCallableIdentityConflict at hn
-  have ha : (contributions.filterMap (fun c => c.algEnv.lookup name)).any
-      (fun right => !sameRepeatedCallableIdentity left right) = false := by
-    simpa using (List.any_eq_false.mp hn) left hl
-  have hp := (List.any_eq_false.mp ha) right hr
-  simpa using hp
-
-private theorem repeated_lookup_append {A} (name : Ident) (xs ys : Assoc Ident A) :
-    lookupAssoc name (xs ++ ys) = (lookupAssoc name xs).orElse (fun _ => lookupAssoc name ys) := by
-  induction xs with
-  | nil => rfl
-  | cons x xs ih =>
-    rcases x with ⟨key, value⟩
-    by_cases h : name = key <;> simp [lookupAssoc, h, ih]
-
-private theorem repeated_lookup_appendFirst {A} (name : Ident) (acc incoming : Assoc Ident A) :
-    lookupAssoc name (appendFirstOccurrences acc incoming) =
-      (lookupAssoc name acc).orElse (fun _ => lookupAssoc name incoming) := by
-  induction incoming generalizing acc with
-  | nil => simp [appendFirstOccurrences, lookupAssoc]
-  | cons entry rest ih =>
-    rcases entry with ⟨key, value⟩
-    simp only [appendFirstOccurrences, List.foldl_cons]
-    split
-    next h =>
-      rw [show rest.foldl _ acc = appendFirstOccurrences acc rest from rfl, ih]
-      by_cases hn : name = key
-      · subst name
-        cases he : lookupAssoc key acc <;> simp_all [lookupAssoc]
-      · simp [lookupAssoc, hn]
-
-    next h =>
-      rw [show rest.foldl _ (acc ++ [(key, value)]) = appendFirstOccurrences (acc ++ [(key, value)]) rest from rfl, ih, repeated_lookup_append]
-      by_cases hn : name = key
-      · subst name
-        cases he : lookupAssoc key acc <;> simp_all [lookupAssoc]
-      · simp [lookupAssoc, hn]
-
-private def repeatedMergeStep (merged contribution : ParameterPatternBindings) : ParameterPatternBindings := {
-  argEnv := appendFirstOccurrences merged.argEnv contribution.argEnv,
-  countedParamEnv := appendFirstOccurrences merged.countedParamEnv contribution.countedParamEnv,
-  algEnv := appendFirstOccurrences merged.algEnv contribution.algEnv }
-
-private theorem repeated_lookup_fold_merge {A} (name : Ident)
-    (project : ParameterPatternBindings → Assoc Ident A)
-    (step : ∀ a b, project (repeatedMergeStep a b) = appendFirstOccurrences (project a) (project b))
-    (cs : List ParameterPatternBindings) (acc : ParameterPatternBindings) :
-    lookupAssoc name (project (cs.foldl repeatedMergeStep acc)) =
-      (lookupAssoc name (project acc)).orElse
-        (fun _ => (cs.filterMap (fun c => lookupAssoc name (project c))).head?) := by
-  induction cs generalizing acc with
-  | nil => simp
-  | cons c cs ih =>
-    simp only [List.foldl_cons, ih, step, repeated_lookup_appendFirst]
-    cases ha : lookupAssoc name (project acc) <;>
-      cases hc : lookupAssoc name (project c) <;> simp [hc]
-
-private theorem repeated_merged_lookup {A} (name : Ident)
-    (project : ParameterPatternBindings → Assoc Ident A)
-    (step : ∀ a b, project (repeatedMergeStep a b) = appendFirstOccurrences (project a) (project b))
-    (empty : project {} = []) (cs : List ParameterPatternBindings) :
-    lookupAssoc name (project (mergeFirstOccurrences cs)) =
-      (cs.filterMap (fun c => lookupAssoc name (project c))).head? := by
-  change lookupAssoc name (project (cs.foldl repeatedMergeStep {})) = _
-  rw [repeated_lookup_fold_merge name project step cs {}, empty]
-  rfl
-
-def RepeatedBindingChannelAgreement {A} (same : A → A → Bool) : Option A → Option A → Prop
-  | none, none => True
-  | some a, some b => same a b = true
-  | _, _ => False
-
-private theorem repeated_first_agrees_of_perm {A} (same : A → A → Bool)
-    {xs ys : List A} (permutation : xs.Perm ys)
-    (compatible : xs.any (fun a => xs.any (fun b => !same a b)) = false) :
-    RepeatedBindingChannelAgreement same xs.head? ys.head? := by
-  cases xs with
-  | nil => have hy := List.perm_nil.mp permutation.symm; subst ys; trivial
-  | cons a xs =>
-    cases ys with
-    | nil => have hx := List.perm_nil.mp permutation; simp at hx
-    | cons b ys =>
-      change same a b = true
-      have hb : b ∈ a :: xs := permutation.mem_iff.mpr (by simp)
-      have ha : (a :: xs).any (fun b => !same a b) = false := by
-        simpa using (List.any_eq_false.mp compatible) a (by simp)
-      simpa using (List.any_eq_false.mp ha) b hb
-
-/-- In HistoricalReadyBinding, successful repeated-name binding preserves availability
-    and contents up to BEq on value/count channels and callable identity on the
-    algorithm channel under every contribution permutation. This is not exact
-    Decimal128 representation invariance. Association-list order
-    is not observable; callable contents are compared by callable identity. -/
-theorem repeated_name_complete_binding_is_permutation_invariant
-    (names : List Ident) (name : Ident) (member : name ∈ names)
-    {contributions permuted : List ParameterPatternBindings}
-    (permutation : contributions.Perm permuted)
-    (success : repeatedNameFailure names contributions = none) :
-    RepeatedBindingChannelAgreement (· == ·)
-      (lookupAssoc name (mergeFirstOccurrences contributions).argEnv)
-      (lookupAssoc name (mergeFirstOccurrences permuted).argEnv) ∧
-    RepeatedBindingChannelAgreement (· == ·)
-      (lookupAssoc name (mergeFirstOccurrences contributions).countedParamEnv)
-      (lookupAssoc name (mergeFirstOccurrences permuted).countedParamEnv) ∧
-    RepeatedBindingChannelAgreement sameRepeatedCallableIdentity
-      ((mergeFirstOccurrences contributions).algEnv.lookup name)
-      ((mergeFirstOccurrences permuted).algEnv.lookup name) := by
-  have compatible :
-      names.any (fun n => repeatedNameValueConflict n contributions) = false ∧
-      names.any (fun n => repeatedNameCountedConflict n contributions) = false ∧
-      names.any (fun n => repeatedNameCallableIdentityConflict n contributions) = false := by
-    unfold repeatedNameFailure at success
-    split at success <;> try contradiction
-    split at success <;> try contradiction
-    split at success <;> simp_all
-  refine ⟨?_, ?_, ?_⟩
-  · rw [repeated_merged_lookup name ParameterPatternBindings.argEnv (by intros; rfl) rfl contributions,
-        repeated_merged_lookup name ParameterPatternBindings.argEnv (by intros; rfl) rfl permuted]
-    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
-    have h := (List.any_eq_false.mp compatible.1) name member
-    simpa [repeatedNameValueConflict] using h
-  · rw [repeated_merged_lookup name ParameterPatternBindings.countedParamEnv (by intros; rfl) rfl contributions,
-        repeated_merged_lookup name ParameterPatternBindings.countedParamEnv (by intros; rfl) rfl permuted]
-    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
-    have h := (List.any_eq_false.mp compatible.2.1) name member
-    simpa [repeatedNameCountedConflict] using h
-  · -- The algorithm channel is compared by the callable it binds (`AlgEnv.lookup`, the
-    -- projection an invocation reads). No recorded value failure survives a repeated
-    -- name: every contribution of one carries its own value (Q-05, the binder half is
-    -- `repeated_capture_success_requires_every_value`), so each algorithm binding it
-    -- keeps records none.
-    simp only [AlgEnv.lookup]
-    rw [repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl contributions,
-        repeated_merged_lookup name ParameterPatternBindings.algEnv (by intros; rfl) rfl permuted,
-        ← List.head?_map, ← List.head?_map, List.map_filterMap, List.map_filterMap]
-    apply repeated_first_agrees_of_perm _ (permutation.filterMap _)
-    have h := (List.any_eq_false.mp compatible.2.2) name member
-    simpa [repeatedNameCallableIdentityConflict, AlgEnv.lookup] using h
-
--- The canonical instances — `P(f, f, f)` rejects `(Inc, 5, A)` in all six permutations,
--- `(A, A, 5)` binds in all six, and distinct callable identities reject — are
--- executable guards (`CoreTests/HigherOrderCalls.lean`, `repeatedNameVerdictIsOrderIndependent`,
--- `twoOccurrenceRepeatsKeepThePairwiseRule`), since the derived `BEq` on `Result` carries
--- no lawful lemmas to close a value comparison by proof.
-
-
-/-- A right-kind value with the wrong number of elements is the group's ordinary
-arity mismatch, never a kind mismatch: the pair pattern `(x, y)` given the
-three-element sequence `(a, b, c)` reports 2 required, 3 supplied. -/
-theorem nested_pair_pattern_rejects_three_element_sequence (a b c : Result) :
-    runEvalM (bindParameterPatternList
-        [.sequenceValue [.capture { name := "x", kind := .normal },
-                         .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.sequenceValue [a, b, c]) }]
-        false)
-      = .error (Error.arityMismatch 2 3) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.sequencePatternItems?, ParameterPattern.minimumSuppliedSlots]
-  rfl
 
 /-- The post-binding builtin collection view opens a bound list exactly like a
 bound sequence value: ONE outer boundary, so `count([1, 2, 3])` counts three
 items just as `count((1, 2, 3))` does. Opening is never recursive — nested
 lists stay intact as single items (`count((1, [2], 3))` is 3, and a
-collection element `[..]` inside the bound collection is one item). The view
-applies only AFTER ordinary fixed binding: `count(1, 2, 3)` and
-`count([1, 2, 3]*)` are ordinary arity errors, never collections. -/
+collection element `[..]` inside the bound collection is one item; the identity returns `xs`
+verbatim, so no element is opened). That the evaluator applies the view only AFTER ordinary
+fixed binding — `count(1, 2, 3)` and `count([1, 2, 3]*)` being arity errors — is evaluator
+behaviour, pinned by guards. -/
 theorem builtinCollectionItems_list (xs : List Result) :
     builtinCollectionItems (Result.listValue xs) = xs := rfl
 
@@ -2748,11 +2149,12 @@ theorem builtinCollectionItems_keeps_nested_list_opaque (xs : List Result) :
       (Result.sequenceValue [Result.atom 1, Result.listValue xs, Result.atom 3])
       = [Result.atom 1, Result.listValue xs, Result.atom 3] := rfl
 
-/-- Collection-producing builtins materialize EXACT lists: zero kept items form
-`[]`, one kept item forms `[item]` (never erased to the item), and the emitted
-count is always 1 — the builtin result re-enters arity as one value. -/
-theorem makeCollectionListResult_exact (x : Result) :
-    makeCollectionListResult [x] = (Result.listValue [x], 1) := rfl
+/-- Collection-producing builtins materialize EXACT lists: for EVERY item list the
+materialization is the exact list of those items with emitted count 1 — zero kept items form
+`[]`, one kept item forms `[item]` (never erased to the item) — so the builtin result re-enters
+arity as one value (generalized from the singleton, R8/X-13). -/
+theorem makeCollectionListResult_exact (items : List Result) :
+    makeCollectionListResult items = (Result.listValue items, 1) := rfl
 
 theorem makeCollectionListResult_empty :
     makeCollectionListResult [] = (Result.listValue [], 1) := rfl
@@ -2763,8 +2165,9 @@ theorem normalize_listValue (xs : List Result) :
     Result.normalize (Result.listValue xs) = Result.listValue (xs.map Result.normalize) := by
   simp [Result.normalize]
 
-/-- A singleton SEQUENCE boundary around a list still collapses: `([1, 2])` is
-`[1, 2]`. Parenthesized grouping stays redundant even when the value is a list. -/
+/-- `Result.normalize` collapses a singleton SEQUENCE boundary around a list to the list (with
+its elements normalized). (Surface `([1, 2])` never reaches `normalize`: the C# parser erases the
+redundant group, `Parser.IsRedundantGrouping`.) -/
 theorem normalize_singleton_sequence_of_list (xs : List Result) :
     Result.normalize (Result.sequenceValue [Result.listValue xs])
       = Result.listValue (xs.map Result.normalize) := by
@@ -2772,227 +2175,27 @@ theorem normalize_singleton_sequence_of_list (xs : List Result) :
 
 /-- Ordinary capture and segment collection stay distinct operations on the same
 supply: `capture` normalizes to a sequence value while `collect` preserves
-the exact list — `x = A*` re-groups list items as `(…)`, while
-`x, *rest = A` collects them as `[…]`. -/
+the exact list (the surface illustrations `x = A*` regrouping list items as `(…)` and
+`x, *rest = A` collecting them as `[…]` are evaluator behaviour, pinned by guards). -/
 theorem capture_and_collect_differ_on_pairs (a b : Result) :
     captureForArityLaw [a, b] =
         Result.sequenceValue [Result.normalize a, Result.normalize b]
       ∧ collectSegment [a, b] = Result.listValue [a, b] :=
   ⟨capture_pair a b, rfl⟩
 
--- Calls: a lone list argument is ONE argument; calls never open lists.
-
-/-- `Add(A)` with a stored LIST `A`: one supplied item against two fixed
-parameters is an arity mismatch — the call binder does not open the list. -/
-theorem call_fixed_single_list_rejected :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "x", kind := .normal }, .capture { name := "y", kind := .normal }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .error (Error.arityMismatch 2 1) := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting, runEvalM]
-  rfl
-
-/-- `G(A)` mixed fixed/variadic call with a stored LIST `A`: `first` receives the
-whole list value and `rest` collects the empty list `[]` — lists never open
-implicitly. -/
-theorem call_variadic_single_list_preserved :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "first", kind := .normal }, .capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("first", Result.listValue [Result.atom 1, Result.atom 2]),
-                         ("rest", Result.listValue [])],
-              countedParamEnv := [("rest", (Result.listValue [], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM,
-    collectSegment]
-  rfl
-
--- Assignment deconstruction: the unpacking receiver opens a lone LIST exactly
--- like a lone sequence value (it is not a written structural pattern; it has no
--- delimiter to select a kind).
-
-/-- `x, y = [1, 2]`: the unpacking receiver opens the lone list, binding
-`x = 1`, `y = 2` — identical bindings to `x, y = [1, 2]*`. -/
-theorem deconstruct_fixed_single_list_opens :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "x", kind := .normal },
-                     .capture { name := "y", kind := .normal }]]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("x", Result.atom 1), ("y", Result.atom 2)],
-              countedParamEnv := [], algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPattern, runEvalM,
-    Result.spreadItems]
-  rfl
-
-/-- `first, *rest = [1, 2, 3]`: the unpacking receiver opens the lone list;
-`first = 1` and `rest` COLLECTS the matched items as the exact list `[2, 3]`. -/
-theorem deconstruct_collecting_single_list_opens :
-    runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "first", kind := .normal },
-                     .capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2, Result.atom 3]) }]
-        true)
-      = .ok { argEnv := [("first", Result.atom 1),
-                         ("rest", Result.listValue [Result.atom 2, Result.atom 3])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 2, Result.atom 3], 1))],
-              algEnv := [] } := by
-  simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-    bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-    bindParameterPattern, runEvalM, Result.spreadItems,
-    collectSegment]
-  rfl
-
-/-- Lone-list receiver DISAGREEMENT, lone-collecting shape: call binding collects the
-one supplied argument — the list itself — as `rest = [[1, 2]]`, while
-deconstruction opens the lone list first and collects its items as
-`rest = [1, 2]`. The receiver distinction is observable for every structured
-argument. -/
-theorem lone_collecting_list_call_and_deconstruct_differ :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]])],
-              countedParamEnv := [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
-              algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
-              algEnv := [] } := by
-  constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment]
-    rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      bindParameterPattern, runEvalM, Result.spreadItems,
-      collectSegment]
-    rfl
-
-/-- Lone-SEQUENCE receiver disagreement, lone-collecting shape — the same as
-for a list: call binding collects the one supplied argument (`rest = [(1, 2)]`)
-while the deconstruction unpacking receiver opens it (`rest = [1, 2]`). Only an
-opening receiver opens; the call boundary preserves the value. -/
-theorem lone_collecting_seq_call_and_deconstruct_differ :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]])],
-              countedParamEnv :=
-                [("rest", (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]], 1))],
-              algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.unpacking [.capture { name := "rest", kind := .collecting }]]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
-              algEnv := [] } := by
-  constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment]
-    rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      bindParameterPattern, runEvalM, Result.spreadItems, Result.toItems,
-      collectSegment]
-    rfl
-
-/-- A lone SEQUENCE argument keeps the grouped/spread distinction: `F(A)` with
-a stored sequence `A = (1, 2)` collects the one sequence value
-(`rest = [(1, 2)]`) — the collector never opens an argument — while `F(A*)`
-collects the spread items (`rest = [1, 2]`). Sequences and lists behave
-identically here (`lone_collecting_list_call_grouped_and_spread_differ`). -/
-theorem lone_collecting_seq_call_grouped_and_spread_differ :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.sequenceValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]])],
-              countedParamEnv :=
-                [("rest", (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]], 1))],
-              algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        ((Result.sequenceValue [Result.atom 1, Result.atom 2]).spreadItems.map
-          (fun value => { value? := some value : ParameterPatternInput }))
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
-              algEnv := [] } := by
-  constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment]
-    rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment, Result.spreadItems, Result.toItems]
-    rfl
-
-/-- A lone LIST argument keeps the grouped/spread distinction: `F(A)` with a
-stored list `A = [1, 2]` collects the one exact list (`rest = [[1, 2]]`) — no
-argument opens implicitly — while `F(A*)` collects the spread items
-(`rest = [1, 2]`), exactly as for a sequence
-(`lone_collecting_seq_call_grouped_and_spread_differ`). -/
-theorem lone_collecting_list_call_grouped_and_spread_differ :
-    runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        [{ value? := some (Result.listValue [Result.atom 1, Result.atom 2]) }]
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]])],
-              countedParamEnv :=
-                [("rest", (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]], 1))],
-              algEnv := [] }
-    ∧ runEvalM (bindParameterPatternList
-        [.capture { name := "rest", kind := .collecting }]
-        ((Result.listValue [Result.atom 1, Result.atom 2]).spreadItems.map
-          (fun value => { value? := some value : ParameterPatternInput }))
-        true)
-      = .ok { argEnv := [("rest", Result.listValue [Result.atom 1, Result.atom 2])],
-              countedParamEnv := [("rest", (Result.listValue [Result.atom 1, Result.atom 2], 1))],
-              algEnv := [] } := by
-  constructor
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment]
-    rfl
-  · simp [bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPatternList.collectValues,
-      runEvalM,
-      collectSegment, Result.spreadItems]
-    rfl
-
 /-
-## Canonical-form laws (general theorems over the real model)
+## Canonical-form laws (general theorems over the value model)
 
-The laws above pin specific shapes over the real binder paths; the theorems
-below establish the general canonical-form story of `Result.normalize` over the
-authoritative model:
+The laws above pin specific shapes of the value views and total helpers; the theorems below
+establish the general canonical-form story of `Result.normalize` over the authoritative value
+model:
 
 * `normalize_idempotent` — `Result.normalize` is a projection onto canonical
   values;
 * `orphanFree_normalize` — canonical values contain no redundant singleton
   sequence boundary anywhere in their tree (no literal-unwritable "orphans");
-* `captureForArityLaw_canonical` / `captureForArityLaw_orphanFree` — the real
-  capture expression only ever produces canonical, orphan-free values;
+* `captureForArityLaw_canonical` / `captureForArityLaw_orphanFree` — the capture
+  alias `captureForArityLaw` only ever produces canonical, orphan-free values;
 * `capture_toItems_of_canonical` — re-capturing the NON-spread item view
   (`Result.toItems`, which keeps lists opaque) reproduces canonical values
   exactly, for every value kind including lists;
@@ -3151,8 +2354,8 @@ mutual
 end
 
 /-- Capture canonicity over `captureForArityLaw` (the normalizing construction of the
-spread value and the loop state; the written `.capture` arm combines its slots with
-`combineOutputSlots` and agrees with it on canonical items): a captured item supply
+spread value and the loop state; that the written `.capture` arm, which combines its slots with
+`combineOutputSlots`, agrees with it on canonical items is NOT proved here): a captured item supply
 is already canonical, so capture is a fixed point of `Result.normalize`
 (corollary of `normalize_idempotent`, since
 `captureForArityLaw xs = Result.normalize (Result.sequenceValue xs)`). -/
@@ -3160,8 +2363,8 @@ theorem captureForArityLaw_canonical (xs : List Result) :
     (captureForArityLaw xs).normalize = captureForArityLaw xs :=
   normalize_idempotent (Result.sequenceValue xs)
 
-/-- `captureForArityLaw` never mints an orphan (the written `.capture` arm agrees with it
-on canonical items, VAL-03): every captured value is
+/-- `captureForArityLaw` never mints an orphan (its agreement with the written `.capture`
+arm on canonical items, VAL-03, is not proved here): every captured value is
 orphan-free (corollary of `orphanFree_normalize`). -/
 theorem captureForArityLaw_orphanFree (xs : List Result) :
     orphanFreeResult (captureForArityLaw xs) = true :=
@@ -3194,11 +2397,9 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
       rw [capture_singleton]
       exact h
 
-/-- The SPREAD/capture round-trip is sequence-specific: it holds exactly on
-canonical values that are not lists. Spreading a list opens its boundary, and
-re-capturing the spread items groups them as a sequence value — spread-then-
-capture converts a list to a sequence (`x = A*` with `A = [1, 2, 3]` gives
-`x = (1, 2, 3)`), losslessly for every other value kind. -/
+/-- The SPREAD/capture round trip holds exactly on canonical values that are NOT lists
+(atoms, strings, Booleans and sequences). A list's spread opens its boundary; its re-capture is
+`capture_spreadItems_of_list`. -/
 theorem capture_spreadItems_of_canonical_non_list (r : Result)
     (h : r.normalize = r) (hl : ∀ xs, r ≠ Result.listValue xs) :
     captureForArityLaw r.spreadItems = r := by
@@ -3222,8 +2423,8 @@ theorem capture_spreadItems_of_canonical_non_list (r : Result)
       exact absurd rfl (hl rs)
 
 /-- Spread-then-capture on a list yields the canonical capture of its
-ELEMENTS — never the same list back: the concrete conversion law behind
-`x = A*` re-grouping list items as `(1, 2, 3)`. Singleton normalization
+ELEMENTS (the value-level law behind the surface `x = A*` regrouping list items as
+`(1, 2, 3)`, which is evaluator behaviour). Singleton normalization
 applies to the re-capture as usual, so a one-element payload collapses to
 that lone element (`[7]` round-trips to `7`, and `[[7]]` to the inner
 `[7]`), while multi-element payloads become one sequence value. -/
@@ -3231,8 +2432,9 @@ theorem capture_spreadItems_of_list (xs : List Result) :
     captureForArityLaw (Result.listValue xs).spreadItems
       = Result.normalize (Result.sequenceValue xs) := rfl
 
-/-- Capture/spread/capture collapse: since captured values are canonical, a
-second capture of a captured value's items is just the first capture. -/
+/-- Capture/item-view/capture collapse: since captured values are canonical, a second capture
+of a captured value's NON-SPREAD item view (`Result.toItems`) is just the first capture. (With the
+spread view this fails on lists: `capture_spreadItems_of_list`.) -/
 theorem capture_toItems_capture (xs : List Result) :
     captureForArityLaw (captureForArityLaw xs).toItems = captureForArityLaw xs :=
   capture_toItems_of_canonical _ (captureForArityLaw_canonical xs)
@@ -3242,21 +2444,22 @@ a value via `Result.spreadItems`, which agrees with `Result.toItems` on
 sequence values, so `()*` contributes nothing to the surrounding item
 supply. This is the item-view statement of the visible-empty spread law (the
 empty instance of `toItems_sequenceValue` / `spreadItems_sequenceValue`;
-`spreadItems_empty_list` is the list twin). -/
+`spreadItems_empty_list` is the corresponding SPREAD fact for `[]`, whose `toItems` is `[[]]`). -/
 theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
 
 /-
-## Zero-item-spread neutrality at the real capture boundary
+## Zero-item-spread neutrality at the capture alias
 
-`()` and `[]` spread to zero items, so inserting either spread anywhere in a
-captured item supply changes nothing — while the UNSPREAD values stay visible
-one-item slots. These are the real-model faces of the core
-`capture_zero_item_spread_neutral` family.
+`()` and `[]` spread to zero items, so inserting either spread view anywhere in an item supply
+captured by `captureForArityLaw` changes nothing — while the UNSPREAD values stay visible
+one-item slots (`toItems_listValue_opaque`, `valueCount_empty_list`). These are the value-model
+faces of the core `capture_zero_item_spread_neutral` family; the surface forms `(n, ()*)` and
+`(n, []*)` are written `.capture` slots evaluated by the `partial` arm and pinned by guards.
 -/
 
-/-- Generic neutral open at the real capture expression: any value whose
-spread supplies no items leaves the captured value unchanged wherever the
-spread is inserted. -/
+/-- Generic neutral open at the capture alias: any value whose spread view supplies no items
+leaves the captured value unchanged wherever its items are inserted (a congruence once the view
+is empty). -/
 theorem capture_zero_item_spread_neutral {r : Result}
     (h : r.spreadItems = []) (before after : List Result) :
     captureForArityLaw (before ++ r.spreadItems ++ after)
@@ -3264,14 +2467,14 @@ theorem capture_zero_item_spread_neutral {r : Result}
   rw [h]
   simp
 
-/-- `()*` is neutral at the capture boundary (`(n, ()*) == n`-style). -/
+/-- `()*`'s items are neutral at the capture alias. -/
 theorem capture_empty_sequence_spread_neutral (before after : List Result) :
     captureForArityLaw (before ++ (Result.sequenceValue []).spreadItems ++ after)
       = captureForArityLaw (before ++ after) :=
   capture_zero_item_spread_neutral rfl before after
 
-/-- `[]*` is neutral at the capture boundary (`(n, []*) == n`-style),
-even though the unspread `[]` is a visible one-item value. -/
+/-- `[]*`'s items are neutral at the capture alias (the unspread `[]` stays a visible one-item
+value: `toItems_listValue_opaque`). -/
 theorem capture_empty_list_spread_neutral (before after : List Result) :
     captureForArityLaw (before ++ (Result.listValue []).spreadItems ++ after)
       = captureForArityLaw (before ++ after) :=
@@ -3280,8 +2483,8 @@ theorem capture_empty_list_spread_neutral (before after : List Result) :
 /-
 ## Result-boundary re-count laws
 
-`reCountValueBoundary` is the shared helper applied at every public
-property/call/builtin RESULT boundary: the caller observes the same structural
+`reCountValueBoundary` is the shared helper the evaluator applies (a fact of its `partial`
+source) at public property/call/builtin RESULT boundaries: the caller observes the same structural
 value with emitted count `Result.valueCount` (0 for the empty sequence value,
 otherwise 1), whatever internal item-supply count the body produced.
 -/
@@ -3301,9 +2504,8 @@ boundary re-counts to the same pair. -/
 theorem reCountValueBoundary_idempotent (p : CountedResult) :
     reCountValueBoundary (reCountValueBoundary p) = reCountValueBoundary p := rfl
 
-/-- The structural emitted count of one value is at most one: only the empty
-sequence value emits 0; every other value — including the empty list `[]`,
-which is a visible exact value — emits exactly 1. -/
+/-- `Result.valueCount` is at most one (by its definition it is 0 only for the empty sequence
+value `()`, and 1 for every other value, the empty list `[]` included). -/
 theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .atom _ => Nat.le_refl 1
   | .str _ => Nat.le_refl 1
@@ -3312,8 +2514,9 @@ theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .sequenceValue (_ :: _) => Nat.le_refl 1
   | .listValue _ => Nat.le_refl 1
 
-/-- The empty list is a visible value: `[]` emits count 1 at every value
-boundary, unlike the empty sequence value `()` which emits 0. -/
+/-- The empty list is a visible value: `Result.valueCount []` is 1, unlike the empty sequence
+value `()` (0 by definition). That the evaluator emits `valueCount` at value boundaries is a
+source fact. -/
 theorem valueCount_empty_list : (Result.listValue []).valueCount = 1 := rfl
 
 /-- A result boundary emits at most one value: after `reCountValueBoundary`
@@ -3325,7 +2528,8 @@ theorem reCountValueBoundary_count_le_one (p : CountedResult) :
 /-
 ## Loop results are value boundaries (Q-26, decided October 2026)
 
-A completed `while`/`repeat` returns `loopResultCounted finalSlots`: the
+A completed `while`/`repeat` returns `loopResultCounted finalSlots` (a fact of the `partial`
+loop evaluator's source, pinned by CoreTests `LoopCardinality`): the
 canonical capture of its final state's slots, re-counted at the ordinary
 RESULT value boundary exactly like every builtin and call result. The laws
 below are instances of the re-count laws above: the loop's slot count is its
@@ -3349,15 +2553,15 @@ number of final slots. -/
 theorem loop_result_count_is_value_count (slots : List Result) :
     (loopResultCounted slots).snd = (loopStateResult slots).valueCount := rfl
 
-/-- A completed loop emits at most one value, so a non-spread loop contributes
-at most one item to any row supply (root, body, capture or loop step). -/
+/-- `loopResultCounted`'s count is at most one (so a non-spread loop contributes at most one
+item to a row supply — a consequence for the `partial` row-supply construction, guard-checked). -/
 theorem loop_result_count_le_one (slots : List Result) :
     (loopResultCounted slots).snd ≤ 1 :=
   reCountValueBoundary_count_le_one _
 
-/-- The slot count is not observable outside the loop: two final states whose
-captures are equal complete to the same counted result (a one-slot state
-holding `(20, 30)` and the two-slot state `20, 30` alike). -/
+/-- `loopResultCounted` does not depend on the slot count: two final states whose captures are
+equal complete to the same counted result (a one-slot state holding `(20, 30)` and the two-slot
+state `20, 30` alike). That the loop's consumers see only this result is a source fact. -/
 theorem loop_result_depends_only_on_the_final_value (left right : List Result)
     (h : loopStateResult left = loopStateResult right) :
     loopResultCounted left = loopResultCounted right := by
@@ -3412,9 +2616,8 @@ is Boolean-only (`Result.asBool?` reads no atom view at all), so lists still
 have no truth value — the traversal laws here can never leak into `if`.
 -/
 
-/-- The atoms builtin's observable materialization in closed form: what the
-`.atomsBuiltin` dispatch in `applyBuiltinCounted` returns for an evaluated
-argument value. -/
+/-- LOCAL mirror of the expression the `partial` `.atomsBuiltin` arm of `applyBuiltinCounted`
+returns for an evaluated argument value (agreement by inspection of the source, not proof). -/
 def atomsBuiltinResultForLaw (r : Result) : CountedResult :=
   makeCollectionListResult ((Result.languageAtoms r).map Result.atom)
 
@@ -3430,7 +2633,8 @@ theorem atoms_string (s : String) :
     Result.languageAtoms (Result.str s) = [] := by
   simp [Result.languageAtoms]
 
-/-- Booleans are not numeric atoms: `atoms(true)` is `[]`. -/
+/-- Booleans are not numeric atoms: the collector gives a Boolean no atoms (so the mirror's
+materialization is the empty list `[]`). -/
 theorem atoms_bool (b : Bool) :
     Result.languageAtoms (Result.bool b) = [] := by
   simp [Result.languageAtoms]
@@ -3486,9 +2690,9 @@ theorem atoms_mixed_sequence_list :
        Result.atom 5]) = [1, 2, 3, 4, 5] := by
   simp [Result.languageAtoms]
 
-/-- The atoms builtin returns ONE exact list value with emitted count 1 for
-EVERY input — including a zero-atom collection, where the visible result is
-the empty list `[]` (never the invisible empty sequence). -/
+/-- The local mirror `atomsBuiltinResultForLaw` is ONE exact list value with emitted count 1
+for EVERY input — including a zero-atom collection, where it is the empty list `[]` (never the
+invisible empty sequence). -/
 theorem atoms_result_is_list (r : Result) :
     atomsBuiltinResultForLaw r
       = (Result.listValue ((Result.languageAtoms r).map Result.atom), 1) := rfl
@@ -3500,8 +2704,8 @@ theorem atoms_singleton_preserved (n : Int) :
       = (Result.listValue [Result.atom n], 1) := by
   simp [atomsBuiltinResultForLaw, makeCollectionListResult, atoms_number]
 
-/-- `atoms(7)` is `[7]`, never `7`: the materialized list is structurally
-distinct from the bare atom. -/
+/-- The materialization of the atom 7 is `[7]`, never `7`: the materialized list is
+structurally distinct from the bare atom. -/
 theorem atoms_singleton_list_ne_atom (n : Int) :
     (atomsBuiltinResultForLaw (Result.atom n)).fst ≠ Result.atom n := by
   simp [atomsBuiltinResultForLaw, makeCollectionListResult, atoms_number]
@@ -3564,8 +2768,9 @@ the Boolean view `asBool?` reads no atom view at all. -/
 theorem asBool_list_none (rs : List Result) :
     Result.asBool? (Result.listValue rs) = none := rfl
 
-/-- Numbers have no truth value either: there is no `0`/nonzero convention
-anywhere in the model. -/
+/-- Numbers have no truth value either: the Boolean view of a number is empty (the condition
+consumers — `if`, `filter`, `while`, the logical operators — read this view by design; that they
+do is a source fact). -/
 theorem asBool_atom_none (n : Int) : Result.asBool? (Result.atom n) = none := rfl
 
 /-- Strings have no truth value. -/
@@ -3580,131 +2785,28 @@ theorem asBool_singleton_sequence (b : Bool) :
     Result.asBool? (Result.sequenceValue [Result.bool b]) = some b := by
   simp [Result.asBool?, Result.normalize]
 
-/-- A multi-item sequence value is never a Boolean, whatever its first item:
-the Boolean view performs no flattening. -/
-theorem asBool_pair_none (a b : Result) :
-    Result.asBool? (Result.sequenceValue [a, b]) = none := by
+/-- A multi-item sequence value is never a Boolean, whatever its items: the Boolean view
+performs no flattening (generalized from two-item sequences, R8/X-13). -/
+theorem asBool_multi_item_sequence_none (a b : Result) (rest : List Result) :
+    Result.asBool? (Result.sequenceValue (a :: b :: rest)) = none := by
   simp [Result.asBool?, Result.normalize]
 
-/-- Booleans are not numbers: the numeric view of a Boolean value is empty,
-so no arithmetic or ordering operator can ever read one as `0`/`1`. -/
+/-- Booleans are not numbers: the numeric view `asInt?` of a Boolean is empty. The operators'
+operand reader `requireNumericScalarOperandOf` (and unary `-`) consult exactly this view, so by
+inspection — not proved here — no operator reads a Boolean as `0`/`1`. -/
 theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
 
-/-! ## At-most-once argument value evaluation (Q-01, September 2026)
-
-Within one call, a written argument slot is evaluated at most once for its
-value; if that evaluation fails, the failure is the parameter's value outcome
-for the whole activation. The two laws below pin the binder half of that rule
-over the real `bindParameterPattern`: a slot's algorithm channel is always bound
-TOGETHER with the outcome of its one value evaluation (`slotAlgorithmBinding`),
-so no failure is ever dropped and no value read can re-derive the parameter's
-value from the algorithm. The read half — the `.param` arm of `evalCounted`
-reports `AlgBinding.valueFailure?` and never evaluates the algorithm — lives in
-the partial evaluator and is pinned by `CoreTests/ArgumentValueOutcome.lean`. -/
-
-/-- A written slot whose one value evaluation FAILED binds its algorithm channel
-together with that failure, and binds no value — for a capture whose name does not
-repeat at its level (a repeated name needs the slot's OWN value, Q-05:
-`repeated_capture_valueless_first_fails_with_its_own_outcome`). -/
-theorem failed_slot_binds_its_failure_beside_the_algorithm_channel
-    (name : Ident) (a : Algorithm) (err : Error) :
-    runEvalM (bindParameterPattern [.capture { name := name }] (.capture { name := name })
-      { algorithm? := some a, error? := some err } true)
-      = .ok { argEnv := [], countedParamEnv := [],
-              algEnv := [(name, { algorithm := a, valueFailure? := some err })] } := by
-  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM, ParameterPattern.repeatsAtLevel,
-    ParameterPattern.bindsName]
-  rfl
-
-/-- A written slot whose one value evaluation SUCCEEDED binds that value and an
-algorithm channel that records no failure: the value tier holds the outcome. The
-pattern level is irrelevant to a slot that has a value. -/
-theorem valued_slot_binds_its_value_and_no_failure
-    (level : List ParameterPattern) (name : Ident) (a : Algorithm) (v : Result) :
-    runEvalM (bindParameterPattern level (.capture { name := name })
-      { value? := some v, algorithm? := some a } true)
-      = .ok { argEnv := [(name, v)], countedParamEnv := [],
-              algEnv := [(name, { algorithm := a, valueFailure? := none })] } := by
-  simp [bindParameterPattern, slotAlgorithmBinding, runEvalM]
-  rfl
-
-/-! ## Repeated names are constraints, not merges (Q-05, September 2026)
-
-A repeated parameter name is an equality constraint over INDEPENDENTLY supplied
-arguments. Every occurrence must supply its OWN value; the values must be equal;
-a failed required value propagates; a callable-only argument cannot satisfy the
-constraint; several callable channels must share one identity; and channels from
-different occurrences are never spliced together to make up for a missing or
-failed value. Repeated-name matching may RESTRICT a binding — it never
-manufactures one that no individual argument supplied.
-
-Before Q-05, `repeatedNameAlgorithmConflict` rejected only TWO valueless
-contributions: one beside a value was merged into a binding whose value came from
-one argument and whose algorithm came from the other (`P(x, x) = x, x(5)` with
-`P(Inc, 1)` gave `(1, 6)`), and a failed argument was repaired by the other's value
-(`Q(Bad, 7)` gave `7`). The laws below pin the binder half over the real
-`bindParameterPatternList`: a valueless occurrence (a callable-only argument, whose
-value demand is its own arity rejection, or an argument whose value evaluation
-failed) fails the binding with ITS OWN recorded outcome in either argument order,
-before any verdict; the first such occurrence wins; and a successful binding of a
-repeated capture requires every occurrence to have supplied a value, so its algorithm
-channel never records a failure. The executable half — surface programs, collectors,
-nested groups, clause families, forwarding — is `CoreTests/RepeatedNameConstraints.lean`. -/
-
-/-- The two-occurrence level `P(x, x)`. -/
-def repeatedCapturePair : List ParameterPattern :=
-  [.capture { name := "x" }, .capture { name := "x" }]
-
-/-- `P(x, x)`: a valueless FIRST argument — a callable-only one (`Inc`, whose value
-demand failed with its own arity rejection) or a failed one — fails with its own
-recorded outcome, whatever the second argument supplies: the second is never bound,
-so its value cannot stand in, and when BOTH failed the FIRST failure is the one
-reported (arguments were evaluated left to right, and binding follows that order). -/
-theorem repeated_capture_valueless_first_fails_with_its_own_outcome
-    (a? : Option Algorithm) (e? : Option Error) (other : ParameterPatternInput) :
-    runEvalM (bindParameterPatternList repeatedCapturePair
-      [{ algorithm? := a?, error? := e? }, other] true) = .error (e?.getD Error.badArity) := by
-  cases a? <;>
-    simp [repeatedCapturePair, bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPattern, ParameterPattern.minimumSuppliedSlots,
-      ParameterPattern.hasCollectingCaptureAtCurrentLevel, ParameterPattern.repeatsAtLevel,
-      ParameterPattern.bindsName, runEvalM] <;> rfl
-
-/-- `P(x, x)`: a valueless SECOND argument beside a value fails with its own recorded
-outcome — the first argument's value never stands in for it, and its algorithm is
-never paired with that value (`P(7, Bad)` is `Bad`'s failure, `P(1, Inc)` `Inc`'s). -/
-theorem repeated_capture_valueless_second_fails_with_its_own_outcome
-    (v : Result) (a₁? a₂? : Option Algorithm) (e₁? e? : Option Error) :
-    runEvalM (bindParameterPatternList repeatedCapturePair
-      [{ value? := some v, algorithm? := a₁?, error? := e₁? }, { algorithm? := a₂?, error? := e? }] true)
-      = .error (e?.getD Error.badArity) := by
-  cases a₁? <;> cases a₂? <;>
-    simp [repeatedCapturePair, bindParameterPatternList, bindParameterPatternList.findCollecting,
-      bindParameterPatternList.bindPairs, bindParameterPattern, ParameterPattern.minimumSuppliedSlots,
-      ParameterPattern.hasCollectingCaptureAtCurrentLevel, ParameterPattern.repeatsAtLevel,
-      ParameterPattern.bindsName, slotAlgorithmBinding, runEvalM] <;> rfl
-
-/-- `P(x, x)` binds only when BOTH arguments supplied their OWN value: no binding of a
-repeated capture is ever made from a contribution that had none — neither a
-callable-only argument nor a failed one — so no other occurrence's value is ever
-paired with its algorithm (and, by `valued_slot_binds_its_value_and_no_failure`,
-every algorithm channel the binding keeps records no failure). -/
-theorem repeated_capture_success_requires_every_value
-    (i₁ i₂ : ParameterPatternInput) (b : ParameterPatternBindings)
-    (success : runEvalM (bindParameterPatternList repeatedCapturePair [i₁, i₂] true) = .ok b) :
-    i₁.value?.isSome ∧ i₂.value?.isSome := by
-  rcases i₁ with ⟨v₁?, a₁?, e₁?⟩
-  rcases i₂ with ⟨v₂?, a₂?, e₂?⟩
-  cases v₁? with
-  | none =>
-      rw [repeated_capture_valueless_first_fails_with_its_own_outcome a₁? e₁? ⟨v₂?, a₂?, e₂?⟩] at success
-      cases success
-  | some v₁ =>
-      cases v₂? with
-      | none =>
-          rw [repeated_capture_valueless_second_fails_with_its_own_outcome v₁ a₁? a₂? e₁? e₂?] at success
-          cases success
-      | some v₂ => exact ⟨rfl, rfl⟩
+-- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01) and REPEATED NAMES ARE CONSTRAINTS, NOT MERGES
+-- (Q-05) have NO theorem here. The first lives on the slot's need cell — the `.param` arm of
+-- `evalCounted` demands it first (`demandNeed`: single flight, sticky failure; `partial`, so a
+-- theorem needs a total interpretation of cells, open formalization work) — and is executed by
+-- `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the production
+-- binder's per-occurrence inspection (`bindNeedName`, whose compatibility check calls `partial`
+-- definitions; repeated-name laws over it are open formalization work),
+-- executed by `CoreTests/RepeatedNameConstraints.lean` (evaluator programs and the binder itself,
+-- both argument orders) and `CoreTests/ModelC.lean`. A plain (non-repeated) binder transports its
+-- cell and demands nothing: `plain_patterns_bind_without_any_channel`,
+-- `binder_name_transports_a_non_repeated_cell`.
 
 /-! ## Builtin call assembly respects argument roles (PV-05 / PV-19 / PV-20, September 2026)
 
@@ -3713,9 +2815,10 @@ position has in the builtin's metadata (`SequenceBuiltinMetadata.slotRole`): a V
 slot is demanded once and its outcome — one value or one failure — is final; a
 CALLBACK slot carries its algorithm and is invoked by the builtin, never evaluated
 merely because it was supplied; and a spread slot is supply assembly whose failure is
-the call's failure. The laws below pin the metadata half and the binding half over the
-real definitions. The assembly itself lives in the partial evaluator
-(`collectSequenceCallableCallItems`) and is pinned by
+the call's failure. The laws below pin the metadata (`slotRole`, read by the lifting
+specification) and the per-item preparation helper `prepareSequenceBuiltinSuffixArgItem`. The
+assembly itself — formation of need-backed items and their demand — lives in the `partial`
+evaluator (`collectSequenceCallableCallItems`) and is pinned by
 `CoreTests/BuiltinArgumentRoles.lean`. -/
 
 /-- The `collection` parameter is a VALUE slot of every collection builtin. -/
@@ -3732,7 +2835,8 @@ theorem control_position_role_follows_its_kind
       = if descriptor.kind == .algorithm then .callback else .value := by
   simp [SequenceBuiltinMetadata.slotRole, h]
 
-/-- A position past the fixed signature is SURPLUS: supplying it is an arity error. -/
+/-- A position past the fixed signature is SURPLUS (that supplying it is an arity error is the
+`partial` arity check's, which never consults `slotRole`). -/
 theorem position_past_the_signature_is_surplus
     (metadata : SequenceBuiltinMetadata) (slot : Nat) (h : metadata.suffixArgs.length < slot) :
     metadata.slotRole slot = .surplus := by
@@ -3759,9 +2863,9 @@ theorem filter_predicate_is_a_callback_slot :
     (sequenceBuiltinMetadata? .filterBuiltin).map (·.slotRole 1) = some .callback := by
   rfl
 
-/-- A CALLBACK control binds the item's algorithm channel and the callable it names, and
-nothing else: the item's value and any value failure are never consulted, because a
-callback slot is never value-evaluated (CALL-03). -/
+/-- A CALLBACK control item WITHOUT a need cell binds the item's algorithm channel and the
+callable it names, and nothing else: the item's value and any value failure are never consulted
+(CALL-03). (Production items are need-backed: `callback_control_transports_need_address`.) -/
 theorem callback_control_binds_only_the_algorithm_channel
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
     (alg : Algorithm) (hk : descriptor.kind = .algorithm) (ha : item.algorithm? = some alg)
@@ -3789,10 +2893,11 @@ theorem value_control_binds_its_established_value
   simp [prepareSequenceBuiltinSuffixArgItem, hk, hv, runEvalM]
   rfl
 
-/-- A VALUE control whose one evaluation FAILED reports that failure: binding never
-evaluates the slot again, so a failure cannot be retried into a different outcome
-(PV-05 — `reduce`'s `initial` included). -/
-theorem value_control_reports_its_recorded_failure
+/-- A VALUE control item carrying ONLY a recorded failure reports that failure: preparation
+never evaluates the slot again, so a failure cannot be retried into a different outcome (PV-05 —
+`reduce`'s `initial` included). (Production items, whose placeholder algorithm accepts zero
+arguments, behave the same by inspection; not proved here.) -/
+theorem value_control_reports_a_bare_recorded_failure
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (err : Error)
     (hk : descriptor.kind = .value) :
     runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor { error? := some err })
@@ -3806,14 +2911,19 @@ theorem value_control_reports_its_recorded_failure
 
 A resolved callable reference is lifted when its occurrence is used as a VALUE, and its lifting
 signature is its resolved callable's contract (`Algorithm.liftingSignature?`), whatever its
-category. The laws pin the role table the C# front end classifies with (`FormulaLiftingRoles`),
-the derived signature of a clause family (whole-value slots named by the clauses, never an
-invented name), and Q-03's complement for every kind that has a lifting signature: such a
-reference lifts exactly when the callable cannot satisfy a zero-argument demand.
+category. These are SPECIFICATION laws (the evaluator calls none of `liftingSlotRole`,
+`familyLiftingSignature?`, `liftsBareValueReference`): they pin the role table the C# front end
+classifies with (`FormulaLiftingRoles`; agreement rests on `UnifiedFormulaLiftingTests`), EXAMPLES
+of the derived signature of a clause family (whole-value slots named by the clauses, never an
+invented name), and Q-03's complement for user algorithms
+(`lifts_bare_value_reference_iff_not_cacheable`) and builtins
+(`builtin_reference_lifts_and_is_never_cacheable`); for clause families only the example
+`literal_base_family_reference_lifts` is proved.
 -/
 
-/-- A clause family demands every argument's value before any clause is tried (PAT-07), so a
-reference passed to it is used as a value, whatever the position. -/
+/-- A family argument is a VALUE role, whatever the position (a static role, retained by
+NEED-05; at run time a family demands only what its patterns inspect or its selected body
+consumes, PAT-07/NEED-04). -/
 theorem family_arguments_are_value_slots (position : Nat) (known : Bool) :
     liftingSlotRole .family position known = .value := by
   cases known <;> rfl
@@ -3834,9 +2944,9 @@ theorem user_and_dynamic_arguments_stay_neutral (position : Nat) (known : Bool) 
 /-- A builtin reads its registry roles: `map`'s collection is a value and its mapper a callback
 the builtin invokes; `reduce`'s initial accumulator is a value; `if`'s condition and both
 branches are values (laziness does not change a role); a loop's step is invoked while its count
-and initial state are values; and a SURPLUS position beyond the signature is a value (it is
-value-evaluated before the arity verdict), so no role depends on how many arguments a call
-supplies. -/
+and initial state are values; and a SURPLUS position beyond the signature has the static
+VALUE role (at run time a surplus slot is never demanded), so no role depends on how many
+arguments a call supplies. Thirteen sampled entries of the table. -/
 theorem builtin_slot_roles_follow_the_registry :
     liftingSlotRole (.builtin .mapBuiltin) 0 true = .value
     ∧ liftingSlotRole (.builtin .mapBuiltin) 1 true = .callable
@@ -3853,45 +2963,49 @@ theorem builtin_slot_roles_follow_the_registry :
     ∧ liftingSlotRole (.builtin .ifBuiltin) 3 true = .value := by
   decide
 
-/-- After a spread slot a position is known only at run time: it is a value slot only for a
-builtin whose every slot is one. -/
-theorem unknown_builtin_position_is_a_value_only_when_every_slot_is :
-    liftingSlotRole (.builtin .sumBuiltin) 3 false = .value
+/-- After a spread slot a position is known only at run time: for EVERY builtin and position,
+it is a value slot exactly when every slot of the builtin is one (generalized from two decided
+instances, R8/X-13). -/
+theorem unknown_builtin_position_is_a_value_iff_every_slot_is (b : Builtin) (position : Nat) :
+    liftingSlotRole (.builtin b) position false = .value ↔ builtinEverySlotIsValue b = true := by
+  cases h : builtinEverySlotIsValue b <;> simp [liftingSlotRole, h]
+
+example : liftingSlotRole (.builtin .sumBuiltin) 3 false = .value
     ∧ liftingSlotRole (.builtin .mapBuiltin) 3 false = .callable := by
   decide
 
 private def lawBranch (pattern : Pattern) : CondBranch := { pattern := pattern, body := alg [] [] [] [num 0] }
 
-/-- A literal base case names nothing, so the general clause names the one slot:
+/-- EXAMPLE (family naming): a literal base case names nothing, so the general clause names the one slot:
 `G(0) = …` / `G(n) = …` lifts as `G(n)`. -/
 theorem family_literal_base_is_named_by_its_general_clause :
     familyLiftingSignature? [lawBranch (.litInt 0), lawBranch (.bind "n")]
       = some [.capture { name := "n" }] := by
   rfl
 
-/-- Different clauses may name different positions: `P(a, 0)` / `P(0, b)` lifts as `P(a, b)`. -/
+/-- EXAMPLE: different clauses may name different positions — `P(a, 0)` / `P(0, b)` lifts as `P(a, b)`. -/
 theorem family_positions_are_named_by_the_clauses_that_bind_them :
     familyLiftingSignature?
         [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.litInt 0, .bind "b"])]
       = some [.capture { name := "a" }, .capture { name := "b" }] := by
   rfl
 
-/-- Two positions never share one name: `P(a, 0)` / `P(0, a)` has no lifting signature — by-name
-lifting would feed one binding to two independent positions. -/
+/-- EXAMPLE: two positions never share one name — `P(a, 0)` / `P(0, a)` has no lifting signature (by-name
+lifting would feed one binding to two independent positions). -/
 theorem family_one_name_for_two_positions_is_unnameable :
     familyLiftingSignature?
         [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.litInt 0, .bind "a"])]
       = none := by
   rfl
 
-/-- Clauses that name a position differently leave it unnamed: `H(a, 0)` / `H(b, c)`. -/
+/-- EXAMPLE: clauses that name a position differently leave it unnamed — `H(a, 0)` / `H(b, c)`. -/
 theorem family_conflicting_names_are_unnameable :
     familyLiftingSignature?
         [lawBranch (.sequenceValue [.bind "a", .litInt 0]), lawBranch (.sequenceValue [.bind "b", .bind "c"])]
       = none := by
   rfl
 
-/-- Structural and binderless clause patterns are dispatch detail and name nothing: a family of
+/-- EXAMPLE: structural and binderless clause patterns are dispatch detail and name nothing — a family of
 list patterns alone has no lifting signature, while a capture clause beside binderless groups
 names the slot (`F(()) = …` / `F([]) = …` / `F(x) = …` lifts as `F(x)`). -/
 theorem structural_clauses_do_not_name_a_slot :
@@ -3901,25 +3015,28 @@ theorem structural_clauses_do_not_name_a_slot :
       = some [.capture { name := "x" }] := by
   exact ⟨rfl, rfl⟩
 
-/-- A user algorithm's lifting signature is its parameter patterns, so Q-03's complement law
-(`bare_reference_lifts_iff_not_cacheable`) is the user case of the kind-independent law. A builtin
-never accepts a zero-argument call, and its interface always requires an argument, so a builtin
-reference in a value role always lifts; so does a clause family with a lifting signature, whose
-every clause needs its arguments. -/
+/-- Q-03's complement for BUILTINS (the user case is `lifts_bare_value_reference_iff_not_cacheable`;
+no kind-independent theorem is stated): a builtin never accepts a zero-argument call, and its
+lifting signature always requires an argument, so the specification always lifts a builtin
+reference in a value role. -/
 theorem builtin_reference_lifts_and_is_never_cacheable (b : Builtin) :
     Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false
     ∧ liftsBareValueReference (builtinLiftingSignature b) = true := by
   cases b <;> decide
 
-/-- Q-27 payload hygiene is checked against the independent acceptance predicate for every
-    builtin, including its minimum and the immediately smaller supply. -/
-theorem builtin_minimum_payload_is_the_first_accepted_supply (b : Builtin) :
+/-- Q-27 payload hygiene, checked against the independent acceptance predicate for every
+    builtin: the reported minimum is accepted, positive, and the LEAST accepted supply — every
+    smaller supply is rejected (strengthened from the immediately smaller supply alone, R8/X-13). -/
+theorem builtin_minimum_payload_is_the_least_accepted_supply (b : Builtin) :
     builtinAcceptsArity b (builtinMinimumArity b) = true
     ∧ builtinMinimumArity b > 0
-    ∧ builtinAcceptsArity b (builtinMinimumArity b - 1) = false := by
+    ∧ ∀ k, k < builtinMinimumArity b → builtinAcceptsArity b k = false := by
   cases b <;> decide
 
-theorem nameable_family_reference_lifts :
+/-- EXAMPLE: the family `G(0)` / `G(n)` has the lifting signature `[n]`, which the
+specification lifts. (Not every nameable family lifts: a host-built zero-arity family has the
+signature `[]`, which does not.) -/
+theorem literal_base_family_reference_lifts :
     (familyLiftingSignature? [lawBranch (.litInt 0), lawBranch (.bind "n")]).map liftsBareValueReference
       = some true := by
   rfl
@@ -3932,10 +3049,12 @@ Since October 2026 the Model-C binder is a TOTAL definition of `KatLang.lean` �
 `bindNeedLevel`, `bindNeedPatterns` and the clause-family dispatcher `selectNeedFamilyBranch`
 — parametrized by the two capabilities of a supplied cell (`NeedChannels`: VALUE demand and
 CALLABLE projection). The evaluator recursion core instantiates every one of them with
-`⟨demandNeed, projectNeedCallable⟩`. The laws below are stated for ALL channels, so they
-hold of whatever channels a caller passes — in particular of that instantiation: they are
-theorems about the binder definitions the evaluator calls, not about a historical or an
-abstract copy.
+`⟨demandNeed, projectNeedCallable⟩`. Every binder law below that takes a `channels` argument is
+stated for ALL channels, so it holds of whatever channels a caller passes — in particular of
+that instantiation. The other laws concern the binder's channel-free parts (the allocation
+`needLevelSources` and the cardinality gate `needAcceptsCardinality`), the laws-file helpers
+`plainNeedBinding`, `NeedSource.map`, `needPatternOfAlgebra` and `NeedSource.algebraValue`, the
+paper algebra's correspondence with the allocation, or `makeCollectionListResult`.
 
 What they do NOT establish:
 * that the evaluator calls these definitions with `⟨demandNeed, projectNeedCallable⟩` — the
@@ -4048,8 +3167,9 @@ theorem binder_minimum_differs_on_two_collectors :
   simp [needMinimumSuppliedSlots, NeedPattern.ofParameter, NeedPattern.isCollecting, List.filter_cons,
     ParameterPattern.minimumSuppliedSlots, ParameterPattern.hasCollectingCaptureAtCurrentLevel]
 
-/-- The binder accepts the EMPTY supply exactly when its minimum is zero. -/
-theorem binder_accepts_empty_supply_iff_minimum_zero (ps : List NeedPattern) :
+/-- The binder's cardinality GATE accepts the EMPTY supply exactly when the minimum is zero
+(gate acceptance is not successful binding: see `two_collectors_misallocate`). -/
+theorem cardinality_gate_accepts_empty_supply_iff_minimum_zero (ps : List NeedPattern) :
     needAcceptsCardinality ps 0 = true ↔ needMinimumSuppliedSlots ps = 0 := by
   unfold needAcceptsCardinality needMinimumSuppliedSlots
   constructor
@@ -4067,9 +3187,11 @@ theorem binder_accepts_empty_supply_iff_minimum_zero (ps : List NeedPattern) :
           rw [List.filter_eq_nil_iff]; intro p hp; simp [hall p hp]
         rw [this] at h; simp at h; simp [h]
 
-/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, user algorithms: the acceptance
-    rule `Algorithm.acceptsZeroSuppliedArguments` (zero-argument demand, Q-03, the cache) is
-    exactly the production binder's cardinality gate on the empty supply — the gate
+/-- ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY, user algorithms with at most one
+    top-level collector (every signature the X-02 gate admits, `collector_gate_bounds_the_top_level`;
+    the hypothesis is necessary, `binder_minimum_differs_on_two_collectors`): the acceptance rule
+    `Algorithm.acceptsZeroSuppliedArguments` (zero-argument demand, Q-03, the cache) is exactly
+    the production binder's cardinality gate on the empty supply — the gate
     `evalZeroArgumentDemandOutputCounted` then runs. -/
 theorem zero_argument_acceptance_is_the_binder_gate (parent : Option ScopeCtx)
     (ps : List ParameterPattern) (opens : List Expr) (props : List PropDef) (out : OutputBundle)
@@ -4077,7 +3199,7 @@ theorem zero_argument_acceptance_is_the_binder_gate (parent : Option ScopeCtx)
     (h : ParameterPattern.collectingCaptureCountAtCurrentLevel ps ≤ 1) :
     Algorithm.acceptsZeroSuppliedArguments (.mk parent ps opens props out identity)
       = needAcceptsCardinality (ps.map NeedPattern.ofParameter) 0 := by
-  have hacc := binder_accepts_empty_supply_iff_minimum_zero (ps.map NeedPattern.ofParameter)
+  have hacc := cardinality_gate_accepts_empty_supply_iff_minimum_zero (ps.map NeedPattern.ofParameter)
   rw [binder_minimum_is_the_signature_minimum ps h] at hacc
   simp only [Algorithm.acceptsZeroSuppliedArguments, Algorithm.parameterPatterns]
   cases hb : needAcceptsCardinality (ps.map NeedPattern.ofParameter) 0
@@ -4233,7 +3355,8 @@ theorem need_level_sources_length {α : Type} (ps : List NeedPattern) (cells : L
     (needLevelSources ps cells).length = ps.length := by
   simp [needLevelSources]
 
-/-- Without a collector, pattern `i` is bound from supplied cell `i`. -/
+/-- Without a collector and with exactly as many cells as patterns, pattern `i` is bound from
+supplied cell `i`. -/
 theorem need_level_sources_without_collector {α : Type} (ps : List NeedPattern) (cells : List α)
     (hnone : ps.findIdx? NeedPattern.isCollecting = none) (hlen : cells.length = ps.length) :
     needLevelSources ps cells = cells.map NeedSource.cell := by
@@ -4244,8 +3367,8 @@ theorem need_level_sources_without_collector {α : Type} (ps : List NeedPattern)
     simp at h2
     simp [h2]
 
-/-- AROUND THE COLLECTOR (VAR-02, any lengths — the general form of the historical
-    one-capture-per-side bridge laws): with the level's first collector at `c` and enough
+/-- AROUND THE COLLECTOR (VAR-02, any lengths and any number of fixed patterns on either side):
+    with the level's first collector at `c` and enough
     cells, the patterns before it take the leading `c` cells, the collector takes the exact
     slice of `n + 1 - L` cells after them, and the patterns after it take the remaining
     trailing cells, in order. -/
@@ -4578,19 +3701,88 @@ theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.
     have : ¬ (ps.filter CoreArityAlgebra.Pat.isCollecting).length ≤ 1 := by omega
     simp [this]
 
-/-- The collector cell's VALUE materializer (`demandNeed`'s `.collector` arm) is the
-    value-level collector `collectSegment` at emitted count 1, so every `collectSegment` law of
-    this file speaks about what a production collector cell yields once its slice values are
-    demanded. -/
-theorem collector_materialization_is_collect_segment (items : List Result) :
+/-- `makeCollectionListResult` is `collectSegment` at emitted count 1. It is the list
+    constructor `demandNeed`'s `.collector` arm applies to its demanded slice values (a source
+    fact: `demandNeed` is `partial`; pinned by CoreTests.ModelC), and several collection builtins
+    return it too. So the `collectSegment` laws of this file describe a production collector
+    cell's value only through that source fact. -/
+theorem make_collection_list_result_is_collect_segment (items : List Result) :
     makeCollectionListResult items = (collectSegment items, 1) := rfl
+
+/-! ### Production collector and dot-receiver laws (R8/X-13, October 2026)
+
+The production Model-C binder binds supply CELLS, so its collector law is value-blind: what a
+cell holds — a sequence, a list, `()`, `[]`, a scalar, a failing computation — cannot change how
+it is allocated or bound. These laws state the binder half of the exact collector law and of the
+dot-receiver laws (§ Exact collector laws, § Dot-receiver bridge laws) for every channel pair.
+They presuppose supply formation (`formNeedSupply`,
+`partial`): that a written non-spread argument — a dot receiver included — forms ONE cell, and a
+spread slot one cell per spread item, is a source fact pinned by CoreTests `ModelC` /
+`ExplicitValueOpening` / `DotReceiverSegments`, not a theorem.
+-/
+
+/-- A LONE COLLECTOR COLLECTS EVERY SUPPLIED CELL, in order, whatever the cells hold: a lone
+written argument (a dot receiver included) is ONE collected item, two written arguments two items,
+`n` spread items `n` items, and the empty supply the empty slice. -/
+theorem lone_collector_collects_every_supplied_cell {α : Type} (name : Ident) (cells : List α) :
+    needLevelSources [.bind name true] cells = [.collector cells] := by
+  rw [need_level_sources_around_the_collector [.bind name true] cells 0 rfl (by simp)]
+  simp
+
+/-- A collector before one fixed pattern: the fixed pattern takes the LAST cell and the collector
+every cell before it — a lone receiver cell goes to the fixed pattern, leaving the collector the
+empty slice. -/
+theorem collector_before_a_fixed_pattern_takes_all_but_the_last_cell {α : Type}
+    (collector fixed : Ident) (front : List α) (last : α) :
+    needLevelSources [.bind collector true, .bind fixed false] (front ++ [last])
+      = [.collector front, .cell last] := by
+  rw [need_level_sources_around_the_collector _ _ 0 rfl (by simp)]
+  simp
+
+/-- A lone collecting head BINDS by allocating ONE fresh suspended collector cell over exactly the
+supplied cells, for every channel pair and in either mode: nothing is demanded or projected, and
+no cell is reopened. With `make_collection_list_result_is_collect_segment`, the collector's value
+(once `demandNeed` materializes it, a source fact) is the exact list of the cells' values — the
+production face of the exact collector law and of collecting-parameter forwarding's target
+(`Target(*ys)` re-collects exactly the cells `xs*` transported). -/
+theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels : NeedChannels)
+    (name : Ident) (cells : List Nat) (family : Bool) :
+    bindNeedPatterns channels [.bind name true] cells family
+      = (do
+          let address <- allocateNeed (.collector cells)
+          pure (some [(name, address)])) := by
+  have hr : needRepeatedNames [.bind name true] = [] := by
+    simp [needRepeatedNames, NeedPattern.names]
+  have hacc : needAcceptsCardinality [.bind name true] cells.length = true := by
+    simp [needAcceptsCardinality, needMinimumSuppliedSlots, NeedPattern.isCollecting, List.filter_cons]
+  have hplain := plain_patterns_bind_without_any_channel channels [.bind name true] [name] rfl []
+    (by simp) [.collector cells] [] family
+  unfold bindNeedPatterns bindNeedLevel needCardinalityGate
+  rw [hr, hacc, lone_collector_collects_every_supplied_cell]
+  simp only [Bool.not_true, Bool.false_eq_true, if_false]
+  rw [hplain]
+  simp [plainNeedBinding, needSourceAddress]
+
+/-- ONE CELL NEVER SATISFIES TWO FIXED PATTERNS: a one-cell supply against `[a, *r, z]` fails with
+`arityMismatch 2 1` and leaves the run state unchanged, for every channel pair — so the cell (a dot
+receiver's, say) is never demanded or projected, and however many items its value holds plays no
+part (the production form of "the receiver's item count never satisfies arity"). -/
+theorem one_cell_supply_fails_two_fixed_patterns_before_any_effect (channels : NeedChannels)
+    (a r z : Ident) (cell : Nat) (state : EvalState) :
+    (bindNeedPatterns channels [.bind a false, .bind r true, .bind z false] [cell]).runState state
+      = (.error (Error.arityMismatch 2 1), state) :=
+  call_binder_rejects_unaccepted_supply_before_any_effect channels _ [cell] (by rfl) state
 
 /-! ## String interpolation (STR-02, VAL-12)
 
 `interpolateWith` is the TOTAL combinator that the evaluator's `.interpolatedString` arm
 instantiates with the ordinary value read of each hole (`fun hole => eval hole ctx env`). It is
-defined above the `partial` evaluator block, so the laws below are theorems for EVERY hole
-channel. That the evaluator arm passes exactly that read is a source fact, pinned by the
+defined above the `partial` evaluator block, so the laws below are kernel-checked theorems about
+the combinator itself, each for the channels it quantifies over: every monad and channel
+(`interpolate_hole_free_is_its_text`, `interpolate_step`), every `EvalM` channel (the failure,
+continuation and trace laws), pure `Id` channels (`interpolate_pure_holes_concatenate`), the
+laws-local `recordingHole` (`interpolate_evaluates_each_hole_once_in_order`), and no channel for
+`canonical_text_*`. That the evaluator arm passes exactly that read is a source fact, pinned by the
 `#guard`s of `CoreTests.Strings` and the `ParityGuards` evaluation-projection probes — the
 FORMAL-07 caveat: no theorem here unfolds `evalCounted`. The number text is this model's
 integer tier (`toString`); the Decimal128 canonical text, the string limits and the lexical

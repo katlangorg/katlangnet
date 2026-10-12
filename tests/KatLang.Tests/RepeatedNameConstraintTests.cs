@@ -21,19 +21,21 @@ namespace KatLang.Tests;
 /// <c>P(x, x) = x, x(5)</c> with <c>P(Inc, 1)</c> bound <c>x</c> to the value <c>1</c> AND the
 /// algorithm <c>Inc</c> (the chimera <c>(1, 6)</c>), <c>Q(Bad, 7)</c> with <c>Bad = 1 / 0</c>
 /// returned <c>7</c>, and <c>Q(Bad, Bad)</c> reported a type mismatch instead of the division by
-/// zero. The mechanism: a top-level capture whose name repeats at its pattern level needs its
-/// slot's own value when it binds (C# <c>BindParameterPattern</c> / <c>RepeatsAtLevel</c>, Lean
-/// <c>bindParameterPattern</c> / <c>ParameterPattern.repeatsAtLevel</c>), exactly as a nested
-/// sequence-value pattern needs the value it opens; the former "algorithm-only" verdict is
-/// deleted because it can no longer arise.</para>
+/// zero. The mechanism: every occurrence of a repeated name needs its own slot's value when it
+/// binds (since Model C the one binder <c>BindNeedPatterns</c> / Lean <c>bindNeedName</c> demands
+/// each repeated occurrence's own cell, NEED-04; at the decision, C# <c>BindParameterPattern</c> /
+/// <c>RepeatsAtLevel</c>), exactly as a nested sequence-value pattern needs the value it opens; the
+/// former "algorithm-only" verdict is deleted because it can no longer arise.</para>
 ///
 /// <para>Evidence: six execution routes (the public sync and async engines, the async twin with an
 /// async host operation present, the generic and optimized evaluators, and the forced async
 /// twin), which must agree on the outcome, the error message and location, and the exact
 /// host-call log (so the number of argument evaluations); plus a generated metamorphic family
 /// asserting that every successful binding is observationally the binding of ONE individual
-/// argument. Lean: <c>CoreTests/RepeatedNameConstraints.lean</c> and the
-/// <c>repeated_capture_*</c> laws in <c>KatLangArityLaws.lean</c>.</para>
+/// argument. Lean: <c>CoreTests/RepeatedNameConstraints.lean</c> (evaluator programs and the
+/// production binder over formed cells, both argument orders) and <c>CoreTests/ModelC.lean</c>;
+/// repeated-name binding is guard-checked, not proved (no theorem over the Model-C binder's
+/// repeated-name check yet).</para>
 /// </summary>
 public class RepeatedNameConstraintTests
 {

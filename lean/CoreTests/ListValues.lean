@@ -699,20 +699,26 @@ def listIndexingBuiltinResultsDirectlyIndexable : Bool :=
 -- star's supply re-captures at the ordinary expression boundary. A LONE
 -- structured item singleton-collapses at that capture, so a singleton-list
 -- chain opens one more list boundary per written star, while a multi-item
--- supply is a fixed point (see the dedicated guards below).
+-- supply is a fixed point (see the dedicated guards below). Each case runs
+-- BOTH spellings — the stacked `A**` and the grouped `(A*)*` (`.capture` is
+-- the written-parentheses boundary) — and requires them to agree with each
+-- other and with the pinned value. (Until R8/X-13 this guard evaluated only
+-- the stacked spelling, so its name claimed a comparison it did not make.)
 def stackedSpreadAgreesWithGroupedCompositionalForm : Bool :=
-  (match runResult (.algorithmExpr (algPrivate [] []
-      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 7]]])]
-      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
-   | Except.ok (Result.atom 7) => true | _ => false) &&
-  (match runResult (.algorithmExpr (algPrivate [] []
-      [("A", alg [] [] [] [.listLiteral [.listLiteral [.num 1, .num 2]]])]
-      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
-   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false) &&
-  (match runResult (.algorithmExpr (algPrivate [] []
-      [("A", alg [] [] [] [.capture [.num 1, .num 2]])]
-      [.sequenceSpread (.sequenceSpread (.resolve "A"))])) with
-   | Except.ok (Result.sequenceValue [Result.atom 1, Result.atom 2]) => true | _ => false)
+  let program : KatLang.Expr -> KatLang.Expr -> KatLang.Expr := fun value output =>
+    .algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [value])] [output])
+  let agrees : KatLang.Expr -> Result -> Bool := fun value expected =>
+    let stacked := runResult (program value (.sequenceSpread (.sequenceSpread (.resolve "A"))))
+    let grouped := runResult (program value
+      (.sequenceSpread (.capture [.sequenceSpread (.resolve "A")])))
+    match stacked, grouped with
+    | Except.ok s, Except.ok g => s == g && s == expected
+    | _, _ => false
+  agrees (.listLiteral [.listLiteral [.num 7]]) (Result.atom 7) &&
+  agrees (.listLiteral [.listLiteral [.num 1, .num 2]])
+    (Result.sequenceValue [Result.atom 1, Result.atom 2]) &&
+  agrees (.capture [.num 1, .num 2])
+    (Result.sequenceValue [Result.atom 1, Result.atom 2])
 
 #guard stackedSpreadAgreesWithGroupedCompositionalForm
 

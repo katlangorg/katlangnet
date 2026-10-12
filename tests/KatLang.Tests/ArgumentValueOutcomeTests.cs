@@ -26,10 +26,11 @@ namespace KatLang.Tests;
 /// instrumentation (<c>tick</c> counts its invocations, <c>trace</c> logs its argument)
 /// and seeded random streams, on every execution route: the public sync and async
 /// engines, the async twin (an async host operation present), the generic and optimized
-/// evaluators, and the forced async twin. Lean: <c>AlgBinding.valueFailure?</c>,
-/// <c>slotAlgorithmBinding</c>, <c>CoreTests/ArgumentValueOutcome.lean</c>, and the laws
-/// <c>failed_slot_binds_its_failure_beside_the_algorithm_channel</c> /
-/// <c>valued_slot_binds_its_value_and_no_failure</c>.</para>
+/// evaluators, and the forced async twin. Lean: the slot's need cell (<c>supplyNeed</c> /
+/// <c>demandNeed</c> over <c>EvalState.needs</c>; the <c>.param</c> arm of <c>evalCounted</c>
+/// demands it first), guard-checked by <c>CoreTests/ArgumentValueOutcome.lean</c> and
+/// <c>CoreTests/ModelC.lean</c>; <c>AlgBinding.valueFailure?</c> remains a legacy reader with no
+/// production writer (the eager writer <c>slotAlgorithmBinding</c> is deleted).</para>
 /// </summary>
 public class ArgumentValueOutcomeTests
 {

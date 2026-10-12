@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace KatLang.Tests;
 
 /// <summary>
@@ -82,14 +84,6 @@ public class LeanCoreTestsCompositionTests
             var expected = module switch
             {
                 "Common" => new[] { "KatLang" },
-                // These completed-input proof checks retain explicit historical algebra.
-                // The production model and current Model-C laws never import that fixture.
-                "ExplicitValueOpening" or "HigherOrderCalls" or "RepeatedNameConstraints" or "ValueDemand" =>
-                [
-                    "HistoricalReadyBinding",
-                    "KatLang",
-                    "CoreTests.Common",
-                ],
                 "CollectionBuiltins" =>
                 [
                     "KatLang",
@@ -114,12 +108,43 @@ public class LeanCoreTestsCompositionTests
         }
     }
 
+    /// <summary>
+    /// Every library the Lean package declares is the authoritative model or one of the seven
+    /// canonical validation targets (<c>scripts/validate-all.ps1</c>), so no proof library can sit
+    /// outside validation. The historical Ready-binding fixture and its laws were retired on
+    /// 2026-10-12 (owner decision; git history keeps them): the laws file imports only the model
+    /// and the paper algebra.
+    /// </summary>
     [Fact]
-    public void HistoricalReadyFixtureNeverEntersTheProductionModel()
+    public void LeanPackageDeclaresOnlyTheModelAndTheValidatedTargets()
     {
         var lean = FindLeanDirectory();
-        Assert.DoesNotContain("HistoricalReadyBinding", ReadImports(Path.Combine(lean, "KatLang.lean")));
-        Assert.Equal(["KatLang"], ReadImports(Path.Combine(lean, "HistoricalReadyBinding.lean")));
+        var declarations = File.ReadLines(Path.Combine(lean, "lakefile.lean"))
+            .Where(static line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal))
+            .Where(static line => Regex.IsMatch(line, @"\b(?:lean_lib|lean_exe|extern_lib|target)\b"))
+            .ToArray();
+        // Every declaration is a guillemet-quoted library at the start of its line, so the
+        // extraction below cannot miss a library written in another Lake form.
+        Assert.All(declarations, static line => Assert.Matches(@"^lean_lib «[^»]+» where$", line));
+        var libraries = declarations
+            .Select(static line => Regex.Match(line, @"^lean_lib «([^»]+)»").Groups[1].Value)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                "AstDemo",
+                "CoreArityAlgebra",
+                "CoreArityAlgebraProofs",
+                "CoreTests",
+                "KatLang",
+                "KatLangArityLaws",
+                "LanguageSpecCases",
+                "SemanticExplorerCases",
+            },
+            libraries);
+        Assert.Equal(["CoreArityAlgebra", "KatLang"], ReadImports(Path.Combine(lean, "KatLangArityLaws.lean")));
         Assert.Equal(["KatLang", "CoreTests.Common"], ReadImports(Path.Combine(lean, "CoreTests", "ModelC.lean")));
     }
 

@@ -24,8 +24,9 @@ namespace KatLang.Tests;
 /// (the collector cell; <c>collectSegment</c> its value-level definition),
 /// <c>evalUserCallbackCallCounted</c> (formerly <c>collectVariadicCallItems</c> and the
 /// Ready binders <c>bindParameterPatternList</c> / <c>bindCountedParameterPatternList</c>); laws
-/// <c>collector_*</c> / <c>explicit_spread_opens_one_level</c> /
-/// <c>forwarding_resupplies_the_collected_items</c> in <c>lean/KatLangArityLaws.lean</c>;
+/// <c>lone_collector_collects_every_supplied_cell</c> / <c>lone_collecting_head_allocates_one_collector_over_its_supply</c>
+/// (production), <c>explicit_spread_opens_one_level</c>, <c>spreadItems_collectSegment</c> and
+/// <c>make_collection_list_result_is_collect_segment</c> in <c>lean/KatLangArityLaws.lean</c>;
 /// algebra <c>bindArgs</c> / <c>bindCallback</c>; CoreTests <c>ExplicitValueOpening</c>.
 /// C#: <c>Evaluator.FormNeedSupply</c>, <c>CollectorCell</c>, <c>BindNeedPatterns</c>,
 /// <c>EvalResolvedCallbackCallCountedCore</c> (formerly <c>BuildCallArgumentInputs</c> and

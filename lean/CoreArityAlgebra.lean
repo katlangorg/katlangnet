@@ -30,7 +30,10 @@ arity algebra used in the paper. It distinguishes:
 
 Proofs and executable checks are kept in CoreArityAlgebraProofs.lean.
 
-Provenance table / implementation correspondence:
+Provenance table / implementation correspondence. Rows are correspondences by
+construction/inspection, cross-checked by CoreTests guards and by Result-level analogues in
+KatLangArityLaws.lean; the only machine-checked algebra-to-production theorem is the PROVED row,
+and it covers the ALLOCATION only:
 
 CoreArityAlgebra.lean           KatLang.lean correspondence
 -------------------------------------------------------------
@@ -71,18 +74,25 @@ Pat / bindArgs / bindPats       the Model-C binder's ALLOCATION needLevelSources
                                 forms (one cell per non-spread argument, the
                                 spread operand's items per spread slot) —
                                 PROVED for bindPats/bindArgs/bindCallback
-                                allocation: KatLangArityLaws
+                                allocation under the guard "at most one
+                                collector and needAcceptsCardinality accepts":
+                                KatLangArityLaws
                                 algebra_binder_is_the_production_allocation
-                                (formerly the Ready binder
-                                bindParameterPatternList, now in
-                                HistoricalReadyBinding.lean); bindArgs binds
+                                (with two collectors production misallocates,
+                                two_collectors_misallocate; NOT proved: supply
+                                formation, which is partial, repeated-name
+                                constraints, structural/literal patterns,
+                                demandNeed); bindArgs binds
                                 that supply as it is
 bindDeconstruct                 the unpacking arm of bindNeedOne (spreadItems of
                                 the demanded value, then bindNeedLevel) —
                                 cross-checked, not proved
 bindCallback                    evalUserCallbackCallCounted: the ordinary binder
                                 bindNeedPatterns over ready cells, one per
-                                element (plus the reducer accumulator)
+                                element (plus the reducer accumulator) —
+                                allocation proved via the bindPats row; the
+                                callback route itself (partial) is
+                                cross-checked by guards, not proved
 
 This file is not a full semantics of KatLang. It isolates only the arity
 machinery used by the paper.
@@ -324,7 +334,7 @@ holds one item per non-spread argument — whatever its value, a sequence, a
 list, or an empty value alike — plus the immediate items of each explicitly
 spread operand (`items`), so `bindArgs` is the shared binder itself: fixed
 captures take one item unchanged and a collector collects exactly its
-allocated items (THE EXACT COLLECTOR LAW, `bindPats_rest_exact`).
+allocated items (THE EXACT COLLECTOR LAW, `bindPats_collect_exact` / `bindPats_collecting_split`).
 `bindArgs [Pat.collecting x] [Val.seq ys]` (`Coll((1, 2))`) binds
 `x = collect [Val.seq ys]`, and only the spread supply
 `bindArgs [Pat.collecting x] (items (Val.seq ys))` (`Coll((1, 2)*)`) binds
@@ -337,15 +347,15 @@ def bindArgs (ps : List Pat) (xs : Supply) : Option Env :=
   bindPats ps xs
 
 /--
-THE CALLBACK LAW: a callback operation supplies each value it passes — a
-`map`/`filter` element, a `reduce` element and accumulator — as ONE ordinary
-argument, and the callee binds that supply through the ordinary call binder.
-`map(xs, F)` binds `F` to `bindCallback ps [e]` for each element `e`, exactly
-the binding of the direct call `F(e)`; `reduce(xs, R, init)` binds
-`bindCallback ps [e, acc]`. No callback-specific adaptation exists: a
-structured element is one argument (`map([(1, 2)], Add)` with `Add(x, y)` is
-the ordinary arity failure), and only the callee's explicit structural pattern
-opens it.
+THE CALLBACK LAW, as modelled: the algebra models a callback as ONE ordinary argument per
+passed value — a `map`/`filter` element, a `reduce` element and accumulator — so `map(xs, F)` is
+modelled by `bindCallback ps [e]`, which is `bindArgs ps [e]` BY DEFINITION
+(`bindCallback_eq_bindArgs`), the binding of the direct call `F(e)`; `reduce(xs, R, init)` by
+`bindCallback ps [e, acc]`. A structured element is one argument (`map([(1, 2)], Add)` with
+`Add(x, y)` is the ordinary arity failure), and only the callee's explicit structural pattern
+opens it. In production, `evalUserCallbackCallCounted` feeds `readyNeed` cells to
+`evalNeedUserSupply`, which binds them with `bindNeedPatterns` — a source fact cross-checked by
+guards; only the allocation step is proved (`algebra_binder_is_the_production_allocation`).
 -/
 def bindCallback (ps : List Pat) (args : List Val) : Option Env :=
   bindArgs ps args

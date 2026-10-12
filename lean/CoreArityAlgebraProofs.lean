@@ -50,9 +50,12 @@ theorem listItems?_list (xs : Supply) : listItems? (Val.list xs) = some xs := rf
 
 `structureItems?` unifies the openable halves of `sequenceItems?` and
 `listItems?`: both collection kinds project to their immediate items, and an
-atom is not an openable structure. It matches the full model's
-`Result.structureItems?`, whose total extension `Result.spreadItems` is the
-deconstruction receiver's opening.
+atom is not an openable structure. It mirrors, by construction (no Lean theorem relates the
+algebra's `Val` to `Result`), the full model's `Result.structureItems?`, whose total extension
+`Result.spreadItems` is the opening the unpacking receiver applies (`bindNeedOne`'s `.unpack`
+arm). The parallel `Result`-side laws are `structureItems_listValue` /
+`structureItems_sequenceValue` / `structureItems_atom` / `spreadItems_extends_structureItems`
+(`KatLangArityLaws.lean`).
 -/
 
 theorem structureItems?_seq (xs : Supply) :
@@ -175,18 +178,23 @@ theorem capture_singleton_atom (n : Int) : capture [Val.atom n] = Val.atom n := 
 theorem capture_pair (a b : Val) :
     capture [a, b] = Val.seq [normalize a, normalize b] := rfl
 
-theorem capture_singleton_atom_ne_seq :
-    capture [Val.atom 1] ≠ Val.seq [Val.atom 1] := by
-  decide
+/-- For EVERY atom, the singleton capture is the atom itself, never a one-item sequence
+(generalized from the atom `1`, R8/X-13). -/
+theorem capture_singleton_atom_ne_seq (n : Int) :
+    capture [Val.atom n] ≠ Val.seq [Val.atom n] := by
+  rw [capture_singleton_atom]
+  intro h
+  cases h
 
-theorem sequenceItems?_capture_pair :
-    sequenceItems? (capture [Val.atom 1, Val.atom 2])
-      = some [Val.atom 1, Val.atom 2] := by
-  decide
+/-- For EVERY pair, the sequence view of its capture is the pair of normalized items
+(generalized from the atoms `1, 2`, R8/X-13). -/
+theorem sequenceItems?_capture_pair (a b : Val) :
+    sequenceItems? (capture [a, b]) = some [normalize a, normalize b] := rfl
 
-theorem sequenceItems?_capture_singleton_atom :
-    sequenceItems? (capture [Val.atom 1]) = none := by
-  decide
+/-- For EVERY atom, the singleton capture has no sequence view (generalized from the atom `1`,
+R8/X-13). -/
+theorem sequenceItems?_capture_singleton_atom (n : Int) :
+    sequenceItems? (capture [Val.atom n]) = none := rfl
 
 /-! ## Zero-item-spread neutrality (`()*` and `[]*`)
 
@@ -448,7 +456,7 @@ its own domain:
 * `spread ∘ collect = id` on supplies — `items_collect`;
 * `collect ∘ open = id` on exact list values — `collect_items_list`;
 * `capture ∘ open = id` on canonical non-list values —
-  `capture_items_of_canonical` (later in this file; spreading a list and
+  `capture_items_of_canonical_non_list` (later in this file; spreading a list and
   re-CAPTURING converts it to the sequence world, `capture_items_of_list`,
   so the unrestricted claim would be false).
 -/
@@ -459,22 +467,21 @@ re-supplies EXACTLY the collected items, so collecting-parameter forwarding
 theorem items_collect (xs : Supply) : items (collect xs) = xs := rfl
 
 /-- Collect/open round trip on the list side: re-collecting a spread list's
-items reproduces the list exactly — `collect` is a section of `open` on exact
-list values. Definitionally trivial, conceptually load-bearing: a collecting binding that
-re-collects a forwarded collected list's spread observes the original list. -/
+items reproduces the list exactly — `collect ∘ open = id` on exact list values (`collect` is a
+left inverse of `open` there; the section property `open ∘ collect = id` is `items_collect`).
+Definitionally trivial; in the algebra, a collector that re-collects a collected list's spread
+observes the original list. -/
 theorem collect_items_list (xs : Supply) :
     collect (items (Val.list xs)) = Val.list xs := rfl
 
-/-- Provenance independence: `collect` depends only on the assembled item
-supply, never on which structures were spread to produce it. Collecting the
-concatenation of two spread supplies is exactly the list of those items,
-whatever `a` and `b` were (`first, *rest = 1, [2, 3]*, (4, 5)*` gives
-`rest = [2, 3, 4, 5]`). -/
+/-- Collecting the concatenation of two spread supplies is exactly the list of those items —
+the instance `xs := items a ++ items b` of `collect`'s definition. (Provenance independence needs
+no theorem: `collect` takes a `Supply`, which records no provenance.) -/
 theorem collect_spread_concat_exact (a b : Val) :
     collect (items a ++ items b) = Val.list (items a ++ items b) := rfl
 
-/-- Equal supplies collect equal lists — the general form of provenance
-independence (a function of the supply alone). -/
+/-- Congruence: equal supplies collect equal lists (`collect` is a function of its supply; a
+`Supply` records no provenance). -/
 theorem collect_congr {xs ys : Supply} (h : xs = ys) : collect xs = collect ys :=
   congrArg collect h
 
@@ -555,13 +562,16 @@ theorem collecting_singleton_collected :
       = some [("x", Val.atom 1), ("rest", Val.list [Val.atom 2])] := by
   decide
 
-/-! ### The exact collector law (September 2026)
+/-! ### The exact collector law (September 2026): concrete checks
 
 VALUES STAY VALUES. A collector collects exactly its allocated items and never
 opens one: a non-spread argument is ONE item whatever its value — a sequence,
 a list, or an empty value alike — and only explicit spread (`items`) supplies a
 value's items. Fixed positions are allocated first and bind their items
-unchanged. -/
+unchanged. The theorems in this subsection are decided CHECKS of concrete shapes (the general
+algebra forms are `bindArgs_lone_collecting`, `collector_lone_argument_is_one_item` and
+`bindPats_collecting_split`); they are algebra theorems (`CoreArityAlgebra.*`), distinct from the
+production allocation laws of `KatLangArityLaws.lean` (`lone_collector_collects_every_supplied_cell`). -/
 
 /-- `Coll((1, 2))`: a lone sequence argument is ONE collected item. -/
 theorem collector_lone_sequence_is_one_item :
@@ -751,18 +761,6 @@ exists, because no call boundary opens a value. -/
 theorem bindArgs_eq_bindPats (ps : List Pat) (xs : Supply) :
     bindArgs ps xs = bindPats ps xs := rfl
 
-/--
-The lone collecting pattern models both the single collecting parameter
-`F(*items)` and the lone-collecting assignment `*x = 1, 2, 3`, which
-reaches this binder through the deconstruction receiver. Whatever the supply —
-written arguments or the items an explicit spread produced — the collector is
-exact.
--/
-theorem variadic_is_lone_collecting (xs : Supply) :
-    bindArgs [Pat.collecting "x"] xs = some [("x", collect xs)] := by
-  simp [bindArgs, bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
-        List.take_length, List.drop_length]
-
 /-! ## Generic segment collection (the `bindPats` split theorem)
 
 The concrete binding checks above pin specific shapes; the theorems below
@@ -778,9 +776,10 @@ positionally), so no name-uniqueness premise is needed: duplicate names in
 this abstract binder simply contribute multiple entries. (Surface KatLang does
 NOT reject duplicate parameter names: the full model's binder treats a repeated
 name as an equality CONSTRAINT over independently supplied values — every
-occurrence supplies its own value, and `repeatedNameFailure` only restricts
-(Q-05) — which the extraction deliberately omits; the bridge theorems in
-`KatLangArityLaws.lean` use distinct names.)
+occurrence supplies its own value, and the binder's repeated-name check (`bindNeedName`) only
+restricts (Q-05) — which the extraction deliberately omits. Through
+`algebra_binder_is_the_production_allocation`, the theorems below describe the production
+ALLOCATION under its guard, never the production binder's result.)
 -/
 
 private theorem filter_isCollecting_eq_nil : ∀ {ps : List Pat},
@@ -886,9 +885,10 @@ theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : 
     rfl rfl
   simpa [bindFixed, Pat.key] using h
 
-/-- The reducer accumulator is ONE ordinary argument too: an accumulator-side
-collector collects the one accumulator value, a sequence or a list alike
-(`reduce([e], R, (1, 2))` with `R(x, *acc)` binds `acc = [(1, 2)]`). -/
+/-- In the algebra, a two-item callback supply binds `[x, *acc]` with the trailing collector
+collecting the one accumulator value, a sequence or a list alike (modelling
+`reduce([e], R, (1, 2))` with `R(x, *acc)` binding `acc = [(1, 2)]`; the production reducer
+dispatch is `partial`, guard-checked). -/
 theorem callback_accumulator_is_one_ordinary_argument (x r : String) (e acc : Val) :
     bindCallback [Pat.name x, Pat.collecting r] [e, acc] = some [(x, e), (r, collect [acc])] :=
   bindPats_trailing_collecting x e r [acc]
@@ -915,7 +915,7 @@ theorem bindPats_middle_collecting (a : String) (x : Val) (r : String) (mid : Su
   simpa [bindFixed, Pat.key] using h
 
 /-- Lone collecting binding (`F(*items)`), re-derived as the degenerate split instance —
-agrees with the directly proved `variadic_is_lone_collecting`/`bindArgs_lone_collecting`. -/
+agrees with the directly proved `bindArgs_lone_collecting`. -/
 theorem bindPats_lone_collecting (r : String) (xs : Supply) :
     bindPats [Pat.collecting r] xs = some [(r, collect xs)] := by
   have h := bindPats_collect_exact [] [] r [] xs []
@@ -950,7 +950,7 @@ deconstruction receiver opens a lone structure of either kind
   (see the example after it);
 * `lone_collecting_disagrees_on_lone_structure` — the concrete lone-collecting
   disagreement (there both modes DO succeed, so the Option values really
-  differ), and `variadic_collect_distinguishes_spread` — the grouped call
+  differ), and `variadic_collect_distinguishes_spread_seq` / `_list` — the grouped call
   `F(A)` and the spread call `F(A*)` of a single collecting parameter differ for
   every structured `A`, a sequence and a list alike.
 -/
@@ -996,8 +996,9 @@ theorem deconstruct_spread_capture_can_open_further :
         some [("x", Val.atom 1), ("y", Val.atom 2)] := by
   decide
 
-/-- `variadic_is_lone_collecting`, generalized to an arbitrary collecting-binding
-name: the collector is exact on every supply. -/
+/-- The lone collecting pattern — modelling both the single collecting parameter `F(*items)`
+and the lone-collecting assignment `*x = 1, 2, 3` — is exact on every supply, for every
+collecting-binding name. -/
 theorem bindArgs_lone_collecting (r : String) (xs : Supply) :
     bindArgs [Pat.collecting r] xs = some [(r, collect xs)] := by
   simp [bindArgs, bindPats, bindFixed, Pat.isCollecting, Pat.key, List.filter_cons, List.filter_nil,
@@ -1010,8 +1011,10 @@ theorem collector_lone_argument_is_one_item (r : String) (v : Val) :
     bindArgs [Pat.collecting r] [v] = some [(r, collect [v])] :=
   bindArgs_lone_collecting r [v]
 
-/-- THE EXPLICIT SPREAD LAW: the only way a call supplies a value's items is the
-spread marker, which opens exactly one level — `Coll(v*)` binds `items v`. -/
+/-- THE EXPLICIT SPREAD LAW, algebra form: given the spread's one-level items `items v` as its
+supply, a lone collector binds exactly `collect (items v)` (`Coll(v*)`). That the spread is the
+ONLY way a call supplies a value's items is the algebra's definition of `bindArgs`
+(`bindArgs_eq_bindPats`; `variadic_collect_distinguishes_spread_seq` / `_list`). -/
 theorem collector_spread_argument_is_its_items (r : String) (v : Val) :
     bindArgs [Pat.collecting r] (items v) = some [(r, collect (items v))] :=
   bindArgs_lone_collecting r (items v)
@@ -1023,20 +1026,23 @@ theorem forwarding_resupplies_the_collected_supply (r : String) (xs : Supply) :
     bindArgs [Pat.collecting r] (items (collect xs)) = bindArgs [Pat.collecting r] xs := by
   rw [items_collect]
 
-/-- THE FIXED BINDING LAW: a fixed parameter receives its allocated item
-unchanged — `Id(v)` binds `v` for every value, a structure included. -/
+/-- THE FIXED BINDING LAW, single-parameter case: one fixed pattern given one item binds it
+unchanged — `Id(v)` binds `v` for every value, a structure included. (Fixed patterns in
+collector heads keep their items unchanged by `bindPats_collecting_split`.) -/
 theorem fixed_parameter_binds_item_unchanged (x : String) (v : Val) :
     bindArgs [Pat.name x] [v] = some [(x, v)] := rfl
 
-/-- THE CALLBACK LAW: callback binding IS the ordinary call binding of the
-supplied arguments — `map([e], F)` binds exactly as `F(e)`, `reduce` as
-`R(e, acc)`. -/
-theorem callback_is_the_ordinary_call (ps : List Pat) (args : List Val) :
+/-- `bindCallback` is `bindArgs` BY DEFINITION in this algebra: the algebra models callback binding as the ordinary
+call binding of the supplied arguments (`map([e], F)` binding as `F(e)`, `reduce` as `R(e, acc)`).
+It is a fact of the algebra only: production callback-binder agreement (Q-66, HO-02) is not
+proved — both production paths reach `bindNeedPatterns` only inside `partial` definitions. -/
+theorem bindCallback_eq_bindArgs (ps : List Pat) (args : List Val) :
     bindCallback ps args = bindArgs ps args := rfl
 
-/-- A callback element is ONE ordinary argument: a single collector collects it
-as one item whatever its value, a sequence and a list alike
-(`map([(1, 2)], Coll)` is `[[(1, 2)]]`). -/
+/-- A callback element is ONE ordinary argument in the algebra: a single collector collects it
+as one item whatever its value, a sequence and a list alike. (The binding `[(1, 2)]` is what
+`map([(1, 2)], Coll)` stores per element; the result `[[(1, 2)]]` itself is evaluator behaviour,
+Q-25, not modelled here.) -/
 theorem callback_element_is_one_ordinary_argument (r : String) (e : Val) :
     bindCallback [Pat.collecting r] [e] = some [(r, collect [e])] :=
   bindArgs_lone_collecting r [e]
@@ -1335,7 +1341,7 @@ story over all values:
   produce canonical, orphan-free values;
 * `collect_normalize_elementwise` — collected list values normalize
   element-wise only: the collected boundary itself is stable;
-* `capture_items_of_canonical` — capture after spread is the identity on
+* `capture_items_of_canonical_non_list` — capture after spread is the identity on
   canonical NON-LIST values; spreading a list opens its boundary, so
   re-capture converts it to the canonical capture of its elements
   (`capture_items_of_list`).
@@ -1410,8 +1416,10 @@ mutual
   /-- Orphan-freedom: `true` iff no singleton sequence boundary `Val.seq [x]`
   appears anywhere in the value. A singleton sequence boundary is a
   literal-unwritable "orphan" (a stored `(5)` distinct from `5`): `normalize`
-  erases such boundaries at every construction/capture site, so no canonical
-  value contains one (`orphanFree_normalize`). Exact list values carry NO
+  erases such boundaries, so no canonical value (fixed point of `normalize`) contains one
+  (`orphanFree_normalize`), and `capture = normalize ∘ Val.seq` never mints one
+  (`capture_orphanFree`); that the full model normalizes at its construction/capture sites is a
+  property of `KatLang.lean` this file does not prove. Exact list values carry NO
   singleton-orphan rule — `[x]` is literal-writable — so only their elements
   are checked. -/
   def orphanFree : Val -> Bool
@@ -1494,7 +1502,7 @@ theorem capture_orphanFree (xs : Supply) : orphanFree (capture xs) = true :=
 /-- Spread/capture round-trip, restricted to non-list values: on a canonical
 value that is not an exact list, re-capturing the item view (the supply an
 explicit spread expression provides) reproduces the value exactly. -/
-theorem capture_items_of_canonical (v : Val) (h : normalize v = v)
+theorem capture_items_of_canonical_non_list (v : Val) (h : normalize v = v)
     (hl : ∀ xs, v ≠ Val.list xs) :
     capture (items v) = v := by
   cases v with
@@ -1502,10 +1510,10 @@ theorem capture_items_of_canonical (v : Val) (h : normalize v = v)
   | seq xs => exact h
   | list xs => exact absurd rfl (hl xs)
 
-/-- Spread-then-CAPTURE on a list yields the canonical capture of its
-elements — never the same list back: `x = A*` re-groups list items into
-the sequence world. (Spread-then-COLLECT, by contrast, reproduces the list:
-`items_collect`.) -/
+/-- Spread-then-CAPTURE on a list yields the canonical capture of its elements (`capture xs`:
+the empty sequence or a sequence for zero or several elements, the lone element itself — after
+normalization — for one). (Spread-then-COLLECT, by contrast, reproduces the list:
+`collect_items_list`.) -/
 theorem capture_items_of_list (xs : Supply) :
     capture (items (Val.list xs)) = capture xs := rfl
 
@@ -1517,12 +1525,12 @@ theorem collect_items_collect (xs : Supply) :
 
 /-! ## Canonical-supply invariant (`canonicalSupply`)
 
-The abstract `Supply` type admits raw non-canonical members; observable
-runtime supplies do not. `canonicalSupply` names that invariant, and the laws
-below close it under the algebra's operations: the empty supply is canonical,
-normalization produces canonical supplies, opening a canonical VALUE yields a
-canonical supply, and collecting a canonical supply yields an
-already-canonical list. That last law is the precise sense in which `collect`
+The abstract `Supply` type admits raw non-canonical members; observable runtime supplies are
+intended to satisfy the invariant, which this file assumes and does not prove. `canonicalSupply`
+names that invariant, and the laws below prove that the empty supply is canonical, normalization
+yields canonical supplies, the item view of a canonical VALUE is canonical, and collecting a
+canonical supply yields an already-canonical list (closure under concatenation and under the
+binder's slicing is not proved). That last law is the precise sense in which `collect`
 needs no normalization of its own: `collect` preserves the number, order,
 kinds, and boundaries of the supplied values as-is, and canonicality of the
 result comes from the input invariant, not from work performed inside
@@ -1585,10 +1593,10 @@ theorem canonicalSupply_normalizeList (xs : Supply) :
     canonicalSupply (normalizeList xs) :=
   normalizeList_idempotent xs
 
-/-- Collecting a canonical supply is already canonical: collecting binding stores
-observable (canonical) values without renormalizing them, and the collected
-list is a `normalize` fixed point purely because its INPUT satisfied the
-invariant. -/
+/-- Collecting a canonical supply is already canonical: `collect` stores its supply without
+renormalizing it (`collect = Val.list`), so the collected list is a `normalize` fixed point
+because its INPUT satisfies the invariant. (That observable runtime supplies satisfy it is
+assumed, not proved here.) -/
 theorem normalize_collect_of_canonicalSupply {xs : Supply}
     (h : canonicalSupply xs) :
     normalize (collect xs) = collect xs := by
@@ -1615,9 +1623,9 @@ theorem collect_orphanFree_of_elements {xs : Supply}
   show orphanFreeList xs = true
   exact orphanFreeList_of_forall h
 
-/-- Opening a canonical value yields a canonical supply: the invariant is
-closed under `open`, so supplies assembled from spreads of canonical stored
-values are canonical without renormalization. (For a canonical sequence value
+/-- Opening a canonical value yields a canonical supply: the item view of a canonical value is
+canonical. (Closure under concatenation, and so for supplies assembled from several spreads, is
+not proved here.) (For a canonical sequence value
 the stored payload is its own normalization — the singleton-collapse case is
 impossible because it would leave an orphan boundary, contradicting
 `orphanFree_normalize`.) -/
@@ -1663,10 +1671,10 @@ theorem canonicalSupply_items_of_canonical {v : Val} (h : normalize v = v) :
                 h.symm.trans (normalize_seq_of_list_multi hl)
               exact (Val.seq.inj hx).symm
 
-/-- The invariant composes with the receiver operations end to end: a collecting binding
-that collects the spread of a canonical stored value stores a canonical list
-(`normalize_collect_of_canonicalSupply` after
-`canonicalSupply_items_of_canonical`). -/
+/-- Collecting the item view of a canonical value gives a canonical list
+(`normalize_collect_of_canonicalSupply` after `canonicalSupply_items_of_canonical`) — the lone
+collector case; a collector's slice in a mixed head would also need closure under the binder's
+slicing, not proved here. -/
 theorem normalize_collect_items_of_canonical {v : Val} (h : normalize v = v) :
     normalize (collect (items v)) = collect (items v) :=
   normalize_collect_of_canonicalSupply (canonicalSupply_items_of_canonical h)
@@ -1688,9 +1696,12 @@ this extraction, not a parser theorem — parse-time lowering of the stacked
 spelling is C#-side, and the authoritative evaluator guards
 (`stackedSpreadAgreesWithGroupedCompositionalForm`,
 `stackedSpreadMultiItemFixedPoint`, `stackedSpreadMixedSupplyStaysUnopened`
-in `CoreTests.lean`) pin the same behavior end to end through the full
+in `CoreTests/ListValues.lean`) pin the same behavior end to end through the full
 model's `Result.spreadItems` after `Result.normalize ∘ Result.sequenceValue`
-— exactly the composition `items ∘ capture` mirrors.
+— exactly the composition `items ∘ capture` mirrors. They are executable
+`#guard`s over the `partial` evaluator on concrete values, not theorems; the
+first two compare the stacked and grouped spellings directly. No `Result`- or
+`Expr`-level theorem transfers the laws below (Q-66).
 
 The theorems below prove the exact behavior of that composition:
 
@@ -1861,8 +1872,8 @@ theorem repeated_spread_fixed_point_of_multi {v : Val}
 
 /-- The values whose spread supplies exactly themselves-as-one-item are the
 atoms: a sequence or list value cannot be its own lone stored item (the
-structural order excludes it). This is what makes scalar spread total AND
-repeated-spread-neutral. -/
+structural order excludes it). `repeated_spread_fixed_iff` uses this to show that a lone atom is
+the only singleton first spread that repeated spread leaves unchanged. -/
 theorem items_eq_singleton_self_iff_atom (v : Val) :
     items v = [v] ↔ ∃ n, v = Val.atom n := by
   cases v with
@@ -1954,7 +1965,7 @@ example :
 /-- Multi-item fixed point, pinned concretely: `[[1, 2], [3, 4]]**` supplies
 the SAME two intact inner lists as `[[1, 2], [3, 4]]*` — the
 extraction-side mirror of the authoritative evaluator guard
-`stackedSpreadMultiItemFixedPoint` in `CoreTests.lean`. -/
+`stackedSpreadMultiItemFixedPoint` in `CoreTests/ListValues.lean`. -/
 theorem repeated_spread_multi_item_fixed_point :
     items (capture (items (Val.list
         [Val.list [Val.atom 1, Val.atom 2], Val.list [Val.atom 3, Val.atom 4]])))

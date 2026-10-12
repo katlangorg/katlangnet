@@ -263,7 +263,7 @@ def afAliasPairs : List (String × String) :=
 #guard afAliasPairs.all fun (callee, alias) =>
   afSupplies.all fun supply => afSameOutcome (afRun [afCall alias supply]).fst (afRun [afCall callee supply]).fst
 
--- ... and through a 100-link chain (`alias_chain_normalizes`).
+-- ... and through a 100-link chain (`static_alias_chain_example_reaches_its_target`).
 #guard afSupplies.all fun supply =>
   afSameOutcome (afChainRun 100 [afCall "L99" supply]).fst (afChainRun 100 [afCall "Single" supply]).fst
 
@@ -306,7 +306,7 @@ def afBuiltinSupplies : List (List KatLang.Expr) :=
 #guard afSucceedsWith [afCall "SA" [num (-1)]] (.atom (-1))
 #guard afFailsWith (innermostIsNoMatchingBranch "SA") [afCall "SA" [num 0]]
 -- ... while a CLOSED lone row asking it for bare forwarding is the front-end error
--- (`alias_without_forwarding_contract_cannot_bare_forward`, narrowed Q-77) — and a nameable
+-- (`unnameable_family_target_cannot_bare_forward`, narrowed Q-77) — and a nameable
 -- target forwards by its own names through every alias of it.
 def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwardingRejection KatLang.Expr -> Bool
   | .error actual => actual == rejection
@@ -334,7 +334,7 @@ def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwarding
 #guard afSucceedsWith [afCall "PF" [resolve "Only", resolve "OnlyA"]] (.atom 0)
 #guard afFailsWith (fun _ => true) [afCall "PF" [resolve "OnlyA", resolve "Inc"]]
 
--- 7. THE CACHE KEY IS THE ALIAS BINDING'S (`alias_cache_key_is_alias_binding`): a bare read of the
+-- 7. THE CACHE KEY IS THE ALIAS BINDING'S (`zero_arg_cache_key_carries_the_binding_name`): a bare read of the
 --    alias `OnlyA` is Only's zero-supply demand stored under OnlyA's OWN entry, so `OnlyA, Only,
 --    OnlyA` evaluates Only's body twice (one evaluation per binding: Only binds its empty supply
 --    and calls `Id`, two contexts each) and reuses OnlyA's entry; an explicit `OnlyA()` is fresh
@@ -343,7 +343,7 @@ def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwarding
 #guard (afRun [resolve "OnlyA", resolve "Only", resolve "OnlyA"]).snd == 4
 #guard (afRun [afCall "OnlyA" [], resolve "OnlyA"]).snd == 4
 #guard (afRun [resolve "OnlyA", afCall "OnlyA" []]).snd == 4
--- A ZERO-PARAMETER target is READ, never aliased (`alias_zero_parameter_target_is_read`):
+-- A ZERO-PARAMETER target is READ, never aliased (`zero_parameter_user_algorithm_is_not_an_alias_target`):
 -- `ZA = Z` reads Z's own cached value, so `ZA, Z, ZA` evaluates Z's body once.
 #guard afSucceedsWith [resolve "ZA", resolve "Z", resolve "ZA"] (.sequenceValue [.atom 3, .atom 3, .atom 3])
 #guard (afRun [resolve "ZA", resolve "Z", resolve "ZA"]).snd == 1

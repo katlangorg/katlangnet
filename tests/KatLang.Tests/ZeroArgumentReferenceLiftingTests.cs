@@ -32,8 +32,8 @@ namespace KatLang.Tests;
 /// <para>The evidence is deterministic host instrumentation (<c>tick</c> counts body executions)
 /// and seeded random streams, on six execution routes: the public sync and async engines, the
 /// async twin (an async host operation present), the generic and optimized evaluators, and the
-/// forced async twin. Lean: <c>liftsBareValueReference</c>, the law
-/// <c>bare_reference_lifts_iff_not_cacheable</c> (<c>KatLangArityLaws.lean</c>), and the guards in
+/// forced async twin. Lean: the specification predicate <c>liftsBareValueReference</c>, the
+/// definitional identity <c>lifts_bare_value_reference_iff_not_cacheable</c> (<c>KatLangArityLaws.lean</c>), and the guards in
 /// <c>CoreTests/ValueDemand.lean</c>.</para>
 /// </summary>
 public class ZeroArgumentReferenceLiftingTests

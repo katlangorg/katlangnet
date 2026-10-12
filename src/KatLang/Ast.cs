@@ -2024,7 +2024,7 @@ public sealed record Property(
 /// <see cref="Builtin"/>, <see cref="Conditional"/>, and <see cref="Alias"/> are its only
 /// variants, no other assembly can derive from it, and a switch EXPRESSION naming all four is
 /// compiler-exhaustive with no catch-all arm — the Lean-mirroring dispatches
-/// (<c>withParent</c>, <c>isFunctionShaped</c>, signature and exposure classification,
+/// (<c>withParent</c>, <c>acceptsZeroSuppliedArguments</c>, signature and exposure classification,
 /// the <c>WithParams</c> family here, the internal total accessors) name the variants a
 /// case applies to instead of hiding them under <c>_</c>, so a new variant fails the build
 /// there until decided.</para>
