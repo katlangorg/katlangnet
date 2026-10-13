@@ -275,7 +275,7 @@ internal sealed class EvaluationBudget
     /// dynamic invocations and loop iterations only, and the frozen plain/dot work
     /// parity depends on that), but each IS a level of host recursion: without this
     /// charge a zero-parameter property can reach itself through a builtin argument
-    /// (<c>A = count(A)</c>), an <c>AlgEnv</c> value thunk, or a name-resolved
+    /// (<c>A = count(A)</c>), a parameter's supplied cell, or a name-resolved
     /// <c>.string</c> receiver and recurse outside every budget chokepoint. Same
     /// contract as
     /// <see cref="TryEnterInvocation"/>: on <c>null</c>, balance with

@@ -446,7 +446,7 @@ def dotCallParityChooseAlg : Algorithm := .conditional none [] [
   ⟨ .sequenceValue [.bind "x", .bind "y"], alg [] [] [] [.binary .add (.param "x") (.param "y")] ⟩ ]
 
 -- G(0) = 100; G(x) = x — a branch's top-level pattern is its head's argument
--- list (`matchCallPattern`), never a nested group.
+-- list (`needClauseHead`), never a nested group.
 def dotCallParityOneSlotHeadAlg : Algorithm := .conditional none [] [
   ⟨ .sequenceValue [.litInt 0], alg [] [] [] [.num 100] ⟩,
   ⟨ .sequenceValue [.bind "x"], alg [] [] [] [.param "x"] ⟩ ]
@@ -633,7 +633,7 @@ def dotCallParityCases : List DotCallParityCase :=
     -- per-run cache; both paths must leave the same cache state.
     { label := "P/structural-zero-arg-cache", target := resolve "Holder", name := "Inner",
       expectedAtoms := some [42] },
-    -- Q: a stored `.param` fallback with NO algEnv binding fails with the
+    -- Q: a stored `.param` fallback with NO parameter binding fails with the
     -- canonical parameter-resolution error on both paths — the stored
     -- identity decides, never the runtime environment.
     { label := "Q/param-fallback-unbound", target := .num 5, name := "Missing",

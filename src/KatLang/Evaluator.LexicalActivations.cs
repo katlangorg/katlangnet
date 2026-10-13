@@ -1,12 +1,13 @@
 namespace KatLang;
 
 /// <summary>
-/// The three binding channels of ONE activation of a lexical owner, captured when a call
+/// The parameter bindings of ONE activation of a lexical owner, captured when a call
 /// enters the owner's body (<see cref="Evaluator.EnterAlgorithmBody"/>) or matches one of
 /// its clauses (<c>ChildOfConditionalCall</c>): the owner's own parameter names, as bound
-/// on the value, algorithm, and counted tiers at that moment — first binding per name,
-/// exactly the tiers a captured-parameter read must see. Keeping the three channels
-/// together prevents a shadowing caller from supplying any missing channel.
+/// on the value tier and the need-cell tier at that moment — first binding per name,
+/// exactly the tiers a captured-parameter read must see (a cell carries both the VALUE and
+/// the CALLABLE channel of its parameter). Keeping the tiers together prevents a
+/// shadowing caller from supplying any missing binding.
 /// <para>An activation is identified by REFERENCE: two calls of one declaration are two
 /// activations even when every captured value is equal (Lean: a fresh index into
 /// <c>EvalState.lexicalActivations</c> per <c>recordParameterActivation</c>). It lives on
@@ -17,30 +18,20 @@ namespace KatLang;
 /// </summary>
 internal sealed class ParameterActivation
 {
-    private ParameterActivation(ValEnv values, AlgEnv algorithms, CountedParamEnv counted, NeedEnv needs,
-        object valueEnvironmentIdentity, object algorithmEnvironmentIdentity, object countedEnvironmentIdentity)
+    private ParameterActivation(ValEnv values, NeedEnv needs, object valueEnvironmentIdentity)
     {
         Values = values;
-        Algorithms = algorithms;
-        Counted = counted;
         Needs = needs;
         ValueEnvironmentIdentity = valueEnvironmentIdentity;
-        AlgorithmEnvironmentIdentity = algorithmEnvironmentIdentity;
-        CountedEnvironmentIdentity = countedEnvironmentIdentity;
     }
 
     public ValEnv Values { get; }
 
-    public AlgEnv Algorithms { get; }
-
-    public CountedParamEnv Counted { get; }
     internal NeedEnv Needs { get; }
 
     // The binding context at OWNER entry, not the eventual consumer's context.
     // Parameterless property reads retain it; explicit calls bind fresh environments.
     internal object ValueEnvironmentIdentity { get; }
-    internal object AlgorithmEnvironmentIdentity { get; }
-    internal object CountedEnvironmentIdentity { get; }
 
     /// <summary>
     /// The normalized callable-alias targets of alias bindings declared under this activation
@@ -52,19 +43,16 @@ internal sealed class ParameterActivation
     private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
 
     /// <summary>
-    /// Captures the bindings of <paramref name="names"/> from the three tiers of a binding
-    /// context: the value environment <paramref name="values"/> and the algorithm and counted
-    /// tiers of <paramref name="ctx"/>, keeping the first binding of each owned name in
-    /// environment order (Lean: <c>recordParameterActivation</c>'s three <c>filter</c>s).
+    /// Captures the bindings of <paramref name="names"/> from the two tiers of a binding
+    /// context: the value environment <paramref name="values"/> and the need-cell tier of
+    /// <paramref name="ctx"/>, keeping the first binding of each owned name in environment
+    /// order (Lean: <c>recordParameterActivation</c>'s two <c>filter</c>s).
     /// </summary>
     internal static ParameterActivation Capture(IReadOnlyList<string> names, Evaluator.EvalCtx ctx, ValEnv values)
         => new(
             FilterOwned(values, names, static binding => binding.Name),
-            FilterOwned(ctx.AlgEnv, names, static binding => binding.Name),
-            FilterOwned(ctx.CountedParamEnv, names, static binding => binding.Name),
             FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
-            ctx.NeedEnv.Count == 0 ? Evaluator.ValueEnvironmentCacheIdentity(values) : ctx.NeedEnv,
-            ctx.AlgEnv, ctx.CountedParamEnv);
+            ctx.NeedEnv.Count == 0 ? Evaluator.ValueEnvironmentCacheIdentity(values) : ctx.NeedEnv);
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
@@ -224,58 +212,13 @@ public static partial class Evaluator
             return ctx;
 
         values = activation.Values;
-        return ctx.WithAlgEnv(activation.Algorithms).WithCountedParamEnv(activation.Counted).WithNeedEnv(activation.Needs);
+        return ctx.WithNeedEnv(activation.Needs);
     }
-
-    /// <summary>
-    /// Whether a parameter's VALUE outcome is established on the legacy Ready tiers: it has a
-    /// value (counted or value tier), or a failure is recorded on its algorithm binding. Under
-    /// Model C a parameter's outcome is its supplied cell's (<see cref="KatLang.Evaluation.NeedCell"/>),
-    /// demanded by the ordinary parameter read, and no binding path records an algorithm-tier
-    /// failure (the eager writer, <c>SlotAlgorithmBinding</c>, was deleted). Either way a value
-    /// demand of the parameter is the ordinary parameter read, never an evaluation of its
-    /// algorithm channel. Lean: the value tiers the <c>.param</c> arm of <c>evalCounted</c> reads
-    /// (the former <c>resolveArgAlgExpr</c> was removed with Model C).
-    /// </summary>
-    private static bool ParameterHasValueOutcome(string name, EvalCtx ctx, ValEnv values)
-    {
-        var parameterCtx = ParameterContext(name, ctx, ref values);
-        return LookupCountedParam(parameterCtx.CountedParamEnv, name) is not null
-            || LookupVal(values, name) is not null
-            || LookupAlgBinding(parameterCtx.AlgEnv, name) is { ValueError: not null };
-    }
-
-    /// <summary>
-    /// The failure recorded on a parameter's algorithm binding as its VALUE outcome (the
-    /// legacy Ready tier: no Model-C binding path records one, and a supplied cell's failure
-    /// is read through <see cref="EvalParamCounted"/>), read in the parameter's own binding
-    /// context exactly as that read reaches the tier: <c>null</c> when the parameter has a
-    /// value (a value binding always wins, as in that read) or no failed algorithm-channel
-    /// binding.
-    /// Lean: <c>parameterValueFailure?</c>.
-    /// </summary>
-    private static EvalError? ParameterValueFailure(string name, EvalCtx ctx, ValEnv values)
-    {
-        var parameterCtx = ParameterContext(name, ctx, ref values);
-        if (LookupCountedParam(parameterCtx.CountedParamEnv, name) is not null || LookupVal(values, name) is not null)
-            return null;
-
-        return LookupAlgBinding(parameterCtx.AlgEnv, name)?.ValueError;
-    }
-
-    // A builtin value boundary must preserve an established parameter failure before
-    // classifying the independent callable channel. This lookup never evaluates a body.
-    private static EvalError? ParameterValueFailure(Expr? source, EvalCtx ctx, ValEnv values)
-        => source is Expr.Param(var name) && ParameterValueFailure(name, ctx, values) is { } failure
-            ? ParameterSlotFailure(name, source.Span, failure)
-            : null;
 
     internal static bool CapturedParameterNeedsOwnerLookup(string name, EvalCtx ctx, ValEnv values)
     {
         if (CapturedParameterActivation(name, ctx) is not { } activation)
             return false;
-        return LookupCountedParam(activation.Counted, name) != LookupCountedParam(ctx.CountedParamEnv, name)
-            || !ReferenceEquals(LookupVal(activation.Values, name), LookupVal(values, name))
-            || LookupAlgBinding(activation.Algorithms, name) != LookupAlgBinding(ctx.AlgEnv, name);
+        return !ReferenceEquals(LookupVal(activation.Values, name), LookupVal(values, name));
     }
 }

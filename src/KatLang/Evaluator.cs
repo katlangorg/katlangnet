@@ -66,20 +66,17 @@ public static partial class Evaluator
     /// consult, and the parent every scope wired under the head receives. It is null for a
     /// head pushed without an activation, whose site scope is then its plain declaring scope
     /// (<c>SiteScope</c>); every push resets it, because it describes the head alone.
-    /// AlgEnv carries algorithm-typed parameter bindings for higher-order dispatch.
-    /// NeedEnv carries the invocation's shared parameter cells. Legacy Ready bindings in
-    /// AlgEnv and CountedParamEnv adapt already-supplied host data without re-evaluation.
+    /// NeedEnv carries the invocation's shared parameter cells: a parameter's VALUE outcome
+    /// and its CALLABLE identity (higher-order dispatch projects the callable from the cell).
     /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
     /// by this copied struct, so every derived context charges the same run's counters
     /// and no copy can reset them.
-    /// Lean: structure EvalCtx where callStack : List Algorithm; algEnv : AlgEnv := [];
+    /// Lean: structure EvalCtx where callStack : List Algorithm; needEnv; bindingContext;
     /// headScope : Option ScopeCtx := none.
     /// </summary>
     internal readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
         ScopeCtx? HeadScope,
-        AlgEnv AlgEnv,
-        CountedParamEnv CountedParamEnv,
         IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
         IDeconstructionBindingCache DeconstructionBindingCache,
         bool EnableLoopOptimization,
@@ -97,7 +94,7 @@ public static partial class Evaluator
         /// stream — because a shared one would be global mutable evaluation state.
         /// </summary>
         public static EvalCtx Empty => new(
-            [], null, [], [], UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
+            [], null, UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
             true, null, true, null,
             null,
             EvaluationBudget.Create(null));
@@ -115,8 +112,6 @@ public static partial class Evaluator
             => new(
                 Prepend(alg, CallStack),
                 headScope,
-                AlgEnv,
-                CountedParamEnv,
                 ZeroArgPropertyResultCache,
                 DeconstructionBindingCache,
                 EnableLoopOptimization,
@@ -129,45 +124,11 @@ public static partial class Evaluator
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
-        /// <summary>Lean: EvalCtx.withAlgEnv — replace the algorithm environment.</summary>
-        public EvalCtx WithAlgEnv(AlgEnv algEnv)
-            => new(
-                CallStack,
-                HeadScope,
-                algEnv,
-                CountedParamEnv,
-                ZeroArgPropertyResultCache,
-                DeconstructionBindingCache,
-                EnableLoopOptimization,
-                LoopDiagnostics,
-                EnableSequencePipelineOptimization,
-                SequenceDiagnostics,
-                Observations,
-                Budget) { NeedEnv = NeedEnv };
-
-        /// <summary>Replace the counted callback-parameter environment.</summary>
-        public EvalCtx WithCountedParamEnv(CountedParamEnv countedParamEnv)
-            => new(
-                CallStack,
-                HeadScope,
-                AlgEnv,
-                countedParamEnv,
-                ZeroArgPropertyResultCache,
-                DeconstructionBindingCache,
-                EnableLoopOptimization,
-                LoopDiagnostics,
-                EnableSequencePipelineOptimization,
-                SequenceDiagnostics,
-                Observations,
-                Budget) { NeedEnv = NeedEnv };
-
         /// <summary>Replace the zero-argument property cache for a scoped evaluation subtree.</summary>
         public EvalCtx WithZeroArgPropertyResultCache(IZeroArgPropertyResultCache zeroArgPropertyResultCache)
             => new(
                 CallStack,
                 HeadScope,
-                AlgEnv,
-                CountedParamEnv,
                 zeroArgPropertyResultCache,
                 DeconstructionBindingCache,
                 EnableLoopOptimization,
@@ -206,34 +167,13 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Counted callback-parameter environment for selected higher-order items.
-    /// Each item carries its ordinary value-boundary count: zero for <c>()</c>,
-    /// otherwise one, just like <c>S[i]</c>.
-    /// </summary>
-    private static CountedResult? LookupCountedParam(CountedParamEnv env, string name)
-    {
-        foreach (var (n, v) in env)
-            if (n == name) return v;
-        return null;
-    }
-
-    /// <summary>
     /// Native-wrapper argument read, shared by Math-member natives and host
     /// operations. A wrapper body's argument names are the wrapper's own bound
     /// parameters, so this is EXACTLY the <see cref="Expr.Param"/> value read —
     /// <see cref="EvalParamCounted"/> projected to its value — and not a
-    /// separate lookup rule: counted callback-parameter environment first (the
-    /// callback/loop-step funnel), then the value environment (direct
-    /// calls), then the algorithm binding.
-    /// <para>The algorithm tier is reachable whenever an argument bound only on
-    /// the algorithm channel — its value evaluation failed, or it names a
-    /// callable — and it must produce the ordinary value-demand outcome: the
-    /// zero-argument arity error for a parameterized callable, the conditional
-    /// value-access error for a clause family, or the value/failure of a
-    /// zero-parameter algorithm. Omitting it reported <c>Unknown name</c> for
-    /// the wrapper's OWN parameter, and (before the value environment was
-    /// shadowed at binding) let a same-named ambient caller value answer
-    /// instead.</para>
+    /// separate lookup rule: the parameter's supplied cell first (Model C; its
+    /// demand is the argument's one value evaluation), then the value
+    /// environment.
     /// The wrapper body carries no source span, so the error is positioned by
     /// the enclosing call/dot-call context like every other native failure.
     /// </summary>
@@ -243,141 +183,44 @@ public static partial class Evaluator
         string name)
         => ProjectCountedValue(EvalParamCounted(name, span: null, ctx, valEnv));
 
-    internal static CountedParamEnv ShadowCountedParamEnv(
-        CountedParamEnv env,
-        IEnumerable<string> shadowedNames)
-    {
-        if (env.Count == 0)
-            return env;
-
-        var shadowed = new HashSet<string>(shadowedNames);
-        if (shadowed.Count == 0)
-            return env;
-
-        var filtered = new List<(string Name, CountedResult Value)>(env.Count);
-        var removedAny = false;
-        foreach (var binding in env)
-        {
-            if (shadowed.Contains(binding.Name))
-            {
-                removedAny = true;
-                continue;
-            }
-
-            filtered.Add(binding);
-        }
-
-        return removedAny ? filtered : env;
-    }
-
     /// <summary>
-    /// Removes the named bindings from an INHERITED algorithm environment — the
-    /// algorithm-tier counterpart of <see cref="ShadowCountedParamEnv"/> and
-    /// <see cref="ShadowValEnv"/>.
-    /// <para>A callee's algorithm environment is its own algorithm bindings
-    /// prepended to the CALLER's, which is what lets a nested call still invoke
-    /// an ancestor-owned callable parameter. A parameter the call bound only on
-    /// the VALUE channel contributes no algorithm binding, so without this
-    /// filter a same-named callable inherited from the caller answered every
-    /// call-position read of that parameter (<see cref="ResolveAlg"/> on an
-    /// <see cref="Expr.Param"/>): <c>Inner(f) = f(2)</c> called as
-    /// <c>Inner(5)</c> inside <c>Apply(f)</c> invoked the caller's <c>f</c>
-    /// instead of failing as not-callable, exactly as the standalone
-    /// <c>Inner(5)</c> does.</para>
-    /// Returns the SAME instance when nothing is removed. That is correct, not merely
-    /// cheap: a shadowed inherited tier is a VIEW of the caller's binding context, and
-    /// the reference identity that keys a LOCAL-ONLY property's zero-arg cache entry
-    /// (an exported property's key carries no environment) is the CALLEE's new
-    /// identity, minted by <see cref="Concat"/> when its own bindings are prepended —
-    /// <see cref="Concat"/> never returns an operand, so no activation can inherit
-    /// another's identity through a shadow that removed nothing.
-    /// Lean: <c>AlgEnv.shadow</c>.
-    /// </summary>
-    internal static AlgEnv ShadowAlgEnv(
-        AlgEnv env,
-        IReadOnlyList<string> shadowedNames)
-    {
-        if (env.Count == 0 || shadowedNames.Count == 0)
-            return env;
-
-        HashSet<string>? shadowedSet = shadowedNames.Count > LinearShadowNameScanLimit
-            ? new HashSet<string>(shadowedNames, StringComparer.Ordinal)
-            : null;
-
-        List<(string Name, Algorithm Value, EvalError? ValueError)>? filtered = null;
-        for (var index = 0; index < env.Count; index++)
-        {
-            var binding = env[index];
-            var isShadowed = shadowedSet is not null
-                ? shadowedSet.Contains(binding.Name)
-                : ContainsOrdinal(shadowedNames, binding.Name);
-
-            if (isShadowed)
-            {
-                if (filtered is null)
-                {
-                    filtered = new List<(string Name, Algorithm Value, EvalError? ValueError)>(env.Count - 1);
-                    for (var copied = 0; copied < index; copied++)
-                        filtered.Add(env[copied]);
-                }
-
-                continue;
-            }
-
-            filtered?.Add(binding);
-        }
-
-        return filtered ?? env;
-    }
-
-    /// <summary>
-    /// The inherited tiers of a callee's context with the callee's parameter
-    /// names shadowed out of the Model-C need-cell environment (`NeedEnv`), the algorithm environment
-    /// (<see cref="ShadowAlgEnv"/>) and the counted callback-parameter
-    /// environment (<see cref="ShadowCountedParamEnv"/>).
-    /// <para>A bound parameter owns its name on every channel: a call-position
-    /// read of a value-bound parameter never reaches a same-named caller
-    /// callable, exactly as a value-position read of an algorithm-bound
-    /// parameter never reaches a same-named caller value
-    /// (<see cref="ShadowValEnv"/>, applied beside this helper at the value
-    /// tier). Names the callee does not bind stay visible, which is what lets a
-    /// nested call still reach an ancestor-owned callable. Every user-call,
-    /// conditional-call, callback, and loop-step binding site — generic and
-    /// planned, synchronous and async twin — derives its callee context from
-    /// this ONE helper and then prepends its own bindings, so no path can
-    /// shadow one tier and forget another. Each tier keeps its instance when
-    /// nothing is removed — a view of the caller's context — while the callee's
-    /// binding-context identity (the key component of a LOCAL-ONLY property's
-    /// zero-arg cache entry) is minted by the <see cref="Concat"/> that prepends its
-    /// own bindings.</para>
+    /// The inherited need-cell tier of a callee's context with the callee's parameter
+    /// names shadowed out of it (`NeedEnv`; the value tier is shadowed beside this helper
+    /// by <see cref="ShadowValEnv"/>).
+    /// <para>A bound parameter owns its name on every channel: its supplied cell carries
+    /// both its VALUE and its CALLABLE channel, so neither a value-position read nor a
+    /// call-position read of it can reach a same-named caller binding. Names the callee
+    /// does not bind stay visible, which is what lets a nested call still reach an
+    /// ancestor-owned parameter. Every user-call, conditional-call, callback, and
+    /// loop-step binding site — generic and planned, synchronous and async twin —
+    /// derives its callee context from this ONE helper and then prepends its own cells;
+    /// the callee's binding-context identity (the key component of a LOCAL-ONLY
+    /// property's zero-arg cache entry) is minted by the <see cref="Concat"/> that
+    /// prepends them.</para>
     /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
     /// </summary>
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
-        => ctx
-            .WithAlgEnv(ShadowAlgEnv(ctx.AlgEnv, parameterNames))
-            .WithCountedParamEnv(ShadowCountedParamEnv(ctx.CountedParamEnv, parameterNames))
-            .WithNeedEnv(ctx.NeedEnv.Where(binding => !ContainsOrdinal(parameterNames, binding.Name)).ToArray());
+        => ctx.WithNeedEnv(ctx.NeedEnv.Where(binding => !ContainsOrdinal(parameterNames, binding.Name)).ToArray());
 
     /// <summary>
     /// Removes the named bindings from an INHERITED value environment — the
-    /// value-tier counterpart of <see cref="ShadowCountedParamEnv"/>.
+    /// value-tier counterpart of <see cref="ShadowInheritedParameterEnvironments"/>.
     /// <para>A callee's value environment is its own bindings prepended to the
     /// CALLER's, which is what lets a nested property body still read an
-    /// ancestor-owned parameter. A parameter the call bound only on the
-    /// ALGORITHM channel — a higher-order argument, or any argument whose value
-    /// evaluation failed — contributes no value binding, so without this filter
-    /// a same-named binding inherited from the caller would answer every
-    /// value-position read of that parameter: the callee would silently observe
-    /// an unrelated caller value instead of the argument bound at THIS
+    /// ancestor-owned parameter. A parameter the call bound through its
+    /// supplied cell (every Model-C binding) contributes no value binding, so
+    /// without this filter a same-named binding inherited from the caller would
+    /// stay in the callee's value tier: a read that reaches that tier would
+    /// observe an unrelated caller value instead of the argument bound at THIS
     /// invocation, and which caller parameter names happen to collide with a
     /// callee's parameter names would become observable. Shadowing the callee's
-    /// whole parameter list is the same rule the counted and algorithm tiers
-    /// apply (<see cref="ShadowInheritedParameterEnvironments"/>); names that
+    /// whole parameter list is the same rule the need-cell tier applies
+    /// (<see cref="ShadowInheritedParameterEnvironments"/>); names that
     /// DO carry a value binding are shadowed by the prepended bindings anyway,
     /// so filtering the tail changes nothing for them.</para>
-    /// Returns the SAME instance when nothing is removed: like <see cref="ShadowAlgEnv"/>,
-    /// a shadowed tier is a view of the caller's binding context, and the callee's own
-    /// context identity is minted by the <see cref="Concat"/> that prepends its bindings.
+    /// Returns the SAME instance when nothing is removed: a shadowed tier is a view of
+    /// the caller's binding context, and the callee's own context identity is minted by
+    /// the <see cref="Concat"/> that prepends its bindings.
     /// Lean: <c>ValEnv.shadow</c>.
     /// </summary>
     internal static ValEnv ShadowValEnv(
@@ -433,21 +276,6 @@ public static partial class Evaluator
                 return true;
         return false;
     }
-
-    private static (Algorithm Algorithm, EvalError? ValueError)? LookupAlgBinding(
-        AlgEnv env,
-        string name)
-    {
-        foreach (var (n, algorithm, valueError) in env)
-            if (n == name) return (algorithm, valueError);
-        return null;
-    }
-
-    /// <summary>Algorithm environment: maps parameter names to algorithms. Lean: AlgEnv.lookup.</summary>
-    private static Algorithm? LookupAlg(
-        AlgEnv env,
-        string name)
-        => LookupAlgBinding(env, name) is { } binding ? binding.Algorithm : null;
 
     // ── Algorithm helpers ────────────────────────────────────────────────────
 
@@ -2341,8 +2169,9 @@ public static partial class Evaluator
             Expr.DotCall dotCall => ResolveDotCallAlgorithm(dotCall, ctx),
 
             // Algorithm resolution for parameters (Lean: resolveAlg Param(x)):
-            // Check AlgEnv first — if x is bound to an algorithm, return it.
-            // Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
+            // The parameter's supplied cell projects its CALLABLE identity (never a VALUE
+            // demand); an algorithm-tier binding (internally constructed contexts only) is
+            // returned as is. Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
             // The environment reaching here was shadowed by every enclosing
             // binding's parameter names (ShadowInheritedParameterEnvironments), so a
             // parameter bound only on the value channel finds NO entry and fails as
@@ -2620,8 +2449,6 @@ public static partial class Evaluator
         return new EvalCtx(
             [budget.HostOperations?.RuntimePreludeAlgorithm ?? PreludeAlg],
             null,
-            [],
-            [],
             zeroArgPropertyResultCache,
             new RunScopedDeconstructionBindingCache(),
             enableLoopOptimization,
@@ -3507,8 +3334,9 @@ public static partial class Evaluator
     /// <paramref name="a"/> or <paramref name="b"/> itself — even when the other operand
     /// is empty.</b> The reference identity of an environment tier is the binding-context
     /// identity of the zero-argument property cache (<see cref="ZeroArgPropertyCacheKey"/>:
-    /// a LOCAL-ONLY entry is keyed by the identities of the three tiers at the access,
-    /// <see cref="ValueEnvironmentCacheIdentity"/>) and of the deconstruction binding
+    /// a LOCAL-ONLY entry is keyed by the value-environment identity at the access — the
+    /// need-cell list, or <see cref="ValueEnvironmentCacheIdentity"/> when no cell is bound)
+    /// and of the deconstruction binding
     /// cache (<see cref="DeconstructionBindingExecution"/>). Two activations that bind
     /// NOTHING new — <c>Inner()</c> called twice from one caller, a zero-parameter
     /// callback, an iteration of a step with no state — must still be two binding
@@ -3517,9 +3345,8 @@ public static partial class Evaluator
     /// once per activation
     /// and never served another activation's entry. The apparently obvious
     /// short-circuit <c>if (a.Count == 0) return b;</c> would silently collapse those
-    /// activations into one context. Contrast <see cref="ShadowValEnv"/>,
-    /// <see cref="ShadowAlgEnv"/>, and <see cref="ShadowCountedParamEnv"/>, which MAY
-    /// return their input unchanged: a shadowed inherited tier is a VIEW of the caller's
+    /// activations into one context. Contrast <see cref="ShadowValEnv"/>, which MAY
+    /// return its input unchanged: a shadowed inherited tier is a VIEW of the caller's
     /// context, not a new one, and the new context's identity is minted here when the
     /// callee's own bindings are prepended. Pinned by
     /// <c>EnvironmentIdentityInvariantTests</c>.</para>

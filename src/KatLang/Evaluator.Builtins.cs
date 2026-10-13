@@ -213,8 +213,8 @@ public static partial class Evaluator
     ///   <item>a callable whose pattern list accepts an EMPTY supply (a collecting-only
     ///   signature such as <c>Only(*xs) = xs</c>) is bound by the ORDINARY binder against
     ///   the empty supply first, so its collecting parameter holds the exact empty list
-    ///   while the body runs, and the callee's names shadow all three inherited tiers
-    ///   exactly as a written call's do;</item>
+    ///   while the body runs, and the callee's names shadow every inherited tier (need
+    ///   cells, algorithm, counted, value) exactly as a written call's do;</item>
     ///   <item>a clause family that accepts zero supplied arguments dispatches its
     ///   zero-argument branch through ordinary conditional dispatch, so branch selection,
     ///   duplicate-pattern rejection and the value boundary are the call's own.</item>
@@ -358,8 +358,6 @@ public static partial class Evaluator
                 binding,
                 accessKind,
                 ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
-                ctx.AlgEnv,
-                ctx.CountedParamEnv,
                 // The budget is created fresh per run (CreateRootCtx) and threaded by
                 // reference through every derived ctx, so it is the run identity:
                 // entries can never be served across runs even when a host shares
@@ -756,9 +754,6 @@ public static partial class Evaluator
             var result = cell.Demand();
             return FinishNeedCallItemDemand(item, cell, result);
         }
-        if (item.Value is null && item.ValueError is null
-            && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
-            return item with { ValueError = slotFailure };
 
         if (item.Value is not null
             || item.ValueError is not null
@@ -1954,8 +1949,8 @@ public static partial class Evaluator
     /// receiver fallback. It re-enters an algorithm body, so it uses the same depth-only
     /// charge as builtin argument evaluation; left uncharged, a demand-time re-entry would
     /// recurse outside every budget chokepoint. A PARAMETER's value is never demanded
-    /// through this funnel: its value outcome is established once, at argument assembly,
-    /// and every read reuses it (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
+    /// through this funnel: its value outcome is established once, by its supplied cell's
+    /// first VALUE demand, and every read reuses it (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
     /// <see cref="EvalParamCounted"/>).
     /// </summary>
     private static EvalResult<Result> EvalResolvedAlgOutputForValueDemand(
@@ -1991,17 +1986,23 @@ public static partial class Evaluator
     /// boundary. Written receiver shapes (brace block, capture, dot-result wrapper) carry
     /// no name to cycle back through and their nesting is parser-bounded, so they stay on
     /// the uncharged written-syntax policy like every other block/capture evaluation.
-    /// Whatever the shape, the receiver is demanded for its VALUE with zero
-    /// arguments, so the ONE zero-argument value-demand law
-    /// (<see cref="ZeroArgumentValueDemandError"/>) decides from the resolved
-    /// receiver's signature BEFORE its body is entered: <c>Inc.string</c> with
-    /// <c>Inc(x)</c> is the property arity error, a navigated parameterized member
-    /// the bare one, a written parameterized block
-    /// <see cref="EvalError.UnresolvedImplicitParams"/>, and an inline callable alias
+    /// The receiver is demanded for its VALUE with zero arguments. A <c>Param</c> bound to a
+    /// supplied cell is a VALUE demand of that cell and nothing else (CALL-06): its first
+    /// demand evaluates the written argument once, and the outcome is reported exactly as
+    /// that argument reports it — <c>Show(v) = v.string</c> / <c>Show(Inc)</c> is Inc's
+    /// property-context arity error, <c>Show({ x + 1 })</c> the block's
+    /// <see cref="EvalError.UnresolvedImplicitParams"/>, a clause family its own
+    /// <see cref="EvalError.NoMatchingBranch"/> — the report every other read of the
+    /// parameter gives, never one re-judged against the parameter's callable. Every other
+    /// receiver is judged by the ONE zero-argument value-demand law
+    /// (<see cref="ZeroArgumentValueDemandError"/>) from the resolved receiver's signature
+    /// BEFORE its body is entered: <c>Inc.string</c> with <c>Inc(x)</c> is the property
+    /// arity error, a navigated parameterized member the bare one, a written parameterized
+    /// block <see cref="EvalError.UnresolvedImplicitParams"/>, and an inline callable alias
     /// <c>{ Inc }.string</c> its written target reference's report (the property arity
-    /// error, FA-OQ-1) — never <c>Unknown name: x</c>
-    /// from inside the receiver. Lean: the <c>string</c> arm of <c>evalDotCallCounted</c>
-    /// and <c>evalDotStringReceiverValue</c>.
+    /// error, FA-OQ-1) — never <c>Unknown name: x</c> from inside the receiver. Lean: the
+    /// <c>string</c> arm of <c>evalDotCallCounted</c> (<c>hasSuppliedParameterCell</c>) and
+    /// <c>evalDotStringReceiverValue</c>.
     /// </summary>
     private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
         Expr target,
@@ -2010,18 +2011,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // A parameter bound to a supplied cell is a VALUE demand of that cell, reported as the
+        // written argument reports it, before (and instead of) the zero-argument law (CALL-06).
+        // Lean: `hasSuppliedParameterCell` in the `string` arm of `evalDotCallCounted`.
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
             return ProjectCountedValue(EvalParamCounted(needName, target.Span, ctx, valEnv));
-
-        // A parameter without a supplied cell (the legacy Ready tiers; every Model-C parameter
-        // took the cell read above) reports a failure recorded on its algorithm binding first,
-        // before the law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE EVALUATION);
-        // no Model-C binding path records one.
-        if (target is Expr.Param(var paramName)
-            && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
-        {
-            return ParameterSlotFailure(paramName, target.Span, slotFailure);
-        }
 
         if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
             return rejection;
@@ -2033,11 +2027,11 @@ public static partial class Evaluator
         switch (target)
         {
             case Expr.Param(var name):
-                // The ordinary value-position PARAMETER read: its bound VALUE when it has one
-                // (a forwarded property value is never re-run through the parameter's
-                // algorithm channel), otherwise the algorithm-channel demand, whose
-                // output-less argument is that parameter's failure (never "Property 'a' has
-                // no defined output"), exactly as the value-position read `a` reports it.
+                // The ordinary value-position PARAMETER read (a parameter with a supplied
+                // cell returned above): its counted or bound VALUE when it has one (a
+                // forwarded property value is never re-run through the parameter's algorithm
+                // channel), and BadArity for a binding that has only an algorithm channel,
+                // which is never evaluated — exactly as the value-position read `a` reports it.
                 return ProjectCountedValue(EvalParamCountedOf(target, name, ctx, valEnv));
 
             case Expr.Resolve(var name):
@@ -2125,9 +2119,9 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Demand a builtin argument slot for its VALUE with zero explicit arguments. An
-    /// already-bound parameter first reports its established failure. Otherwise the
-    /// ONE zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
+    /// Demand a builtin argument slot for its VALUE with zero explicit arguments. A slot
+    /// with a supplied cell is that cell's demand (its completed outcome is reused).
+    /// Otherwise the ONE zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
     /// decides from the resolved algorithm's effective signature BEFORE any body is
     /// entered — and before the depth-only argument level is entered, exactly as the
     /// value-position arms reject before their invocation chokepoint — so a selected
@@ -2152,8 +2146,6 @@ public static partial class Evaluator
         }
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
-        if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
-            return slotFailure;
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
         // The law judges the callable the argument NAMES; the accepted demand evaluates

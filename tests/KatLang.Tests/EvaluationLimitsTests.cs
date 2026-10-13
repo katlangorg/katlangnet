@@ -260,7 +260,7 @@ public class EvaluationLimitsTests
         // is x itself, so every level re-enters it until MaxDepth; the refusal is
         // terminal at the innermost slot's assembly (RESOURCE LIMITS ARE TERMINAL, Q-02 —
         // it was once retained for an algorithm-channel fallback, which is why every
-        // zero-parameter AlgEnv re-entry must consume depth: the retries grew
+        // zero-parameter re-entry of a parameter must consume depth: the retries grew
         // exponentially), so the work stays linear.
         const int maxDepth = 24;
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
@@ -294,10 +294,10 @@ public class EvaluationLimitsTests
     [Theory]
     [InlineData("F(v) = v.string\nx = F(x)\nx")]
     [InlineData("F(v) = v.string*\nx = F(x)\nx")]
-    public void DotStringAlgEnvRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
+    public void DotStringParameterRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
     {
         // The ordinary-dot `string` intrinsic evaluates an algorithm-resolving
-        // receiver for its value, so an AlgEnv-bound Param receiver is the same
+        // receiver for its value, so a parameter receiver (its supplied cell) is the same
         // demand funnel as a bare `v`: a resource-limit error must never be retried
         // through the receiver (a depth charge alone leaves the retry tree exponential)
         // — it is terminal at the slot that reached it (RESOURCE LIMITS ARE TERMINAL,

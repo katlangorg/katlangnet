@@ -730,11 +730,12 @@ public static partial class Evaluator
     // ── Main dispatch twin ──────────────────────────────────────────────────
 
     /// <summary>
-    /// MIRROR OF <see cref="EvalParamCounted"/> — identical by construction. A parameter
-    /// read evaluates NOTHING: its value outcome — the bound value, or the failure its
-    /// written argument slot's one value evaluation established — was fixed at argument
-    /// assembly (AT-MOST-ONCE ARGUMENT VALUE EVALUATION), so the read has no child
-    /// evaluation to route through the async seam and never suspends.
+    /// MIRROR OF <see cref="EvalParamCounted"/> — identical by construction. The
+    /// parameter's supplied cell is demanded through the async seam
+    /// (<see cref="NeedCell.DemandAsync"/>): its first VALUE demand evaluates the supplied
+    /// computation once and every later read reuses that outcome (AT-MOST-ONCE ARGUMENT
+    /// VALUE EVALUATION). Every other tier is a lookup with no child evaluation, read by
+    /// the synchronous twin.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalParamCountedAsync(
         string name,
@@ -1727,8 +1728,6 @@ public static partial class Evaluator
                 binding,
                 accessKind,
                 ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
-                ctx.AlgEnv,
-                ctx.CountedParamEnv,
                 // The budget is the run identity, exactly as on the synchronous seam.
                 ctx.Budget)
             { DeclaringScope = resolvedAlgorithm.Parent },
@@ -1941,7 +1940,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
-            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv, ctx.AlgEnv, ctx.CountedParamEnv);
+            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv);
         var sharedR = await ctx.DeconstructionBindingCache.GetOrBindAsync(execution,
             () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false);
         if (sharedR.IsError) return sharedR.Error;
@@ -2113,8 +2112,6 @@ public static partial class Evaluator
         }
         if (arg.PreparedValue is { } prepared)
             return EvalResult<CountedResult>.Ok(prepared);
-        if (ParameterValueFailure(arg.Source, ctx, valEnv) is { } slotFailure)
-            return slotFailure;
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
 
@@ -2213,9 +2210,6 @@ public static partial class Evaluator
             var result = await cell.DemandAsync().ConfigureAwait(false);
             return FinishNeedCallItemDemand(item, cell, result);
         }
-        if (item.Value is null && item.ValueError is null
-            && ParameterValueFailure(item.Source, ctx, valEnv) is { } slotFailure)
-            return item with { ValueError = slotFailure };
 
         if (item.Value is not null
             || item.ValueError is not null
@@ -2766,19 +2760,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // A parameter bound to a supplied cell is a VALUE demand of that cell, reported as the
+        // written argument reports it, before (and instead of) the zero-argument law — see the
+        // synchronous twin.
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
             return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(false));
 
-        // A parameter without a supplied cell reports a failure recorded on its algorithm
-        // binding first — see the synchronous twin.
-        if (target is Expr.Param(var paramName)
-            && ParameterValueFailure(paramName, ctx, valEnv) is { } slotFailure)
-        {
-            return ParameterSlotFailure(paramName, target.Span, slotFailure);
-        }
-
-        // The receiver is demanded for its VALUE with zero arguments — see the
-        // synchronous twin.
+        // Every other receiver is demanded for its VALUE with zero arguments through the ONE
+        // law — see the synchronous twin.
         if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
             return rejection;
 
@@ -2787,8 +2776,9 @@ public static partial class Evaluator
         switch (target)
         {
             case Expr.Param(var name):
-                // MIRROR OF the synchronous twin: the ordinary value-position parameter read
-                // (its bound value first; a missing output is the parameter's failure).
+                // MIRROR OF the synchronous twin: the ordinary value-position parameter read (a
+                // parameter with a supplied cell returned above): its counted or bound value, and
+                // BadArity for a binding that has only an algorithm channel, which is never evaluated.
                 return ProjectCountedValue(await EvalParamCountedAsync(name, target.Span, ctx, valEnv).ConfigureAwait(false));
 
             case Expr.Resolve(var name):

@@ -745,7 +745,7 @@ public class ZeroArgPropertyCacheScopeTests
         var exception = new InvalidOperationException("host failure");
         var owner = SourceProvenance.ParseValid("A = 1\nA").Root;
         var execution = new ZeroArgPropertyExecution(owner, owner.Properties[0],
-            ZeroArgPropertyAccessKind.CountedLexical, new object(), new object(), new object(), new object());
+            ZeroArgPropertyAccessKind.CountedLexical, new object(), new object());
         var cache = new RunScopedAsyncZeroArgPropertyResultCache();
         var attempts = 0;
         async ValueTask<EvalResult<ZeroArgPropertyResult>> Fail()
@@ -856,14 +856,14 @@ public class ZeroArgPropertyCacheScopeTests
         var binding = declaringScope.Properties[0];
         var run = new object();
 
-        ZeroArgPropertyExecution Execution(Algorithm owner, object valueEnv, object algEnv, object countedEnv, object? runIdentity = null)
-            => new(owner, binding, ZeroArgPropertyAccessKind.CountedLexical, valueEnv, algEnv, countedEnv, runIdentity ?? run);
+        ZeroArgPropertyExecution Execution(Algorithm owner, object valueEnv, object? runIdentity = null)
+            => new(owner, binding, ZeroArgPropertyAccessKind.CountedLexical, valueEnv, runIdentity ?? run);
 
-        var baseline = ZeroArgPropertyCacheKey.FromExecution(Execution(declaringScope, new object(), new object(), new object()));
+        var baseline = ZeroArgPropertyCacheKey.FromExecution(Execution(declaringScope, new object()));
 
-        // Fresh environments and a rebuilt owner record over the same declaring scope: HIT.
+        // A fresh environment and a rebuilt owner record over the same declaring scope: HIT.
         var otherEnvironments = ZeroArgPropertyCacheKey.FromExecution(
-            Execution(declaringScope with { }, new object(), new object(), new object()));
+            Execution(declaringScope with { }, new object()));
         Assert.True(comparer.Equals(baseline, otherEnvironments));
         Assert.Equal(comparer.GetHashCode(baseline), comparer.GetHashCode(otherEnvironments));
 
@@ -871,26 +871,22 @@ public class ZeroArgPropertyCacheScopeTests
         // for the same shared binding object; so is a different run.
         var otherScope = new Algorithm.User(
             null, [], [], [binding, new Property("Extra", new Algorithm.User(null, [], [], [], [new Expr.Num(2m)]))], [new Expr.Num(0m)]);
-        Assert.False(comparer.Equals(baseline, ZeroArgPropertyCacheKey.FromExecution(Execution(otherScope, new object(), new object(), new object()))));
-        Assert.False(comparer.Equals(baseline, ZeroArgPropertyCacheKey.FromExecution(Execution(declaringScope, new object(), new object(), new object(), new object()))));
+        Assert.False(comparer.Equals(baseline, ZeroArgPropertyCacheKey.FromExecution(Execution(otherScope, new object()))));
+        Assert.False(comparer.Equals(baseline, ZeroArgPropertyCacheKey.FromExecution(Execution(declaringScope, new object(), new object()))));
 
-        // A local-only binding keeps its declaring scope and every environment identity.
+        // A local-only binding keeps its declaring scope and its environment identity.
         var localOnly = new Property(
             "Local",
             new Algorithm.User(null, [], [], [], [new Expr.Param("x")]),
             Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters);
         var localScope = new Algorithm.User(null, [new CaptureParameterPattern("x")], [], [localOnly], [new Expr.Resolve("Local")]);
         var valueEnv = new object();
-        var algEnv = new object();
-        var countedEnv = new object();
-        ZeroArgPropertyCacheKey LocalKey(Algorithm owner, object v, object a, object c)
-            => ZeroArgPropertyCacheKey.FromExecution(new(owner, localOnly, ZeroArgPropertyAccessKind.CountedLexical, v, a, c, run));
+        ZeroArgPropertyCacheKey LocalKey(Algorithm owner, object v)
+            => ZeroArgPropertyCacheKey.FromExecution(new(owner, localOnly, ZeroArgPropertyAccessKind.CountedLexical, v, run));
 
-        var localBaseline = LocalKey(localScope, valueEnv, algEnv, countedEnv);
-        Assert.True(comparer.Equals(localBaseline, LocalKey(localScope, valueEnv, algEnv, countedEnv)));
-        Assert.False(comparer.Equals(localBaseline, LocalKey(localScope, new object(), algEnv, countedEnv)));
-        Assert.False(comparer.Equals(localBaseline, LocalKey(localScope, valueEnv, new object(), countedEnv)));
-        Assert.False(comparer.Equals(localBaseline, LocalKey(localScope, valueEnv, algEnv, new object())));
-        Assert.True(comparer.Equals(localBaseline, LocalKey(localScope with { }, valueEnv, algEnv, countedEnv)));
+        var localBaseline = LocalKey(localScope, valueEnv);
+        Assert.True(comparer.Equals(localBaseline, LocalKey(localScope, valueEnv)));
+        Assert.False(comparer.Equals(localBaseline, LocalKey(localScope, new object())));
+        Assert.True(comparer.Equals(localBaseline, LocalKey(localScope with { }, valueEnv)));
     }
 }

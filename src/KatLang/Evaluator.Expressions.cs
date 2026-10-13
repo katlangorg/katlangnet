@@ -640,12 +640,10 @@ public static partial class Evaluator
     ///    evaluates the algorithm channel, so a failure cannot heal, the argument's effects
     ///    and random draws never repeat, and every read of the parameter in one activation
     ///    observes the same outcome.
-    /// 1. Counted callback-param env (legacy Ready data: a callback item / collecting
-    ///    binding as bound)
-    /// 2. ValEnv (ordinary value meaning)
-    /// 3. AlgEnv: a parameter found only on the algorithm channel reports the failure
-    ///    recorded there (<see cref="ParameterSlotFailure"/>); no Model-C binding path
-    ///    records one (Lean keeps the same retained tier, <c>AlgBinding.valueFailure?</c>).
+    /// 1. ValEnv (ordinary value meaning)
+    /// 2. Otherwise the name is unbound: <see cref="EvalError.UnknownName"/> at the read.
+    /// (The legacy counted and algorithm-channel tiers that sat between them had no
+    /// production writer and were retired on 2026-10-13 with their Lean counterparts.)
     /// </summary>
     // Frame-size discipline for the two name dispatches of the Eval / EvalCounted spines: the
     // expression's span (a 20-byte value as SourceSpan?) is read in these small non-inlined
@@ -668,33 +666,26 @@ public static partial class Evaluator
         ctx = ParameterContext(name, ctx, ref valEnv);
         if (LookupNeed(ctx.NeedEnv, name) is { } need)
             return DemandParameter(need, need.Demand(), name, span);
-        var counted = LookupCountedParam(ctx.CountedParamEnv, name);
-        if (counted is not null)
-            return EvalResult<CountedResult>.Ok(counted.Value);
 
         var val = LookupVal(valEnv, name);
         if (val is not null)
             return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
-
-        if (LookupAlgBinding(ctx.AlgEnv, name) is { } bound)
-            return ParameterSlotFailure(name, span, bound.ValueError);
 
         return new EvalError.UnknownName(name) { Span = span };
     }
 
     /// <summary>
     /// The value outcome of a parameter whose supplied computation FAILED its one value
-    /// evaluation (its cell's first VALUE demand, <see cref="NeedCell"/>), or that carries a
-    /// failure recorded on the legacy algorithm tier: that failure, reported the
-    /// way a value-position read reports a parameter's failure — an output-less argument is
-    /// the PARAMETER's failure (<see cref="WithParameterContextOnMissingOutput"/>), and the
-    /// read's location is attached only when the failure carries none. This is never an
-    /// evaluation (AT-MOST-ONCE ARGUMENT VALUE EVALUATION); <see cref="EvalError.BadArity"/>
-    /// is the binders' own default should a valueless binding carry no failure.
+    /// evaluation (its cell's first VALUE demand, <see cref="NeedCell"/>): that failure,
+    /// reported the way a value-position read reports a parameter's failure — an
+    /// output-less argument is the PARAMETER's failure
+    /// (<see cref="WithParameterContextOnMissingOutput"/>), and the read's location is
+    /// attached only when the failure carries none. This is never an evaluation
+    /// (AT-MOST-ONCE ARGUMENT VALUE EVALUATION).
     /// Lean: the <c>.param</c> arm of <c>evalCounted</c>.
     /// </summary>
-    private static EvalError ParameterSlotFailure(string name, SourceSpan? span, EvalError? slotFailure)
-        => WithParameterContextOnMissingOutput(name, span, EvalResult<Result>.Err(slotFailure ?? new EvalError.BadArity())).Error;
+    private static EvalError ParameterSlotFailure(string name, SourceSpan? span, EvalError slotFailure)
+        => WithParameterContextOnMissingOutput(name, span, EvalResult<Result>.Err(slotFailure)).Error;
 
     /// <summary>
     /// A parameter whose value is demanded and whose argument supplied no output is

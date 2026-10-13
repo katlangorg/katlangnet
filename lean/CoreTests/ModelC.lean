@@ -303,21 +303,19 @@ def differentCallablePairStopsBeforeTheLaterFailure : EvalM Bool := do
   pure ((match outcome with | .error (.typeMismatch _) => true | _ => false) && (<- isSuspended last))
 #guard (runEvalM differentCallablePairStopsBeforeTheLaterFailure).toOption == some true
 
-def needContextShadowsEveryInheritedChannel : EvalM Bool := do
-  let a := alg [] [] [] [.num 1]
+-- The need-cell tier is the only inherited parameter tier `bindParameters` manages
+-- (the algorithm-channel and counted tiers had no production writer and were
+-- retired on 2026-10-13): the callee's names are shadowed out of it, names it does
+-- not bind stay visible, and every binding opens a fresh binding context.
+def needContextShadowsTheInheritedNeedTier : EvalM Bool := do
   let old <- readyNeed (.atom 99, 1)
   let fresh <- readyNeed (.atom 7, 1)
-  let ctx := { EvalCtx.empty with
-    needEnv := [("x", old), ("keep", old)]
-    algEnv := [("x", { algorithm := a }), ("keep", { algorithm := a })]
-    countedParamEnv := [("x", (.atom 99, 1)), ("keep", (.atom 99, 1))] }
+  let ctx := { EvalCtx.empty with needEnv := [("x", old), ("keep", old)] }
   let outer <- needBindingContext ctx [("outer", old)]
   let nested <- needBindingContext outer [("x", fresh)]
   pure (nested.needEnv == [("x", fresh), ("outer", old), ("keep", old)]
-    && (nested.algEnv.lookup "x").isNone && (nested.algEnv.lookup "keep").isSome
-    && (nested.countedParamEnv.lookup "x").isNone && (nested.countedParamEnv.lookup "keep").isSome
     && nested.bindingContext != outer.bindingContext && (<- get).nextBindingContext == 3)
-#guard (runEvalM needContextShadowsEveryInheritedChannel).toOption == some true
+#guard (runEvalM needContextShadowsTheInheritedNeedTier).toOption == some true
 
 def valueFailureDoesNotEraseCallableIdentity : EvalM Bool := do
   let a := Algorithm.withDeclarationId (some (.shared 704)) (alg [] [] [] [bad])

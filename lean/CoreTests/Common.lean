@@ -182,7 +182,7 @@ def innermostIsBooleanRequired (role description : String) : Error -> Bool :=
     root emitted count, so a boundary returning one value shows count 1 while the
     root output list still shows its slot count. -/
 def runCountedProgram (e : KatLang.Expr) : Except KatLang.Error KatLang.CountedResult :=
-  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg], algEnv := [] }
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   KatLang.runEvalM
     (match e with
      | .algorithmExpr a =>

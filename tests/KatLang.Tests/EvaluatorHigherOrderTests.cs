@@ -59,8 +59,8 @@ public class EvaluatorHigherOrderTests
     {
         // Named algorithm V = 42 resolves structurally and also evaluates to a value.
         // This is about lexical algorithm lookup, not zero-parameter inline blocks.
-        // Use = func; V = 42; Use(V) → ValEnv has func=42, AlgEnv has func=V
-        // Param("func") checks ValEnv first → 42
+        // Use = func; V = 42; Use(V) → func's supplied cell has VALUE 42 (V's read) and
+        // CALLABLE identity V; Param("func") demands the VALUE → 42
         AssertEval("Use = func\nV = 42\nUse(V)", 42);
     }
 

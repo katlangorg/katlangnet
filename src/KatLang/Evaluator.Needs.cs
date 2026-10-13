@@ -29,9 +29,8 @@ public static partial class Evaluator
                 ? EvalResult<Algorithm>.Ok(callable)
                 : new EvalError.NotAnAlgorithm($"param({name})") { Span = span };
         }
-        return LookupAlg(activation?.Algorithms ?? ctx.AlgEnv, name) is { } algorithm
-            ? EvalResult<Algorithm>.Ok(algorithm)
-            : new EvalError.NotAnAlgorithm($"param({name})") { Span = span };
+        // No supplied cell: nothing binds the name on any channel. Lean: `resolveAlg (.param x)`.
+        return new EvalError.NotAnAlgorithm($"param({name})") { Span = span };
     }
 
     private static EvalResult<CountedResult> DemandParameter(NeedCell cell, EvalResult<CountedResult> result, string name, SourceSpan? span)

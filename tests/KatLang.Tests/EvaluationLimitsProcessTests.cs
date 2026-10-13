@@ -314,7 +314,7 @@ public class EvaluationLimitsProcessTests
         if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
             return;
 
-        // These are the original AlgEnv reproducer, its ordinary-dot `string`
+        // These are the original parameter re-entry reproducer, its ordinary-dot `string`
         // counterpart, and the lexical `string` receiver that formerly reached
         // an uncatchable CLR stack overflow. A small explicit limit pins the
         // deterministic error; the default public path separately proves that

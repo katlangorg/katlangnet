@@ -29,9 +29,7 @@ namespace KatLang.Evaluation.Caching;
 internal readonly record struct DeconstructionBindingExecution(
     object GroupIdentity,
     object OwnerIdentity,
-    object ValueEnvironmentIdentity,
-    object AlgorithmEnvironmentIdentity,
-    object CountedParamEnvironmentIdentity);
+    object ValueEnvironmentIdentity);
 
 /// <summary>
 /// Run-scoped memoization of assignment-deconstruction binds. The first demanded target of a
@@ -70,9 +68,7 @@ internal interface IDeconstructionBindingCache
 internal readonly record struct DeconstructionBindingCacheKey(
     object GroupIdentity,
     object OwnerIdentity,
-    object ValueEnvironmentIdentity,
-    object AlgorithmEnvironmentIdentity,
-    object CountedParamEnvironmentIdentity);
+    object ValueEnvironmentIdentity);
 
 internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<DeconstructionBindingCacheKey>
 {
@@ -85,9 +81,7 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
     public bool Equals(DeconstructionBindingCacheKey x, DeconstructionBindingCacheKey y)
         => ReferenceEquals(x.GroupIdentity, y.GroupIdentity)
             && ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
-            && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
-            && ReferenceEquals(x.AlgorithmEnvironmentIdentity, y.AlgorithmEnvironmentIdentity)
-            && ReferenceEquals(x.CountedParamEnvironmentIdentity, y.CountedParamEnvironmentIdentity);
+            && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity);
 
     public int GetHashCode(DeconstructionBindingCacheKey obj)
     {
@@ -97,8 +91,6 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
             ? owner.GetHashCode()
             : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.ValueEnvironmentIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.AlgorithmEnvironmentIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.CountedParamEnvironmentIdentity));
         return hash.ToHashCode();
     }
 }
@@ -170,9 +162,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         var key = new DeconstructionBindingCacheKey(
             execution.GroupIdentity,
             execution.OwnerIdentity,
-            execution.ValueEnvironmentIdentity,
-            execution.AlgorithmEnvironmentIdentity,
-            execution.CountedParamEnvironmentIdentity);
+            execution.ValueEnvironmentIdentity);
 
         if (_results.TryGetValue(key, out var cached))
             return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
@@ -210,9 +200,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         var key = new DeconstructionBindingCacheKey(
             execution.GroupIdentity,
             execution.OwnerIdentity,
-            execution.ValueEnvironmentIdentity,
-            execution.AlgorithmEnvironmentIdentity,
-            execution.CountedParamEnvironmentIdentity);
+            execution.ValueEnvironmentIdentity);
 
         if (_results.TryGetValue(key, out var cached))
             return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);

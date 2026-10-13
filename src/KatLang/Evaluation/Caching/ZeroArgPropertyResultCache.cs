@@ -7,8 +7,6 @@ internal readonly record struct ZeroArgPropertyExecution(
     Property Binding,
     ZeroArgPropertyAccessKind AccessKind,
     object ValueEnvironmentIdentity,
-    object AlgorithmEnvironmentIdentity,
-    object CountedParamEnvironmentIdentity,
     object RunIdentity)
 {
     internal ScopeCtx? DeclaringScope { get; init; }
@@ -46,12 +44,13 @@ internal interface IZeroArgPropertyResultCache
 ///   serves every property-style access: <c>Big</c> read from two thousand calls of
 ///   <c>F(x) = Big + x</c>, from each callback of a <c>map</c>, from every
 ///   iteration of a loop step, or inside an explicit <c>B()</c> call is evaluated
-///   once. The environment components are the shared
+///   once. The environment component is the shared
 ///   <see cref="RunWideEnvironmentIdentity"/> sentinel.</item>
 ///   <item>A local-only binding (<see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>)
 ///   reads an input an enclosing owner's call binds, through the dynamically
 ///   threaded environments; its value is a function of the binding context, so the
-///   key carries the identities of the three environments at the DECLARING owner's entry and the
+///   key carries the value-environment identity at the DECLARING owner's entry (the
+///   activation's need-cell list, or its value environment when it bound no cell) and the
 ///   declaring scope. Two distinct binding contexts never share an
 ///   entry, and consumers within one owning activation reuse its entry even through nested calls.
 ///   Scopes without an activation retain the host environment fallback.</item>
@@ -66,15 +65,12 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     object OwnerIdentity,
     object BindingIdentity,
     object ValueEnvironmentIdentity,
-    object AlgorithmEnvironmentIdentity,
-    object CountedParamEnvironmentIdentity,
     object RunIdentity)
 {
     /// <summary>
     /// Environment identity of every key of an exported binding: the binding context
-    /// is not a determinant of a self-contained value, so all three environment
-    /// components collapse to this one process-wide sentinel (the run identity still
-    /// separates runs).
+    /// is not a determinant of a self-contained value, so the environment component
+    /// collapses to this one process-wide sentinel (the run identity still separates runs).
     /// </summary>
     internal static object RunWideEnvironmentIdentity { get; } = new();
 
@@ -99,16 +95,12 @@ internal readonly record struct ZeroArgPropertyCacheKey(
                 StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
                 execution.Binding,
                 RunWideEnvironmentIdentity,
-                RunWideEnvironmentIdentity,
-                RunWideEnvironmentIdentity,
                 execution.RunIdentity)
             : new(
                 ZeroArgPropertyCacheAccessShape.Lexical,
                 StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
                 execution.Binding,
                 activation?.ValueEnvironmentIdentity ?? execution.ValueEnvironmentIdentity,
-                activation?.AlgorithmEnvironmentIdentity ?? execution.AlgorithmEnvironmentIdentity,
-                activation?.CountedEnvironmentIdentity ?? execution.CountedParamEnvironmentIdentity,
                 execution.RunIdentity);
     }
 
@@ -250,8 +242,6 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
             && OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
             && ReferenceEquals(x.BindingIdentity, y.BindingIdentity)
             && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
-            && ReferenceEquals(x.AlgorithmEnvironmentIdentity, y.AlgorithmEnvironmentIdentity)
-            && ReferenceEquals(x.CountedParamEnvironmentIdentity, y.CountedParamEnvironmentIdentity)
             && ReferenceEquals(x.RunIdentity, y.RunIdentity);
 
     /// <summary>
@@ -273,8 +263,6 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
             : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.BindingIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.ValueEnvironmentIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.AlgorithmEnvironmentIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.CountedParamEnvironmentIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.RunIdentity));
         return hash.ToHashCode();
     }

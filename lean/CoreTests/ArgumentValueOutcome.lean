@@ -17,13 +17,12 @@ open KatLang (resolve param num)
 -- forwarding, but it is never a second route to the parameter's value. Since
 -- Model C (October 2026) the one route is the parameter's need cell
 -- (`supplyNeed`, `demandNeed`, `EvalState.needs`; the `.param` arm of
--- `evalCounted` demands it first). `AlgBinding.valueFailure?` and
--- `parameterValueFailure?` remain as legacy Ready-tier readers with no
--- production writer (only a host-built context, like the one below, records such
--- a failure); the former `resolveArgAlgExpr` is gone (builtin argument
--- resolution now supplies need cells, `resolveArgAlgsWithSequenceSpread`), and
--- the eager writer `slotAlgorithmBinding` was deleted with Model C (its last Lean
--- copy, the pre-Model-C Ready binder, was retired on 2026-10-12).
+-- `evalCounted` demands it first), and a builtin call forms its supply of need
+-- cells the same way (`formNeedSupply`). The pre-Model-C eager writer
+-- `slotAlgorithmBinding`, which recorded a failed slot beside its
+-- algorithm-channel binding, was deleted with Model C (its last Lean copy, the
+-- pre-Model-C Ready binder, was retired on 2026-10-12), and the algorithm-tier
+-- failure readers it fed were removed on 2026-10-13 (P3 maintenance cleanup).
 --
 -- Evidence without host operations: `Bad = Id(1) / 0` and `A = Id(5)` open
 -- exactly ONE binding context per evaluation of their bodies (the `Id` call;
@@ -155,31 +154,32 @@ def callOf (callee : String) (args : List KatLang.Expr) : KatLang.Expr :=
 #guard aoContexts [callOf "Three" [resolve "A"]] == aoContexts [callOf "One" [resolve "A"]]
 #guard aoContexts [callOf "One" [resolve "A"]] == aoContexts [resolve "A"] + 1
 
--- 3. LAW B — a failure cannot become a value through a parameter read. The read
---    below finds an algorithm-channel binding whose algorithm WOULD evaluate to 5,
---    but whose slot recorded `divByZero`: the read reports the recorded failure,
---    evaluates nothing (no binding context is opened), and never yields 5.
-def readOfFailedBinding : Except Error Result × Nat :=
-  let ctx : KatLang.EvalCtx :=
-    { callStack := [KatLang.preludeAlg],
-      algEnv := [("x", { algorithm := alg [] [] [] [num 5], valueFailure? := some Error.divByZero })] }
-  let (result, state) := (KatLang.eval (param "x") ctx []).runState EvalState.empty
-  (result, state.nextBindingContext)
-
-#guard match readOfFailedBinding with
-  | (.error .divByZero, 1) => true
-  | _ => false
-
--- The same binding WITHOUT a recorded failure but WITH a value reads the value; the
--- algorithm channel is never consulted for a value that exists.
+-- 3. LAW B — a failure cannot become a value through a parameter read: the need
+--    cell's completed failure is the outcome every later demand reuses, with no
+--    further work (`CoreTests/ModelC.lean`: `stickyFailure`,
+--    `failedCompletionDoesNoFurtherWork`).
+--    The read's remaining tiers on a hand-built evaluation context: a parameter
+--    without a supplied cell reads its value binding, and one with neither is
+--    `unknownName` — nothing is evaluated (no binding context opens). The
+--    algorithm-channel and counted tiers that once sat between them had no
+--    production writer and were retired on 2026-10-13 (their guards
+--    `readOfAlgorithmOnlyBinding` and the algorithm half of `readOfValuedBinding`
+--    with them). C#: `ParameterReadFallbackTests`.
 def readOfValuedBinding : Except Error Result :=
-  let ctx : KatLang.EvalCtx :=
-    { callStack := [KatLang.preludeAlg],
-      algEnv := [("x", { algorithm := alg [] [] [] [num 5] })] }
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
   KatLang.runEvalM (KatLang.eval (param "x") ctx [("x", .atom 7)])
 
 #guard match readOfValuedBinding with
   | .ok (.atom 7) => true
+  | _ => false
+
+def readOfUnboundParameter : Except Error Result × Nat :=
+  let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
+  let (result, state) := (KatLang.eval (param "x") ctx []).runState EvalState.empty
+  (result, state.nextBindingContext)
+
+#guard match readOfUnboundParameter with
+  | (.error (.unknownName "x"), 1) => true
   | _ => false
 
 -- 4. LAW D — forwarding transports the one supplied cell (NEED-08); it never
@@ -189,9 +189,8 @@ def readOfValuedBinding : Except Error Result :=
 #guard aoContexts [callOf "Fwd" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 2
 
 -- 5. Builtin VALUE slots and the `.string` receiver read a failed parameter through
---    the ordinary parameter read (the parameter's need cell, `demandNeed`; formerly
---    `resolveArgAlgExpr` and `parameterValueFailure?`): the slot's failure, with no
---    second evaluation of the argument.
+--    the ordinary parameter read (the parameter's need cell, `demandNeed`): the
+--    slot's failure, with no second evaluation of the argument.
 #guard aoFailsWithDivByZero [callOf "Sum" [resolve "Bad"]]
 #guard aoContexts [callOf "Sum" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
 #guard aoFailsWithDivByZero [callOf "If" [resolve "Bad"]]
@@ -232,30 +231,202 @@ def readOfValuedBinding : Except Error Result :=
 #guard aoFailsWithDivByZero [callOf "Coll" [resolve "Bad"]]
 #guard aoContexts [callOf "Coll" [resolve "Bad"]] == aoContexts [resolve "Bad"] + 1
 
--- A callable's signature must never replace a PARAMETER's recorded failure at a
--- builtin value boundary. The raw algorithm requires an argument and could run
--- successfully when invoked; the established value outcome is still divByZero.
-def aoFailedCallableBoundary (consumer : KatLang.Expr) (contexts : Nat := 1) : Bool :=
-  let ctx : KatLang.EvalCtx :=
-    { callStack := [KatLang.preludeAlg],
-      algEnv := [("x", { algorithm := aoIncAlg, valueFailure? := some Error.divByZero })] }
-  let (result, state) := (KatLang.eval consumer ctx []).runState EvalState.empty
-  match result with
-  | .error err => innermostIsDivByZero err && state.nextBindingContext == contexts
+
+--------------------------------------------------------------------------------
+-- 10. The `.string` receiver of a parameter reports what the written argument
+--     raises (2026-10-13)
+--------------------------------------------------------------------------------
+-- A parameter bound to a supplied cell is read through that cell by the
+-- ordinary-dot `string` intrinsic as well: the receiver is a VALUE demand of the
+-- slot (CALL-06), so its first demand evaluates the written argument once and a
+-- failure is that argument's own report — exactly what the value-position read
+-- `Plus(f, x) = f + x` reports (section 7) — never a report re-judged against
+-- the parameter's callable (`hasSuppliedParameterCell` in the `string` arm of
+-- `evalDotCallCounted`). Until 2026-10-13 that arm applied the zero-argument law
+-- to the PARAMETER first: `Show(Inc)` lost Inc's property frame, `Show({ x + 1 })`
+-- was the parameter-shaped `arityMismatch 1 0` instead of the block's
+-- `unresolvedImplicitParams [x]`, and a clause family's `noMatchingBranch` named
+-- the parameter instead of the family. The C# engine already read the cell first.
+#guard match (runWithContexts (aoRoot [callOf "Show" [resolve "Inc"]])).fst with
+  | .error err => innermostIsArityMismatch 1 0 err && hasContext "while evaluating property Inc" err
   | .ok _ => false
 
-#guard aoFailedCallableBoundary (param "x")
-#guard aoFailedCallableBoundary (callOf "sum" [param "x"])
-#guard aoFailedCallableBoundary (callOf "count" [param "x"])
-#guard aoFailedCallableBoundary (callOf "first" [param "x"])
-#guard aoFailedCallableBoundary (callOf "last" [param "x"])
-#guard aoFailedCallableBoundary (callOf "take" [.listLiteral [num 1], param "x"])
-#guard aoFailedCallableBoundary (callOf "if" [.boolLiteral true, param "x", num 0])
-#guard aoFailedCallableBoundary (callOf "range" [param "x", num 3])
-#guard aoFailedCallableBoundary (callOf "repeat" [.algorithmExpr aoIncAlg, num 1, param "x"]) 2
-#guard aoFailedCallableBoundary (callOf "repeat" [.algorithmExpr aoIncAlg, param "x", num 0])
-#guard aoFailedCallableBoundary (callOf "reduce"
-  [.listLiteral [num 1], .algorithmExpr (alg ["e", "a"] [] [] [param "a"]), param "x"])
-#guard aoFailedCallableBoundary (.dotCall (param "x") "string" none)
+-- The cross-engine table. Each program is the C# elaborated AST of the source in
+-- its doc comment, encoded by `LeanAstEncoder`; the C# test class
+-- `DotStringParameterReceiverFrameTests` renders the C# error tree of the same
+-- source in the same neutral spelling on every C# route, and checks that this
+-- file holds the same programs and the same expectations. The neutral tree lists
+-- every frame, outermost first — a `dotCall` frame with its receiver — then the
+-- leaf with its payload. It omits only two documented presentation differences:
+-- Lean's builtin-arity description frame (`builtinArityError`; C# keeps that
+-- description on the `ArityMismatch` leaf), and C#'s implicit-parameter frame
+-- around `UnresolvedImplicitParams` (no Lean counterpart). Until 2026-10-13 it
+-- omitted a `dotCall` frame's receiver too, because `openExprName` wrote a
+-- parameter receiver `(param)` where C# writes its name; both now write the name
+-- (`HigherOrderCalls.lean` § "Parameter callee and receiver names").
+
+section DotStringParameterReceiver
+open KatLang (Expr privateProp runResult)
+
+/-- One frame of the neutral tree, or `none` for a frame the tree omits. -/
+def dsrNeutralFrame (message : String) : Option String :=
+  let callPrefix := "while evaluating call to "
+  let dotCallPrefix := "while evaluating dotCall ."
+  let propertyPrefix := "while evaluating property "
+  if message.startsWith callPrefix then
+    some ("call " ++ (message.drop callPrefix.length).toString)
+  else if message.startsWith dotCallPrefix then
+    some ("dotCall ." ++ (message.drop dotCallPrefix.length).toString)
+  else if message.startsWith propertyPrefix then
+    some ("property " ++ (message.drop propertyPrefix.length).toString)
+  else if message.startsWith "expected " && message.endsWith " arguments" then
+    none
+  else
+    some message
+
+/-- The leaf of the neutral tree: the error kind and its payload. -/
+def dsrNeutralLeaf : Error -> String
+  | .arityMismatch expected actual => s!"arityMismatch {expected} {actual}"
+  | .unresolvedImplicitParams names => s!"unresolvedImplicitParams {names}"
+  | .noMatchingBranch name => s!"noMatchingBranch {name}"
+  | .typeMismatch message => s!"typeMismatch {message}"
+  | .notAnAlgorithm description => s!"notAnAlgorithm {description}"
+  | .divByZero => "divByZero"
+  | .badArity => "badArity"
+  | other => s!"other {reprStr other}"
+
+/-- The neutral error tree: kept frames outermost first, then the leaf. -/
+def dsrNeutralError : Error -> String
+  | .withContext message inner =>
+      match dsrNeutralFrame message with
+      | some frame => frame ++ " > " ++ dsrNeutralError inner
+      | none => dsrNeutralError inner
+  | leaf => dsrNeutralLeaf leaf
+
+/-- The neutral spelling of a value (the language-spec corpus's spelling). -/
+partial def dsrNeutralResult : Result -> String
+  | .atom n => toString n
+  | .str s => "'" ++ s ++ "'"
+  | .bool b => Result.boolText b
+  | .sequenceValue items => "S[" ++ String.intercalate ", " (items.map dsrNeutralResult) ++ "]"
+  | .listValue items => "L[" ++ String.intercalate ", " (items.map dsrNeutralResult) ++ "]"
+
+/-- The neutral observation of a program: `ok <value>`, or its neutral error tree. -/
+def dsrObserve (program : Expr) : String :=
+  match runResult program with
+  | .ok value => "ok " ++ dsrNeutralResult value
+  | .error err => dsrNeutralError err
+
+/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Show(Inc)` -/
+def dsrParameterizedProperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Inc"])])
+#guard dsrObserve dsrParameterizedProperty == "call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
+
+/-- `Inc(z) = z + 1` / `Plus(f, x) = f + x` / `Plus(Inc, 5)` -/
+def dsrParameterizedPropertyValueRead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Plus" (alg ["f", "x"] [] [] [(.binary .add (.param "f") (.param "x"))])] [(.call (.resolve "Plus") [.resolve "Inc", .num 5])])
+#guard dsrObserve dsrParameterizedPropertyValueRead == "call Plus > property Inc > arityMismatch 1 0"
+
+/-- `Show(v) = v.string` / `Show({ x + 1 })` -/
+def dsrWrittenBlock : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))])])
+#guard dsrObserve dsrWrittenBlock == "call Show > dotCall .string of v > unresolvedImplicitParams [x]"
+
+/-- `Plus(f, x) = f + x` / `Plus({ y + 1 }, 5)` -/
+def dsrWrittenBlockValueRead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Plus" (alg ["f", "x"] [] [] [(.binary .add (.param "f") (.param "x"))])] [(.call (.resolve "Plus") [(.algorithmExpr (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))])), .num 5])])
+#guard dsrObserve dsrWrittenBlockValueRead == "call Plus > unresolvedImplicitParams [y]"
+
+/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Show({ Inc })` -/
+def dsrInlineAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])
+#guard dsrObserve dsrInlineAlias == "call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
+
+/-- `F(0) = 1` / `F(n) = n` / `Show(v) = v.string` / `Show(F)` -/
+def dsrClauseFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "F"])])
+#guard dsrObserve dsrClauseFamily == "call Show > dotCall .string of v > noMatchingBranch F"
+
+/-- `F(0) = 1` / `F(n) = n` / `Plus(f, x) = f + x` / `Plus(F, 5)` -/
+def dsrClauseFamilyValueRead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩]), privateProp "Plus" (alg ["f", "x"] [] [] [(.binary .add (.param "f") (.param "x"))])] [(.call (.resolve "Plus") [.resolve "F", .num 5])])
+#guard dsrObserve dsrClauseFamilyValueRead == "call Plus > noMatchingBranch F"
+
+/-- `Inc(z) = z + 1` / `A = Inc` / `Show(v) = v.string` / `Show(A)` -/
+def dsrCallableAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Inc")), privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "A"])])
+#guard dsrObserve dsrCallableAlias == "call Show > dotCall .string of v > property A > arityMismatch 1 0"
+
+/-- `F(0) = 1` / `F(n) = n` / `A = F` / `Show(v) = v.string` / `Show(A)` -/
+def dsrFamilyAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "F")), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "A"])])
+#guard dsrObserve dsrFamilyAlias == "call Show > dotCall .string of v > noMatchingBranch A"
+
+/-- `Lib = { public F(x) = x }` / `Show(v) = v.string` / `Show(Lib.F)` -/
+def dsrMemberPath : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "F" (alg ["x"] [] [] [.param "x"])] []), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.dotCall (.resolve "Lib") "F" none)])])
+#guard dsrObserve dsrMemberPath == "call Show > dotCall .string of v > dotCall .F of Lib > arityMismatch 1 0"
+
+/-- `Inc(z) = z + 1` / `Lib = { public A = Inc }` / `Show(v) = v.string` / `Show(Lib.A)` -/
+def dsrMemberAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "A" (.alias none [] [] (.resolve "Inc"))] []), privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.dotCall (.resolve "Lib") "A" none)])])
+#guard dsrObserve dsrMemberAlias == "call Show > dotCall .string of v > dotCall .A of Lib > arityMismatch 1 0"
+
+/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Show2(w) = Show(w)` / `Show2(Inc)` -/
+def dsrForwardedParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)]), privateProp "Show2" (alg ["w"] [] [] [(.call (.resolve "Show") [.param "w"])])] [(.call (.resolve "Show2") [.resolve "Inc"])])
+#guard dsrObserve dsrForwardedParameter == "call Show2 > call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
+
+/-- `Head(x, *rest) = x` / `Show(v) = v.string` / `Show(Head)` -/
+def dsrMinimumSupply : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "x"]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Head"])])
+#guard dsrObserve dsrMinimumSupply == "call Show > dotCall .string of v > property Head > arityMismatch 1 0"
+
+/-- `Show(v) = v.string` / `Show(count)` -/
+def dsrBuiltin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "count"])])
+#guard dsrObserve dsrBuiltin == "call Show > dotCall .string of v > arityMismatch 1 0"
+
+/-- `Only(*xs) = xs` / `Show(v) = v.string` / `Show(Only)` -/
+def dsrCollectingOnlyCallable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Only"])])
+#guard dsrObserve dsrCollectingOnlyCallable == "call Show > dotCall .string of v > typeMismatch builtin property `string` expects a numeric receiver"
+
+/-- `Z = 5` / `Show(v) = v.string` / `Show(Z)` -/
+def dsrZeroParameterProperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.num 5]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Z"])])
+#guard dsrObserve dsrZeroParameterProperty == "ok '5'"
+
+/-- `Bad = 1 / 0` / `Show(v) = v.string` / `Show(Bad)` -/
+def dsrFailingProperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Bad"])])
+#guard dsrObserve dsrFailingProperty == "call Show > dotCall .string of v > divByZero"
+
+/-- `Show(v) = v.string` / `Show(1 / 0)` -/
+def dsrFailingArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.binary .div (.num 1) (.num 0))])])
+#guard dsrObserve dsrFailingArgument == "call Show > dotCall .string of v > divByZero"
+
+/-- `Z = 5` / `Show(v) = v + 0, v.string` / `Show(Z)` -/
+def dsrReadThenString : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.num 5]), privateProp "Show" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 0)), (.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Z"])])
+#guard dsrObserve dsrReadThenString == "ok S[5, '5']"
+
+/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Step(x) = Show(Inc)` / `repeat(Step, 1, 0)` -/
+def dsrLoopStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)]), privateProp "Step" (alg ["x"] [] [] [(.call (.resolve "Show") [.resolve "Inc"])])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .num 0])])
+#guard dsrObserve dsrLoopStep == "call repeat > call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
+
+/-- `Inc(z) = z + 1` / `Show(*vs) = vs.string` / `Show(Inc)` -/
+def dsrCollectingParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (algWithParameters [{ name := "vs", kind := .collecting }] [] [] [(.dotCall (.param "vs") "string" none)])] [(.call (.resolve "Show") [.resolve "Inc"])])
+#guard dsrObserve dsrCollectingParameter == "call Show > dotCall .string of vs > property Inc > arityMismatch 1 0"
+
+/-- `Inc(z) = z + 1` / `Show(v) = v.string(1)` / `Show(Inc)` -/
+def dsrIntrinsicArguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" (some [.num 1]))])] [(.call (.resolve "Show") [.resolve "Inc"])])
+#guard dsrObserve dsrIntrinsicArguments == "call Show > dotCall .string of v > arityMismatch 0 1"
+
+end DotStringParameterReceiver
 
 end KatLangTests

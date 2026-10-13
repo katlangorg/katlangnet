@@ -3,13 +3,17 @@ using static KatLang.Tests.EvaluatorTestSupport;
 namespace KatLang.Tests;
 
 /// <summary>
-/// A user call binds each parameter on the value channel, the algorithm channel,
-/// or both, and the callee then inherits the CALLER's value environment so a
-/// nested property can still read an ancestor-owned parameter. A parameter bound
-/// ONLY on the algorithm channel contributes no value binding, so without
-/// <c>Evaluator.ShadowValEnv</c> (Lean <c>ValEnv.shadow</c>) a same-named binding
-/// inherited from the caller answered every value-position read of that
-/// parameter.
+/// A user call binds each parameter as one supplied cell carrying a VALUE outcome and
+/// an independent CALLABLE identity (Model C), and the callee then inherits the
+/// CALLER's value environment so a nested property can still read an ancestor-owned
+/// parameter. A parameter bound through its cell is read from that cell first, and
+/// every binding site also shadows the callee's parameter names out of every inherited
+/// tier (<c>Evaluator.ShadowInheritedParameterEnvironments</c> with
+/// <c>Evaluator.ShadowValEnv</c>; Lean <c>EvalCtx.bindParameters</c> with
+/// <c>ValEnv.shadow</c>), so a same-named caller binding never answers a read of the
+/// parameter. Before Model C a parameter bound only on the algorithm channel was read
+/// through the value tier, where an inherited binding did answer it; these tests pin
+/// the cell-first read and the shadowing.
 ///
 /// <para>That was observable two ways, both fixed here: the callee silently
 /// computed with an unrelated caller value instead of failing, and WHICH caller
@@ -19,7 +23,8 @@ namespace KatLang.Tests;
 ///
 /// <para>The native-wrapper side of the same defect is
 /// <see cref="NativeArgumentValueDemandTests"/>: a wrapper body's declared
-/// argument read omitted the algorithm tier entirely, so once the value
+/// argument read omitted the algorithm tier entirely (then the route of such an
+/// argument; today the supplied cell is read first), so once the value
 /// environment was shadowed it reported <c>Unknown name</c> for the wrapper's own
 /// parameter.</para>
 /// </summary>
@@ -28,9 +33,9 @@ public class AlgorithmChannelParameterShadowingTests
     // ── The caller's same-named value is never visible in the callee ─────────
 
     /// <summary>
-    /// Flat fixed binding. <c>A</c> is parameterized, so <c>G(A)</c> binds
-    /// <c>x</c> on the algorithm channel only; reading <c>x</c> in value position
-    /// must reach that binding (the ordinary zero-argument value demand of a
+    /// Flat fixed binding. <c>A</c> is parameterized, so the cell <c>G(A)</c>
+    /// supplies for <c>x</c> has no value of its own; reading <c>x</c> in value
+    /// position must reach that cell (the ordinary zero-argument value demand of a
     /// one-parameter callable), never the caller's own <c>x = 7</c>.
     /// </summary>
     [Fact]

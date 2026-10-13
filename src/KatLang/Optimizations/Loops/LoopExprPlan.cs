@@ -24,8 +24,6 @@ internal closed record LoopExprPlan(Expr Source)
 
     public sealed record NeedParameter(Expr Source, NeedCell Cell, string Name, bool ReadyCounted = false) : LoopExprPlan(Source);
 
-    public sealed record CountedParamSlot(Expr Source, int Index, string Name) : LoopExprPlan(Source);
-
     /// <summary>
     /// A bare value-position read of a ZERO-parameter local property of the loop step
     /// (<c>T</c>). Mirrors the generic zero-argument property access: charged as one
@@ -195,21 +193,6 @@ internal static partial class LoopOptimizer
                 if (Evaluator.CapturedParameterNeedsOwnerLookup(name, ctx, parentValEnv))
                     return new LoopExprPlanTryBuildResult(null, $"captured parameter requires its lexical activation: {name}");
 
-                if (TryFindCountedParam(ctx, name, out var countedParamIndex, out var countedParam))
-                {
-                    if (!IsSafeCountedParamSlot(countedParam, out var fallbackReason))
-                    {
-                        var reason = $"unsupported counted parameter value shape: {name} ({fallbackReason})";
-                        ctx.LoopDiagnostics?.RecordCountedParameterReferenceFallback(reason);
-                        return new LoopExprPlanTryBuildResult(null, reason);
-                    }
-
-                    ctx.LoopDiagnostics?.RecordCountedParameterReferencePlanned();
-                    return new LoopExprPlanTryBuildResult(
-                        new LoopExprPlan.CountedParamSlot(expr, countedParamIndex, name),
-                        null);
-                }
-
                 for (var i = 0; i < parentValEnv.Count; i++)
                 {
                     if (parentValEnv[i].Name == name)
@@ -331,28 +314,6 @@ internal static partial class LoopOptimizer
             default:
                 return new LoopExprPlanTryBuildResult(null, $"unsupported expression kind: {Evaluator.ExprKind(expr)}");
         }
-    }
-
-    private static bool TryFindCountedParam(
-        Evaluator.EvalCtx ctx,
-        string name,
-        out int index,
-        out Evaluator.CountedResult value)
-    {
-        for (var i = 0; i < ctx.CountedParamEnv.Count; i++)
-        {
-            var (paramName, countedValue) = ctx.CountedParamEnv[i];
-            if (paramName == name)
-            {
-                index = i;
-                value = countedValue;
-                return true;
-            }
-        }
-
-        index = -1;
-        value = default;
-        return false;
     }
 
     private static bool IsSafeCountedParamSlot(
@@ -513,7 +474,7 @@ internal static partial class LoopOptimizer
                 => dispatch != LoopPlanDispatch.Argument,
 
             LoopExprPlan.Constant or LoopExprPlan.StringConstant or LoopExprPlan.CapturedSlot
-                or LoopExprPlan.CountedParamSlot or LoopExprPlan.TempSlot or LoopExprPlan.TempCall
+                or LoopExprPlan.TempSlot or LoopExprPlan.TempCall
                 or LoopExprPlan.If => true,
 
             // Evaluated through Evaluator.EvalCounted, whose own head records the checkpoint.
@@ -593,8 +554,6 @@ internal static partial class LoopOptimizer
                 temp.Binding,
                 ZeroArgPropertyAccessKind.CountedLexical,
                 Evaluator.ValueEnvironmentCacheIdentity(frame.ValueEnvironment),
-                ctx.AlgEnv,
-                ctx.CountedParamEnv,
                 ctx.Budget),
             () =>
             {
@@ -698,8 +657,6 @@ internal static partial class LoopOptimizer
 
             LoopExprPlan.NeedParameter parameter => EvalLoopNeedParameter(parameter),
 
-            LoopExprPlan.CountedParamSlot countedParamSlot => EvalLoopCountedParamSlot(countedParamSlot, frame),
-
             // MIRROR of the generic value-position read (Evaluator.EvalResolveCounted):
             // the reference's own span is attached to an error that carries none.
             LoopExprPlan.TempSlot tempSlot =>
@@ -748,15 +705,6 @@ internal static partial class LoopOptimizer
         return valueR.IsError
             ? valueR.Error
             : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(valueR.Value));
-    }
-
-    private static EvalResult<PlannedLoopValue> EvalLoopCountedParamSlot(
-        LoopExprPlan.CountedParamSlot countedParamSlot,
-        LoopRunFrame frame)
-    {
-        var countedParam = frame.GetCountedParamSlot(countedParamSlot.Index);
-        return EvalResult<PlannedLoopValue>.Ok(
-            PlannedLoopValue.FromResult(countedParam.Value, countedParam.EmittedCount));
     }
 
     /// <summary>
@@ -1098,7 +1046,6 @@ internal static partial class LoopOptimizer
             LoopExprPlan.StateSlot stateSlot => $"StateSlot({stateSlot.Name})",
             LoopExprPlan.CapturedSlot capturedSlot => $"CapturedSlot({capturedSlot.Name})",
             LoopExprPlan.NeedParameter parameter => parameter.ReadyCounted ? $"CountedParamSlot({parameter.Name})" : $"CapturedSlot({parameter.Name})",
-            LoopExprPlan.CountedParamSlot countedParamSlot => $"CountedParamSlot({countedParamSlot.Name})",
             LoopExprPlan.TempSlot tempSlot => $"TempSlot({tempSlot.Name})",
             LoopExprPlan.TempCall tempCall => $"TempCall({tempCall.Name})",
             LoopExprPlan.Fallback fallback => $"Fallback({fallback.Reason})",

@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests;
@@ -31,25 +32,22 @@ public class EvaluatorIdentityStateReviewTests
     {
         var names = Enumerable.Range(0, width).Select(i => $"p{i}").ToArray();
         var expectedNames = names.Reverse().ToArray();
-        var function = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
-        var other = new Algorithm.Builtin(BuiltinId.count);
         var values = expectedNames.Select(n => (Name: n, Value: (Result)new Result.Atom(1)))
             .Concat(names.Select(n => (n, (Result)new Result.Atom(2)))).Append(("unowned", new Result.Atom(3))).ToArray();
-        var algorithms = expectedNames.Select(n => (Name: n, Algorithm: (Algorithm)function, Error: (EvalError?)null))
-            .Concat(names.Select(n => (n, (Algorithm)other, (EvalError?)new EvalError.BadArity()))).ToArray();
-        var counted = expectedNames.Select(n => (Name: n, Value: new Evaluator.CountedResult(new Result.Atom(7), 3)))
-            .Concat(names.Select(n => (n, new Evaluator.CountedResult(new Result.Atom(8), 4)))).ToArray();
-        var ctx = Evaluator.EvalCtx.Empty.WithAlgEnv(algorithms).WithCountedParamEnv(counted);
+        var first = NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(7), 1));
+        var second = NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(8), 1));
+        var needs = expectedNames.Select(n => (Name: n, Cell: first))
+            .Concat(names.Select(n => (n, second))).ToArray();
+        var ctx = Evaluator.EvalCtx.Empty.WithNeedEnv(needs);
 
-        // Duplicate owned names do not allocate multiple bindings. All tiers independently
-        // preserve environment order, not signature order, including the wide set path.
+        // Duplicate owned names do not allocate multiple bindings. Both tiers (values and
+        // supplied cells) independently preserve environment order, not signature order,
+        // including the wide set path.
         var captured = ParameterActivation.Capture([.. names, names[0]], ctx, values);
         Assert.Equal(expectedNames, captured.Values.Select(b => b.Name));
         Assert.All(captured.Values, b => Assert.Equal(new Result.Atom(1), b.Value));
-        Assert.Equal(expectedNames, captured.Algorithms.Select(b => b.Name));
-        Assert.All(captured.Algorithms, b => { Assert.Same(function, b.Value); Assert.Null(b.ValueError); });
-        Assert.Equal(expectedNames, captured.Counted.Select(b => b.Name));
-        Assert.All(captured.Counted, b => Assert.Equal(new Evaluator.CountedResult(new Result.Atom(7), 3), b.Value));
+        Assert.Equal(expectedNames, captured.Needs.Select(b => b.Name));
+        Assert.All(captured.Needs, b => Assert.Same(first, b.Cell));
         Assert.NotSame(captured, ParameterActivation.Capture(names, ctx, values));
     }
 
@@ -173,8 +171,6 @@ public class EvaluatorIdentityStateReviewTests
                     foreach (var binding in activation.Needs) References.Add(("cell", new WeakReference(binding.Cell)));
                 }
                 if (activation.Values.Count > 0) References.Add(("values", new WeakReference(activation.Values)));
-                if (activation.Algorithms.Count > 0) References.Add(("algorithms", new WeakReference(activation.Algorithms)));
-                if (activation.Counted.Count > 0) References.Add(("counted", new WeakReference(activation.Counted)));
             }
             return evaluate();
         }

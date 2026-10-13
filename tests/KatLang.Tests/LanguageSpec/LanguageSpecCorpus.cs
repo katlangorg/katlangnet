@@ -7108,13 +7108,31 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("A = 7\nA.string", "ok raw='7' n=1"),
                 new SpecProbe("Inc(x) = x + 1\nInc(4).string", "ok raw='5' n=1"),
-                // A navigated parameterized member and a callable-channel parameter receiver are the same demand.
+                // A navigated parameterized member is the same demand; a parameter receiver demands its
+                // written argument (`Inc`'s own arity error; see the next case).
                 new SpecProbe("Lib = { Sub(x) = x }\nProbe(u) = Lib.Sub.string\nProbe(0)", "err arity"),
                 new SpecProbe("Inc(x) = x + 1\nF(g) = g.string\nF(Inc)", "err arity"),
                 // In a formula that infers its parameters the receiver is a value position and lifts.
                 new SpecProbe("Inc(x) = x + 1\nS = Inc.string\nS(4)", "ok raw='5' n=1"),
             ],
             Explanation = "`.string` converts its receiver's VALUE. Where nothing forwards to the receiver — here a closed parameter list — it is demanded as a zero-argument value, so a receiver that still needs arguments is the ordinary arity error at the receiver and its body is never entered; `Inc(4).string` converts the call's result. In a formula that infers its parameters the receiver lifts like any operand: `S = Inc.string` is `S(x) = Inc(x).string`.",
+        },
+        new()
+        {
+            Id = "dot-string-parameter-receiver-reports-the-written-argument",
+            Category = "strings",
+            Source = "Show(v) = v.string\nShow({ x + 1 })",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unresolvedImplicitParams",
+            Probes =
+            [
+                // The value read of the same parameter reports the same error.
+                new SpecProbe("Plus(v, y) = v + y\nPlus({ x + 1 }, 5)", "err unresolvedImplicitParams"),
+                new SpecProbe("Inc(z) = z + 1\nShow(v) = v.string\nShow(Inc)", "err arity"),
+                new SpecProbe("F(0) = 1\nF(n) = n\nShow(v) = v.string\nShow(F)", "err branch"),
+                new SpecProbe("Z = 5\nShow(v) = v.string\nShow(Z)", "ok raw='5' n=1"),
+            ],
+            Explanation = "A parameter is read through its argument's one supplied computation wherever it is read, the `.string` receiver included: the receiver demands the written argument's VALUE, so a failure is the argument's own report. A written block that still needs its own implicit parameter `x` reports `UnresolvedImplicitParams`, exactly as the value read `v + y` does — never an arity error judged against the parameter `v`.",
         },
         new()
         {

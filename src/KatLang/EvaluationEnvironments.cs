@@ -1,4 +1,4 @@
-// The three evaluator parameter-binding environment tiers, named as in Lean.
+// The two evaluator parameter-binding environment tiers, named as in Lean.
 //
 // Each alias is the C# spelling of a Lean `abbrev`: a transparent name for the
 // same association-list representation (an ordered `IReadOnlyList` of bindings,
@@ -7,29 +7,16 @@
 // implementations, and cache-identity checks all keep operating on the plain
 // list.
 //
+// A parameter's VALUE and its CALLABLE identity both live on its supplied cell
+// (NeedEnv): since Model C there is no separate algorithm-channel tier and no counted
+// callback-parameter tier (both retired on 2026-10-13 with their Lean counterparts,
+// after audits showed that no production binding site still wrote either).
+//
 // Lean: abbrev ValEnv := Assoc Ident Result
 global using ValEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Result Value)>;
 
-// Lean: abbrev AlgEnv := Assoc Ident AlgBinding
-//
-// ValueError is Lean's AlgBinding.valueFailure?: an ORDINARY failure recorded on the
-// algorithm tier as a parameter's VALUE outcome, null when the parameter has a value
-// or nothing was recorded. Under Model C (NEED-01/02) no binding path writes it: a
-// parameter's VALUE outcome is its NeedCell's completed outcome (NeedEnv), established
-// by the cell's first demand and reused by every later demand (AT-MOST-ONCE ARGUMENT
-// VALUE EVALUATION). The pre-Model-C eager writer, Evaluator.SlotAlgorithmBinding, was
-// deleted; the field and its readers (ParameterValueFailure, ParameterSlotFailure) remain
-// for the legacy Ready tier, as Lean keeps valueFailure? (whose eager writer is deleted
-// there too). A resource limit is never recorded here: a
-// demanded computation that reaches one ends the run (RESOURCE LIMITS ARE TERMINAL).
-global using AlgEnv =
-    System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Algorithm Value, KatLang.EvalError? ValueError)>;
-
-// Lean: abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
-global using CountedParamEnv =
-    System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Evaluator.CountedResult Value)>;
-
 // A parameter retains one complete demandable supply, including its independent channels.
+// Lean: abbrev NeedEnv := Assoc Ident Nat
 global using NeedEnv =
     System.Collections.Generic.IReadOnlyList<(string Name, KatLang.Evaluation.NeedCell Cell)>;

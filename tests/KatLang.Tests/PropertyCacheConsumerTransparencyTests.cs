@@ -458,7 +458,7 @@ public class PropertyCacheConsumerTransparencyTests
         var root = SourceProvenance.ParseValid("Bad = 7\nBad").Root;
         var binding = Assert.Single(root.Properties);
         var execution = new ZeroArgPropertyExecution(root, binding, ZeroArgPropertyAccessKind.Lexical,
-            new object(), new object(), new object(), new object());
+            new object(), new object());
         var cache = new RunScopedZeroArgPropertyResultCache();
         var attempts = 0;
         var failure = new EvalError.DivByZero();

@@ -115,8 +115,8 @@ public class CallArgumentSingleForcingTests
             "Make = range(1, 4)\nF2(a, b) = a.count + b\nMake().F2(6)",
             10m, 2, 4
         },
-        // Higher-order dual view Apply(Increment): AlgEnv probing of the
-        // callable argument is NON-FORCING — the only invocations are Apply
+        // Higher-order dual view Apply(Increment): projecting the supplied cell's
+        // CALLABLE identity is NON-FORCING — the only invocations are Apply
         // and the callee's own intentional f(9) call boundary. steps = 2;
         // items = 0.
         {

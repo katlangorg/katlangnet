@@ -50,7 +50,7 @@ partial def fine : Error -> String
 def runCountedM (e : Expr) : EvalM CountedResult := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
-  let ctx := { callStack := [preludeAlg], algEnv := [] }
+  let ctx := { callStack := [preludeAlg] }
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a

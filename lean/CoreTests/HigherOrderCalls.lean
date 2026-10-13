@@ -927,7 +927,8 @@ def test17 : Bool :=
 ]))
 
 -- Test 18: structural property calls share higher-order binding semantics
--- Receiver.ApplyTwice(Inc, 10) should bind Inc through AlgEnv and return 12.
+-- Receiver.ApplyTwice(Inc, 10) should bind Inc's supplied cell, invoked through its
+-- CALLABLE projection, and return 12.
 def receiver18 : Algorithm :=
   algPrivate [] [] [("ApplyTwice", applyTwiceAlg15)] []
 
@@ -1773,8 +1774,8 @@ def test19c : Bool :=
   .dotCall (resolve "Receiver") "Apply" (some [.num 9, resolve "Inc"])
 ]))
 
--- Test 19d: sequenceValue eager values stay whole when a sibling argument binds only
--- through AlgEnv. The occurrence count is the kept-item count: filter materializes an
+-- Test 19d: sequenceValue eager values stay whole when a sibling argument is used
+-- only through its callable channel. The occurrence count is the kept-item count: filter materializes an
 -- exact list ([(1, 2)] here) and count opens exactly that one list boundary, so one
 -- kept pair counts as 1.
 def occurrenceCountAlg19d : Algorithm :=
@@ -1888,8 +1889,8 @@ def test21 : Bool :=
 --
 -- A callee inherits the CALLER's value environment (`argEnv ++ env`), which is
 -- what lets a nested property read an ancestor-owned parameter. A parameter the
--- call bound only through AlgEnv contributes no `argEnv` entry, so without
--- `ValEnv.shadow` a same-named caller binding would answer every value-position
+-- call bound through its supplied cell (every Model-C binding) contributes no
+-- `argEnv` entry, so without `ValEnv.shadow` a same-named caller binding would answer every value-position
 -- read of that parameter: the callee would silently observe an unrelated caller
 -- value instead of the argument bound at THIS invocation.
 --
@@ -1929,8 +1930,8 @@ def testAlgChannelParamShadowsCallerValueFlat : Bool :=
 #guard testAlgChannelParamShadowsCallerValueFlat
 #eval runFlat (.algorithmExpr (shadowedCallRoot "G" shadowedFlatFixedCallee))
 
--- Patterned binding: P(x, (a, b)) = x + a — the first argument still binds only
--- through AlgEnv, and the written group supplies the pattern's items.
+-- Patterned binding: P(x, (a, b)) = x + a — the first argument still binds through
+-- its supplied cell, and the written group supplies the pattern's items.
 def shadowedPatternedCallee : Algorithm :=
   algWithParameterPatterns
     [.capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]]
@@ -2023,12 +2024,12 @@ def testDualChannelArgumentKeepsValueView : Bool :=
 -- Value-channel parameter binding shadows the caller's algorithm environment
 -- (K4-03 — the mirror image of the block above)
 --
--- A callee's algorithm environment is its own algorithm bindings prepended to
--- the CALLER's, which is what lets a nested call still invoke an ancestor-owned
--- callable parameter. A parameter the call bound only on the VALUE channel
--- contributes no algorithm binding, so without `AlgEnv.shadow` (applied at
--- every binding site by `EvalCtx.bindParameters`) a same-named caller callable
--- answered every call-position read of that parameter: `Inner(f) = f(2)`
+-- A callee's supplied cells are prepended to the CALLER's, which is what lets a
+-- nested call still invoke an ancestor-owned callable parameter. The callee's
+-- own parameter names are shadowed out of the inherited cells at every binding
+-- site (`EvalCtx.bindParameters`), so a parameter bound to a VALUE (a cell with
+-- no CALLABLE projection) never reaches a same-named caller callable: before
+-- that shadowing (then on the retired algorithm-channel tier), `Inner(f) = f(2)`
 -- called as `Inner(5)` inside `Apply(f)` invoked the caller's `f` and returned
 -- 3, where the standalone `Inner(5)` fails as not-callable.
 --
@@ -2153,5 +2154,135 @@ def testAlgorithmParamStillShadowsCallerValue : Bool :=
   | _ => false
 
 #guard testAlgorithmParamStillShadowsCallerValue
+
+
+--------------------------------------------------------------------------------
+-- Parameter callee and receiver names (aligned with C# on 2026-10-13)
+--------------------------------------------------------------------------------
+-- A parameter is a reference, so every report that names a callee or a receiver
+-- names the parameter as written — the call frame of `f(x)`, a clause family's
+-- `noMatchingBranch`, the receiver of a `dotCall` frame, a `localOnlyProperty`
+-- object, and the name inside a `badOpenForm` or alias-target message — exactly as
+-- C# does (`openExprName`'s `.param` arm; C# `ExprNameRenderer` renders
+-- `Expr.Param` as its name). Until 2026-10-13 a parameter fell to the renderer's
+-- `(kind)` fallback, so `Apply(f, x) = f(x)` / `Apply(F, 5)` was
+-- `noMatchingBranch "(param)"` under "while evaluating call to (param)" in Lean and
+-- `NoMatchingBranch("f")` in C#; the error categories always agreed.
+--
+-- The cross-engine table. Each program is the C# AST of the source in its doc
+-- comment (elaborated; or host-built, as described), encoded by `LeanAstEncoder`;
+-- the C# test class `ParameterCalleeNameTests` renders the C# error tree of the same
+-- program in the same neutral spelling on every C# route, and checks that this
+-- section holds the same programs and the same expectations. The neutral tree keeps
+-- EVERY frame with its full description — receivers included — outermost first, then
+-- the leaf with its payload.
+
+section ParameterCalleeNames
+open KatLang (Expr)
+
+/-- One frame of the neutral tree. -/
+def pcnNeutralFrame (message : String) : String :=
+  let callPrefix := "while evaluating call to "
+  let dotCallPrefix := "while evaluating dotCall ."
+  let propertyPrefix := "while evaluating property "
+  if message.startsWith callPrefix then
+    "call " ++ (message.drop callPrefix.length).toString
+  else if message.startsWith dotCallPrefix then
+    "dotCall ." ++ (message.drop dotCallPrefix.length).toString
+  else if message.startsWith propertyPrefix then
+    "property " ++ (message.drop propertyPrefix.length).toString
+  else
+    message
+
+/-- A local-only member's exposure, as the neutral tree spells it. -/
+def pcnExposure : PropExposure -> String
+  | .localConditional => "conditional"
+  | .localCapturedAncestorParams names => "captured [" ++ String.intercalate ", " names ++ "]"
+  | other => s!"other {reprStr other}"
+
+/-- The leaf of the neutral tree: the error kind and its payload. -/
+def pcnNeutralLeaf : Error -> String
+  | .noMatchingBranch name => s!"noMatchingBranch {name}"
+  | .arityMismatch expected actual => s!"arityMismatch {expected} {actual}"
+  | .notAnAlgorithm description => s!"notAnAlgorithm {description}"
+  | .localOnlyProperty object member exposure =>
+      s!"localOnlyProperty {object} {member} {pcnExposure exposure}"
+  | .badOpenForm reason => s!"badOpenForm {reason}"
+  | .illegalInEval reason => s!"illegalInEval {reason}"
+  | other => s!"other {reprStr other}"
+
+/-- The neutral error tree: every frame outermost first, then the leaf. -/
+def pcnNeutralError : Error -> String
+  | .withContext message inner => pcnNeutralFrame message ++ " > " ++ pcnNeutralError inner
+  | leaf => pcnNeutralLeaf leaf
+
+/-- The neutral observation of a program: `ok`, or its neutral error tree. -/
+def pcnObserve (program : Expr) : String :=
+  match runResult program with
+  | .ok _ => "ok"
+  | .error err => pcnNeutralError err
+
+-- The renderer itself: a parameter is its written name in every report that names a
+-- reference, and a dotted path from a parameter keeps that name.
+#guard KatLang.openExprName (.param "f") == "f"
+#guard KatLang.openExprName (.dotMember (.param "obj") "Q" (.resolve "Q") none) == "obj.Q"
+#guard KatLang.CtxMsg.call (.param "f") == "while evaluating call to f"
+#guard KatLang.CtxMsg.dotCall (.param "obj") "Q" == "while evaluating dotCall .Q of obj"
+/-- `F(0) = 1` / `F(1) = 2` / `Apply(f, x) = f(x)` / `Apply(F, 5)` -/
+def pcnFamilyThroughParameterCallee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩]), privateProp "Apply" (alg ["f", "x"] [] [] [(.call (.param "f") [.param "x"])])] [(.call (.resolve "Apply") [.resolve "F", .num 5])])
+#guard pcnObserve pcnFamilyThroughParameterCallee == "call Apply > call f > noMatchingBranch f"
+
+/-- `Inc(z) = z + 1` / `Apply(f) = f(1, 2)` / `Apply(Inc)` -/
+def pcnArityThroughParameterCallee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 1, .num 2])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
+#guard pcnObserve pcnArityThroughParameterCallee == "call Apply > call f > arityMismatch 1 2"
+
+/-- `Apply(f) = f(1)` / `Apply(5)` -/
+def pcnValueThroughParameterCallee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "Apply") [.num 5])])
+#guard pcnObserve pcnValueThroughParameterCallee == "call Apply > call f > notAnAlgorithm param(f)"
+
+/-- `C(0) = { public Q = 1 ⏎ 0 }` / `C(1) = 2` / `Get(obj) = obj.Q` / `Get(C)` -/
+def pcnBranchOnlyMemberOfParameterReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.conditional none [] [⟨.litInt 0, (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.num 0])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Q" none)])] [(.call (.resolve "Get") [.resolve "C"])])
+#guard pcnObserve pcnBranchOnlyMemberOfParameterReceiver == "call Get > dotCall .Q of obj > localOnlyProperty obj Q conditional"
+
+/-- `G(x) = { public Sub = { public Q = 1 ⏎ x } ⏎ 0 }` / `Get(obj) = obj.Sub` / `Get(G)` -/
+def pcnLocalOnlyMemberOfParameterReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Sub" none)])] [(.call (.resolve "Get") [.resolve "G"])])
+#guard pcnObserve pcnLocalOnlyMemberOfParameterReceiver == "call Get > dotCall .Sub of obj > localOnlyProperty obj Sub captured [x]"
+
+/-- `C(0) = { public Q = 1 ⏎ 0 }` / `C(1) = 2` / `Apply(g) = g(1)` / `Get(obj) = Apply(obj.Q)` / `Get(C)` -/
+def pcnCallableProjectionOfParameterReceiverPath : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.conditional none [] [⟨.litInt 0, (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.num 0])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩]), privateProp "Apply" (alg ["g"] [] [] [(.call (.param "g") [.num 1])]), privateProp "Get" (alg ["obj"] [] [] [(.call (.resolve "Apply") [(.dotCall (.param "obj") "Q" none)])])] [(.call (.resolve "Get") [.resolve "C"])])
+#guard pcnObserve pcnCallableProjectionOfParameterReceiverPath == "call Get > call Apply > call g > localOnlyProperty obj Q conditional"
+
+/-- `Lib = { public M(a) = a }` / `Get(obj) = obj.M` / `Get(Lib)` -/
+def pcnMemberReadThroughParameterReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "M" none)])] [(.call (.resolve "Get") [.resolve "Lib"])])
+#guard pcnObserve pcnMemberReadThroughParameterReceiver == "call Get > dotCall .M of obj > arityMismatch 1 0"
+
+/-- `F(0) = 1` / `F(1) = 2` / `Apply(f, x) = x.f` / `Apply(F, 5)` -/
+def pcnDotFallbackThroughParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩]), privateProp "Apply" (alg ["f", "x"] [] [] [(.dotMember (.param "x") "f" (.param "f") none)])] [(.call (.resolve "Apply") [.resolve "F", .num 5])])
+#guard pcnObserve pcnDotFallbackThroughParameter == "call Apply > dotCall .f of x > noMatchingBranch f"
+
+/-- `F(0) = 1` / `Run(step) = repeat(step, 1, 5)` / `Run(F)` (the step cell keeps its written source `F`) -/
+def pcnLoopStepThroughParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩]), privateProp "Run" (alg ["step"] [] [] [(.call (.resolve "repeat") [.param "step", .num 1, .num 5])])] [(.call (.resolve "Run") [.resolve "F"])])
+#guard pcnObserve pcnLoopStepThroughParameter == "call Run > call repeat > call F > noMatchingBranch F"
+
+/-- host-built: a root whose `open` target is the parameter reference `f`, reading `Zzz` -/
+def pcnHostOpenTargetParameter : Expr :=
+  .algorithmExpr (alg [] [.param "f"] [] [.resolve "Zzz"])
+#guard pcnObserve pcnHostOpenTargetParameter == "badOpenForm param: f"
+
+/-- host-built: a callable alias `A` whose target is the parameter reference `f` -/
+def pcnHostAliasTargetParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.param "f"))] [.resolve "A"])
+#guard pcnObserve pcnHostAliasTargetParameter == "illegalInEval callable alias target f is not a name or a declared member path"
+
+end ParameterCalleeNames
 
 end KatLangTests

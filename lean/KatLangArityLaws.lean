@@ -791,8 +791,6 @@ theorem source_argument_sequence_pattern_rebuilds_a_sequence (items : List Param
     (ParameterKind.normal == ParameterKind.normal) = true := by decide
 @[simp] private theorem parameter_kind_normal_beq_collecting :
     (ParameterKind.normal == ParameterKind.collecting) = false := by decide
-@[simp] private theorem parameter_kind_collecting_beq_normal :
-    (ParameterKind.collecting == ParameterKind.normal) = false := by decide
 @[simp] private theorem parameter_kind_collecting_beq_collecting :
     (ParameterKind.collecting == ParameterKind.collecting) = true := by decide
 

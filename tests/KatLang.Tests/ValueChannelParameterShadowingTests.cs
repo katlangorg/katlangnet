@@ -5,15 +5,16 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// The mirror image of <see cref="AlgorithmChannelParameterShadowingTests"/> (K4-03).
-/// A callee's algorithm environment is its own algorithm bindings prepended to the
-/// CALLER's, which is what lets a nested call still invoke an ancestor-owned callable
-/// parameter. A parameter bound ONLY on the value channel contributes no algorithm
-/// binding, so without <c>Evaluator.ShadowAlgEnv</c> (Lean <c>AlgEnv.shadow</c>, applied
-/// at every binding site through <c>ShadowInheritedParameterEnvironments</c> / Lean
-/// <c>EvalCtx.bindParameters</c>) a same-named callable inherited from the caller
-/// answered every call-position read of that parameter: <c>Inner(f) = f(2)</c> called as
-/// <c>Inner(5)</c> inside <c>Apply(f)</c> invoked the caller's <c>f</c> and returned
-/// <c>3</c>, where the standalone <c>Inner(5)</c> fails as not-callable.
+/// A callee's supplied cells are prepended to the CALLER's, which is what lets a nested
+/// call still invoke an ancestor-owned callable parameter. A parameter bound to a VALUE (a
+/// cell with no CALLABLE identity) must still own its name, so every binding site shadows
+/// the callee's parameter names out of the inherited cells
+/// (<c>ShadowInheritedParameterEnvironments</c> / Lean <c>EvalCtx.bindParameters</c>).
+/// Before that shadowing (then on a separate algorithm-channel tier, since retired) a
+/// same-named callable inherited from the caller answered every call-position read of that
+/// parameter: <c>Inner(f) = f(2)</c> called as <c>Inner(5)</c> inside <c>Apply(f)</c>
+/// invoked the caller's <c>f</c> and returned <c>3</c>, where the standalone
+/// <c>Inner(5)</c> fails as not-callable.
 ///
 /// <para>Every test asserts the OBSERVABLE rule — a bound parameter owns its name on
 /// every channel — through the public evaluation surface, once per independently

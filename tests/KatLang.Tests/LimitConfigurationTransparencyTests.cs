@@ -391,13 +391,24 @@ public class LimitConfigurationTransparencyTests
     /// language permits and never calls a mismatch. What the configuration may NOT do is change
     /// anything: every non-binding limit configuration leaves the suspending run's outcome and host
     /// trace exactly as the unconfigured run has them.
+    /// <para>So every run starts from the same host conditions — on a fresh thread-pool work item,
+    /// hence a fresh stack — and only the configuration differs. A run's completion unwinds one
+    /// nested continuation per recursion level (measured on 2026-10-13: about 1,700 to 3,900
+    /// frames here, varying with the JIT state). A run awaited plainly after its predecessor
+    /// starts at the bottom of that unwind, where its first invocations can meet the host-stack
+    /// backstop: the same run started with 1,150 of about 1,230 KiB of headroom already used
+    /// stops with <see cref="EvalError.EvaluationStackExhausted"/> before its first pause.
+    /// That is host variability (Q-09a), never a configuration's effect (Q-09b). It made this
+    /// test fail once in a full suite run, as "steps-max changed the suspending run".</para>
     /// </summary>
     [Fact]
     public async Task GenuinelySuspendingRun_IsUnchangedByNonBindingLimits_AndMayOutrunTheSynchronousRoute()
     {
         const string source = "F(x) = if(x < 100, pause() + F(x + 1), x)\nF(0)";
 
-        async Task<string> RunSuspending(EvaluationLimits? limits)
+        // A fresh stack per run (see the summary). The observation names a failure's codes, so a
+        // mismatch shows what differed.
+        Task<string> RunSuspending(EvaluationLimits? limits) => Task.Run(async () =>
         {
             var log = new List<string>();
             var operations = HostOperations.Create(HostOperation.CreateAsync("pause", async (_, _) =>
@@ -407,13 +418,20 @@ public class LimitConfigurationTransparencyTests
                 return new Result.Atom(0);
             }));
             var result = await KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations, EvaluationLimits = limits });
-            return $"{result.GetType().Name}: {result.ToDisplayString()} | pauses={log.Count}";
-        }
+            var codes = result is RunResult.EvalFailure failure
+                ? " codes=" + string.Join(",", failure.Errors.Select(static error => error.Code))
+                : "";
+            return $"{result.GetType().Name}: {result.ToDisplayString()} | pauses={log.Count}{codes}";
+        });
 
         var unconfigured = await RunSuspending(null);
         Assert.Equal("Success: 100 | pauses=100", unconfigured);
         foreach (var (name, limits) in NonBindingConfigurations)
-            Assert.True(unconfigured == await RunSuspending(limits), $"{name} changed the suspending run");
+        {
+            var configured = await RunSuspending(limits);
+            Assert.True(unconfigured == configured,
+                $"{name} changed the suspending run:\n  unconfigured: {unconfigured}\n  {name}: {configured}");
+        }
 
         // The synchronous route on a 1 MiB thread (the documented minimum) either completes with
         // the same value or stops with the structured host-stack backstop — permitted host/route

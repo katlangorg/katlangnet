@@ -714,7 +714,7 @@ public static class CountedMatrixCorpus
         Raw("clause/one-element-list-pattern-binds-element", ClauseFamilyDispatch, One, WrittenRows,
             "E([x]) = x.count\nE(0) = 999\nE([[1, 2]])",
             "2", 1,
-            "in a clause FAMILY the one-element list pattern [x] matches a one-element list and binds its element whole (matchCallPattern)"),
+            "in a clause FAMILY the one-element list pattern [x] matches a one-element list and binds its element whole (selectNeedFamilyBranch)"),
         Raw("clause/list-pattern-skips-scalar", ClauseFamilyDispatch, One, WrittenRows,
             "E([x]) = x.count\nE(x) = 999\nE(7)",
             "999", 1,

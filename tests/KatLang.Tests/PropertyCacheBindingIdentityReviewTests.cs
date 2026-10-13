@@ -78,7 +78,7 @@ public class PropertyCacheBindingIdentityReviewTests
         var first = new Algorithm.User(null, [], [], properties, []);
         var second = new Algorithm.User(null, [], [], properties, []);
         var baseline = new ZeroArgPropertyExecution(first, binding, ZeroArgPropertyAccessKind.Lexical,
-            new object(), new object(), new object(), new object());
+            new object(), new object());
         var comparer = ZeroArgPropertyCacheKeyComparer.Instance;
         Assert.False(comparer.Equals(ZeroArgPropertyCacheKey.FromExecution(baseline),
             ZeroArgPropertyCacheKey.FromExecution(baseline with { Owner = second })));

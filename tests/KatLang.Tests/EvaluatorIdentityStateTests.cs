@@ -309,7 +309,9 @@ public class EvaluatorIdentityStateTests
             [new Expr.Param("x")]);
         var ctx = Evaluator.EvalCtx.Empty.Push(new Algorithm.User(null, [], [], [], []));
         var callee = new Algorithm.User(null, [], [], [], [new Expr.Num(9)]);
-        var callerCtx = ctx.WithAlgEnv([("f", callee, null), ("f", new Algorithm.Builtin(BuiltinId.count), null), ("g", callee, null)]);
+        var cell = NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(9), 1));
+        var otherCell = NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(8), 1));
+        var callerCtx = ctx.WithNeedEnv([("f", cell), ("f", otherCell), ("g", cell)]);
         ValEnv values = [("x", new Result.Atom(1)), ("y", new Result.Atom(2)), ("x", new Result.Atom(3))];
 
         var entered = Evaluator.EnterAlgorithmBody(body, callerCtx, values);
@@ -326,15 +328,13 @@ public class EvaluatorIdentityStateTests
         // nothing else; a second entry is a distinct activation.
         var activation = Assert.IsType<ParameterActivation>(head.Activation);
         Assert.Equal([("x", new Result.Atom(1))], activation.Values);
-        Assert.Equal([("f", callee, (EvalError?)null)], activation.Algorithms);
-        Assert.Empty(activation.Counted);
+        Assert.Equal([("f", cell)], activation.Needs);
         Assert.NotSame(activation, Evaluator.EnterAlgorithmBody(body, callerCtx, values).HeadScope!.Activation);
 
         // A parameterless body and every plain push carry no head scope.
         Assert.Null(Evaluator.EnterAlgorithmBody(callee, callerCtx, values).HeadScope);
         Assert.Null(entered.Push(callee).HeadScope);
-        Assert.Same(head, entered.WithAlgEnv([]).HeadScope);
-        Assert.Same(head, entered.WithCountedParamEnv([]).HeadScope);
+        Assert.Same(head, entered.WithNeedEnv([]).HeadScope);
         Assert.Same(head, entered.WithZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache()).HeadScope);
     }
 
@@ -343,16 +343,16 @@ public class EvaluatorIdentityStateTests
     {
         var wide = Enumerable.Range(0, 12).Select(index => $"p{index}").ToArray();
         ValEnv values = [("p3", new Result.Atom(3)), ("q", new Result.Atom(0)), ("p3", new Result.Atom(30)), ("p11", new Result.Atom(11))];
-        var counted = Evaluator.EvalCtx.Empty.WithCountedParamEnv(
-            [("p0", new Evaluator.CountedResult(new Result.Atom(7), 1)), ("zz", new Evaluator.CountedResult(new Result.Atom(8), 1))]);
+        var cells = Evaluator.EvalCtx.Empty.WithNeedEnv(
+            [("p0", NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(7), 1))),
+             ("zz", NeedCell.Ready(new Evaluator.CountedResult(new Result.Atom(8), 1)))]);
 
-        var activation = ParameterActivation.Capture(wide, counted, values);
+        var activation = ParameterActivation.Capture(wide, cells, values);
         Assert.Equal([("p3", new Result.Atom(3)), ("p11", new Result.Atom(11))], activation.Values);
-        Assert.Empty(activation.Algorithms);
-        Assert.Equal(["p0"], activation.Counted.Select(binding => binding.Name));
+        Assert.Equal(["p0"], activation.Needs.Select(binding => binding.Name));
 
-        Assert.Empty(ParameterActivation.Capture([], counted, values).Values);
-        Assert.Empty(ParameterActivation.Capture(["none"], counted, values).Values);
+        Assert.Empty(ParameterActivation.Capture([], cells, values).Values);
+        Assert.Empty(ParameterActivation.Capture(["none"], cells, values).Values);
     }
 
     // ── D. Traversal: ownership is a back-reference, not an AST edge ────────

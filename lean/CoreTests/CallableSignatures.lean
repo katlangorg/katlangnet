@@ -340,7 +340,7 @@ def zeroArgExportedPropertyIsEvaluatedOncePerRunAcrossCalls : Bool :=
       match state.zeroArgPropertyCache with
       | [(key, (Result.atom 3, 1))] =>
           key.propertyName == "Big" && key.accessKind == .lexical
-            && key.valEnv == none && key.algEnv == none && key.countedParamEnv == none
+            && key.valEnv == none && key.bindingContext == none
       | _ => false
   | _ => false
 
@@ -366,8 +366,7 @@ def zeroArgLocalOnlyPropertyIsKeyedByBindingContext : Bool :=
       let pEntries := state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == "P")
       pEntries.length == 2
         && pEntries.all (fun entry =>
-          entry.fst.bindingContext.isSome && entry.fst.valEnv.isNone
-            && entry.fst.algEnv.isNone && entry.fst.countedParamEnv.isNone)
+          entry.fst.bindingContext.isSome && entry.fst.valEnv.isNone)
   | _ => false
 
 #guard zeroArgLocalOnlyPropertyIsKeyedByBindingContext

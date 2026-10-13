@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 440
+- specification surface cases: 441
 - excluded parse-level cases (Lean has no surface parser): 67
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 351
-- probe observations (C#-only by design): 1322
+- Lean-guarded cases: 352
+- probe observations (C#-only by design): 1326
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -75,7 +75,7 @@ partial def errCategory : Error -> String
 def runCountedM (e : Expr) : EvalM CountedResult := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
-  let ctx := { callStack := [preludeAlg], algEnv := [] }
+  let ctx := { callStack := [preludeAlg] }
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
@@ -1756,6 +1756,11 @@ def case_dot_string_receiver_is_a_zero_argument_value_demand : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.resolve "Inc") "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_dot_string_receiver_is_a_zero_argument_value_demand == "err arity"
 
+-- dot-string-parameter-receiver-reports-the-written-argument [strings]: Show(v) = v.string \n Show({ x + 1 })
+def case_dot_string_parameter_receiver_reports_the_written_argument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))])])
+#guard obs case_dot_string_parameter_receiver_reports_the_written_argument == "err unresolvedImplicitParams"
+
 -- zero-argument-demand-follows-actual-call-arity [variadic-calls]: Only(*xs) = xs \n Only
 def case_zero_argument_demand_follows_actual_call_arity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [.resolve "Only"])
@@ -1856,7 +1861,7 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 351 canonical Lean-guarded specification cases.
+-- 352 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2195,6 +2200,7 @@ def specCaseIds : List String := [
   "lazy-slot-demand-is-the-ordinary-zero-argument-demand",
   "lazy-slot-demand-covers-every-builtin-value-slot",
   "dot-string-receiver-is-a-zero-argument-value-demand",
+  "dot-string-parameter-receiver-reports-the-written-argument",
   "zero-argument-demand-follows-actual-call-arity",
   "zero-argument-callable-name-is-read-not-lifted",
   "same-arity-user-if-keeps-user-identity",
@@ -2216,6 +2222,6 @@ def specCaseIds : List String := [
   "string-interpolation-hole-failure",
   "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 351
+#guard specCaseIds.length == 352
 
 end LanguageSpecCases

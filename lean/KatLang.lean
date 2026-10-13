@@ -1622,8 +1622,8 @@ namespace Result
       (`[x, y]` is the list pattern) and a scalar is NOT a one-item supply: the
       only pattern that takes a value whole is a bare binder. This is the ONE
       rule shared by the one Model-C binder (`bindNeedOne`, for direct calls,
-      callbacks, loop steps and clause families alike) and the literal-pattern
-      matchers (`matchPatternInto`, `matchCountedPatternInto`), so a callback that
+      callbacks, loop steps and clause families alike) and the pattern matcher
+      (`matchPatternInto`), so a callback that
       supplies one value `V` to a pattern `P` binds exactly as the ordinary call
       `P(V)` does. A
       sequence value has 0 or at least 2 elements (there is no one-item
@@ -1755,87 +1755,12 @@ def lookupAssoc {A} (k : Ident) : Assoc Ident A -> Option A
 
 abbrev ValEnv := Assoc Ident Result
 
-/-- One parameter's ALGORITHM-channel binding, together with a VALUE outcome
-    recorded beside it when that outcome is a FAILURE.
-
-    AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): within one
-    call, a written argument slot is evaluated at most once for its value.
-    Under Model C (NEED-01/02, October 2026) that slot is the parameter's
-    supplied need cell (`EvalState.needs`, `supplyNeed`, `demandNeed`): its
-    first VALUE demand evaluates the computation once and stores the completed
-    outcome, which every later demand reuses, and the `.param` arm of
-    `evalCounted` demands the cell before any tier below it. No production
-    binding path writes `valueFailure?` any more: its eager writer — the slot
-    evaluated at assembly, its failure recorded here (`slotAlgorithmBinding`) —
-    was deleted with Model C, and its last Lean copy, the pre-Model-C Ready
-    binder, was retired on 2026-10-12 (git history keeps it). The field and its
-    readers (the `.param` arm's algorithm-tier fallback, `parameterValueFailure?`,
-    `evalDotCallCounted`'s `string` arm) remain for that legacy Ready tier, which
-    only a host-built context can populate (CoreTests `ArgumentValueOutcome`),
-    and none of them evaluates `algorithm`. The
-    algorithm channel remains what it is for: invocation (`f(x)`, an invoking
-    builtin slot), structural member access, and forwarding.
-    `valueFailure?` is `none` exactly when the value tier holds the
-    parameter's value or nothing was recorded. C#: the `ValueError` element
-    of an `AlgEnv` entry. -/
-structure AlgBinding where
-  algorithm : Algorithm
-  valueFailure? : Option Error := none
-  deriving Repr
-
-/-- Algorithm environment: maps parameter names to algorithm-channel bindings.
-    Used for higher-order algorithm parameters — when a caller passes an
-    algorithm as an argument, the callee can invoke it by name.
-    Parallel to ValEnv (which maps names to Results). -/
-abbrev AlgEnv := Assoc Ident AlgBinding
-
-namespace AlgEnv
-  /-- The algorithm a name is bound to on the algorithm channel: what an
-      invocation, a structural member access, or a forwarded argument uses. -/
-  def lookup (env : AlgEnv) (x : Ident) : Option Algorithm :=
-    (lookupAssoc x env).map AlgBinding.algorithm
-
-  /-- The complete algorithm-channel binding of a name, including any failure
-      recorded beside it (`AlgBinding.valueFailure?`; no Model-C binding path
-      records one). -/
-  def lookupBinding (env : AlgEnv) (x : Ident) : Option AlgBinding :=
-    lookupAssoc x env
-
-  /-- Remove the named bindings from an INHERITED algorithm environment — the
-      algorithm-tier counterpart of `CountedParamEnv.shadow` and `ValEnv.shadow`.
-
-      A callee's algorithm environment is its own algorithm bindings prepended
-      to the CALLER's, which is what lets a nested call still invoke an
-      ancestor-owned callable parameter. A parameter the call bound only on the
-      VALUE channel contributes no algorithm binding, so without this filter a
-      same-named callable inherited from the caller answered every
-      call-position read of that parameter (`resolveAlg (.param x)`):
-      `Inner(f) = f(2)` called as `Inner(5)` inside `Apply(f)` invoked the
-      caller's `f` instead of failing as not-callable, exactly as the standalone
-      `Inner(5)` does. Shadowing is applied per binding site through
-      `EvalCtx.bindParameters`. C#: `ShadowAlgEnv`. -/
-  def shadow (env : AlgEnv) (names : List Ident) : AlgEnv :=
-    env.filter (fun entry => !names.contains entry.fst)
-end AlgEnv
-
-/-- Counted parameter environment for callback-bound values: higher-order
-    sequence items (selected values re-counted through `countedSequenceCallbackItem`,
-    so a `()` item carries emitted count 0 and every other item count 1) and the
-    reducer accumulator bound beside them. Collecting bindings also record
-    their bound value here; since collecting binding collects ONE exact
-    immutable list value, those entries always carry emitted count 1 and agree
-    with ordinary value-environment lookup (there is no separate raw-supply
-    forwarding environment). Since selection became a value boundary
-    (September 2026) every entry's count is `Result.valueCount` of its value. -/
-abbrev CountedParamEnv := Assoc Ident (Prod Result Nat)
-
-namespace CountedParamEnv
-  def lookup (env : CountedParamEnv) (x : Ident) : Option (Prod Result Nat) :=
-    lookupAssoc x env
-
-  def shadow (env : CountedParamEnv) (names : List Ident) : CountedParamEnv :=
-    env.filter (fun entry => !names.contains entry.fst)
-end CountedParamEnv
+/- A parameter's CALLABLE identity is its supplied need cell's projection
+   (`projectNeedCallable`), and its VALUE is that cell's one demand (`demandNeed`):
+   since Model C (October 2026) there is no separate algorithm-channel tier and no
+   counted callback-parameter tier — they were retired on 2026-10-13, with their C#
+   counterparts, after a dependency analysis showed that no production binding site
+   still wrote either. -/
 
 inductive ZeroArgPropertyAccessKind where
   | lexical
@@ -1891,8 +1816,6 @@ structure ZeroArgPropertyCacheKey where
   propertyName : Ident
   propertyAlgorithm : String
   valEnv : Option String
-  algEnv : Option String
-  countedParamEnv : Option String
   bindingContext : Option Nat
   deriving Repr, BEq
 
@@ -1922,8 +1845,6 @@ abbrev NeedEnv := Assoc Ident Nat
 
 structure EvalCtx where
   callStack : List Algorithm
-  algEnv    : AlgEnv := []
-  countedParamEnv : CountedParamEnv := []
   needEnv : Assoc Ident Nat := []
   bindingContext : Nat := 0
   headScope : Option ScopeCtx := none
@@ -1950,12 +1871,12 @@ structure NeedCell where
   callable : Option (Except Error (Option Algorithm)) := none
   deriving Repr
 
-/-- The three binding channels saved by one lexical owner activation. -/
+/-- The parameter bindings saved by one lexical owner activation: its value
+    bindings and its supplied cells (a cell carries both the VALUE and the
+    CALLABLE channel of its parameter). -/
 structure ParameterActivation where
   values : ValEnv
   needs : NeedEnv := []
-  algorithms : AlgEnv
-  counted : CountedParamEnv
   bindingContext : Nat := 0
   deriving Repr
 
@@ -2030,32 +1951,25 @@ def runEvalM (m : EvalM A) : Except Error A :=
   | .error err => .error err
 
 namespace EvalCtx
-  def empty : EvalCtx := { callStack := [], algEnv := [], countedParamEnv := [] }
+  def empty : EvalCtx := { callStack := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
     { ctx with callStack := a :: ctx.callStack, headScope := none }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
-  def withAlgEnv (env : AlgEnv) (ctx : EvalCtx) : EvalCtx :=
-    { ctx with algEnv := env }
-  def withCountedParamEnv (env : CountedParamEnv) (ctx : EvalCtx) : EvalCtx :=
-    { ctx with countedParamEnv := env }
 
-  /-- The callee-side context of a parameter binding: the callee's own
-      algorithm and counted bindings prepended to the CALLER's tiers with the
-      bound parameter names removed from the inherited need-cell tier (`needEnv`) and from BOTH inherited binding tiers (`AlgEnv.shadow`,
-      `CountedParamEnv.shadow`; the value tier is shadowed beside it with
-      `ValEnv.shadow`).
+  /-- The callee-side context of a parameter binding: a fresh binding context
+      with the bound parameter names removed from the inherited need-cell tier
+      (`needEnv`; the value tier is shadowed beside it with `ValEnv.shadow`); the
+      binding site then prepends the callee's own cells (`needBindingContext`).
 
-      A bound parameter owns its name on every channel: a call-position read of
-      a value-bound parameter never reaches a same-named caller callable,
-      exactly as a value-position read of an algorithm-bound parameter never
-      reaches a same-named caller value. Names the callee does not bind stay
-      visible, which is what lets a nested call still reach an ancestor-owned
-      callable. Every user-call, conditional-call, callback, and loop-step
-      binding site builds its context through this one definition, so no path
-      can shadow one tier and forget another.
+      A bound parameter owns its name on every channel: its supplied cell
+      carries both its VALUE and its CALLABLE channel, so neither a
+      value-position read nor a call-position read of it can reach a same-named
+      caller binding. Names the callee does not bind stay visible, which is what
+      lets a nested call still reach an ancestor-owned parameter. Every
+      user-call, conditional-call, callback, and loop-step binding site builds
+      its context through this one definition.
       C#: `ShadowInheritedParameterEnvironments` plus the site's own prepend. -/
-  def bindParameters (names : List Ident) (algBindings : AlgEnv)
-      (countedBindings : CountedParamEnv) (ctx : EvalCtx) : EvalM EvalCtx := do
+  def bindParameters (names : List Ident) (ctx : EvalCtx) : EvalM EvalCtx := do
     -- Equal values in separate calls are still distinct bindings. Allocate at
     -- every binding boundary, including an explicit zero-argument call, just
     -- as C# creates fresh environment lists there. A property read only pushes
@@ -2064,9 +1978,7 @@ namespace EvalCtx
     set { state with nextBindingContext := state.nextBindingContext + 1 }
     pure { ctx with
       bindingContext := state.nextBindingContext,
-      needEnv := ctx.needEnv.filter (fun entry => !names.contains entry.fst),
-      algEnv := algBindings ++ AlgEnv.shadow ctx.algEnv names,
-      countedParamEnv := countedBindings ++ CountedParamEnv.shadow ctx.countedParamEnv names }
+      needEnv := ctx.needEnv.filter (fun entry => !names.contains entry.fst) }
 end EvalCtx
 
 /-- Allocate a fresh cell; transporting a parameter never calls this function. -/
@@ -2087,18 +1999,16 @@ abbrev ValEnv.lookup (env : ValEnv) (x : Ident) : Option Result :=
 
     A callee's value environment is its own bindings prepended to the CALLER's
     (`argEnv ++ env`), which is what lets a nested property body still read an
-    ancestor-owned parameter. A parameter the call bound only on the ALGORITHM
-    channel — a higher-order argument, or any argument whose value evaluation
-    failed — contributes no entry to `argEnv`, so without this filter a
-    same-named binding inherited from the caller would answer every
-    value-position read of that parameter: the callee would silently observe an
-    unrelated caller value instead of the argument bound at THIS invocation, and
-    which caller parameter names happen to collide with a callee's parameter
+    ancestor-owned parameter. A parameter the call bound through its supplied
+    need cell (every Model-C binding) contributes no entry to `argEnv`, so
+    without this filter a same-named binding inherited from the caller would
+    stay in the callee's value tier: a read that reaches that tier would observe
+    an unrelated caller value instead of the argument bound at THIS invocation,
+    and which caller parameter names happen to collide with a callee's parameter
     names would become observable. Shadowing the callee's whole parameter list
-    is exactly the rule `CountedParamEnv.shadow` and `AlgEnv.shadow` apply to
-    the counted and algorithm tiers (`EvalCtx.bindParameters`); names that DO
-    carry a value binding are shadowed by `argEnv` anyway, so filtering the
-    tail changes nothing for them.
+    is exactly the rule `EvalCtx.bindParameters` applies to the inherited
+    need-cell tier; names that DO carry a value binding are shadowed by
+    `argEnv` anyway, so filtering the tail changes nothing for them.
     C#: `ShadowValEnv`. -/
 def ValEnv.shadow (env : ValEnv) (names : List Ident) : ValEnv :=
   env.filter (fun entry => !names.contains entry.fst)
@@ -2562,15 +2472,23 @@ def emptySequenceText (depth : Nat) : String :=
   String.ofList (List.replicate (depth + 1) '(' ++ List.replicate (depth + 1) ')')
 
 /-- Extract a descriptive name from an open expression for error messages.
-  This MINIMAL renderer models only structural reference forms; every other
-  kind (`.num`, `.param`, `.binary`, ...) renders as the `(kind)` fallback, so
-  C#'s merged `OpenExprName` prints more detail for them. That gap is
-  pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
+  This MINIMAL renderer models only reference forms — a name, a parameter, and the
+  structural forms below; every other kind (`.num`, `.binary`, ...) renders as the
+  `(kind)` fallback, so C#'s merged `OpenExprName` prints more detail for them. That
+  gap is pre-existing and uniform across `.dotCall`, `.sequenceConstruct`,
   `.sequenceSpread`, and `.index` alike — it is a property of this renderer's
-  coverage, not of selection. -/
+  coverage, not of selection.
+  A PARAMETER is a reference: it renders as the name written, like a property name
+  (C# `ExprNameRenderer` renders `Expr.Param` the same way). Every call frame, branch
+  failure and member-access report therefore names the written callee or receiver —
+  `Apply(f, x) = f(x)` with a clause family reports `noMatchingBranch "f"` under
+  "while evaluating call to f", and `Get(obj) = obj.Q` names `obj` in its
+  `localOnlyProperty` report — never a `(param)` placeholder (aligned with C# on
+  2026-10-13; until then a parameter fell to the `(kind)` fallback). -/
 def openExprName (e : Expr) : String :=
   match e with
   | .resolve n => n
+  | .param x => x
   | .dotMember o n _ _ =>
       openExprName o ++ "." ++ n
   -- Selection is source-faithful postfix `target[s1, …, sn]`, never the `(index)`
@@ -3080,8 +2998,6 @@ def recordParameterActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv
   let activation : ParameterActivation := {
     values := env.filter (fun b => names.contains b.fst)
     needs := ctx.needEnv.filter (fun b => names.contains b.fst)
-    algorithms := ctx.algEnv.filter (fun b => names.contains b.fst)
-    counted := ctx.countedParamEnv.filter (fun b => names.contains b.fst)
     bindingContext := ctx.bindingContext }
   set { state with
     lexicalActivations := state.lexicalActivations.push activation }
@@ -3109,8 +3025,21 @@ def parameterContext (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Eval
   match <- capturedParameterActivation? name ctx with
   | none => pure (ctx, env)
   | some activation =>
-      let parameterCtx := { ctx with needEnv := activation.needs, algEnv := activation.algorithms, countedParamEnv := activation.counted }
+      let parameterCtx := { ctx with needEnv := activation.needs }
       pure (parameterCtx, activation.values)
+
+/-- Whether `target` is a parameter bound to a SUPPLIED CELL (every parameter an ordinary
+    call binds under Model C), looked up exactly as the value-position `param` arm of
+    `evalCounted` finds it (through the captured activation, `parameterContext`). The
+    ordinary-dot `string` intrinsic reads such a receiver through that cell instead of
+    re-judging its callable by the zero-argument law (CALL-06; `evalDotCallCounted`).
+    C#: the need-cell test that opens `Evaluator.EvalDotStringReceiverAlgOutput`. -/
+def hasSuppliedParameterCell (target : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Bool := do
+  match target with
+  | .param x =>
+      let (parameterCtx, _) <- parameterContext x ctx env
+      pure (lookupAssoc x parameterCtx.needEnv).isSome
+  | _ => pure false
 
 def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat := do
   if let .param name := source then
@@ -3118,31 +3047,6 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
     if let some address := lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) then
       return address
   allocateNeed (.expression source caller values)
-
-/-- The failure recorded on a parameter's algorithm binding as its VALUE
-    outcome (`AlgBinding.valueFailure?`), read in the parameter's own binding
-    context exactly as the `.param` arm of `evalCounted` reads that tier:
-    `none` when the parameter has a value (a value binding always wins, as in
-    that read) or no failed algorithm-channel binding. Under Model C no
-    production path records such a failure — a parameter's outcome is its
-    need cell's (`demandNeed`), and the eager writer is deleted — so for every
-    source program this is `none`; only a host-built context can carry one.
-    C#: `Evaluator.ParameterValueFailure`. -/
-def parameterValueFailure? (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option Error) := do
-  let (parameterCtx, values) <- parameterContext name ctx env
-  if (parameterCtx.countedParamEnv.lookup name).isSome || (values.lookup name).isSome then
-    pure none
-  else
-    pure ((parameterCtx.algEnv.lookupBinding name).bind AlgBinding.valueFailure?)
-
-/-- A builtin value boundary reads a parameter's established failure before
-    classifying its independent callable channel. This never evaluates a body.
-    C#: the expression overload of `ParameterValueFailure`. -/
-def argumentParameterValueFailure? (source? : Option Expr) (ctx : EvalCtx)
-    (env : ValEnv) : EvalM (Option Error) :=
-  match source? with
-  | some (.param name) => parameterValueFailure? name ctx env
-  | _ => pure none
 
 /-- THE member-accessibility law, applied AFTER a member has been selected — by structural
     dot access (`evalDotCallCounted`, `resolveDotReceiver`), by a dotted `open` path step
@@ -4141,10 +4045,13 @@ end CtxMsg
     `algorithmExpr` arms of `evalCounted`, every lazy builtin VALUE slot (the `if`
     condition and branches, `while`/`repeat` initial state, the `repeat` count,
     `atoms`, `range` — `evalArgumentValueCounted`), and the ordinary-dot `string`
-    intrinsic's receiver. The value-position `param` arm does NOT consult it: a
-    parameter's value outcome was established when its argument slot was
-    evaluated — through this law, at the written argument — and the read reuses
-    that outcome (AT-MOST-ONCE ARGUMENT VALUE EVALUATION, `AlgBinding`).
+    intrinsic's receiver. A read of a parameter bound to a supplied cell does NOT
+    consult it — neither the value-position `param` arm nor a `string` receiver
+    that is such a parameter (`hasSuppliedParameterCell`): the parameter's value
+    outcome is established by the first VALUE demand of its cell, which evaluates
+    the written argument — through this law, keyed by the argument's own shape —
+    and every read reuses that outcome (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
+    `demandNeed`).
 
     ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
     callable may satisfy a zero-argument value demand exactly when an ordinary
@@ -4250,16 +4157,16 @@ structure OpenPropertyHit where
 -- Pattern matching (for conditional algorithms)
 --------------------------------------------------------------------------------
 
-/-- The elements a family structural pattern of `patternCount` items matches
+/-- The elements a structural pattern of `patternCount` items matches
     against: a value of the pattern's OWN kind (`Result.sequencePatternItems?`
     for `(…)`, `Result.listPatternItems?` for `[…]`) with exactly that many
     elements, and nothing otherwise — never a value of the other kind and never
     a scalar (STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY
     DESTRUCTURE, September 2026; the former singleton fallback, under which a
     one-item `(b)` took any non-sequence value whole, is gone with the
-    one-item sequence pattern itself). Shared by `matchPattern` and
-    `matchCountedPattern`, so direct conditional calls and counted callback
-    calls (map/filter/reduce) accept exactly the same input shapes. -/
+    one-item sequence pattern itself). Read by the structural arms of
+    `matchPatternInto`; the one Model-C binder binds structural patterns itself
+    (`bindNeedOne`) and hands the matcher literal patterns only. -/
 def patternStructureMembers? (elements? : Option (List Result)) (patternCount : Nat)
     : Option (List Result) :=
   match elements? with
@@ -4316,114 +4223,6 @@ end
 
 def matchPattern (p : Pattern) (r : Result) : Option ValEnv :=
   matchPatternInto p r []
-
-/-- Match a top-level conditional call head against the explicit argument list
-    supplied at the call site.
-
-    Ordinary direct conditional calls preserve explicit argument slots at the
-    top level: a non-sequence-value head expects exactly one explicit argument, while a
-    sequence-value head expects one explicit argument per sequence element. Nested sequence-value
-    structure is still matched through `matchPattern`. -/
-def matchCallPattern (p : Pattern) (args : List Result) : Option ValEnv :=
-  match p with
-  | .sequenceValue ps =>
-      if ps.length != args.length then
-        none
-      else
-        let rec go : List Pattern -> List Result -> ValEnv -> Option ValEnv
-          | [], [], env => some env
-          | p::ps', arg::args', env => do
-              let next <- matchPatternInto p arg env
-              go ps' args' next
-          | _, _, _ => none
-        go ps args []
-  | _ =>
-      match args with
-      | [arg] => matchPattern p arg
-      | _ => none
-
-/-- Try to match branches in order against the explicit argument list of an
-    ordinary direct conditional call. -/
-def matchCallBranches (bs : List CondBranch) (args : List Result) : Option (CondBranch × ValEnv) :=
-  match bs with
-  | []     => none
-  | b::bs' =>
-      match matchCallPattern b.pattern args with
-      | some env => some (b, env)
-      | none     => matchCallBranches bs' args
-
-mutual
-partial def matchCountedPatternInto (p : Pattern) (arg : CountedResult)
-    (env : CountedParamEnv) : Option CountedParamEnv :=
-  match p with
-  | .bind x =>
-      match env.lookup x with
-      | some existing => if existing.fst == arg.fst then some env else none
-      | none => some (env ++ [(x, arg)])
-  | .litInt n =>
-      match arg.fst with
-      | .atom v => if v = n then some env else none
-      | _ => none
-  | .litString s =>
-      match arg.fst with
-      | .str v => if v = s then some env else none
-      | _ => none
-  | .litBool b =>
-      match arg.fst with
-      | .bool v => if v = b then some env else none
-      | _ => none
-  | .sequenceValue ps =>
-      matchCountedStructureInto ps (patternStructureMembers? (Result.sequencePatternItems? arg.fst) ps.length) env
-  | .listValue ps =>
-      matchCountedStructureInto ps (patternStructureMembers? (Result.listPatternItems? arg.fst) ps.length) env
-
-/-- Counted twin of `matchStructureInto`: each element crosses the ordinary
-    value boundary (`Result.valueCount`) before its sub-pattern matches. -/
-partial def matchCountedStructureInto (ps : List Pattern) (members? : Option (List Result))
-    (env : CountedParamEnv) : Option CountedParamEnv :=
-  match members? with
-  | none => none
-  | some rs =>
-      let rec go : List Pattern -> List Result ->
-          CountedParamEnv -> Option CountedParamEnv
-        | [], [], current => some current
-        | p'::ps', r::rs', current => do
-            let next <- matchCountedPatternInto p' (r, Result.valueCount r) current
-            go ps' rs' next
-        | _, _, _ => none
-      go ps rs env
-end
-
-def matchCountedPattern (p : Pattern) (arg : CountedResult) : Option CountedParamEnv :=
-  matchCountedPatternInto p arg []
-
-def matchCountedCallPattern (p : Pattern) (args : List CountedResult) : Option CountedParamEnv :=
-  match p with
-  | .sequenceValue ps =>
-      if ps.length != args.length then
-        none
-      else
-        let rec go : List Pattern -> List CountedResult ->
-            CountedParamEnv -> Option CountedParamEnv
-          | [], [], env => some env
-          | p'::ps', arg::args', env => do
-              let next <- matchCountedPatternInto p' arg env
-              go ps' args' next
-          | _, _, _ => none
-        go ps args []
-  | _ =>
-      match args with
-      | [arg] => matchCountedPattern p arg
-      | _ => none
-
-def matchCountedCallBranches (bs : List CondBranch) (args : List CountedResult)
-    : Option (CondBranch × CountedParamEnv) :=
-  match bs with
-  | [] => none
-  | b::bs' =>
-      match matchCountedCallPattern b.pattern args with
-      | some env => some (b, env)
-      | none => matchCountedCallBranches bs' args
 
 --------------------------------------------------------------------------------
 -- Pure evaluator helpers (no evaluator recursion)
@@ -4572,8 +4371,6 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     propertyName := binding.name,
     propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
     valEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr env),
-    algEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr ctx.algEnv),
-    countedParamEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr ctx.countedParamEnv),
     bindingContext := if bindingContextFree then none else some (ownerBindingContext.getD ctx.bindingContext)
   }
 
@@ -5462,20 +5259,19 @@ partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
       identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
   -- Explicit errors for syntactic forms that cannot resolve to algorithms
   | .param x =>
-      -- Higher-order parameter: if x is bound in AlgEnv, return the algorithm.
-      -- The environment reaching here was shadowed by every enclosing
-      -- binding's parameter names (`EvalCtx.bindParameters`), so a parameter
-      -- bound only on the value channel finds NO entry and fails as
-      -- not-callable instead of reaching a same-named caller callable.
+      -- Higher-order parameter: its supplied cell projects its CALLABLE identity
+      -- (`projectNeedCallable`, never a VALUE demand). A cell without one — a
+      -- computed value — and a name with no cell are not callable. The
+      -- environment reaching here was shadowed by every enclosing binding's
+      -- parameter names (`EvalCtx.bindParameters`), so a parameter never reaches
+      -- a same-named caller binding.
       do
       let activation <- capturedParameterActivation? x ctx
       if let some address := lookupAssoc x (activation.map ParameterActivation.needs |>.getD ctx.needEnv) then
         match <- projectNeedCallable address with
         | some algorithm => return algorithm
         | none => return <- .error (Error.notAnAlgorithm s!"param({x})")
-      match (activation.map ParameterActivation.algorithms |>.getD ctx.algEnv).lookup x with
-      | some alg => pure alg
-      | none     => .error (Error.notAnAlgorithm s!"param({x})")
+      .error (Error.notAnAlgorithm s!"param({x})")
   | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
   | .emptySequence _ => .error (Error.notAnAlgorithm "empty sequence value")
   | .listLiteral _ => .error (Error.notAnAlgorithm "list literal")
@@ -5943,7 +5739,7 @@ def bindNeedPatterns (channels : NeedChannels) (patterns : List NeedPattern) (ce
 /-- The callee-side context of a completed need binding. -/
 def needBindingContext (ctx : EvalCtx) (bindings : NeedEnv) : EvalM EvalCtx := do
   let names := bindings.map Prod.fst
-  let next <- ctx.bindParameters names [] []
+  let next <- ctx.bindParameters names
   pure { next with needEnv := bindings ++ next.needEnv }
 
 /-- The ordinary clause-family dispatcher over an already formed cell supply: the
@@ -6298,7 +6094,8 @@ mutual
         signature such as `Only(*xs) = xs`) is bound by the ORDINARY binder
         against the empty supply first, so its collecting parameter holds the
         exact empty list `[]` while the body runs, and the callee's names shadow
-        all three inherited tiers exactly as a written call's do;
+        every inherited tier (need cells, algorithm, counted, value) exactly as a
+        written call's do;
       * a clause family that accepts zero supplied arguments dispatches its
         zero-argument branch through ordinary conditional dispatch, so branch
         selection, duplicate-pattern rejection and the value boundary are the
@@ -6353,8 +6150,6 @@ mutual
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     if let some address := arg.need? then return <- demandNeed address
-    if let some err <- argumentParameterValueFailure? arg.source? ctx env then
-      throw err
     match zeroArgumentDemandError? arg.source? arg.invoked with
     | some err => .error err
     | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
@@ -6570,8 +6365,6 @@ mutual
       | .error err => return { item with error? := some err }
     match item.value?, item.error?, item.algorithm? with
     | none, none, some alg =>
-        if let some err <- argumentParameterValueFailure? item.source? ctx env then
-          return { item with error? := some err }
         if acceptsZeroArgumentValueDemand (item.callable?.getD alg) then
           match <- evalAttempt (evalZeroArgumentDemandOutputCounted alg ctx env) with
           | .ok counted => pure { item with value? := some counted.fst }
@@ -7186,7 +6979,10 @@ mutual
       else .error (Error.arityMismatch 0 items.length)
 
   /-- The VALUE the ordinary-dot `string` intrinsic converts, demanded after the
-      zero-argument value-demand law accepted the resolved receiver. HOW A
+      zero-argument value-demand law accepted the resolved receiver — or, for a
+      parameter bound to a supplied cell, without consulting the law
+      (`hasSuppliedParameterCell`), since that cell's demand reports exactly what
+      the written argument raises (CALL-06). HOW A
       PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING, so the intrinsic reads
       its receiver exactly as a value position reads it:
       * a lexical property reference `A` is read through the zero-argument
@@ -7331,28 +7127,26 @@ mutual
               -- A receiver that is a callable alias is demanded as its TARGET, read through the
               -- alias's own binding (C#: `EvalAliasDotStringCounted`).
               let targetAlg <- resolveAliasTarget targetAlg ctx
-              -- The receiver is demanded for its VALUE with zero arguments, so the ONE
-              -- zero-argument demand law decides from the resolved receiver's
-              -- signature before its body is entered: `Inc.string` with `Inc(x)` is
-              -- the property arity error, a navigated parameterized member the bare
-              -- one, and a written parameterized block `unresolvedImplicitParams`.
-              -- The accepted receiver is then READ like a value position reads it
+              -- The receiver is demanded for its VALUE with zero arguments. A PARAMETER
+              -- bound to a supplied cell is a VALUE demand of that cell (CALL-06): the
+              -- first demand evaluates the written argument once, and its outcome is
+              -- reported exactly as that argument reports it, as every other read of the
+              -- parameter reports it — `Show(v) = v.string` / `Show(Inc)` is Inc's
+              -- property-context arity error, `Show({ x + 1 })` the block's
+              -- `unresolvedImplicitParams`, a clause family its own `noMatchingBranch` —
+              -- never a report re-judged against the parameter's callable. Every other
+              -- receiver is judged by the ONE zero-argument demand law from the resolved
+              -- receiver's signature before its body is entered: `Inc.string` with
+              -- `Inc(x)` is the property arity error, a navigated parameterized member the
+              -- bare one, and a written parameterized block `unresolvedImplicitParams`.
+              -- The receiver is then READ like a value position reads it
               -- (`evalDotStringReceiverValue`): a named property through its cached
               -- property access, a parameter through its bound value.
-              -- A PARAMETER receiver with a failure recorded on its algorithm binding
-              -- (the legacy Ready tier: no Model-C binding path records one, so for a
-              -- source program this is `none`) reports that failure first, before the
-              -- law judges its algorithm channel (AT-MOST-ONCE ARGUMENT VALUE
-              -- EVALUATION, `parameterValueFailure?`). C#: `EvalDotStringReceiverAlgOutput`.
-              match target with
-              | .param x =>
-                  match <- parameterValueFailure? x ctx env with
-                  | some err => .error err
-                  | none => pure ()
-              | _ => pure ()
-              match zeroArgumentDemandError? (some target) targetAlg with
-              | some err => .error err
-              | none => pure ()
+              -- C#: `EvalDotStringReceiverAlgOutput`.
+              if !(<- hasSuppliedParameterCell target ctx env) then
+                match zeroArgumentDemandError? (some target) targetAlg with
+                | some err => .error err
+                | none => pure ()
               let val <- evalDotStringReceiverValue target targetAlg ctx env
               let out <- resultToString val
               pure (out, Result.valueCount out)
@@ -7638,27 +7432,14 @@ mutual
     match e with
     | .param x => do
         let (ctx, env) <- parameterContext x ctx env
+        -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a Model-C
+        -- parameter is read through its need cell (its first demand evaluates the
+        -- supplied computation once; every later read reuses the completed outcome).
         if let some address := lookupAssoc x ctx.needEnv then
           return <- demandNeed address
-        match ctx.countedParamEnv.lookup x with
-        | some counted => pure counted
-        | none =>
-            match env.lookup x with
-            | some v => pure (v, Result.valueCount v)
-            | none =>
-                -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01, September 2026): a
-                -- Model-C parameter was read through its need cell above (its first
-                -- demand evaluates the supplied computation once; every later read
-                -- reuses the completed outcome). A parameter found only on the
-                -- algorithm channel belongs to the legacy Ready tier: it reports the
-                -- failure recorded beside its algorithm (`AlgBinding.valueFailure?`,
-                -- which no Model-C path writes) and never evaluates the algorithm
-                -- channel, so a failure cannot heal and the argument's work is never
-                -- repeated. The algorithm channel serves invocation and navigation
-                -- (`resolveAlg (.param x)`), never this value read.
-                match ctx.algEnv.lookupBinding x with
-                | some binding => .error (binding.valueFailure?.getD Error.badArity)
-                | none => .error (Error.unknownName x)
+        match env.lookup x with
+        | some v => pure (v, Result.valueCount v)
+        | none => .error (Error.unknownName x)
     | .sequenceConstruct _ _ =>
       evalSequenceConstructCounted e ctx env
     | .emptySequence depth =>
@@ -7980,7 +7761,7 @@ def selectOwnedDeclaration (chain : List OwnerLevel) (name : Ident) : OwnedDecla
   selectOwnedDeclarationFrom 0 chain name
 
 /-- Whether a bare-name occurrence elaborates to `Expr.param name` (a runtime
-    parameter read, resolved through the inherited `ValEnv`/`AlgEnv`) rather
+    parameter read, resolved through the inherited supplied cells and `ValEnv`) rather
     than to `Expr.resolve name` (ordinary lexical property lookup). The value
     and the callable view of one occurrence share this single decision: the
     elaborated node is the same in both positions. -/
@@ -8758,7 +8539,8 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    Algorithm — a bundle slot is an Expr, and the brace algorithm always
    appears as an `Expr.algorithmExpr` slot. This allows per-slot argument
    resolution to see the `Expr.algorithmExpr` node and return the inner
-   algorithm, which is essential for higher-order binding via AlgEnv.
+   algorithm, which is essential for higher-order binding (the slot's need
+   cell projects it as its CALLABLE identity, `projectNeedCallable`).
    (Per-expression Algorithm resolution remains separate from value
    evaluation, and the runtime may still construct one-expression
    Algorithm adapters — `Algorithm.ofExpr`, `countedArgAlgorithm`, the
@@ -8788,11 +8570,13 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
       where `inlineAlg.params = ["a"]`.
    2. `evalCallExpr` resolves `Algo` and dispatches through
       `evalResolvedCall` into `evalUserCall`.
-   3. `projectNeedCallable` resolves an `Expr.algorithmExpr inlineAlg` on
-      that bundle slot, which returns `inlineAlg` (wired to caller scope).
-   4. The callee's `func` parameter is bound in AlgEnv to `inlineAlg`.
-   5. When the callee evaluates `func(9)`, the value `9` is bound to `a` and
-      the output `a + 1` evaluates to `10`.
+   3. Supply formation turns that bundle slot into a suspended need cell
+      (`formNeedSupply` / `supplyNeed`), and the callee's `func` parameter is
+      bound to it.
+   4. When the callee evaluates `func(9)`, `resolveAlg (.param func)` projects
+      the cell's CALLABLE identity (`projectNeedCallable`), which resolves the
+      `Expr.algorithmExpr inlineAlg` slot to `inlineAlg` (wired to caller scope).
+   5. The value `9` is bound to `a`, and the output `a + 1` evaluates to `10`.
 
    Examples
    --------
@@ -8935,7 +8719,7 @@ end
 def runResultM (e : Expr) : EvalM Result := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
-  let ctx := { callStack := [preludeAlg], algEnv := [] }
+  let ctx := { callStack := [preludeAlg] }
   match e with
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a

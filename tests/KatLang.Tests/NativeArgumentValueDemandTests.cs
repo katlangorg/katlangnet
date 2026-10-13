@@ -7,12 +7,14 @@ namespace KatLang.Tests;
 /// <see cref="Algorithm.User"/> wrapper whose body is an
 /// <see cref="Expr.NativeCall"/> naming the wrapper's own parameters. Reading
 /// one of those declared arguments is therefore exactly the
-/// <see cref="Expr.Param"/> value read — counted parameter environment, then
-/// value environment, then the algorithm binding.
+/// <see cref="Expr.Param"/> value read — the parameter's supplied cell, then the
+/// counted parameter environment, then the value environment, then the algorithm
+/// binding.
 ///
 /// <para>The read used to stop after the value environment ("native arguments
-/// are always value bindings"), which is false: an argument whose value
-/// evaluation fails still binds on the ALGORITHM channel. That produced
+/// are always value bindings"), which was false: an argument whose value
+/// evaluation failed was then bound on the ALGORITHM channel (today it is the
+/// parameter's supplied cell, read first). That produced
 /// <c>Unknown name: x</c> — the wrapper's OWN parameter name, an internal
 /// spelling the user never wrote — for every such argument, and (before the
 /// value environment was shadowed at binding, see
@@ -46,7 +48,7 @@ public class NativeArgumentValueDemandTests
         return arity;
     }
 
-    // ── The algorithm tier is reached, and never `Unknown name` ──────────────
+    // ── The argument's own value demand is reached, never `Unknown name` ─────
 
     /// <summary>
     /// A parameterized property as a Math member argument reports the ordinary

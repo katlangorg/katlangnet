@@ -118,8 +118,6 @@ public class CacheKeyDifferentialTests
             NewProperty("Value") with { Exposure = PropertyExposure.LocalOnlyCapturedAncestorParameters },
             ZeroArgPropertyAccessKind.Lexical,
             new object(),
-            new object(),
-            new object(),
             new object());
         var baselineKey = ZeroArgPropertyCacheKey.FromExecution(baseline);
 
@@ -144,10 +142,6 @@ public class CacheKeyDifferentialTests
                 baseline with { Binding = NewProperty("Value") })),
             ("value environment", ZeroArgPropertyCacheKey.FromExecution(
                 baseline with { ValueEnvironmentIdentity = new object() })),
-            ("algorithm environment", ZeroArgPropertyCacheKey.FromExecution(
-                baseline with { AlgorithmEnvironmentIdentity = new object() })),
-            ("counted environment", ZeroArgPropertyCacheKey.FromExecution(
-                baseline with { CountedParamEnvironmentIdentity = new object() })),
             ("run identity", ZeroArgPropertyCacheKey.FromExecution(
                 baseline with { RunIdentity = new object() })),
         };
@@ -177,8 +171,6 @@ public class CacheKeyDifferentialTests
             binding,
             ZeroArgPropertyAccessKind.Lexical,
             new object(),
-            new object(),
-            new object(),
             new object());
         var baselineKey = ZeroArgPropertyCacheKey.FromExecution(baseline);
 
@@ -187,8 +179,6 @@ public class CacheKeyDifferentialTests
         var hits = new[]
         {
             ("value environment", baseline with { ValueEnvironmentIdentity = new object() }),
-            ("algorithm environment", baseline with { AlgorithmEnvironmentIdentity = new object() }),
-            ("counted environment", baseline with { CountedParamEnvironmentIdentity = new object() }),
             ("rebuilt owner", baseline with { Owner = owner with { } }),
             ("counted spelling", baseline with { AccessKind = ZeroArgPropertyAccessKind.CountedLexical }),
             ("structural spelling", baseline with { AccessKind = ZeroArgPropertyAccessKind.Structural }),
@@ -221,8 +211,6 @@ public class CacheKeyDifferentialTests
         var baseline = new DeconstructionBindingCacheKey(
             new object(),
             new object(),
-            new object(),
-            new object(),
             new object());
 
         var same = baseline with { };
@@ -234,8 +222,6 @@ public class CacheKeyDifferentialTests
             ("group", baseline with { GroupIdentity = new object() }),
             ("owner", baseline with { OwnerIdentity = new object() }),
             ("value environment", baseline with { ValueEnvironmentIdentity = new object() }),
-            ("algorithm environment", baseline with { AlgorithmEnvironmentIdentity = new object() }),
-            ("counted environment", baseline with { CountedParamEnvironmentIdentity = new object() }),
         };
 
         foreach (var (dimension, key) in changed)

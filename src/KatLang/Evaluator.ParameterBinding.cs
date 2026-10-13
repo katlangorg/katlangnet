@@ -503,7 +503,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
-            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv, ctx.AlgEnv, ctx.CountedParamEnv);
+            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv);
         var sharedR = ctx.DeconstructionBindingCache.GetOrBind(execution,
             () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult());
         if (sharedR.IsError) return sharedR.Error;

@@ -192,19 +192,6 @@ internal static partial class LoopOptimizer
             return true;
         }
 
-        if (TryFindCountedParam(ctx, name, out _, out var countedParam))
-        {
-            if (IsSafeCountedParamSlot(countedParam, out var countedParamFallbackReason))
-            {
-                fallbackReason = null;
-                return true;
-            }
-
-            fallbackReason = $"unsupported counted parameter value shape: {name} ({countedParamFallbackReason})";
-            ctx.LoopDiagnostics?.RecordCountedParameterReferenceFallback(fallbackReason);
-            return false;
-        }
-
         for (var i = 0; i < parentValEnv.Count; i++)
         {
             if (parentValEnv[i].Name == name)

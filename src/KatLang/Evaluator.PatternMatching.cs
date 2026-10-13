@@ -80,12 +80,6 @@ public static partial class Evaluator
         return true;
     }
 
-    private static ValEnv? MatchPattern(Pattern pattern, Result result)
-    {
-        var bindings = new List<(string Name, Result Value)>();
-        return MatchPattern(pattern, result, bindings) ? bindings : null;
-    }
-
     /// <summary>
     /// Compatibility fallback for manually constructed core conditionals.
     /// Surface clause elaboration should already classify whole same-name

@@ -29,8 +29,8 @@ namespace KatLang.Tests;
 /// evaluators, and the forced async twin. Lean: the slot's need cell (<c>supplyNeed</c> /
 /// <c>demandNeed</c> over <c>EvalState.needs</c>; the <c>.param</c> arm of <c>evalCounted</c>
 /// demands it first), guard-checked by <c>CoreTests/ArgumentValueOutcome.lean</c> and
-/// <c>CoreTests/ModelC.lean</c>; <c>AlgBinding.valueFailure?</c> remains a legacy reader with no
-/// production writer (the eager writer <c>slotAlgorithmBinding</c> is deleted).</para>
+/// <c>CoreTests/ModelC.lean</c> (the eager writer <c>slotAlgorithmBinding</c>, which recorded a
+/// slot's failure beside its algorithm-channel binding, is deleted).</para>
 /// </summary>
 public class ArgumentValueOutcomeTests
 {

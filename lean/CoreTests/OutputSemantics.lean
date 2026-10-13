@@ -683,7 +683,7 @@ def deeplyNestedSpreadExpr (depth : Nat) : KatLang.Expr :=
 -- spreads the same single item, so the flat result is `[1]` with count 1.
 def deepNestedSequenceSpreadIsStackSafe : Bool :=
   match KatLang.runEvalM (KatLang.evalCounted (deeplyNestedSpreadExpr 8192)
-      { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
+      { callStack := [KatLang.preludeAlg] } []) with
   | Except.ok (value, count) => KatLang.Result.hostAtoms value == [1] && count == 1
   | _ => false
 
@@ -700,7 +700,7 @@ def sequenceConstructEmitsOneConstructedSequenceValue : Bool :=
 def sequenceConstructCommaPriorityConstructsOneValue : Bool :=
   let joined := .sequenceConstruct (.sequenceConstruct (.num 1) (.num 2)) (.num 3)
   match runResult (.algorithmExpr (alg [] [] [] [joined])),
-        KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
+        KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg] } []) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3]),
     Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3], 1) => true
   | _, _ => false
@@ -710,7 +710,7 @@ def sequenceConstructCommaPriorityConstructsOneValue : Bool :=
 def sequenceConstructExplicitSequenceValueBoundaryProtected : Bool :=
   let joined := .sequenceConstruct (.capture [.num 1, .num 2]) (.num 3)
   match runResult (.algorithmExpr (alg [] [] [] [joined])),
-        KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
+        KatLang.runEvalM (KatLang.evalCounted joined { callStack := [KatLang.preludeAlg] } []) with
   | Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3]),
     Except.ok (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3], 1) => true
   | _, _ => false
@@ -722,7 +722,7 @@ def sequenceConstructMaterializedCommaRows : Bool :=
   let rightRow := .capture [.num 4, .num 5, .num 6]
   let table := .sequenceConstruct leftRow rightRow
   match runResult (.algorithmExpr (alg [] [] [] [table])),
-        KatLang.runEvalM (KatLang.evalCounted table { callStack := [KatLang.preludeAlg], algEnv := [] } []) with
+        KatLang.runEvalM (KatLang.evalCounted table { callStack := [KatLang.preludeAlg] } []) with
   | Except.ok (.sequenceValue [
       .sequenceValue [.atom 1, .atom 2, .atom 3],
       .sequenceValue [.atom 4, .atom 5, .atom 6]

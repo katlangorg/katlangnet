@@ -10,16 +10,12 @@ public class ZeroArgPropertyResultCacheTests
         bool OwnerIdentityMatches,
         bool BindingIdentityMatches,
         bool ValueEnvironmentIdentityMatches,
-        bool AlgorithmEnvironmentIdentityMatches,
-        bool CountedParamEnvironmentIdentityMatches,
         bool RunIdentityMatches)
     {
         public bool AllComponentsMatch
             => OwnerIdentityMatches
                 && BindingIdentityMatches
                 && ValueEnvironmentIdentityMatches
-                && AlgorithmEnvironmentIdentityMatches
-                && CountedParamEnvironmentIdentityMatches
                 && RunIdentityMatches;
     }
 
@@ -54,8 +50,6 @@ public class ZeroArgPropertyResultCacheTests
             owner,
             binding,
             ZeroArgPropertyAccessKind.Lexical,
-            new object(),
-            new object(),
             new object(),
             new object());
 
@@ -100,15 +94,11 @@ public class ZeroArgPropertyResultCacheTests
             binding,
             ZeroArgPropertyAccessKind.Structural,
             new object(),
-            new object(),
-            new object(),
             runIdentity);
         var second = new ZeroArgPropertyExecution(
             NewAlgorithm() with { Properties = [binding] },
             binding,
             ZeroArgPropertyAccessKind.Structural,
-            new object(),
-            new object(),
             new object(),
             runIdentity);
 
@@ -137,8 +127,6 @@ public class ZeroArgPropertyResultCacheTests
         var cache = new RunScopedZeroArgPropertyResultCache();
         var binding = NewProperty("Value");
         var valueEnv = new object();
-        var algorithmEnv = new object();
-        var countedParamEnv = new object();
         var runIdentity = new object();
         var owner = NewAlgorithm();
         var first = new ZeroArgPropertyExecution(
@@ -146,16 +134,12 @@ public class ZeroArgPropertyResultCacheTests
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
-            algorithmEnv,
-            countedParamEnv,
             runIdentity);
         var second = new ZeroArgPropertyExecution(
             owner with { },
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
-            algorithmEnv,
-            countedParamEnv,
             runIdentity);
 
         var firstResult = cache.GetOrEvaluate(
@@ -176,8 +160,6 @@ public class ZeroArgPropertyResultCacheTests
         Assert.True(comparison.OwnerIdentityMatches);
         Assert.True(comparison.BindingIdentityMatches);
         Assert.True(comparison.ValueEnvironmentIdentityMatches);
-        Assert.True(comparison.AlgorithmEnvironmentIdentityMatches);
-        Assert.True(comparison.CountedParamEnvironmentIdentityMatches);
         Assert.True(comparison.RunIdentityMatches);
         Assert.Equal(2, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
@@ -198,8 +180,6 @@ public class ZeroArgPropertyResultCacheTests
         var cache = new RunScopedZeroArgPropertyResultCache();
         var binding = NewProperty("Value");
         var valueEnv = new object();
-        var algorithmEnv = new object();
-        var countedParamEnv = new object();
         var runIdentity = new object();
         IReadOnlyList<Expr> grandparentOpens = [new Expr.Num(1m)];
         IReadOnlyList<Property> grandparentProperties = [NewProperty("Grandparent")];
@@ -227,8 +207,6 @@ public class ZeroArgPropertyResultCacheTests
             binding,
             ZeroArgPropertyAccessKind.Structural,
             valueEnv,
-            algorithmEnv,
-            countedParamEnv,
             runIdentity);
         var second = first with { Owner = RebuildOwner() };
 
@@ -255,8 +233,6 @@ public class ZeroArgPropertyResultCacheTests
             NewAlgorithm(),
             NewProperty("Value"),
             ZeroArgPropertyAccessKind.CountedStructural,
-            new object(),
-            new object(),
             new object(),
             new object());
 
@@ -653,8 +629,6 @@ public class ZeroArgPropertyResultCacheTests
         Assert.True(comparison.OwnerIdentityMatches);
         Assert.True(comparison.BindingIdentityMatches);
         Assert.True(comparison.ValueEnvironmentIdentityMatches);
-        Assert.True(comparison.AlgorithmEnvironmentIdentityMatches);
-        Assert.True(comparison.CountedParamEnvironmentIdentityMatches);
         Assert.True(comparison.RunIdentityMatches);
         AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);
     }
@@ -1102,8 +1076,6 @@ public class ZeroArgPropertyResultCacheTests
             ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(firstKey.OwnerIdentity, secondKey.OwnerIdentity),
             ReferenceEquals(firstKey.BindingIdentity, secondKey.BindingIdentity),
             ReferenceEquals(firstKey.ValueEnvironmentIdentity, secondKey.ValueEnvironmentIdentity),
-            ReferenceEquals(firstKey.AlgorithmEnvironmentIdentity, secondKey.AlgorithmEnvironmentIdentity),
-            ReferenceEquals(firstKey.CountedParamEnvironmentIdentity, secondKey.CountedParamEnvironmentIdentity),
             ReferenceEquals(firstKey.RunIdentity, secondKey.RunIdentity));
     }
 }

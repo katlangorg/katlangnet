@@ -315,6 +315,38 @@ public class MaintainedDocumentationConsistencyTests
             + @"repeatedCapturePair|realCallbackBinderMatchesOrdinaryValueSupply)(?![\w?])",
             "the retired historical Ready binder, one of its theorems, or a laws-only definition retired with it (2026-10-12)"
         },
+        // P3 maintenance cleanup (2026-10-13): dead evaluator infrastructure is deleted; git history
+        // keeps it. The Lean clause-call matchers superseded by the Model-C family dispatcher
+        // (matchCallPattern, matchCallBranches) and their counted twins (matchCounted*; the Lean name
+        // matchCountedPattern is matched case-sensitively, so the deleted C# twin's spelling
+        // MatchCountedPattern, which current prose records as deleted with Model C, is not flagged),
+        // and the legacy algorithm-tier failure channel with its readers (Lean
+        // AlgBinding.valueFailure?, AlgEnv.lookupBinding, parameterValueFailure?,
+        // argumentParameterValueFailure?; C# ParameterValueFailure, ParameterHasValueOutcome,
+        // LookupAlgBinding). The dated P3 entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        {
+            @"(?<![\w?])(?:matchCallPattern|matchCallBranches|matchCountedPatternInto|matchCountedStructureInto|"
+            + @"matchCountedCallPattern|matchCountedCallBranches|(?-i:matchCountedPattern)|lookupBinding|"
+            + @"parameterValueFailure\?|ParameterValueFailure|ParameterHasValueOutcome|LookupAlgBinding)(?![\w?])|"
+            + @"(?<![\w?])(?:argumentParameterValueFailure|valueFailure)\??(?![\w?])",
+            "dead evaluator infrastructure removed by the P3 maintenance cleanup (2026-10-13)"
+        },
+        // Retired parameter tiers (2026-10-13): after Model C no production binding site wrote the
+        // algorithm-channel tier or the counted callback-parameter tier in either engine, so both
+        // were retired together — Lean AlgEnv / AlgBinding / CountedParamEnv with the EvalCtx fields
+        // algEnv / countedParamEnv and withAlgEnv / withCountedParamEnv; C# AlgEnv /
+        // CountedParamEnv, ShadowAlgEnv, ShadowCountedParamEnv, LookupAlg, LookupCountedParam,
+        // WithAlgEnv / WithCountedParamEnv, the activation and cache-key identities of both tiers,
+        // and the loop planner's TryFindCountedParam / GetCountedParamSlot. A parameter's VALUE and
+        // CALLABLE identity are its supplied cell's. (The planner's live NeedParameter rendering
+        // "CountedParamSlot(name)" is not a retired name.) The dated entry of SEMANTIC-ALIGNMENT.md
+        // (not scanned) keeps the record.
+        {
+            @"(?<![\w?])(?:AlgEnv|AlgBinding|CountedParamEnv|withAlgEnv|withCountedParamEnv|ShadowAlgEnv|"
+            + "ShadowCountedParamEnv|LookupAlg|LookupCountedParam|AlgorithmEnvironmentIdentity|"
+            + @"CountedParamEnvironmentIdentity|CountedEnvironmentIdentity|TryFindCountedParam|GetCountedParamSlot)(?![\w?])",
+            "a parameter tier retired on 2026-10-13 (the algorithm-channel and counted tiers)"
+        },
     };
 
     [Theory]
