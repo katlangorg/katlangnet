@@ -81,7 +81,7 @@ public class DeepValueRobustnessTests
         => AssertEval(DeepListProgram("atoms(A).count, atoms(A)[0]"), 1, 0);
 
     [Fact]
-    public void DeepDotCallReceiverReification()
+    public void DeepDotCallReceiverValueBoundary()
         => AssertEval(DeepListProgram("A.count"), 1);
 
     [Fact]

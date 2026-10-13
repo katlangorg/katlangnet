@@ -32,22 +32,6 @@ internal sealed class EvaluationObservations
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
 
     /// <summary>
-    /// Number of structure NODES expanded across the <c>Evaluator.ResultToExpr</c> reifications of
-    /// this run: the top-level structure of each conversion, plus every nested sequence or list
-    /// value descended into. Leaves reify in place and record nothing, and a node reached again
-    /// through a second shared reference reuses its memoized expression, so ONE top-level
-    /// conversion stays bounded by the number of distinct reachable structure nodes — never the
-    /// number of expanded tree paths (a shared doubling DAG of depth 40 expands ~40 nodes, not
-    /// 2^40 path occurrences). One direct <c>ResultToExpr</c> call is one conversion scope. A
-    /// multi-root conversion shares one memo across all its roots. Production cell transport
-    /// performs no conversion. Nothing is shared between separate conversions.
-    /// </summary>
-    public long ResultToExprStructureExpansionCount { get; private set; }
-
-    internal void RecordResultToExprStructureExpansion()
-        => ResultToExprStructureExpansionCount = checked(ResultToExprStructureExpansionCount + 1);
-
-    /// <summary>
     /// Number of compound expression names rendered for call or dot-call diagnostics during this
     /// run. Successful calls and resource-limit errors observe zero; an ordinary error increments
     /// once for each diagnostic/context frame that actually needs the compound name. Simple

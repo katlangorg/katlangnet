@@ -540,8 +540,10 @@ it. The parser and all current production transformations have **zero origin
 sites** for `Expr.SequenceConstruct`: the parser never constructs it
 (directly, via desugaring, or in error recovery — and `Parser.Parse` runs the
 full `FrontEndPipeline`, so the containment sweep scans post-elaboration
-ASTs); no evaluator or reification path creates one (`resultToExpr` emits
-blocks). **Nine production visitor branches** (`ModuleLoader`,
+ASTs); no evaluator path creates one. *(October 13 2026 retirement note:
+the historical `resultToExpr` conversion emitted captures, not blocks, and
+had no evaluator caller after Model C; it is now deleted.)*
+**Nine production visitor branches** (`ModuleLoader`,
 `ParameterDetector` x4, `ImplicitArgumentResolver` x3,
 `PropertyExposureResolver`) may **rebuild** an existing node while mapping
 its children — preservation is pinned by

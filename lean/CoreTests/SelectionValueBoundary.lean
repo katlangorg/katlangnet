@@ -451,12 +451,17 @@ def selectionCountBeforeRootDecoration : Bool :=
 -- Filter must inspect the same value as a direct call, and keep the original
 -- exact element even when the element is `()`. The collector makes the count
 -- visible to the Boolean predicate instead of merely comparing display text.
+-- The predicate compares `x.Coll` with the list literal `[V]` written around
+-- the selected expression itself, and the guard first checks that this
+-- literal denotes the table's expected collected value.
 def filterCallbackUsesTheOrdinaryValueBoundary : Bool :=
   selectionTable.all fun (selected, expectedColl, _) =>
+    let expectedLiteral := KatLang.Expr.listLiteral [selected]
     let collection := alg [] [] [] [.listLiteral [selected]]
     let keep := alg ["x"] [] []
-      [.compare .eq (.dotCall (.param "x") "Coll" none) (KatLang.resultToExpr expectedColl)]
+      [.compare .eq (.dotCall (.param "x") "Coll" none) expectedLiteral]
     let filtered := KatLang.Expr.call (resolve "filter") [resolve "A", resolve "Keep"]
+    resultIs expectedColl (runResult expectedLiteral) &&
     sameOutcome
       (runSelectionProgram collection [("Keep", keep)] filtered)
       (runResult (.algorithmExpr (alg [] [] [] [.listLiteral [selected]]))) &&

@@ -9,7 +9,7 @@ using KatLang.Optimizations.Sequences;
 namespace KatLang;
 
 /// <summary>
-/// Result helpers: value inspection and construction, <see cref="Result"/>-to-<see cref="Expr"/> reification, and the counted-result / prepared-evaluation record types (the "Result helpers" section).
+/// Result helpers: value inspection and construction, and the counted-result / prepared-evaluation record types (the "Result helpers" section).
 /// Part of the <see cref="Evaluator"/> partial class; the central state, lookup and open resolution,
 /// the built-in prelude, and the run entry points remain in <c>Evaluator.cs</c>.
 /// </summary>
@@ -40,195 +40,12 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Lean: <c>resultToExpr</c>. Reify a normalized result as an expression that
-    /// evaluates back to the same shape.
-    /// </summary>
-    /// <summary>
-    /// Post-order rebuild with explicit frames and a REFERENCE-IDENTITY memo, the same
-    /// discipline as <see cref="Result.Normalize"/>: reification is a pure function of the
-    /// node — each kind maps to its expression form using only the node's own kind and its
-    /// children's reified forms, with no parent, position, span, or evaluator context — so
-    /// one node's expression is built once per conversion scope and REUSED at every shared
-    /// occurrence. A value is a DAG, not a tree (<c>Wrap = [x, x]</c> + <c>repeat</c>
-    /// reaches n+1 distinct nodes through 2^n root-to-leaf paths in n in-budget steps), so
-    /// a rebuild proportional to PATHS is exponential on ordinary in-budget values, and no
-    /// evaluation budget bounds it: the blow-up happens inside one uncharged conversion.
-    /// Lean: <c>resultToExpr</c> — a pure function on inductive values, where reference
-    /// sharing is not expressible; the memo is C#-only implementation machinery.
-    ///
-    /// <para>The produced expression preserves the input's sharing as a shared (acyclic)
-    /// <see cref="Expr"/> subgraph — an explicitly supported AST shape (the structural
-    /// preflight and the pre-evaluation walker are reference-memoized for exactly this).
-    /// Reified nodes are immutable and spanless, no evaluator cache keys on
-    /// <see cref="Expr"/> reference identity, and evaluation work is charged per VISIT,
-    /// so a shared subexpression still evaluates once per semantic occurrence: sharing
-    /// changes host object topology only. Reified values nest as deep as any runtime
-    /// value (unbounded — see the depth note on <see cref="Result"/>), so the walk stays
-    /// iterative. A direct call owns one operation-local memo; multi-root conversion shares
-    /// that memo across its roots. Nothing is cached on a <see cref="Result"/>.
-    /// The direct-call memo is allocated lazily on the first nested descent, so flat
-    /// structures allocate none. Leaves reify fresh per converting edge (bounded by the
-    /// unique edge count); only structure nodes are memoized. Termination relies on the
-    /// acyclicity every constructible value has.</para>
-    ///
-    /// <para><paramref name="observations"/> is the passive run-scoped observer: one
-    /// <see cref="EvaluationObservations.RecordResultToExprStructureExpansion"/> per
-    /// structure node expanded (frame pushed), pinned by the shared-value-graph
-    /// regressions to the distinct-structure-node count. Internal for those tests;
-    /// the evaluator transports Ready values directly and never reifies them to acquire a callable.</para>
-    /// </summary>
-    internal static Expr ResultToExpr(Result result, EvaluationObservations? observations = null)
-        => ResultToExpr(result, observations, sharedMemo: null);
-
-    /// <summary>
-    /// Core conversion. A non-null <paramref name="sharedMemo"/> extends the conversion scope
-    /// across several roots of one output bundle; it never escapes the operation that owns it.
-    /// Scalar/string/empty-sequence leaves deliberately bypass the memo and remain one fresh
-    /// expression per explicit incoming edge.
-    /// </summary>
-    private static Expr ResultToExpr(
-        Result result,
-        EvaluationObservations? observations,
-        Dictionary<Result, Expr>? sharedMemo)
-    {
-        if (ResultToExprLeaf(result) is { } leaf)
-            return leaf;
-
-        if (sharedMemo is not null && sharedMemo.TryGetValue(result, out var sharedRoot))
-            return sharedRoot;
-
-        var frames = new Stack<ResultToExprFrame>();
-        // One completed expression per distinct nested structure node reached, for the
-        // duration of THIS conversion scope only. A direct call allocates it on the first
-        // nested descent; a multi-root counted-argument conversion supplies its wrapper-local
-        // memo so sharing between emitted roots is preserved too.
-        var memo = sharedMemo;
-        frames.Push(new ResultToExprFrame(result));
-        observations?.RecordResultToExprStructureExpansion();
-
-        while (true)
-        {
-            var frame = frames.Peek();
-
-            while (frame.Next < frame.Converted.Length)
-            {
-                var child = frame.Source[frame.Next];
-                if (ResultToExprLeaf(child) is { } childLeaf)
-                    frame.Converted[frame.Next++] = childLeaf;
-                else if (memo is not null && memo.TryGetValue(child, out var reified))
-                    frame.Converted[frame.Next++] = reified;
-                else
-                    break;
-            }
-
-            if (frame.Next < frame.Converted.Length)
-            {
-                memo ??= new Dictionary<Result, Expr>(ReferenceEqualityComparer.Instance);
-                frames.Push(new ResultToExprFrame(frame.Source[frame.Next]));
-                observations?.RecordResultToExprStructureExpansion();
-                continue;
-            }
-
-            frames.Pop();
-            var completed = frame.Complete();
-            // Commit only after every child has completed. Storing the root matters for the
-            // multi-root wrapper scope: a later emitted root may be this exact node or may reach
-            // it as a descendant. For a direct call the operation-local entry dies on return.
-            memo?.TryAdd(frame.Node, completed);
-            if (frames.Count == 0)
-                return completed;
-
-            var parent = frames.Peek();
-            parent.Converted[parent.Next++] = completed;
-        }
-    }
-
-    /// <summary>
-    /// Reifies the values <see cref="ResultToExpr(Result, EvaluationObservations?)"/> does not descend into;
-    /// returns null for the two structure shapes that convert child by child.
-    /// </summary>
-    private static Expr? ResultToExprLeaf(Result result) => result switch
-    {
-        Result.Atom(var n) => new Expr.Num(n),
-        Result.Str(var s) => new Expr.StringLiteral(s),
-        Result.Bool(var b) => new Expr.BoolLiteral(b),
-        // Repeated ordinary parentheses around the empty sequence are redundant
-        // surface structure, so any empty-sequence chain reifies as `()`.
-        Result.SequenceValue when IsEmptySequenceChain(result)
-            => new Expr.EmptySequence(0),
-        Result.SequenceValue => null,
-        Result.ListValue => null,
-    };
-
-    /// <summary>One in-progress structure rebuild in the <see cref="ResultToExpr(Result, EvaluationObservations?)"/> walk.</summary>
-    private sealed class ResultToExprFrame
-    {
-        public readonly Result Node;
-        public readonly IReadOnlyList<Result> Source;
-        public readonly Expr[] Converted;
-        public readonly bool IsSequence;
-        public int Next;
-
-        public ResultToExprFrame(Result structure)
-        {
-            Node = structure;
-            switch (structure)
-            {
-                case Result.SequenceValue(var items):
-                    Source = items;
-                    IsSequence = true;
-                    break;
-                case Result.ListValue(var items):
-                    Source = items;
-                    IsSequence = false;
-                    break;
-                default:
-                    throw new ArgumentException(
-                        "Result reification frames require a sequence or list value.", nameof(structure));
-            }
-
-            Converted = new Expr[Source.Count];
-        }
-
-        public Expr Complete()
-            => IsSequence
-                // A reified sequence value is a capture of its already-evaluated
-                // items — a value boundary, not an algorithm. Converted is this
-                // frame's exclusively owned fresh array, so ownership transfers
-                // without a snapshot copy.
-                ? new Expr.Capture(OutputBundle.TakeOwnership(Converted))
-                // Exact list values reify as list literals so they round-trip
-                // losslessly (a reified `()` element stays one visible list
-                // element).
-                : new Expr.ListLiteral(OutputBundle.TakeOwnership(Converted));
-    }
-
-    /// <summary>
     /// Builds the canonical empty sequence value for an <see cref="Expr.EmptySequence"/>.
     /// Repeated ordinary parentheses around <c>()</c> do not create higher-order
     /// empty sequence values.
     /// </summary>
     private static Result BuildEmptySequenceValue(int _)
         => Result.SequenceValue.TakeOwnership([]);
-
-    /// <summary>
-    /// Returns true when <paramref name="result"/> is the empty sequence value or
-    /// a redundant chain of one-item sequences ending in it.
-    /// </summary>
-    private static bool IsEmptySequenceChain(Result result)
-    {
-        var current = result;
-        while (true)
-        {
-            if (current is not Result.SequenceValue(var items))
-                return false;
-            if (items.Count == 0)
-                return true;
-            if (items.Count != 1)
-                return false;
-            current = items[0];
-        }
-    }
 
     /// <summary>
     /// Counted evaluation result: the normalized value paired with the number of

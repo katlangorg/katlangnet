@@ -4,18 +4,21 @@ using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// The AST occurrence invariant that makes shared <see cref="Expr"/> subgraphs — including the
-/// reified DAGs <see cref="Evaluator.ResultToExpr"/> now produces — a safe representation: an
-/// expression OCCURRENCE is semantic work, whatever the host object topology. If one immutable
-/// <see cref="Expr"/> reference appears in N positions, evaluation happens N times, each under
-/// its own occurrence's lexical context, charging the same steps, items, and dynamic depth as N
-/// structurally identical clones; the structural preflight judges the same weighted paths; and
-/// no evaluator cache keys on <see cref="Expr"/> reference identity, so occurrences never alias.
+/// The AST occurrence invariant that makes shared <see cref="Expr"/> subgraphs — built by a host,
+/// or shared by the front end (a spliced module, a shared implicit-argument bundle) — a safe
+/// representation: an expression OCCURRENCE is semantic work, whatever the host object topology.
+/// If one immutable <see cref="Expr"/> reference appears in N positions, evaluation happens N
+/// times, each under its own occurrence's lexical context, charging the same steps, items, and
+/// dynamic depth as N structurally identical clones; the structural preflight judges the same
+/// weighted paths; and no evaluator cache keys on <see cref="Expr"/> reference identity, so
+/// occurrences never alias.
 ///
 /// <para>Every experiment here compares ONE root holding the SAME child reference twice against
-/// a root holding two independently constructed clones, through the public prebuilt-AST entry
-/// points (shared host subtrees are an explicitly supported AST shape — the pre-evaluation
-/// walker and <c>AstStructuralPreflight</c> are reference-memoized for exactly this).</para>
+/// a root holding two independently constructed clones — or, for the doubling literal DAG, a
+/// graph whose every level holds the same child twice against its fully expanded tree — through
+/// the public prebuilt-AST entry points (shared host subtrees are an explicitly supported AST
+/// shape — the pre-evaluation walker and <c>AstStructuralPreflight</c> are reference-memoized for
+/// exactly this).</para>
 /// </summary>
 public class SharedExprOccurrenceSemanticsTests
 {
@@ -149,6 +152,106 @@ public class SharedExprOccurrenceSemanticsTests
         }
 
         Assert.True(failed && succeeded, "The depth sweep did not cross the success/failure boundary.");
+    }
+
+    // ── A deeply shared value-literal DAG evaluates exactly like its expanded tree ────────────
+
+    /// <summary>
+    /// The doubling literal DAG: <c>L0 = [1, 2]</c>, <c>Lk = [L(k-1), L(k-1)]</c>. Shared, it is ONE
+    /// list-literal object per level holding the SAME child reference twice, so depth n spells
+    /// 2^(n+1) - 1 list-literal occurrences with n+1 objects; expanded, every occurrence is its own
+    /// object (the structurally identical tree).
+    /// </summary>
+    private static Expr LiteralDag(int depth, bool shared)
+    {
+        if (depth == 0)
+            return new Expr.ListLiteral([new Expr.Num(1), new Expr.Num(2)]);
+        if (!shared)
+            return new Expr.ListLiteral([LiteralDag(depth - 1, shared: false), LiteralDag(depth - 1, shared: false)]);
+
+        var child = LiteralDag(depth - 1, shared: true);
+        return new Expr.ListLiteral([child, child]);
+    }
+
+    [Fact]
+    public void SharedLiteralChild_MaterializesOncePerOccurrence()
+    {
+        var child = new Expr.ListLiteral([new Expr.Num(1), new Expr.Num(2)]);
+        var twice = new Expr.ListLiteral([child, child]);
+        var once = new Expr.ListLiteral([child]);
+
+        var (twiceResult, twiceBudget) = Evaluator.RunCountedObserved(twice);
+        var (onceResult, onceBudget) = Evaluator.RunCountedObserved(once);
+        Assert.False(twiceResult.IsError);
+        Assert.False(onceResult.IsError);
+        Assert.True(twiceBudget.MaterializedItems > onceBudget.MaterializedItems);
+    }
+
+    [Fact]
+    public void SharedLiteralDag_EvaluatesWithExactlyTheExpandedTreesWork()
+    {
+        // Evaluation is per VISIT, and a shared reference visited twice pays twice: the doubling
+        // DAG and its expanded tree describe the same expression, so they charge identical work.
+        var shared = LiteralDag(6, shared: true);
+        var expanded = LiteralDag(6, shared: false);
+
+        var (sharedResult, sharedBudget) = Evaluator.RunCountedObserved(shared);
+        var (expandedResult, expandedBudget) = Evaluator.RunCountedObserved(expanded);
+
+        Assert.False(sharedResult.IsError);
+        Assert.False(expandedResult.IsError);
+        Assert.Equal(expandedResult.Value.Value, sharedResult.Value.Value, Result.ValueComparer);
+        Assert.Equal(expandedResult.Value.EmittedCount, sharedResult.Value.EmittedCount);
+        Assert.Equal(expandedBudget.ConsumedSteps, sharedBudget.ConsumedSteps);
+        Assert.True(sharedBudget.ConsumedExpressionCheckpoints > 0);
+        Assert.Equal(expandedBudget.ConsumedExpressionCheckpoints, sharedBudget.ConsumedExpressionCheckpoints);
+        Assert.Equal(expandedBudget.MaterializedItems, sharedBudget.MaterializedItems);
+        Assert.Equal(expandedBudget.MaterializedStringChars, sharedBudget.MaterializedStringChars);
+        Assert.Equal(expandedBudget.PeakDepth, sharedBudget.PeakDepth);
+    }
+
+    [Fact]
+    public void SharedLiteralDag_CrossesTheMaterializationBoundaryExactlyWhereTheExpandedTreeDoes()
+    {
+        var shared = LiteralDag(4, shared: true);
+        var expanded = LiteralDag(4, shared: false);
+
+        var failed = false;
+        var succeeded = false;
+        for (long limit = 1; limit <= 96; limit++)
+        {
+            var limits = new EvaluationLimits { MaxMaterializedItems = limit };
+            var sharedR = Evaluator.Run(shared, limits);
+            var expandedR = Evaluator.Run(expanded, limits);
+
+            Assert.Equal(expandedR.IsError, sharedR.IsError);
+            if (sharedR.IsError)
+            {
+                Assert.Equal(expandedR.Error.GetType(), sharedR.Error.GetType());
+                failed = true;
+            }
+            else
+            {
+                succeeded = true;
+            }
+        }
+
+        Assert.True(failed && succeeded, "The materialization sweep did not cross the success/failure boundary.");
+    }
+
+    [Fact]
+    public void SharedLiteralDag_CalledAsACallee_ReportsTheExpandedTreesDiagnostic()
+    {
+        // A literal has no callable identity; the diagnostic that names the shared callee must be
+        // the expanded tree's, and both are spanless (host-built nodes carry no source spans).
+        var shared = Evaluator.Run(new Expr.Call(LiteralDag(4, shared: true), OutputBundle.Empty));
+        var expanded = Evaluator.Run(new Expr.Call(LiteralDag(4, shared: false), OutputBundle.Empty));
+
+        Assert.True(shared.IsError);
+        Assert.True(expanded.IsError);
+        Assert.Equal(expanded.Error, shared.Error);
+        Assert.Equal(expanded.Error.ToString(), shared.Error.ToString());
+        Assert.Null(shared.Error.Span);
     }
 
     // ── Environment sensitivity: each occurrence resolves in ITS context ─────────────────────
@@ -290,25 +393,24 @@ public class SharedExprOccurrenceSemanticsTests
     }
 
     [Fact]
-    public void ReifiedSharedSubtree_PreservesDifferentIncomingEdgeTransitionCosts()
+    public void SharedSubtree_PreservesDifferentIncomingEdgeTransitionCosts()
     {
-        static Result Atom(decimal value) => new Result.Atom(value);
-        static Result List(params Result[] items) => Result.ListValue.TakeOwnership(items);
-        static Result Seq(params Result[] items) => Result.SequenceValue.TakeOwnership(items);
-
-        // ResultToExpr produces the shared Capture -> ListLiteral fragment itself. The first
+        // The shared fragment Capture -> ListLiteral -> Capture -> ListLiteral -> 1. The first
         // occurrence is reached through Capture -> Capture (no evaluator transition surcharge);
         // the second through ListLiteral -> Capture (a spine-to-recursive re-entry). Preflight may
         // memoize the child's height, but it must still add each incoming edge's own cost.
-        var shared = Evaluator.ResultToExpr(Seq(List(Seq(List(Atom(1))))));
+        static Expr Fragment()
+            => new Expr.Capture([new Expr.ListLiteral([new Expr.Capture([new Expr.ListLiteral([new Expr.Num(1)])])])]);
+
+        var shared = Fragment();
         var sharedProgram = Program(Root(
             null,
             new Expr.Capture([shared]),
             new Expr.ListLiteral([shared])));
         var clonedProgram = Program(Root(
             null,
-            new Expr.Capture([Evaluator.ResultToExpr(Seq(List(Seq(List(Atom(1))))))]),
-            new Expr.ListLiteral([Evaluator.ResultToExpr(Seq(List(Seq(List(Atom(1))))))])));
+            new Expr.Capture([Fragment()]),
+            new Expr.ListLiteral([Fragment()])));
 
         var rejected = false;
         var accepted = false;

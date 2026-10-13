@@ -388,6 +388,22 @@ public class MaintainedDocumentationConsistencyTests
             @"(?<![\w?])(?:RecordCountedArgumentReification|CountedArgumentReificationCount)(?![\w?])",
             "the reification counter retired on 2026-10-13 (EvaluationObservations.CountedArgumentReificationCount and its recorder)"
         },
+        // The retired Result-to-Expr reification (2026-10-13): Model C deleted its only production
+        // caller, the counted-argument wrapper CountedArgAlgorithm (with its multi-root
+        // ResultsToExprBundle), so the C# Evaluator.ResultToExpr — with ResultToExprLeaf,
+        // ResultToExprFrame, IsEmptySequenceChain and the run-scoped counter
+        // EvaluationObservations.ResultToExprStructureExpansionCount with its recorder
+        // RecordResultToExprStructureExpansion — had test callers only, and the Lean resultToExpr
+        // (with isEmptySequenceChain) one CoreTests fixture; all are retired, as is the uncalled
+        // pre-K1-08 Lean lookupPropDefExportedAny? (both definitions). The scan is
+        // case-insensitive, so each name covers its C# and Lean spelling (and the deleted Lean
+        // countedArgAlgorithm). The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the
+        // record.
+        {
+            @"(?<![\w?])(?:ResultToExpr(?:Leaf|Frame|StructureExpansionCount)?|RecordResultToExprStructureExpansion|"
+            + @"ResultsToExprBundle|IsEmptySequenceChain|CountedArgAlgorithm|lookupPropDefExportedAny\??)(?![\w?])",
+            "the Result-to-Expr reification retired on 2026-10-13 (ResultToExpr / resultToExpr with its helpers and work counter), the uncalled lookupPropDefExportedAny?, or the deleted counted-argument wrapper"
+        },
     };
 
     [Theory]

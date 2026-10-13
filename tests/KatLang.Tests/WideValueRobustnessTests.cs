@@ -50,7 +50,7 @@ public class WideValueRobustnessTests
         => AssertEval($"atoms(range(1, {Wide})).count", Wide);
 
     [Fact]
-    public void WideDotCallReceiverReification()
+    public void WideDotCallReceiverValueBoundary()
         => AssertEval($"range(1, {Wide}).count", Wide);
 
     // ── Direct coverage of the Result walks ─────────────────────────────────

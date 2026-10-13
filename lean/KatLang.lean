@@ -2027,10 +2027,6 @@ def dedupList [BEq A] (xs : List A) : List A :=
 def lookupPropDefAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
   ps.find? (fun p => p.name = k)
 
-/-- Primary helper: Lookup PropDef by name when the property is exported. -/
-def lookupPropDefExportedAny? (ps : List PropDef) (k : Ident) : Option PropDef :=
-  ps.find? (fun p => p.name = k && p.exposure.isExported)
-
 /-- Primary helper: Lookup PropDef by name (public only — the member an `open` provides,
     selected by visibility alone; accessibility is checked after selection). -/
 def lookupPropDefPublic? (ps : List PropDef) (k : Ident) : Option PropDef :=
@@ -2295,10 +2291,6 @@ namespace Algorithm
   /-- Lookup PropDef by name (any visibility). -/
   def lookupPropDefAny? (a : Algorithm) (k : Ident) : Option PropDef :=
     KatLang.lookupPropDefAny? (props a) k
-
-  /-- Lookup PropDef by name when the property is exported. -/
-  def lookupPropDefExportedAny? (a : Algorithm) (k : Ident) : Option PropDef :=
-    KatLang.lookupPropDefExportedAny? (props a) k
 
   /-- Lookup PropDef by name (public only). -/
   def lookupPropDefPublic? (a : Algorithm) (k : Ident) : Option PropDef :=
@@ -3390,31 +3382,6 @@ def isMissingOutputError : Error -> Bool
 /-- The empty sequence value expression `()`. -/
 def emptyResultExpr : Expr :=
   .emptySequence 0
-
-/-- True when a Result is the empty sequence value or a redundant chain of
-    one-item sequences ending in it. -/
-def isEmptySequenceChain : Result -> Bool
-  | .sequenceValue [] => true
-  | .sequenceValue [inner] => isEmptySequenceChain inner
-  | _ => false
-
-/-- Reify a normalized Result as an expression that evaluates back to the same
-    value/shape. Redundant empty-sequence chains reify as canonical `()`; other
-    sequence-value results become block expressions. -/
-def resultToExpr : Result -> Expr
-  | .atom n => .num n
-  | .str s => .stringLiteral s
-  | .bool b => .boolLiteral b
-  | .sequenceValue rs =>
-      if isEmptySequenceChain (.sequenceValue rs) then
-        .emptySequence 0
-      else
-        -- A reified sequence value is a capture of its already-evaluated
-        -- items — a value boundary, not an algorithm.
-        .capture (rs.map resultToExpr)
-  -- Exact list values reify as list literals so they round-trip losslessly
-  -- (a reified `()` element stays one visible list element).
-  | .listValue rs => .listLiteral (rs.map resultToExpr)
 
 /-- Recover the top-level values emitted at one algorithm boundary from a
     counted result.
@@ -8501,9 +8468,9 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    cell projects it as its CALLABLE identity, `projectNeedCallable`).
    (Per-expression Algorithm resolution remains separate from value
    evaluation, and the runtime may still construct one-expression
-   Algorithm adapters — `Algorithm.ofExpr`, `countedArgAlgorithm`, the
-   capture value thunk — for deferred/lazy evaluation of individual
-   slots; those adapters are runtime machinery, not the source AST.)
+   Algorithm adapters — `Algorithm.ofExpr` and the capture value
+   thunk — for deferred/lazy evaluation of individual slots; those
+   adapters are runtime machinery, not the source AST.)
 
    Evaluation semantics of `Expr.algorithmExpr` in value position
    ---------------------------------------------------------------
