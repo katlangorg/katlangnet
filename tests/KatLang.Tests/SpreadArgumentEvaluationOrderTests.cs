@@ -4,25 +4,25 @@ using System.Numerics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// Written-argument-slot evaluation ORDER for builtins that expand spread
-/// arguments (<c>Evaluator.ExpandSequenceSpreadBuiltinArguments</c> /
-/// Lean <c>expandSequenceSpreadBuiltinArguments</c>).
+/// Written-argument-slot evaluation ORDER for builtins with spread arguments, which
+/// supply formation opens (<c>Evaluator.FormNeedSupply</c> / Lean
+/// <c>formNeedSupplySourced</c>).
 ///
-/// <para>The rule pinned here: SPREAD-MARKED slots are forced exactly once, in
-/// left-to-right written order, and expanding a spread slot is part of evaluating
-/// that slot. Non-spread builtin slots keep their written position but remain
-/// algorithm-lazy — the builtin decides whether and when to evaluate them (see
+/// <para>The rule pinned here: SPREAD slots are forced exactly once, in
+/// left-to-right written order, and opening a spread slot is part of forming
+/// that slot. Non-spread builtin slots keep their written position as suspended
+/// cells — the builtin decides whether and when to demand them (see
 /// <see cref="SpreadSlotsAreForcedDuringExpansion_NonSpreadBuiltinSlotsStayLazy"/>).
-/// Lean's expansion recursed into the remaining slots BEFORE evaluating the current
-/// spread slot, so two failing spread arguments reported the RIGHTMOST failure while
-/// C# reported the leftmost: <c>P = 1 / 0</c>, <c>Q = 'x' + 1</c>,
-/// <c>range(P*, Q*)</c> was a division-by-zero in C# and a type mismatch in Lean.
-/// C# was correct; these tests pin the language behavior on the C# side while the
-/// generated Lean guards (<c>spread-arguments-fail-left-to-right</c> and
+/// Lean's pre-Model-C expansion helper recursed into the remaining slots BEFORE
+/// evaluating the current spread slot, so two failing spread arguments reported the
+/// RIGHTMOST failure while C# reported the leftmost: <c>P = 1 / 0</c>,
+/// <c>Q = 'x' + 1</c>, <c>range(P*, Q*)</c> was a division-by-zero in C# and a type
+/// mismatch in Lean. C# was correct; these tests pin the language behavior on the C#
+/// side while the generated Lean guards (<c>spread-arguments-fail-left-to-right</c> and
 /// <c>spread-arguments-keep-written-order</c> in
 /// <c>tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs</c>, plus the
-/// <c>spreadBuiltinArgument*</c> guards in <c>lean/CoreTests.lean</c>) pin the same
-/// behavior on the Lean side.</para>
+/// <c>spreadBuiltinArgument*</c> guards in <c>lean/CoreTests/CollectionBuiltins.lean</c>)
+/// pin the same behavior on the Lean side.</para>
 /// </summary>
 public class SpreadArgumentEvaluationOrderTests
 {

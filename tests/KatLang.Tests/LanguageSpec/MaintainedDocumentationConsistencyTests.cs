@@ -347,6 +347,38 @@ public class MaintainedDocumentationConsistencyTests
             + @"CountedParamEnvironmentIdentity|CountedEnvironmentIdentity|TryFindCountedParam|GetCountedParamSlot)(?![\w?])",
             "a parameter tier retired on 2026-10-13 (the algorithm-channel and counted tiers)"
         },
+        // The dead Lean helper resolveArgAlgsWithSequenceSpread (2026-10-13): Model C made a
+        // builtin's arguments the call's ordinary need cells (formNeedSupply in the builtin arm of
+        // evalResolvedCallCounted) and left the helper without a caller, so it is deleted like its
+        // pre-Model-C per-slot resolver resolveArgAlgExpr; git history keeps both. Current-rule text
+        // cites the need cells instead. Both Lean names are matched case-sensitively, so the LIVE
+        // C# method ResolveArgAlgsWithSequenceSpread (it delegates to ResolveNeedSupply) is not
+        // flagged. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        {
+            @"(?<![\w?])(?-i:resolveArgAlgsWithSequenceSpread|resolveArgAlgExpr)(?![\w?])",
+            "the dead Lean helper resolveArgAlgsWithSequenceSpread (retired 2026-10-13) or its per-slot resolver resolveArgAlgExpr (deleted by Model C)"
+        },
+        // Dead builtin-argument infrastructure (2026-10-13): since Model C every argument a builtin
+        // receives is a supplied need cell, so the machinery for hand-built spread-marked arguments
+        // and for a named callable carried beside an argument's value side had no production writer.
+        // Retired: Lean applyBuiltinResolved, requireCallableValues, expandSequenceSpreadBuiltinArguments
+        // (C# ExpandSequenceSpreadBuiltinArguments with its Async twin), CallableCallItem.skipMissingValue,
+        // ResolvedArgumentAlgorithm.spreadsSequence / .callable? / .invoked (C# SpreadsSequence /
+        // Callable / InvokedAlgorithm / PreparedValue), C# VariadicCallItem.PreparedValue,
+        // AlgorithmArg.Callable / InvokedAlgorithm and BuildCallableCallItemsAsync. Every retired
+        // name is matched as a whole word in any spelling (`arg.invoked`, `` `invoked` ``,
+        // `arg.PreparedValue`), except the field names a LIVE member shares: CallableCallItem.callable?
+        // and VariadicCallItem.Callable (a failed VALUE demand's projection) stay live, so the
+        // retired callable? / Callable is matched only through its retired owner
+        // (ResolvedArgumentAlgorithm., AlgorithmArg.). ExpectPreparedValueSuffixArg is no whole-word
+        // PreparedValue. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        {
+            @"(?<![\w?])(?:applyBuiltinResolved|requireCallableValues|expandSequenceSpreadBuiltinArguments(?:Async)?|"
+            + @"BuildCallableCallItemsAsync|skipMissingValue|spreadsSequence|InvokedAlgorithm|PreparedValue)(?![\w?])|"
+            + @"\.invoked(?![\w?])|`invoked`|"
+            + @"(?<![\w?])(?:ResolvedArgumentAlgorithm|AlgorithmArg)\.callable\??(?![\w?])",
+            "dead builtin-argument infrastructure retired on 2026-10-13 (spread-marked arguments, the named-callable side channel, prepared argument values)"
+        },
     };
 
     [Theory]

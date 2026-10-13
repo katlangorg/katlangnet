@@ -24,74 +24,43 @@ public static partial class Evaluator
         Result? Value,
         Algorithm? Algorithm,
         EvalError? ValueError,
-        CountedResult? PreparedValue = null,
         Expr? Source = null,
         Algorithm? Callable = null,
         NeedCell? Cell = null)
     {
         /// <summary>
-        /// The algorithm this item NAMES (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>):
-        /// the identity the zero-argument value-demand law judges, while a VALUE demand
-        /// evaluates the value-side <see cref="Algorithm"/>. Lean: <c>CallableCallItem.named?</c>.
+        /// The algorithm this item NAMES: the identity the zero-argument value-demand law
+        /// judges — the projected <see cref="Callable"/> when the item has one (a supplied
+        /// cell whose VALUE demand failed, <see cref="FinishNeedCallItemDemand"/>), otherwise
+        /// the value-side <see cref="Algorithm"/>, which a VALUE demand evaluates.
+        /// Lean: <c>CallableCallItem.named?</c>.
         /// </summary>
         public Algorithm? NamedAlgorithm => Callable ?? Algorithm;
     }
 
-    internal readonly record struct ResolvedArgumentAlgorithm(
-        Algorithm? Algorithm,
-        bool SpreadsSequence)
+    /// <summary>
+    /// One argument a builtin receives. Every argument the evaluator builds is a SUPPLIED
+    /// CELL (<see cref="Cell"/>): a builtin call passes its supply
+    /// (<see cref="ResolveNeedSupply"/>, explicit spreads already opened), a builtin loop step
+    /// its state cells and a builtin callback its element cells; a VALUE slot demands the cell
+    /// and an invoking slot projects it, while <see cref="Algorithm"/> is <c>null</c>. An
+    /// argument WITHOUT a cell is the direct-invocation seam that hand-built test plans use: a
+    /// VALUE slot then demands <see cref="Algorithm"/> through the zero-argument law, and an
+    /// invoking slot calls it. Lean: <c>ResolvedArgumentAlgorithm</c>.
+    /// </summary>
+    internal readonly record struct ResolvedArgumentAlgorithm(Algorithm? Algorithm)
     {
         internal NeedCell? Cell { get; init; }
-        /// <summary>
-        /// An argument that NAMES a binding resolves to its value side (<see cref="Algorithm"/>,
-        /// a wrapper that performs the ordinary value read of the written name) and keeps the
-        /// named algorithm here: a parameter bound on BOTH channels (the wrapper reads the bound
-        /// value, so a VALUE slot never re-runs the argument's body), and a lexical property
-        /// reference <c>A</c> (the wrapper is the ordinary property read — the zero-argument
-        /// property access with its run cache — so a VALUE slot never re-runs the property's
-        /// body: how a property value is consumed does not affect caching). A slot that
-        /// INVOKES its argument — a sequence callback or a loop step — calls
-        /// <see cref="InvokedAlgorithm"/>, so <c>Apply(f, xs) = map(xs, f)</c> applies the
-        /// callable <c>f</c> exactly as <c>map(xs, Cnt)</c> does even when <c>Cnt</c> also
-        /// satisfies a zero-argument value demand. <c>null</c> for every other argument,
-        /// whose <see cref="Algorithm"/> already is its algorithm-channel identity.
-        /// Lean: <c>ResolvedArgumentAlgorithm.callable?</c>.
-        /// </summary>
-        public Algorithm? Callable { get; init; }
 
         /// <summary>
-        /// The algorithm this argument NAMES: the callable an ALGORITHM slot (a sequence
-        /// callback or a loop step) invokes, and the identity the zero-argument value-demand
-        /// law and every signature classification judge — the named binding's algorithm when
-        /// it has one, otherwise the resolved algorithm. VALUE slots demand
-        /// <see cref="Algorithm"/>. Lean: <c>ResolvedArgumentAlgorithm.invoked</c>.
-        /// </summary>
-        public Algorithm? InvokedAlgorithm => Callable ?? Algorithm;
-
-        /// <summary>
-        /// The already-computed value of this argument, when the caller evaluated it before
-        /// assembling the call. Used for dotted receivers and builtin callback arguments,
-        /// both of which have already been evaluated before builtin binding begins.
-        ///
-        /// <para><see cref="Algorithm"/> retains a source-backed algorithm channel when one
-        /// exists. Callback data values and dotted sequence-builtin receivers leave that
-        /// channel null so their structure is not eagerly rebuilt as an AST; an
-        /// algorithm-only consumer can recreate the legacy channel lazily from this counted
-        /// value. The value channel always uses this field directly and never re-evaluates
-        /// a reconstructed literal.</para>
-        /// </summary>
-        public CountedResult? PreparedValue { get; init; }
-
-        /// <summary>
-        /// The written argument expression <see cref="Algorithm"/> was resolved from
-        /// (<see cref="ResolveArgAlgsWithSequenceSpread"/>): the demand-site identity the
-        /// zero-argument value-demand law (<see cref="ZeroArgumentValueDemandError"/>)
-        /// reports through — its span, and whether the algorithm was named as a property,
-        /// a parameter, a dot receiver, or a written block — when a builtin VALUE slot
-        /// demands the algorithm with zero arguments. <c>null</c> for value-reified
-        /// arguments (prepared callback data, expanded spread items, dotted receivers),
-        /// whose algorithms carry no parameters. Diagnostic identity only: it never
-        /// changes which algorithm a slot resolves to. Lean: <c>source?</c>.
+        /// The argument's WRITTEN slot at this call, recorded from the supply formation
+        /// (<see cref="ResolveNeedSupply"/> — the slot as written; for a transported collector
+        /// slice, each cell's own original source): the demand-site identity a builtin VALUE
+        /// slot's rejection reports through (<see cref="SequenceBuiltinValueDemandError"/> and
+        /// the zero-argument value-demand law, <see cref="ZeroArgumentValueDemandError"/>) —
+        /// its span, and whether the argument was written as a property, a parameter, a dot
+        /// receiver, or a block. <c>null</c> for an opened spread's items. Diagnostic identity
+        /// only: it never changes which callable a slot resolves to. Lean: <c>source?</c>.
         /// </summary>
         public Expr? Source { get; init; }
     }

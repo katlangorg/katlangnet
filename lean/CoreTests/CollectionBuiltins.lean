@@ -61,14 +61,15 @@ def test33 : Bool :=
 
 --------------------------------------------------------------------------------
 -- spread builtin-argument evaluation ORDER tests
--- `expandSequenceSpreadBuiltinArguments`: SPREAD-MARKED argument slots are forced
--- exactly once, in left-to-right written order, and expanding a spread slot is
--- part of evaluating that slot. Non-spread slots keep their written position but
--- remain builtin-lazy algorithms at this stage — the builtin decides whether and
--- when to evaluate them (an unselected `if` branch never runs). The helper
--- formerly recursed into the remaining slots BEFORE evaluating the current spread
--- slot, so two failing spread arguments reported the RIGHTMOST failure while C#
--- reported the leftmost. C# parity:
+-- Supply formation (`formNeedSupplySourced`, the builtin arm of
+-- `evalResolvedCallCounted`): SPREAD argument slots are forced exactly once, in
+-- left-to-right written order, and opening a spread slot is part of forming that
+-- slot. Non-spread slots keep their written position as suspended cells — the
+-- builtin decides whether and when to demand them (an unselected `if` branch never
+-- runs). The pre-Model-C expansion helper (retired 2026-10-13) once recursed into
+-- the remaining slots BEFORE evaluating the current spread slot, so two failing
+-- spread arguments reported the RIGHTMOST failure while C# reported the leftmost.
+-- C# parity:
 -- tests/KatLang.Tests/SpreadArgumentEvaluationOrderTests.cs and the generated
 -- LanguageSpecCases guards `spread-arguments-fail-left-to-right` /
 -- `spread-arguments-keep-written-order`.

@@ -621,33 +621,29 @@ public static partial class Evaluator
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
 
     /// <summary>
-    /// The call item of an argument that assembly does not evaluate: its value-side
-    /// algorithm, its prepared value (if any), its written source, and the callable it
-    /// NAMES. A CALLBACK position always receives this item (CALL-03 — supplying a
-    /// callback evaluates nothing); a callable-shaped VALUE item starts from it before
-    /// its zero-argument demand.
+    /// The call item of an argument that assembly does not evaluate: its supplied cell, its
+    /// written source, and (for an argument without a cell) its algorithm. A CALLBACK
+    /// position always receives this item (CALL-03 — supplying a callback evaluates
+    /// nothing); a VALUE item starts from it before its one demand.
     /// </summary>
     private static VariadicCallItem UnevaluatedCallItem(ResolvedArgumentAlgorithm resolvedArg)
         => new(
             Value: null,
             resolvedArg.Algorithm,
             ValueError: null,
-            resolvedArg.PreparedValue,
             resolvedArg.Source,
-            resolvedArg.Callable,
-            resolvedArg.Cell);
+            Cell: resolvedArg.Cell);
 
     /// <summary>
     /// Prepares a filter predicate exactly as the generic filter binds its CALLBACK slot:
     /// the unevaluated call item (a callback slot is never value-evaluated merely because it
     /// was supplied, CALL-03) through the ONE suffix preparation, keeping the original
     /// callable identity. Used after fusion commits, with caller environments. The predicate
-    /// keeps its algorithm-channel binding (<see cref="ResolvedArgumentAlgorithm.Callable"/>),
-    /// so a callable forwarded through a parameter is invoked exactly as the generic filter
-    /// invokes it. Evaluates nothing: an unused predicate runs no effect, draws nothing and
-    /// cannot fail or recurse. Called only once the source is known to be non-empty, so a
-    /// predicate with no CALLABLE identity is reported exactly where the generic filter
-    /// reports it (<see cref="ResolvePreparedCallback"/>).
+    /// keeps its supplied cell, so a callable forwarded through a parameter is projected
+    /// exactly as the generic filter projects it. Evaluates nothing: an unused predicate runs
+    /// no effect, draws nothing and cannot fail or recurse. Called only once the source is
+    /// known to be non-empty, so a predicate with no CALLABLE identity is reported exactly
+    /// where the generic filter reports it (<see cref="ResolvePreparedCallback"/>).
     /// </summary>
     internal static EvalResult<Algorithm> PrepareFilterPredicateArgument(
         ResolvedArgumentAlgorithm predicate,
@@ -663,27 +659,24 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Form the ordinary cell supply before checking arity. Arbitrary explicit spreads
-    /// demand their operand here; an existing collector slice transports its addresses.
-    /// VALUE and surplus slots remain suspended. After cardinality succeeds, each builtin
-    /// demands its value controls in its established order and projects callbacks only
-    /// when an invocation is required. Lean: <c>collectSequenceCallableCallItems</c>.
+    /// The builtin's call items, evaluating NOTHING: every argument is already a supplied
+    /// cell — a builtin loop step's state cells, a builtin callback's element cells, or a
+    /// call's supply formed before this (<see cref="ResolveNeedSupply"/> — arbitrary
+    /// explicit spreads demanded their operand there, an existing collector slice
+    /// transported its cells) — and every item keeps its cell. After cardinality succeeds, each builtin demands its value
+    /// controls in its established order and projects callbacks only when an invocation is
+    /// required. Shared by the sync and async engines (no suspending operation).
+    /// Lean: <c>collectSequenceCallableCallItems</c>.
     /// </summary>
-    private static EvalResult<IReadOnlyList<VariadicCallItem>> BuildCallableCallItems(
-        IReadOnlyList<ResolvedArgumentAlgorithm> args,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        SequenceBuiltinMetadata metadata)
-    {
-        var expanded = ExpandSequenceSpreadBuiltinArguments(args, ctx, valEnv);
-        return expanded.IsError ? expanded.Error : EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(expanded.Value.Select(UnevaluatedCallItem).ToArray());
-    }
+    private static IReadOnlyList<VariadicCallItem> BuildCallableCallItems(IReadOnlyList<ResolvedArgumentAlgorithm> args)
+        => args.Select(UnevaluatedCallItem).ToArray();
 
     /// <summary>
     /// Call-item assembly preserves callable arguments without entering their bodies.
     /// Once binding selects a VALUE position, report its zero-argument demand using
     /// the original source — judging the callable the item NAMES
-    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>), never its value wrapper — or
+    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>: a failed cell's CALLABLE projection,
+    /// or a hand-built item's algorithm) — or
     /// preserve the failure of a valid value's body. Callback positions never call this
     /// helper. A resource limit the item's own demand reached is authoritative: it is the
     /// demand's failure, never replaced by a classification of the callable channel
@@ -720,23 +713,25 @@ public static partial class Evaluator
 
     /// <summary>
     /// Demand ONE collection-builtin call item that binding has placed in a VALUE
-    /// position. Call-item assembly leaves a callable-shaped CALLBACK item
-    /// unevaluated (a CALLBACK slot must receive the algorithm, never a value — and
-    /// eagerly evaluating a collecting-only callback such as <c>map(xs, Only)</c> would
-    /// run its body an extra time), so the demand happens HERE, once the descriptor has
-    /// decided the slot is a value: an item whose NAMED callable
-    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>) the ONE law accepts
-    /// (<see cref="AcceptsZeroArgumentValueDemand"/> — a collecting-only signature
-    /// alongside every zero-parameter property) is evaluated through the shared demand
-    /// funnel on its VALUE side — for a named property the ordinary property read with its
-    /// run cache — charged exactly as the eager value-shaped path charges it, and every
-    /// other item is returned untouched for <see cref="SequenceBuiltinValueDemandError"/>
-    /// to report. An item that was already evaluated, or whose evaluation already failed,
-    /// is never re-entered. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
+    /// position (<see cref="DemandSequenceBuiltinCallItemValue"/>): the demand happens
+    /// HERE, once the descriptor has decided the slot is a value — a CALLBACK item is
+    /// never demanded (a CALLBACK slot receives the callable, never a value; eagerly
+    /// evaluating a collecting-only callback such as <c>map(xs, Only)</c> would run its
+    /// body an extra time). An item that was already evaluated, or whose evaluation
+    /// already failed, is never re-entered. A supplied cell — every item the evaluator
+    /// builds — is demanded once; on an ordinary failure this records the cell's CALLABLE
+    /// projection as the callable the slot NAMES (<see cref="VariadicCallItem.NamedAlgorithm"/>),
+    /// unless the written slot is a parameter, so the slot's rejection report judges it
+    /// (<see cref="SequenceBuiltinValueDemandError"/>). An item WITHOUT a cell (a hand-built
+    /// plan) is evaluated through the shared demand funnel only when the ONE law accepts its
+    /// callable (<see cref="AcceptsZeroArgumentValueDemand"/> — a collecting-only signature
+    /// alongside every zero-parameter property); every other such item is returned
+    /// untouched for <see cref="SequenceBuiltinValueDemandError"/> to report.
+    /// Lean: <c>demandSequenceBuiltinCallItemValue</c>.
     /// </summary>
     private static VariadicCallItem FinishNeedCallItemDemand(VariadicCallItem item, NeedCell cell, EvalResult<CountedResult> result)
     {
-        if (!result.IsError) return item with { Value = result.Value.Value, PreparedValue = result.Value };
+        if (!result.IsError) return item with { Value = result.Value.Value };
         if (item.Source is Expr.Param(var name))
             return item with { ValueError = DemandParameter(cell, result, name, item.Source.Span).Error };
         if (result.Error.IsResourceLimit) return item with { ValueError = result.Error };
@@ -766,7 +761,7 @@ public static partial class Evaluator
         var demandedR = EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv);
         return demandedR.IsError
             ? item with { ValueError = BlameDemandedArgumentForMissingOutput(item.Source, demandedR).Error }
-            : item with { Value = demandedR.Value.Value, PreparedValue = demandedR.Value };
+            : item with { Value = demandedR.Value.Value };
     }
 
     private static EvalResult<PreparedSequenceBuiltinSuffixArg> PrepareSequenceBuiltinSuffixArg(
@@ -789,7 +784,7 @@ public static partial class Evaluator
                         return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
                             new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(null) { Cell = cell, WrittenSource = item.Source });
                     return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(item.Algorithm) { Callable = item.Callable, WrittenSource = item.Source });
+                        new PreparedSequenceBuiltinSuffixArg.AlgorithmArg(item.Algorithm) { WrittenSource = item.Source });
                 }
 
             case SequenceBuiltinSuffixArgKind.Value:
@@ -1146,8 +1141,7 @@ public static partial class Evaluator
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
-        var itemsR = BuildCallableCallItems(args, ctx, valEnv, metadata);
-        if (itemsR.IsError) return itemsR.Error;
+        var items = BuildCallableCallItems(args);
 
         // A collection builtin is an ordinary fixed-arity callable: exactly one
         // collection argument followed by its fixed control arguments
@@ -1158,7 +1152,6 @@ public static partial class Evaluator
         // boundaries, and the spread items obey the same fixed arity
         // (`count([1, 2, 3]*)` supplies three arguments and is an arity
         // error). Nothing is opened before binding.
-        var items = itemsR.Value;
         var expectedArgCount = 1 + metadata.SuffixArgs.Count;
         if (items.Count != expectedArgCount)
         {
@@ -1234,13 +1227,14 @@ public static partial class Evaluator
     /// <summary>
     /// The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
     /// <c>filter</c> predicate, the <c>map</c> mapper, the <c>reduce</c> reducer): the
-    /// argument's algorithm-channel identity (<see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.InvokedAlgorithm"/>),
-    /// projected through the ONE invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only
-    /// once the builtin is about to invoke it (a non-empty collection).
+    /// argument's supplied cell's CALLABLE projection (or, for an argument without a cell,
+    /// its <see cref="PreparedSequenceBuiltinSuffixArg.AlgorithmArg.AlgorithmValue"/>),
+    /// through the ONE invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only once the
+    /// builtin is about to invoke it (a non-empty collection).
     /// Lean: <c>expectPreparedSequenceBuiltinAlgorithmSuffixArg</c>.
     /// </summary>
     private static EvalResult<Algorithm> ResolvePreparedCallback(BuiltinId builtin, PreparedSequenceBuiltinSuffixArg.AlgorithmArg arg)
-        => ProjectInvokingSlot(arg.Cell, arg.InvokedAlgorithm, InvokingSlotRoles.Of(builtin), arg.WrittenSource?.Span);
+        => ProjectInvokingSlot(arg.Cell, arg.AlgorithmValue, InvokingSlotRoles.Of(builtin), arg.WrittenSource?.Span);
 
     /// <summary>
     /// The ROLE of every invoking (CALLABLE) builtin slot: the description of its missing-callability
@@ -2144,14 +2138,11 @@ public static partial class Evaluator
             var result = cell.Demand();
             return arg.Source is Expr.Param(var name) ? DemandParameter(cell, result, name, arg.Source.Span) : result;
         }
-        if (arg.PreparedValue is { } prepared)
-            return EvalResult<CountedResult>.Ok(prepared);
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
-        // The law judges the callable the argument NAMES; the accepted demand evaluates
-        // the VALUE side, which for a named property is the ordinary property read — so
-        // the slot reads the property's cached value and never re-runs its body.
-        if (ZeroArgumentValueDemandError(arg.Source, arg.InvokedAlgorithm ?? algorithm) is { } rejection)
+        // An argument without a cell (a hand-built plan): the ONE law judges its algorithm
+        // before any body is entered, and the accepted demand evaluates it.
+        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
             return rejection;
 
         return BlameDemandedArgumentForMissingOutput(arg.Source, EvalArgumentAlgOutputCounted(algorithm, ctx, valEnv));
@@ -2192,53 +2183,22 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The algorithm a <c>while</c>/<c>repeat</c> step INVOKES: the argument's algorithm-channel
-    /// identity (<see cref="ResolvedArgumentAlgorithm.InvokedAlgorithm"/>), so a step forwarded
-    /// through a parameter is the callable itself, never its demanded value — projected through
-    /// the ONE invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only when an iteration needs
-    /// it, and positioned at the step argument. Lean: <c>projectInvokingSlot</c> over
+    /// The algorithm a <c>while</c>/<c>repeat</c> step INVOKES: the step argument's supplied
+    /// cell's CALLABLE projection (or, for an argument without a cell, its
+    /// <see cref="ResolvedArgumentAlgorithm.Algorithm"/>), so a step forwarded through a
+    /// parameter is the callable itself, never its demanded value — projected through the ONE
+    /// invoking-slot rule (<see cref="ProjectInvokingSlot"/>) only when an iteration needs it,
+    /// and positioned at the step argument. Lean: <c>projectInvokingSlot</c> over
     /// <c>invokeNeed step</c>.
     /// </summary>
     private static EvalResult<Algorithm> ProjectLoopStep(ResolvedArgumentAlgorithm step, BuiltinId loop)
-        => ProjectInvokingSlot(step.Cell, step.InvokedAlgorithm, InvokingSlotRoles.Of(loop), step.Source?.Span);
+        => ProjectInvokingSlot(step.Cell, step.Algorithm, InvokingSlotRoles.Of(loop), step.Source?.Span);
 
     private static EvalResult<Result> EvalResolvedArgument(
         ResolvedArgumentAlgorithm arg,
         EvalCtx ctx,
         ValEnv valEnv)
         => ProjectCountedValue(EvalResolvedArgumentCounted(arg, ctx, valEnv));
-
-    private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ExpandSequenceSpreadBuiltinArguments(
-        IReadOnlyList<ResolvedArgumentAlgorithm> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var expanded = new List<ResolvedArgumentAlgorithm>(args.Count);
-        foreach (var arg in args)
-        {
-            if (!arg.SpreadsSequence)
-            {
-                expanded.Add(arg);
-                continue;
-            }
-
-            var outputR = EvalResolvedArgumentCounted(arg, ctx, valEnv);
-            if (outputR.IsError) return outputR.Error;
-
-            foreach (var value in CountedTopLevelValues(outputR.Value))
-            {
-                var prepared = new CountedResult(value, 1);
-                expanded.Add(new ResolvedArgumentAlgorithm(
-                    Algorithm: null,
-                    SpreadsSequence: false)
-                {
-                    PreparedValue = prepared,
-                });
-            }
-        }
-
-        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(expanded);
-    }
 
     private static EvalResult<CountedResult> ApplyBuiltinCountedResolved(
         BuiltinId builtin,
@@ -2249,9 +2209,10 @@ public static partial class Evaluator
         if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
             return ApplyBuiltinCountedSequence(builtin, metadata, resolvedArgs, ctx, valEnv);
 
-        var expandedArgsR = ExpandSequenceSpreadBuiltinArguments(resolvedArgs, ctx, valEnv);
-        if (expandedArgsR.IsError) return expandedArgsR.Error;
-        var args = expandedArgsR.Value;
+        // The arguments are supplied cells: a call's supply (explicit spreads already
+        // opened at formation, ResolveNeedSupply), a loop step's state cells, or a
+        // callback's element cells.
+        var args = resolvedArgs;
 
         switch (builtin, args.Count)
         {

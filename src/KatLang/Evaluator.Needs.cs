@@ -91,14 +91,16 @@ public static partial class Evaluator
     /// transported unforced; any other spread operand is evaluated NOW, during formation, and
     /// opened one boundary into Ready items. Appends the slot's cells to <paramref name="supply"/>
     /// (and their written sources to <paramref name="sources"/>) and returns the formation failure,
-    /// if any. Lean: the spread branch of <c>formNeedSupply</c>.
+    /// if any. Lean: the spread branch of <c>formNeedSupplySourced</c>, whose known-slice test is
+    /// <c>spreadCollectorSlice?</c>.
     /// </summary>
     private static async ValueTask<EvalError?> FormSpreadSupplySlot(
         Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
         List<NeedCell> supply, List<Expr?>? sources)
     {
-        var cell = SupplyCell(argument.Operand, caller, values);
-        if (cell.Slice is { } known)
+        // A collecting parameter's known slice, found exactly as SupplyCell finds a parameter's
+        // cell — without allocating a cell for any other operand.
+        if (argument.Operand is Expr.Param(var name) && ParameterNeedCell(name, caller) is { Slice: { } known })
         {
             supply.AddRange(known);
             if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
@@ -172,7 +174,7 @@ public static partial class Evaluator
         var sources = new List<Expr?>(args.Count);
         var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources).ConfigureAwait(false);
         return formed.IsError ? formed.Error : EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            formed.Value.Select((cell, index) => new ResolvedArgumentAlgorithm(null, false) { Cell = cell, Source = sources[index] }).ToArray());
+            formed.Value.Select((cell, index) => new ResolvedArgumentAlgorithm(null) { Cell = cell, Source = sources[index] }).ToArray());
     }
 
     private static NeedCell CollectorCell(IReadOnlyList<NeedCell> slice, EvalCtx ctx)
@@ -536,7 +538,7 @@ public static partial class Evaluator
             }
             case Algorithm.Builtin(var builtin):
             {
-                var supplied = state.Select(static cell => new ResolvedArgumentAlgorithm(null, false) { Cell = cell }).ToArray();
+                var supplied = state.Select(static cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
                 var result = asynchronous
                     ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
                     : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values);
@@ -677,7 +679,7 @@ public static partial class Evaluator
         var supply = arguments.Select(argument => NeedCell.Ready(argument)).ToArray();
         if (callee is Algorithm.Builtin builtin)
         {
-            var resolved = supply.Select(cell => new ResolvedArgumentAlgorithm(null, false) { Cell = cell }).ToArray();
+            var resolved = supply.Select(cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
             return asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
                 : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values);
         }
@@ -808,12 +810,10 @@ public static partial class Evaluator
     }
 
     private static NeedCell ExistingArgumentCell(ResolvedArgumentAlgorithm argument, EvalCtx ctx, ValEnv values)
-        => argument.Cell ?? (argument.PreparedValue is { } ready
-            ? NeedCell.Ready(ready)
-            : new NeedCell(() => EvalResolvedArgumentCounted(argument, ctx, values),
-                () => EvalResolvedArgumentCountedAsync(argument, ctx, values),
-                () => EvalResult<Algorithm?>.Ok(argument.InvokedAlgorithm),
-                argument.Source?.Span, source: argument.Source, budget: ctx.Budget, token: ctx.Budget.CancellationToken));
+        => argument.Cell ?? new NeedCell(() => EvalResolvedArgumentCounted(argument, ctx, values),
+            () => EvalResolvedArgumentCountedAsync(argument, ctx, values),
+            () => EvalResult<Algorithm?>.Ok(argument.Algorithm),
+            argument.Source?.Span, source: argument.Source, budget: ctx.Budget, token: ctx.Budget.CancellationToken);
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedLoop(
         BuiltinId builtin, IReadOnlyList<ResolvedArgumentAlgorithm> arguments,

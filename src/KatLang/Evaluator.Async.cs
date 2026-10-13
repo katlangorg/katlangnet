@@ -2020,9 +2020,8 @@ public static partial class Evaluator
         if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
             return await ApplyBuiltinCountedSequenceAsync(builtin, metadata, resolvedArgs, ctx, valEnv).ConfigureAwait(false);
 
-        var expandedArgsR = await ExpandSequenceSpreadBuiltinArgumentsAsync(resolvedArgs, ctx, valEnv).ConfigureAwait(false);
-        if (expandedArgsR.IsError) return expandedArgsR.Error;
-        var args = expandedArgsR.Value;
+        // Supplied cells — see the synchronous twin.
+        var args = resolvedArgs;
 
         switch (builtin, args.Count)
         {
@@ -2110,15 +2109,12 @@ public static partial class Evaluator
             var result = await cell.DemandAsync().ConfigureAwait(false);
             return arg.Source is Expr.Param(var name) ? DemandParameter(cell, result, name, arg.Source.Span) : result;
         }
-        if (arg.PreparedValue is { } prepared)
-            return EvalResult<CountedResult>.Ok(prepared);
         if (arg.Algorithm is not { } algorithm)
             return new EvalError.BadArity();
 
-        // The ONE zero-argument value-demand law decides from the NAMED callable before
-        // any body (or the argument level) is entered; the demand reads the value side —
-        // see the synchronous twin.
-        if (ZeroArgumentValueDemandError(arg.Source, arg.InvokedAlgorithm ?? algorithm) is { } rejection)
+        // The ONE zero-argument value-demand law decides before any body (or the argument
+        // level) is entered — see the synchronous twin.
+        if (ZeroArgumentValueDemandError(arg.Source, algorithm) is { } rejection)
             return rejection;
 
         return BlameDemandedArgumentForMissingOutput(
@@ -2155,50 +2151,6 @@ public static partial class Evaluator
         }
     }
 
-    /// <summary>MIRROR OF <see cref="ExpandSequenceSpreadBuiltinArguments"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> ExpandSequenceSpreadBuiltinArgumentsAsync(
-        IReadOnlyList<ResolvedArgumentAlgorithm> args,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var expanded = new List<ResolvedArgumentAlgorithm>(args.Count);
-        foreach (var arg in args)
-        {
-            if (!arg.SpreadsSequence)
-            {
-                expanded.Add(arg);
-                continue;
-            }
-
-            var outputR = await EvalResolvedArgumentCountedAsync(arg, ctx, valEnv).ConfigureAwait(false);
-            if (outputR.IsError) return outputR.Error;
-
-            foreach (var value in CountedTopLevelValues(outputR.Value))
-            {
-                var prepared = new CountedResult(value, 1);
-                expanded.Add(new ResolvedArgumentAlgorithm(
-                    Algorithm: null,
-                    SpreadsSequence: false)
-                {
-                    PreparedValue = prepared,
-                });
-            }
-        }
-
-        return EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(expanded);
-    }
-
-    /// <summary>MIRROR OF <see cref="BuildCallableCallItems"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<VariadicCallItem>>> BuildCallableCallItemsAsync(
-        IReadOnlyList<ResolvedArgumentAlgorithm> args,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        SequenceBuiltinMetadata metadata)
-    {
-        var expanded = await ExpandSequenceSpreadBuiltinArgumentsAsync(args, ctx, valEnv).ConfigureAwait(false);
-        return expanded.IsError ? expanded.Error : EvalResult<IReadOnlyList<VariadicCallItem>>.Ok(expanded.Value.Select(UnevaluatedCallItem).ToArray());
-    }
-
     /// <summary>MIRROR OF <see cref="DemandSequenceBuiltinCallItemValue"/> — keep in lock-step.</summary>
     private static async ValueTask<VariadicCallItem> DemandSequenceBuiltinCallItemValueAsync(
         VariadicCallItem item,
@@ -2222,7 +2174,7 @@ public static partial class Evaluator
         var demandedR = await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
         return demandedR.IsError
             ? item with { ValueError = BlameDemandedArgumentForMissingOutput(item.Source, demandedR).Error }
-            : item with { Value = demandedR.Value.Value, PreparedValue = demandedR.Value };
+            : item with { Value = demandedR.Value.Value };
     }
 
     /// <summary>MIRROR OF <see cref="BindSequenceBuiltinArguments"/> — keep in lock-step.</summary>
@@ -2235,11 +2187,10 @@ public static partial class Evaluator
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
         var signature = descriptor.PlainSignature;
-        var itemsR = await BuildCallableCallItemsAsync(args, ctx, valEnv, metadata).ConfigureAwait(false);
-        if (itemsR.IsError) return itemsR.Error;
+        // Call-item assembly evaluates nothing, so both engines share it.
+        var items = BuildCallableCallItems(args);
 
         // Collection builtins are ordinary fixed-arity callables — see the synchronous twin.
-        var items = itemsR.Value;
         var expectedArgCount = 1 + metadata.SuffixArgs.Count;
         if (items.Count != expectedArgCount)
         {

@@ -301,25 +301,21 @@ public static partial class Evaluator
         private PreparedSequenceBuiltinSuffixArg() { }
 
         /// <summary>
-        /// An algorithm-kind (CALLBACK) suffix argument: the algorithm channel of an
-        /// argument that call-item assembly never value-evaluated (CALL-03 — supplying a
-        /// callback evaluates nothing), so it carries no value. <see cref="Callable"/>
-        /// carries a named argument's algorithm-channel binding beside its value side
-        /// (<see cref="ResolvedArgumentAlgorithm.Callable"/>); the callback slot invokes
-        /// <see cref="InvokedAlgorithm"/>.
+        /// An algorithm-kind (CALLBACK) suffix argument of an argument that call-item
+        /// assembly never value-evaluated (CALL-03 — supplying a callback evaluates nothing),
+        /// so it carries no value, only its callable: the supplied <see cref="Cell"/>,
+        /// projected when the builtin invokes it, or — for an argument without a cell (a
+        /// hand-built plan) — <see cref="AlgorithmValue"/> (<see cref="ResolvePreparedCallback"/>).
+        /// Lean: <c>.needAlgorithm</c> / <c>.algorithm</c>.
         /// </summary>
         public sealed record AlgorithmArg(KatLang.Algorithm? AlgorithmValue) : PreparedSequenceBuiltinSuffixArg
         {
-            public KatLang.Algorithm? Callable { get; init; }
-
-            /// <summary>The callback an invoking slot applies (Lean: <c>ResolvedArgumentAlgorithm.invoked</c>).</summary>
+            /// <summary>The supplied cell whose CALLABLE projection an invoking slot applies.</summary>
             internal KatLang.Evaluation.NeedCell? Cell { get; init; }
 
             // A whole collector has no single original argument span. Keep the current
             // written slot as the fallback, just as a loop's step argument does.
             internal Expr? WrittenSource { get; init; }
-
-            public KatLang.Algorithm? InvokedAlgorithm => Callable ?? AlgorithmValue;
         }
 
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;

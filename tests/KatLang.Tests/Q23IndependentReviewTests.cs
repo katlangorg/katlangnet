@@ -17,9 +17,9 @@ public partial class LoopStepCallableDispatchTests
             () => { projections++; return EvalResult<Algorithm?>.Ok(new Algorithm.Builtin(BuiltinId.count)); });
         var arguments = new[]
         {
-            new Evaluator.ResolvedArgumentAlgorithm(null, false) { Cell = step },
-            new Evaluator.ResolvedArgumentAlgorithm(null, false) { Cell = NeedCell.Ready(new(new Result.Atom(0), 1)) },
-            new Evaluator.ResolvedArgumentAlgorithm(null, false) { Cell = NeedCell.Ready(new(new Result.Atom(7), 1)) }
+            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = step },
+            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = NeedCell.Ready(new(new Result.Atom(0), 1)) },
+            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = NeedCell.Ready(new(new Result.Atom(7), 1)) }
         };
         var method = typeof(Evaluator).GetMethod("EvalNeedLoop", BindingFlags.Static | BindingFlags.NonPublic)!;
         var invocation = (ValueTask<EvalResult<Evaluator.CountedResult>>)method.Invoke(null,

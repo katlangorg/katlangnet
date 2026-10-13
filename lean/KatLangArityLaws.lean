@@ -212,7 +212,7 @@ of a collected list is EXACTLY the collected items. This is the value-level face
 collecting-parameter forwarding (`Forward(*items) = Target(items*)`, FWD-01): read through
 `make_collection_list_result_is_collect_segment`, spreading a materialized collector gives back
 its demanded element values. Production forwarding itself transports the collector's own slice
-CELLS, unforced (`formNeedSupply`'s `.collector` arm, `partial`; CoreTests.ModelC
+CELLS, unforced (the known-slice arm of the `partial` `formNeedSupplySourced`, `spreadCollectorSlice?`; CoreTests.ModelC
 `sliceTransport`), and the target's collector then collects exactly the cells supplied
 (`lone_collecting_head_allocates_one_collector_over_its_supply`). -/
 theorem spreadItems_collectSegment (xs : List Result) :
@@ -360,7 +360,7 @@ formation reads.
 itself: `Result.spreadItems`, which the `partial` spread arms of the evaluator read (a source
 fact; `Coll((1, 2)*)` and `Coll([1, 2]*)` both supply `1, 2` by supply formation, pinned by
 guards). Since Model C a spread of a collecting PARAMETER transports its cells instead
-(`formNeedSupply`'s `.collector` arm). -/
+(`formNeedSupplySourced`'s known-slice arm, `spreadCollectorSlice?`). -/
 theorem explicit_spread_opens_one_level (items : List Result) (n : Int) :
     (Result.sequenceValue items).spreadItems = items
     ∧ (Result.listValue items).spreadItems = items
@@ -2814,9 +2814,10 @@ slot is demanded once and its outcome — one value or one failure — is final;
 CALLBACK slot carries its algorithm and is invoked by the builtin, never evaluated
 merely because it was supplied; and a spread slot is supply assembly whose failure is
 the call's failure. The laws below pin the metadata (`slotRole`, read by the lifting
-specification) and the per-item preparation helper `prepareSequenceBuiltinSuffixArgItem`. The
-assembly itself — formation of need-backed items and their demand — lives in the `partial`
-evaluator (`collectSequenceCallableCallItems`) and is pinned by
+specification), the call-item assembly `collectSequenceCallableCallItems` (which evaluates
+nothing), and the per-item preparation helper `prepareSequenceBuiltinSuffixArgItem`. Supply
+formation (`formNeedSupplySourced`) and the per-slot demand
+(`demandSequenceBuiltinCallItemValue`) live in the `partial` evaluator and are pinned by
 `CoreTests/BuiltinArgumentRoles.lean`. -/
 
 /-- The `collection` parameter is a VALUE slot of every collection builtin. -/
@@ -2861,15 +2862,28 @@ theorem filter_predicate_is_a_callback_slot :
     (sequenceBuiltinMetadata? .filterBuiltin).map (·.slotRole 1) = some .callback := by
   rfl
 
-/-- A CALLBACK control item WITHOUT a need cell binds the item's algorithm channel and the
-callable it names, and nothing else: the item's value and any value failure are never consulted
-(CALL-03). (Production items are need-backed: `callback_control_transports_need_address`.) -/
+/-- Builtin call-item assembly evaluates nothing (CALL-02, CALL-03): one item per received
+argument, carrying that argument's cell, and no value, recorded failure or projected callable. -/
+theorem call_item_assembly_evaluates_nothing (args : List ResolvedArgumentAlgorithm) :
+    (collectSequenceCallableCallItems args).map (·.need?) = args.map (·.need?)
+    ∧ ∀ item ∈ collectSequenceCallableCallItems args,
+        item.value? = none ∧ item.error? = none ∧ item.callable? = none := by
+  constructor
+  · simp [collectSequenceCallableCallItems]
+  · intro item h
+    simp only [collectSequenceCallableCallItems, List.mem_map] at h
+    obtain ⟨arg, _, rfl⟩ := h
+    exact ⟨rfl, rfl, rfl⟩
+
+/-- A CALLBACK control item WITHOUT a need cell binds the item's algorithm channel, and nothing
+else: the item's value and any value failure are never consulted (CALL-03). (Production items
+are need-backed: `callback_control_transports_need_address`.) -/
 theorem callback_control_binds_only_the_algorithm_channel
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
     (alg : Algorithm) (hk : descriptor.kind = .algorithm) (ha : item.algorithm? = some alg)
     (hn : item.need? = none) :
     runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor item)
-      = .ok (.algorithm alg item.callable?) := by
+      = .ok (.algorithm alg) := by
   simp [prepareSequenceBuiltinSuffixArgItem, hk, ha, hn, runEvalM]
   rfl
 

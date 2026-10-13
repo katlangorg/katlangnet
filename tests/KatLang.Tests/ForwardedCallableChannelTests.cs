@@ -18,13 +18,13 @@ namespace KatLang.Tests;
 ///
 /// <para>The rule now: a slot that INVOKES its argument — the <c>map</c> mapper, the
 /// <c>filter</c> predicate, the <c>reduce</c> reducer, a <c>while</c>/<c>repeat</c> step —
-/// invokes the parameter's ALGORITHM-channel binding
-/// (<c>ResolvedArgumentAlgorithm.InvokedAlgorithm</c>; Lean <c>ResolvedArgumentAlgorithm.invoked</c>),
-/// so direct and forwarded consumer slots invoke the same callable. Forwarding retains
-/// ordinary eager binding effects; consumer selection adds no value demand. Every VALUE slot (the
-/// collection, <c>reduce</c>'s <c>initial</c>, the loop state, the <c>if</c> branches) still
-/// reads the bound value and never re-runs the callable's body. A parameter bound on the value
-/// channel only has no algorithm binding and keeps its old behavior. Lean: the forwarded
+/// invokes the parameter's CALLABLE projection (its supplied cell's,
+/// <c>NeedCell.ProjectCallable</c>; Lean <c>projectNeedCallable</c>), so direct and forwarded
+/// consumer slots invoke the same callable. Since Model C, plain binding demands nothing, and
+/// consumer selection adds no value demand. Every VALUE slot (the collection, <c>reduce</c>'s
+/// <c>initial</c>, the loop state, the <c>if</c> branches) still reads the bound value and never
+/// re-runs the callable's body. A parameter whose cell has no callable identity (a computed
+/// value) has nothing to invoke (<c>NotAnAlgorithm</c>, Q-06). Lean: the forwarded
 /// callable guards in <c>CoreTests/ValueDemand.lean</c>; the
 /// <c>forwarded-callable-keeps-its-algorithm-channel</c> spec case.</para>
 /// </summary>

@@ -157,11 +157,16 @@ def blockSlotReportsUnresolvedImplicitParams : Bool :=
 
 -- `reduce`'s initial accumulator keeps its dedicated hint, now decided from the
 -- signature: `K(x) = 5` is rejected without ever running (it used to yield 8).
+-- The initial is a supplied cell; its failed VALUE demand records the cell's
+-- CALLABLE projection, which `reduceInitialRejection` judges (C# `FinishNeedCallItemDemand`).
+-- Model C (2026-10-02) had left Lean's call items without that projection, so this guard
+-- pinned the property frame instead until 2026-10-13 (`ReduceInitialReportAlignmentTests`).
 def reduceInitialSlotRejectsFromSignature (initial : String) : Bool :=
   match runResult (valueDemandRoot [.call (resolve "reduce")
       [.listLiteral [.num 1, .num 2], resolve "Add", resolve initial]]) with
   | Except.error err =>
-      hasContext ("while evaluating property " ++ initial) err && innermostIsArityMismatch 1 0 err
+      hasContext "while preparing reduce initial accumulator" err && innermostIsBadArity err
+        && !(hasContext ("while evaluating property " ++ initial) err)
   | _ => false
 #guard reduceInitialSlotRejectsFromSignature "Inc"
 #guard reduceInitialSlotRejectsFromSignature "K"
@@ -473,9 +478,9 @@ def unusedZeroArityCallbackIsNotDemanded (inlineBlock : Bool) : Bool :=
 -- demand (`OnlyCount(*xs) = count(xs)`) is bound on BOTH channels. A builtin
 -- VALUE slot reads the bound value; a slot that INVOKES its argument — the
 -- `map` mapper, the `filter` predicate, the `reduce` reducer, a `while` or
--- `repeat` step — invokes the algorithm-channel binding
--- (`ResolvedArgumentAlgorithm.invoked`), so forwarding a callback through a
--- parameter selects the same callable as a direct slot. Ordinary parameter binding
+-- `repeat` step — invokes the parameter cell's CALLABLE projection
+-- (`projectNeedCallable`), so forwarding a callback through a parameter selects
+-- the same callable as a direct slot. Ordinary parameter binding
 -- may already have demanded its value; slot selection adds no demand.
 -- Before, every such slot received the demanded
 -- value wrapped as a zero-parameter algorithm and failed with an arity error.
@@ -698,5 +703,198 @@ def inlineAliasFailsWith (check : Error -> Bool) (row : KatLang.Expr) : Bool :=
   [.call (.algorithmExpr (alg ["v"] [] [] [.num 7])) [inlineAlias (resolve "Inc")]])) [7]
 #guard inlineAliasFailsWith (innermostIsNoMatchingBranch "Fam")
   (.call (resolve "reduce") [.listLiteral [.num 1], resolve "Pair", inlineAlias (resolve "Fam")])
+
+--------------------------------------------------------------------------------
+-- Builtin VALUE-slot rejection reports (aligned with C# on 2026-10-13)
+--------------------------------------------------------------------------------
+-- A builtin's arguments are the call's supplied cells, each with its WRITTEN source
+-- (`formNeedSupplySourced`). When a VALUE slot's demand FAILS, the call item records the
+-- cell's CALLABLE projection unless the written slot is a parameter
+-- (`demandSequenceBuiltinCallItemValue`), so the slot's rejection report judges the callable
+-- the argument names (`sequenceBuiltinValueDemandErrorWith?`): the zero-argument law's
+-- report keyed by the written source, and `reduce`'s dedicated initial-accumulator report
+-- (`reduceInitialRejection`; PV-05: "the dedicated accumulator hint stays as the value
+-- slot's REJECTION report"). A written parameter keeps its established failure (CALL-06),
+-- and a clause family the law's own `noMatchingBranch`. Model C (2026-10-02) left Lean's
+-- call items with neither the written source nor the projection, so until 2026-10-13 Lean
+-- reported the cell's own failure instead: `reduce([1, 2], Add, Inc)` was the property-arity
+-- error, `reduce(xs, Add, { x + 1 })` even `unresolvedImplicitParams`, and `count(Lib.M)`
+-- kept the member's dot-call frame — while C# (`FinishNeedCallItemDemand`) kept the reports.
+--
+-- The cross-engine table. Each program is the C# AST of the source in its doc comment
+-- (elaborated), encoded by `LeanAstEncoder`; the C# test class
+-- `ReduceInitialReportAlignmentTests` renders the C# error tree of the same program in the
+-- same neutral spelling on every C# route, and checks that this section holds the same
+-- programs and the same expectations. The neutral tree keeps the call, dot-call and property
+-- frames by kind — a dot-call frame without its receiver description, whose `(kind)`
+-- spelling is a documented presentation difference — and reduce's initial-accumulator frame
+-- as `reduceInitial`; it drops Lean's builtin-arity frame (C# keeps that content on the
+-- leaf) and C#'s implicit-parameter and output-less argument blame frames (C#-only
+-- presentation); then the leaf with its payload, or `ok` and the value.
+
+section BuiltinValueSlotRejectionReports
+open KatLang (Expr privateProp publicProp)
+
+/-- One frame of the neutral tree, or `none` for a frame the tree omits. -/
+def rirNeutralFrame (message : String) : Option String :=
+  let callPrefix := "while evaluating call to "
+  let dotCallPrefix := "while evaluating dotCall ."
+  let propertyPrefix := "while evaluating property "
+  if message.startsWith callPrefix then
+    some ("call " ++ (message.drop callPrefix.length).toString)
+  else if message.startsWith dotCallPrefix then
+    some ("dotCall ." ++ (((message.drop dotCallPrefix.length).toString.splitOn " of ").headD ""))
+  else if message.startsWith propertyPrefix then
+    some ("property " ++ (message.drop propertyPrefix.length).toString)
+  else if message == "while preparing reduce initial accumulator" then
+    some "reduceInitial"
+  else if message.startsWith "expected " && message.endsWith " arguments" then
+    none
+  else
+    some message
+
+/-- The leaf of the neutral tree: the error kind and its payload. -/
+def rirNeutralLeaf : Error -> String
+  | .arityMismatch expected actual => s!"arityMismatch {expected} {actual}"
+  | .badArity => "badArity"
+  | .noMatchingBranch name => s!"noMatchingBranch {name}"
+  | .unresolvedImplicitParams names => "unresolvedImplicitParams [" ++ String.intercalate ", " names ++ "]"
+  | .notAnAlgorithm description => s!"notAnAlgorithm {description}"
+  | .divByZero => "divByZero"
+  | .missingOutput => "missingOutput"
+  | other => s!"other {reprStr other}"
+
+/-- The neutral error tree: the kept frames outermost first, then the leaf. -/
+def rirNeutralError : Error -> String
+  | .withContext message inner =>
+      match rirNeutralFrame message with
+      | some frame => frame ++ " > " ++ rirNeutralError inner
+      | none => rirNeutralError inner
+  | leaf => rirNeutralLeaf leaf
+
+/-- The neutral spelling of a value. -/
+partial def rirNeutralResult : Result -> String
+  | .atom n => toString n
+  | .str s => "'" ++ s ++ "'"
+  | .bool b => Result.boolText b
+  | .sequenceValue items => "S[" ++ String.intercalate ", " (items.map rirNeutralResult) ++ "]"
+  | .listValue items => "L[" ++ String.intercalate ", " (items.map rirNeutralResult) ++ "]"
+
+/-- The neutral observation of a program: `ok <value>`, or its neutral error tree. -/
+def rirObserve (program : Expr) : String :=
+  match runResult program with
+  | .ok value => "ok " ++ rirNeutralResult value
+  | .error err => rirNeutralError err
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, Inc)` / `Probe(0)` -/
+def rirReduceInitialProperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialProperty == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `K(x) = 5` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, K)` / `Probe(0)` -/
+def rirReduceInitialIgnoredParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "K"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialIgnoredParameter == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { x + 1 })` / `Probe(0)` -/
+def rirReduceInitialBlock : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialBlock == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` -/
+def rirReduceInitialInlineAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialInlineAlias == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `A = Inc` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, A)` / `Probe(0)` -/
+def rirReduceInitialAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Inc")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "A"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialAlias == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Lib = { public M(a) = a }` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, Lib.M)` / `Probe(0)` -/
+def rirReduceInitialMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.dotCall (.resolve "Lib") "M" none)])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialMember == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `P((p, q)) = p` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, P)` / `Probe(0)` -/
+def rirReduceInitialStructuralPattern : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "p" }, .capture { name := "q" }]] [] [] [.param "p"]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "P"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialStructuralPattern == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = [1, 2].reduce(Add, Inc)` / `Probe(0)` -/
+def rirReduceInitialDotted : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.dotCall (.listLiteral [.num 1, .num 2]) "reduce" (some [.resolve "Add", .resolve "Inc"]))])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialDotted == "call Probe > dotCall .reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([], Add, Inc)` / `Probe(0)` -/
+def rirReduceInitialEmptyCollection : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral []), .resolve "Add", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialEmptyCollection == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `G(*xs) = reduce([1, 2], Add, xs*)` / `G(Inc)` -/
+def rirReduceInitialCollectorTransport : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "G" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.sequenceSpread (.param "xs"))])])] [(.call (.resolve "G") [.resolve "Inc"])])
+#guard rirObserve rirReduceInitialCollectorTransport == "call G > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `G(*xs) = count(xs*)` / `G(Inc)` -/
+def rirCountCollectorTransport : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "count") [(.sequenceSpread (.param "xs"))])])] [(.call (.resolve "G") [.resolve "Inc"])])
+#guard rirObserve rirCountCollectorTransport == "call G > call count > property Inc > arityMismatch 1 0"
+
+/-- `F(0) = 1` / `F(n) = n` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, F)` / `Probe(0)` -/
+def rirReduceInitialFamily : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "F"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialFamily == "call Probe > call reduce > noMatchingBranch F"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `G(v) = reduce([1, 2], Add, v)` / `G(Inc)` -/
+def rirReduceInitialThroughParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "G" (alg ["v"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .param "v"])])] [(.call (.resolve "G") [.resolve "Inc"])])
+#guard rirObserve rirReduceInitialThroughParameter == "call G > call reduce > property Inc > arityMismatch 1 0"
+
+/-- `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, 7)` / `Probe(0)` -/
+def rirReduceInitialValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .num 7])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialValue == "ok 10"
+
+/-- `Lib = { public M(a) = a }` / `Probe(unused) = count(Lib.M)` / `Probe(0)` -/
+def rirCountMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "count") [(.dotCall (.resolve "Lib") "M" none)])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirCountMember == "call Probe > call count > arityMismatch 1 0"
+
+/-- `Deep = { public Sub = { public N(b) = b } }` / `Probe(unused) = count(Deep.Sub.N)` / `Probe(0)` -/
+def rirCountNestedMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Deep" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "N" (alg ["b"] [] [] [.param "b"])] [])] []), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "count") [(.dotCall (.dotCall (.resolve "Deep") "Sub" none) "N" none)])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirCountNestedMember == "call Probe > call count > arityMismatch 1 0"
+
+/-- `Lib = { public M(a) = a }` / `Probe(unused) = take([1, 2], Lib.M)` / `Probe(0)` -/
+def rirTakeMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "take") [(.listLiteral [.num 1, .num 2]), (.dotCall (.resolve "Lib") "M" none)])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirTakeMember == "call Probe > call take > arityMismatch 1 0"
+
+/-- `Inc(x) = x + 1` / `Probe(unused) = count(Inc)` / `Probe(0)` -/
+def rirCountProperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "count") [.resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirCountProperty == "call Probe > call count > property Inc > arityMismatch 1 0"
+
+/-- `Lib = { public M(a) = a }` / `G(v) = count(v)` / `G(Lib.M)` -/
+def rirCountMemberThroughParameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "G" (alg ["v"] [] [] [(.call (.resolve "count") [.param "v"])])] [(.call (.resolve "G") [(.dotCall (.resolve "Lib") "M" none)])])
+#guard rirObserve rirCountMemberThroughParameter == "call G > call count > dotCall .M > arityMismatch 1 0"
+
+-- A written parameter's failed VALUE demand is reported as the argument's own (CALL-06) and
+-- performs NO callable projection, like the parameter branch of C#'s
+-- `FinishNeedCallItemDemand`: after `G(v) = reduce([1, 2], Add, v)` / `G(Inc)` fails, no
+-- supplied cell holds a projection (the reducer `Add` is never projected either: binding
+-- fails at the initial accumulator before any invocation).
+def rirParameterSlotProjectsNothing : Bool :=
+  match KatLang.runEvalM (do
+      let outcome <- KatLang.evalAttempt (KatLang.runResultM rirReduceInitialThroughParameter)
+      let state <- get
+      pure (outcome.isOk, state.needs.all (fun cell => cell.callable.isNone))) with
+  | .ok (false, true) => true
+  | _ => false
+#guard rirParameterSlotProjectsNothing
+
+end BuiltinValueSlotRejectionReports
 
 end KatLangTests

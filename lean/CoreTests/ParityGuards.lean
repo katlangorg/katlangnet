@@ -379,46 +379,36 @@ def ifCountedParenthesizedBranchStaysOneValue : Bool :=
 --------------------------------------------------------------------------------
 -- An explicit spread argument (`if(X*)`) has a runtime-only count. The C#
 -- parser is the only layer that gated `if` arity statically; the shared
--- evaluator already expands spread before applying counted `if`, via
--- `applyBuiltinCountedResolved -> expandSequenceSpreadBuiltinArguments`. So a
--- spread of `true, 2, 3` opens into the three argument slots and selects
--- `whenTrue` (2) as one value, matching the user wrapper
--- `MyIF(a, b, c) = if(a, b, c)`. This guard witnesses that no Lean evaluator
--- change was needed for #131.
+-- evaluator opens the spread while it forms the call's supply
+-- (`formNeedSupplySourced`, the builtin arm of `evalResolvedCallCounted`),
+-- before `if` binds its three slots. So a spread of `true, 2, 3` opens into the
+-- three argument slots and selects `whenTrue` (2) as one value, matching the
+-- user wrapper `MyIF(a, b, c) = if(a, b, c)`. These guards run the written call
+-- through the whole evaluator and witness that no Lean evaluator change was
+-- needed for #131.
 
 /-- Three-output property `X = true, 2, 3`: a Boolean condition followed by
     the two branch values. -/
 def ifSpreadSourceThreeOutputs : Algorithm :=
   alg [] [] [] [.boolLiteral true, .num 2, .num 3]
 
-/-- One spread argument whose value opens to three top-level items (`X*`). -/
-def ifSpreadThreeItemsArg : KatLang.ResolvedArgumentAlgorithm :=
-  { algorithm := ifSpreadSourceThreeOutputs, spreadsSequence := true }
-
-/-- Run counted `if` through the resolved, spread-aware builtin entry point. -/
-def ifCountedResolvedResult (args : List KatLang.ResolvedArgumentAlgorithm)
-    : Except KatLang.Error KatLang.CountedResult :=
-  match (KatLang.applyBuiltinCountedResolved .ifBuiltin args builtinProbeCtx []).run
-      KatLang.EvalState.empty with
-  | .ok (counted, _) => .ok counted
-  | .error err => .error err
+/-- Run the root program `X = <source>` / `if(X*)`, counted. -/
+def ifSpreadCallResult (source : Algorithm) : Except KatLang.Error KatLang.CountedResult :=
+  runCountedProgram (.algorithmExpr (algPrivate [] [] [("X", source)]
+    [.call (resolve "if") [.sequenceSpread (resolve "X")]]))
 
 def ifSpreadArgumentOpensIntoThreeArguments : Bool :=
-  match ifCountedResolvedResult [ifSpreadThreeItemsArg] with
+  match ifSpreadCallResult ifSpreadSourceThreeOutputs with
   | .ok (Result.atom 2, 1) => true
   | _ => false
 
 #guard ifSpreadArgumentOpensIntoThreeArguments
 
 -- The same holds when the spread operand is an already-grouped (count-1) value
--- `(true, 2, 3)*`: the spread supplies its items, so the argument still expands
--- to three slots. This mirrors the C# engine test for `TrueResult = (true, 2, 3)`.
-def ifSpreadGroupedOperandArg : KatLang.ResolvedArgumentAlgorithm :=
-  { algorithm := alg [] [] [] [.sequenceSpread (.algorithmExpr ifSpreadSourceThreeOutputs)],
-    spreadsSequence := true }
-
+-- `X = (true, 2, 3)`: the spread supplies its items, so `if(X*)` still receives
+-- three slots. This mirrors the C# engine test for `TrueResult = (true, 2, 3)`.
 def ifSpreadGroupedOperandOpensIntoThreeArguments : Bool :=
-  match ifCountedResolvedResult [ifSpreadGroupedOperandArg] with
+  match ifSpreadCallResult (alg [] [] [] [.capture [.boolLiteral true, .num 2, .num 3]]) with
   | .ok (Result.atom 2, 1) => true
   | _ => false
 

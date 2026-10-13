@@ -520,8 +520,8 @@ public class EvaluatorSequencePipelineTests
                 throw new Xunit.Sdk.XunitException("dot-receiver evaluation must not run for a plain call"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
                 [
-                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], []), SpreadsSequence: false),
-                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], []), SpreadsSequence: false),
+                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], [])),
+                    new Evaluator.ResolvedArgumentAlgorithm(new Algorithm.User(null, [], [], [], [])),
                 ]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@filter)),
             EvaluateRangeCallArguments: (_, _, _) =>

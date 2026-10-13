@@ -151,9 +151,9 @@ public static partial class Evaluator
     /// argument of <c>filter(R, P)</c> — so it is resolved and demanded through
     /// the ONE builtin argument funnel the generic path uses
     /// (<see cref="ResolveArgAlgsWithSequenceSpread"/> +
-    /// <see cref="BuildCallableCallItems"/> with <c>filter</c>'s metadata, whose position 0
-    /// is the VALUE slot <c>collection</c> +
-    /// <see cref="BindSequenceBuiltinCollectionArgument"/>): a named property is
+    /// <see cref="BuildCallableCallItems"/> +
+    /// <see cref="BindSequenceBuiltinCollectionArgument"/>, which demands the one item as
+    /// <c>filter</c>'s VALUE slot <c>collection</c>): a named property is
     /// read through its ordinary property access (the run cache), a parameterized
     /// receiver is the collection-argument demand rejection, and the bound value opens
     /// through the shared post-binding collection view. The fused and generic
@@ -168,20 +168,14 @@ public static partial class Evaluator
         if (receiverArgsR.IsError)
             return receiverArgsR.Error;
 
-        var itemsR = BuildCallableCallItems(
-            receiverArgsR.Value,
-            ctx,
-            valEnv,
-            GetSequenceBuiltinMetadata(BuiltinId.@filter)!.Value);
-        if (itemsR.IsError)
-            return itemsR.Error;
+        var items = BuildCallableCallItems(receiverArgsR.Value);
 
         // A spread receiver never reaches this adapter (the optimizer declines it),
         // so the receiver is exactly one call item — the collection argument.
-        if (itemsR.Value.Count != 1)
-            return new EvalError.ArityMismatch(1, itemsR.Value.Count);
+        if (items.Count != 1)
+            return new EvalError.ArityMismatch(1, items.Count);
 
-        var collectionValuesR = BindSequenceBuiltinCollectionArgument(itemsR.Value[0], ctx, valEnv);
+        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0], ctx, valEnv);
         if (collectionValuesR.IsError)
             return collectionValuesR.Error;
 
@@ -227,10 +221,7 @@ public static partial class Evaluator
         var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
         if (argAlgsR.IsError) return argAlgsR.Error;
 
-        var expandedArgsR = ExpandSequenceSpreadBuiltinArguments(argAlgsR.Value, ctx, valEnv);
-        if (expandedArgsR.IsError) return expandedArgsR.Error;
-
-        return EvalBuiltinRangeArguments(expandedArgsR.Value, ctx, valEnv);
+        return EvalBuiltinRangeArguments(argAlgsR.Value, ctx, valEnv);
     }
 
     /// <summary>

@@ -12,7 +12,7 @@ import CoreTests.Common
 --   cells (`bindNeedPatterns` → a `.collector` suspension). Binding demands none
 --   of them.
 -- * RE-SPREADING A KNOWN SLICE. `xs*` transfers those very cells
---   (`formNeedSupply`'s `.collector` arm), with whatever VALUE/CALLABLE channels
+--   (`formNeedSupplySourced`'s known-slice arm, `spreadCollectorSlice?`), with whatever VALUE/CALLABLE channels
 --   they already have and without forcing them: a callable that flows through a
 --   collector and is re-spread is callable again. No identity is invented — a
 --   value, a capture or a computed result stays value-only (NEED-06).

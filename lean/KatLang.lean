@@ -3048,6 +3048,18 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
       return address
   allocateNeed (.expression source caller values)
 
+/-- The KNOWN collector slice a spread operand transports (NEED-07/08): the slice of a
+    parameter bound to a supplied collector cell, found exactly as `supplyNeed` finds a
+    parameter's cell. It allocates nothing — any other operand is evaluated by the spread
+    itself (`formNeedSupplySourced`). C#: the `Slice` test in `FormSpreadSupplySlot`. -/
+def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (List Nat)) := do
+  if let .param name := operand then
+    let activation <- capturedParameterActivation? name caller
+    if let some address := lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) then
+      let some cell := (<- get).needs[address]? | throw Error.badArity
+      if let .collector slice := cell.suspension then return some slice
+  pure none
+
 /-- THE member-accessibility law, applied AFTER a member has been selected — by structural
     dot access (`evalDotCallCounted`, `resolveDotReceiver`), by a dotted `open` path step
     (`resolveAlgForOpen`), and by an `open`-provided name (`lookupOpenProperties`); direct
@@ -3242,17 +3254,17 @@ structure CallableCallItem where
   value? : Option Result := none
   algorithm? : Option Algorithm := none
   error? : Option Error := none
-  skipMissingValue : Bool := false
   source? : Option Expr := none
-  /-- The named binding's ALGORITHM-channel identity (a parameter's or a
-      property reference's), carried beside the value-side `algorithm?`
-      (`ResolvedArgumentAlgorithm.callable?`). -/
+  /-- The callable the item NAMES, beside the value-side `algorithm?`: for a supplied
+      cell whose VALUE demand failed, the cell's CALLABLE projection (unless the
+      written slot is a parameter — `demandSequenceBuiltinCallItemValue`; C#
+      `VariadicCallItem.Callable`, set by `FinishNeedCallItemDemand`). -/
   callable? : Option Algorithm := none
   deriving Repr
 
-/-- The algorithm a call item NAMES (`ResolvedArgumentAlgorithm.invoked`): the
-    identity the zero-argument value-demand law judges, while a VALUE demand
-    evaluates the value-side `algorithm?`. -/
+/-- The algorithm a call item NAMES: the identity the zero-argument value-demand law
+    judges — the projected `callable?` when the item has one, otherwise the
+    value-side `algorithm?`, which a VALUE demand evaluates. -/
 def CallableCallItem.named? (item : CallableCallItem) : Option Algorithm :=
   item.callable?.or item.algorithm?
 
@@ -3620,13 +3632,13 @@ structure PreparedSequenceBuiltinInput where
   numericItems? : Option (List Int) := none
   deriving Repr
 
-/-- One bound control argument of a collection builtin. A CALLBACK control
-    (`.algorithm`) carries the algorithm channel and the named callable it
-    invokes (`callable?`, read through `ResolvedArgumentAlgorithm.invoked`) and
-    no value: it was never value-evaluated. A VALUE control carries the value
-    its one demand established. -/
+/-- One bound control argument of a collection builtin. A CALLBACK control carries
+    no value — it was never value-evaluated — only its callable: a supplied cell's
+    address (`.needAlgorithm`, projected when the builtin invokes it), or, for an
+    argument without a cell (the hand-built fixture seam), the algorithm it invokes
+    (`.algorithm`). A VALUE control carries the value its one demand established. -/
 inductive PreparedSequenceBuiltinSuffixArg where
-  | algorithm (value : Algorithm) (callable? : Option Algorithm := none)
+  | algorithm (value : Algorithm)
   | needAlgorithm (address : Nat)
   | value (value : Result)
   | wholeNumber (value : Int)
@@ -3638,43 +3650,58 @@ structure BoundSequenceBuiltinArguments where
   suffixArgs : List PreparedSequenceBuiltinSuffixArg
   deriving Repr
 
+/-- One argument a builtin receives. Every argument the evaluator builds is a SUPPLIED
+    CELL (`need?`): the builtin arm of `evalResolvedCallCounted` passes the call's
+    supply (`formNeedSupplySourced`, explicit spreads already opened), a builtin loop
+    step its state cells and a builtin callback its element cells; a VALUE slot
+    demands the cell (`demandNeed`) and an invoking slot projects it
+    (`projectNeedCallable`), while `algorithm` is an inert placeholder. An argument
+    WITHOUT a cell is the direct-invocation seam that hand-built fixtures use
+    (`CoreTests/ParityGuards.lean`, the slot-role laws): a VALUE slot then demands
+    `algorithm` through the zero-argument law, and an invoking slot calls it.
+    C#: `Evaluator.ResolvedArgumentAlgorithm`. -/
 structure ResolvedArgumentAlgorithm where
   need? : Option Nat := none
   algorithm : Algorithm
-  spreadsSequence : Bool := false
-  /-- The written argument expression this algorithm was resolved from: the
-      demand-site identity `zeroArgumentDemandError?` reports through when a
-      builtin VALUE slot demands the algorithm with zero arguments. `none` for
-      value-reified arguments (prepared callback data, expanded spread items,
-      dotted receivers), whose algorithms carry no parameters. -/
+  /-- The argument's WRITTEN slot at this call: the builtin arm of
+      `evalResolvedCallCounted` records it from the supply formation
+      (`formNeedSupplySourced` — the slot as written; for a transported collector
+      slice, each cell's own original source; none for a spread's ready items), and a
+      builtin VALUE slot's rejection report reads it: a written parameter reports its
+      established failure (CALL-06), and any other written source keys the
+      zero-argument law's report (`sequenceBuiltinValueDemandErrorWith?`). For an
+      argument WITHOUT a cell it is the demand-site identity `zeroArgumentDemandError?`
+      reports through. C#: `ResolvedArgumentAlgorithm.Source`. -/
   source? : Option Expr := none
-  /-- An argument that NAMES a binding resolves to its value side (`algorithm`,
-      a wrapper that performs the ordinary value read of the written name) and
-      keeps the named algorithm here: a parameter bound on BOTH channels (the
-      wrapper reads the bound value, so a VALUE slot never re-runs the
-      argument's body), a parameter whose argument slot FAILED its one value
-      evaluation (the wrapper reports that failure — AT-MOST-ONCE ARGUMENT VALUE
-      EVALUATION), and a lexical property reference `A` (the wrapper is the
-      ordinary property read `A` — the zero-argument property access with its run
-      cache — so a VALUE slot never re-runs the property's body: HOW A PROPERTY
-      VALUE IS CONSUMED DOES NOT AFFECT CACHING, and `sum(A)` reads exactly the
-      value `A` reads). A slot that INVOKES its argument — a sequence callback or
-      a loop step — calls `invoked`, so `Apply(f, xs) = map(xs, f)` applies the
-      callable `f` exactly as `map(xs, Cnt)` does even when `Cnt` also satisfies
-      a zero-argument value demand; the zero-argument value-demand law and every
-      signature classification read `invoked` too, because they judge the named
-      callable, not its value wrapper. `none` for every other argument, whose
-      `algorithm` already is its algorithm-channel identity. -/
-  callable? : Option Algorithm := none
   deriving Repr
 
-/-- The algorithm an argument NAMES: the callable an ALGORITHM slot (a sequence
-    callback or a loop step) invokes and the identity the zero-argument
-    value-demand law and signature classification judge — a named binding's
-    algorithm-channel identity when it has one, otherwise the resolved
-    algorithm. VALUE slots read `algorithm`. -/
-def ResolvedArgumentAlgorithm.invoked (arg : ResolvedArgumentAlgorithm) : Algorithm :=
-  arg.callable?.getD arg.algorithm
+/-- Collection-builtin call items: each argument the builtin receives, wrapped for
+    binding, evaluating NOTHING (CALL-02, CALL-03, NEED-01..05). Every argument is
+    already a supplied cell (`need?`): a builtin loop step's state cells, a builtin
+    callback's element cells, or a call's supply, formed before this, left to right
+    (`formNeedSupplySourced`, the builtin arm of `evalResolvedCallCounted`) — where a
+    SPREAD slot's operand was evaluated and supplied exactly its spread items, which
+    take the roles of the positions they land on, its failure, of any kind, the CALL's
+    failure, raised before any later slot and before the arity check, never one
+    phantom supplied item (SUP-01, SUP-02, CALL-04), so `take(Bad*)` is `Bad`'s
+    failure, not an arity error, and `map([], Bad*)` fails although `map` would never
+    invoke a callback — and every other slot stayed its suspended cell. Each item's ROLE
+    (`SequenceBuiltinMetadata.slotRole`) decides what the builtin later does with it:
+    a CALLBACK is projected on the CALLABLE channel only when the builtin invokes it
+    per element (CALL-03, HO-04), so an unused callback runs no body, has no effect,
+    cannot fail and cannot recurse (`map([], A)` never reads `A`, exactly as
+    `repeat(A, 0, 5)` never runs `A`); a VALUE slot is demanded only when the builtin
+    executes it, after the arity check, through its cell and at most once, so no later
+    read retries it (`reduce`'s `initial` included, HO-04;
+    `demandSequenceBuiltinCallItemValue`); a SURPLUS slot is never demanded: the call
+    reports its arity error first (NEED-05). An argument without a cell (the
+    hand-built fixture seam) is never evaluated standalone either: a VALUE slot judges
+    its algorithm by the ONE zero-argument law first. *(Until Model C, 2026-10-02, a
+    value slot was demanded here, before the arity check, its ordinary failure retained
+    on the item, and a surplus slot was prepared like a value slot's eager attempt.)*
+    C#: `BuildCallableCallItems`. -/
+def collectSequenceCallableCallItems (args : List ResolvedArgumentAlgorithm) : List CallableCallItem :=
+  args.map fun arg => { algorithm? := some arg.algorithm, source? := arg.source?, need? := arg.need? }
 
 def intPow (b : Int) : Nat -> Int
   | 0 => 1
@@ -4264,18 +4291,24 @@ def loopStateResult (stateSlots : List Result) : Result :=
     C#: the builtin arm of `Evaluator.InvokeLoopStepSupply`. -/
 def loopStepBuiltinRows (out : CountedResult) : List Result := [out.fst]
 
+/-- The written expression a supply cell retains: the argument as written, or, for a
+    cell transported through a parameter, the argument originally written for it
+    (`supplyNeed`). A ready cell (a spread item, a callback element, loop state) and a
+    collector have none. C#: `NeedCell.Source`. -/
+def needWrittenSource? (address : Nat) : EvalM (Option Expr) := do
+  match (<- get).needs[address]? with
+  | some { suspension := .expression source _ _, .. } => pure (some source)
+  | _ => pure none
+
 /-- The name a loop step's own call frame and a family step's `noMatchingBranch`
-    report (LOOP-08, Q-23): the written expression its SUPPLY CELL retains — the
-    step argument as written, or, for a cell transported through a parameter, the
-    argument originally written for it (`supplyNeed`) — named exactly as the
-    ordinary call names its callee (`openExprName`); a cell with no written source
+    report (LOOP-08, Q-23): the written expression its SUPPLY CELL retains
+    (`needWrittenSource?`) — the step argument as written, or, for a cell transported
+    through a parameter, the argument originally written for it — named exactly as
+    the ordinary call names its callee (`openExprName`); a cell with no written source
     (a spread item) is the loop's step. C#: `Evaluator.StepDiagnosticName`. -/
 def loopStepName (loopName : String) (step : ResolvedArgumentAlgorithm) : EvalM String := do
   let written? : Option Expr <- match step.need? with
-    | some address => do
-        match (<- get).needs[address]? with
-        | some { suspension := .expression source _ _, .. } => pure (some source)
-        | _ => pure none
+    | some address => needWrittenSource? address
     | none => pure step.source?
   pure (match written? with
     | some e => openExprName e
@@ -4384,22 +4417,6 @@ partial def propertyOwnerBindingContext (scope : Option ScopeCtx) (state : EvalS
       | some activation => some activation.bindingContext
       | none => propertyOwnerBindingContext level.parent state
 
-def requireCallableValues (items : List CallableCallItem)
-    : EvalM (List Result) := do
-  match items with
-  | [] => pure []
-  | item :: rest =>
-      let tail <- requireCallableValues rest
-      match item.value? with
-      | some value => pure (value :: tail)
-      | none =>
-          if item.skipMissingValue then
-            pure tail
-          else
-            match item.error? with
-            | some err => .error err
-            | none => .error Error.badArity
-
 def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMetadata)
     (collected : CollectedSequenceBuiltinInput) : EvalM CollectedSequenceBuiltinInput :=
   match metadata.emptyPolicy with
@@ -4481,7 +4498,8 @@ def internalSequenceBuiltinSuffixArgMetadataError
 
 /-- After binding chooses a VALUE position, apply the shared demand rejection to
     an unevaluated callable using its written source — judging the callable the
-    item NAMES (`CallableCallItem.named?`), never its value wrapper. Preserve a
+    item NAMES (`CallableCallItem.named?`: a failed cell's CALLABLE projection, or a
+    fixture item's algorithm). Preserve a
     valid value's body error; callback positions never consult this helper. A
     parameter's established failure precedes callable classification. `refine`
     rewrites only the zero-argument law's REJECTION of the named callable (every
@@ -4519,7 +4537,7 @@ def prepareSequenceBuiltinSuffixArgItem
     -- A CALLBACK slot: call-item assembly never evaluated the item (CALL-03), so
     -- it carries its algorithm channel only; the builtin invokes it later.
     match item.algorithm? with
-    | some alg => pure (.algorithm alg item.callable?)
+    | some alg => pure (.algorithm alg)
     | none =>
         match item.error? with
         | some err => .error err
@@ -4578,10 +4596,6 @@ def expectPreparedSequenceBuiltinSuffixArgAt
     | _, _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"expected suffix argument {index + 1} to have metadata kind {sequenceBuiltinSuffixArgKindDesc expectedKind}"
-
-/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
-    `filter` predicate, the `map` mapper, the `reduce` reducer): the argument's
-    algorithm-channel identity (`ResolvedArgumentAlgorithm.invoked`). -/
 
 def expectPreparedSequenceBuiltinWholeNumberSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
@@ -5390,6 +5404,10 @@ def projectInvokingSlot (role : String) : Option Algorithm -> EvalM Algorithm
   | some algorithm => pure algorithm
   | none => .error (Error.notAnAlgorithm role)
 
+/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
+    `filter` predicate, the `map` mapper, the `reduce` reducer), through the ONE
+    invoking-slot rule (`projectInvokingSlot`): a supplied cell's CALLABLE projection
+    (`projectNeedCallable`), or, for an argument without a cell, its algorithm. -/
 partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
     (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
@@ -5397,9 +5415,8 @@ partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
     match arg with
     | .needAlgorithm address => do
         projectInvokingSlot (invokingSlotRole b) (<- projectNeedCallable address)
-    | .algorithm algorithm callable? =>
-        projectInvokingSlot (invokingSlotRole b)
-          (some ({ algorithm := algorithm, callable? := callable? } : ResolvedArgumentAlgorithm).invoked)
+    | .algorithm algorithm =>
+        projectInvokingSlot (invokingSlotRole b) (some algorithm)
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
@@ -5466,17 +5483,6 @@ def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
   | .algorithmExpr a => pure (wireToCaller ctx a)
   | _ => resolveAlg e ctx
 
-
-/-- Transport builtin arguments as suspended cells, retaining written source and spread markers.
-    Ordinary arguments do no value evaluation or callable probing during formation. -/
-def resolveArgAlgsWithSequenceSpread (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-    : EvalM (List ResolvedArgumentAlgorithm) :=
-  args.mapM (fun e => do
-    let address <- supplyNeed e ctx env
-    pure { algorithm := Algorithm.ofExpr e, need? := some address,
-           spreadsSequence := match e with | .sequenceSpread _ => true | _ => false,
-           source? := some e })
-
 /-
 Evaluator recursion core.
 
@@ -5501,7 +5507,7 @@ PLAIN/COUNTED OWNERSHIP: for every plain/counted evaluator pair the COUNTED
 implementation is canonical and the plain implementation is its value
 projection (`.fst` of the counted result) — `eval` projects `evalCounted`,
 `evalUserCall`/`evalConditionalCall`/`evalResolvedCall`/`evalCallExpr`/
-`evalDotCall`/`applyBuiltin`/`applyBuiltinResolved`/`evalAlgOutputCore`/
+`evalDotCall`/`applyBuiltin`/`evalAlgOutputCore`/
 `evalCaptureValue`/`evalZeroArgPropertyAccess`/`evalResolvedCallbackCall`
 project their counted twins. `evalCounted` therefore matches EVERY `Expr`
 variant explicitly, with no default arm delegating back to `eval`: the
@@ -5790,24 +5796,34 @@ mutual
       modify fun state => { state with needs := (state.needs.modify address (fun current => { current with state := .completed outcome })) }
       return <- outcome
 
-  /-- Supply formation only opens spreads. Known collecting slices transport addresses. -/
-  partial def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Nat) := do
-    let rec go : List Expr -> EvalM (List Nat)
+  /-- Supply formation only opens spreads. Known collecting slices transport addresses.
+      THE ONE FORMATION: each formed cell is paired with its WRITTEN source — the slot as
+      written; for a transported collector slice, each cell's own original source
+      (`needWrittenSource?`); none for a spread's ready items. A builtin's VALUE slot reads
+      it for its rejection report (`demandSequenceBuiltinCallItemValue`,
+      `sequenceBuiltinValueDemandErrorWith?`); every other call projects the cells alone
+      (`formNeedSupply`). C#: `FormNeedSupply` with its `sources`. -/
+  partial def formNeedSupplySourced (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM (List (Nat × Option Expr)) := do
+    let rec go : List Expr -> EvalM (List (Nat × Option Expr))
       | [] => pure []
       | source :: rest => do
         let head <- match source with
           | .sequenceSpread operand => do
-            let address <- supplyNeed operand ctx env
-            let some cell := (<- get).needs[address]? | throw Error.badArity
-            match cell.suspension with
-            | .collector slice => pure slice
-            | _ => do
+            match <- spreadCollectorSlice? operand ctx with
+            | some slice => slice.mapM (fun element => do pure (element, <- needWrittenSource? element))
+            | none => do
               let opened <- evalCounted source ctx env
-              (countedTopLevelValues opened).mapM (fun value => readyNeed (value, Result.valueCount value))
-          | _ => do pure [<- supplyNeed source ctx env]
+              (countedTopLevelValues opened).mapM (fun value => do
+                pure (<- readyNeed (value, Result.valueCount value), none))
+          | _ => do pure [(<- supplyNeed source ctx env, some source)]
         let tail <- go rest
         pure (head ++ tail)
     go args
+
+  /-- The supply's cells (`formNeedSupplySourced` without the written sources). -/
+  partial def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Nat) := do
+    pure ((<- formNeedSupplySourced args ctx env).map Prod.fst)
 
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
@@ -5833,7 +5849,7 @@ mutual
 
   partial def invokeNeed (arg : ResolvedArgumentAlgorithm) : EvalM (Option Algorithm) := do
     if let some address := arg.need? then return (<- projectNeedCallable address)
-    pure (some arg.invoked)
+    pure (some arg.algorithm)
 
   partial def argumentNeed (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Nat :=
     match arg.need? with
@@ -6132,25 +6148,22 @@ mutual
     let counted <- evalZeroArgumentDemandOutputCounted a ctx env
     pure counted.fst
 
-  /-- Demand a builtin argument slot for its VALUE with zero explicit arguments.
-      The ONE zero-argument value-demand law (`zeroArgumentDemandError?`) decides
-      from the resolved algorithm's effective signature BEFORE any body is
-      entered — a selected `if` branch, a loop's initial state, the `repeat`
-      count, and the `atoms`/`range` arguments reject a callable that cannot
-      accept zero supplied arguments exactly like value-position access does
-      (`if(true, Inc, 0)` with `Inc(x)` is the property arity error, never
-      `unknownName x` from inside `Inc`), while a callable that CAN (a property,
-      a captured-binding thunk, a written value, a collecting-only signature)
-      evaluates through the shared demand funnel. The law judges the callable
-      the argument NAMES (`invoked`); the accepted demand evaluates the VALUE
-      channel (`algorithm`), which for a named property is the ordinary property
-      read — so the slot reads the property's cached value and never re-runs its
-      body. Laziness is untouched: a slot is demanded only when the builtin
-      selects it. C#: `EvalResolvedArgumentCounted`. -/
+  /-- Demand a builtin argument slot for its VALUE. A supplied cell is its one VALUE
+      demand (`demandNeed`) — every argument the evaluator builds. An argument WITHOUT
+      a cell (the hand-built fixture seam) is judged by the ONE zero-argument
+      value-demand law (`zeroArgumentDemandError?`) from its algorithm's effective
+      signature BEFORE any body is entered — a selected `if` branch, a loop's initial
+      state, the `repeat` count, and the `atoms`/`range` arguments reject a callable
+      that cannot accept zero supplied arguments exactly like value-position access
+      does (`if(true, Inc, 0)` with `Inc(x)` is the property arity error, never
+      `unknownName x` from inside `Inc`), while a callable that CAN (a property, a
+      written value, a collecting-only signature) evaluates through the shared demand
+      funnel. Laziness is untouched: a slot is demanded only when the builtin selects
+      it. C#: `EvalResolvedArgumentCounted`. -/
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     if let some address := arg.need? then return <- demandNeed address
-    match zeroArgumentDemandError? arg.source? arg.invoked with
+    match zeroArgumentDemandError? arg.source? arg.algorithm with
     | some err => .error err
     | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
 
@@ -6301,68 +6314,42 @@ mutual
       ]
       ctx env calleeName
 
-  /-- Collection-builtin argument supply: the written slots, left to right, as the
-      ordinary supply (CALL-02, CALL-03, NEED-01..05), before the arity check and
-      before binding. Each slot's ROLE (`SequenceBuiltinMetadata.slotRole`) decides
-      what the builtin later does with it.
-      - A SPREAD slot is supply formation: its operand is evaluated NOW and supplies
-        exactly its spread items, which take the roles of the positions they land
-        on. Its failure — of any kind — is the CALL's failure, raised here, before
-        any later slot and before the arity check; it is never one phantom supplied
-        item (SUP-01, SUP-02, CALL-04). So `take(Bad*)` is `Bad`'s failure, not an
-        arity error, and `map([], Bad*)` fails although `map` would never invoke a
-        callback: the spread law of every call.
-      - Every other slot is transported as its suspended cell (`need?`) and never
-        evaluated here. A CALLBACK slot is projected on the CALLABLE channel only
-        when the builtin invokes it per element (CALL-03, HO-04): an unused callback
-        runs no body, so it has no effect, cannot fail and cannot recurse
-        (`map([], A)` never reads `A`, exactly as `repeat(A, 0, 5)` never runs `A`).
-        A VALUE slot is demanded only when the builtin executes it, after the arity
-        check, through its cell and at most once, so no later read retries it
-        (`reduce`'s `initial` included, HO-04). A SURPLUS slot is never demanded:
-        the call reports its arity error first (NEED-05). *(Until Model C,
-        2026-10-02, a value slot was demanded here, before the arity check, its
-        ordinary failure retained on the item, and a surplus slot was prepared like
-        a value slot's eager attempt.)*
-      A callable-shaped argument (one that declares parameters, or a clause
-      family) is never evaluated standalone: its parameters are unbound at this
-      collection point, so evaluating its body would resolve those parameter
-      names against the surrounding scope (when a sibling argument shares a
-      parameter name and was deferred as a self-referential thunk, that stray
-      lookup re-enters the same builtin call and never settles). In a VALUE
-      position it is demanded through the ONE zero-argument law
-      (`demandSequenceBuiltinCallItemValue`). The shape is the NAMED callable's
-      (`invoked`), never its value wrapper's; a named zero-parameter property is
-      read through its value side — the ordinary property read, served from the
-      run cache. C#: `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`, then
-      `BuildCallableCallItems` and `DemandSequenceBuiltinCallItemValue`. -/
-    partial def collectSequenceCallableCallItems
-      (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-      (metadata : SequenceBuiltinMetadata)
-      : EvalM (List CallableCallItem) := do
-    let _ := metadata
-    let expanded <- expandSequenceSpreadBuiltinArguments args ctx env
-    pure (expanded.map fun arg => ({ algorithm? := some arg.algorithm, source? := arg.source?, callable? := arg.callable?, need? := arg.need? } : CallableCallItem))
-
   /-- Demand ONE collection-builtin call item that binding has placed in a VALUE
-      position. Call-item assembly leaves a callable-shaped CALLBACK item
-      unevaluated (a CALLBACK slot must receive the algorithm, never a value), so
-      the demand happens HERE, once the descriptor has decided the slot is a
-      value: an item whose NAMED callable (`CallableCallItem.named?`) the ONE law
-      accepts (`acceptsZeroArgumentValueDemand` — a collecting-only signature
-      such as `Only` alongside every zero-parameter property) is evaluated
-      through the shared demand funnel on its VALUE side — for a named property
-      the ordinary property read with its run cache — and every other item is
-      returned untouched for `sequenceBuiltinValueDemandError?` to report. An
-      item that was already evaluated, or whose evaluation already failed, is
-      never re-entered. C#: `DemandSequenceBuiltinCallItemValue`. -/
+      position: the demand happens HERE, once the descriptor has decided the slot is
+      a value (a CALLBACK item is never demanded — a CALLBACK slot receives the
+      callable, never a value). An item that was already evaluated, or whose
+      evaluation already failed, is never re-entered.
+
+      A supplied cell — every item the evaluator builds — is demanded through its one
+      VALUE demand. When that demand FAILS, the item keeps the failure and — unless
+      its WRITTEN slot is a parameter, whose established failure is reported as the
+      written argument's own (CALL-06) — records the cell's CALLABLE projection, never
+      a VALUE demand (NEED-06), as the callable the slot NAMES
+      (`CallableCallItem.callable?`), so the slot's rejection report judges it
+      (`sequenceBuiltinValueDemandErrorWith?`: the zero-argument law's report keyed by
+      the written source, and `reduce`'s dedicated initial-accumulator report,
+      `reduceInitialRejection`). A projection that fails names no callable.
+
+      An item WITHOUT a cell (the hand-built fixture seam) is evaluated through the
+      shared demand funnel only when the ONE law accepts its callable
+      (`acceptsZeroArgumentValueDemand` — a collecting-only signature such as `Only`
+      alongside every zero-parameter property); every other such item is returned
+      untouched for `sequenceBuiltinValueDemandError?` to report.
+      C#: `DemandSequenceBuiltinCallItemValue` → `FinishNeedCallItemDemand`. -/
   partial def demandSequenceBuiltinCallItemValue (item : CallableCallItem)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem := do
     if let some address := item.need? then
       if item.value?.isSome || item.error?.isSome then return item
       match <- evalAttempt (demandNeed address) with
       | .ok value => return { item with value? := some value.fst }
-      | .error err => return { item with error? := some err }
+      | .error err =>
+          match item.source? with
+          | some (.param _) => return { item with error? := some err }
+          | _ =>
+              let named? <- match <- evalAttempt (projectNeedCallable address) with
+                | .ok projected => pure projected
+                | .error _ => pure none
+              return { item with error? := some err, callable? := named? }
     match item.value?, item.error?, item.algorithm? with
     | none, none, some alg =>
         if acceptsZeroArgumentValueDemand (item.callable?.getD alg) then
@@ -6376,7 +6363,7 @@ mutual
     partial def bindSequenceBuiltinArguments
       (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments := do
-    let items <- collectSequenceCallableCallItems args ctx env metadata
+    let items := collectSequenceCallableCallItems args
     -- A collection builtin is an ordinary fixed-arity callable: exactly one
     -- collection argument followed by its fixed control arguments
     -- (`count(collection)`, `take(collection, count)`,
@@ -6623,9 +6610,9 @@ mutual
       `repeat` count, `atoms`, `range`) is demanded through
       `evalArgumentValueCounted`, so a parameterized algorithm in a selected slot
       is the ordinary zero-argument arity rejection and never enters its body;
-      ALGORITHM slots (loop steps) invoke the argument's algorithm-channel
-      identity (`ResolvedArgumentAlgorithm.invoked`), so a step forwarded through
-      a parameter is the callable itself, never its demanded value. -/
+      ALGORITHM slots (loop steps) invoke the argument's CALLABLE projection
+      (`invokeNeed`), so a step forwarded through a parameter is the callable
+      itself, never its demanded value. -/
   partial def applyBuiltinCounted
       (b : Builtin) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv)
@@ -6723,51 +6710,19 @@ mutual
     let out <- applyBuiltinCounted b args ctx env
     pure out.fst
 
-  partial def expandSequenceSpreadBuiltinArguments
-      (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-      : EvalM (List ResolvedArgumentAlgorithm) := do
-    -- Spread-marked argument slots are forced exactly once, in left-to-right written
-    -- order, and expanding a spread slot is part of evaluating that slot: evaluate and
-    -- expand the CURRENT spread slot before recursing into the remaining ones, then
-    -- place its expansion before theirs. Non-spread slots pass through untouched as
-    -- algorithms — they keep their written position and remain builtin-lazy, evaluated
-    -- or skipped later by the builtin's own semantics (an unselected `if` branch never
-    -- runs). Recursing first still produced the correct flattened argument order, but
-    -- it ran the spread slots' effects and reported their failures right to left, so
-    -- two failing spread slots reported the RIGHTMOST failure while the C# runtime
-    -- reported the leftmost.
-    let rec loop : List ResolvedArgumentAlgorithm -> EvalM (List ResolvedArgumentAlgorithm)
-      | [] => pure []
-      | arg :: rest => do
-          if arg.spreadsSequence then
-            let counted <- evalArgumentValueCounted arg ctx env
-            let expanded <- (countedTopLevelValues counted).mapM (fun value => do
-              let address <- readyNeed (value, 1)
-              pure ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm))
-            let tail <- loop rest
-            pure (expanded ++ tail)
-          else
-            let tail <- loop rest
-            pure (arg :: tail)
-    loop args
-
+  /-- The builtin application of a resolved call and of a builtin loop step (C#:
+      `ApplyBuiltinCountedResolved`, the ONE builtin dispatch switch, which a builtin
+      callback reaches too; Lean's callback route calls `applyBuiltinCounted`
+      directly): `applyBuiltinCounted` over the arguments as received — supplied
+      cells, a call's explicit spreads already opened at supply formation
+      (`formNeedSupplySourced`). *(Until 2026-10-13 it first expanded spread-marked
+      arguments, which no evaluator-built argument had been since Model C; only
+      CoreTests fixtures wrote them.)* -/
   partial def applyBuiltinCountedResolved
       (b : Builtin) (args : List ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult :=
-    match sequenceBuiltinMetadata? b with
-    | some metadata =>
-        applyBuiltinCountedSequence b metadata args ctx env
-    | none => do
-        let expandedArgs <- expandSequenceSpreadBuiltinArguments args ctx env
-        applyBuiltinCounted b expandedArgs ctx env
-
-  partial def applyBuiltinResolved
-      (b : Builtin) (args : List ResolvedArgumentAlgorithm)
-      (ctx : EvalCtx) (env : ValEnv)
-      : EvalM Result := do
-    let out <- applyBuiltinCountedResolved b args ctx env
-    pure out.fst
+    applyBuiltinCounted b args ctx env
 
   partial def evalExplicitSequenceValueItems (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
       : EvalM (List Result) := do
@@ -6900,8 +6855,11 @@ mutual
       : EvalM CountedResult := do
     match callee with
     | .builtin b => do
-      let cells <- formNeedSupply args ctx env
-      let supplied := cells.map fun address => ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)
+      -- A builtin receives the ordinary supply cells, each with its WRITTEN source (C#:
+      -- `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`).
+      let cells <- formNeedSupplySourced args ctx env
+      let supplied := cells.map fun (address, source?) =>
+        ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
       applyBuiltinCountedResolved b supplied ctx env
     | .conditional _ _ _ _ =>
       match flatBinderUserEquivalent? callee with

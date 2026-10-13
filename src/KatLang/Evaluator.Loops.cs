@@ -396,8 +396,8 @@ public static partial class Evaluator
     // (sequence-builtin metadata routing plus the if/while/repeat/atoms/range
     // arms), and every plain spelling reaches it through the counted call
     // family plus the value projection. (Lean keeps the named projection
-    // `applyBuiltinResolved` because CoreTests guards address it directly;
-    // the C# equivalent would have no caller at all.)
+    // `applyBuiltin` because CoreTests guards address it directly; the C#
+    // equivalent would have no caller at all.)
 
     /// <summary>
     /// The generic continuation of a planned <c>while</c> after a handover (its only caller). It

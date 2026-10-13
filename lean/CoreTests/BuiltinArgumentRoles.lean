@@ -8,9 +8,10 @@ open KatLang (resolve param num)
 --------------------------------------------------------------------------------
 -- Builtin call assembly respects argument roles (PV-05 / PV-19 / PV-20, September 2026)
 --------------------------------------------------------------------------------
--- THE RULE: collection-builtin argument assembly (`collectSequenceCallableCallItems`)
--- handles every written slot by the ROLE its position has in the builtin's metadata
--- (`SequenceBuiltinMetadata.slotRole`):
+-- THE RULE: a collection builtin handles every written slot by the ROLE its position
+-- has in the builtin's metadata (`SequenceBuiltinMetadata.slotRole`) — through supply
+-- formation (`formNeedSupplySourced`), the call items (`collectSequenceCallableCallItems`,
+-- which evaluate nothing) and the per-slot demand (`demandSequenceBuiltinCallItemValue`):
 --   * a VALUE slot is demanded ONCE; its value or its failure is final for the call and
 --     is never retried — `reduce`'s `initial` is a value slot (PV-05);
 --   * a CALLBACK slot carries its algorithm and is INVOKED by the builtin; supplying it

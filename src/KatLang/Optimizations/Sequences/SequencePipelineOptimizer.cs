@@ -690,7 +690,7 @@ internal static class SequencePipelineOptimizer
                     preparation.Syntax.Form,
                     preparation.Syntax.Source,
                     preparation.PredicateExpression,
-                    preparation.Predicate.InvokedAlgorithm,
+                    preparation.Predicate.Algorithm,
                     sourceKind));
         return FilterCountRecognitionStatus.Recognized;
     }

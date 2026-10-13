@@ -15,10 +15,11 @@ open KatLang (resolve param num)
 -- HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING: a builtin VALUE slot
 -- (`sum(A)`, `A.sum`, `if(c, A, B)`, a loop's initial state, `reduce`'s initial
 -- accumulator), the `.string` receiver, a user call, a callback, a selection and
--- a collection element all receive the value the property access produced
--- (`resolveArgAlgsWithSequenceSpread`'s need cells — formerly `resolveArgAlgExpr` —
--- and `evalDotStringReceiverValue`); none of them can re-run
--- the property's body.
+-- a collection element all receive the value the property access produced (a
+-- builtin's arguments are the call's ordinary need cells — `formNeedSupply` /
+-- `supplyNeed` — whose VALUE demand, `demandNeed`, is that property read, and
+-- the `.string` receiver reads through `evalDotStringReceiverValue`); none of
+-- them can re-run the property's body.
 --
 -- Evidence without host operations: `A`'s body is the call `Id([1, 2])` and
 -- `N`'s is `Id(7)` (`.string` converts a NUMERIC receiver), and every call opens

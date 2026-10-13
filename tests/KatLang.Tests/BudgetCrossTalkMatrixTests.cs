@@ -1360,7 +1360,7 @@ public class BudgetCrossTalkMatrixTests
                 return EvalResult<IReadOnlyList<Evaluator.CountedResult>>.Ok([]);
             },
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
-                [new Evaluator.ResolvedArgumentAlgorithm(predicate, SpreadsSequence: false)]),
+                [new Evaluator.ResolvedArgumentAlgorithm(predicate)]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) =>
             {
@@ -1408,7 +1408,7 @@ public class BudgetCrossTalkMatrixTests
             EvaluateDotReceiverIterationItems: _ =>
                 throw new Xunit.Sdk.XunitException("generic source evaluation must not run for a direct range"),
             ResolveArgumentAlgorithms: _ => EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>.Ok(
-                [new Evaluator.ResolvedArgumentAlgorithm(predicate, SpreadsSequence: false)]),
+                [new Evaluator.ResolvedArgumentAlgorithm(predicate)]),
             ResolveAlgorithm: _ => EvalResult<Algorithm>.Ok(new Algorithm.Builtin(BuiltinId.@range)),
             EvaluateRangeCallArguments: (_, _, _) => new EvalError.DivByZero());
 
