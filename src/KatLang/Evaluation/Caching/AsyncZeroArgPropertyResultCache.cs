@@ -11,10 +11,12 @@ namespace KatLang.Evaluation.Caching;
 /// <see cref="ValueTask{TResult}"/> that has not completed suspends the whole evaluation
 /// spine and resumes it when the cache work finishes — no thread is blocked, and no
 /// evaluator thread offloading is involved. Since Phase 3, a public asynchronous host
-/// operation is a second routing reason and has its own await site; public entry points
-/// pair such configurations with an async-capable cache because the twin family awaits
-/// this seam at every property access. A run with only a synchronous cache and no
-/// asynchronous host operation executes the ordinary synchronous evaluator inline.</para>
+/// operation is a second routing reason and has its own await site, and since B2c a tree
+/// carrying a deferred module region is the third (materializing a selected branch can
+/// await the module downloader); public entry points pair both with an async-capable cache
+/// because the twin family awaits this seam at every property access. A run with only a
+/// synchronous cache, no asynchronous host operation, and no deferred module region
+/// executes the ordinary synchronous evaluator inline.</para>
 ///
 /// <para><b>Contract</b> — identical to <see cref="IZeroArgPropertyResultCache.GetOrEvaluate"/>
 /// except for asynchrony:</para>

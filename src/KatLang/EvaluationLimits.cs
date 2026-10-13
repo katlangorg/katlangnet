@@ -114,9 +114,10 @@ public sealed record EvaluationLimits
     /// route. A run that takes the asynchronous twin path — one configured with an
     /// asynchronous <see cref="HostOperation"/> through
     /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
-    /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
-    /// — executes larger per-level frames and usually reaches the backstop at a SHALLOWER
-    /// depth than the synchronous evaluator (where that would report
+    /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>,
+    /// or one whose program has a clause branch that loads its modules on demand (a
+    /// deferred module region) — executes larger per-level frames and usually reaches the
+    /// backstop at a SHALLOWER depth than the synchronous evaluator (where that would report
     /// <see cref="EvalError.EvaluationDepthExceeded"/> or complete), while a twin run that
     /// genuinely suspends before descending resumes on a fresh stack and can go DEEPER. The
     /// backstop never depends on which limits are configured. Hosts must not assume any

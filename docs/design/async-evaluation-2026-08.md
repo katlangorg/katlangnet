@@ -56,6 +56,15 @@ One decision per run, at the async entry point:
    already-async twin, nothing more, and Phase 3's public host operations are exactly
    that extension.
 
+> **Update 2026-10-13 (X-40).** Since B2c (`8910bb61`, 2026-09-06, branch-lazy module
+> loading) a third run component takes the twin path: a tree carrying a deferred module
+> region, recognized from the tree itself (`DeferredModuleRegion.RequiresAsyncEvaluation`),
+> whose selected branch's materialization can await the module downloader. The fast path
+> above therefore also requires a tree without deferred regions, the twin path also
+> suspends on that download, and the synchronous `Evaluator` entries reject such a tree
+> before evaluating it. See Phase 4 § Entry-point routing and `evaluator-and-hosting.md`
+> § Async evaluation and host operations.
+
 ### Why not the alternatives
 
 - **Single async core shared by sync and async APIs**: rejected — per-node async
@@ -171,6 +180,10 @@ the twin path's reduced synchronous-completion capacity is documented and struct
 configuration containing an asynchronous host operation does, and these capacities and
 structured outcomes apply to it unchanged.)
 
+> **Update 2026-10-13 (X-40).** Since B2c a program carrying a deferred module region
+> reaches the twin path too, so these capacities and structured outcomes apply to it as
+> well.
+
 The capacity sweep is a diagnostic characterization, not a semantic threshold. Near a
 boundary, JIT/runtime stack-check placement can move the largest successful request by
 one level (the Release plain-clause twin was observed at both 63 and 64); every request
@@ -258,6 +271,11 @@ allocation columns are exact):
   a genuinely asynchronous workload's IO dwarfs it; sequencing-overhead reduction
   (e.g. per-subtree async-free fast paths inside the twins) is an available
   refinement, not an architectural change.
+
+> **Update 2026-10-13 (X-40).** Since B2c the twin path is also taken, without an explicit
+> request, by every run whose tree carries a deferred module region — even when no
+> deferred branch is ever selected — so for such programs the cost above is no longer
+> pay-per-use.
 
 # Phase 3: Public asynchronous host operations (August 2026)
 
@@ -375,6 +393,12 @@ module — rather than inventing a parallel subsystem:
   containing an asynchronous operation with `InvalidOperationException` BEFORE any
   parsing or evaluation.
 
+> **Update 2026-10-13 (X-40).** A program carrying a deferred module region leaves the
+> synchronous fast path even with only synchronous operations configured: since B2c it
+> takes the twin path. `KatLangEngine.Run` rejects the downloader configuration that
+> produces such a tree before parsing, and the synchronous `Evaluator` entries reject the
+> tree itself before evaluating it.
+
 ## Routing (enforced, not documented)
 
 `RequiresAsyncEvaluationPath` now names exactly two async-capable run components: an
@@ -393,6 +417,14 @@ configured asynchronous host operation. Enforcement:
   fail-loud ownership violation (mirroring `ThrowIfAsyncStrategyPinningViolated`).
 - A `HostOperations` set is immutable, so no asynchronous operation can APPEAR after
   routing committed to the synchronous pipeline.
+
+> **Update 2026-10-13 (X-40).** Since B2c `RequiresAsyncEvaluationPath` names three
+> components: a tree carrying a deferred module region is the third. It is paired with the
+> async-capable run cache like an asynchronous operation
+> (`CreateRunScopedZeroArgPropertyResultCache`), an internal async entry given a sync-only
+> cache fails loud for it (`ThrowIfAsyncHostOperationsWithoutAsyncCapableCache`), and the
+> synchronous `Evaluator` entries reject it
+> (`ThrowIfDeferredModuleRegionsOnSynchronousEntry`).
 
 Strategy pinning is unchanged from Phase 2: the twin path pins the generic
 loop/sequence strategies; synchronous host operations on the synchronous pipeline

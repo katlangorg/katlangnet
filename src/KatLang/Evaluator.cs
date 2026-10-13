@@ -2253,6 +2253,15 @@ public static partial class Evaluator
     /// surface programs never contain such conditionals (clause elaboration rejects
     /// them with source-positioned diagnostics); this gate aligns hand-built ASTs with
     /// Lean's <c>runResult</c>.</para>
+    /// <para><b>Deferred module regions:</b> a tree carrying a deferred module region — a
+    /// clause branch whose modules load only when evaluation selects it, which
+    /// <see cref="Parser.ParseAsync"/> produces when <see cref="RunOptions.DownloadCode"/> is
+    /// configured — can be evaluated only asynchronously, because materializing a selected
+    /// branch can await the module downloader. Every synchronous <c>Run</c> and
+    /// <c>RunFlat</c> overload rejects such a tree with
+    /// <see cref="InvalidOperationException"/> before evaluating it; use
+    /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/> or another
+    /// asynchronous entry point.</para>
     /// <para><b>Supported execution environment:</b> the structural safety envelope
     /// is calibrated for threads with at least 1 MiB of stack (the CLR/Windows
     /// default). Embedders running evaluation on smaller custom stacks are outside
@@ -2266,6 +2275,10 @@ public static partial class Evaluator
     /// independent.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region, which only an asynchronous
+    /// entry point can evaluate.
+    /// </exception>
     public static EvalResult<Result> Run(Expr expr)
         => Run(expr, limits: null);
 
@@ -2278,6 +2291,9 @@ public static partial class Evaluator
     /// display is a host-rendering policy applied by <see cref="RunResult"/>.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
     {
         ArgumentNullException.ThrowIfNull(expr);
@@ -2301,6 +2317,9 @@ public static partial class Evaluator
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
         => Run(expr, limits, randomSeed: null, cancellationToken);
 
@@ -2319,6 +2338,9 @@ public static partial class Evaluator
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<Result> Run(
         Expr expr,
         EvaluationLimits? limits,
@@ -2363,7 +2385,8 @@ public static partial class Evaluator
     /// containing an asynchronous operation is rejected with
     /// <see cref="InvalidOperationException"/> before anything is evaluated — use
     /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
-    /// for asynchronous operations.</para>
+    /// for asynchronous operations. A tree carrying a deferred module region is rejected the
+    /// same way (see <see cref="Run(Expr)"/>).</para>
     ///
     /// <para>Every arity of the <c>Run</c> family has exactly one overload, so positional
     /// arguments — <c>null</c> literals included — always select exactly one of them:
@@ -2374,7 +2397,8 @@ public static partial class Evaluator
     /// without host operations uses an overload that does not take them.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// <paramref name="hostOperations"/> contains an asynchronous operation.
+    /// <paramref name="hostOperations"/> contains an asynchronous operation, or
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
@@ -2614,8 +2638,9 @@ public static partial class Evaluator
     /// <summary>
     /// Run-entry preparation for the SYNCHRONOUS entry family: the host token is
     /// observed first (cancellation preempts every pre-evaluation verdict, including a
-    /// misconfiguration rejection), then an asynchronous host-operation configuration is
-    /// rejected before any tree work, then the shared admitted-run sequence runs. The
+    /// misconfiguration rejection), then an asynchronous host-operation configuration and
+    /// then a tree carrying deferred module regions (B2c) are rejected before any other tree
+    /// work, then the shared admitted-run sequence runs. The
     /// async twin family prepares through <c>PrepareAsyncTwinRun</c>, whose guard order
     /// differs — that ordering difference is each wrapper's contract, so a new entry
     /// point must choose a wrapper, never call <see cref="PrepareAdmittedRun"/> directly.
@@ -3036,10 +3061,16 @@ public static partial class Evaluator
     /// Lean: runFlat → EvalM (List Int).
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr)
         => RunFlat(expr, limits: null);
 
     /// <summary>Host-boundary flattening run under explicit resource limits.</summary>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(Expr expr, EvaluationLimits? limits)
         => RunFlat(expr, limits, cancellationToken: default);
 
@@ -3050,6 +3081,9 @@ public static partial class Evaluator
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
     /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
@@ -3065,6 +3099,9 @@ public static partial class Evaluator
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
     /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="expr"/> carries a deferred module region (see <see cref="Run(Expr)"/>).
+    /// </exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
         => ProjectFlatHostAtoms(Run(expr, limits, randomSeed, cancellationToken), limits, cancellationToken);
@@ -3076,7 +3113,10 @@ public static partial class Evaluator
     /// strings and Booleans are omitted and both list and sequence boundaries are opened.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> or <paramref name="hostOperations"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">The operations require asynchronous evaluation.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The operations, or a deferred module region in <paramref name="expr"/>, require
+    /// asynchronous evaluation (see <see cref="Run(Expr)"/>).
+    /// </exception>
     /// <exception cref="OperationCanceledException">Evaluation or projection was cancelled.</exception>
     public static EvalResult<IReadOnlyList<Decimal128>> RunFlat(
         Expr expr, HostOperations hostOperations, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)

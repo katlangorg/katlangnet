@@ -180,8 +180,8 @@ public sealed class RunOptions
     /// an incomplete host awaitable genuinely suspends evaluation and resumes it on
     /// completion; synchronous entry points reject such a configuration with
     /// <see cref="InvalidOperationException"/> before evaluating anything. Synchronous
-    /// operations work on every entry point and keep <c>RunAsync</c>'s synchronous
-    /// fast path.</para>
+    /// operations work on every entry point and never by themselves take a run off
+    /// <c>RunAsync</c>'s synchronous fast path.</para>
     /// <para>Like <see cref="EvaluationLimits"/>, this is immutable configuration and
     /// safe to share across concurrent and sequential runs — all run state lives in
     /// run-scoped evaluator structures.</para>

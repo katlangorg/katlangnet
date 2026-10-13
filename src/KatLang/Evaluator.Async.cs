@@ -16,22 +16,24 @@ namespace KatLang;
 /// <list type="number">
 ///   <item><b>Fast path</b> — when no run component can complete asynchronously (the
 ///   zero-argument property cache does not implement
-///   <see cref="IAsyncZeroArgPropertyResultCache"/> and no ASYNCHRONOUS
-///   <see cref="HostOperation"/> is configured — every configuration without async
-///   host operations), the async entry point executes the ORDINARY synchronous pipeline
-///   inline on the calling thread and returns an already-completed task. Behavior,
-///   budget accounting, optimizer strategy selection, stack shape, and cancellation are
-///   those of the synchronous entry point, by identity — the same code runs. There is no
-///   thread offloading and no artificial yielding.</item>
+///   <see cref="IAsyncZeroArgPropertyResultCache"/>, no ASYNCHRONOUS
+///   <see cref="HostOperation"/> is configured, and the tree carries no deferred module
+///   region — every run without async host operations whose program has no clause branch
+///   that loads its modules on demand), the async entry point executes the ORDINARY
+///   synchronous pipeline inline on the calling thread and returns an already-completed
+///   task. Behavior, budget accounting, optimizer strategy selection, stack shape, and
+///   cancellation are those of the synchronous entry point, by identity — the same code
+///   runs. There is no thread offloading and no artificial yielding.</item>
 ///   <item><b>Async twin path</b> — when a run component IS async-capable, evaluation
 ///   runs through the <c>*Async</c> twin methods in this file. Each twin MIRRORS its
 ///   synchronous counterpart's sequencing exactly (marked <c>// MIRROR OF ...</c>) and
 ///   must be kept in lock-step with it; the twins share every non-evaluating helper
 ///   (lookup, binding matchers, budget chokepoints, value construction, diagnostics)
 ///   with the synchronous family and re-implement only the child-evaluation sequencing
-///   that must be awaitable. A genuinely asynchronous host operation — the internal
-///   cache seam, or a public asynchronous <see cref="HostOperation"/> awaited at its
-///   wrapper-body site — suspends the whole spine and resumes it on completion.</item>
+///   that must be awaitable. A genuinely asynchronous operation — the internal cache
+///   seam, a public asynchronous <see cref="HostOperation"/> awaited at its wrapper-body
+///   site, or the module download awaited when a selected deferred branch is materialized
+///   — suspends the whole spine and resumes it on completion.</item>
 /// </list>
 ///
 /// <para><b>Twin discipline.</b> A twin may call: other <c>*Async</c> twins; shared
@@ -100,15 +102,25 @@ public static partial class Evaluator
     /// <summary>
     /// Asynchronous counterpart of <see cref="Run(Expr, EvaluationLimits?, CancellationToken)"/>.
     ///
-    /// <para>An uncancelled run produces exactly the result, diagnostics, and limit
-    /// verdict of the synchronous overload. This overload carries no asynchronous host
-    /// component, so the returned task completes synchronously on the calling thread:
-    /// this method never schedules evaluation onto another thread and never yields
-    /// artificially — host scheduling (thread placement, offloading) remains the host's
-    /// responsibility. Genuinely asynchronous host operations are configured through
+    /// <para>For a tree without a deferred module region, an uncancelled run produces
+    /// exactly the result, diagnostics, and limit verdict of the synchronous overload, and
+    /// because this overload carries no asynchronous host component, the returned task
+    /// completes synchronously on the calling thread: this method never schedules
+    /// evaluation onto another thread and never yields artificially — host scheduling
+    /// (thread placement, offloading) remains the host's responsibility. Genuinely
+    /// asynchronous host operations are configured through
     /// <see cref="RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// (or <see cref="RunOptions.HostOperations"/> at the engine level), where an
     /// incomplete host awaitable suspends and resumes the run.</para>
+    ///
+    /// <para>A tree carrying a deferred module region — a clause branch whose modules load
+    /// only when evaluation selects it, which <see cref="Parser.ParseAsync"/> produces when
+    /// <see cref="RunOptions.DownloadCode"/> is configured — is the exception to both
+    /// statements: the synchronous overload rejects it with
+    /// <see cref="InvalidOperationException"/> before evaluating it, and this overload runs
+    /// it on the async twin path, where materializing a selected branch can await the module
+    /// downloader and genuinely suspend the run. Such a run has the twin path's host-stack
+    /// behavior, described under <see cref="EvaluationLimits.MaxDepth"/>.</para>
     ///
     /// <para>Cancellation follows the synchronous contract exactly — same token, same
     /// chokepoints, same completion-boundary observation — except that, as with any
@@ -163,13 +175,16 @@ public static partial class Evaluator
     /// <see cref="Run(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// and the entry point that accepts ASYNCHRONOUS operations.
     ///
-    /// <para>With only synchronous operations configured the run keeps the synchronous
-    /// fast path: the returned task completes synchronously on the calling thread, and
-    /// behavior is that of the synchronous host-operation overload by identity. With at
-    /// least one asynchronous operation the run executes through the async twin path,
-    /// and an incomplete <see cref="ValueTask{TResult}"/> returned by an operation
-    /// genuinely suspends the evaluation — no thread is blocked, nothing is replayed —
-    /// resuming at the same point when the operation completes. Each operation receives
+    /// <para>With only synchronous operations configured, and a tree that carries no
+    /// deferred module region, the run keeps the synchronous fast path: the returned task
+    /// completes synchronously on the calling thread, and behavior is that of the
+    /// synchronous host-operation overload by identity. With at least one asynchronous
+    /// operation, or a tree carrying a deferred module region (which the synchronous
+    /// overload rejects; see <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>),
+    /// the run executes through the async twin path. An incomplete
+    /// <see cref="ValueTask{TResult}"/> returned by an operation genuinely suspends the
+    /// evaluation — no thread is blocked, nothing is replayed — resuming at the same point
+    /// when the operation completes. Each operation receives
     /// <paramref name="cancellationToken"/>; host exceptions and faulted awaitables
     /// propagate through the returned task unchanged (see <see cref="HostOperation"/>
     /// for the full contract). A run suspended by an incomplete host awaitable resumes with
@@ -294,11 +309,13 @@ public static partial class Evaluator
     /// <summary>
     /// The ONE rule that selects the execution family for an async entry point: only a
     /// run component that can complete asynchronously justifies the async twin path.
-    /// There are exactly two such components — an async-capable zero-argument property
-    /// cache (the internal Phase 2 seam) and a configured ASYNCHRONOUS host operation
-    /// (the public Phase 3 surface, which awaits at its wrapper-body site). Everything
-    /// else — including a configuration of purely SYNCHRONOUS host operations, whose
-    /// delegates complete inline by contract — takes the synchronous pipeline inline:
+    /// There are exactly three such components — an async-capable zero-argument property
+    /// cache (the internal Phase 2 seam), a configured ASYNCHRONOUS host operation (the
+    /// public Phase 3 surface, which awaits at its wrapper-body site), and a deferred
+    /// module region anywhere in the tree (B2c: materializing a selected branch can await
+    /// the module downloader; <see cref="DeferredModuleRegion.RequiresAsyncEvaluation"/>).
+    /// Everything else — including a configuration of purely SYNCHRONOUS host operations,
+    /// whose delegates complete inline by contract — takes the synchronous pipeline inline:
     /// the honest optimum, since nothing could suspend.
     /// </summary>
     private static bool RequiresAsyncEvaluationPath(
@@ -316,11 +333,11 @@ public static partial class Evaluator
     /// Routing enforcement for the twin path's property seam: the twin family awaits
     /// the cache's asynchronous member at every zero-argument property access, and a
     /// synchronous-only cache cannot host that await (its callback would have to be
-    /// evaluated eagerly, double-evaluating on hits). A configuration that selects the
-    /// twin path through asynchronous host operations must therefore also carry an
-    /// async-capable cache; the public entry points construct one, and this guard makes
-    /// the requirement fail-loud for internal callers instead of surfacing later as the
-    /// twin family's mid-run ownership exception.
+    /// evaluated eagerly, double-evaluating on hits). A run that selects the twin path
+    /// through asynchronous host operations or a deferred module region must therefore
+    /// also carry an async-capable cache; the public entry points construct one, and this
+    /// guard makes the requirement fail-loud for internal callers instead of surfacing later
+    /// as the twin family's mid-run ownership exception.
     /// </summary>
     private static void ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(
         Expr expr,
@@ -348,11 +365,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// The ONE cache-pairing rule for constructing a run's zero-argument property
-    /// result cache from its host-operation configuration: a configuration containing
-    /// an ASYNCHRONOUS operation routes the run through the async twin path, which
-    /// awaits the property seam — so it is paired with the async-capable run-scoped
-    /// cache; every other configuration (no host operations, or purely synchronous
-    /// ones) keeps the ordinary run-scoped cache and with it the synchronous fast path.
+    /// result cache from its host-operation configuration and its tree: a configuration
+    /// containing an ASYNCHRONOUS operation, or a tree carrying a deferred module region,
+    /// routes the run through the async twin path, which awaits the property seam — so it
+    /// is paired with the async-capable run-scoped cache; every other run (no host
+    /// operations or purely synchronous ones, and no deferred module region) keeps the
+    /// ordinary run-scoped cache and with it the synchronous fast path.
     /// Every call constructs a FRESH cache belonging to one run alone — the pairing
     /// rule never introduces sharing.
     /// <see cref="ThrowIfAsyncHostOperationsWithoutAsyncCapableCache"/> enforces the

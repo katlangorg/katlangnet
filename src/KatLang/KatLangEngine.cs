@@ -575,17 +575,20 @@ public static class KatLangEngine
     /// <see cref="RunOptions.SourceProcessingLimits"/>. Evaluation then goes through the
     /// evaluator's async surface, where an incomplete asynchronous
     /// <see cref="RunOptions.HostOperations"/> awaitable suspends and resumes the run the
-    /// same way (see <see cref="HostOperation"/> for the full contract) — one run can
-    /// suspend during both source processing and evaluation. When nothing actually
-    /// suspends (no downloader, a synchronously-completing downloader, no asynchronous
-    /// host operation), the whole run completes synchronously on the calling thread: this
-    /// method never schedules work onto another thread and never yields artificially —
-    /// thread placement and scheduling remain the host's (and the downloader's
-    /// awaitable's) responsibility.</para>
+    /// same way (see <see cref="HostOperation"/> for the full contract), and so does the
+    /// module download of a clause branch whose modules load on demand when evaluation
+    /// selects that branch; one run can suspend during both source processing and
+    /// evaluation. When nothing actually suspends (no downloader, a synchronously-completing
+    /// downloader, no asynchronous host operation), the whole run completes synchronously
+    /// on the calling thread: this method never schedules work onto another thread and
+    /// never yields artificially — thread placement and scheduling remain the host's (and
+    /// the downloader's awaitable's) responsibility.</para>
     ///
     /// <para>A configuration with an asynchronous <see cref="RunOptions.HostOperations"/>
     /// operation evaluates through the async twin path — even when the program never calls
-    /// that operation. Its larger per-level frames usually reach the host-stack backstop at a
+    /// that operation — and so does a program with a clause branch whose modules load on
+    /// demand (a deferred module region), even when that branch is never selected. The twin
+    /// path's larger per-level frames usually reach the host-stack backstop at a
     /// shallower recursion depth than <see cref="Run(string, RunOptions?)"/>, so a deeply
     /// recursive program may fail with the structured
     /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> error where the synchronous run
