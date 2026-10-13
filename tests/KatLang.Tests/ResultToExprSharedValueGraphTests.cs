@@ -807,7 +807,6 @@ public class ResultToExprSharedValueGraphTests
         EvalError? InnermostError,
         Result? Value,
         int? Emitted,
-        long Reifications,
         long Expansions,
         LoopOptimizationDiagnosticsSnapshot LoopStats);
 
@@ -826,7 +825,6 @@ public class ResultToExprSharedValueGraphTests
             result.IsError ? Innermost(result.Error) : null,
             result.IsError ? null : result.Value.Value,
             result.IsError ? null : result.Value.EmittedCount,
-            observations.CountedArgumentReificationCount,
             observations.ResultToExprStructureExpansionCount,
             loopDiagnostics.GetSnapshot());
     }
@@ -848,11 +846,10 @@ public class ResultToExprSharedValueGraphTests
         // A spread item is Ready data with no CALLABLE identity: it is no step (Q-06).
         Assert.True(run.IsError);
         Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
         if (optimize)
         {
-                        Assert.True(run.LoopStats.OptimizedLoopHits > 0);
+            Assert.True(run.LoopStats.OptimizedLoopHits > 0);
             Assert.All(run.LoopStats.LoopPlans, plan => Assert.Equal("Wrap.repeat", plan.Identity));
         }
         else
@@ -872,7 +869,6 @@ public class ResultToExprSharedValueGraphTests
         var list = Assert.IsType<Result.ListValue>(run.Value);
         Assert.Empty(list.Items);
         Assert.Equal(1, run.Emitted);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
 
@@ -889,7 +885,6 @@ public class ResultToExprSharedValueGraphTests
         // with no CALLABLE identity (Q-06).
         Assert.True(run.IsError);
         Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
 
@@ -904,7 +899,6 @@ public class ResultToExprSharedValueGraphTests
 
         Assert.True(run.IsError);
         Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
 
@@ -916,9 +910,7 @@ public class ResultToExprSharedValueGraphTests
 
         Assert.False(shallow.IsError);
         Assert.False(deep.IsError);
-        Assert.Equal(0, shallow.Reifications);
         Assert.Equal(0, shallow.Expansions);
-        Assert.Equal(0, deep.Reifications);
         Assert.Equal(0, deep.Expansions);
     }
 
@@ -933,7 +925,6 @@ public class ResultToExprSharedValueGraphTests
             optimize: false);
 
         Assert.False(run.IsError);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(0, run.Expansions);
     }
 

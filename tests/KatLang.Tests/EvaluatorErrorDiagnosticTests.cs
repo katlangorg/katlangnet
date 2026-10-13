@@ -285,10 +285,13 @@ public class EvaluatorErrorDiagnosticTests
     /// `R(Obj)` for `R(a, b)` reports (2, 1) and "called with 1 argument", never 0 (CALL-04).
     /// (Until Model C the Lean-modeled payload was the VALUE-tier view, which left such a slot
     /// out of both numbers, and the message repaired the written count: the final hostile
-    /// pass of September 2026.)
+    /// pass of September 2026.) The same holds for a slot only the callable channel can
+    /// satisfy: `F(x, y) = x(y)` / `F(Inc)` — the open-questions witness X-43 recorded as the
+    /// payload (1, 0) — reports (2, 1), as Lean's `CoreTests/ModelC.lean` `callXY` guard pins.
     /// </summary>
     [Theory]
     [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj)", 2, 1, "R(a, b)", 2, 1)]
+    [InlineData("Inc(x) = x + 1\nF(x, y) = x(y)\nF(Inc)", 2, 1, "F(x, y)", 2, 1)]
     [InlineData("Obj = {\n    K = 9\n}\nR(a, b, c) = c\nR(Obj, 1)", 3, 2, "R(a, b, c)", 3, 2)]
     [InlineData("Obj = {\n    K = 9\n}\nR(a, b) = b\nR(Obj, 1, 2)", 2, 3, "R(a, b)", 2, 3)]
     [InlineData("R(a, b) = b\nR(1)", 2, 1, "R(a, b)", 2, 1)]

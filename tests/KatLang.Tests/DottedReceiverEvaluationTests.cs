@@ -1,4 +1,6 @@
 using KatLang.Evaluation.Caching;
+using KatLang.Optimizations.Loops;
+using KatLang.Optimizations.Sequences;
 
 namespace KatLang.Tests;
 
@@ -14,12 +16,12 @@ namespace KatLang.Tests;
 /// reconstruction from the already-evaluated result rather than a second evaluation of the
 /// source expression.</para>
 ///
-/// <para>The follow-up correction made the reification itself lazy: the receiver is carried
-/// forward as a prepared counted value with NO eagerly constructed expression-tree wrapper,
-/// because the ordinary value path never consumes one. The wrapper is synthesized only if an
-/// algorithm-only consumer requests the argument's algorithm channel, observed through the
-/// run-scoped <see cref="EvaluationObservations.CountedArgumentReificationCount"/> counter
-/// (see the lazy-reification section below).</para>
+/// <para>A follow-up correction made that reification lazy, and Model C (October 2026) removed
+/// it: every argument is a supplied cell, an evaluated value is Ready data with no CALLABLE
+/// identity (NEED-06), and no path rebuilds a value into an expression-tree wrapper, so an
+/// invoking slot that receives such data is <c>NotAnAlgorithm</c> (Q-06). The run-scoped
+/// counter that observed the former wrapper, whose recorder had no caller after Model C, was
+/// retired on October 13 2026; the charges and outcomes below are the guards.</para>
 ///
 /// <para>Since dot-call passes the receiver as the ORDINARY leading argument, there is no
 /// separate receiver-preparation path at all: <c>A.F(B)</c> assembles the argument slots of
@@ -243,18 +245,25 @@ public class DottedReceiverEvaluationTests
     [InlineData("range(1, 10).distinct")]
     [InlineData("D(x) = x * 2\nrange(1, 10).map(D)")]
     public void OptimizedAndGenericPaths_ChargeTheSame(string source)
-        => Assert.Equal(RequiredItemSlots(source, optimize: false), RequiredItemSlots(source, optimize: true));
+    {
+        // No row is fused or loop-planned: enabling the optimizations must leave the charge
+        // of a dot call they do not apply to unchanged. The optimized strategies themselves
+        // are covered by FusedPipelines_ChargeExactlyTheGenericPath and
+        // OptimizedDotCalls_ChargeExactlyTheirWrittenCall.
+        Assert.Equal(RequiredItemSlots(source, optimize: false), RequiredItemSlots(source, optimize: true));
+    }
 
     [Theory]
     [InlineData("range(1, 10).count")]
     [InlineData("range(1, 10).sum")]
     [InlineData("B(x) = x > 5\nrange(1, 10).filter(B).count")]
-    public void FusedPipelines_ChargeNoMoreThanTheGenericPath(string source)
+    public void FusedPipelines_ChargeExactlyTheGenericPath(string source)
     {
-        // A fused pipeline materializes nothing, so it legitimately charges LESS — that
-        // difference is the documented fusion contract. What must never happen is the
-        // optimized path charging MORE than the generic one.
-        Assert.True(RequiredItemSlots(source, optimize: true) <= RequiredItemSlots(source, optimize: false));
+        // Strategy-neutral charging (Q-09b): a fused pipeline materializes nothing but
+        // RESERVES the item slots the generic composition materializes, so it needs exactly
+        // the generic path's budget. Only the `filter → count` row fuses; the other two run
+        // the generic strategy with the optimizations on as well.
+        Assert.Equal(RequiredItemSlots(source, optimize: false), RequiredItemSlots(source, optimize: true));
     }
 
     // ── Budget-boundary parity ───────────────────────────────────────────────
@@ -317,25 +326,35 @@ public class DottedReceiverEvaluationTests
         long Steps,
         long Items,
         long StringChars,
-        int PeakDepth,
-        long Reifications);
+        int PeakDepth);
 
     /// <summary>
     /// Runs <paramref name="source"/> once with a fresh run-scoped
-    /// <see cref="EvaluationObservations"/> (zero by construction, no reset, no static
-    /// state). <paramref name="optimize"/> defaults to false so the GENERIC dot-call path —
-    /// the one that prepares the receiver argument — is the path observed.
+    /// <see cref="EvaluationObservations"/>, so that
+    /// <see cref="ObservationPresence_IsSemanticallyAndOperationallyPassive"/> can compare an
+    /// observed run with an unobserved one. <paramref name="optimize"/> defaults to false, so
+    /// the generic strategy is the one observed.
     /// </summary>
     private static ObservedRun Observe(string source, bool optimize = false)
     {
         var observations = new EvaluationObservations();
-        return ObserveCore(source, optimize, observations);
+        return ObserveCore(source, optimize, observations).Run;
     }
 
-    private static ObservedRun ObserveCore(
+    /// <summary>
+    /// Runs <paramref name="source"/> once and returns its <see cref="ObservedRun"/> together
+    /// with the run's raw expression-work checkpoints. Strategy-neutral charging (Q-09b) makes
+    /// the checkpoints exact between the strategies of ONE program, while whole steps can hide a
+    /// difference of fewer than 4096 of them (it shows only when it crosses a 4096-checkpoint
+    /// block); they stay outside <see cref="ObservedRun"/> because they are compared between
+    /// strategies, never between two spellings.
+    /// </summary>
+    private static (ObservedRun Run, long ExpressionCheckpoints) ObserveCore(
         string source,
         bool optimize,
-        EvaluationObservations? observations)
+        EvaluationObservations? observations,
+        LoopOptimizationDiagnostics? loopDiagnostics = null,
+        SequencePipelineDiagnostics? sequenceDiagnostics = null)
     {
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, $"`{source}` did not parse.");
@@ -343,9 +362,11 @@ public class DottedReceiverEvaluationTests
         var (result, budget) = Evaluator.RunCountedObserved(
             new Expr.AlgorithmExpr(parsed.Root),
             enableOptimizations: optimize,
+            loopDiagnostics: loopDiagnostics,
+            sequenceDiagnostics: sequenceDiagnostics,
             observations: observations);
 
-        return new ObservedRun(
+        var run = new ObservedRun(
             result.IsError
                 ? "err:" + SemanticExplorerHarness.ErrorCategory(result.Error)
                 : "ok:" + SemanticExplorerHarness.Neutral(result.Value.Value),
@@ -353,8 +374,8 @@ public class DottedReceiverEvaluationTests
             budget.ConsumedSteps,
             budget.MaterializedItems,
             budget.MaterializedStringChars,
-            budget.PeakDepth,
-            observations?.CountedArgumentReificationCount ?? 0);
+            budget.PeakDepth);
+        return (run, budget.ConsumedExpressionCheckpoints);
     }
 
     [Theory]
@@ -387,7 +408,6 @@ public class DottedReceiverEvaluationTests
             var b = Observe($"R = {receiver}\n{dotted}");
 
             Assert.Equal(a, b);
-            Assert.Equal(0, a.Reifications);
         }
     }
 
@@ -460,7 +480,6 @@ public class DottedReceiverEvaluationTests
         Assert.Equal(outcome, run.Outcome);
         Assert.Equal(steps, run.Steps);
         Assert.Equal(items, run.Items);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(run, Observe(plain));
     }
 
@@ -478,39 +497,78 @@ public class DottedReceiverEvaluationTests
         }
     }
 
-    // ── Lazy receiver reification ────────────────────────────────────────────
+    // ── Dot calls charge exactly their written call ──────────────────────────
     //
-    // The dotted receiver is evaluated exactly once and carried forward ONLY as a
-    // prepared counted value; the legacy expression-tree wrapper (CountedArgAlgorithm →
-    // ResultToExpr, an O(receiver size) rebuild) is never constructed for ordinary dot
-    // calls. No public KatLang program can put the dot receiver ITSELF into an
-    // algorithm-only position — it always binds the fixed `collection` parameter through
-    // the value channel — so the lazy fallback is exercised through the same prepared-
-    // argument machinery's other producers: builtin-as-callback dispatch routes
-    // pre-evaluated values into builtin argument positions, where an algorithm-only slot
-    // (a loop step, an algorithm-kind suffix argument) synthesizes the wrapper exactly
-    // when requested.
+    // The dotted receiver is the call's ORDINARY leading argument cell, so no dot call
+    // reconstructs it: a rebuilt receiver (the original defect charged twenty item slots
+    // for `range(1, 10).count`) would show up as a charge the written call does not make.
+    // Every observation — outcome, emitted count, steps, item slots, string units, peak
+    // depth — must therefore agree with the written call. No row of the first theory is
+    // loop-planned or fused, so with optimizations off and on alike it runs the generic
+    // strategy; the second theory takes the optimized strategies (a fused `filter → count`
+    // pipeline, a planned loop), proves which one ran, and requires each optimized run to
+    // record exactly its generic run's expression-work checkpoints. (The former
+    // lazy-reification counter, `CountedArgumentReificationCount`, whose recorder lost its
+    // only caller with Model C, was retired on October 13 2026.)
 
     [Theory]
-    [InlineData("range(1, 6).count")]
-    [InlineData("V = range(1, 6)\nV.count")]
-    [InlineData("V = range(1, 6)\nV.first")]
-    [InlineData("V = range(1, 6)\nV.take(2)")]
-    [InlineData("V = range(1, 6)\nV.skip(1)")]
-    [InlineData("V = range(1, 6)\nV.sum")]
-    [InlineData("D(x) = x * 2\nV = range(1, 6)\nV.map(D)")]
-    [InlineData("B(x) = x > 3\nV = range(1, 6)\nV.filter(B)")]
-    [InlineData("A(a, b) = a + b\nV = range(1, 6)\nV.reduce(A, 0)")]
-    [InlineData("B(x) = x > 5\nD(x) = x * 2\nrange(1, 10).filter(B).map(D).count")]
-    [InlineData("[(1, 2), [3, 4]].take(1)")]
-    [InlineData("'text'.count")]
-    [InlineData("().count")]
-    [InlineData("[].first")]
-    [InlineData("A = (1, 2, 3)\n(A*).count")]
-    public void OrdinaryDotCalls_NeverReifyTheReceiver(string source)
+    [InlineData("range(1, 6).count", "count(range(1, 6))")]
+    [InlineData("V = range(1, 6)\nV.count", "V = range(1, 6)\ncount(V)")]
+    [InlineData("V = range(1, 6)\nV.first", "V = range(1, 6)\nfirst(V)")]
+    [InlineData("V = range(1, 6)\nV.take(2)", "V = range(1, 6)\ntake(V, 2)")]
+    [InlineData("V = range(1, 6)\nV.skip(1)", "V = range(1, 6)\nskip(V, 1)")]
+    [InlineData("V = range(1, 6)\nV.sum", "V = range(1, 6)\nsum(V)")]
+    [InlineData("D(x) = x * 2\nV = range(1, 6)\nV.map(D)", "D(x) = x * 2\nV = range(1, 6)\nmap(V, D)")]
+    [InlineData("B(x) = x > 3\nV = range(1, 6)\nV.filter(B)", "B(x) = x > 3\nV = range(1, 6)\nfilter(V, B)")]
+    [InlineData("A(a, b) = a + b\nV = range(1, 6)\nV.reduce(A, 0)", "A(a, b) = a + b\nV = range(1, 6)\nreduce(V, A, 0)")]
+    [InlineData("B(x) = x > 5\nD(x) = x * 2\nrange(1, 10).filter(B).map(D).count", "B(x) = x > 5\nD(x) = x * 2\ncount(map(filter(range(1, 10), B), D))")]
+    [InlineData("[(1, 2), [3, 4]].take(1)", "take([(1, 2), [3, 4]], 1)")]
+    [InlineData("'text'.count", "count('text')")]
+    [InlineData("().count", "count(())")]
+    [InlineData("[].first", "first([])")]
+    [InlineData("A = (1, 2, 3)\n(A*).count", "A = (1, 2, 3)\ncount((A*))")]
+    public void OrdinaryDotCalls_ChargeExactlyTheirWrittenCall(string dotted, string written)
     {
-        Assert.Equal(0, Observe(source, optimize: false).Reifications);
-        Assert.Equal(0, Observe(source, optimize: true).Reifications);
+        Assert.Equal(Observe(written, optimize: false), Observe(dotted, optimize: false));
+        Assert.Equal(Observe(written, optimize: true), Observe(dotted, optimize: true));
+    }
+
+    [Theory]
+    // The dotted spelling over a NAMED collection fuses through the pipeline's dot-receiver
+    // adapter (`EvaluateDotReceiverIterationItemsForSequenceOptimizer`); the written spelling
+    // fuses only a direct `range` source, so it runs the generic strategy here.
+    [InlineData("B(x) = x > 3\nV = range(1, 6)\nV.filter(B).count", "B(x) = x > 3\nV = range(1, 6)\ncount(filter(V, B))", 1, 0, false)]
+    // Both spellings fuse over a direct `range` source.
+    [InlineData("B(x) = x > 3\nrange(1, 6).filter(B).count", "B(x) = x > 3\ncount(filter(range(1, 6), B))", 1, 1, false)]
+    // Both spellings run the planned loop.
+    [InlineData("Step(s) = s + 1\nStep.repeat(5, 0)", "Step(s) = s + 1\nrepeat(Step, 5, 0)", 0, 0, true)]
+    public void OptimizedDotCalls_ChargeExactlyTheirWrittenCall(
+        string dotted, string written, long dottedFusions, long writtenFusions, bool planned)
+    {
+        var dottedSequences = new SequencePipelineDiagnostics();
+        var writtenSequences = new SequencePipelineDiagnostics();
+        var dottedLoops = new LoopOptimizationDiagnostics();
+        var writtenLoops = new LoopOptimizationDiagnostics();
+        var (dottedRun, dottedCheckpoints) =
+            ObserveCore(dotted, optimize: true, new EvaluationObservations(), dottedLoops, dottedSequences);
+        var (writtenRun, writtenCheckpoints) =
+            ObserveCore(written, optimize: true, new EvaluationObservations(), writtenLoops, writtenSequences);
+        var (dottedGeneric, dottedGenericCheckpoints) = ObserveCore(dotted, optimize: false, new EvaluationObservations());
+        var (_, writtenGenericCheckpoints) = ObserveCore(written, optimize: false, new EvaluationObservations());
+
+        // Strategy-neutral charging (Q-09b): whichever strategy each spelling takes, every
+        // observation equals the written call's and the generic run's, and each spelling's
+        // optimized run records exactly the expression-work checkpoints of its own generic
+        // run — a difference whole steps cannot show in runs this small.
+        Assert.Equal(writtenRun, dottedRun);
+        Assert.Equal(dottedGeneric, dottedRun);
+        Assert.Equal(dottedGenericCheckpoints, dottedCheckpoints);
+        Assert.Equal(writtenGenericCheckpoints, writtenCheckpoints);
+
+        Assert.Equal(dottedFusions, dottedSequences.FilterCountFusionHits);
+        Assert.Equal(writtenFusions, writtenSequences.FilterCountFusionHits);
+        Assert.Equal(planned, dottedLoops.GetSnapshot().OptimizedLoopHits > 0);
+        Assert.Equal(planned, writtenLoops.GetSnapshot().OptimizedLoopHits > 0);
     }
 
     [Fact]
@@ -518,10 +576,9 @@ public class DottedReceiverEvaluationTests
     {
         // A*.count lowers to count(A*), so it supplies three ordinary arguments and fails
         // fixed arity like the written call. Parenthesized (A*).count is the
-        // capture-receiver case covered by the direct theory above.
+        // capture-receiver case covered by OrdinaryDotCalls_ChargeExactlyTheirWrittenCall above.
         var run = Observe("A = (1, 2, 3)\nA*.count", optimize: false);
         Assert.Equal("err:arity", run.Outcome);
-        Assert.Equal(0, run.Reifications);
         Assert.Equal(run, Observe("A = (1, 2, 3)\ncount(A*)", optimize: false));
     }
 
@@ -530,10 +587,10 @@ public class DottedReceiverEvaluationTests
     [InlineData("'text'.sum")]
     [InlineData("S = 5\nwhile(S*, 1)")]
     [InlineData("((), ()).reduce(map, ())")]
-    public void ReificationObservation_IsSemanticallyAndOperationallyPassive(string source)
+    public void ObservationPresence_IsSemanticallyAndOperationallyPassive(string source)
     {
         var observed = Observe(source, optimize: false);
-        var unobserved = ObserveCore(source, optimize: false, observations: null);
+        var unobserved = ObserveCore(source, optimize: false, observations: null).Run;
 
         Assert.Equal(observed.Outcome, unobserved.Outcome);
         Assert.Equal(observed.Emitted, unobserved.Emitted);
@@ -544,28 +601,23 @@ public class DottedReceiverEvaluationTests
     }
 
     [Fact]
-    public void ReadyCallbackData_DoesNotAcquireCallableIdentityOrReification()
+    public void ReadyCallbackData_DoesNotAcquireCallableIdentity()
     {
         // Ready data has no CALLABLE identity: an invoking slot that receives it is
         // NotAnAlgorithm (Q-06) — the spread step here, `map`'s mapper slot below.
         var loopStep = Observe("S = 5\nwhile(S*, 1)");
-        Assert.Equal(0, loopStep.Reifications);
         Assert.Equal("err:notAnAlgorithm", loopStep.Outcome);
 
         var suffixSlot = Observe("(5, 6).reduce(map, ())");
-        Assert.Equal(0, suffixSlot.Reifications);
         Assert.Equal("err:notAnAlgorithm", suffixSlot.Outcome);
 
         var success = Observe("((), ()).reduce(map, ())");
-        Assert.Equal(0, success.Reifications);
         Assert.Equal("ok:L[]", success.Outcome);
 
         var notRequested = Observe("R = (1, 2)\nR.reduce(repeat, 0)");
-        Assert.Equal(0, notRequested.Reifications);
         Assert.Equal("err:arity", notRequested.Outcome);
 
         var neverInvoked = Observe("().reduce(map, 7)");
-        Assert.Equal(0, neverInvoked.Reifications);
         Assert.Equal("ok:7", neverInvoked.Outcome);
     }
 
@@ -587,13 +639,11 @@ public class DottedReceiverEvaluationTests
 
         Assert.Equal("ok:2007000", dotted.Outcome);
         Assert.Equal(2000, dotted.Items);
-        Assert.Equal(0, dotted.Reifications);
         Assert.Equal(dotted, written);
         Assert.Equal(dotted, grouped);
 
         Assert.Equal("ok:2007000", viaProperty.Outcome);
         Assert.Equal(2000, viaProperty.Items);
-        Assert.Equal(0, viaProperty.Reifications);
     }
 
     [Fact]
@@ -607,12 +657,10 @@ public class DottedReceiverEvaluationTests
 
         Assert.Equal("ok:2", dotted.Outcome);
         Assert.Equal(40, dotted.Items);
-        Assert.Equal(0, dotted.Reifications);
         Assert.Equal(dotted, written);
         Assert.Equal(dotted, grouped);
 
         Assert.Equal("ok:2", viaProperty.Outcome);
         Assert.Equal(40, viaProperty.Items);
-        Assert.Equal(0, viaProperty.Reifications);
     }
 }

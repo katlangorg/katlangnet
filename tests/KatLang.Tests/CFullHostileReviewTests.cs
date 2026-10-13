@@ -53,12 +53,27 @@ public class CFullHostileReviewTests
     [Theory]
     [InlineData("F(a, b, c) = 0\nF(1, (2, 3))", 3, 2)]
     [InlineData("Inc(x) = x + 1\nUse(f, x, y) = f(x) + y\nUse(Inc, (2, 3))", 3, 2)]
+    [InlineData("Inc(x) = x + 1\nF(x, y) = x(y)\nF(Inc)", 2, 1)]
     [InlineData("Step(a, b) = a, b\nrepeat(Step, 1, (1, 2))", 2, 1)]
     public async Task FlatBindingArity_ReportsCompleteBindingInputLengths(string source, int expected, int actual)
     {
-        var error = Assert.IsType<EvalError.ArityMismatch>(RootError(await AcrossStrategies(source)));
-        Assert.Equal(expected, error.Expected);
-        Assert.Equal(actual, error.Actual);
+        // AcrossStrategies compares only the neutral observation (the error CATEGORY) across its
+        // routes, so the payload itself is asserted on each route: generic, the default run with
+        // optimizations enabled, and the forced-async twin.
+        var ast = AsyncEvaluationHarness.Ast(source);
+        var (asynchronous, _) = await AsyncEvaluationHarness.Complete(
+            Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache()));
+        foreach (var result in new[]
+        {
+            await AcrossStrategies(source),
+            Evaluator.RunCountedObserved(ast).Result,
+            asynchronous,
+        })
+        {
+            var error = Assert.IsType<EvalError.ArityMismatch>(RootError(result));
+            Assert.Equal(expected, error.Expected);
+            Assert.Equal(actual, error.Actual);
+        }
     }
 
     [Theory]

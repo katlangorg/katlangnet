@@ -31,12 +31,6 @@ internal sealed class EvaluationObservations
     internal void RecordDeconstructionFullBind()
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
 
-    /// <summary>Legacy reification guard: production Ready/callback transport must keep this zero.</summary>
-    public long CountedArgumentReificationCount { get; private set; }
-
-    internal void RecordCountedArgumentReification()
-        => CountedArgumentReificationCount = checked(CountedArgumentReificationCount + 1);
-
     /// <summary>
     /// Number of structure NODES expanded across the <c>Evaluator.ResultToExpr</c> reifications of
     /// this run: the top-level structure of each conversion, plus every nested sequence or list

@@ -379,6 +379,15 @@ public class MaintainedDocumentationConsistencyTests
             + @"(?<![\w?])(?:ResolvedArgumentAlgorithm|AlgorithmArg)\.callable\??(?![\w?])",
             "dead builtin-argument infrastructure retired on 2026-10-13 (spread-marked arguments, the named-callable side channel, prepared argument values)"
         },
+        // The dead C# reification counter (2026-10-13): Model C deleted CountedArgAlgorithm, the
+        // only caller of EvaluationObservations.RecordCountedArgumentReification, when an evaluated
+        // value became Ready data with no CALLABLE identity (NEED-06, Q-06). The recorder then had
+        // no caller, CountedArgumentReificationCount was always zero, and both are retired. The
+        // dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        {
+            @"(?<![\w?])(?:RecordCountedArgumentReification|CountedArgumentReificationCount)(?![\w?])",
+            "the reification counter retired on 2026-10-13 (EvaluationObservations.CountedArgumentReificationCount and its recorder)"
+        },
     };
 
     [Theory]
