@@ -2506,7 +2506,8 @@ evaluator calls:
   `reopenSpreadLayers` — that step once per extra written star; `spreadSupplyResult` — a spread
   expression's counted result (`evalSequenceSpreadCounted` returns
   `spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied)`);
-* `countedTopLevelValues` — how a spread ROW of a capture recovers its slots.
+* `countedTopLevelValues` — how a spread ROW of a capture (and a spread leaf of the internal
+  `sequenceConstruct` join) recovers its slots.
 
 Results:
 

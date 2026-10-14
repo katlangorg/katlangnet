@@ -280,9 +280,10 @@ def test238 : Bool :=
 
 #guard test238
 
+-- `Append(item, *history) = (history*, item)` (the written capture of two rows).
 def reduceVariadicAppendAlg239 : Algorithm :=
   algWithParameters [{ name := "item" }, { name := "history", kind := .collecting }] [] [] [
-    .capture [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")]
+    .capture [sequenceSpread (.param "history"), .param "item"]
   ]
 
 def reduceScalarSumAlg241 : Algorithm :=
@@ -295,18 +296,22 @@ def reduceStructuralAppendAlg242 : Algorithm :=
     .capture [.sequenceConstruct (sequenceSpread (.param "history")) (.param "item")]
   ]
 
-def reduceVariadicAccumulatorStateFlattens : Bool :=
+-- The accumulator is ONE argument, so `history` is always the one-element list of the current
+-- accumulator and each step nests it whole: `(((1, 2), 3), 4)` (mirrors C#
+-- `EvaluatorSequenceCallbackTests.Eval_Reduce_CollectingAccumulator_CollectsTheOneAccumulatorValue`).
+def reduceCollectingAccumulatorCollectsTheOneAccumulatorValue : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Append", reduceVariadicAppendAlg239)] [
     .call (resolve "reduce") [
-      sequenceItems [.num 2, .num 3, .num 4],
+      .capture [.num 2, .num 3, .num 4],
       .resolve "Append",
       .num 1
     ]
   ])) with
-  | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
+  | Except.ok (.sequenceValue [.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3], .atom 4]) =>
+      true
   | _ => false
 
-#guard reduceVariadicAccumulatorStateFlattens
+#guard reduceCollectingAccumulatorCollectsTheOneAccumulatorValue
 
 def reduceScalarReducerBehaviorRemainsUnchanged : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Sum", reduceScalarSumAlg241)] [

@@ -306,11 +306,22 @@ public class AsyncExpressionDispatchTests
             Parent: null,
             ParameterPatterns: [],
             Opens: [],
-            Properties: [new Property("P", EmptyAlgorithm(new Expr.Num(5)))],
+            Properties:
+            [
+                new Property("P", EmptyAlgorithm(new Expr.Num(5))),
+                // Lone structured items: a spread LEAF over them is read like a spread row
+                // (EvalCountedAsync), so its property read must stay on the async seam.
+                new Property("Q", EmptyAlgorithm(new Expr.ListLiteral([new Expr.ListLiteral([new Expr.Num(7)])]))),
+                new Property("R", EmptyAlgorithm(new Expr.ListLiteral(
+                    [new Expr.ListLiteral([new Expr.ListLiteral([new Expr.Num(7)])])]))),
+            ],
             Output: new OutputBundle(
             [
                 new Expr.SequenceConstruct(new Expr.Resolve("P"), new Expr.Num(1)),
                 new Expr.SequenceConstruct(new Expr.Num(1), new Expr.Resolve("P")),
+                new Expr.SequenceConstruct(new Expr.SequenceSpread(new Expr.Resolve("Q")), new Expr.Num(1)),
+                new Expr.SequenceConstruct(
+                    new Expr.SequenceSpread(new Expr.SequenceSpread(new Expr.Resolve("R"))), new Expr.Num(1)),
             ]));
 
         await AssertChildRoutesThroughAsyncSeam(new Expr.AlgorithmExpr(root));

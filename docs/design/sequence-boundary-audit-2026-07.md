@@ -350,7 +350,7 @@ list-pattern counterparts now pin this kind-specific law.)*
 The generated artifact pins every Lean-representable corpus case
 (**2,630 surface cases** as of this update — the surface corpus minus its 11
 parse-level cases such as `(3,)`, `A.spread == A.spread`, `1 ; 2`, `open count, Lib`, `open Lib.S` through a private `S`, and a written `X` that `open L1, L2` provides twice, which
-are C#-only typed outcomes since Lean has no surface parser — plus **14**
+are C#-only typed outcomes since Lean has no surface parser — plus **19**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
 
@@ -359,7 +359,10 @@ notes:
   chains: `sequenceConstruct` is an internal/test form on both sides (its
   evaluation drops `()` leaves, and the C# parser never produces it for
   written parentheses). Note for Lean test authors: the two encodings are
-  interchangeable only for non-empty, non-spread leaves.
+  interchangeable except for a non-spread leaf whose value is `()`, which the
+  join drops and a capture keeps; a spread leaf contributes exactly what the same
+  spread row contributes to a capture, a spread-produced `()` item included
+  (since the October 2026 spread-leaf fix, §7).
 - Assignment deconstruction is emitted in its parser-elaborated form (shared
   RHS property + `unpacking` receiver helper).
 - The root emitted count is observed through a generated `runCountedM`
@@ -400,11 +403,11 @@ parse-level set) is enforced by
 |---|---:|---|---|---|
 | Surface corpus (= C# semantic report surface section) | 2,641 | 2,312 template cases (68 receiver templates x 34 values) + 329 specials; outcomes 2,126 ok / 504 err / 11 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
 | Lean-representable surface differential | 2,630 | the 2,641 above minus the 11 parse-level cases (eleven deliberate parse-error specials — the 34 `indexNeg__*` cases became Lean-representable with variadic postfix selection, October 2026, since `x[-1]` is an ordinary selector slot evaluating to `BadIndex` where `x:-1` was a parse error — the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, and the three written open ambiguities since Q-29 A-U, October 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
-| Internal `SequenceConstruct` corpus | 14 | direct-AST `internal__sc_*` cases | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 2,644 | 2,630 surface + 14 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
-| C# semantic report internal-node section | 14 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
+| Internal `SequenceConstruct` corpus | 19 | direct-AST `internal__sc_*` cases (four lone-item spread-leaf cases and one output-less spread leaf added by the spread-leaf fix, October 2026) | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
+| Generated Lean case guards | 2,649 | 2,630 surface + 19 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| C# semantic report internal-node section | 19 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
 | Parser/elaboration reachability sweep | 2,641 attempted, 2,630 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 11 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
-| Containment test invocations | 42 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins, difference facts, and the call-function `NotAnAlgorithm` payload pin | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
+| Containment test invocations | 68 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins (13 rows) and their async-twin theory (13), the spread-leaf written-form agreement theory (6), difference facts, the two lone-builtin-argument facts, and the call-function `NotAnAlgorithm` payload pin (recounted October 2026: 44 at `a366f888`, where the row still said 42 because string interpolation had added two surface forms without updating it; the spread-leaf fix adds 24) | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
 
@@ -429,7 +432,8 @@ generated header, partition guards, JSON report, and table above now agree on
 2,641 surface cases, 45 parse-level exclusions, 2,596 Lean-representable
 surface cases, and 14 internal-node cases (since variadic postfix selection,
 October 2026: 11 parse-level exclusions and 2,630 Lean-representable cases, the
-34 `indexNeg__*` cases now evaluating `x[-1]` to `BadIndex` on both sides). String interpolation (STR-02,
+34 `indexNeg__*` cases now evaluating `x[-1]` to `BadIndex` on both sides; 19 internal-node cases since the
+spread-leaf fix of October 2026: four lone-item spread leaves and one output-less spread leaf). String interpolation (STR-02,
 October 2026) added three receiver templates — `interpolation` (a hole written
 directly), `interpolationViaProp` (a property read in two holes) and
 `interpolationViaParam` (a parameter read in a hole), 102 cases that pin every
@@ -558,8 +562,9 @@ reachable through public semantic-AST construction.
 
 **Why its evaluation drops `()`.** The node has join semantics: an empty
 contribution adds no items
-(`evalSequenceConstructCounted` skips `valueCount = 0` leaves, splices spread
-leaves, normalizes). This is intentional for the internal role, pinned by
+(`evalSequenceConstructCounted` skips `valueCount = 0` leaves, splices each spread
+leaf's items — exactly the items the spread expression supplies, one boundary per
+written star, read back like a spread output row — and normalizes). This is intentional for the internal role, pinned by
 CoreTests (`spreadEmptyJoinContributesNoItems`,
 `internalSequenceConstruct*` guards), and exactly why the node must stay
 surface-unreachable: written parentheses always keep a non-spread `()`
@@ -595,6 +600,39 @@ cases):
 | `take(SC[(), 1, 2], 2)` | `[1, 2]` on both; the internal join drops the `()` leaf |
 | `sum(SC[1, 2])` | `3` on both |
 
+**Spread-leaf double opening found and fixed (October 2026) — compatibility note for
+semantic-AST consumers.** Since the June 2026 removal of the semicolon syntax (`ad757205`),
+the join handed a whole spread LEAF `x*` to the spread-OPERAND helper (then
+`evalSequenceSupplyOperandItems` / `EvalSequenceSupplyOperandItems`, now
+`evalSequenceSpreadOperandItems` / `EvalSequenceSpreadOperandItems`; the async twin copied
+the hand-off when async execution arrived in `12ea7457`, August 2026), whose generic arm
+evaluated the spread expression — the capture of `x`'s items — and spread that captured
+value again: a k-star leaf behaved like k+1 written layers. Values first diverged
+when exact lists arrived (`d202b746`, July 2026), and only for a leaf supplying exactly ONE
+structured item. Lean and C# (sync and async) agreed, so no differential test noticed; five
+hand-written Lean CoreTests guards depended on it after the same June commit had changed
+their initial states to one join-built value (four loop-step guards, restored to three
+initial slots: the two repeat guards and the while guard with the step shapes of their C# twins
+`EvaluatorLoopTests.Eval_VariadicLoopStep_*`, the dot-call take guard — which has no C# twin of
+its own — reusing the repeat fixture) or kept a join-built step (the reduce
+guard, restored to the written capture `(history*, item)` and its C# twin's nested result). The join now reads
+a spread leaf exactly as a written capture reads a spread row (Lean `evalCounted` +
+`countedTopLevelValues`, C# `EvalCounted` + `AddCountedTopLevelValues`): the operand is still
+evaluated once, errors (including `SpreadMissingOutput`), spans and step charges are
+unchanged, and only the join's own collection reservation sees the corrected item count. No
+KatLang source program is affected (the node has no surface origin). Pinned in
+`SequenceConstructContainmentTests` and the `internal__sc_spread_lone_*` /
+`internal__sc_spread_stacked_lone` differential cases:
+
+| Hand-built AST input | Before | After (= the written capture) |
+|---|---|---|
+| `SC[[[7]]*, 3]` | `(7, 3)` | `([7], 3)` |
+| `SC[[()]*, 3]` | `3` | `((), 3)` — a spread-produced `()` item is kept; only a NON-spread `()` leaf drops |
+| `SC[[(1, 2)]*, 3]` | `(1, 2, 3)` | `((1, 2), 3)` |
+| `SC[[[[7]]]**, 3]` | `(7, 3)` | `([7], 3)` |
+| `SC[(1, 2)*, 3]` | `(1, 2, 3)` | unchanged |
+| `SC[{A = 1}*, 3]` | `SpreadMissingOutput` | unchanged (`internal__sc_spread_missing_output`) |
+
 **Containment guarantees and their enforcing tests:**
 
 | Guarantee | Enforced by |
@@ -602,8 +640,8 @@ cases):
 | Surface syntax never parses or elaborates to the node (zero origin sites) | `SequenceConstructContainmentTests.SurfaceSequenceSyntax_NeverParsesToSequenceConstruct` + `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` (all corpus programs attempted, the deliberate parse-error cases skipped; see §5.1) + pre-existing `ParserTests` absence assertions |
 | Surface forms keep their intended AST family | `ParenthesizedSequenceSyntax_UsesExpectedNodes` |
 | Production visitors rebuild, never drop or originate | `ProductionVisitor_PreservesExternallyOriginatedNode` |
-| Node semantics pinned (incl. `()`-drop, spread splice) | `DirectSequenceConstruct_DropsEmptyLeavesAndSplicesSpreads` (C#), `internalSequenceConstruct*` guards (Lean CoreTests) |
-| Lean/C# agreement on the node | 13 `internal__sc_*` cases in the generated `SemanticExplorerCases.lean` (pinned to C#-observed results) |
+| Node semantics pinned (incl. `()`-drop, spread splice) | `DirectSequenceConstruct_DropsEmptyLeavesAndSplicesSpreads`, `DirectSequenceConstruct_SpreadLeafSuppliesExactlyItsWrittenSpreadItems` and `DirectSequenceConstruct_AsyncTwinMatchesThePinnedObservation` (C#), `AsyncExpressionDispatchTests.SequenceConstruct_ChildEvaluationRoutesThroughTheAsyncSeam` (spread leaves read on the async seam), `internalSequenceConstruct*` guards and `RepeatedSpread` `joinSpreadLeaf*` guards (Lean CoreTests) |
+| Lean/C# agreement on the node | 19 `internal__sc_*` cases in the generated `SemanticExplorerCases.lean` (pinned to C#-observed results) |
 | Lean plain/counted agreement | plain eval is the counted projection on both sides + the artifact's per-case internal cross-check |
 | Accidental surface exposure detected at the observation level | `InternalNodeSurfaceHazard` findings in `SemanticExplorerTests` (internal vs surface-counterpart relations, visible in `SemanticExplorerReport.json` under `internalNodeCases`) + `DirectSequenceConstruct_IsIntentionallyDifferentFromWrittenParentheses` |
 | Purpose documented at definition/eval sites | doc comments on `Ast.cs` `SequenceConstruct`, `EvalSequenceConstructCounted`, Lean `Expr.sequenceConstruct`, `evalSequenceConstructCounted` |

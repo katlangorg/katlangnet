@@ -241,6 +241,7 @@ public class SemanticExplorerLeanArtifactTests
         Assert.True(
             document.Contains(expectedSurfaceRow, StringComparison.Ordinal),
             $"Sequence-boundary audit is missing expected row:{Environment.NewLine}{expectedSurfaceRow}");
+        Assert.Contains($"plus **{internalNodes}**", document, StringComparison.Ordinal);
         Assert.Contains(
             $"| Generated Lean case guards | {Count(leanRepresentable + internalNodes)} | " +
             $"{Count(leanRepresentable)} surface + {internalNodes} internal-node",

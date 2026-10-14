@@ -941,6 +941,28 @@ public static class SemanticExplorerCorpus
         new("sc_spread_3", "SequenceConstruct[(1,2)*, 3] splices the spread leaf",
             () => Sc(new Expr.SequenceSpread(ScBlock(ScNum(1), ScNum(2))), ScNum(3)),
             "((1, 2)*, 3)", InternalNodeRelation.IntentionallyEqual),
+        // A spread leaf supplies exactly its spread items, one boundary per written
+        // star: a LONE structured item stays whole and a lone spread-produced `()`
+        // stays an item (the join drops only a NON-spread `()` leaf).
+        new("sc_spread_lone_list", "SequenceConstruct[[[7]]*, 3] keeps the lone list item whole",
+            () => Sc(new Expr.SequenceSpread(new Expr.ListLiteral([new Expr.ListLiteral([ScNum(7)])])), ScNum(3)),
+            "([[7]]*, 3)", InternalNodeRelation.IntentionallyEqual),
+        new("sc_spread_lone_empty", "SequenceConstruct[[()]*, 3] keeps the spread-produced () item",
+            () => Sc(new Expr.SequenceSpread(new Expr.ListLiteral([ScEmpty()])), ScNum(3)),
+            "([()]*, 3)", InternalNodeRelation.IntentionallyEqual),
+        new("sc_spread_lone_pair", "SequenceConstruct[[(1,2)]*, 3] keeps the lone pair item whole",
+            () => Sc(new Expr.SequenceSpread(new Expr.ListLiteral([new Expr.Capture([ScNum(1), ScNum(2)])])), ScNum(3)),
+            "([(1, 2)]*, 3)", InternalNodeRelation.IntentionallyEqual),
+        new("sc_spread_stacked_lone", "SequenceConstruct[[[[7]]]**, 3] opens one boundary per written star",
+            () => Sc(new Expr.SequenceSpread(new Expr.SequenceSpread(
+                new Expr.ListLiteral([new Expr.ListLiteral([new Expr.ListLiteral([ScNum(7)])])]))), ScNum(3)),
+            "([[[7]]]**, 3)", InternalNodeRelation.IntentionallyEqual),
+        new("sc_spread_missing_output", "SequenceConstruct[{A = 1}*, 3] fails like the spread anywhere else",
+            () => Sc(new Expr.SequenceSpread(new Expr.AlgorithmExpr(new Algorithm.User(
+                Parent: null, ParameterPatterns: [], Opens: [],
+                Properties: [new Property("A", new Algorithm.User(null, [], [], [], [ScNum(1)]))],
+                Output: []))), ScNum(3)),
+            "({A = 1}*, 3)", InternalNodeRelation.IntentionallyEqual),
         new("sc_count_arg", "count of the internal node observes the ()-dropped value",
             () => ScCall("count", Sc(ScEmpty(), ScNum(1))),
             "count(((), 1))", InternalNodeRelation.IntentionallyDifferent),

@@ -2827,10 +2827,12 @@ public static partial class Evaluator
         {
             if (leaf is Expr.SequenceSpread)
             {
-                var suppliedItemsR = await EvalSequenceSpreadOperandItemsAsync(leaf, ctx, valEnv).ConfigureAwait(false);
-                if (suppliedItemsR.IsError) return suppliedItemsR.Error;
+                // A spread leaf supplies exactly the spread EXPRESSION's items, read
+                // back like a spread output row (see the synchronous twin).
+                var spreadR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
+                if (spreadR.IsError) return spreadR.Error;
 
-                items.AddRange(suppliedItemsR.Value);
+                AddCountedTopLevelValues(items, spreadR.Value);
                 continue;
             }
 

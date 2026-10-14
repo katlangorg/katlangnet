@@ -26,9 +26,18 @@ its spread row's recovered slots shallowly. These guards pin that routing execut
    structured item opens exactly one more boundary per star;
 4. the operand is EVALUATED ONCE whatever the number of stars or groupings: every user call opens
    one binding context (`EvalState.nextBindingContext`), so a fresh call operand `Id(v)` opens
-   one context under every spelling, including operands whose supply changes across layers.
+   one context under every spelling, including operands whose supply changes across layers;
+5. the INTERNAL join (`sequenceConstruct`, host-built only) reads a spread leaf exactly as a
+   written capture reads a spread row (`evalCounted` + `countedTopLevelValues`, never re-spread):
+   with the non-empty second leaf `3`, the join equals the written capture in value and emitted
+   count for every operand value and every spelling;
+6. hand-written join shapes, independent of the capture route: a lone structured item stays
+   whole, a lone spread-produced `()` stays an item, a stacked leaf opens one boundary per star,
+   and a NON-spread `()` leaf is still dropped.
 
-C# twin: `StarSyntaxTests` (`RepeatedSpread_*`), `ListValueTests.StackedSpread_*`.
+C# twins: `StarSyntaxTests` (`RepeatedSpread_*`), `ListValueTests.StackedSpread_*` (1–4);
+`SequenceConstructContainmentTests` (`DirectSequenceConstruct_*`) and the `internal__sc_spread_*`
+explorer cases (5–6).
 -/
 
 namespace KatLangTests.RepeatedSpread
@@ -178,5 +187,38 @@ def operandIsEvaluatedOnceUnderEverySpelling : Bool :=
       spellings.all fun (_, spell) => contextsOpened value [spell (call value)] == some 1
 
 #guard operandIsEvaluatedOnceUnderEverySpelling
+
+/-- 5. The INTERNAL join (`sequenceConstruct`, host-built only) reads a spread leaf exactly as a
+written capture reads a spread row: the spread expression's items, one boundary per written star,
+never reopened. The join differs from written parentheses ONLY in dropping a non-spread `()` leaf,
+so with the non-empty second leaf `3` the two agree — value and emitted count — for every operand
+value and every spelling. -/
+def joinSpreadLeafSuppliesExactlyTheSpreadItems : Bool :=
+  operandValues.all fun value =>
+    spellings.all fun (_, spell) =>
+      match counted (.sequenceConstruct (spell value) (n 3)), counted (.capture [spell value, n 3]) with
+      | .ok (joined, joinedCount), .ok (captured, capturedCount) =>
+          joined == captured && joinedCount == capturedCount
+      | _, _ => false
+
+#guard joinSpreadLeafSuppliesExactlyTheSpreadItems
+
+/-- 6. Hand-written join observations, independent of the capture route: a LONE structured item
+stays whole, a lone spread-produced `()` stays an item, a stacked leaf opens one boundary per
+star — while a NON-spread `()` leaf is still dropped (join semantics). -/
+def joinSpreadLeafShapesArePinned : Bool :=
+  let join (leaf : Expr) : Option Result :=
+    match counted (.sequenceConstruct leaf (n 3)) with
+    | .ok (value, 1) => some value
+    | _ => none
+  join (.sequenceSpread (lit [lit [n 7]])) == some (.sequenceValue [atomList [7], .atom 3]) &&
+  join (.sequenceSpread (lit [unit])) == some (.sequenceValue [.sequenceValue [], .atom 3]) &&
+  join (.sequenceSpread (lit [tup [n 1, n 2]]))
+    == some (.sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 3]) &&
+  join (stacked2 (lit [lit [lit [n 7]]])) == some (.sequenceValue [atomList [7], .atom 3]) &&
+  join (.sequenceSpread (tup [n 1, n 2])) == some (.sequenceValue [.atom 1, .atom 2, .atom 3]) &&
+  join unit == some (.atom 3)
+
+#guard joinSpreadLeafShapesArePinned
 
 end KatLangTests.RepeatedSpread

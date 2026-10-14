@@ -13,8 +13,8 @@ Partition (machine-checked by the `*CaseIds.length` guards below):
 - surface corpus cases: 2641
 - excluded parse-level cases (Lean has no surface parser): 11
 - Lean-representable surface cases: 2630
-- internal-node cases: 14
-- total generated guards: 2644 case guards + 2 count guards
+- internal-node cases: 19
+- total generated guards: 2649 case guards + 2 count guards
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -15934,6 +15934,31 @@ def case_internal__sc_spread_3 : Expr :=
   .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.capture [.num 1, .num 2])) (.num 3))])
 #guard obs case_internal__sc_spread_3 == "ok raw=S[1, 2, 3] n=1"
 
+-- internal__sc_spread_lone_list: SequenceConstruct[[[7]]*, 3] keeps the lone list item whole
+def case_internal__sc_spread_lone_list : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.listLiteral [(.listLiteral [.num 7])])) (.num 3))])
+#guard obs case_internal__sc_spread_lone_list == "ok raw=S[L[7], 3] n=1"
+
+-- internal__sc_spread_lone_empty: SequenceConstruct[[()]*, 3] keeps the spread-produced () item
+def case_internal__sc_spread_lone_empty : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.listLiteral [(.emptySequence 0)])) (.num 3))])
+#guard obs case_internal__sc_spread_lone_empty == "ok raw=S[S[], 3] n=1"
+
+-- internal__sc_spread_lone_pair: SequenceConstruct[[(1,2)]*, 3] keeps the lone pair item whole
+def case_internal__sc_spread_lone_pair : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])])) (.num 3))])
+#guard obs case_internal__sc_spread_lone_pair == "ok raw=S[S[1, 2], 3] n=1"
+
+-- internal__sc_spread_stacked_lone: SequenceConstruct[[[[7]]]**, 3] opens one boundary per written star
+def case_internal__sc_spread_stacked_lone : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [(.listLiteral [.num 7])])]))) (.num 3))])
+#guard obs case_internal__sc_spread_stacked_lone == "ok raw=S[L[7], 3] n=1"
+
+-- internal__sc_spread_missing_output: SequenceConstruct[{A = 1}*, 3] fails like the spread anywhere else
+def case_internal__sc_spread_missing_output : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))) (.num 3))])
+#guard obs case_internal__sc_spread_missing_output == "err spreadMissingOutput"
+
 -- internal__sc_count_arg: count of the internal node observes the ()-dropped value
 def case_internal__sc_count_arg : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceConstruct (.emptySequence 0) (.num 1))])])
@@ -15976,6 +16001,11 @@ def internalNodeCaseIds : List String := [
   "internal__sc_1_2",
   "internal__sc_p12_p34",
   "internal__sc_spread_3",
+  "internal__sc_spread_lone_list",
+  "internal__sc_spread_lone_empty",
+  "internal__sc_spread_lone_pair",
+  "internal__sc_spread_stacked_lone",
+  "internal__sc_spread_missing_output",
   "internal__sc_count_arg",
   "internal__sc_take_collection",
   "internal__sc_take_collection_empty",
@@ -15983,8 +16013,8 @@ def internalNodeCaseIds : List String := [
   "internal__sc_sum_arg",
   "internal__sc_call_function"
 ]
-#guard internalNodeCaseIds.length == 14
+#guard internalNodeCaseIds.length == 19
 
--- 14 internal-node cases.
--- Total: 2644 case guards (2630 surface + 14 internal-node).
+-- 19 internal-node cases.
+-- Total: 2649 case guards (2630 surface + 19 internal-node).
 end SemanticExplorerCases

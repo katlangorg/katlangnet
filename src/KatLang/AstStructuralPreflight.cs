@@ -528,13 +528,19 @@ internal static class AstStructuralPreflight
 
     /// <summary>
     /// Cost of ONE re-entry from the iterative join machinery into generic recursive
-    /// evaluation. Both re-entry shapes are the same measured frame burst
-    /// (<c>EvalSequenceConstructCounted</c> -> <c>EvalSequenceSpreadOperandItems</c> ->
-    /// <c>Eval</c> -> ...), so they share one constant: the ALTERNATION link (a spread
+    /// evaluation. Two re-entry shapes share this constant: the ALTERNATION link (a spread
     /// directly over a construct) and the HAND-OFF from a join spine to a non-join
     /// composite. Process-isolated probes measured both classes overflowing a 1 MiB Debug
     /// stack between 80 and 100 re-entries, so 8 units — admitting at most 37 — keeps a
-    /// >=2.1x margin in Debug and more in Release.
+    /// >=2.1x margin in Debug and more in Release. Since the October 2026 spread-leaf fix a
+    /// construct's spread leaf runs <c>EvalSequenceConstructCounted</c> -> <c>EvalCounted</c> ->
+    /// <c>EvalSequenceSpreadCounted</c> -> ..., one frame shorter than the measured
+    /// <c>EvalSequenceConstructCounted</c> -> <c>EvalSequenceSpreadOperandItems</c> -> <c>Eval</c>
+    /// hop; the hand-off chains (<c>EvalSequenceConstructCounted</c> -> <c>Eval</c> for a
+    /// construct leaf, <c>EvalSequenceSpreadCounted</c> -> <c>EvalSequenceSpreadOperandItems</c>
+    /// -> the operand's evaluator — <c>Eval</c>, or <c>EvalCaptureValue</c> /
+    /// <c>EvalZeroArgumentDemandOutput</c> / <c>EvalAliasSpreadOperandItems</c> for a capture,
+    /// block or alias operand — for a spread operand) are unchanged.
     /// </summary>
     private const int JoinReentryWeight = 8;
 

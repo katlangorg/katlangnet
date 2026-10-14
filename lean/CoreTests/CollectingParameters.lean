@@ -1175,23 +1175,24 @@ def loopVariadicHistoryLastExpr : KatLang.Expr :=
 def loopVariadicNextExpr : KatLang.Expr :=
   .binary .add loopVariadicHistoryLastExpr (.num 1)
 
+-- `AppendNext(*history) = history*, history.atoms.last + 1`: two output rows, so each state
+-- slot of the previous step is one item of `history` (mirrors C#
+-- `EvaluatorLoopTests.Eval_VariadicLoopStep_*`).
 def loopVariadicAppendNextAlg : Algorithm :=
   algWithParameters [{ name := "history", kind := .collecting }] [] [] [
-    .sequenceConstruct (sequenceSpread (.param "history")) loopVariadicNextExpr
+    sequenceSpread (.param "history"),
+    loopVariadicNextExpr
   ]
 
 def loopVariadicContinueFlagExpr : KatLang.Expr :=
-  .call (resolve "if") [
-    .compare .lt loopVariadicNextExpr (.num 6),
-    .boolLiteral true,
-    .boolLiteral false
-  ]
+  .compare .lt loopVariadicNextExpr (.num 6)
 
+-- `AppendWhile(*history) = (history*, history.atoms.last + 1), history.atoms.last + 1 < 6`:
+-- the next state is ONE captured slot, followed by the continuation flag.
 def loopVariadicWhileAppendNextAlg : Algorithm :=
   algWithParameters [{ name := "history", kind := .collecting }] [] [] [
-    .sequenceConstruct
-      (.sequenceConstruct (sequenceSpread (.param "history")) loopVariadicNextExpr)
-      loopVariadicContinueFlagExpr
+    .capture [sequenceSpread (.param "history"), loopVariadicNextExpr],
+    loopVariadicContinueFlagExpr
   ]
 
 def loopVariadicInitialState : Algorithm :=
@@ -1199,10 +1200,7 @@ def loopVariadicInitialState : Algorithm :=
 
 def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [
-      .num 1,
-      sequenceItems [.num 1, .num 2, .num 4]
-    ])
+    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2, .num 4])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5]) => true
   | _ => false
@@ -1211,40 +1209,49 @@ def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
 
 def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [
-      .num 2,
-      sequenceItems [.num 1, .num 2, .num 4]
-    ])
+    .dotCall (resolve "Step") "repeat" (some [.num 2, .num 1, .num 2, .num 4])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
 
 #guard variadicLoopStepRepeatTwoIterationsKeepsExpandedState
 
--- The step's ONE output row is the joined sequence `(1, 2, 4, 5, true)`, so
--- the loop sees a single output slot that is not a Boolean continuation flag:
--- the Boolean-requirement error names that slot (a value-kind error, never a
--- truth test of the slot's contents).
+-- Three initial state slots collect into `history = [1, 2, 4]`; the step returns the next
+-- state `(1, 2, 4, 5)` as one slot with the flag `5 < 6`, and the loop's result is that state
+-- (mirrors C# `EvaluatorLoopTests.Eval_VariadicLoopStep_WhileUsesExpandedState`).
 def variadicLoopStepWhileUsesExpandedState : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileAppendNextAlg)] [
-    .dotCall (resolve "Step") "while" (some [
-      sequenceItems [.num 1, .num 2, .num 4]
-    ])
+    .dotCall (resolve "Step") "while" (some [.num 1, .num 2, .num 4])
+  ])) with
+  | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5]) => true
+  | _ => false
+
+#guard variadicLoopStepWhileUsesExpandedState
+
+-- A while step with ONE output row `(history*, next, next < 6)` has a single slot, which is both
+-- the next state and the continuation flag: the Boolean requirement names that whole sequence
+-- value — a value-kind error, never a truth test of its last element (the single-slot arm of the
+-- loop's flag split). Mirrors C# `BooleanValueTests.While_RejectsANonBooleanContinuationFlag_*`.
+def loopVariadicWhileOneRowAlg : Algorithm :=
+  algWithParameters [{ name := "history", kind := .collecting }] [] [] [
+    .capture [sequenceSpread (.param "history"), loopVariadicNextExpr, loopVariadicContinueFlagExpr]
+  ]
+
+def variadicLoopStepWhileOneRowSlotIsNotAFlag : Bool :=
+  match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileOneRowAlg)] [
+    .dotCall (resolve "Step") "while" (some [.num 1, .num 2, .num 4])
   ])) with
   | Except.error err =>
       innermostIsBooleanRequired "while continuation flag (the step's last output)"
         "a sequence value with 5 sequence elements: (1, 2, 4, 5, true)" err
   | _ => false
 
-#guard variadicLoopStepWhileUsesExpandedState
+#guard variadicLoopStepWhileOneRowSlotIsNotAFlag
 
 def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 3,
-        sequenceItems [.num 1, .num 2, .num 4]
-      ]))
+      (.dotCall (resolve "Step") "repeat" (some [.num 3, .num 1, .num 2, .num 4]))
       "take"
       (some [.num 5])
   ])) with

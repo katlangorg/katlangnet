@@ -1134,8 +1134,12 @@ mutual
     --   is the intentional external origin mechanism. Its value evaluation
     --   DROPS `()` leaves (join semantics), which written parentheses never
     --   do, so routing surface syntax through it would silently violate the
-    --   visible-empty rule. Guarded by SequenceConstructContainmentTests
-    --   (C#) and the internal-node cases in SemanticExplorerCases.lean.
+    --   visible-empty rule. A spread leaf contributes exactly its spread items,
+    --   read back like a spread output row — one boundary per written star,
+    --   never reopened — so the join agrees with the written capture except for
+    --   the dropped non-spread `()` leaves. Guarded by
+    --   SequenceConstructContainmentTests (C#) and the internal-node cases in
+    --   SemanticExplorerCases.lean.
     | sequenceConstruct : Expr -> Expr -> Expr
     -- * emptySequence: the empty sequence value `()`. Repeated ordinary
     --   parentheses around the empty sequence are useful-structure normalized
@@ -3603,9 +3607,9 @@ def reopenSpreadLayers : Nat -> List Result -> List Result
 /-- The counted result of a spread expression over its final item supply: the supply's
     ordinary capture, emitting the supply's item count (the expression-level face of
     `spread : Value -> Supply`; consumers that read the expression as one value re-count at
-    their value boundary, and a spread ROW recovers the supply's NORMALIZED items — the items
-    themselves on a canonical supply — through `countedTopLevelValues`,
-    `countedTopLevelValues_spreadSupplyResult`).
+    their value boundary, and a spread ROW — or a spread leaf of the internal join — recovers the
+    supply's NORMALIZED items, the items themselves on a canonical supply, through
+    `countedTopLevelValues`, `countedTopLevelValues_spreadSupplyResult`).
     `evalSequenceSpreadCounted` returns it. C#: the final layer of
     `Evaluator.EvalSequenceSpreadCounted` (`CountedResult(capture, items.Count)`). -/
 def spreadSupplyResult (items : List Result) : CountedResult :=
@@ -5959,8 +5963,9 @@ mutual
       pattern-derived flag (the former LOOP-04 packing of a pattern-bound step's
       spread row was retired by Q-24), so `(a, b)` is one item and `(a, b)*` two
       in every step. The internal `sequenceConstruct` join (never
-      parser-produced) may still emit several values and is expanded by
-      `countedTopLevelValues`. A builtin has no written rows, so its value is ONE
+      parser-produced) is a non-spread row like any other: it supplies exactly ONE slot (it
+      emits at most one value, `Result.valueCount` of its constructed sequence; a constructed
+      `()` is kept as its one slot by the `out.snd = 0` arm). A builtin has no written rows, so its value is ONE
       row (LOOP-03, Q-23) — never a re-counted supply that would read a `()` result
       as zero slots; a builtin loop step never reaches this arm (`runNeedStepSlots`
       invokes it over the state supply), only a host-built clause body that IS a
@@ -7134,7 +7139,12 @@ mutual
       `spreadMissingOutput` error on EVERY operand shape — the direct
       `.algorithmExpr`/`.capture` specializations translate a missing-output
       failure exactly like the generic arm, so `{A = 1}*` and
-      `X = {A = 1}` / `X*` agree.
+      `X = {A = 1}` / `X*` agree. Its argument is the spread's PEELED operand
+      (`evalSequenceSpreadCounted` is its one caller): a consumer holding a whole
+      spread EXPRESSION reads its items through `evalCounted` +
+      `countedTopLevelValues` (the output-row loop, written-slot reification, supply
+      formation, the internal join), since handing it the spread node itself would
+      spread the spread's captured value again — one boundary too many.
       C#: `EvalSequenceSpreadOperandItems`. -/
   partial def evalSequenceSpreadOperandItems (e : Expr) (ctx : EvalCtx)
       (env : ValEnv) : EvalM (List Result) := do
@@ -7227,8 +7237,13 @@ mutual
   /-- Evaluate the INTERNAL `sequenceConstruct` join node as one sequence
       value. Join semantics, not written-parentheses semantics: a non-spread
       leaf whose value is `()` contributes NO item (an empty join
-      contribution), an explicit spread leaf opens its operand's immediate
-      items into the constructed sequence, and the result is normalized.
+      contribution), an explicit spread leaf contributes exactly the items the
+      spread expression supplies — read back like a spread output row
+      (`evalCounted` + `countedTopLevelValues`), one boundary per written star,
+      never reopened, a spread-produced `()` item included — and the result is
+      normalized. (Until October 2026 the leaf itself was handed to
+      `evalSequenceSpreadOperandItems`, which re-spread the spread's captured value:
+      a k-star leaf acted as k+1 layers whenever it supplied one structured item.)
       Written parentheses parse to `capture` nodes and always keep a
       non-spread `()` item visible — surface syntax must never route through
       this node (see the constructor note on `Expr.sequenceConstruct`).
@@ -7243,8 +7258,11 @@ mutual
       | leaf :: rest, items => do
           match leaf with
           | .sequenceSpread _ => do
-              let supplied <- evalSequenceSpreadOperandItems leaf ctx env
-              loop rest (supplied.reverse ++ items)
+              -- A spread leaf supplies exactly the spread EXPRESSION's items, read back
+              -- like a spread output row (`countedTopLevelValues`): one boundary per
+              -- written star, never reopened (`countedTopLevelValues_spreadSupplyResult`).
+              let out <- evalCounted leaf ctx env
+              loop rest ((countedTopLevelValues out).reverse ++ items)
           | _ => do
               let value <- eval leaf ctx env
               if Result.valueCount value = 0 then

@@ -496,6 +496,10 @@ public class BooleanValueTests
     [InlineData("Step = x, 1\nStep.while(5)", "numeric value 1")]
     [InlineData("Step = x + 1, 'go'\nStep.while(0)", "a string: 'go'")]
     [InlineData("Step = x + 1, (true, true)\nStep.while(0)", "a sequence value with 2 sequence elements: (true, true)")]
+    // ONE output row is a single slot — both the next state and the flag — so the
+    // requirement names the whole sequence, never a truth test of its last element
+    // (Lean: CoreTests `variadicLoopStepWhileOneRowSlotIsNotAFlag`).
+    [InlineData("Step(*h) = (h*, h.atoms.last + 1, h.atoms.last + 1 < 6)\nStep.while(1, 2, 4)", "a sequence value with 5 sequence elements: (1, 2, 4, 5, true)")]
     public void While_RejectsANonBooleanContinuationFlag_InBothStrategies(string source, string described)
     {
         var expected = $"while continuation flag (the step's last output) must be a Boolean value (true or false), but was {described}";

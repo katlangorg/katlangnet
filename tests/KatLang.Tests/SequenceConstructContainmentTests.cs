@@ -195,7 +195,26 @@ public class SequenceConstructContainmentTests
         { "sc[1, 2]", "ok raw=S[1, 2] n=1" },   // agrees with surface (1, 2)
         { "sc[(1,2), (3,4)]", "ok raw=S[S[1, 2], S[3, 4]] n=1" },
         { "sc[(1,2)*, 3]", "ok raw=S[1, 2, 3] n=1" },
+        // A spread leaf supplies exactly its spread items — one boundary per
+        // written star, never reopened — so a LONE structured item stays whole
+        // and a lone spread-produced `()` stays an item (only a NON-spread `()`
+        // leaf is dropped).
+        { "sc[[[7]]*, 3]", "ok raw=S[L[7], 3] n=1" },
+        { "sc[[()]*, 3]", "ok raw=S[S[], 3] n=1" },
+        { "sc[[(1,2)]*, 3]", "ok raw=S[S[1, 2], 3] n=1" },
+        { "sc[[[[7]]]**, 3]", "ok raw=S[L[7], 3] n=1" },
+        // An output-less spread operand fails through the leaf exactly as the
+        // spread fails anywhere else (the operand helper's spread-specific error).
+        { "sc[{A = 1}*, 3]", "err spreadMissingOutput" },
     };
+
+    private static Expr Lst(params Expr[] items) => new Expr.ListLiteral(items);
+
+    private static Expr Pair(int a, int b) => new Expr.Capture([N(a), N(b)]);
+
+    private static Expr OutputlessBlock() => new Expr.AlgorithmExpr(new Algorithm.User(
+        Parent: null, ParameterPatterns: [], Opens: [],
+        Properties: [new Property("A", new Algorithm.User(null, [], [], [], [N(1)]))], Output: []));
 
     private static readonly IReadOnlyDictionary<string, Func<Expr>> DirectNodeBuilders =
         new Dictionary<string, Func<Expr>>
@@ -207,8 +226,25 @@ public class SequenceConstructContainmentTests
             ["sc[(), (1,2)]"] = () => Sc(E(), Blk(N(1), N(2))),
             ["sc[1, 2]"] = () => Sc(N(1), N(2)),
             ["sc[(1,2), (3,4)]"] = () => Sc(Blk(N(1), N(2)), Blk(N(3), N(4))),
-            ["sc[(1,2)*, 3]"] = () => Sc(new Expr.SequenceSpread(Blk(N(1), N(2))), N(3)),
+            ["sc[(1,2)*, 3]"] = () => Sc(new Expr.SequenceSpread(Pair(1, 2)), N(3)),
+            ["sc[[[7]]*, 3]"] = () => Sc(new Expr.SequenceSpread(Lst(Lst(N(7)))), N(3)),
+            ["sc[[()]*, 3]"] = () => Sc(new Expr.SequenceSpread(Lst(E())), N(3)),
+            ["sc[[(1,2)]*, 3]"] = () => Sc(new Expr.SequenceSpread(Lst(Pair(1, 2))), N(3)),
+            ["sc[[[[7]]]**, 3]"] = () => Sc(
+                new Expr.SequenceSpread(new Expr.SequenceSpread(Lst(Lst(Lst(N(7)))))), N(3)),
+            ["sc[{A = 1}*, 3]"] = () => Sc(new Expr.SequenceSpread(OutputlessBlock()), N(3)),
         };
+
+    /// <summary>The written capture each spread-leaf case must agree with.</summary>
+    public static TheoryData<string, string> SpreadLeafWrittenForms => new()
+    {
+        { "sc[(1,2)*, 3]", "((1, 2)*, 3)" },
+        { "sc[[[7]]*, 3]", "([[7]]*, 3)" },
+        { "sc[[()]*, 3]", "([()]*, 3)" },
+        { "sc[[(1,2)]*, 3]", "([(1, 2)]*, 3)" },
+        { "sc[[[[7]]]**, 3]", "([[[7]]]**, 3)" },
+        { "sc[{A = 1}*, 3]", "({A = 1}*, 3)" },
+    };
 
     [Theory]
     [MemberData(nameof(DirectNodeCases))]
@@ -217,6 +253,41 @@ public class SequenceConstructContainmentTests
         // ObserveAst also cross-checks the plain and counted evaluators.
         var observation = SemanticExplorerHarness.ObserveAst(caseId, DirectNodeBuilders[caseId]());
         Assert.Equal(expectedNeutral, observation.Neutral);
+    }
+
+    /// <summary>
+    /// A spread leaf of the join contributes exactly what the same spread
+    /// contributes as a row of the written capture <c>(x*, 3)</c>: the spread
+    /// expression's items, one boundary per written star. The join differs from
+    /// written parentheses ONLY in dropping a non-spread <c>()</c> leaf, so with a
+    /// non-empty second leaf the two agree for every spread operand.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SpreadLeafWrittenForms))]
+    public void DirectSequenceConstruct_SpreadLeafSuppliesExactlyItsWrittenSpreadItems(string caseId, string writtenSource)
+    {
+        var internalNode = SemanticExplorerHarness.ObserveAst(caseId, DirectNodeBuilders[caseId]());
+        var written = SemanticExplorerHarness.Observe(caseId + " (written)", writtenSource);
+        Assert.Equal(written.Neutral, internalNode.Neutral);
+    }
+
+    /// <summary>
+    /// The async twin's join reads a spread leaf the same way: an async-capable
+    /// cache routes the run through the async twin family, which yields every pinned
+    /// observation (these ASTs read no property, so the cache seam itself is pinned by
+    /// <c>AsyncExpressionDispatchTests.SequenceConstruct_ChildEvaluationRoutesThroughTheAsyncSeam</c>).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DirectNodeCases))]
+    public async Task DirectSequenceConstruct_AsyncTwinMatchesThePinnedObservation(string caseId, string expectedNeutral)
+    {
+        var root = new Expr.AlgorithmExpr(new Algorithm.User(
+            Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [DirectNodeBuilders[caseId]()]));
+
+        var cache = new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache();
+        var async = await AsyncEvaluation.AsyncEvaluationHarness.Complete(Evaluator.RunCountedAsync(root, cache));
+
+        Assert.Equal(expectedNeutral, AsyncEvaluation.AsyncEvaluationHarness.NeutralOf(async));
     }
 
     /// <summary>

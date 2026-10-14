@@ -1039,7 +1039,9 @@ public closed record Expr
     /// mechanism. Its value evaluation DROPS <c>()</c> leaves (join
     /// semantics: an empty contribution adds no items), which written
     /// parentheses never do, so routing surface syntax through this node
-    /// would silently violate the visible-empty rule;
+    /// would silently violate the visible-empty rule. A spread leaf contributes
+    /// exactly its spread items (one boundary per written star, like a spread
+    /// row of a written capture);
     /// <c>SequenceConstructContainmentTests</c> and the semantic explorer's
     /// internal-node cases enforce that surface syntax and elaboration keep
     /// zero origin sites and that its semantics stay pinned and Lean-aligned.

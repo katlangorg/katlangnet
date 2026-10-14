@@ -471,8 +471,13 @@ public static partial class Evaluator
     /// Evaluate the INTERNAL <see cref="Expr.SequenceConstruct"/> join node as
     /// one sequence value. Join semantics, not written-parentheses semantics:
     /// a non-spread leaf whose value is <c>()</c> contributes NO item (an
-    /// empty join contribution), a spread leaf splices its operand's items,
-    /// and the result is recursively normalized. Written parentheses parse to
+    /// empty join contribution), a spread leaf contributes exactly the items the
+    /// spread expression supplies — read back like a spread output row
+    /// (<see cref="EvalCounted"/> + <see cref="AddCountedTopLevelValues"/>), one
+    /// boundary per written star, never reopened, a spread-produced <c>()</c>
+    /// item included — and the items are combined with the shallow
+    /// <see cref="CombineOutputSlots"/> (Lean normalizes; the two agree on the
+    /// canonical items evaluation produces). Written parentheses parse to
     /// <see cref="Expr.Capture"/> and always keep a non-spread <c>()</c> item
     /// visible — surface syntax must never route through this node
     /// (enforced by <c>SequenceConstructContainmentTests</c>).
@@ -491,10 +496,13 @@ public static partial class Evaluator
         {
             if (leaf is Expr.SequenceSpread)
             {
-                var suppliedItemsR = EvalSequenceSpreadOperandItems(leaf, ctx, valEnv);
-                if (suppliedItemsR.IsError) return suppliedItemsR.Error;
+                // A spread leaf supplies exactly the spread EXPRESSION's items, read
+                // back like a spread output row: one boundary per written star, never
+                // reopened. Lean: the `.sequenceSpread` arm of evalSequenceConstructCounted.
+                var spreadR = EvalCounted(leaf, ctx, valEnv);
+                if (spreadR.IsError) return spreadR.Error;
 
-                items.AddRange(suppliedItemsR.Value);
+                AddCountedTopLevelValues(items, spreadR.Value);
                 continue;
             }
 
@@ -524,6 +532,10 @@ public static partial class Evaluator
         _ => false,
     };
 
+    // Supplies a spread's PEELED operand's immediate items; EvalSequenceSpreadCounted is
+    // its one caller. A consumer holding a whole spread EXPRESSION reads its items through
+    // EvalCounted + AddCountedTopLevelValues instead — handing this the spread node itself
+    // would spread the spread's captured value again (one boundary too many).
     private static EvalResult<IReadOnlyList<Result>> EvalSequenceSpreadOperandItems(
         Expr expr,
         EvalCtx ctx,
