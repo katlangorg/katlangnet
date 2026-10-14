@@ -221,4 +221,16 @@ def joinSpreadLeafShapesArePinned : Bool :=
 
 #guard joinSpreadLeafShapesArePinned
 
+/-- A join's spread leaf evaluates its FRESH call operand once, under every spelling.
+The twice-written control opens two binding contexts; property caching cannot mask replay. -/
+def joinSpreadLeafEvaluatesItsOperandOnce : Bool :=
+  [lit [lit [lit [n 7]]], lit [unit], lit [tup [n 1, n 2]]].all fun value =>
+    let call := Expr.call (resolve "Id") [value]
+    spellings.all fun (_, spell) =>
+      contextsOpened value [.sequenceConstruct (spell call) (n 3)] == some 1 &&
+      contextsOpened value [.sequenceConstruct (spell call) (.sequenceConstruct (spell call) (n 3))]
+        == some 2
+
+#guard joinSpreadLeafEvaluatesItsOperandOnce
+
 end KatLangTests.RepeatedSpread
