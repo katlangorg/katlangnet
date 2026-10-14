@@ -379,7 +379,7 @@ public class ContinuousIntegrationPolicyTests
 
         using var document = JsonDocument.Parse(Text("global.json"));
         var sdk = document.RootElement.GetProperty("sdk");
-        Assert.Equal("11.0.100-rc.1.26425.128", sdk.GetProperty("version").GetString());
+        Assert.Equal("11.0.100-rc.2.26504.105", sdk.GetProperty("version").GetString());
         Assert.Equal("disable", sdk.GetProperty("rollForward").GetString());
         Assert.True(sdk.GetProperty("allowPrerelease").GetBoolean());
     }
