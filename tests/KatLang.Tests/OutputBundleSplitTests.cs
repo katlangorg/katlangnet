@@ -546,7 +546,7 @@ public class OutputBundleSplitTests
     [InlineData("(M.~N)")]
     public void OpenTargetNormalization_RejectsNonOpenOuterFormsAtSyntaxPhase(string target)
     {
-        var parsed = Parser.ParseSyntax("open " + target);
+        var parsed = Parser.ParseSyntax("open " + target + ", {}");
         Assert.NotEmpty(parsed.Diagnostics);
         Assert.All(parsed.Diagnostics, d => Assert.Equal(DiagnosticCode.BadOpenForm, d.Code));
     }

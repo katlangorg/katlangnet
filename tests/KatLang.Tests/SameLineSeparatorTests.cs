@@ -7,8 +7,8 @@ namespace KatLang.Tests;
 /// a declaration must begin a new row. A physical newline keeps separating
 /// slots wherever the context
 /// already allowed it (root output, brace bodies, parenthesized groups,
-/// call-argument lists, list literals), a definition body still ends at its
-/// newline, and ordinary expression continuation (operators, call
+/// call-argument lists, list literals), a definition body ends before an
+/// independent newline item, and ordinary expression continuation (operators, call
 /// delimiters, <c>:</c>, <c>.</c>, attached markers) is never a boundary.
 ///
 /// <para>The rule is decided at ONE ownership point for slots
@@ -24,9 +24,9 @@ namespace KatLang.Tests;
 /// already diagnosed (a rejected Grace run, a detached marker, a stray
 /// closer, a bad token, an open-target leftover) is never reported twice.</para>
 ///
-/// <para>SYN-07B is untouched: star classification, marker attachment,
-/// multiplication across a newline, and the spread boundaries keep their
-/// meaning — except that a slot before a spread now needs its comma like
+/// <para>The current SYN-07B/Q-65 rule gives physical line-final stars
+/// multiplication priority; spread needs explicit same-line closure and attachment.
+/// A slot before a spread needs its comma like
 /// every other slot (<c>A, B*</c>, never <c>A B*</c>).</para>
 /// </summary>
 public class SameLineSeparatorTests
@@ -142,7 +142,7 @@ public class SameLineSeparatorTests
     // ── Rejected: a same-line slot before a spread (SYN-07B interaction) ────
 
     [Theory]
-    [InlineData("A = (1, 2)\nB = (3, 4)\nA B*", "3:3")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA B*, 997", "3:3")]
     [InlineData("A = (1, 2)\nB = (3, 4)\nC = 5\nA B*, C", "4:3")]
     [InlineData("Use(*v) = v\na = 1\nb = (2, 3)\nUse(a b*)", "4:7")]
     [InlineData("X(*vals) = vals.count\nb = (1, 2)\nX(7 b*)", "3:5")]
@@ -255,7 +255,7 @@ public class SameLineSeparatorTests
     [InlineData("F(a, b) = a + b\nF(1, 2)", "3")]
     [InlineData("F(a, b) = a + b\nF(1, -2)", "-1")]
     [InlineData("NetSalary = 5\n('neto', NetSalary)", "(neto, 5)")]
-    [InlineData("A = (1, 2)\nB = (3, 4)\nA, B*", "(1, 2)\n3\n4")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA, B*, 997", "(1, 2)\n3\n4\n997")]
     [InlineData("Use(*v) = v\na = 1\nb = (2, 3)\nUse(a, b*)", "[1, 2, 3]")]
     [InlineData("X(*vals) = vals.count\nb = (1, 2)\nX(7, b*)", "3")]
     [InlineData("K = A~, B\nK(1, 2)", "(2, 1)")]
@@ -301,7 +301,7 @@ public class SameLineSeparatorTests
     [InlineData("A = 2\nB = 3\nA* B", "6")]
     [InlineData("A = 2\nB = 3\nA*, B", "2\n3")]
     [InlineData("A = 2\nB = 3\nA*,\nB", "2\n3")]
-    [InlineData("A = (1, 2)\nA*\nB = 5\nB", "1\n2\n5")]
+    [InlineData("A = (1, 2)\nA*, 997\nB = 5\nB", "1\n2\n997\n5")]
     [InlineData("A = (1, 2)\nB = 3\nX = (A*)\nB\nX", "3\n(1, 2)")]
     [InlineData("A = (1, 2)\nB = 3\nX = { A* }\nB\nX", "3\n(1, 2)")]
     public void ExplicitCommasNewlineRowsAndContinuations_StayValid(string source, string expected)
@@ -393,10 +393,12 @@ public class SameLineSeparatorTests
     [InlineData("open Math Physics\n1", "InvalidOpenTargetList")]
     [InlineData("open Math ; Physics\n1", "InvalidOpenTargetList")]
     [InlineData("public open Math\n1", "InvalidOpenDeclaration")]
-    [InlineData("A = (1, 2)\nA *", "InvalidSpreadMarker")]
+    [InlineData("A = (1, 2)\nA *", "UnexpectedToken")]
     [InlineData("A = (1, 2)\nA *, 3", "InvalidSpreadMarker")]
     [InlineData("Collect(*items) = items\nA = (1, 2)\nCollect(A *)", "InvalidSpreadMarker")]
-    [InlineData("A = (1, 2)\nB = (3, 4)\nA*\nB*", "MisplacedSpread")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA*\nB*", "UnexpectedToken")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA*\nB*, 997", "MisplacedSpread")]
+    [InlineData("A = (1, 2)\nA*\nB = 5\nB", "UnexpectedToken")]
     [InlineData("1 @ 2", "UnexpectedCharacter")]
     public void ARecoveryThatOwnsTheBoundary_ReportsOnlyItsOwnDiagnostic(string source, string expectedCodes)
     {

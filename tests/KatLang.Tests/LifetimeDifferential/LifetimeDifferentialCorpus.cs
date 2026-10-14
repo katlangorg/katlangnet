@@ -41,8 +41,8 @@ public static class LifetimeDifferentialCorpus
     public const string TargetCounted =
         "P0 = ()\nP1 = 7\nP2 = 10, 20\nItems(*i) = i.count\nP2*, P1, (P0, P1), Items(P2*)";
 
-    /// <summary>Zero-output target: n=0 is a first-class observation.</summary>
-    public const string TargetZero = "Z = ()\nZ*";
+    /// <summary>Empty-spread target: zero contributed items beside a real control gives n=1.</summary>
+    public const string TargetZero = "Z = ()\nZ*, 997";
 
     /// <summary>Scope-graph-heavy target: lexical capture, clause family,
     /// sequence-value pattern, nested brace shadowing, collecting parameter —
@@ -50,7 +50,7 @@ public static class LifetimeDifferentialCorpus
     public const string TargetScopes =
         "x = 5\nF(a) = a + x\nItems(*i) = i\nD(0) = 111\nD(v) = F(v)\n" +
         "G((h, *t)) = t.count\nInner = {x = 50\nF(x)}\n" +
-        "D(0), D(2), G((1, 2, 3)), Inner, Items(x)*";
+        "D(0), D(2), G((1, 2, 3)), Inner, Items(x)*, 997";
 
     /// <summary>Runtime-error target: error-category equality across histories.</summary>
     public const string TargetRuntimeError = "(1, 2)[9]";
@@ -221,7 +221,7 @@ public static class LifetimeDifferentialCorpus
         new()
         {
             Id = "fresh/b-then-zero", Scenario = FreshVsPriorSuccess,
-            Invariant = "a zero-output target stays zero-output after unrelated history",
+            Invariant = "an empty spread contributes no items beside the control after unrelated history",
             Target = TargetZero, ExpectedFreshOutcome = "ok",
             History = [HistB], ExpectedHistoryOutcomes = ["ok"],
         },
@@ -260,7 +260,7 @@ public static class LifetimeDifferentialCorpus
         new()
         {
             Id = "repeat/zero", Scenario = RepeatStability,
-            Invariant = "repeat stability of a zero-output program",
+            Invariant = "repeat stability of empty spread beside its explicit control",
             Target = TargetZero, ExpectedFreshOutcome = "ok",
             History = [TargetZero], ExpectedHistoryOutcomes = ["ok"],
         },
@@ -593,8 +593,8 @@ public static class LifetimeDifferentialCorpus
         new()
         {
             Id = "sentinel/zero-kitchen-sink", Scenario = CountedSentinel,
-            Invariant = "the zero-output observation (n=0) survives mixed history",
-            Target = TargetZero, ExpectedFreshOutcome = "ok", ExpectedFreshEmitted = 0,
+            Invariant = "the empty-spread contribution beside a control (n=1) survives mixed history",
+            Target = TargetZero, ExpectedFreshOutcome = "ok", ExpectedFreshEmitted = 1,
             History = [HistParseError, HistB, HistRuntimeDepthError],
             ExpectedHistoryOutcomes = ["parseError", "ok", "err"],
         },

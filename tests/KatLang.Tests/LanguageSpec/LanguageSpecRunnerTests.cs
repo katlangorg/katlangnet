@@ -286,6 +286,10 @@ public class LanguageSpecRunnerTests
             // The marker attachment law (SYN-07B follow-up): surface-lexical,
             // parse-level by construction.
             "spread-marker-must-be-attached",
+            // Q-65: surface grammar, outside Lean's parser-free model.
+            "unary-minus-must-be-attached",
+            "negative-pattern-sign-must-be-attached",
+            "line-final-star-at-eof-is-incomplete",
             "grace-marker-must-be-attached",
             "collect-marker-must-be-attached",
             // The declaration-head line rule (F7) and the Grace effectiveness

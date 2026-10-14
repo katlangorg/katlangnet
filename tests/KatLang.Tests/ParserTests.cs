@@ -660,7 +660,7 @@ public class ParserTests
     [Fact]
     public void Parse_PostfixSpreadMarker_IsUnarySpreadWithNoRightOperand()
     {
-        var result = Parser.ParseSyntax("A*");
+        var result = Parser.ParseSyntax("A*, 0");
 
         Assert.False(result.HasErrors);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
@@ -686,7 +686,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_LineEndingSpreadMarkerBeforeDeclaration_StaysASpread()
+    public void Parse_LineEndingSpreadMarkerBeforeDeclaration_DiagnosesMultiplicationAndPreservesDeclaration()
     {
         // A declaration head is never a multiplication operand, so a line-final
         // star before `Name = ...` is the spread marker: one spread row, then
@@ -700,10 +700,10 @@ public class ParserTests
             B
             """);
 
-        Assert.False(result.HasErrors);
+        Assert.True(result.HasErrors);
         Assert.Equal(2, result.Root.Output.Count);
-        var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
+        var sequenceSpread = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Left).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         Assert.Contains(result.Root.Properties, static p => p.Name == "B");
     }
@@ -881,7 +881,7 @@ public class ParserTests
     [Fact]
     public void Parse_UnparenthesizedSequenceSpread_RemainsBareSequenceSpread()
     {
-        var result = Parser.ParseSyntax("A*");
+        var result = Parser.ParseSyntax("A*, 0");
 
         Assert.False(result.HasErrors);
         Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
@@ -1217,10 +1217,10 @@ public class ParserTests
     [InlineData("A\nB*")]
     public void Parse_SlotBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
+        Assert.Equal(3, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[1]);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
@@ -1231,10 +1231,10 @@ public class ParserTests
     [InlineData("A\nB\nC*")]
     public void Parse_MultipleSlotsBeforePostfixSequenceSpread_SpreadsImmediateExpression(string source)
     {
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -1261,10 +1261,10 @@ public class ParserTests
     [InlineData("A, B\nC*")]
     public void Parse_CommaSlotsBeforePostfixSequenceSpread_PreserveCommaStructure(string source)
     {
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -1276,10 +1276,10 @@ public class ParserTests
     [InlineData("A\nB, C*")]
     public void Parse_NewlineRowBeforeCommaSlotPostfixSequenceSpread_PreservesCommaStructure(string source)
     {
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -1289,11 +1289,11 @@ public class ParserTests
     [Fact]
     public void Parse_DefinitionSeparatedPostfixSequenceSpreadContribution_PreservesPriorCommaSlot()
     {
-        var result = Parser.ParseSyntax("A, B\nP = 1\nC*");
+        var result = Parser.ParseSyntax("A, B\nP = 1\nC*, 0");
 
         Assert.False(result.HasErrors);
         Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -1303,11 +1303,11 @@ public class ParserTests
     [Fact]
     public void Parse_DefinitionSeparatedCommaSlotSpreadContribution_PreservesPriorSequenceSlot()
     {
-        var result = Parser.ParseSyntax("A\nP = 1\nB, C*");
+        var result = Parser.ParseSyntax("A\nP = 1\nB, C*, 0");
 
         Assert.False(result.HasErrors);
         Assert.Equal("P", Assert.Single(result.Root.Properties).Name);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -1319,10 +1319,10 @@ public class ParserTests
     {
         // Comma slots stay structural and the spread stays local to its own
         // slot — no adjacency pulls `B*` into `A`'s slot.
-        var result = Parser.ParseSyntax("A, B*");
+        var result = Parser.ParseSyntax("A, B*, 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
+        Assert.Equal(3, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         var sequenceSpread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[1]);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(sequenceSpread.Operand).Name);
@@ -1655,7 +1655,7 @@ public class ParserTests
     [InlineData("A # comment\n-1")]
     public void Parse_MinusLedLineAfterOutputRow_IsAdjacencyRowNotSubtraction(string source)
     {
-        // A binary operator never continues a closed expression across a
+        // A leading minus never continues a closed expression across a
         // physical newline, and a trailing comment must not change that:
         // both forms are the expression list `A, -1`, never `A - 1`.
         var result = Parser.ParseSyntax(source);
@@ -1771,13 +1771,13 @@ public class ParserTests
         // definition between the rows both produce expression-list slots after
         // the spread. (A bare `C` row directly after `A*` would be the
         // multiplication `A * C` — see Parse_LineEndingStarBeforeOperand_IsMultiplication.)
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source.Replace("*\n", "*, 0\n", StringComparison.Ordinal));
 
         Assert.False(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
+        Assert.Equal(source.Contains("P =", StringComparison.Ordinal) ? 3 : 2, result.Root.Output.Count);
         var spread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
-        Assert.Equal("C", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+        Assert.Equal("C", Assert.IsType<Expr.Resolve>(result.Root.Output[^1]).Name);
     }
 
     [Theory]
@@ -1941,10 +1941,10 @@ public class ParserTests
 
         // Chained spread nests one node per written star; each layer's span
         // grows to its own star and each spread-marker span is exactly that star.
-        var chained = Parser.ParseSyntax("A**");
+        var chained = Parser.ParseSyntax("A**, 0");
 
         Assert.False(chained.HasErrors);
-        var outer = Assert.IsType<Expr.SequenceSpread>(Assert.Single(chained.Root.Output));
+        var outer = Assert.IsType<Expr.SequenceSpread>(chained.Root.Output[0]);
         Assert.Equal(new SourceSpan(1, 1, 1, 4), outer.Span);
         Assert.Equal(new SourceSpan(1, 3, 1, 4), outer.SpreadMarkerSpan);
         var inner = Assert.IsType<Expr.SequenceSpread>(outer.Operand);
@@ -2053,7 +2053,7 @@ public class ParserTests
     [Theory]
     [InlineData("A\n*")]
     [InlineData("A # comment\n*")]
-    public void Parse_StarLedLine_IsCollectMarkerInExpressionError(string source)
+    public void Parse_StarLedLine_IsIncompleteBinaryMultiplication(string source)
     {
         // A star never crosses lines: the previous row is complete, so a
         // '*'-led line is a prefix collect marker in expression position —
@@ -2064,19 +2064,19 @@ public class ParserTests
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
-            d => d.Message.Contains(
-                "Prefix `*` is the collect marker and is valid only in binding patterns"));
+            d => d.Code == DiagnosticCode.UnexpectedToken && d.Message.Contains("after '*'"));
     }
+
 
     [Theory]
     [InlineData("A, B, C*")]
     [InlineData("A\nB\nC*")]
     public void Parse_TrailingPostfixSpreadAfterSlotChain_SpreadsImmediateExpression(string source)
     {
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", 0");
 
         Assert.False(result.HasErrors);
-        Assert.Equal(3, result.Root.Output.Count);
+        Assert.Equal(4, result.Root.Output.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[0]).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
         var spread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[2]);
@@ -2614,15 +2614,12 @@ public class ParserTests
     [Theory]
     [InlineData("1\n+ 2")]
     [InlineData("1 # comment\n+ 2")]
-    public void Parse_CommentDoesNotEnableBinaryContinuationAcrossNewline(string source)
+    public void Parse_LeadingPlusContinuesAcrossNewlineWithOrWithoutComments(string source)
     {
-        // A binary operator never continues a closed expression across a
-        // physical newline, and a skipped comment must not relax that
-        // boundary: both spellings reject the '+'-led line identically.
+        // Restricted Q-65 admits leading plus; comments change no syntax.
         var result = Parser.ParseSyntax(source);
-
-        Assert.True(result.HasErrors);
-        Assert.Contains(result.Diagnostics, d => d.Message == "Unexpected '+'.");
+        Assert.False(result.HasErrors);
+        Assert.Equal(BinaryOp.Add, Assert.IsType<Expr.Binary>(Assert.Single(result.Root.Output)).Op);
     }
 
     [Fact]
@@ -3051,9 +3048,8 @@ public class ParserTests
         // A `not`-led line after a closed row is a new row, never a continuation.
         Assert.Equal(2, SourceProvenance.ParseValid("x > 3\nnot y").Root.Output.Count);
 
-        // A `>`-led line never continues the previous row: `not x` closes, and the
-        // dangling operator is the ordinary unexpected-token error.
-        Assert.True(Parser.ParseSyntax("not x\n> 3").HasErrors);
+        // Leading comparison continues within the operand of prefix `not`.
+        AssertComparison(AssertUnary(ParseSingleOutput("not x\n> 3"), UnaryOp.Not), ComparisonOp.Gt);
     }
 
     [Fact]
@@ -3106,7 +3102,7 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_TrailingCaret_ContinuesAcrossNewline_LeadingCaretDoesNot()
+    public void Parse_TrailingAndLeadingCaret_ContinueAcrossNewline()
     {
         // A trailing `^` continues to its right operand on the following line.
         var pow = AssertPow(ParseSingleOutput("2 ^\n3"));
@@ -3117,11 +3113,9 @@ public class ParserTests
         var unaryPow = AssertPow(ParseSingleOutput("2 ^\n-3"));
         AssertNum(AssertUnary(unaryPow.Right, UnaryOp.Minus), 3);
 
-        // A `^`-led line never continues the closed expression on the
-        // previous line — the first row stays `2` and the dangling `^` row
-        // is a parse error.
-        var broken = Parser.ParseSyntax("2\n^ 3");
-        Assert.True(broken.HasErrors);
+        var leading = AssertPow(ParseSingleOutput("2\n^ 3"));
+        AssertNum(leading.Left, 2);
+        AssertNum(leading.Right, 3);
     }
 
     [Theory]
@@ -3936,27 +3930,16 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_Open_SameLineDeclarationBoundary_IsUnchangedByTheSharedRelation()
+    public void Parse_Open_SameLineDeclarationBoundary_PreservesTheWholeHead()
     {
-        // The comma-spanning binding-pattern arm applies only to a candidate
-        // on a NEW physical line: inside the open's own line the list's
-        // separator commas are open syntax, so `open A, x, y = 1` keeps
-        // today's recovery — `x` parses as a (bogus) open target and the
-        // boundary still stops at `y = 1` through the direct property head.
-        // This pins the adjacency gate: widening the binding-pattern arm to
-        // same-line candidates would reinterpret the open list's own commas
-        // and reject `A` itself.
         var result = Parser.ParseSyntax("open A, x, y = 1");
-
         Assert.True(result.HasErrors);
-        Assert.Contains(
-            result.Diagnostics,
-            d => d.Code == DiagnosticCode.InvalidOpenTargetList
-                && d.Message.Contains("Expected an open target after ','"));
-        Assert.Equal(
-            ["A", "x"],
-            result.Root.Opens.Select(static open => Assert.IsType<Expr.Resolve>(open).Name).ToArray());
-        Assert.Equal("y", Assert.Single(result.Root.Properties).Name);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal(DiagnosticCode.InvalidOpenTargetList, diagnostic.Code);
+        Assert.Contains("Expected an open target after ','", diagnostic.Message);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(Assert.Single(result.Root.Opens)).Name);
+        Assert.Contains(result.Root.Properties, p => p.Name == "x");
+        Assert.Contains(result.Root.Properties, p => p.Name == "y");
     }
 
     [Theory]
@@ -4108,7 +4091,7 @@ public class ParserTests
     {
         // The open-form rejection points at the offending spread target
         // `A*` (columns 6-7), not at the `open` keyword or the whole line.
-        var result = Parser.ParseSyntax("open A*");
+        var result = Parser.ParseSyntax("open A*, B");
 
         Assert.True(result.HasErrors);
         var diagnostic = Assert.Single(
@@ -4123,16 +4106,17 @@ public class ParserTests
         // Valid comma-separated targets before the invalid spread target do
         // not hide the error; the rejected spread target stays in the parsed
         // opens list (open-form validation reports, it does not remove).
-        var result = Parser.ParseSyntax("open A, B*");
+        var result = Parser.ParseSyntax("open A, B*, C");
 
         Assert.True(result.HasErrors);
         Assert.Contains(
             result.Diagnostics,
             d => d.Message.Contains("Invalid open form: 'spread' is not allowed in open declarations"));
-        Assert.Equal(2, result.Root.Opens.Count);
+        Assert.Equal(3, result.Root.Opens.Count);
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Opens[0]).Name);
         Assert.IsType<Expr.SequenceSpread>(result.Root.Opens[1]);
     }
+
 
     [Theory]
     [InlineData("open A*")]
@@ -4142,7 +4126,7 @@ public class ParserTests
     {
         // A spread-marked target parses to a SequenceSpread open target,
         // which open-form validation rejects — spread is not an open form.
-        var result = Parser.ParseSyntax(source);
+        var result = Parser.ParseSyntax(source + ", C");
 
         Assert.True(result.HasErrors);
         Assert.Contains(
@@ -6150,4 +6134,44 @@ public class ParserTests
         var result = Parser.ParseSyntax(source);
         Assert.True(result.HasErrors);
     }
+    [Theory]
+    [InlineData("P = A\n. Good = 41\nGood", false)]
+    [InlineData("A\n.~Good = 41\nGood", true)]
+    public void Parse_LeadingDotBeforeDeclaration_PreservesTheWholeHead(string source, bool rejectedGrace)
+    {
+        var parsed = Parser.ParseSyntax(source);
+        Assert.True(parsed.HasErrors);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken && d.Message.Contains("after '.'"));
+        var good = Assert.Single(parsed.Root.Properties, p => p.Name == "Good");
+        Assert.Equal(41m, Assert.IsType<Expr.Num>(Assert.Single(good.Value.Output)).Value);
+        Assert.Equal(rejectedGrace, parsed.Diagnostics.Any(d => d.Code == DiagnosticCode.InvalidGraceMarker));
+        Assert.Equal("Good", Assert.IsType<Expr.Resolve>(parsed.Root.Output[^1]).Name);
+        Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("Unexpected '='"));
+    }
+
+    [Theory]
+    [InlineData("10-@2")]
+    [InlineData("10\n-@ 2")]
+    [InlineData("10\n- @2")]
+    public void Parse_ReportedCharacterAfterBinaryMinus_IsGrammarInvisible(string source)
+    {
+        var parsed = Parser.ParseSyntax(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.UnexpectedCharacter, diagnostic.Code);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(parsed.Root.Output));
+        Assert.Equal(BinaryOp.Sub, binary.Op);
+        Assert.Equal(10m, Assert.IsType<Expr.Num>(binary.Left).Value);
+        Assert.Equal(2m, Assert.IsType<Expr.Num>(binary.Right).Value);
+    }
+
+    [Theory]
+    [InlineData("-@2")]
+    [InlineData("F(-@2) = 1")]
+    public void Parse_ReportedCharacterBreaksUnaryAndPatternAttachment(string source)
+    {
+        var parsed = Parser.ParseSyntax(source);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedCharacter);
+        Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken && d.Message.Contains("directly attached"));
+    }
+
 }

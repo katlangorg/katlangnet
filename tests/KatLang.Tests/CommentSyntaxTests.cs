@@ -169,12 +169,9 @@ public class CommentSyntaxTests
     }
 
     [Fact]
-    public void OperatorLedLine_IsStillRejectedWhenThePreviousLineEndsWithAComment()
+    public void LeadingPlus_ContinuesWhenThePreviousLineEndsWithAComment()
     {
-        // A comment must never RELAX the newline boundary either: the
-        // '+'-led line stays invalid exactly as without the comment.
-        var result = Parser.ParseSyntax("1 # comment\n+ 2");
-        Assert.True(result.HasErrors);
+        Assert.Equal("3", Display("1 # comment\n+ 2"));
     }
 
     // ── Strings ─────────────────────────────────────────────────────────────

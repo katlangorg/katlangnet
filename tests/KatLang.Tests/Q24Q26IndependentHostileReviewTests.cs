@@ -29,9 +29,9 @@ public class Q24Q26IndependentHostileReviewTests
         var root = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5)"));
         Assert.Equal(1, root.EmittedCount);
         Assert.Single(root.OutputRows);
-        var spread = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5)*"));
-        Assert.Equal(0, spread.EmittedCount);
-        Assert.Empty(spread.OutputRows);
+        var spread = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5)*, 997"));
+        Assert.Equal(1, spread.EmittedCount);
+        Assert.Equal(new Result.Atom(997), Assert.Single(spread.OutputRows));
     }
 
     [Fact]
@@ -62,9 +62,9 @@ public class Q24Q26IndependentHostileReviewTests
     [Fact]
     public async Task LoopProperty_UsesItsOwnCacheAndExplicitCallBypassesIt()
     {
-        var result = await SixRouteAgreement.OnEveryRouteAsync("Keep(x) = x\nP = repeat(Keep, 0, trace(9))\nP, P, P(), P*");
+        var result = await SixRouteAgreement.OnEveryRouteAsync("Keep(x) = x\nP = repeat(Keep, 0, trace(9))\nP, P, P(), P*, 997");
         Assert.Equal("ok", result.Kind);
-        Assert.Equal("S[9, 9, 9, 9]", result.Value);
+        Assert.Equal("S[9, 9, 9, 9, 997]", result.Value);
         Assert.Equal(new[] { "trace(9)", "trace(9)" }, result.HostCalls);
     }
 
@@ -120,7 +120,7 @@ public class Q24Q26IndependentHostileReviewTests
         "Fib(a, b) = b, a + b\nreduce([1, 2], { repeat(Fib, 2, x, 1) }, (0, 1))",
         "I(x) = [x, x]\nmap([1, 2], { repeat(I, 1, x) }).filter({ x.count == 2 })",
         "I(s) = s + 'x'\nS(p, n) = repeat(I, 2, 'a'), n + 1\nrepeat(S, 3, '', 0)",
-        "I(s) = s + 'x'\nP = repeat(I, 2, 'a')\nP, P(), P*",
+        "I(s) = s + 'x'\nP = repeat(I, 2, 'a')\nP, P(), P*, 997",
         // The empty branch forces a later handover after several planned nested rows.
         "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I, 1, trace(n), n), ()), n + 1\nrepeat(S, 4, 0, 0)",
         "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I, 1, n, n), ()), 1 / (3 - n)\nrepeat(S, 5, 0, 0)",

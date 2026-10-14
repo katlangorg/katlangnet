@@ -342,16 +342,16 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void DirectNestedSpreads_ChargeEveryRealSequenceRecapture()
     {
-        const string oneLayer = "A = (1, 2, 3)\nA*";
-        const string twoLayers = "A = (1, 2, 3)\nA**";
+        const string oneLayer = "A = (1, 2, 3)\nA*, 0";
+        const string twoLayers = "A = (1, 2, 3)\nA**, 0";
 
-        var one = Observe(oneLayer, Total(9));
-        var two = Observe(twoLayers, Total(12));
+        var one = Observe(oneLayer, Total(10));
+        var two = Observe(twoLayers, Total(13));
         Assert.False(one.Result.IsError);
         Assert.False(two.Result.IsError);
-        Assert.Equal(9, one.Budget.MaterializedItems);
-        Assert.Equal(12, two.Budget.MaterializedItems);
-        Assert.IsType<EvalError.MaterializationLimitExceeded>(Observe(twoLayers, Total(11)).Result.Error);
+        Assert.Equal(10, one.Budget.MaterializedItems);
+        Assert.Equal(13, two.Budget.MaterializedItems);
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(Observe(twoLayers, Total(12)).Result.Error);
     }
 
     [Fact]

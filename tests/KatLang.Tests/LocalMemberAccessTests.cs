@@ -372,7 +372,7 @@ public class LocalMemberAccessTests
     [InlineData("Outer(n) = {\n    Inner = { public X = n }\n    Apply(f) = f.X\n    Apply(Inner)\n}\nOuter(5)")]
     // A block literal and a callback block are wired under the body that writes them.
     [InlineData("Outer(n) = {\n    Inner = { public X = n }\n    { Inner.X }\n}\nOuter(5)")]
-    [InlineData("Outer(n) = {\n    Inner = { public X = n }\n    [1].map({ Inner.X * e })*\n}\nOuter(5)")]
+    [InlineData("Outer(n) = {\n    Inner = { public X = n }\n    [1].map({ Inner.X * e })* }\nOuter(5)")]
     public async Task SiblingAndNestedScopes_UnderTheSameActivation_ReachTheMember(string source)
     {
         Assert.Equal("5", Display(source));

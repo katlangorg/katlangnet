@@ -34,12 +34,12 @@ public class OutputRowsTests
     }
 
     [Fact]
-    public void SpreadContributingZeroItems_HasZeroRows()
+    public void SpreadContributingZeroItems_AddsNoRowsBesideAnExplicitControl()
     {
-        var success = Success("E = ()\nE*");
+        var success = Success("E = ()\nE*, 997");
 
-        Assert.Empty(success.OutputRows);
-        Assert.Equal(string.Empty, success.ToDisplayString());
+        Assert.Equal(new Result.Atom(997), Assert.Single(success.OutputRows));
+        Assert.Equal("997", success.ToDisplayString());
     }
 
     [Fact]
@@ -78,11 +78,11 @@ public class OutputRowsTests
             "S = ((1, 2), (3, 4))\nS**",
         })
         {
-            var success = Success(source);
-            Assert.Equal(2, success.OutputRows.Count);
+            var success = Success(source + ", 997");
+            Assert.Equal(3, success.OutputRows.Count);
             Assert.Equal(2, Assert.IsType<Result.SequenceValue>(success.OutputRows[0]).Items.Count);
             Assert.Equal(2, Assert.IsType<Result.SequenceValue>(success.OutputRows[1]).Items.Count);
-            Assert.Equal($"(1, 2){Environment.NewLine}(3, 4)", success.ToDisplayString());
+            Assert.Equal($"(1, 2){Environment.NewLine}(3, 4){Environment.NewLine}997", success.ToDisplayString());
         }
     }
 
@@ -163,7 +163,7 @@ public class OutputRowsTests
         foreach (var source in new[]
         {
             "7", "1, 2, 3", "(1, 2)", "1, (2, 3)", "[1, 2]", "''", "()", "[]",
-            "E = ()\nE*", "S = ((1, 2), (3, 4))\nS[0]", "repeat({a, b}, 1, 1, 2)",
+            "E = ()\nE*, 997", "S = ((1, 2), (3, 4))\nS[0]", "repeat({a, b}, 1, 1, 2)",
         })
         {
             var success = Success(source);
@@ -218,11 +218,11 @@ public class OutputRowsTests
     public void SpreadMultiSlotLoopResult_EmitsTheValueItemsAsRows()
     {
         // Only the explicit spread opens the loop result into separate rows.
-        var success = Success("repeat({a, b}, 1, 1, 2)*");
+        var success = Success("repeat({a, b}, 1, 1, 2)*, 997");
 
-        Assert.Equal(2, success.EmittedCount);
-        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], success.OutputRows);
-        Assert.Equal($"1{Environment.NewLine}2", success.ToDisplayString());
+        Assert.Equal(3, success.EmittedCount);
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2), new Result.Atom(997)], success.OutputRows);
+        Assert.Equal($"1{Environment.NewLine}2{Environment.NewLine}997", success.ToDisplayString());
     }
 
     [Fact]
@@ -247,9 +247,9 @@ public class OutputRowsTests
             Assert.Equal("(1, 2)", success.ToDisplayString());
         }
 
-        var spread = Success("S = ((1, 2), (3, 4))\n(S[0])*");
-        Assert.Equal(2, spread.EmittedCount);
-        Assert.Equal([new Result.Atom(1), new Result.Atom(2)], spread.OutputRows);
-        Assert.Equal($"1{Environment.NewLine}2", spread.ToDisplayString());
+        var spread = Success("S = ((1, 2), (3, 4))\n(S[0])*, 997");
+        Assert.Equal(3, spread.EmittedCount);
+        Assert.Equal([new Result.Atom(1), new Result.Atom(2), new Result.Atom(997)], spread.OutputRows);
+        Assert.Equal($"1{Environment.NewLine}2{Environment.NewLine}997", spread.ToDisplayString());
     }
 }

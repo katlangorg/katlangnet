@@ -282,14 +282,14 @@ public class EvaluatorSpreadTests
         // already covered by Eval_SequenceSpread_LongChain_IsStackSafeForFlatAndCountedEvaluation
         // above, which builds the same nested spread chain directly as an AST at depth 8192.
         const int spreadCount = Parser.MaxExpressionChainDepth;
-        var source = "1" + new string('*', spreadCount);
+        var source = "1" + new string('*', spreadCount) + ", 997";
 
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors);
         Assert.Empty(parsed.Diagnostics);   // in particular, no "chain is too deep" diagnostic
 
         // The source really produced the chain under test, one spread level per written `*`.
-        var output = Assert.Single(parsed.Root.Output);
+        var output = parsed.Root.Output[0];
         var nesting = 0;
         var operand = output;
         while (operand is Expr.SequenceSpread(var inner))
@@ -301,7 +301,7 @@ public class EvaluatorSpreadTests
         Assert.Equal(spreadCount, nesting);
         Assert.IsType<Expr.Num>(operand);
 
-        AssertEval(source, 1m);
+        AssertEval(source, 1m, 997m);
     }
 
     [Fact]
@@ -535,7 +535,7 @@ public class EvaluatorSpreadTests
                 X = 1
             }
 
-            Bad*
+            Bad*, 997
             """;
         AssertSpreadMissingOutput(operandSource, 5, 1, 5, 4);
 
@@ -562,7 +562,7 @@ public class EvaluatorSpreadTests
         // resolved-name operand — never raw MissingOutput (T4-2; the Lean
         // `.algorithmExpr` arm translates identically). Root row: span is the block
         // `{A = 1}` (line 1, columns 1-7).
-        AssertSpreadMissingOutput("{A = 1}*", 1, 1, 1, 8);
+        AssertSpreadMissingOutput("{A = 1}*, 997", 1, 1, 1, 8);
 
         // The same rule inside a list literal element slot.
         AssertSpreadMissingOutput("[{A = 1}*]", 1, 2, 1, 9);
@@ -581,7 +581,7 @@ public class EvaluatorSpreadTests
         // Resolved-name control: reaching the same no-output block through a
         // property keeps the identical structured error, so the direct and
         // resolved spellings agree.
-        AssertSpreadMissingOutput("X = {A = 1}\nX*", 2, 1, 2, 2);
+        AssertSpreadMissingOutput("X = {A = 1}\nX*, 997", 2, 1, 2, 2);
     }
 
     [Fact]
@@ -649,8 +649,8 @@ public class EvaluatorSpreadTests
         AssertEval("1, ()*, 2", 1, 2);
         AssertEval("1, (())*, 2", 1, 2);
         AssertEval("()*, 1", 1);
-        AssertEval("1, ()*", 1);
-        AssertEvalEmptyOutput("()*");
+        EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel("1, ()*", 1);
+        EvaluatorTestSupport.AssertRootSpreadEmptyWithSentinel("()*");
     }
 
     // Additional: simple spread of two literals
@@ -813,7 +813,7 @@ public class EvaluatorSpreadTests
     [Fact]
     public void Eval_SequenceSpread_OpensOneBoundaryAtOutput()
     {
-        AssertEval(
+        EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel(
             """
             Seq1 = (1, 2, 3)
             Seq2 = (1, 2, 3)
@@ -830,9 +830,9 @@ public class EvaluatorSpreadTests
         AssertEvalResultLoopModes(
             """
             Nested = ((1, 2), 3)
-            Nested*
+            Nested*, 997
             """,
-            Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3)]));
+            Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3), Atom(997)]));
     }
 
     [Theory]

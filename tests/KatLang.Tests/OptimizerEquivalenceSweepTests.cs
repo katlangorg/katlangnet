@@ -178,7 +178,7 @@ public class OptimizerEquivalenceSweepTests
     {
         var bodies = new[]
         {
-            "x", "-x", "not x", "- -x",
+            "x", "-x", "not x", "--x",
             "if(x > 1, x - 1, x)", "if(x, x - 1, 0)", "if(x == 1, 'a', 0)",
             "if(x, (), 1)", "if(x, (1, 2), 3)", "if(x, [1], 2)",
             "if(Str, 1, 2)", "if(Lst, 1, 2)", "if(Emp, 1, 2)",

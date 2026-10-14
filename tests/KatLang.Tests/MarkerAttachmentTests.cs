@@ -3,7 +3,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// The MARKER ATTACHMENT LAW (SYN-07B follow-up), pinned as one table:
 /// unary structural/annotation markers must be directly attached to the
-/// syntax they modify, while ordinary expression operators may be spaced
+/// syntax they modify, while ordinary binary expression operators may be spaced
 /// freely.
 ///
 /// <list type="table">
@@ -17,8 +17,8 @@ namespace KatLang.Tests;
 /// Attachment is decided by ONE helper (<c>Parser.IsDirectlyAttached</c>:
 /// exact source-offset adjacency, no whitespace/comment/newline between the
 /// tokens), and for the postfix star it is checked only AFTER the SYN-07B
-/// classification has established that the star is a spread marker (nothing
-/// that could be a right operand follows it). A detached marker never
+/// classification has established an explicitly closed same-line spread item.
+/// A physical line-final star announces multiplication, including at EOF. A detached marker never
 /// silently keeps the marker's meaning and never silently becomes the other
 /// valid operation: it is a parse-phase error, and the recovered tree keeps
 /// the plain name/operand (no collecting binding, no spread node, no Grace
@@ -131,17 +131,18 @@ public class MarkerAttachmentTests
         }
     }
 
-    [Fact]
-    public void Multiplication_NeverDependsOnAttachment_EvenWhenTheOperandIsADeclarationLookalike()
+    [Theory]
+    [InlineData("A = (1, 2)\nA*\nB = 5\nB", 2)]
+    [InlineData("A = (1, 2)\nA *\nB = 5\nB", 3)]
+    public void LineFinalStarBeforeDeclaration_IsMissingMultiplicationRegardlessOfAttachment(string source, int starColumn)
     {
-        // `B` beginning an expression lexically does not make the star
-        // multiplication when `B = 5` is a declaration head, and attachment
-        // plays no part in either verdict: the attached star before the
-        // declaration is a spread, the detached one is the attachment error —
-        // never the multiplication `A * B`.
-        Assert.Equal("1\n2\n5", Display("A = (1, 2)\nA*\nB = 5\nB"));
-        var detached = AssertRejected("A = (1, 2)\nA *\nB = 5\nB", DiagnosticCode.InvalidSpreadMarker, SpreadAttachmentFragment);
-        Assert.Equal(new SourceSpan(2, 1, 2, 4), detached.Span);
+        var error = AssertRejected(source, DiagnosticCode.UnexpectedToken, "Expected an expression after '*'");
+        Assert.Equal(new SourceSpan(2, starColumn, 2, starColumn + 1), error.Span);
+        var syntax = Parser.ParseSyntax(source);
+        var product = Assert.IsType<Expr.Binary>(syntax.Root.Output[0]);
+        Assert.Equal(BinaryOp.Mul, product.Op);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(product.Left).Name);
+        Assert.Contains(syntax.Root.Properties, p => p.Name == "B");
     }
 
     // ── Postfix spread: attached forms valid, detached forms rejected ───────
@@ -153,10 +154,10 @@ public class MarkerAttachmentTests
     [InlineData("values = (1, 2)\n[values*]", "[1, 2]")]
     [InlineData("values = (1, 2)\n{ values* }", "(1, 2)")]
     [InlineData("values = (1, 2)\nvalues*,\n3", "1\n2\n3")]
-    [InlineData("values = (1, 2)\nvalues*", "1\n2")]
-    [InlineData("values = (1, 2)\nvalues*\nB = 5\nB", "1\n2\n5")]
+    [InlineData("values = (1, 2)\nvalues*, 997", "1\n2\n997")]
+    [InlineData("values = (1, 2)\nvalues*, 997\nB = 5\nB", "1\n2\n997\n5")]
     [InlineData("values = (1, 2)\nX = (values*)\nX", "(1, 2)")]
-    [InlineData("values = (1, 2)\nvalues**", "1\n2")]
+    [InlineData("values = (1, 2)\nvalues**, 997", "1\n2\n997")]
     // Spread stays total: scalars and strings supply themselves as one item.
     [InlineData("F(*items) = items\nF(5*)", "[5]")]
     [InlineData("F(*items) = items\nF('text'*)", "[text]")]
@@ -171,15 +172,30 @@ public class MarkerAttachmentTests
     [InlineData("values = (1, 2)\n[values *]", 2, 2, 2, 10)]
     [InlineData("values = (1, 2)\n{ values * }", 2, 3, 2, 11)]
     [InlineData("values = (1, 2)\nvalues *,\n3", 2, 1, 2, 9)]
-    [InlineData("values = (1, 2)\nvalues *", 2, 1, 2, 9)]
-    [InlineData("values = (1, 2)\nvalues *\nB = 5\nB", 2, 1, 2, 9)]
+    [InlineData("values = (1, 2)\nvalues *, 997", 2, 1, 2, 9)]
     [InlineData("values = (1, 2)\nX = (values *)\nX", 2, 6, 2, 14)]
-    [InlineData("values = (1, 2)\nvalues* *", 2, 1, 2, 10)]
+    [InlineData("values = (1, 2)\nvalues* *, 997", 2, 1, 2, 10)]
     [InlineData("F(*items) = items\nF(5 *)", 2, 3, 2, 6)]
     public void DetachedPostfixSpread_IsRejected(string source, int startLine, int startColumn, int endLine, int endColumn)
     {
         var error = AssertRejected(source, DiagnosticCode.InvalidSpreadMarker, SpreadAttachmentFragment);
         Assert.Equal(new SourceSpan(startLine, startColumn, endLine, endColumn), error.Span);
+    }
+
+    [Theory]
+    [InlineData("values = (1, 2)\nvalues*")]
+    [InlineData("values = (1, 2)\nvalues *")]
+    [InlineData("values = (1, 2)\nvalues**")]
+    [InlineData("values = (1, 2)\nvalues*\nB = 5\nB")]
+    [InlineData("values = (1, 2)\nvalues *\nB = 5\nB")]
+    public void EofAndLaterDeclarations_NeverCloseASpreadItem(string source)
+    {
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Contains(syntax.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken
+            && d.Message.Contains("Expected an expression after '*'", StringComparison.Ordinal));
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        if (source.Contains("B = 5", StringComparison.Ordinal))
+            Assert.Contains(syntax.Root.Properties, p => p.Name == "B");
     }
 
     [Fact]
@@ -312,13 +328,12 @@ public class MarkerAttachmentTests
     // ── The attachment helper is shared: comments and newlines break attachment ──
 
     [Theory]
-    [InlineData("values = (1, 2)\nvalues # note\n*", DiagnosticCode.InvalidCollectMarker)]
+    [InlineData("values = (1, 2)\nvalues # note\n*", DiagnosticCode.UnexpectedToken)]
     [InlineData("F(*\nx) = x\nF(1)", DiagnosticCode.InvalidCollectMarker)]
     public void MarkerSeparatedByANewline_IsNeverAttached(string source, DiagnosticCode expected)
     {
-        // A star on a later line is never a spread continuation (the
-        // '*'-led-line rule reaches the collect-marker diagnostics instead),
-        // and a collect marker never binds across a newline.
+        // A later-line star can continue multiplication, but EOF leaves its
+        // right operand missing. A collect marker still never binds across a newline.
         var parse = Parser.ParseSyntax(source);
         Assert.True(parse.HasErrors);
         Assert.Contains(parse.Diagnostics, d => d.Code == expected);

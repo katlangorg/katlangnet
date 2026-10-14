@@ -252,7 +252,7 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("F(v) = v\nx = F(x)\nx")]
-    [InlineData("F(v) = v*\nx = F(x)\nx")]
+    [InlineData("F(v) = { v* }\nx = F(x)\nx")]
     public void AlgEnvThunkRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
     {
         // The ordinary F body reaches EvalCounted(Param); the spread body reaches the
@@ -293,7 +293,7 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("F(v) = v.string\nx = F(x)\nx")]
-    [InlineData("F(v) = v.string*\nx = F(x)\nx")]
+    [InlineData("F(v) = { v.string* }\nx = F(x)\nx")]
     public void DotStringParameterRecursion_IsDepthBoundedAndConsumesLinearWork(string source)
     {
         // The ordinary-dot `string` intrinsic evaluates an algorithm-resolving
@@ -415,7 +415,7 @@ public class EvaluationLimitsTests
 
     [Theory]
     [InlineData("Bad = 1 / 0\nG(w) = w\nF(v) = G(v)\nF(Bad)")]
-    [InlineData("Bad = 1 / 0\nG(w) = w*\nF(v) = G(v)\nF(Bad)")]
+    [InlineData("Bad = 1 / 0\nG(w) = { w* }\nF(v) = G(v)\nF(Bad)")]
     public void FailedArgumentForwardedThroughAParameter_IsNeverReentered(string source)
     {
         // The failing property argument is evaluated ONCE, as F's slot (the property access

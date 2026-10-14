@@ -4515,175 +4515,175 @@ def case_seqWrapSolo__pl1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.listLiteral [.num 1])])
 #guard obs case_seqWrapSolo__pl1 == "ok raw=L[1] n=1"
 
--- spreadRoot__e: ()*
+-- spreadRoot__e: ()*, 997
 def case_spreadRoot__e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.emptySequence 0))])
-#guard obs case_spreadRoot__e == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.emptySequence 0)), .num 997])
+#guard obs case_spreadRoot__e == "ok raw=997 n=1"
 
--- spreadRoot__n0: 0*
+-- spreadRoot__n0: 0*, 997
 def case_spreadRoot__n0 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 0))])
-#guard obs case_spreadRoot__n0 == "ok raw=0 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 0)), .num 997])
+#guard obs case_spreadRoot__n0 == "ok raw=S[0, 997] n=2"
 
--- spreadRoot__n1: 1*
+-- spreadRoot__n1: 1*, 997
 def case_spreadRoot__n1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1))])
-#guard obs case_spreadRoot__n1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1)), .num 997])
+#guard obs case_spreadRoot__n1 == "ok raw=S[1, 997] n=2"
 
--- spreadRoot__bt: true*
+-- spreadRoot__bt: true*, 997
 def case_spreadRoot__bt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral true))])
-#guard obs case_spreadRoot__bt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral true)), .num 997])
+#guard obs case_spreadRoot__bt == "ok raw=S[true, 997] n=2"
 
--- spreadRoot__bf: false*
+-- spreadRoot__bf: false*, 997
 def case_spreadRoot__bf : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral false))])
-#guard obs case_spreadRoot__bf == "ok raw=false n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral false)), .num 997])
+#guard obs case_spreadRoot__bf == "ok raw=S[false, 997] n=2"
 
--- spreadRoot__pbt: (true)*
+-- spreadRoot__pbt: (true)*, 997
 def case_spreadRoot__pbt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral true))])
-#guard obs case_spreadRoot__pbt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.boolLiteral true)), .num 997])
+#guard obs case_spreadRoot__pbt == "ok raw=S[true, 997] n=2"
 
--- spreadRoot__pbt_e: (true, ())*
+-- spreadRoot__pbt_e: (true, ())*, 997
 def case_spreadRoot__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)]))])
-#guard obs case_spreadRoot__pbt_e == "ok raw=S[true, S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)])), .num 997])
+#guard obs case_spreadRoot__pbt_e == "ok raw=S[true, S[], 997] n=3"
 
--- spreadRoot__pbt_1: (true, 1)*
+-- spreadRoot__pbt_1: (true, 1)*, 997
 def case_spreadRoot__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.boolLiteral true, .num 1]))])
-#guard obs case_spreadRoot__pbt_1 == "ok raw=S[true, 1] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.boolLiteral true, .num 1])), .num 997])
+#guard obs case_spreadRoot__pbt_1 == "ok raw=S[true, 1, 997] n=3"
 
--- spreadRoot__lbt: [true]*
+-- spreadRoot__lbt: [true]*, 997
 def case_spreadRoot__lbt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.boolLiteral true]))])
-#guard obs case_spreadRoot__lbt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.boolLiteral true])), .num 997])
+#guard obs case_spreadRoot__lbt == "ok raw=S[true, 997] n=2"
 
--- spreadRoot__lbt_bf: [true, false]*
+-- spreadRoot__lbt_bf: [true, false]*, 997
 def case_spreadRoot__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false]))])
-#guard obs case_spreadRoot__lbt_bf == "ok raw=S[true, false] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false])), .num 997])
+#guard obs case_spreadRoot__lbt_bf == "ok raw=S[true, false, 997] n=3"
 
--- spreadRoot__lpbt_1: [(true, 1)]*
+-- spreadRoot__lpbt_1: [(true, 1)]*, 997
 def case_spreadRoot__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])]))])
-#guard obs case_spreadRoot__lpbt_1 == "ok raw=S[true, 1] n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])])), .num 997])
+#guard obs case_spreadRoot__lpbt_1 == "ok raw=S[S[true, 1], 997] n=2"
 
--- spreadRoot__p1: (1)*
+-- spreadRoot__p1: (1)*, 997
 def case_spreadRoot__p1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1))])
-#guard obs case_spreadRoot__p1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1)), .num 997])
+#guard obs case_spreadRoot__p1 == "ok raw=S[1, 997] n=2"
 
--- spreadRoot__p12: (1, 2)*
+-- spreadRoot__p12: (1, 2)*, 997
 def case_spreadRoot__p12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2]))])
-#guard obs case_spreadRoot__p12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2])), .num 997])
+#guard obs case_spreadRoot__p12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRoot__p123: (1, 2, 3)*
+-- spreadRoot__p123: (1, 2, 3)*, 997
 def case_spreadRoot__p123 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])
-#guard obs case_spreadRoot__p123 == "ok raw=S[1, 2, 3] n=3"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2, .num 3])), .num 997])
+#guard obs case_spreadRoot__p123 == "ok raw=S[1, 2, 3, 997] n=4"
 
--- spreadRoot__pee: ((), ())*
+-- spreadRoot__pee: ((), ())*, 997
 def case_spreadRoot__pee : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])
-#guard obs case_spreadRoot__pee == "ok raw=S[S[], S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)])), .num 997])
+#guard obs case_spreadRoot__pee == "ok raw=S[S[], S[], 997] n=3"
 
--- spreadRoot__pe1: ((), 1)*
+-- spreadRoot__pe1: ((), 1)*, 997
 def case_spreadRoot__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))])
-#guard obs case_spreadRoot__pe1 == "ok raw=S[S[], 1] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), .num 1])), .num 997])
+#guard obs case_spreadRoot__pe1 == "ok raw=S[S[], 1, 997] n=3"
 
--- spreadRoot__p1e: (1, ())*
+-- spreadRoot__p1e: (1, ())*, 997
 def case_spreadRoot__p1e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))])
-#guard obs case_spreadRoot__p1e == "ok raw=S[1, S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)])), .num 997])
+#guard obs case_spreadRoot__p1e == "ok raw=S[1, S[], 997] n=3"
 
--- spreadRoot__p12_3: ((1, 2), 3)*
+-- spreadRoot__p12_3: ((1, 2), 3)*, 997
 def case_spreadRoot__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))])
-#guard obs case_spreadRoot__p12_3 == "ok raw=S[S[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3])), .num 997])
+#guard obs case_spreadRoot__p12_3 == "ok raw=S[S[1, 2], 3, 997] n=3"
 
--- spreadRoot__p12_34: ((1, 2), (3, 4))*
+-- spreadRoot__p12_34: ((1, 2), (3, 4))*, 997
 def case_spreadRoot__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))])
-#guard obs case_spreadRoot__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])), .num 997])
+#guard obs case_spreadRoot__p12_34 == "ok raw=S[S[1, 2], S[3, 4], 997] n=3"
 
--- spreadRoot__pe_12: ((), (1, 2))*
+-- spreadRoot__pe_12: ((), (1, 2))*, 997
 def case_spreadRoot__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))])
-#guard obs case_spreadRoot__pe_12 == "ok raw=S[S[], S[1, 2]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])), .num 997])
+#guard obs case_spreadRoot__pe_12 == "ok raw=S[S[], S[1, 2], 997] n=3"
 
--- spreadRoot__ppe1_2: (((), 1), 2)*
+-- spreadRoot__ppe1_2: (((), 1), 2)*, 997
 def case_spreadRoot__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))])
-#guard obs case_spreadRoot__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])), .num 997])
+#guard obs case_spreadRoot__ppe1_2 == "ok raw=S[S[S[], 1], 2, 997] n=3"
 
--- spreadRoot__p12_e: ((1, 2), ())*
+-- spreadRoot__p12_e: ((1, 2), ())*, 997
 def case_spreadRoot__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))])
-#guard obs case_spreadRoot__p12_e == "ok raw=S[S[1, 2], S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])), .num 997])
+#guard obs case_spreadRoot__p12_e == "ok raw=S[S[1, 2], S[], 997] n=3"
 
--- spreadRoot__ppe: (())*
+-- spreadRoot__ppe: (())*, 997
 def case_spreadRoot__ppe : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.emptySequence 0))])
-#guard obs case_spreadRoot__ppe == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.emptySequence 0)), .num 997])
+#guard obs case_spreadRoot__ppe == "ok raw=997 n=1"
 
--- spreadRoot__pp1: ((1))*
+-- spreadRoot__pp1: ((1))*, 997
 def case_spreadRoot__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1))])
-#guard obs case_spreadRoot__pp1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.num 1)), .num 997])
+#guard obs case_spreadRoot__pp1 == "ok raw=S[1, 997] n=2"
 
--- spreadRoot__ppp12: (((1, 2)))*
+-- spreadRoot__ppp12: (((1, 2)))*, 997
 def case_spreadRoot__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2]))])
-#guard obs case_spreadRoot__ppp12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [.num 1, .num 2])), .num 997])
+#guard obs case_spreadRoot__ppp12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRoot__le: []*
+-- spreadRoot__le: []*, 997
 def case_spreadRoot__le : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral []))])
-#guard obs case_spreadRoot__le == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [])), .num 997])
+#guard obs case_spreadRoot__le == "ok raw=997 n=1"
 
--- spreadRoot__l7: [7]*
+-- spreadRoot__l7: [7]*, 997
 def case_spreadRoot__l7 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 7]))])
-#guard obs case_spreadRoot__l7 == "ok raw=7 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 7])), .num 997])
+#guard obs case_spreadRoot__l7 == "ok raw=S[7, 997] n=2"
 
--- spreadRoot__l12: [1, 2]*
+-- spreadRoot__l12: [1, 2]*, 997
 def case_spreadRoot__l12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])
-#guard obs case_spreadRoot__l12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1, .num 2])), .num 997])
+#guard obs case_spreadRoot__l12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRoot__l12_3: [[1, 2], 3]*
+-- spreadRoot__l12_3: [[1, 2], 3]*, 997
 def case_spreadRoot__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))])
-#guard obs case_spreadRoot__l12_3 == "ok raw=S[L[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])), .num 997])
+#guard obs case_spreadRoot__l12_3 == "ok raw=S[L[1, 2], 3, 997] n=3"
 
--- spreadRoot__lle: [[]]*
+-- spreadRoot__lle: [[]]*, 997
 def case_spreadRoot__lle : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])
-#guard obs case_spreadRoot__lle == "ok raw=L[] n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.listLiteral [])])), .num 997])
+#guard obs case_spreadRoot__lle == "ok raw=S[L[], 997] n=2"
 
--- spreadRoot__l_e: [()]*
+-- spreadRoot__l_e: [()]*, 997
 def case_spreadRoot__l_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))])
-#guard obs case_spreadRoot__l_e == "ok raw=S[] n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.emptySequence 0)])), .num 997])
+#guard obs case_spreadRoot__l_e == "ok raw=S[S[], 997] n=2"
 
--- spreadRoot__l_p12: [(1, 2)]*
+-- spreadRoot__l_p12: [(1, 2)]*, 997
 def case_spreadRoot__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))])
-#guard obs case_spreadRoot__l_p12 == "ok raw=S[1, 2] n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])])), .num 997])
+#guard obs case_spreadRoot__l_p12 == "ok raw=S[S[1, 2], 997] n=2"
 
--- spreadRoot__p_l12: ([1, 2], 3)*
+-- spreadRoot__p_l12: ([1, 2], 3)*, 997
 def case_spreadRoot__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))])
-#guard obs case_spreadRoot__p_l12 == "ok raw=S[L[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3])), .num 997])
+#guard obs case_spreadRoot__p_l12 == "ok raw=S[L[1, 2], 3, 997] n=3"
 
--- spreadRoot__pl1: ([1])*
+-- spreadRoot__pl1: ([1])*, 997
 def case_spreadRoot__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1]))])
-#guard obs case_spreadRoot__pl1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.listLiteral [.num 1])), .num 997])
+#guard obs case_spreadRoot__pl1 == "ok raw=S[1, 997] n=2"
 
 -- spreadInSeq__e: (()*, 99)
 def case_spreadInSeq__e : Expr :=
@@ -10635,175 +10635,175 @@ def case_takeCollecting__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "G") [(.call (.resolve "take") [(.listLiteral [.num 1]), .num 1])])])
 #guard obs case_takeCollecting__pl1 == "ok raw=L[L[1]] n=1"
 
--- spreadRootStacked__e: ()**
+-- spreadRootStacked__e: ()**, 997
 def case_spreadRootStacked__e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])
-#guard obs case_spreadRootStacked__e == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0))), .num 997])
+#guard obs case_spreadRootStacked__e == "ok raw=997 n=1"
 
--- spreadRootStacked__n0: 0**
+-- spreadRootStacked__n0: 0**, 997
 def case_spreadRootStacked__n0 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 0)))])
-#guard obs case_spreadRootStacked__n0 == "ok raw=0 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 0))), .num 997])
+#guard obs case_spreadRootStacked__n0 == "ok raw=S[0, 997] n=2"
 
--- spreadRootStacked__n1: 1**
+-- spreadRootStacked__n1: 1**, 997
 def case_spreadRootStacked__n1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])
-#guard obs case_spreadRootStacked__n1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1))), .num 997])
+#guard obs case_spreadRootStacked__n1 == "ok raw=S[1, 997] n=2"
 
--- spreadRootStacked__bt: true**
+-- spreadRootStacked__bt: true**, 997
 def case_spreadRootStacked__bt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral true)))])
-#guard obs case_spreadRootStacked__bt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral true))), .num 997])
+#guard obs case_spreadRootStacked__bt == "ok raw=S[true, 997] n=2"
 
--- spreadRootStacked__bf: false**
+-- spreadRootStacked__bf: false**, 997
 def case_spreadRootStacked__bf : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral false)))])
-#guard obs case_spreadRootStacked__bf == "ok raw=false n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral false))), .num 997])
+#guard obs case_spreadRootStacked__bf == "ok raw=S[false, 997] n=2"
 
--- spreadRootStacked__pbt: (true)**
+-- spreadRootStacked__pbt: (true)**, 997
 def case_spreadRootStacked__pbt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral true)))])
-#guard obs case_spreadRootStacked__pbt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.boolLiteral true))), .num 997])
+#guard obs case_spreadRootStacked__pbt == "ok raw=S[true, 997] n=2"
 
--- spreadRootStacked__pbt_e: (true, ())**
+-- spreadRootStacked__pbt_e: (true, ())**, 997
 def case_spreadRootStacked__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)])))])
-#guard obs case_spreadRootStacked__pbt_e == "ok raw=S[true, S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)]))), .num 997])
+#guard obs case_spreadRootStacked__pbt_e == "ok raw=S[true, S[], 997] n=3"
 
--- spreadRootStacked__pbt_1: (true, 1)**
+-- spreadRootStacked__pbt_1: (true, 1)**, 997
 def case_spreadRootStacked__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.boolLiteral true, .num 1])))])
-#guard obs case_spreadRootStacked__pbt_1 == "ok raw=S[true, 1] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.boolLiteral true, .num 1]))), .num 997])
+#guard obs case_spreadRootStacked__pbt_1 == "ok raw=S[true, 1, 997] n=3"
 
--- spreadRootStacked__lbt: [true]**
+-- spreadRootStacked__lbt: [true]**, 997
 def case_spreadRootStacked__lbt : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.boolLiteral true])))])
-#guard obs case_spreadRootStacked__lbt == "ok raw=true n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.boolLiteral true]))), .num 997])
+#guard obs case_spreadRootStacked__lbt == "ok raw=S[true, 997] n=2"
 
--- spreadRootStacked__lbt_bf: [true, false]**
+-- spreadRootStacked__lbt_bf: [true, false]**, 997
 def case_spreadRootStacked__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false])))])
-#guard obs case_spreadRootStacked__lbt_bf == "ok raw=S[true, false] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false]))), .num 997])
+#guard obs case_spreadRootStacked__lbt_bf == "ok raw=S[true, false, 997] n=3"
 
--- spreadRootStacked__lpbt_1: [(true, 1)]**
+-- spreadRootStacked__lpbt_1: [(true, 1)]**, 997
 def case_spreadRootStacked__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])])))])
-#guard obs case_spreadRootStacked__lpbt_1 == "ok raw=S[true, 1] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])]))), .num 997])
+#guard obs case_spreadRootStacked__lpbt_1 == "ok raw=S[true, 1, 997] n=3"
 
--- spreadRootStacked__p1: (1)**
+-- spreadRootStacked__p1: (1)**, 997
 def case_spreadRootStacked__p1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])
-#guard obs case_spreadRootStacked__p1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1))), .num 997])
+#guard obs case_spreadRootStacked__p1 == "ok raw=S[1, 997] n=2"
 
--- spreadRootStacked__p12: (1, 2)**
+-- spreadRootStacked__p12: (1, 2)**, 997
 def case_spreadRootStacked__p12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2])))])
-#guard obs case_spreadRootStacked__p12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2]))), .num 997])
+#guard obs case_spreadRootStacked__p12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRootStacked__p123: (1, 2, 3)**
+-- spreadRootStacked__p123: (1, 2, 3)**, 997
 def case_spreadRootStacked__p123 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2, .num 3])))])
-#guard obs case_spreadRootStacked__p123 == "ok raw=S[1, 2, 3] n=3"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2, .num 3]))), .num 997])
+#guard obs case_spreadRootStacked__p123 == "ok raw=S[1, 2, 3, 997] n=4"
 
--- spreadRootStacked__pee: ((), ())**
+-- spreadRootStacked__pee: ((), ())**, 997
 def case_spreadRootStacked__pee : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)])))])
-#guard obs case_spreadRootStacked__pee == "ok raw=S[S[], S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))), .num 997])
+#guard obs case_spreadRootStacked__pee == "ok raw=S[S[], S[], 997] n=3"
 
--- spreadRootStacked__pe1: ((), 1)**
+-- spreadRootStacked__pe1: ((), 1)**, 997
 def case_spreadRootStacked__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), .num 1])))])
-#guard obs case_spreadRootStacked__pe1 == "ok raw=S[S[], 1] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), .num 1]))), .num 997])
+#guard obs case_spreadRootStacked__pe1 == "ok raw=S[S[], 1, 997] n=3"
 
--- spreadRootStacked__p1e: (1, ())**
+-- spreadRootStacked__p1e: (1, ())**, 997
 def case_spreadRootStacked__p1e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, (.emptySequence 0)])))])
-#guard obs case_spreadRootStacked__p1e == "ok raw=S[1, S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))), .num 997])
+#guard obs case_spreadRootStacked__p1e == "ok raw=S[1, S[], 997] n=3"
 
--- spreadRootStacked__p12_3: ((1, 2), 3)**
+-- spreadRootStacked__p12_3: ((1, 2), 3)**, 997
 def case_spreadRootStacked__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3])))])
-#guard obs case_spreadRootStacked__p12_3 == "ok raw=S[S[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))), .num 997])
+#guard obs case_spreadRootStacked__p12_3 == "ok raw=S[S[1, 2], 3, 997] n=3"
 
--- spreadRootStacked__p12_34: ((1, 2), (3, 4))**
+-- spreadRootStacked__p12_34: ((1, 2), (3, 4))**, 997
 def case_spreadRootStacked__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])))])
-#guard obs case_spreadRootStacked__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))), .num 997])
+#guard obs case_spreadRootStacked__p12_34 == "ok raw=S[S[1, 2], S[3, 4], 997] n=3"
 
--- spreadRootStacked__pe_12: ((), (1, 2))**
+-- spreadRootStacked__pe_12: ((), (1, 2))**, 997
 def case_spreadRootStacked__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])))])
-#guard obs case_spreadRootStacked__pe_12 == "ok raw=S[S[], S[1, 2]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))), .num 997])
+#guard obs case_spreadRootStacked__pe_12 == "ok raw=S[S[], S[1, 2], 997] n=3"
 
--- spreadRootStacked__ppe1_2: (((), 1), 2)**
+-- spreadRootStacked__ppe1_2: (((), 1), 2)**, 997
 def case_spreadRootStacked__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])))])
-#guard obs case_spreadRootStacked__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))), .num 997])
+#guard obs case_spreadRootStacked__ppe1_2 == "ok raw=S[S[S[], 1], 2, 997] n=3"
 
--- spreadRootStacked__p12_e: ((1, 2), ())**
+-- spreadRootStacked__p12_e: ((1, 2), ())**, 997
 def case_spreadRootStacked__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])))])
-#guard obs case_spreadRootStacked__p12_e == "ok raw=S[S[1, 2], S[]] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))), .num 997])
+#guard obs case_spreadRootStacked__p12_e == "ok raw=S[S[1, 2], S[], 997] n=3"
 
--- spreadRootStacked__ppe: (())**
+-- spreadRootStacked__ppe: (())**, 997
 def case_spreadRootStacked__ppe : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0)))])
-#guard obs case_spreadRootStacked__ppe == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.emptySequence 0))), .num 997])
+#guard obs case_spreadRootStacked__ppe == "ok raw=997 n=1"
 
--- spreadRootStacked__pp1: ((1))**
+-- spreadRootStacked__pp1: ((1))**, 997
 def case_spreadRootStacked__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1)))])
-#guard obs case_spreadRootStacked__pp1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.num 1))), .num 997])
+#guard obs case_spreadRootStacked__pp1 == "ok raw=S[1, 997] n=2"
 
--- spreadRootStacked__ppp12: (((1, 2)))**
+-- spreadRootStacked__ppp12: (((1, 2)))**, 997
 def case_spreadRootStacked__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2])))])
-#guard obs case_spreadRootStacked__ppp12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [.num 1, .num 2]))), .num 997])
+#guard obs case_spreadRootStacked__ppp12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRootStacked__le: []**
+-- spreadRootStacked__le: []**, 997
 def case_spreadRootStacked__le : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [])))])
-#guard obs case_spreadRootStacked__le == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral []))), .num 997])
+#guard obs case_spreadRootStacked__le == "ok raw=997 n=1"
 
--- spreadRootStacked__l7: [7]**
+-- spreadRootStacked__l7: [7]**, 997
 def case_spreadRootStacked__l7 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 7])))])
-#guard obs case_spreadRootStacked__l7 == "ok raw=7 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 7]))), .num 997])
+#guard obs case_spreadRootStacked__l7 == "ok raw=S[7, 997] n=2"
 
--- spreadRootStacked__l12: [1, 2]**
+-- spreadRootStacked__l12: [1, 2]**, 997
 def case_spreadRootStacked__l12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1, .num 2])))])
-#guard obs case_spreadRootStacked__l12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1, .num 2]))), .num 997])
+#guard obs case_spreadRootStacked__l12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRootStacked__l12_3: [[1, 2], 3]**
+-- spreadRootStacked__l12_3: [[1, 2], 3]**, 997
 def case_spreadRootStacked__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])))])
-#guard obs case_spreadRootStacked__l12_3 == "ok raw=S[L[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))), .num 997])
+#guard obs case_spreadRootStacked__l12_3 == "ok raw=S[L[1, 2], 3, 997] n=3"
 
--- spreadRootStacked__lle: [[]]**
+-- spreadRootStacked__lle: [[]]**, 997
 def case_spreadRootStacked__lle : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])])))])
-#guard obs case_spreadRootStacked__lle == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.listLiteral [])]))), .num 997])
+#guard obs case_spreadRootStacked__lle == "ok raw=997 n=1"
 
--- spreadRootStacked__l_e: [()]**
+-- spreadRootStacked__l_e: [()]**, 997
 def case_spreadRootStacked__l_e : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)])))])
-#guard obs case_spreadRootStacked__l_e == "ok raw=S[] n=0"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.emptySequence 0)]))), .num 997])
+#guard obs case_spreadRootStacked__l_e == "ok raw=997 n=1"
 
--- spreadRootStacked__l_p12: [(1, 2)]**
+-- spreadRootStacked__l_p12: [(1, 2)]**, 997
 def case_spreadRootStacked__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])])))])
-#guard obs case_spreadRootStacked__l_p12 == "ok raw=S[1, 2] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))), .num 997])
+#guard obs case_spreadRootStacked__l_p12 == "ok raw=S[1, 2, 997] n=3"
 
--- spreadRootStacked__p_l12: ([1, 2], 3)**
+-- spreadRootStacked__p_l12: ([1, 2], 3)**, 997
 def case_spreadRootStacked__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3])))])
-#guard obs case_spreadRootStacked__p_l12 == "ok raw=S[L[1, 2], 3] n=2"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))), .num 997])
+#guard obs case_spreadRootStacked__p_l12 == "ok raw=S[L[1, 2], 3, 997] n=3"
 
--- spreadRootStacked__pl1: ([1])**
+-- spreadRootStacked__pl1: ([1])**, 997
 def case_spreadRootStacked__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1])))])
-#guard obs case_spreadRootStacked__pl1 == "ok raw=1 n=1"
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.sequenceSpread (.listLiteral [.num 1]))), .num 997])
+#guard obs case_spreadRootStacked__pl1 == "ok raw=S[1, 997] n=2"
 
 -- collectingStacked__e: F(*a) = a \n F(()**)
 def case_collectingStacked__e : Expr :=
@@ -12015,10 +12015,10 @@ def case_special__rootSpreadExtra : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.sequenceSpread (.resolve "A")), .num 99])
 #guard obs case_special__rootSpreadExtra == "ok raw=S[1, 2, 99] n=3"
 
--- special__spreadOfSpreadSeqLiteral: A = (1, 2) \n ((A*, 99))*
+-- special__spreadOfSpreadSeqLiteral: A = (1, 2) \n ((A*, 99))*, 997
 def case_special__spreadOfSpreadSeqLiteral : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.sequenceSpread (.capture [(.sequenceSpread (.resolve "A")), .num 99]))])
-#guard obs case_special__spreadOfSpreadSeqLiteral == "ok raw=S[1, 2, 99] n=3"
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.sequenceSpread (.capture [(.sequenceSpread (.resolve "A")), .num 99])), .num 997])
+#guard obs case_special__spreadOfSpreadSeqLiteral == "ok raw=S[1, 2, 99, 997] n=4"
 
 -- special__eqSpreadSeqLiteral: P = (1, 2) \n (P*, 99) == (1, 2, 99)
 def case_special__eqSpreadSeqLiteral : Expr :=
@@ -12330,10 +12330,10 @@ def case_special__collectorZeroArgumentCallableFailureIsItsOwn : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.param "ys"])] [(.call (.resolve "Coll") [.resolve "Bad"])])
 #guard obs case_special__collectorZeroArgumentCallableFailureIsItsOwn == "err div0"
 
--- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9)*
+-- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9)*, 997
 def case_special__listInSeqSpreadKeepsList : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.sequenceSpread (.capture [.resolve "A", .num 9]))])
-#guard obs case_special__listInSeqSpreadKeepsList == "ok raw=S[L[1, 2], 9] n=2"
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.sequenceSpread (.capture [.resolve "A", .num 9])), .num 997])
+#guard obs case_special__listInSeqSpreadKeepsList == "ok raw=S[L[1, 2], 9, 997] n=3"
 
 -- special__listFixedCallBoundary: F(a, b) = a \n F([1, 2], 3)
 def case_special__listFixedCallBoundary : Expr :=
@@ -12345,9 +12345,9 @@ def case_special__listCollectingSpreadCall : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.resolve "A")), .num 9])])
 #guard obs case_special__listCollectingSpreadCall == "ok raw=L[1, 2, 9] n=1"
 
--- special__spreadNoOutputBlockRoot: {A = 1}*
+-- special__spreadNoOutputBlockRoot: {A = 1}*, 997
 def case_special__spreadNoOutputBlockRoot : Expr :=
-  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])))])
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))), .num 997])
 #guard obs case_special__spreadNoOutputBlockRoot == "err spreadMissingOutput"
 
 -- special__spreadNoOutputBlockList: [{A = 1}*]
@@ -12360,9 +12360,9 @@ def case_special__spreadNoOutputBlockCallArg : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])))])])
 #guard obs case_special__spreadNoOutputBlockCallArg == "err spreadMissingOutput"
 
--- special__spreadNoOutputResolved: X = {A = 1} \n X*
+-- special__spreadNoOutputResolved: X = {A = 1} \n X*, 997
 def case_special__spreadNoOutputResolved : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.resolve "X"))])
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.resolve "X")), .num 997])
 #guard obs case_special__spreadNoOutputResolved == "err spreadMissingOutput"
 
 -- special__listLoneCollectingAssignment: *items = [1, 2, 3]
@@ -12540,10 +12540,10 @@ def case_special__loopResultBesideAnotherRow : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), .num 7])
 #guard obs case_special__loopResultBesideAnotherRow == "ok raw=S[S[55, 89], 7] n=2"
 
--- special__loopResultSpreadOpensIt: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)*
+-- special__loopResultSpreadOpensIt: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)*, 997
 def case_special__loopResultSpreadOpensIt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])))])
-#guard obs case_special__loopResultSpreadOpensIt == "ok raw=S[55, 89] n=2"
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))), .num 997])
+#guard obs case_special__loopResultSpreadOpensIt == "ok raw=S[55, 89, 997] n=3"
 
 -- special__loopZeroSlotResult: Drop(*xs) = { ()* } \n repeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9
 def case_special__loopZeroSlotResult : Expr :=

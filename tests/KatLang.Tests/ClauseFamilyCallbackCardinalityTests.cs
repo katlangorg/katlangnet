@@ -75,16 +75,16 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     {
         { "binder clause selected", Fam + "map([3], F)", "L[S[3, 3]]" },
         { "literal clause selected", Fam + "map([0], F)", "L[S[1, 2]]" },
-        { "a later item's clause emits two items", "F(0) = [0]*\nF(n) = [n, n]*\nZ = 0\nmap([0, 3], F)", "L[0, S[3, 3]]" },
-        { "the literal clause emits two items after a one-item result", "F(0) = [1, 2]*\nF(n) = [n]*\nZ = 0\nmap([3, 0], F)", "L[3, S[1, 2]]" },
+        { "a later item's clause emits two items", "F(0) = { [0]* }\nF(n) = { [n, n]* }\nZ = 0\nmap([0, 3], F)", "L[0, S[3, 3]]" },
+        { "the literal clause emits two items after a one-item result", "F(0) = { [1, 2]* }\nF(n) = { [n]* }\nZ = 0\nmap([3, 0], F)", "L[3, S[1, 2]]" },
         { "three rows", "F(0) = 1, 2, 3\nF(n) = n, n, n\nmap([0], F)", "L[S[1, 2, 3]]" },
         { "structural clauses", "F((a, 0)) = a, 0\nF((a, b)) = a, b\nmap([(1, 2)], F)", "L[S[1, 2]]" },
         { "list-pattern clauses", "F([0]) = 0, 0\nF([x]) = x, x\nmap([[1]], F)", "L[S[1, 1]]" },
         { "Boolean literal clauses", "F(true) = 1, 1\nF(false) = 0, 0\nmap([true], F)", "L[S[1, 1]]" },
         { "a () row beside a value row", "F(0) = (), 1\nF(n) = n, n\nmap([0], F)", "L[S[S[], 1]]" },
-        { "a spread row emitting two items", "F(0) = [5, 6]*\nF(n) = n\nmap([0], F)", "L[S[5, 6]]" },
-        { "a spread of a bound sequence element", "F((0, 0)) = (0, 0)*\nF(p) = p*\nZ = 0\nmap([5, (1, 2)], F)", "L[5, S[1, 2]]" },
-        { "the two-row base clause of a recursive family", "F(0) = [1, 2]*\nF(n) = [F(n - 1)]*\nZ = 0\nmap([0], F)", "L[S[1, 2]]" },
+        { "a spread row emitting two items", "F(0) = { [5, 6]* }\nF(n) = n\nmap([0], F)", "L[S[5, 6]]" },
+        { "a spread of a bound sequence element", "F((0, 0)) = { (0, 0)* }\nF(p) = { p* }\nZ = 0\nmap([5, (1, 2)], F)", "L[5, S[1, 2]]" },
+        { "the two-row base clause of a recursive family", "F(0) = { [1, 2]* }\nF(n) = { [F(n - 1)]* }\nZ = 0\nmap([0], F)", "L[S[1, 2]]" },
         { "callable alias", Fam + "G = F\nmap([0], G)", "L[S[1, 2]]" },
         { "alias chain", Fam + "G = F\nH = G\nmap([0], H)", "L[S[1, 2]]" },
         { "forwarded through a parameter", Fam + "Apply(f, xs) = map(xs, f)\nApply(F, [0])", "L[S[1, 2]]" },
@@ -98,7 +98,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "inside a loop step", Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "L[S[1, 2]]" },
         { "reduce, binder clause selected", Red + "reduce([1], R, 5)", "S[1, 5]" },
         { "reduce, one-branch family", "R(e, 0) = e, 0\nreduce([1], R, 0)", "S[1, 0]" },
-        { "reduce, the second step", "R(e, 0) = [e + 1]*\nR(e, acc) = [e, acc]*\nZ = 0\nreduce([1, 2], R, 0)", "S[2, 2]" },
+        { "reduce, the second step", "R(e, 0) = { [e + 1]* }\nR(e, acc) = { [e, acc]* }\nZ = 0\nreduce([1, 2], R, 0)", "S[2, 2]" },
         { "reduce, forwarded", Red + "Fold(r, xs) = reduce(xs, r, 0)\nFold(R, [1])", "S[1, 0]" },
         { "reduce, dot call", Red + "[1].reduce(R, 0)", "S[1, 0]" },
         { "reduce, forwarded dot call", Red + "Fold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])", "S[1, 0]" },
@@ -154,10 +154,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "one empty list, one-branch family", "F(0) = []\nmap([0], F)", "L[L[]]" },
         { "one string", "F(0) = 'zero'\nF(n) = n.string\nmap([0, 3], F)", "L['zero', '3']" },
         { "an inner call's one value", "D(x) = x, x\nF(0) = D(0)\nF(n) = D(n)\nmap([0, 3], F)", "L[S[0, 0], S[3, 3]]" },
-        { "a recursive clause's inner call", "F(0) = [1, 2]*\nF(n) = [F(n - 1)]*\nZ = 0\nmap([1], F)", "L[S[1, 2]]" },
+        { "a recursive clause's inner call", "F(0) = { [1, 2]* }\nF(n) = { [F(n - 1)]* }\nZ = 0\nmap([1], F)", "L[S[1, 2]]" },
         { "a completed loop", "Fib(x, y) = y, x + y\nF(0) = repeat(Fib, 2, 0, 1)\nF(n) = repeat(Fib, 2, n, 1)\nmap([0, 1], F)", "L[S[1, 2], S[2, 3]]" },
-        { "a spread of one item", "F(0) = [5]*\nF(n) = n\nmap([0, 3], F)", "L[5, 3]" },
-        { "a spread of a bound scalar", "F((0, 0)) = (0, 0)*\nF(p) = p*\nZ = 0\nmap([5, 7], F)", "L[5, 7]" },
+        { "a spread of one item", "F(0) = { [5]* }\nF(n) = n\nmap([0, 3], F)", "L[5, 3]" },
+        { "a spread of a bound scalar", "F((0, 0)) = { (0, 0)* }\nF(p) = { p* }\nZ = 0\nmap([5, 7], F)", "L[5, 7]" },
         { "η-expanded block", Fam + "map([0, 3], { F(x) })", "L[S[1, 2], S[3, 3]]" },
         { "η-expanded dot call", Fam + "map([0, 3], { x.F })", "L[S[1, 2], S[3, 3]]" },
         { "structural clauses", "Swap((a, 0)) = (0, a)\nSwap((a, b)) = (b, a)\nmap([(1, 2), (3, 0)], Swap)", "L[S[2, 1], S[0, 3]]" },
@@ -208,10 +208,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     {
         { "one () row (D1-F)", "F(0) = ()\nF(n) = n\nmap([0], F)", "L[S[]]" },
         { "one () row in every clause", "F(0) = ()\nF(n) = ()\nmap([0, 3], F)", "L[S[], S[]]" },
-        { "zero rows: a spread of []", "F(0) = []*\nF(n) = n\nmap([0], F)", "L[S[]]" },
-        { "zero rows: a spread of ()", "F(0) = ()*\nF(n) = n\nmap([0], F)", "L[S[]]" },
+        { "zero rows: a spread of []", "F(0) = { []* }\nF(n) = n\nmap([0], F)", "L[S[]]" },
+        { "zero rows: a spread of ()", "F(0) = { ()* }\nF(n) = n\nmap([0], F)", "L[S[]]" },
         { "reduce, one () row", "R(e, 0) = ()\nR(e, acc) = acc\n[reduce([1], R, 0)]", "L[S[]]" },
-        { "reduce, zero rows", "R(e, 0) = []*\nR(e, acc) = acc\n[reduce([1], R, 0)]", "L[S[]]" },
+        { "reduce, zero rows", "R(e, 0) = { []* }\nR(e, acc) = acc\n[reduce([1], R, 0)]", "L[S[]]" },
         { "reduce, () is the next accumulator", "R(e, 0) = ()\nR(e, acc) = e\nreduce([1, 2], R, 0)", "2" },
         { "user identity of a () element", "Id(x) = x\nmap([(), 1], Id)", "L[S[], 1]" },
         { "one [] is one value", "F(0) = []\nmap([0], F)", "L[L[]]" },
@@ -379,7 +379,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     [Fact]
     public async Task Map_InvokesItemsInOrder_StoringEachResultAsOneElement()
     {
-        var (observation, _) = await AllRoutesAsync("F(0) = [trace(0)]*\nF(n) = [trace(n), n]*\nZ = 0\nmap([0, 1, 2], F)");
+        var (observation, _) = await AllRoutesAsync("F(0) = { [trace(0)]* }\nF(n) = { [trace(n), n]* }\nZ = 0\nmap([0, 1, 2], F)");
         Assert.Equal(("ok", "L[0, S[1, 1], S[2, 2]]"), (observation.Kind, observation.Value));
         Assert.Equal(["trace(0)", "trace(1)", "trace(2)"], observation.HostCalls);
     }
@@ -389,7 +389,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     {
         // Step 2's two rows are the one accumulator (2, 1); step 3 receives it whole, fails the literal clause, and
         // its own rows nest it: (3, (2, 1)).
-        var (observation, _) = await AllRoutesAsync("R(e, 0) = [trace(e)]*\nR(e, acc) = [trace(e), acc]*\nZ = 0\nreduce([1, 2, 3], R, 0)");
+        var (observation, _) = await AllRoutesAsync("R(e, 0) = { [trace(e)]* }\nR(e, acc) = { [trace(e), acc]* }\nZ = 0\nreduce([1, 2, 3], R, 0)");
         Assert.Equal(("ok", "S[3, S[2, 1]]"), (observation.Kind, observation.Value));
         Assert.Equal(["trace(1)", "trace(2)", "trace(3)"], observation.HostCalls);
     }
@@ -445,7 +445,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
 
     private const string LawDefinitions =
         Fam + Red + Pair
-        + "One(0) = 1, 2\nE(0) = ()\nE(n) = n\nZ0(0) = []*\nZ0(n) = n\nBoth(0) = true, true\nBoth(n) = false, false\n"
+        + "One(0) = 1, 2\nE(0) = ()\nE(n) = n\nZ0(0) = { []* }\nZ0(n) = n\nBoth(0) = true, true\nBoth(n) = false, false\n"
         + "U0(x) = 1, 2\nD(x) = x, x\nUp0(x) = (1, 2)\nUp(n) = (n, n)\nUe(x) = ()\nUz(x) = { []* }\nRu(e, acc) = e, acc\nQ(x) = true, true\n";
 
     public static TheoryData<string, string> SelectedClauseLawCases() => new()

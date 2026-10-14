@@ -42,7 +42,7 @@ public class LoopCardinalityLawTests
         // Both forms supply two next-state slots, which Dup(x, x) re-binds on the second iteration.
         AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)"), "S[3, 3]", 1, "S[3, 3]");
         AssertOk(await OnEveryRouteAsync(step + "\nrepeat(Dup, 2, 1, 1)"), "S[3, 3]", 1, "S[3, 3]");
-        AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)*"), "S[3, 3]", 2, "3", "3");
+        AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)*, 997"), "S[3, 3, 997]", 3, "3", "3", "997");
     }
 
     [Theory]
@@ -253,11 +253,11 @@ public class LoopCardinalityLawTests
     public async Task Fibonacci_LoopIsOneValue_SpreadOpensIt_BesideAnotherRowItIsOneRow()
     {
         AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1)"), "S[55, 89]", 1, "S[55, 89]");
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1)*"), "S[55, 89]", 2, "55", "89");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1)*, 997"), "S[55, 89, 997]", 3, "55", "89", "997");
         AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1), 7"), "S[S[55, 89], 7]", 2, "S[55, 89]", "7");
 
         Assert.Equal("(55, 89)", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1)"));
-        Assert.Equal("55\n89", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1)*"));
+        Assert.Equal("55\n89\n997", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1)*, 997"));
         Assert.Equal("(55, 89)\n7", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1), 7"));
     }
 
@@ -273,7 +273,7 @@ public class LoopCardinalityLawTests
     [InlineData("while({a + 1, b + a, a < 2}, 0, 0)", 1)]
     [InlineData("while({a + 1, b + a, a < 2}, 0, 0), ()", 2)]
     [InlineData("repeat(Drop, 1, 5)", 1)]
-    [InlineData("repeat(Drop, 1, 5)*", 0)]
+    [InlineData("repeat(Drop, 1, 5)*, 997", 1)]
     [InlineData("repeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9", 2)]
     [InlineData("repeat({x + 1}, 3, 0)", 1)]
     [InlineData("{ Fibonacci.repeat(10, 0, 1), 7 }", 1)]
@@ -335,7 +335,7 @@ public class LoopCardinalityLawTests
         Assert.Equal(directSpread with { HostCalls = [] }, wrappedSpread with { HostCalls = [] });
 
         // At the root and beside other rows, the helper and the loop agree in value and count.
-        foreach (var rows in new[] { "{0}", "{0}, 7", "{0}*", "({0}, 7)" })
+        foreach (var rows in new[] { "{0}", "{0}, 7", "{0}*, 997", "({0}, 7)" })
         {
             var loop = await OnEveryRouteAsync(Fibonacci + inner + string.Format(rows, "repeat(Fibonacci, 2, 0, 1)"));
             var helper = await OnEveryRouteAsync(Fibonacci + inner + string.Format(rows, "Inner(0, 1)"));
@@ -382,11 +382,11 @@ public class LoopCardinalityLawTests
 
         // one final slot: unchanged
         AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc, 3, 0)"), "3", 1, "3");
-        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc, 3, 0)*"), "3", 1, "3");
+        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc, 3, 0)*, 997"), "S[3, 997]", 2, "3", "997");
 
         // several final slots: one value, opened only by the spread
         AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G, 3, 0)"), "S[0, 1, 2, 3]", 1, "S[0, 1, 2, 3]");
-        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G, 3, 0)*"), "S[0, 1, 2, 3]", 4, "0", "1", "2", "3");
+        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G, 3, 0)*, 997"), "S[0, 1, 2, 3, 997]", 5, "0", "1", "2", "3", "997");
     }
 
     [Fact]
@@ -475,7 +475,7 @@ public class LoopCardinalityLawTests
         // value into two slots — exactly the two-row step — ...
         AssertOk(await OnEveryRouteAsync("S(a, b) = { (b, a + b)* }\nrepeat(S, 2, 0, 1)"), "S[1, 2]", 1, "S[1, 2]");
         // ... and at the consumer it opens the completed loop: one row, or its two items.
-        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S, 2, 0, 1)*"), "S[1, 2]", 2, "1", "2");
+        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S, 2, 0, 1)*, 997"), "S[1, 2, 997]", 3, "1", "2", "997");
     }
 
     // ── One iteration equals the direct step call ──────────────────────────────

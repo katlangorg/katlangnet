@@ -409,9 +409,9 @@ public class SelectionValueBoundaryTests
 
         // `value**` is `(value*)*`: the second star spreads each already-spread item
         // supply's single value again, never a recursive flattening.
-        AssertEvalCounted(defs + "(A[0])*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
-        AssertEvalCounted(defs + "(first(A))*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
-        AssertEvalCounted(defs + "A[0]*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(defs + "(A[0])*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(defs + "(first(A))*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(defs + "A[0]*", 2, SequenceValue(SequenceValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
 
         // Selection then spread differs from spread then selection.
         Assert.Equal("[1, 2]", Display(defs + "B = [[1, 2], [3, 4]]\n(B[0])*.Coll"));

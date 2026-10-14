@@ -122,10 +122,10 @@ public static class StructuralShrinker
                 yield return program with { Root = ModelRewriter.ReplaceDecl(program.Root, decl, null) };
         }
 
-        // 2. Remove one root row (keep at least one).
+        // 2. Remove one work row; the real final control remains in the model.
         if (program.Root.Rows.Count > 1)
         {
-            for (var i = 0; i < program.Root.Rows.Count; i++)
+            for (var i = 0; i < program.Root.Rows.Count - 1; i++)
             {
                 var rows = program.Root.Rows.Where((_, j) => j != i).ToList();
                 yield return program with { Root = new MScope(program.Root.Decls, rows) };

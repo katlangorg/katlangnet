@@ -45,7 +45,7 @@ public class EvaluatorValueBoundaryTests
     // Caller-site spread turns the returned value back into an item supply.
     [Fact]
     public void Eval_UserCall_CallerSpread_OpensReturnedValue()
-        => AssertEvalCounted("F(*a) = a\nF(5, 9)*", 2, ResultFromAtoms(5, 9));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("F(*a) = a\nF(5, 9)*", 2, ResultFromAtoms(5, 9));
 
     // Explicit zero-arg call `X()` is a call boundary (unlike property access `X`)
     // and now also returns one value.
@@ -84,7 +84,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 3, 1, 2\nX.order*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 3, 1, 2\nX.order*", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_Take_IsOneExactListValue()
@@ -92,7 +92,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_CollectionBuiltin_TakeSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nX.take(2)*", 2, ResultFromAtoms(1, 2));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 1, 2, 3\nX.take(2)*", 2, ResultFromAtoms(1, 2));
 
     [Fact]
     public void Eval_CollectionBuiltin_Skip_IsOneExactListValue()
@@ -112,7 +112,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_CollectionBuiltin_RangeSpread_OpensIntoItems()
-        => AssertEvalCounted("range(1, 3)*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("range(1, 3)*", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_Atoms_IsOneExactListValue()
@@ -124,27 +124,27 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_CollectionBuiltin_OrderDescSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 3, 1, 2\nX.orderDesc*", 3, ResultFromAtoms(3, 2, 1));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 3, 1, 2\nX.orderDesc*", 3, ResultFromAtoms(3, 2, 1));
 
     [Fact]
     public void Eval_CollectionBuiltin_DistinctSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 1, 2, 3\nX.distinct*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 1, 1, 2, 3\nX.distinct*", 3, ResultFromAtoms(1, 2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_SkipSpread_OpensIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nX.skip(1)*", 2, ResultFromAtoms(2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 1, 2, 3\nX.skip(1)*", 2, ResultFromAtoms(2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_FilterSpread_OpensIntoItems()
-        => AssertEvalCounted("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig)*", 2, ResultFromAtoms(2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("IsBig = x > 1\nX = 1, 2, 3\nX.filter(IsBig)*", 2, ResultFromAtoms(2, 3));
 
     [Fact]
     public void Eval_CollectionBuiltin_MapSpread_OpensIntoItems()
-        => AssertEvalCounted("Double = x * 2\nX = 1, 2, 3\nX.map(Double)*", 3, ResultFromAtoms(2, 4, 6));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("Double = x * 2\nX = 1, 2, 3\nX.map(Double)*", 3, ResultFromAtoms(2, 4, 6));
 
     [Fact]
     public void Eval_CollectionBuiltin_AtomsSpread_OpensIntoItems()
-        => AssertEvalCounted("atoms((1, (2, 3)))*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("atoms((1, (2, 3)))*", 3, ResultFromAtoms(1, 2, 3));
 
     // A collection-builtin result fed into another sequence builtin is still
     // opened by singleton-boundary normalization (value-based, not count-based).
@@ -186,7 +186,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_RootOutput_Spread_StaysMultiOutput()
-        => AssertEvalCounted("X = 1, 2, 3\nX*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 1, 2, 3\nX*", 3, ResultFromAtoms(1, 2, 3));
 
     // Q-26 (decided October 2026): a completed while/repeat is an ordinary value
     // boundary like every builtin result. Its multi-slot final state is the loop's own
@@ -198,7 +198,7 @@ public class EvaluatorValueBoundaryTests
     // Only an explicit spread opens the loop result into items.
     [Fact]
     public void Eval_Repeat_MultiSlotLoopResult_SpreadOpensTheValue()
-        => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)*", 2, ResultFromAtoms(3, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("repeat({a + 1, b + a}, 3, 0, 0)*", 2, ResultFromAtoms(3, 3));
 
     // Regression: redundant empty-sequence nesting is normalized before the
     // public boundary is observed.
@@ -258,7 +258,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_Spread_MultiOutputProperty_OpensIntoOutput()
-        => AssertEval(
+        => EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel(
             """
             X = 1, 2, 3
             X*
@@ -267,7 +267,7 @@ public class EvaluatorValueBoundaryTests
 
     [Fact]
     public void Eval_Spread_SequenceValueProperty_OpensIntoOutput()
-        => AssertEval(
+        => EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel(
             """
             X = (1, 2, 3)
             X*

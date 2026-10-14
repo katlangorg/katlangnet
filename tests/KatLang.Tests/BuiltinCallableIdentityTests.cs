@@ -621,7 +621,7 @@ public class BuiltinCallableIdentityTests
     [Theory]
     [InlineData("X = 1, 2, 3\nif(true, X, X)", 1)]
     [InlineData("X = 1, 2, 3\ntrue.if(X, X)", 1)]
-    [InlineData("X = 1, 2, 3\nif(true, X, X)*", 3)]
+    [InlineData("X = 1, 2, 3\nif(true, X, X)*, 997", 4)]
     [InlineData("X = 1, 2, 3\nApply3(f, a, b, c) = f(a, b, c)\nApply3(if, true, X, X)", 1)]
     [InlineData("if(x) = x\nX = 1, 2, 3\nif(X)", 1)]
     public void CountedAndPlain_Agree(string source, int expectedEmittedCount)

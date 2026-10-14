@@ -49,15 +49,15 @@ public class ParserExpressionChainDepthTests
     /// spread markers (each star adds one spread layer). The base primary contributes
     /// NO expression-chain level (only guarded operator/postfix nodes are recorded),
     /// so the chain depth equals the number of written spread markers exactly — there
-    /// is no root-node off-by-one to account for. Written as a bare root-output row.
+    /// is no root-node off-by-one to account for. Written as a root spread slot closed by a real 997 control.
     /// </summary>
     private static string SpreadChain(int spreadCount)
-        => "1" + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
+        => "1" + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount)) + ", 997";
 
     private static string DotThenSpreadChain(int dotCount, int spreadCount)
         => "Root"
             + string.Concat(Enumerable.Repeat(".Member", dotCount))
-            + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount));
+            + string.Concat(Enumerable.Repeat(SpreadContinuation, spreadCount)) + ", 997";
 
     private static Diagnostic AssertControlledChainFailure(string source)
     {

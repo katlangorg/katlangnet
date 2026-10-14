@@ -288,8 +288,8 @@ public class DeclarationHeadLineRuleTests
             var raw = Parser.ParseSyntax(source.Replace("\n", newline, StringComparison.Ordinal));
             if (declaration)
             {
-                Assert.False(raw.HasErrors);
-                Assert.IsType<Expr.SequenceSpread>(raw.Root.Output[0]);
+                Assert.True(raw.HasErrors);
+                Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(raw.Root.Output[0]).Op);
                 Assert.NotEmpty(raw.Root.Properties);
             }
             else

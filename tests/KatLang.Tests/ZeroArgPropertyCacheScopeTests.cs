@@ -505,7 +505,7 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("Outer(x) = {\n Mid = {\n  P = Data() + x\n  P, P\n }\n Mid\n}\nOuter(1), Outer(2)", "101,101,202,202", 2)]
     [InlineData("F(0) = 0\nF(x) = {\n P = Data() + x\n P + P\n}\nF(1), F(1)", "202,402", 2)]
     [InlineData("Outer(*items) = {\n P = Data() + items.sum\n P + P\n}\nOuter(1, 2), Outer(1, 2)", "206,406", 2)]
-    [InlineData("Outer(s) = {\n F(x) = {\n  P = Data() + s + x\n  P + P\n }\n [1, 1].map(F)*\n}\nOuter(1)", "204,404", 2)]
+    [InlineData("Outer(s) = {\n F(x) = {\n  P = Data() + s + x\n  P + P\n }\n [1, 1].map(F)* }\nOuter(1)", "204,404", 2)]
     [InlineData("F(n) = {\n P = Data() + n\n if(n == 0, P + P, P + P + F(n - 1))\n}\nF(2)", "1206", 3)]
     [InlineData("Step(n) = {\n P = Data() + n\n P + P - n\n}\nStep.repeat(3, 0)", "1200", 3)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n Q(), Q()\n}\nOuter(1)", "202,202", 1)]

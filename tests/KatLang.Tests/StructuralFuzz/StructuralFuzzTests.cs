@@ -114,6 +114,11 @@ public class StructuralFuzzTests
 
     private static void AssertAnchors(GeneratedCase baseCase, ExplorerObservation observation)
     {
+        Assert.True(observation.Emitted >= 1, "Every complete root includes its real control output.");
+        var lastRootValue = observation.Value is Result.SequenceValue sequence
+            ? sequence.Items[^1] : observation.Value!;
+        Assert.Equal(new Result.Atom(StructuralProgram.RootControl), lastRootValue, Result.ValueComparer);
+
         var tokens = AtomTokens(observation.Raw!);
         foreach (var expected in baseCase.Program.MustContainAtoms)
         {
@@ -141,7 +146,7 @@ public class StructuralFuzzTests
     /// <summary>Rule-specific relation check; returns a violation description
     /// or null. Normalization is rule-specific by construction: equivalence
     /// compares the exact neutral raw + count + display; delta rules compare
-    /// exact raw and the exact expected count; error rules compare outcome
+    /// both independently known full raw values and counts; error rules compare outcome
     /// class and category only.</summary>
     private static string? Violation(ExplorerObservation original, TransformCandidate candidate)
     {
@@ -160,13 +165,15 @@ public class StructuralFuzzTests
                     return $"display changed:\n  original:    {original.Display}\n  transformed: {transformed.Display}";
                 return null;
 
-            case ExpectedRelation.RawPreservedCountBecomes delta:
-                if (original.Emitted == delta.NewCount)
-                    return $"POWER violation: the delta case is degenerate — original count already {delta.NewCount}";
+            case ExpectedRelation.ExactRootDelta delta:
+                if (delta.OriginalCount == delta.NewCount)
+                    return $"POWER violation: the model's delta case has no count difference ({delta.NewCount})";
+                if (original.Outcome != "ok" || original.Raw != delta.OriginalRaw || original.Emitted != delta.OriginalCount)
+                    return $"original disagrees with the model: expected raw {delta.OriginalRaw} n={delta.OriginalCount}, observed {original.Neutral}";
                 if (transformed.Outcome != "ok")
                     return $"expected ok with count {delta.NewCount} but got {transformed.Outcome} {transformed.ErrorCategory}";
-                if (transformed.Raw != original.Raw)
-                    return $"raw structure changed:\n  original:    {original.Raw}\n  transformed: {transformed.Raw}";
+                if (transformed.Raw != delta.NewRaw)
+                    return $"transformed disagrees with the model: expected raw {delta.NewRaw}, observed {transformed.Raw}";
                 if (transformed.Emitted != delta.NewCount)
                     return $"emitted count: expected {delta.NewCount}, observed {transformed.Emitted} (original {original.Emitted})";
                 return null;
@@ -238,6 +245,19 @@ public class StructuralFuzzTests
     {
         foreach (var baseCase in Corpus)
             ObserveOriginal(baseCase);
+    }
+
+    [Fact]
+    public void EmptySpread_ContributesZeroItemsBesideTheRealRootControl()
+    {
+        var cases = Corpus.Where(c => c.Features.Contains("zeroOut")).ToList();
+        Assert.NotEmpty(cases);
+        foreach (var baseCase in cases)
+        {
+            var observation = ObserveOriginal(baseCase);
+            Assert.Equal("997", observation.Raw);
+            Assert.Equal(1, observation.Emitted);
+        }
     }
 
     // ── Meta / integrity ────────────────────────────────────────────────────
@@ -330,7 +350,7 @@ public class StructuralFuzzTests
                 switch (candidate.Relation)
                 {
                     case ExpectedRelation.Equivalent: equivalence++; break;
-                    case ExpectedRelation.RawPreservedCountBecomes: delta++; break;
+                    case ExpectedRelation.ExactRootDelta: delta++; break;
                     case ExpectedRelation.BecomesRuntimeError: runtimeError++; break;
                     case ExpectedRelation.BecomesFrontEndError: frontEndError++; break;
                 }

@@ -157,7 +157,9 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
         Assert.Equal(DiagnosticCode.UnexpectedToken, diagnostic.Code);
         var danglingLine = source.Count(c => c == '\n');
         Assert.Equal(new SourceSpan(danglingLine, start, danglingLine, end), diagnostic.Span);
-        Assert.Contains("The next line begins a declaration, which never continues an expression.", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains(source.StartsWith("-\n", StringComparison.Ordinal)
+            ? "Unary '-' must be directly attached"
+            : "The next line begins a declaration, which never continues an expression.", diagnostic.Message, StringComparison.Ordinal);
         var property = RootProperty(parsed.Root, declared);
         Assert.Equal(danglingLine + 1, property.DeclarationSpans[0].Start.Line);
         Assert.Equal(source.Contains("public Good", StringComparison.Ordinal), property.IsPublic);
@@ -198,7 +200,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     [InlineData("A = 1 +\n2\nA", "3")]
     [InlineData("A =\n5\nA", "5")]
     [InlineData("1,\n2", "1\n2")]
-    [InlineData("-\n3", "-3")]
+    [InlineData("10-\n3", "7")]
     [InlineData("not\ntrue", "false")]
     [InlineData("Pair = (1, 2)\nX = Pair[\n0\n]\nX", "1")]
     [InlineData("A = { B = 3 }\nX = A.\nB\nX", "3")]
@@ -531,6 +533,9 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
                     continue; // inside a token
                 if (tokens.Any(t => t.Kind is TokenKind.Star or TokenKind.Tilde && (t.Position == point || t.Position + t.Length == point)))
                     continue; // marker attachment is exact source adjacency
+                if (tokens.Any(t => t.Kind == TokenKind.Minus && t.Position + t.Length == point
+                    && tokens.Any(next => next.Position == point && next.Kind != TokenKind.EndOfFile)))
+                    continue; // attached unary/pattern signs can detach; binary spacing has dedicated probes
                 if (tokens.Any(t => t.Kind == TokenKind.Comment && t.Position + t.Length == point))
                     continue; // the character would join the comment
                 if (tokens.Any(t =>
@@ -656,6 +661,15 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     [InlineData("A = x = 1", false)]
     [InlineData("[A = 1]", false)]
     [InlineData("x, y, = 1, 2", false)]
+    // A MID-line operator, comma or dot is no row start, so the name after it is the
+    // operand and its '=' is the same-line stray '=' (Q-65 protects heads only after a
+    // continuation token that LEADS its line; RestrictedLeadingContinuationTests).
+    [InlineData("A = x + y = 1", false)]
+    [InlineData("A = x < y = 1", false)]
+    [InlineData("A = x and y = 1", false)]
+    [InlineData("[1, A = 1]", false)]
+    [InlineData("A = Obj.b = 1", false)]
+    [InlineData("A = Obj\n.B.c = 1", false)]
     [InlineData("A\n= 1", true)]
     [InlineData("Foo\n(x) = x + 1", true)]
     [InlineData("x, y\n= 1, 2", true)]

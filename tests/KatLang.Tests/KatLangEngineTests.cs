@@ -137,7 +137,7 @@ public class KatLangEngineTests
         AssertDisplay("X = 1, 2, 3\nif(true, X, X)", "(1, 2, 3)");
         AssertDisplay("X = 1, 2, 3\nif(false, X, X)", "(1, 2, 3)");
         // Explicit spread opens it back into separate rows.
-        AssertDisplay("X = 1, 2, 3\nif(true, X, X)*", "1\n2\n3");
+        AssertDisplay("X = 1, 2, 3\nif(true, X, X)*, 997", "1\n2\n3\n997");
     }
 
     [Fact]
@@ -743,7 +743,7 @@ public class KatLangEngineTests
         // A spread-marked target parses to a spread expression, which is not
         // an open form; the rejection happens at parse time, before any
         // evaluation.
-        var result = KatLangEngine.Run(source);
+        var result = KatLangEngine.Run(source + ", {}");
 
         var failure = Assert.IsType<RunResult.ParseFailure>(result);
         Assert.Contains(
@@ -914,10 +914,10 @@ public class KatLangEngineTests
         var result = KatLangEngine.Run(
             """
             Collect(*list) = list
-            (10, 20, 30)*.Collect*
+            (10, 20, 30)*.Collect*, 997
             """);
 
-        Assert.Equal(Lines("10", "20", "30"), result.ToDisplayString());
+        Assert.Equal(Lines("10", "20", "30", "997"), result.ToDisplayString());
     }
 
     [Fact]

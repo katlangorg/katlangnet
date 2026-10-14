@@ -272,7 +272,7 @@ public class AtomsBuiltinTests
 
     [Fact]
     public void Atoms_DirectSpread_OpensIntoItems()
-        => AssertEvalCounted("atoms([1, [2, 3]])*", 3, SequenceValue(Atom(1), Atom(2), Atom(3)));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("atoms([1, [2, 3]])*", 3, SequenceValue(Atom(1), Atom(2), Atom(3)));
 
     // ── Output count: one persistent collection value ────────────────────────
 

@@ -315,7 +315,7 @@ public class SemanticModelTests
         const string source =
             """
             A = (1, 2)
-            A*
+            A*, 997
             """;
 
         var parseResult = Parser.Parse(source);
@@ -327,7 +327,7 @@ public class SemanticModelTests
         // The postfix `*` spread marker is punctuation, not an identifier: the
         // model creates no occurrence, no symbol, and no builtin classification
         // for it — only the operand keeps its identifier semantics.
-        var spread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(parseResult.Root.Output));
+        var spread = Assert.IsType<Expr.SequenceSpread>(parseResult.Root.Output[0]);
         var markerSpan = Assert.IsType<SourceSpan>(spread.SpreadMarkerSpan);
         AssertSpan(markerSpan, 2, 2, 2, 3);
         AssertNoIdentifierSemanticSiteOverlaps(model, markerSpan);

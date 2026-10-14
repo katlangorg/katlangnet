@@ -177,8 +177,8 @@ public class ListValueImmutabilityTests
     public void SpreadProgram_BehaviorRetained()
     {
         Assert.Equal(
-            string.Join(Environment.NewLine, "1", "2", "3"),
-            Display("A = [1, 2, 3]\nA*"));
+            string.Join(Environment.NewLine, "1", "2", "3", "997"),
+            Display("A = [1, 2, 3]\nA*, 997"));
     }
 
     // ── 4. The list-pattern view cannot mutate the original list ────────────

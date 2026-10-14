@@ -76,12 +76,12 @@ public class SharedValueGraphTransportTests
         string body,
         int dagDepth = ShallowDepth,
         int duplicationDepth = 5)
-        => $"""
+        => $$"""
             Wrap = [x, x]
-            A = Wrap.repeat({dagDepth}, 1)
-            Dup(*xs) = xs*, xs*
-            B = Dup.repeat({duplicationDepth}, A)
-            {body}
+            A = Wrap.repeat({{dagDepth}}, 1)
+            Dup(*xs) = { xs*, xs* }
+            B = Dup.repeat({{duplicationDepth}}, A)
+            {{body}}
             """;
 
     private sealed record ObservedSourceRun(

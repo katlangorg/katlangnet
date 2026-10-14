@@ -427,8 +427,8 @@ public class SequenceValueImmutabilityTests
     public void RootRowsAndDeconstruction_BehaviorRetained()
     {
         Assert.Equal(
-            string.Join(Environment.NewLine, "1", "2", "3"),
-            Run("A = 1, 2, 3\nA*").ToDisplayString());
+            string.Join(Environment.NewLine, "1", "2", "3", "997"),
+            Run("A = 1, 2, 3\nA*, 997").ToDisplayString());
         Assert.Equal(
             string.Join(Environment.NewLine, "1", "2", "3"),
             Run("A = 1, 2, 3\nx, y, z = A\nx, y, z").ToDisplayString());

@@ -336,19 +336,19 @@ public static class ArityDifferentialMatrix
         if (m != SpreadMultiplicity.Zero)
         {
             var callValue = CollectArgs([shape.Value]); // Gather(V): one argument at the lone collector
-            var rowSupply = SpreadSupply(callValue, (int)m);
+            var rowSupply = SpreadSupply(callValue, (int)m).Append(OracleVal.Atom(997)).ToArray();
             var rowValue = Capture(rowSupply);
             b.Add("call-result-spread", ReceiverKind.DirectCall, BindingForm.Spread, shape, m,
-                $"V = {shape.Literal}\n{GatherDef}\nGather(V){new string('*', (int)m)}",
+                $"V = {shape.Literal}\n{GatherDef}\nGather(V){new string('*', (int)m)}, 997",
                 m == SpreadMultiplicity.Repeated
                     ? ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION
                     : ReceiverLaw.SPREAD_CONTRIBUTES_ITEMS,
-                Ok(rowValue, rowSupply.Count),
+                Ok(rowValue, rowSupply.Length),
                 new[]
                 {
                     $"Gather(V) = collect([V]) = {callValue.Neutral} (call result: ONE value boundary)",
                     $"spread chain over the call result -> supply {SupplyNeutral(rowSupply)}",
-                    $"root spread row emits the supply: raw {rowValue.Neutral}, n={rowSupply.Count}",
+                    $"root spread plus explicit 997 control emits the supply: raw {rowValue.Neutral}, n={rowSupply.Length}",
                 },
                 notes: "Spread applies to the call's one result value (the A*.F* row of the value/supply table).");
         }
@@ -554,7 +554,7 @@ public static class ArityDifferentialMatrix
         var captured = Capture(supply);
         var (rootValue, emitted) = RootNonSpreadRow(captured, ValueCount(captured));
         b.Add("assign-capture", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-            $"V = {shape.Literal}\nX\nX = {arg}",
+            $"V = {shape.Literal}\nX\nX = {{ {arg} }}",
             SupplyLaw(m, ReceiverLaw.CAPTURE_CANONICALIZES_SUPPLY),
             Ok(rootValue, emitted),
             baseTrace.Append($"X = capture(supply) = {captured.Neutral}; access re-counts to valueCount, root keeps a non-spread row visible (n={emitted})"));
@@ -578,7 +578,7 @@ public static class ArityDifferentialMatrix
         // T6: lone-collecting deconstruction.
         var loneCollect = Collect(opened);
         b.Add("assign-collect-lone", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-            $"V = {shape.Literal}\nR\n*R = {arg}",
+            $"V = {shape.Literal}\nR\n*R = {{ {arg} }}",
             deconLaw,
             Ok(loneCollect, 1),
             sharedTrace.Append($"*R collects the opened supply: R = {loneCollect.Neutral}"));
@@ -588,7 +588,7 @@ public static class ArityDifferentialMatrix
         if (pairEnv is null)
         {
             b.Add("assign-decon-pair", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\n[x, y]\nx, y = {arg}",
+                $"V = {shape.Literal}\n[x, y]\nx, y = {{ {arg} }}",
                 deconLaw,
                 Err(Arity),
                 sharedTrace.Append($"bindPats [x, y] over {opened.Count} opened item(s) -> arity mismatch"));
@@ -597,7 +597,7 @@ public static class ArityDifferentialMatrix
         {
             var pairList = OracleVal.List(pairEnv[0].Value, pairEnv[1].Value);
             b.Add("assign-decon-pair", ReceiverKind.Assignment, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\n[x, y]\nx, y = {arg}",
+                $"V = {shape.Literal}\n[x, y]\nx, y = {{ {arg} }}",
                 deconLaw,
                 Ok(pairList, 1),
                 sharedTrace.Append($"bindPats [x, y] -> {pairList.Neutral}"));
@@ -608,7 +608,7 @@ public static class ArityDifferentialMatrix
         if (mixedEnv is null)
         {
             b.Add("assign-decon-mixed", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\n[a, r]\na, *r = {arg}",
+                $"V = {shape.Literal}\n[a, r]\na, *r = {{ {arg} }}",
                 deconLaw,
                 Err(Arity),
                 sharedTrace.Append($"bindPats [a, *r] over {opened.Count} opened item(s) -> arity mismatch (fixed captures set the minimum)"));
@@ -617,7 +617,7 @@ public static class ArityDifferentialMatrix
         {
             var mixedList = OracleVal.List(mixedEnv[0].Value, mixedEnv[1].Value);
             b.Add("assign-decon-mixed", ReceiverKind.Assignment, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\n[a, r]\na, *r = {arg}",
+                $"V = {shape.Literal}\n[a, r]\na, *r = {{ {arg} }}",
                 deconLaw,
                 Ok(mixedList, 1),
                 sharedTrace.Append($"bindPats [a, *r] -> a = {mixedEnv[0].Value.Neutral}, r = {mixedEnv[1].Value.Neutral}"));
@@ -636,7 +636,7 @@ public static class ArityDifferentialMatrix
         var bodySupply = new[] { OracleVal.Atom(0) }.Concat(supply).ToArray();
         var reified = Capture(bodySupply);
         b.Add("prop-reify", ReceiverKind.Property, BindingForm.Capture, shape, m,
-            $"V = {shape.Literal}\nP\nP = 0, {arg}",
+            $"V = {shape.Literal}\nP\nP = {{ 0, {arg} }}",
             m == SpreadMultiplicity.Repeated
                 ? ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION
                 : ReceiverLaw.PROPERTY_REIFIES_OUTPUT,
@@ -648,7 +648,7 @@ public static class ArityDifferentialMatrix
         {
             var parity = OracleVal.List(reified, reified);
             b.Add("prop-call-parity", ReceiverKind.Property, BindingForm.Capture, shape, m,
-                $"V = {shape.Literal}\n[P, P()]\nP = 0, {arg}",
+                $"V = {shape.Literal}\n[P, P()]\nP = {{ 0, {arg} }}",
                 ReceiverLaw.PROPERTY_CALL_EQUIVALENT_VALUE,
                 Ok(parity, 1),
                 baseTrace.Append($"P and P() observe the same value {reified.Neutral} (cache vs bypass is behavioral only)"));
@@ -658,15 +658,15 @@ public static class ArityDifferentialMatrix
         if (m != SpreadMultiplicity.Zero)
         {
             var stars = new string('*', (int)m);
-            var rowSupply = SpreadSupply(shape.Value, (int)m);
+            var rowSupply = SpreadSupply(shape.Value, (int)m).Append(OracleVal.Atom(997)).ToArray();
             var rowValue = Capture(rowSupply);
             b.Add("prop-spread-root", ReceiverKind.Property, BindingForm.Spread, shape, m,
-                $"V = {shape.Literal}\nP = V\nP{stars}",
+                $"V = {shape.Literal}\nP = V\nP{stars}, 997",
                 m == SpreadMultiplicity.Repeated
                     ? ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION
                     : ReceiverLaw.SPREAD_CONTRIBUTES_ITEMS,
-                Ok(rowValue, rowSupply.Count),
-                baseTrace.Append($"root spread row P{stars} emits the supply: raw {rowValue.Neutral}, n={rowSupply.Count} (zero items emit nothing)"),
+                Ok(rowValue, rowSupply.Length),
+                baseTrace.Append($"root spread row P{stars} plus explicit 997 control emits the supply: raw {rowValue.Neutral}, n={rowSupply.Length} (zero spread items leave only the control)"),
                 notes: "Root output is not a value boundary: an explicit spread row contributes exactly its items.");
         }
     }
@@ -1202,7 +1202,7 @@ public static class ArityDifferentialMatrix
                 Family = "decon-rhs-capture",
                 ShapeId = shape.Id,
                 Multiplicity = SpreadMultiplicity.One,
-                LeftSource = $"V = {shape.Literal}\n[x, y]\nx, y = V*",
+                LeftSource = $"V = {shape.Literal}\n[x, y]\nx, y = {{ V* }}",
                 RightSource = $"V = {shape.Literal}\n{Pair2Def}\nPair2(V*)",
                 ExpectAgreement = deconSpreadExpected.Neutral == itemViewExpected.Neutral,
                 PrimaryLaw = ReceiverLaw.DECONSTRUCTION_RHS_CAPTURE_BOUNDARY,
@@ -1395,7 +1395,7 @@ public static class ArityDifferentialMatrix
             {
                 Id = "add-spread-binary-operand",
                 Family = "spread-placement",
-                Source = "V = (1, 2)\n1 + V*",
+                Source = "V = (1, 2)\n1 + V*, 997",
                 PrimaryLaw = ReceiverLaw.SPREAD_IS_SLOT_ONLY,
                 ExpectedParseDiagnosticFragment = "scalar operand",
             },
@@ -1403,7 +1403,7 @@ public static class ArityDifferentialMatrix
             {
                 Id = "add-spread-comparison-operand",
                 Family = "spread-placement",
-                Source = "V = (1, 2)\n1 < V*",
+                Source = "V = (1, 2)\n1 < V*, 997",
                 PrimaryLaw = ReceiverLaw.SPREAD_IS_SLOT_ONLY,
                 ExpectedParseDiagnosticFragment = "spread",
             },

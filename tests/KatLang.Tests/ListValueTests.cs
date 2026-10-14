@@ -232,12 +232,12 @@ public class ListValueTests
 
     [Fact]
     public void Spread_ListLiteral_Directly()
-        => AssertEvalCounted("[1, 2, 3]*", 3, SequenceValue(Atom(1), Atom(2), Atom(3)))
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("[1, 2, 3]*", 3, SequenceValue(Atom(1), Atom(2), Atom(3)))
         ;
 
     [Fact]
     public void Spread_Scalar_StillSuppliesItself()
-        => AssertAtoms("7*", 7);
+        => AssertAtoms("7*, 997", 7, 997);
 
     [Fact]
     public void Spread_ListContainingSequence_KeepsSequenceItem()
@@ -252,22 +252,22 @@ public class ListValueTests
         // spreads the value the previous star's supply re-captures. A lone
         // structured item singleton-collapses at that capture, so a
         // singleton-list chain opens one more list boundary per written star.
-        AssertEvalCounted("A = [[7]]\nA**", 1, Atom(7));
-        AssertEvalCounted("A = [[7]]\n(A*)*", 1, Atom(7));
-        AssertEvalCounted("A = [[1, 2]]\nA**", 2, SequenceValue(Atom(1), Atom(2)));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[7]]\nA**", 1, Atom(7));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[7]]\n(A*)*", 1, Atom(7));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[1, 2]]\nA**", 2, SequenceValue(Atom(1), Atom(2)));
         // Extra layers on a sequence value stay fixed points (unchanged
         // pre-list behavior).
-        AssertEvalCounted("A = (1, 2)\nA**", 2, SequenceValue(Atom(1), Atom(2)));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = (1, 2)\nA**", 2, SequenceValue(Atom(1), Atom(2)));
         // A MULTI-item first spread is a fixed point too: the two-item supply
         // re-captures as a sequence whose spread restores the same two items,
         // so the second star never opens the inner lists ([[1, 2], [3, 4]]**
         // is NOT 1, 2, 3, 4 — repeated spread is not recursive flattening).
-        AssertEvalCounted("A = [[1, 2], [3, 4]]\nA**", 2,
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[1, 2], [3, 4]]\nA**", 2,
             SequenceValue(ListValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
-        AssertEvalCounted("A = [[1, 2], [3, 4]]\n(A*)*", 2,
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[1, 2], [3, 4]]\n(A*)*", 2,
             SequenceValue(ListValue(Atom(1), Atom(2)), ListValue(Atom(3), Atom(4))));
         // Mixed items stay unopened as well.
-        AssertEvalCounted("A = [[1, 2], 3]\nA**", 2,
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [[1, 2], 3]\nA**", 2,
             SequenceValue(ListValue(Atom(1), Atom(2)), Atom(3)));
     }
 
@@ -703,7 +703,7 @@ public class ListValueTests
     public void BuiltinListResult_ReEntersArityThroughOrdinaryRules()
     {
         // A stored builtin list result spreads like any other list value.
-        AssertDisplay("A = take([1, 2, 3], 1)\nA*", "1");
+        AssertDisplay("A = take([1, 2, 3], 1)\nA*, 997", string.Join(Environment.NewLine, "1", "997"));
         AssertDisplay("A = take([1, 2, 3], 2)\nB = { A* }\nB", "(1, 2)");
     }
 
@@ -809,7 +809,7 @@ public class ListValueTests
         // sequence-target twin; only an explicit spread opens it.
         AssertEvalCounted("((1, 2), (3, 4))[0]", 1, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("[(1, 2), (3, 4)][0]", 1, SequenceValue(Atom(1), Atom(2)));
-        AssertEvalCounted("([(1, 2), (3, 4)][0])*", 2, SequenceValue(Atom(1), Atom(2)));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("([(1, 2), (3, 4)][0])*", 2, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("first([(1, 2), (3, 4)])", 1, SequenceValue(Atom(1), Atom(2)));
     }
 
@@ -880,7 +880,7 @@ public class ListValueTests
     public void Indexing_SelectsOneElement_WhileSpreadOpensAll()
     {
         AssertEvalCounted("A = [1, 2]\nA[0]", 1, Atom(1));
-        AssertEvalCounted("A = [1, 2]\nA*", 2, SequenceValue(Atom(1), Atom(2)));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("A = [1, 2]\nA*", 2, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("A = [1, 2]\nB = { A* }\nB", 1, SequenceValue(Atom(1), Atom(2)));
         AssertEvalCounted("A = [7]\nA[0]", 1, Atom(7));
         AssertEvalCounted("A = [7]\nB = { A* }\nB", 1, Atom(7));

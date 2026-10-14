@@ -68,7 +68,7 @@ public class NaturalStructureLayoutTests
     private const string SpreadSource = SalaryDefinitions + """
         SalaryExpenses(2000, 1, 0)*,
         ''
-        SalaryExpenses(502, 0, 0)*
+        SalaryExpenses(502, 0, 0)*, 997
         """;
 
     private const string NaturalCanonical =

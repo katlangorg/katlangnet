@@ -87,7 +87,8 @@ internal sealed class ProgramBuilder
     public void ExpectAbsent(Decimal128 sentinel) => _mustNotContain.Add(sentinel);
 
     public StructuralProgram Finish(MScope root)
-        => new(root, new Dictionary<Sym, string>(_names), _mustContain.ToList(), _mustNotContain.ToList());
+        => new(new MScope(root.Decls, [.. root.Rows, new MExpr.Atom(StructuralProgram.RootControl)]),
+            new Dictionary<Sym, string>(_names), _mustContain.ToList(), _mustNotContain.ToList());
 }
 
 /// <summary>
@@ -604,7 +605,7 @@ public static class StructuralCorpus
         }
     }
 
-    /// <summary>Zero-output programs (spread of the empty sequence) with scope noise.</summary>
+    /// <summary>Zero-item spread contributions beside the root control, with scope noise.</summary>
     private static void AddZeroOutputCases(List<GeneratedCase> cases)
     {
         var index = 0;

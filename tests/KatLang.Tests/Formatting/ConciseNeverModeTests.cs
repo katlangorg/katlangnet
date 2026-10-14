@@ -66,7 +66,7 @@ public class ConciseNeverModeTests
 
         SalaryExpenses(2000, 1, 0)*,
         ''
-        SalaryExpenses(502, 0, 0)*
+        SalaryExpenses(502, 0, 0)*, 997
         """;
 
     private const string SpreadSalaryCanonical =
@@ -78,7 +78,7 @@ public class ConciseNeverModeTests
         "(neto, 334.72)\n" +
         "(taxes, 286.06)\n" +
         "(social, 171.13, income, 114.57, risk, 0.36)\n" +
-        "(total, 620.78)";
+        "(total, 620.78)\n997";
 
     private const string SpreadSalaryConcise =
         "neto 1473.80\n" +
@@ -89,7 +89,7 @@ public class ConciseNeverModeTests
         "neto 334.72\n" +
         "taxes 286.06\n" +
         "social 171.13 income 114.57 risk 0.36\n" +
-        "total 620.78";
+        "total 620.78\n997";
 
     // ── The SPREAD salary program under the acceptance preset ───────────────
 

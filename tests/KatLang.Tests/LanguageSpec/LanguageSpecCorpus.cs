@@ -834,7 +834,7 @@ public static class LanguageSpecCorpus
         {
             Id = "same-line-slot-before-spread-needs-comma",
             Category = "parser-layout",
-            Source = "A = (1, 2)\nB = (3, 4)\nA B*",
+            Source = "A = (1, 2)\nB = (3, 4)\nA B*, 997",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "Unexpected item after a closed expression on the same line",
             ExpectedDiagnosticCode = DiagnosticCode.UnseparatedSameLineItem,
@@ -876,11 +876,11 @@ public static class LanguageSpecCorpus
         {
             Id = "capture-supply-spread",
             Category = "item-supply-vs-value",
-            Source = "A = 1, 2, 3\nA*",
+            Source = "A = 1, 2, 3\nA*, 997",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1\n2\n3",
-            ExpectedRaw = "S[1, 2, 3]",
-            ExpectedEmittedCount = 3,
+            ExpectedDisplay = "1\n2\n3\n997",
+            ExpectedRaw = "S[1, 2, 3, 997]",
+            ExpectedEmittedCount = 4,
             IncludeInGeneratorPrompt = true,
             Explanation = "A spread expression spreads one sequence-value layer back into the surrounding item supply — here back into three root output rows.",
         },
@@ -899,11 +899,11 @@ public static class LanguageSpecCorpus
         {
             Id = "call-value-boundary",
             Category = "item-supply-vs-value",
-            Source = "F(*a) = a\nF(5, 9)\nF(5, 9)*",
+            Source = "F(*a) = a\nF(5, 9)\nF(5, 9)*, 997",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[5, 9]\n5\n9",
-            ExpectedRaw = "S[L[5, 9], 5, 9]",
-            ExpectedEmittedCount = 3,
+            ExpectedDisplay = "[5, 9]\n5\n9\n997",
+            ExpectedRaw = "S[L[5, 9], 5, 9, 997]",
+            ExpectedEmittedCount = 4,
             Probes =
             [
                 // A multi-row body is observed as ONE value at any call boundary.
@@ -919,7 +919,7 @@ public static class LanguageSpecCorpus
                 // ... exactly as through an ordinary property boundary ...
                 new SpecProbe("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR", "ok raw=S[1, 1] n=1"),
                 // ... and only the explicit spread opens it into items.
-                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*", "ok raw=S[1, 1] n=2"),
+                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*, 997", "ok raw=S[1, 1, 997] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.",
@@ -940,7 +940,7 @@ public static class LanguageSpecCorpus
                 // ... and through `while`: the final two-slot state is one value too.
                 new SpecProbe("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd, 3, 0)", "ok raw=S[1, 5] n=1"),
                 // A zero-slot final state is the one visible value `()`; its spread supplies nothing.
-                new SpecProbe("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 1), repeat(Drop, 1, 1)*", "ok raw=S[] n=1"),
+                new SpecProbe("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 1), repeat(Drop, 1, 1)*, 997", "ok raw=S[S[], 997] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.",
@@ -1146,11 +1146,11 @@ public static class LanguageSpecCorpus
         {
             Id = "property-value-boundary",
             Category = "item-supply-vs-value",
-            Source = "Coordinates = 10, 20\nCoordinates\nCoordinates*",
+            Source = "Coordinates = 10, 20\nCoordinates\nCoordinates*, 997",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(10, 20)\n10\n20",
-            ExpectedRaw = "S[S[10, 20], 10, 20]",
-            ExpectedEmittedCount = 3,
+            ExpectedDisplay = "(10, 20)\n10\n20\n997",
+            ExpectedRaw = "S[S[10, 20], 10, 20, 997]",
+            ExpectedEmittedCount = 4,
             Explanation = "Property-style access observes a multi-item body as one sequence value; caller-site spread turns it back into separate output rows.",
         },
         new()
@@ -1182,7 +1182,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("Collect(*items) = items\nCollect([[1, 2], 3]*)", "ok raw=L[L[1, 2], 3] n=1"),
                 new SpecProbe("Collect(*items) = items\nCollect([[1, 2], 3]**)", "ok raw=L[L[1, 2], 3] n=1"),
-                new SpecProbe("A = [[1, 2], [3, 4]]\nA**", "ok raw=S[L[1, 2], L[3, 4]] n=2"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\nA**, 997", "ok raw=S[L[1, 2], L[3, 4], 997] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Repeated spread is ordinary composition, not recursive flattening: `A**` means `(A*)*`. The first star supplies A's two inner lists; the ordinary expression boundary CAPTURES that two-item supply back into one sequence value; the second star re-spreads the same two items — a fixed point. The inner lists are never opened.",
@@ -1226,7 +1226,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("A = [[1, 2], [3, 4]]\nA[0]*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\nA[0]*, 997", "ok raw=S[1, 2, 997] n=3"),
                 new SpecProbe("A = [[1, 2], [3, 4]]\n(A[0])*\n(A*)[0]", "err type"),
             ],
             Explanation = "Select-then-spread and capture-then-select are different operations: `(A[0])*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*)[0]` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row: without it the `(` on the next line is a right operand and the star is the multiplication `(A[0]) * (A*)[0]` (SYN-07B), which fails on the list operands. (`A[0]*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
@@ -3857,7 +3857,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("count(take(((1, 2), (3, 4)), 1))", "ok raw=1 n=1"),
                 new SpecProbe("take(((1, 2), (3, 4)), 1) == (1, 2)", "ok raw=false n=1"),
-                new SpecProbe("take(((1, 2), (3, 4)), 1)*", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("take(((1, 2), (3, 4)), 1)*, 997", "ok raw=S[S[1, 2], 997] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "Collection builtins materialize exact lists: one kept item forms the one-element list `[(1, 2)]` (never erased to the item), so its count is 1 and an explicit `value*` re-spreads the list to the kept pair.",
@@ -4616,7 +4616,7 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("X = 1, 2, 3\nif(true, X, X)*", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("X = 1, 2, 3\nif(true, X, X)*, 997", "ok raw=S[1, 2, 3, 997] n=4"),
             ],
             Explanation = "`if` is a value boundary like every builtin: the selected branch is one value, turned back into an item supply only by caller-site spread.",
         },
@@ -4724,8 +4724,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("G(a) = a\nPairs = (1, 2), (3, 4)\nG(Pairs[0])", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("Pairs = (1, 2), (3, 4)\nfirst(Pairs)", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("Pairs = (1, 2), (3, 4)\nX = Pairs[0]\nX", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs[0])*", "ok raw=S[1, 2] n=2"),
-                new SpecProbe("Pairs = (1, 2), (3, 4)\nPairs[0]*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\n(Pairs[0])*, 997", "ok raw=S[1, 2, 997] n=3"),
+                new SpecProbe("Pairs = (1, 2), (3, 4)\nPairs[0]*, 997", "ok raw=S[1, 2, 997] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "SELECTION IS A VALUE BOUNDARY: `Pairs[0]` returns the selected item as ONE value without opening it, so a selected sequence value is one root row — exactly what `first(Pairs)` or a property holding the same value shows. Only an explicit spread `(Pairs[0])*` opens the selected value into its items.",
@@ -4815,7 +4815,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Data = 10, 20, 30\nIs = [2, 0]\nData[Is*]", "ok raw=S[30, 10] n=1"),
                 new SpecProbe("Data = 10, 20, 30\nIs = [2, 0]\nData[1, Is*, 1]", "ok raw=S[20, 30, 10, 20] n=1"),
                 new SpecProbe("Data = 10, 20, 30\nData[2, 0][1]", "ok raw=10 n=1"),
-                new SpecProbe("Data = 10, 20, 30\nData[2, 0]*", "ok raw=S[30, 10] n=2"),
+                new SpecProbe("Data = 10, 20, 30\nData[2, 0]*, 997", "ok raw=S[30, 10, 997] n=3"),
                 new SpecProbe("Data = 10, 20, 30\nData [1]", "ok raw=20 n=1"),
                 new SpecProbe("Data = 10, 20, 30\nData[\n  2,\n  0\n]", "ok raw=S[30, 10] n=1"),
             ],
@@ -4988,30 +4988,30 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = (1, 2)\nB = 5\nA*,\nB", "ok raw=S[1, 2, 5] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — when the next significant token can begin an operand and does not begin a declaration, a line-final star continues across the newline like every trailing binary operator, in a definition body too (Q-33). To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).",
+            Explanation = "A physical line-final star announces multiplication, attached or spaced, with ordinary precedence. A declaration or EOF cannot close it as spread; missing operands are diagnosed. A same-line comma explicitly closes a spread slot before the next item.",
         },
         new()
         {
             Id = "star-before-declaration-or-boundary-is-spread",
             Category = "parser-layout",
-            Source = "A = (1, 2)\nA*\nB = 5\nB",
+            Source = "A = (1, 2)\nB = 5\nA*, B",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n2\n5",
             ExpectedRaw = "S[1, 2, 5]",
             ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("A = (1, 2)\nA*", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("A = (1, 2)\nA*, 997", "ok raw=S[1, 2, 997] n=3"),
                 new SpecProbe("F(*items) = items\nA = (1, 2)\nF(A*, 3)", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("A = (1, 2)\nX = (A*)\nX", "ok raw=S[1, 2] n=1"),
                 new SpecProbe("A = (1, 2)\nB = 3\nX = A*\nB\nX", "err type"),
-                // The detached spellings (`A *` before the declaration, at the
-                // end of the program, or inside the call) are neither spread
-                // nor multiplication: the marker attachment law rejects them —
-                // a parse-level outcome, pinned by `spread-marker-must-be-attached`.
+                // A physical line-final star before a declaration or EOF is
+                // incomplete multiplication (LineFinalStarPriorityTests).
+                // Detached actual spread inside a same-line closed call/group
+                // is pinned by spread-marker-must-be-attached.
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A declaration head is never a multiplication operand, so a line-final star before `B = 5` is the spread marker — through the same declaration relation that ends an adjacency row. The star is likewise a spread before a comma, a closing delimiter, or the end of the program. A spread marker must be directly attached to its operand (`A*`): the detached `A *` in any of these positions is a parse error, never silently a spread and never silently a multiplication. A definition body that ends in a spread must be closed when an output row follows: `X = (A*)` captures the spread supply, while a bare `X = A*` above the row `B` is the multiplication `X = A * B`.",
+            Explanation = "The stable case ID retains its historical name. Spread now requires an explicit same-line boundary: the comma closes A* before B. A physical line-final star, including EOF or a later declaration, is incomplete multiplication; declarations are preserved and cannot become operands. Spread VALUE semantics remain unchanged.",
         },
         new()
         {
@@ -5029,21 +5029,21 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = 2\nX = A *\n3\nX", "ok raw=6 n=1"),
                 new SpecProbe("A = 2\nB = 3\nX = A*\nB + 1\nX", "ok raw=7 n=1"),
                 new SpecProbe("A = 2\nX = A*\n# comment\n\n3\nX", "ok raw=6 n=1"),
-                new SpecProbe("A = (1, 2)\nX = A*\nY = 3\nX", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("A = (1, 2)\nX = { A* }\nY = 3\nX", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Q-33 (decided 2026-10-09): a line-final star in a definition body is classified like every star. The next significant token, `3`, can begin an operand and does not begin a declaration, so the star is multiplication and the definition continues across the newline: its body is `A * 3`, so `X` is 6 and the line `3` belongs to the definition instead of being an output row. Operator precedence is unchanged (`X = A*` newline `B + 1` is `X = (A * B) + 1`), and the layout is valid source with no warning or error. A definition meant to end in a spread is closed structurally — `X = (A*)` or `X = { A* }` — and the next line is then its own output row; a following declaration head also ends the body, so `X = A*` newline `Y = 3` keeps `X` the spread of `A`.",
+            Explanation = "Q-65 revises the conflicting Q-33 subrule: every physical line-final star announces multiplication. A following operand continues with ordinary precedence; a declaration or EOF leaves a missing operand. Explicit same-line closure, X = (A*) or X = { A* }, closes spread without changing its VALUE semantics.",
         },
         new()
         {
             Id = "spread-marker-must-be-attached",
             Category = "parser-layout",
-            Source = "A = (1, 2)\nA *",
+            Source = "A = (1, 2)\n(A *)",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "The spread marker `*` must be directly attached to the expression it spreads",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidSpreadMarker,
             IncludeInGeneratorPrompt = true,
-            Explanation = "The marker attachment law: a structural marker is directly attached to the syntax it modifies (`A*`, `*items`, `~x`, `x~`), while the multiplication operator may be spaced freely. `A *` with nothing that could be a right operand after it is classified as a spread marker (SYN-07B) and then rejected for being detached — whitespace never turns one valid operation into another; it only separates the valid `A*` from this error. Write `A*` to spread, or give the star a right operand to multiply.",
+            Explanation = "An explicit same-line closer establishes spread; the classified marker must be directly attached, so (A *) is InvalidSpreadMarker. A terminal star at EOF instead means incomplete multiplication, attached or spaced.",
         },
         new()
         {
@@ -5190,7 +5190,7 @@ public static class LanguageSpecCorpus
         {
             Id = "spread-not-binary-operand",
             Category = "parser-layout",
-            Source = "A = (1, 2)\nA* == A*",
+            Source = "A = (1, 2)\nA* == A*, 997",
             Outcome = SpecOutcome.ParseError,
             ExpectedDiagnosticCode = DiagnosticCode.MisplacedSpread,
             Explanation = "A spread expression is not a binary operand; spread results feed slots, not operators.",
@@ -5312,6 +5312,60 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "newline-grammar-priority-continuation",
+            Category = "parser-layout",
+            Source = "P = 10\n- 2\nP",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "8",
+            ExpectedRaw = "8",
+            ExpectedEmittedCount = 1,
+            IncludeInGeneratorPrompt = true,
+            Probes =
+            [
+                new SpecProbe("10\n-2", "ok raw=S[10, -2] n=2"),
+                new SpecProbe("10\n- 2", "ok raw=8 n=1"),
+                new SpecProbe("10\n- -2", "ok raw=12 n=1"),
+                new SpecProbe("10\n* 2", "ok raw=20 n=1"),
+                new SpecProbe("P=1\n,2\nP", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("F(-2)=7\nF(n)=n\nF(-2)", "ok raw=7 n=1"),
+            ],
+            Explanation = "Q-65: grammar role precedes newline. Independent next-line expressions and declarations have priority; otherwise a leading binary operator, comma or dot continues. Unary minus and negative pattern signs require direct attachment: 10 newline -2 has two rows, while 10 newline - 2 subtracts. Indentation is irrelevant. Calls and selections retain their same-line opener rule.",
+        },
+        new()
+        {
+            Id = "unary-minus-must-be-attached",
+            Category = "parser-layout",
+            Source = "- 2",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Unary '-' must be directly attached",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Prefix unary '-' requires exact attachment to its operand. At root '- 2' has neither an eligible unary role nor a binary left operand, so it is a syntax error. '-2', '--2' and '2 ^ -2' stay valid with their existing precedence and numeric domain. Binary '-' remains spacing-independent.",
+        },
+        new()
+        {
+            Id = "negative-pattern-sign-must-be-attached",
+            Category = "parser-layout",
+            Source = "F(- 2) = 7",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "A negative pattern's '-' must be directly attached",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The owner extended direct attachment to negative literal pattern signs. F(-2) is the existing literal-pattern form; F(- 2), including a newline or comment gap, is rejected. This does not turn a pattern sign into an expression unary node.",
+        },
+        new()
+        {
+            Id = "line-final-star-at-eof-is-incomplete",
+            Category = "parser-layout",
+            Source = "7*",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Expected an expression after '*'",
+            ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A physical line-final '*' always announces multiplication, including at EOF and before a later closer or declaration. Spread needs an explicit same-line closure, such as F(7*), [7*] or 7*, 2. Attachment is checked after spread classification; the spread VALUE and collect-marker laws are unchanged.",
+        },
+        new()
+        {
             Id = "newline-ends-property-body",
             Category = "parser-layout",
             Source = "P = 1\n2",
@@ -5319,7 +5373,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
             ExpectedEmittedCount = 1,
-            Explanation = "A simple one-line property body ends at the newline; the next line is a separate root output row.",
+            Explanation = "A simple property body ends at the newline when the following syntax starts an independent expression. Here 2 is a separate root output row; grammar-eligible leading continuation can still extend the body (Q-65).",
         },
         new()
         {
@@ -5375,7 +5429,7 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("A = {\n}\nA == ()", "err missingOutput"),
-                new SpecProbe("A = {\n}\nA*", "err spreadMissingOutput"),
+                new SpecProbe("A = {\n}\nA*, 997", "err spreadMissingOutput"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.",
@@ -5866,11 +5920,11 @@ public static class LanguageSpecCorpus
         {
             Id = "list-spread-edges",
             Category = "lists",
-            Source = "A = []\nB = [7]\nC = [[7]]\n\nA*,\nB*,\nC*",
+            Source = "A = []\nB = [7]\nC = [[7]]\n\nA*,\nB*,\nC*, 997",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "7\n[7]",
-            ExpectedRaw = "S[7, L[7]]",
-            ExpectedEmittedCount = 2,
+            ExpectedDisplay = "7\n[7]\n997",
+            ExpectedRaw = "S[7, L[7], 997]",
+            ExpectedEmittedCount = 3,
             Probes =
             [
                 new SpecProbe("A = []\nx = (A*)\nx", "ok raw=S[] n=1"),
@@ -6247,7 +6301,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[1, 2]",
             ExpectedRaw = "L[1, 2]",
             ExpectedEmittedCount = 1,
-            LeanExclusionReason = "Math natives (Expr.NativeCall) are a documented unmodeled gap in the Lean core; the counted-first native-argument lookup matches the modeled Expr.Param dual-view order.",
+            LeanExclusionReason = "Math native bodies (Expr.NativeCall) are C#-only by design (Q-34, 2026-10-13), outside the current executable Lean model; the counted-first native-argument lookup matches the modeled Expr.Param dual-view order.",
             Probes =
             [
                 new SpecProbe("[1, -2].map(abs)", "ok raw=L[1, 2] n=1"),
@@ -6682,7 +6736,7 @@ public static class LanguageSpecCorpus
             Source = "Z = 1 / 0\n\nMath.Abs(Z)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
-            LeanExclusionReason = "Math natives (Expr.NativeCall) are a documented unmodeled gap in the Lean core; the wrapper's declared-argument read is the modeled Expr.Param value read applied to a native body Lean does not represent.",
+            LeanExclusionReason = "Math native bodies (Expr.NativeCall) are C#-only by design (Q-34, 2026-10-13), outside the current executable Lean model; the wrapper's declared-argument read is the modeled Expr.Param value read applied to a native body Lean does not represent.",
             Probes =
             [
                 // A clause family has no value with zero arguments, so the ordinary
@@ -6725,7 +6779,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("F(x) = [0 - 1, 0 - 2].map(abs).sum\nF(9)", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            LeanExclusionReason = "Math.Abs executes the unmodeled native Math surface; the pure-core demand counterpart is need-closed-core-demand-is-runtime.",
+            LeanExclusionReason = "Math.Abs executes a C#-only native body by design (Q-34, 2026-10-13); the shared pure-core demand counterpart remains need-closed-core-demand-is-runtime.",
             Explanation = "An explicit parameter list is closed. `F(x)` gains no implicit `q`, but referencing the resolved callable `A` is legal. When `Math.Abs` actually demands its value, the ordinary zero-argument call to `A(q)` rejects with arity mismatch. An unused argument or unselected branch does not demand it. Declaring `q`, calling `A` explicitly, or leaving the list open enables forwarding. Undeclared names remain static errors.",
         },
         new()
@@ -7190,8 +7244,8 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 7,
             Probes =
             [
-                // A strict Math argument reads the same value (probes only: Math natives are
-                // a documented unmodeled gap in the Lean core, so the Lean-compared program
+                // A strict Math argument reads the same value (probes only: native Math bodies
+                // are C#-only by design, Q-34; the shared-core Lean-compared program
                 // above uses operator, comparison, list, and index positions).
                 new SpecProbe("Cnt(*xs) = xs.count\nabs(Cnt), Cnt.abs", "ok raw=S[0, 0] n=2"),
                 // The alias is Cnt's callable (a callable alias): it takes arguments like Cnt.

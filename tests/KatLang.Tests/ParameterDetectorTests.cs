@@ -500,13 +500,14 @@ public class ParameterDetectorTests
     [Fact]
     public void Detect_OpenSequenceSpread_DoesNotCollectProperties()
     {
-        // `open A*` parses to a SequenceSpread target that open-form validation
-        // rejects (spread is not an open form), so the open exposes nothing and
-        // foo/bar/z all stay free. (`open A* B` would be the multiplication
-        // `A * B` under the star law, and `open A*, B` would make B a real
-        // second target — each would exercise something else.)
+        // `open A*, {}` parses to a SequenceSpread target (the same-line comma
+        // closes it) that open-form validation rejects (spread is not an open
+        // form), so the open exposes nothing and foo/bar/z all stay free. (`open
+        // A* B` and a line-final `open A*` would be multiplications under the
+        // star law, and `open A*, B` would make B a real second target — each
+        // would exercise something else.)
         var source = """
-            open A*
+            open A*, {}
             A = { public foo = 1 }
             B = { public bar = 2 }
             foo + bar + z

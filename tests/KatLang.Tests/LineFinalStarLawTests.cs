@@ -217,35 +217,48 @@ public class LineFinalStarLawTests
         // A comma ends the spread slot; the next line is a row of its own.
         { "A = (1, 2)\nB = 5\nA*,\nB", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
         { "A = (1, 2)\nB = 5\nA*, # end of the spread row\r\nB", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
-        { "A = (1, 2)\nB = 5\nA*\n, B", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
+        { "A = (1, 2)\nB = 5\nA*\n, B", "!missingOperand", "S[1, 2, 5]" },
         // Structural closing of a spread-ending definition body.
         { "A = (1, 2)\nB = 5\nX = (A*)\nB\nX", "{A = capture(1, 2); B = 5; X = capture(spread(A))} B | X", "S[5, S[1, 2]]" },
         { "A = (1, 2)\nB = 5\nX = { A* }\nB\nX", "{A = capture(1, 2); B = 5; X = spread(A)} B | X", "S[5, S[1, 2]]" },
         // A following declaration head is never an operand: every head form ends the expression.
-        { "A = (1, 2)\nA*\nB = 5\nB", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
-        { "A = (1, 2)\nA*\npublic B = 5\nB", "{A = capture(1, 2); B = 5} spread(A) | B", "S[1, 2, 5]" },
-        { "A = (1, 2)\nA*\nF(x) = x + 3\nF(2)", "{A = capture(1, 2); F = +($x, 3)} spread(A) | call(F; 2)", "S[1, 2, 5]" },
-        { "A = (1, 2)\nA*\nx, y = 4, 5\ny", "{A = capture(1, 2); $deconstruct$0 = 4 | 5; x = call(block($x); $deconstruct$0); y = call(block($y); $deconstruct$0)} spread(A) | y", "S[1, 2, 5]" },
-        { "A = (1, 2)\nA*\n*items = 4, 5\nitems[1]", "{A = capture(1, 2); $deconstruct$0 = 4 | 5; items = call(block($items); $deconstruct$0)} spread(A) | index(items, 1)", "S[1, 2, 5]" },
-        { "A = (1, 2)\nX = A*\nY = 5\nX, Y", "{A = capture(1, 2); X = spread(A); Y = 5} X | Y", "S[S[1, 2], 5]" },
-        { "A = (1, 2)\n{ A*\n  Y = 5\n  Y }", "{A = capture(1, 2)} block({Y = 5} spread(A) | Y)", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\nB = 5\nB", "!missingOperand", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\npublic B = 5\nB", "!missingOperand", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\nF(x) = x + 3\nF(2)", "!missingOperand", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\nx, y = 4, 5\ny", "!missingOperand", "S[1, 2, 5]" },
+        { "A = (1, 2)\nA*\n*items = 4, 5\nitems[1]", "!missingOperand", "S[1, 2, 5]" },
+        { "A = (1, 2)\nX = A*\nY = 5\nX, Y", "!missingOperand", "S[S[1, 2], 5]" },
+        { "A = (1, 2)\n{ A*\n  Y = 5\n  Y }", "!missingOperand", "S[1, 2, 5]" },
         // A closing delimiter or the end of input closes the expression before any operand.
-        { "A = (1, 2)\n(A*\n)", "{A = capture(1, 2)} capture(spread(A))", "S[1, 2]" },
-        { "A = (1, 2)\n[A*\n]", "{A = capture(1, 2)} list(spread(A))", "L[1, 2]" },
-        { "A = (1, 2)\n{ A*\n}", "{A = capture(1, 2)} block(spread(A))", "S[1, 2]" },
-        { "Coll(*xs) = xs\nA = (1, 2)\nColl(A*\n)", "{A = capture(1, 2); Coll = $xs} call(Coll; spread(A))", "L[1, 2]" },
-        { "A = (1, 2)\nA*", "{A = capture(1, 2)} spread(A)", "S[1, 2]" },
-        { "A = (1, 2)\nA* # the end\n\n# nothing follows", "{A = capture(1, 2)} spread(A)", "S[1, 2]" },
-        { "A = (1, 2)\nX\nX = A*", "{A = capture(1, 2); X = spread(A)} X", "S[1, 2]" },
+        { "A = (1, 2)\n(A*\n)", "!missingOperand", "S[1, 2]" },
+        { "A = (1, 2)\n[A*\n]", "!missingOperand", "L[1, 2]" },
+        { "A = (1, 2)\n{ A*\n}", "!missingOperand", "S[1, 2]" },
+        { "Coll(*xs) = xs\nA = (1, 2)\nColl(A*\n)", "!missingOperand", "L[1, 2]" },
+        { "A = (1, 2)\nA*", "!missingOperand", "S[1, 2]" },
+        { "A = (1, 2)\nA* # the end\n\n# nothing follows", "!missingOperand", "S[1, 2]" },
+        { "A = (1, 2)\nX\nX = A*", "!missingOperand", "S[1, 2]" },
         // Tokens that cannot begin a multiplication operand.
-        { "A = (1, 2)\nA*\nnot true", "{A = capture(1, 2)} spread(A) | not(true)", "S[1, 2, false]" },
-        { "Coll(*xs) = xs\nA = (1, 2)\nA*\n.Coll", "{A = capture(1, 2); Coll = $xs} call(Coll; spread(A))", "L[1, 2]" },
+        { "A = (1, 2)\nA*\nnot true", "!missingOperand", "S[1, 2, false]" },
+        { "Coll(*xs) = xs\nA = (1, 2)\nA*\n.Coll", "!missingOperand", "L[1, 2]" },
     };
 
     [Theory]
     [MemberData(nameof(SpreadEndings))]
     public async Task SpreadEnding_ProducesTheSpreadNode_AndKeepsTheNextRowSeparate(string source, string expectedProgram, string expectedValue)
     {
+        if (expectedProgram == "!missingOperand")
+        {
+            var rejected = Parser.ParseSyntax(source);
+            Assert.True(rejected.HasErrors);
+            Assert.Contains(rejected.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken);
+            var scan = new RejectedStarShape();
+            scan.VisitAlgorithm(rejected.Root);
+            var product = Assert.Single(scan.Products);
+            Assert.Equal("A", Assert.IsType<Expr.Resolve>(product.Left).Name);
+            Assert.Empty(scan.Spreads);
+            Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+            return;
+        }
         var parsed = ParseWithoutAnyDiagnostic(source);
         Assert.Equal(expectedProgram, ProgramShape(parsed.Root));
         Assert.Equal(expectedValue, await ValueOnEveryRoute(source));
@@ -361,6 +374,18 @@ public class LineFinalStarLawTests
         ("x", "item"), ("y", "rest"),
     ];
 
+    private sealed class RejectedStarShape : AstWalker
+    {
+        public List<Expr.Binary> Products { get; } = [];
+        public List<Expr.SequenceSpread> Spreads { get; } = [];
+        public override void VisitExpr(Expr expr)
+        {
+            if (expr is Expr.Binary { Op: BinaryOp.Mul } p) Products.Add(p);
+            if (expr is Expr.SequenceSpread spread) Spreads.Add(spread);
+            base.VisitExpr(expr);
+        }
+    }
+
     private static string Rename(string text)
     {
         foreach (var (from, to) in Renaming)
@@ -384,8 +409,8 @@ public class LineFinalStarLawTests
         data.Add("A = 2\nB = 3\nX = A*\nB + 1\nX");
         data.Add("V = [(1, 2)]\nx, y = V*\nx + y\nV");
         data.Add("A = (1, 2)\nB = 5\nX = (A*)\nB\nX");
-        data.Add("A = (1, 2)\nA*\nB = 5\nB");
-        data.Add("A = (1, 2)\nX = A*\nY = 5\nX, Y");
+        data.Add("A = (1, 2)\nA*, 0\nB = 5\nB");
+        data.Add("A = (1, 2)\nX = { A* }\nY = 5\nX, Y");
         return data;
     }
 
@@ -468,16 +493,12 @@ public class LineFinalStarLawTests
     [InlineData("public A = (1, 2)\npublic X = A*")]
     [InlineData("public A = (1, 2)\npublic X = A*\n")]
     [InlineData("public A = (1, 2)\r\npublic X = A*\r\n\r\n# the end of the module\r\n")]
-    public async Task ModuleSourceEndingInAStar_EndsAtItsOwnEndOfInput_WhateverTheLoadSiteWritesNext(string module)
+    public async Task ModuleSourceEndingInAStar_RejectsAtItsOwnEofWithoutTakingLoadSiteOperands(string module)
     {
-        // A module is parsed as its own document: its last line ends at ITS end of input, never
-        // continued by the line the load site writes after `load(…)`.
+        Assert.True(Parser.ParseSyntax(module).HasErrors);
         const string source = $"M = load('{Lib}')\nM.X\n5";
-        var parsed = await ParseModuleProgramWithoutAnyDiagnostic(source, new CountingModules([(Lib, module)]).Options);
-        var held = Assert.IsType<Algorithm.User>(Body(parsed.Root, "M"));
-        Assert.Equal("spread(A)", Rows(Body(held, "X")));
-        Assert.Equal("dot(M.X) | 5", Rows(parsed.Root));
-        Assert.Equal("S[S[1, 2], 5]", await RunAsyncValue(source, new CountingModules([(Lib, module)]).Options));
+        var result = await KatLangEngine.RunAsync(source, new CountingModules([(Lib, module)]).Options);
+        Assert.IsType<RunResult.ParseFailure>(result);
     }
 
     [Fact]
@@ -547,14 +568,14 @@ public class LineFinalStarLawTests
     public void SpreadOperandOnALaterLine_KeepsTheTargetedMisplacedSpreadDiagnostic(
         string source, int line, int column, int endLine, int endColumn)
     {
-        var error = Assert.Single(SourceProvenance.ExpectFrontEndError(source));
+        var error = Assert.Single(SourceProvenance.ExpectFrontEndError(CloseLastSpread(source)));
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
         Assert.Equal(new SourceSpan(line, column, endLine, endColumn), error.Span);
         Assert.Contains("on an earlier line continued as multiplication", error.Message, StringComparison.Ordinal);
         Assert.Contains("`A*,`", error.Message, StringComparison.Ordinal);
 
-        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(CloseLastSpread(source)));
         var reported = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.MisplacedSpread, reported.Code);
         Assert.Equal(error.Span, reported.Span);
@@ -563,7 +584,7 @@ public class LineFinalStarLawTests
     [Fact]
     public void SameLineSpreadOperand_KeepsTheGenericMisplacedSpreadWording()
     {
-        var error = Assert.Single(SourceProvenance.ExpectFrontEndError("A = 1, 2\nB = 3, 4\nA* B*"));
+        var error = Assert.Single(SourceProvenance.ExpectFrontEndError("A = 1, 2\nB = 3, 4\nA* B*, 0"));
         Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
         Assert.Equal(new SourceSpan(3, 4, 3, 6), error.Span);
         Assert.DoesNotContain("earlier line", error.Message, StringComparison.Ordinal);
@@ -575,9 +596,13 @@ public class LineFinalStarLawTests
     {
         // `A*` newline `B*` newline `C*`: the first two stars multiply; only the LAST, before the
         // end of input, is a spread — the misplaced operand — reported once, at `C*`.
-        var error = Assert.Single(SourceProvenance.ExpectFrontEndError("A = 1, 2\nB = 3, 4\nC = 5, 6\nA*\nB*\nC*"));
+        var error = Assert.Single(SourceProvenance.ExpectFrontEndError("A = 1, 2\nB = 3, 4\nC = 5, 6\nA*\nB*\nC*, 0"));
         Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
         Assert.Equal(new SourceSpan(6, 1, 6, 3), error.Span);
         Assert.Contains("on an earlier line continued as multiplication", error.Message, StringComparison.Ordinal);
     }
+    // Explicitly close only the intended misplaced spread, preserving all
+    // preceding line-final multiplication and original diagnostic spans.
+    private static string CloseLastSpread(string source)
+        => source.Insert(source.LastIndexOf('*') + 1, ", 0");
 }

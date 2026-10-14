@@ -213,8 +213,6 @@ public class MaintainedDocumentationConsistencyTests
         // operand, reopens the question, or carries the rejected prototypes' switches or wording.
         { @"\bmultipl(?:y|ies|ying)\s+by\s+the\s+(?:next|following)\s+(?:physical\s+)?(?:line|row)\b", "a line-final star multiplying by the next line as such (Q-33 wording correction A)" },
         { @"\b(?:next|following|that)\s+(?:physical\s+)?line\s+(?:is|becomes|forms)\s+(?:its|the(?:\s+star's)?)\s+(?:whole\s+)?(?:right\s+)?operand\b", "the next line as the star's operand (Q-33 wording correction B)" },
-        { @"\b(?:right\s+operand\s+continues|multiplication\s+continuing)\s+on\s+the\s+next\s+line\s+whenever\b", "unconditional line-final multiplication without the declaration exception (before Q-33)" },
-        { @"\b(?:every|any|each)\s+line-final\s+(?:star|`?\*`?)\s+(?:is\s+(?:a\s+)?multiplication|multiplies)\b|\bline-final\s+(?:star|`?\*`?)\s+(?:is\s+)?always\s+(?:a\s+)?multipl", "every line-final star as multiplication (Q-33: the next significant token decides)" },
         { @"\b(?:Q-33|F13b)\b[^.]{0,60}\b(?:remains\s+open|is\s+(?:still\s+)?(?:open|undecided|unresolved)|open\s+(?:language-design\s+)?question)\b", "the line-final star layout as an open question (before Q-33)" },
         { @"\bKATLANG_Q33_POLICY\b|\bQ33(?:Policy|Warn\w*|Forces\w*|StarIsAttached)\b|\btouches\s+its\s+operand\s+(?:and\s+ends\s+the\s+line|at\s+the\s+end\s+of\s+a\s+line)\b", "a rejected Q-33 prototype policy, warning, or error (the owner kept P0)" },
         { @"\bdetach(?:ed|ing)?\s+the\s+star\b[^.]{0,40}\bto\s+multiply\b|\bto\s+multiply\b[^.]{0,60}\bdetach\s+the\s+star\b", "attached and detached line-final stars as different valid operations (rejected with P2A)" },
@@ -515,21 +513,16 @@ public class MaintainedDocumentationConsistencyTests
     /// by <c>LineFinalStarLawTests</c> and the spec corpus; this guards the restatements.
     /// </summary>
     [Theory]
-    [InlineData("AGENTS.md", "A LINE-FINAL star is no exception (Q-33, decided 2026-10-09)")]
-    [InlineData("docs/design/language-rules/syntax.md", "THE LINE-FINAL STAR IS NO EXCEPTION (Q-33, decided 2026-10-09")]
-    public void LineFinalStarLaw_IsStatedWithItsConditionPrecedenceAndClosingForms(string relativePath, string anchor)
+    [InlineData("AGENTS.md")]
+    [InlineData("docs/design/language-rules/syntax.md")]
+    public void LineFinalStarPriority_IsExplicitAndRequiresSameLineClosure(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath)).ReplaceLineEndings("\n");
-        var statement = Assert.Single(text.Split('\n'), line => line.Contains(anchor, StringComparison.Ordinal));
-        var law = statement[statement.IndexOf(anchor, StringComparison.Ordinal)..];
-
-        Assert.Contains("next significant token", law);
-        Assert.Contains("does not begin a declaration", law);
-        Assert.Matches(@"continues across the newline[^.]*\bordinary (?:operator )?precedence", law);
-        Assert.Matches(@"no warning (?:or|and no) error", law);
-        Assert.Contains("`A*,`", law);
-        Assert.Contains("(A*)", law);
-        Assert.Contains("{ A* }", law);
+        Assert.Matches(@"(?i)physical line-final star(?: always)? announces multiplication", text);
+        Assert.Contains("EOF", text);
+        Assert.Contains("same-line", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("declaration", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("direct", text, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -542,18 +535,18 @@ public class MaintainedDocumentationConsistencyTests
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), "tutorial.md")).ReplaceLineEndings("\n");
         var section = MarkdownSection(text, "### Spread or Multiplication?");
-        Assert.Contains("rather than a new definition", section);
+        Assert.Contains("following definition stays a definition", section);
         Assert.Contains("usual operator precedence", section);
         Assert.Contains("A = (1, 2)\nX = (A*)\n\nX\n```\n\n**Result:** `(1, 2)`", section);
         Assert.Contains("`X = A * X`", section);
-        Assert.Contains("This is not an error", section);
+        Assert.Contains("missing operand", section);
 
         var mistake = Assert.Single(
             MarkdownSection(text, "### Common Mistakes").Split('\n'),
-            line => line.Contains("line-final `*`", StringComparison.Ordinal));
-        Assert.Contains("rather than a new definition", mistake);
+            line => line.Contains("line-final `*`", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("missing operand", mistake);
         Assert.Contains("usual operator precedence", mistake);
-        Assert.Contains("`A*,`", mistake);
+        Assert.Contains("`A*, B`", mistake);
         Assert.Contains("`X = (A*)`", mistake);
     }
 
@@ -564,10 +557,10 @@ public class MaintainedDocumentationConsistencyTests
     [Theory]
     [InlineData(".github/agents/katlang-generator.agent.md")]
     [InlineData("experimental/prompts/katlang-generator.txt")]
-    public void GeneratorGuidance_KeepsTheDeclarationExceptionAndTheClosingIdioms(string relativePath)
+    public void GeneratorGuidance_StatesStarPriorityAndTheClosingIdioms(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
-        Assert.Matches(@"(?i)\bdefinition head\b|\bbefore a definition\b", text);
+        Assert.Contains("line-final star announces multiplication", text, StringComparison.OrdinalIgnoreCase);
         Assert.Matches(@"`[Aa]\*,` newline `[Bb]`", text);
         Assert.Contains("y = (A*)", text);
         Assert.Contains("[line-final-star-in-definition-continues]", text);

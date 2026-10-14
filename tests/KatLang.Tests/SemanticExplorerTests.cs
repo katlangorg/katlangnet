@@ -372,15 +372,15 @@ public class SemanticExplorerTests
         // For sequences the re-captured value is the captured value itself;
         // for lists it is the canonical sequence of the elements.
         var spreadRoot = Obs("spreadRoot", valueId);
-        var expectedSpreadValue = Result.FromItems(spreadItems);
+        var expectedSpreadValue = Result.FromItems(spreadItems.Append(new Result.Atom(997)).ToArray());
         var expectedSpreadRaw = SemanticExplorerHarness.Neutral(expectedSpreadValue);
         if (spreadRoot.Outcome != "ok"
-            || spreadRoot.Emitted != spreadItems.Count
+            || spreadRoot.Emitted != spreadItems.Count + 1
             || spreadRoot.Raw != expectedSpreadRaw)
         {
             findings.Add(new Finding(
                 "SpreadDepthMismatch", spreadRoot.CaseId,
-                $"expected raw {expectedSpreadRaw} n={spreadItems.Count}, observed {spreadRoot.Neutral}"));
+                $"expected raw {expectedSpreadRaw} n={spreadItems.Count + 1}, observed {spreadRoot.Neutral}"));
         }
 
         // A non-spread value stays one visible item; nested structure intact.
@@ -707,8 +707,8 @@ public class SemanticExplorerTests
         { "((), 1)", "ok raw=S[S[], 1] n=1" },
         { "((1, 2), ())", "ok raw=S[S[1, 2], S[]] n=1" },
         { "1, 2", "ok raw=S[1, 2] n=2" },
-        { "(1, 2)*", "ok raw=S[1, 2] n=2" },
-        { "()*", "ok raw=S[] n=0" },
+        { "(1, 2)*, 997", "ok raw=S[1, 2, 997] n=3" },
+        { "()*, 997", "ok raw=997 n=1" },
         { "(()*, 99)", "ok raw=99 n=1" },
         { "((), 99)", "ok raw=S[S[], 99] n=1" },
         { "take(((1, 2), (3, 4)), 1)", "ok raw=L[S[1, 2]] n=1" },
@@ -728,8 +728,8 @@ public class SemanticExplorerTests
         { "x = ((1, 2), (3, 4))\nx[0]", "ok raw=S[1, 2] n=1" },
         { "x = ((1, 2), (3, 4))\nfirst(x)", "ok raw=S[1, 2] n=1" },
         { "x = ((3, 4), (1, 2))\nlast(x)", "ok raw=S[1, 2] n=1" },
-        { "x = ((1, 2), (3, 4))\n(x[0])*", "ok raw=S[1, 2] n=2" },
-        { "x = ((1, 2), (3, 4))\n(first(x))*", "ok raw=S[1, 2] n=2" },
+        { "x = ((1, 2), (3, 4))\n(x[0])*, 997", "ok raw=S[1, 2, 997] n=3" },
+        { "x = ((1, 2), (3, 4))\n(first(x))*, 997", "ok raw=S[1, 2, 997] n=3" },
         { "x = ((), ())\nx[0]", "ok raw=S[] n=1" },
         { "x = ((), ())\nfirst(x)", "ok raw=S[] n=1" },
         // DOT-CALL PASSES A VALUE and THE EXACT COLLECTOR LAW collects it: the

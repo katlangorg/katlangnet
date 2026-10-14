@@ -359,7 +359,7 @@ public class FrontEndTraversalTests
         { "Comparison.Link", "F(x) = x + 1\n1 < 2 < F" },
         { "Index.Target", "F(x) = x + 1\nF[0]" },
         { "Index.Selector", "F(x) = x + 1\n(1, 2)[F]" },
-        { "SequenceSpread.Operand", "F(x) = x + 1\nF*" },
+        { "SequenceSpread.Operand", "F(x) = x + 1\nF*, 997" },
         { "ListLiteral.Item", "F(x) = x + 1\n[F]" },
         { "InterpolatedString.Hole", "F(x) = x + 1\n\"a{F}b\"" },
         { "InterpolatedString.LaterHole", "F(x) = x + 1\n\"a{1}b{F}c\"" },

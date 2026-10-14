@@ -246,11 +246,8 @@ public class ComparisonChainParserTests
         AssertChain(ParseSingleOutput("a <\nb"), ComparisonOp.Lt);
         AssertChain(ParseSingleOutput("a < b ==\nc"), ComparisonOp.Lt, ComparisonOp.Eq);
 
-        // A comparison-led line never continues the previous row: the first row is a
-        // closed one-link chain and the dangling operator is an ordinary error.
-        var broken = Parser.ParseSyntax("a < b\n< c");
-        Assert.True(broken.HasErrors);
-        AssertChain(broken.Root.Output[0], ComparisonOp.Lt);
+        // Leading comparisons extend the same flat chain under restricted Q-65.
+        AssertChain(ParseSingleOutput("a < b\n< c"), ComparisonOp.Lt, ComparisonOp.Lt);
     }
 
     // ── Malformed input never recovers into a different valid chain ─────────
@@ -282,10 +279,10 @@ public class ComparisonChainParserTests
     {
         foreach (var source in new[] { "A* < B < C", "A < B* < C", "A < B < C*" })
         {
-            var result = Parser.ParseSyntax(source);
+            var result = Parser.ParseSyntax(source + ", 997");
             var diagnostic = Assert.Single(result.Diagnostics);
             Assert.Equal(DiagnosticCode.MisplacedSpread, diagnostic.Code);
-            var chain = AssertChain(Assert.Single(result.Root.Output), ComparisonOp.Lt, ComparisonOp.Lt);
+            var chain = AssertChain(result.Root.Output[0], ComparisonOp.Lt, ComparisonOp.Lt);
             Assert.Equal(["A", "B", "C"], Operands(chain).Select(Name));
         }
     }
@@ -293,7 +290,7 @@ public class ComparisonChainParserTests
     [Fact]
     public void SpreadOperands_OnBothSidesOfOneLink_AreReportedInWrittenOrder()
     {
-        var result = Parser.ParseSyntax("A* < B*");
+        var result = Parser.ParseSyntax("A* < B*, 997");
         Assert.Equal(2, result.Diagnostics.Count);
         Assert.All(result.Diagnostics, d => Assert.Equal(DiagnosticCode.MisplacedSpread, d.Code));
         Assert.Equal(new SourceSpan(1, 1, 1, 3), result.Diagnostics[0].Span);

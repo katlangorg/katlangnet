@@ -69,7 +69,7 @@ internal static class EvaluatorProbe
             + string.Concat(Enumerable.Range(0, n).Select(i => $"L{i} = [{(i == 0 ? "Values" : $"L{i - 1}")}, {(i == 0 ? "Values" : $"L{i - 1}")}]\n"))
             + $"L{Math.Max(0, n - 1)}", 40, false),
         new("display_list",    "render", n => $"range(1, {n})", 1_000_000, false),
-        new("display_rows",    "render", n => $"range(1, {n})*", 1_000_000, false),
+        new("display_rows",    "render", n => $"range(1, {n})*, 997", 1_000_000, false),
         new("display_string",  "render", n => $"Values = range(1, {n})\nValues.map(ToText)\nToText(x) = x.string", 1_000_000, false),
         // ── arithmetic stress ────────────────────────────────────────────────
         new("pow_chain",      "arithmetic", n => $"2 ^ {n}", 100_000, false),

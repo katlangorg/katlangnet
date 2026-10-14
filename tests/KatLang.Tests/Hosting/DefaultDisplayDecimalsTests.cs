@@ -229,7 +229,7 @@ public class DefaultDisplayDecimalsTests
         "Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), -0, -0.0, 0.0, 0",
         "F(x) = x / 3\nmap([1, 2, 3], F)",
         "1.50, 0.000000000000000000000000000",
-        "[]*",
+        "([]*)",
         "()",
         "'only text'",
     };

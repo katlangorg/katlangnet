@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 441
-- excluded parse-level cases (Lean has no surface parser): 67
+- specification surface cases: 445
+- excluded parse-level cases (Lean has no surface parser): 70
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 352
-- probe observations (C#-only by design): 1326
+- Lean-guarded cases: 353
+- probe observations (C#-only by design): 1332
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -331,20 +331,20 @@ def case_capture_supply : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [.resolve "A"])
 #guard obs case_capture_supply == "ok raw=S[1, 2, 3] n=1"
 
--- capture-supply-spread [item-supply-vs-value]: A = 1, 2, 3 \n A*
+-- capture-supply-spread [item-supply-vs-value]: A = 1, 2, 3 \n A*, 997
 def case_capture_supply_spread : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.sequenceSpread (.resolve "A"))])
-#guard obs case_capture_supply_spread == "ok raw=S[1, 2, 3] n=3"
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.sequenceSpread (.resolve "A")), .num 997])
+#guard obs case_capture_supply_spread == "ok raw=S[1, 2, 3, 997] n=4"
 
 -- call-reentry-identity [item-supply-vs-value]: I(a) = a \n A = 1, 2, 3 \n I(I(A))
 def case_call_reentry_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "I" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "I") [(.call (.resolve "I") [.resolve "A"])])])
 #guard obs case_call_reentry_identity == "ok raw=S[1, 2, 3] n=1"
 
--- call-value-boundary [item-supply-vs-value]: F(*a) = a \n F(5, 9) \n F(5, 9)*
+-- call-value-boundary [item-supply-vs-value]: F(*a) = a \n F(5, 9) \n F(5, 9)*, 997
 def case_call_value_boundary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.num 5, .num 9]), (.sequenceSpread (.call (.resolve "F") [.num 5, .num 9]))])
-#guard obs case_call_value_boundary == "ok raw=S[L[5, 9], 5, 9] n=3"
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.num 5, .num 9]), (.sequenceSpread (.call (.resolve "F") [.num 5, .num 9])), .num 997])
+#guard obs case_call_value_boundary == "ok raw=S[L[5, 9], 5, 9, 997] n=4"
 
 -- loop-result-is-one-value [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1) \n Fibonacci.repeat(10, 0, 1)*, \n Fibonacci.repeat(10, 0, 1), 7
 def case_loop_result_is_one_value : Expr :=
@@ -411,10 +411,10 @@ def case_loop_step_lazy_builtin_roles : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "if", .num 1, .boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
 #guard obs case_loop_step_lazy_builtin_roles == "ok raw=2 n=1"
 
--- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates*
+-- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates*, 997
 def case_property_value_boundary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Coordinates" (alg [] [] [] [.num 10, .num 20])] [.resolve "Coordinates", (.sequenceSpread (.resolve "Coordinates"))])
-#guard obs case_property_value_boundary == "ok raw=S[S[10, 20], 10, 20] n=3"
+  .algorithmExpr (alg [] [] [privateProp "Coordinates" (alg [] [] [] [.num 10, .num 20])] [.resolve "Coordinates", (.sequenceSpread (.resolve "Coordinates")), .num 997])
+#guard obs case_property_value_boundary == "ok raw=S[S[10, 20], 10, 20, 997] n=4"
 
 -- spread-capture-count [item-supply-vs-value]: A = [1, 2, 3] \n  \n (A*).count
 def case_spread_capture_count : Expr :=
@@ -1371,7 +1371,7 @@ def case_star_before_operand_row_is_multiplication : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 4]), privateProp "B" (alg [] [] [] [.num 6])] [(.binary .mul (.resolve "A") (.resolve "B"))])
 #guard obs case_star_before_operand_row_is_multiplication == "ok raw=24 n=1"
 
--- star-before-declaration-or-boundary-is-spread [parser-layout]: A = (1, 2) \n A* \n B = 5 \n B
+-- star-before-declaration-or-boundary-is-spread [parser-layout]: A = (1, 2) \n B = 5 \n A*, B
 def case_star_before_declaration_or_boundary_is_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
 #guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
@@ -1415,6 +1415,11 @@ def case_adjacency_call_across_space : Expr :=
 def case_multiline_call_open_delimiter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "Add") [.num 1, .num 2])])
 #guard obs case_multiline_call_open_delimiter == "ok raw=3 n=1"
+
+-- newline-grammar-priority-continuation [parser-layout]: P = 10 \n - 2 \n P
+def case_newline_grammar_priority_continuation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.binary .sub (.num 10) (.num 2))])] [.resolve "P"])
+#guard obs case_newline_grammar_priority_continuation == "ok raw=8 n=1"
 
 -- newline-ends-property-body [parser-layout]: P = 1 \n 2
 def case_newline_ends_property_body : Expr :=
@@ -1571,10 +1576,10 @@ def case_list_spread_capture : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [(.capture [(.sequenceSpread (.resolve "A"))])])] [.resolve "x", .resolve "y"])
 #guard obs case_list_spread_capture == "ok raw=S[L[1, 2, 3], S[1, 2, 3]] n=2"
 
--- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A*, \n B*, \n C*
+-- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A*, \n B*, \n C*, 997
 def case_list_spread_edges : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "C" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 7])])])] [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B")), (.sequenceSpread (.resolve "C"))])
-#guard obs case_list_spread_edges == "ok raw=S[7, L[7]] n=2"
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "C" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 7])])])] [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B")), (.sequenceSpread (.resolve "C")), .num 997])
+#guard obs case_list_spread_edges == "ok raw=S[7, L[7], 997] n=3"
 
 -- list-literal-spread-elements [lists]: A = 1, 2, 3 \n  \n [A*] \n [0, A*, 4]
 def case_list_literal_spread_elements : Expr :=
@@ -1861,7 +1866,7 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 352 canonical Lean-guarded specification cases.
+-- 353 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2132,6 +2137,7 @@ def specCaseIds : List String := [
   "grace-prefix-marker-led-row",
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
+  "newline-grammar-priority-continuation",
   "newline-ends-property-body",
   "comment-does-not-change-parse",
   "spread-binds-before-list",
@@ -2222,6 +2228,6 @@ def specCaseIds : List String := [
   "string-interpolation-hole-failure",
   "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 352
+#guard specCaseIds.length == 353
 
 end LanguageSpecCases

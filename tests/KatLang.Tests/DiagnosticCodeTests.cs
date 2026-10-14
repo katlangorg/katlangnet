@@ -152,7 +152,8 @@ public class DiagnosticCodeTests
         { "grace-prefix-detached", "Divide = y / ~ x\nDivide(2, 10)", DiagnosticCode.InvalidGraceMarker },
         { "grace-postfix-detached", "Divide = y ~ / x\nDivide(2, 10)", DiagnosticCode.InvalidGraceMarker },
         { "grace-member-detached", "K(a, t) = a.~ t\nK(7, {a+1})", DiagnosticCode.InvalidGraceMarker },
-        { "spread-marker-detached", "A = (1, 2)\nA *", DiagnosticCode.InvalidSpreadMarker },
+        { "spread-marker-detached", "A = (1, 2)\nA *, 997", DiagnosticCode.InvalidSpreadMarker },
+        { "line-final-star-detached-at-eof", "A = (1, 2)\nA *", DiagnosticCode.UnexpectedToken },
         { "spread-marker-detached-in-call", "F(*items) = items\nA = (1, 2)\nF(A *)", DiagnosticCode.InvalidSpreadMarker },
         { "same-line-slots-without-comma", "1 2", DiagnosticCode.UnseparatedSameLineItem },
         { "same-line-call-arguments-without-comma", "F(a, b) = a + b\nF(1 2)", DiagnosticCode.UnseparatedSameLineItem },
@@ -167,8 +168,8 @@ public class DiagnosticCodeTests
         { "two-collecting-per-level", "F(*a, *b) = a\nF(1)", DiagnosticCode.InvalidCollectingBinding },
         { "collecting-in-clause-family", "F(*xs) = 1\nF(0) = 2\nF(3)", DiagnosticCode.InvalidCollectingBinding },
         { "two-collecting-deconstruction", "*a, *b = 1, 2, 3\na", DiagnosticCode.InvalidCollectingBinding },
-        { "spread-as-binary-operand", "A = (1, 2)\nA* == A*", DiagnosticCode.MisplacedSpread },
-        { "spread-comparison-operand", "A = (1, 2)\n1 < A*", DiagnosticCode.MisplacedSpread },
+        { "spread-as-binary-operand", "A = (1, 2)\nA* == A*, 997", DiagnosticCode.MisplacedSpread },
+        { "spread-comparison-operand", "A = (1, 2)\n1 < A*, 997", DiagnosticCode.MisplacedSpread },
         // Variadic postfix selection: the colon form is retired with a migration diagnostic
         // (a spread receiver before the `:` adds no second report).
         { "retired-colon-selection", "A = (1, 2)\nA:0", DiagnosticCode.RetiredColonSelection },

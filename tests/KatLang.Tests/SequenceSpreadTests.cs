@@ -913,9 +913,9 @@ public class SequenceSpreadTests
     [Fact]
     public void SequenceSpread_PreferredSemantics_OpensSequenceValueIntoSlots()
     {
-        AssertEval("(1, 2, 3)*", 1m, 2m, 3m); // contributes 1, 2, 3
-        AssertEval("(1)*", 1m);               // contributes 1
-        AssertEval("()*");                    // contributes zero items
+        EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel("(1, 2, 3)*", 1m, 2m, 3m); // contributes 1, 2, 3
+        EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel("(1)*", 1m);               // contributes 1
+        EvaluatorTestSupport.AssertRootSpreadAtomsWithSentinel("()*");                    // contributes zero items
     }
 
     [Fact]

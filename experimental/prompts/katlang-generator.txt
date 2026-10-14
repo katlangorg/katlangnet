@@ -129,10 +129,10 @@ Output shaping:
 - Comma `,` creates top-level outputs and ordinary call argument slots.
 - Comma `,` creates expression-list slots, and it is the ONLY same-line separator: `1, 2, 3` and newline-separated `1`/`2`/`3` are three slots, while `1 2 3` is a parse error (whitespace never separates slots). Always write `F(1, 2)` for two argument slots (`F(1 2)` is invalid) and labelled report pairs as `('neto', NetSalary)`, never `('neto' NetSalary)`. Every declaration starts its own line or is the first item directly after `{`: never generate `x = 1 y = 2` or `{ d = 2 n * d }` on one line. Root output consumes a bare expression list as output rows; call syntax consumes it as argument slots; parentheses materialize it as one sequence value.
 - Semicolon `;` is not supported as expression syntax. Never generate it as a separator or collection constructor. Use commas (or separate lines) for separate slots and parentheses for one sequence value.
-- Expression spreading is the postfix spread star: `value*`, written after a completed expression on the same line. A spread evaluates its operand exactly once and contributes the items of ONE item-producing boundary (sequence and list values supply their contained items; an atom or string supplies itself as one item) to the surrounding item supply. A spread RETURNS NO VALUE — the receiver decides what the items become. The same star is the multiplication operator, and the right operand decides — never spacing and never a line break: any following right operand makes the star infix multiplication (`a* b`, `a*b`, `a * b`, and `a*` newline `b` all multiply), so write `a*, b` to spread `a` before another supplied item, and end a spread ROW with a trailing comma when another output row follows (`a*,` newline `b`). The star is a spread only where no operand can follow it: before `,`, `)`, `]`, `}`, at the end of the program, or before a definition (`a*` newline `b = 1` is a spread row and a definition) — and a spread marker is ALWAYS written directly attached to its operand (`a*`; a detached `a *` with nothing to multiply is a parse error, never a spread). A definition body that ends in a spread and is followed by an output row must be closed — write `y = (a*)` (capture parentheses) or `y = { a* }`, never a bare `y = a*` above an output row, which would be `y = a * row`. A spread is one whole slot: write `Use(a, b*)` to supply `a` and then `b`'s items (`Use(a b*)` is invalid — every same-line slot needs its comma); use `Use((a, b*))` for one sequence-value argument. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` — the spread receiver's items become the leading call arguments, resolved lexically. Repeated stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. `spread` is an ordinary identifier — not reserved, not an intrinsic; a call or member access spelled with that name is an ordinary call or member access, never a spread.
+- Expression spreading uses attached postfix `expr*`, explicitly closed on the same physical line by a comma, closer, fluent dot or closed spread layer. It evaluates its operand once and supplies ONE item-producing boundary: sequences/lists supply their items; other values supply themselves. The receiver decides whether those items become output rows, argument slots, a capture or list; spread itself creates no value. A physical line-final star announces multiplication, including EOF or a following declaration/closer; missing operands are parse errors and declarations retain their scope. `A*` newline `B` and `A *` newline `B` multiply with ordinary precedence; `A*,` newline `B`, `F(A*)`, `[A*]`, `A*.F`, `y = (A*)` and `y = { A* }` explicitly close spread. Use `a*, b` to supply spread items before another slot. Same-line actual spread requires exact attachment (`F(A *)` is invalid), while binary multiplication spacing is ordinary. Prefix collect remains attached binding syntax. No ellipsis or spread keyword exists. Chained spread in an explicitly closed slot composes one ordinary boundary per layer; it never recursively flattens. The current Q-65 grammar-priority and attachment laws supersede only the conflicting Q-33 line-final subrule.
 - A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed on a single row as `(…)`, not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit spread star at the call site to re-spread the returned value into separate rows/items (`F(5)*`, `X.order*` — spread opens one returned boundary). This mirrors `if`. A collecting binding stores an exact list, so `F(*a) = sum(a)` works because the builtin opens the bound list after binding, while `a*` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows) and explicit caller-site spread. A completed `while`/`repeat` IS a value boundary too: its final state is ONE value — `Fibonacci.repeat(10, 0, 1)` with `Fibonacci(a, b) = b, a + b` is `(55, 89)` on one row, and `Fibonacci.repeat(10, 0, 1)*` emits `55` and `89` as two rows; a multi-slot loop written as a row beside other rows is one row, and a nested loop used as a step row is ONE next-state slot unless it is spread (`repeat(Inner, 2, a, b)*`). Scalar/reduction builtins already return one value; a `map`/`reduce` callback returns its ORDINARY call result — ONE value, exactly what calling it directly returns (a multi-row body is one sequence value, `()` and `[]` are ordinary values) — which `map` stores whole as one element and `reduce` passes whole as the next accumulator, never spread.
-- Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted[0]` selects its first element (`range(1, 3)[2]` is `3`, `[3, 1, 2].order[0]` is `1`), so no spread-capture step is needed for bracket selection. Scalar arithmetic, ordering, and logical operators reject whole list and sequence values, including `()`, through ordinary operand validation; structural `==` and `!=` remain valid — select an element first (`Sorted[0] + 1`) or spread-capture (`Sorted = X.order*`) when a canonical sequence VALUE is specifically wanted. Unary `-()` and `not ()` are type errors too: `-` needs a numeric scalar and `not` a Boolean, exactly as for other sequence/list operands. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
-- Postfix continuations bind on the same physical line only. A `(` or `{` after a callable name on the same line continues the call even across whitespace: `F (1, 2)` is the call `F(1, 2)`, `A.B (1)` is the dot call `A.B(1)`, and `values.map { n * 2 }` is `values.map{n * 2}`. Only a name or an argumentless dot call can be called (`(Lib.F)(5)` is the member call `Lib.F(5)`); a call never follows an already computed result — `X.Mk(1)()` is a parse error exactly like `Mk(1)()`. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row, not call arguments for that body. A simple definition or deconstruction head stays on one line; a clause head's name and `(` share a line and its closing `)` and `=` share a line, while its open pattern list may span lines — so newline-separated `Foo` + `(x) = x + 1` is the row `Foo` followed by a stray `=` (a parse error), never the clause `Foo(x) = x + 1`, and `A` + `= 1` is rejected the same way; the body may begin on the line after the `=` (`A =` newline `1`). For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`); an already-open argument list spans lines normally. Postfix selection `[` is same-line only (spaces allowed) — a `[`-led line starts a new list literal, never a selection of the previous line; `:` is not KatLang syntax. Postfix grace `~` is same-line only and only on a bare name — a `~`-led line is its own prefix-grace row whose name must be on that same line, and a line-final `~` after anything else (`F(1)~`) is an error, never prefix grace for the next line. Never start a line with a binary operator expecting continuation (`A` newline `-1` is the expression list `A, -1`, not subtraction; write `A -` newline `1` to continue arithmetic), and comments never change line-boundary decisions. A `.`-led line is the supported exception and continues the dot-call chain. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` and `2(3)` are missing-separator parse errors, never multiplication — write `2 * 3`).
+- Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted[0]` selects its first element (`range(1, 3)[2]` is `3`, `[3, 1, 2].order[0]` is `1`), so no spread-capture step is needed for bracket selection. Scalar arithmetic, ordering, and logical operators reject whole list and sequence values, including `()`, through ordinary operand validation; structural `==` and `!=` remain valid — select an element first (`Sorted[0] + 1`) or spread-capture (`Sorted = { X.order* }`) when a canonical sequence VALUE is specifically wanted. Unary `-()` and `not ()` are type errors too: `-` needs a numeric scalar and `not` a Boolean, exactly as for other sequence/list operands. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
+- Call, selection and annotation continuations bind on the same physical line only; leading dot follows the Q-65 table. A `(` or `{` after a callable name on the same line continues the call even across whitespace: `F (1, 2)` is the call `F(1, 2)`, `A.B (1)` is the dot call `A.B(1)`, and `values.map { n * 2 }` is `values.map{n * 2}`. Only a name or an argumentless dot call can be called (`(Lib.F)(5)` is the member call `Lib.F(5)`); a call never follows an already computed result — `X.Mk(1)()` is a parse error exactly like `Mk(1)()`. A physical newline never continues a closed expression into a call: newline-separated `F` + `(1, 2)` is the expression list `F, (1, 2)`, and a `(`- or `{`-led line after a definition body is a following output row, not call arguments for that body. A simple definition or deconstruction head stays on one line; a clause head's name and `(` share a line and its closing `)` and `=` share a line, while its open pattern list may span lines — so newline-separated `Foo` + `(x) = x + 1` is the row `Foo` followed by a stray `=` (a parse error), never the clause `Foo(x) = x + 1`, and `A` + `= 1` is rejected the same way; the body may begin on the line after the `=` (`A =` newline `1`). For multiline calls, open the delimiter before the newline (`F(` newline `1, 2` newline `)`); an already-open argument list spans lines normally. Postfix selection `[` is same-line only (spaces allowed) — a `[`-led line starts a new list literal, never a selection of the previous line; `:` is not KatLang syntax. Postfix grace `~` is same-line only and only on a bare name — a `~`-led line is its own prefix-grace row whose name must be on that same line, and a line-final `~` after anything else (`F(1)~`) is an error, never prefix grace for the next line. Leading continuation follows [the Q-65 token table](../../docs/design/language-rules/syntax.md#lexical-identity-and-physical-lines-q-65): a complete expression ends by default, but designated leading binary operators, dot and expression-list comma can continue it. An attached leading minus stays independent (`A` newline `-1` is `A, -1`); detached leading minus can continue subtraction, as in `A` newline `- 1`. A trailing binary minus also continues its operand. Q-65 now supersedes the conflicting Q-33 star subrule: line-final star announces multiplication; spread needs explicit same-line closure. Unary minus requires direct attachment: -2 is an independent expression, - 2 can continue binary subtraction, and leading * can continue multiplication unless it starts a collecting declaration. Comments/blank lines change no significant-token decision and never reconstruct attachment. Prefer the compact `F(1, 2)` style. Non-callable targets never become calls (`2 (3)` and `2(3)` are missing-separator parse errors, never multiplication — write `2 * 3`).
 - Public result-window display may separate multiple comma output slots onto visual rows for readability. Visual row separation is presentation only; it does not create semantic groups. Sequence values display as sequence values.
 
 The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot with zero items. Repeated ordinary parentheses around the empty sequence are redundant grouping and normalize to `()`. KatLang does not expose higher-order empty sequence values through `(())` or `((()))`. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
@@ -354,9 +354,9 @@ Flat fixed calls preserve expression boundaries. A property reference used as on
 Spread (postfix star after a completed expression, on the same line):
     expr*
 
-Expression spreading is the postfix spread star: `expr*`. It evaluates its one operand and contributes that value's immediate items to the surrounding item supply; it returns no value and never materializes a sequence or list by itself. The surrounding receiver decides how to bind, capture, collect, or emit the supply. The same star is the multiplication operator, and the right operand decides — never spacing and never a line break: any following right operand makes the star infix multiplication (`a* b`, `a*b`, `a * b`, and `a*` newline `b` all multiply), so write `a*, b` to spread `a` before another supplied item and `a*,` newline `b` before another output row. The star is a spread only before `,`, `)`, `]`, `}`, the end of the program, or a definition head (`a*` newline `b = 1` is a spread row and a definition), and is then written directly attached (`a*`; a detached `a *` with nothing to multiply is a parse error); close a spread-ending definition body that an output row follows with capture parentheses (`y = (a*)`). At boundary-sensitive sites this matters: `Use(1*, Tail)` has argument slots `1*` and `Tail`; use `Use((1*, Tail))` for one sequence-value argument. Prefix `*name` directly attached to a name is the collecting-binding marker, valid only in parameter and deconstruction binding patterns; it is never an expression operator. Repeated stars compose through capture (`value**` means `(value*)*`; a multi-item supply is a fixed point, and only a lone structured item opens one more boundary); `value**next` is an error. A dot may chain after a spread: `x.Calculate*.Target` means `Target(x.Calculate*)` (lexical resolution). `spread` is an ordinary identifier — not reserved, not an intrinsic.
+Expression spreading uses attached postfix `expr*`, explicitly closed on the same physical line by a comma, closer, fluent dot or closed spread layer. It evaluates its operand once and supplies ONE item-producing boundary: sequences/lists supply their items; other values supply themselves. The receiver decides whether those items become output rows, argument slots, a capture or list; spread itself creates no value. A physical line-final star announces multiplication, including EOF or a following declaration/closer; missing operands are parse errors and declarations retain their scope. `A*` newline `B` and `A *` newline `B` multiply with ordinary precedence; `A*,` newline `B`, `F(A*)`, `[A*]`, `A*.F`, `y = (A*)` and `y = { A* }` explicitly close spread. Use `a*, b` to supply spread items before another slot. Same-line actual spread requires exact attachment (`F(A *)` is invalid), while binary multiplication spacing is ordinary. Prefix collect remains attached binding syntax. No ellipsis or spread keyword exists. Chained spread in an explicitly closed slot composes one ordinary boundary per layer; it never recursively flattens. The current Q-65 grammar-priority and attachment laws supersede only the conflicting Q-33 line-final subrule.
 
-The spread star binds to its completed receiver expression before expression-list handling. `Use(a, b*)` and `Use(a` newline `b*)` both contain two written slots: `a` supplies one value, and `b*` supplies b's items. The closing `)` prevents a multiplication right operand after the star, so the attached `b*` is a spread (`Use(a b*)` is a missing-separator parse error). Likewise `Use(a*, b)` contains two written slots, but its supplied argument count depends on a's spread items; `Use(a* b)` has one multiplication argument. Use explicit parentheses when one sequence value is intended.
+The spread star binds to its completed receiver before expression-list handling. `Use(a, b*)` and `Use(a` newline `b*)` keep their two written slots because the same-line `)` closes b’s spread. A physical line-final star itself announces multiplication; EOF, declarations and later-line closers cannot close it as spread. Unary minus and negative literal pattern signs require exact attachment; detached minus can serve binary subtraction only with a preceding left operand. Binary operators continue across LF only when independent expression/declaration grammar does not take priority.
 
 Use comma for ordinary multi-result data and argument slots. Do not scatter spread stars as a decorative list separator. Prefer:
     Values = 3, 4, 2, 1
@@ -389,7 +389,7 @@ Lists (square brackets):
     [0, A*, 4]               # [0, 1, 2, 3, 4]
     [1, []*, 2]              # [1, 2]
 
-The spread star on a list-valued expression opens exactly ONE list boundary (`[]*` supplies zero items, `[[7]]*` supplies `[7]`). Single-name assignment preserves a stored list (`x = A` keeps `[1, 2, 3]`), while `x = A*` captures the canonical sequence `(1, 2, 3)`. Calls never open lists implicitly: `F(A)` passes one list argument; write `F(A*)` to supply its elements. A multi-target deconstruction whose right-hand side is exactly one list opens it (`x, y, z = [1, 2, 3]`), and collecting bindings collect exact lists (`x, *rest = [1, 2, 3]` gives `rest = [2, 3]`). Postfix selection `[i]` indexes lists positionally: `[1, 2, 3][0]` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]][0]` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]][1][0]` is `3`), and `[][0]` or `[1, 2][2]` is the ordinary out-of-range index error. Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]*)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
+The spread star on a list-valued expression opens exactly ONE list boundary (`[]*` supplies zero items, `[[7]]*` supplies `[7]`). Single-name assignment preserves a stored list (`x = A` keeps `[1, 2, 3]`), while `x = { A* }` captures the canonical sequence `(1, 2, 3)`. Calls never open lists implicitly: `F(A)` passes one list argument; write `F(A*)` to supply its elements. A multi-target deconstruction whose right-hand side is exactly one list opens it (`x, y, z = [1, 2, 3]`), and collecting bindings collect exact lists (`x, *rest = [1, 2, 3]` gives `rest = [2, 3]`). Postfix selection `[i]` indexes lists positionally: `[1, 2, 3][0]` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]][0]` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]][1][0]` is `3`), and `[][0]` or `[1, 2][2]` is the ordinary out-of-range index error. Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]*)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
 
 Selection:
     expr[index]
@@ -1140,7 +1140,7 @@ Model-C execution: ordinary arguments are suspended computations in the caller e
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (156 of the 441-case canonical language specification,
+Verified reference examples (160 of the 445-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1318,23 +1318,25 @@ Regenerate this block from the repo root with:
 [capture-supply-spread] A spread expression spreads one sequence-value layer back into the surrounding item supply — here back into three root output rows.
 
     A = 1, 2, 3
-    A*
+    A*, 997
 
   Displays:
     1
     2
     3
+    997
 
 [call-value-boundary] A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.
 
     F(*a) = a
     F(5, 9)
-    F(5, 9)*
+    F(5, 9)*, 997
 
   Displays:
     [5, 9]
     5
     9
+    997
 
 [loop-result-is-one-value] A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.
 
@@ -2445,7 +2447,7 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "Semicolon is not supported as an expression separator ..."
 
-[star-before-operand-row-is-multiplication] SYN-07B: the star is read by the token that follows it, never by spacing or by the line break. `A*` newline `B`, `A *` newline `B`, `A* B`, and `A * B` are all the multiplication `A * B` — when the next significant token can begin an operand and does not begin a declaration, a line-final star continues across the newline like every trailing binary operator, in a definition body too (Q-33). To spread `A` and then emit `B` as the next row, close the spread slot with a comma (`A*,` newline `B`).
+[star-before-operand-row-is-multiplication] A physical line-final star announces multiplication, attached or spaced, with ordinary precedence. A declaration or EOF cannot close it as spread; missing operands are diagnosed. A same-line comma explicitly closes a spread slot before the next item.
 
     A = 4
     B = 6
@@ -2455,19 +2457,18 @@ Regenerate this block from the repo root with:
   Displays:
     24
 
-[star-before-declaration-or-boundary-is-spread] A declaration head is never a multiplication operand, so a line-final star before `B = 5` is the spread marker — through the same declaration relation that ends an adjacency row. The star is likewise a spread before a comma, a closing delimiter, or the end of the program. A spread marker must be directly attached to its operand (`A*`): the detached `A *` in any of these positions is a parse error, never silently a spread and never silently a multiplication. A definition body that ends in a spread must be closed when an output row follows: `X = (A*)` captures the spread supply, while a bare `X = A*` above the row `B` is the multiplication `X = A * B`.
+[star-before-declaration-or-boundary-is-spread] The stable case ID retains its historical name. Spread now requires an explicit same-line boundary: the comma closes A* before B. A physical line-final star, including EOF or a later declaration, is incomplete multiplication; declarations are preserved and cannot become operands. Spread VALUE semantics remain unchanged.
 
     A = (1, 2)
-    A*
     B = 5
-    B
+    A*, B
 
   Displays:
     1
     2
     5
 
-[line-final-star-in-definition-continues] Q-33 (decided 2026-10-09): a line-final star in a definition body is classified like every star. The next significant token, `3`, can begin an operand and does not begin a declaration, so the star is multiplication and the definition continues across the newline: its body is `A * 3`, so `X` is 6 and the line `3` belongs to the definition instead of being an output row. Operator precedence is unchanged (`X = A*` newline `B + 1` is `X = (A * B) + 1`), and the layout is valid source with no warning or error. A definition meant to end in a spread is closed structurally — `X = (A*)` or `X = { A* }` — and the next line is then its own output row; a following declaration head also ends the body, so `X = A*` newline `Y = 3` keeps `X` the spread of `A`.
+[line-final-star-in-definition-continues] Q-65 revises the conflicting Q-33 subrule: every physical line-final star announces multiplication. A following operand continues with ordinary precedence; a declaration or EOF leaves a missing operand. Explicit same-line closure, X = (A*) or X = { A* }, closes spread without changing its VALUE semantics.
 
     A = 2
     X = A*
@@ -2477,10 +2478,10 @@ Regenerate this block from the repo root with:
   Displays:
     6
 
-[spread-marker-must-be-attached] The marker attachment law: a structural marker is directly attached to the syntax it modifies (`A*`, `*items`, `~x`, `x~`), while the multiplication operator may be spaced freely. `A *` with nothing that could be a right operand after it is classified as a spread marker (SYN-07B) and then rejected for being detached — whitespace never turns one valid operation into another; it only separates the valid `A*` from this error. Write `A*` to spread, or give the star a right operand to multiply.
+[spread-marker-must-be-attached] An explicit same-line closer establishes spread; the classified marker must be directly attached, so (A *) is InvalidSpreadMarker. A terminal star at EOF instead means incomplete multiplication, attached or spaced.
 
     A = (1, 2)
-    A *
+    (A *)
 
   Rejected by the parser: "The spread marker `*` must be directly attached to the expression it spreads ..."
 
@@ -2553,6 +2554,33 @@ Regenerate this block from the repo root with:
     231
     312
     132
+
+[newline-grammar-priority-continuation] Q-65: grammar role precedes newline. Independent next-line expressions and declarations have priority; otherwise a leading binary operator, comma or dot continues. Unary minus and negative pattern signs require direct attachment: 10 newline -2 has two rows, while 10 newline - 2 subtracts. Indentation is irrelevant. Calls and selections retain their same-line opener rule.
+
+    P = 10
+    - 2
+    P
+
+  Displays:
+    8
+
+[unary-minus-must-be-attached] Prefix unary '-' requires exact attachment to its operand. At root '- 2' has neither an eligible unary role nor a binary left operand, so it is a syntax error. '-2', '--2' and '2 ^ -2' stay valid with their existing precedence and numeric domain. Binary '-' remains spacing-independent.
+
+    - 2
+
+  Rejected by the parser: "Unary '-' must be directly attached ..."
+
+[negative-pattern-sign-must-be-attached] The owner extended direct attachment to negative literal pattern signs. F(-2) is the existing literal-pattern form; F(- 2), including a newline or comment gap, is rejected. This does not turn a pattern sign into an expression unary node.
+
+    F(- 2) = 7
+
+  Rejected by the parser: "A negative pattern's '-' must be directly attached ..."
+
+[line-final-star-at-eof-is-incomplete] A physical line-final '*' always announces multiplication, including at EOF and before a later closer or declaration. Spread needs an explicit same-line closure, such as F(7*), [7*] or 7*, 2. Attachment is checked after spread classification; the spread VALUE and collect-marker laws are unchanged.
+
+    7*
+
+  Rejected by the parser: "Expected an expression after '*' ..."
 
 [missing-output-not-a-value] A no-output body is not a value: accessing it, comparing it with `()`, or spreading it are errors — `()` is a value, `{}` is not.
 

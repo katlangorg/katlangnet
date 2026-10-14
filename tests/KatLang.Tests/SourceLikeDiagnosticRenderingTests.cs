@@ -127,8 +127,9 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
             checks++;
             // (...) is an explicit elision, not executable source. Substitute a
             // marker only in that exact placeholder and ignore call interiors.
-            var parsed = Parser.ParseSyntax(rendered.Replace("(...)", "(Elided)").Replace("{...}", "{ Elided = 1 }"));
-            if (parsed.Diagnostics.Count != 0 || parsed.Root.Output.Count != 1
+            var parsed = Parser.ParseSyntax(rendered.Replace("(...)", "(Elided)").Replace("{...}", "{ Elided = 1 }") + ", 997");
+            if (parsed.Diagnostics.Count != 0 || parsed.Root.Output.Count != 2
+                || parsed.Root.Output[1] is not Expr.Num { Value: var control } || control != 997m
                 || Shape(expected) != Shape(parsed.Root.Output[0]))
                 failures.Add($"{mode}: {source} -> {rendered}; expected {Shape(expected)}; got "
                     + (parsed.Diagnostics.Count == 0 ? string.Join(";", parsed.Root.Output.Select(Shape))
@@ -144,7 +145,7 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
     [InlineData("(x.f)(a)", "(x.f)(...)*")]
     public void ParserSpreadRepair_PreservesTheAnnotatedOperand(string operand, string repair)
     {
-        var parsed = Parser.ParseSyntax(operand + " *");
+        var parsed = Parser.ParseSyntax(operand + " *, 997");
         var diagnostic = Assert.Single(parsed.Diagnostics);
         Assert.Equal(DiagnosticCode.InvalidSpreadMarker, diagnostic.Code);
         Assert.Contains($"write `{repair}`", diagnostic.Message, StringComparison.Ordinal);
@@ -224,10 +225,13 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
 
     private static Expr Raw(string source)
     {
-        var parsed = Parser.ParseSyntax(source);
+        // Read an expression fragment in a comma-closed slot; the control slot is explicit.
+        var parsed = Parser.ParseSyntax(source + ", 997");
         Assert.True(parsed.Diagnostics.Count == 0,
             source + ": " + string.Join(";", parsed.Diagnostics.Select(d => d.Message)));
-        return Assert.Single(parsed.Root.Output);
+        Assert.Equal(2, parsed.Root.Output.Count);
+        Assert.Equal(997m, Assert.IsType<Expr.Num>(parsed.Root.Output[1]).Value);
+        return parsed.Root.Output[0];
     }
 
     private static string Shape(Expr expr) => expr switch

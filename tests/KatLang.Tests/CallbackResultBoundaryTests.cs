@@ -76,7 +76,7 @@ public sealed class CallbackResultBoundaryTests
         { "E6-user-two-rows", "U(n) = n, n\nmap([0, 2], U)", "ok L[S[0, 0], S[2, 2]]", "" },
         { "E6-family-one-sequence", "F(0) = (0, 0)\nF(n) = (n, n)\nmap([0, 2], F)", "ok L[S[0, 0], S[2, 2]]", "" },
         { "E6-family-reducer-two-rows", "R(e, 0) = e, 0\nR(e, acc) = e, acc\nreduce([1], R, 0)", "ok S[1, 0]", "" },
-        { "E6-family-zero-rows", "F(0) = []*\nF(n) = n\nmap([0, 2], F)", "ok L[S[], 2]", "" },
+        { "E6-family-zero-rows", "F(0) = { []* }\nF(n) = n\nmap([0, 2], F)", "ok L[S[], 2]", "" },
         { "E7-first-error-order", "F(x) = x, 10 / (x - 2)\nmap([1, 2], F)", "err DivisionByZero", "" },
         { "E7-host-effects-two-rows", "F(x) = trace(x), trace(x * 10)\nmap([1, 2], F)", "ok L[S[1, 10], S[2, 20]]", "trace(1) | trace(10) | trace(2) | trace(20)" },
         { "E7-host-effects-spread", "F(x) = { [trace(x), x]* }\nmap([1, 2], F)", "ok L[S[1, 1], S[2, 2]]", "trace(1) | trace(2)" },
@@ -91,16 +91,16 @@ public sealed class CallbackResultBoundaryTests
         { "LOOP-two-row-step", "Step(x) = x, x\nrepeat(Step, 1, 5)", "ok S[5, 5]", "" },
         { "LOOP-empty-seq-step", "Step(x) = ()\n[repeat(Step, 1, 5)]", "ok L[S[]]", "" },
         { "FILTER-two-row-predicate", "P(x) = x > 1, x < 5\nfilter([2], P)", "err TypeMismatch", "" },
-        { "REAL-accidental-row-map", "Net(x) = {\n  x * 2\n  - 1\n}\nmap([1, 2], Net)", "ok L[S[2, -1], S[4, -1]]", "" },
-        { "REAL-accidental-row-sum", "Net(x) = {\n  x * 2\n  - 1\n}\nsum(map([1, 2], Net))", "err TypeMismatch", "" },
-        { "REAL-accidental-row-direct", "Net(x) = {\n  x * 2\n  - 1\n}\nNet(3) + 1", "err TypeMismatch", "" },
+        { "REAL-accidental-row-map", "Net(x) = {\n  x * 2\n  -1\n}\nmap([1, 2], Net)", "ok L[S[2, -1], S[4, -1]]", "" },
+        { "REAL-accidental-row-sum", "Net(x) = {\n  x * 2\n  -1\n}\nsum(map([1, 2], Net))", "err TypeMismatch", "" },
+        { "REAL-accidental-row-direct", "Net(x) = {\n  x * 2\n  -1\n}\nNet(3) + 1", "err TypeMismatch", "" },
         { "REAL-running-pair-reduce", "Acc(x, (s, n)) = s + x, n + 1\nreduce([4, 6], Acc, (0, 0))", "ok S[10, 2]", "" },
         { "REAL-optional-results-map", "Recip(x) = if(x == 0, (), 1 / x)\nmap([0, 2], Recip)", "ok L[S[], 0.5]", "" },
         { "REAL-optional-results-filter", "Recip(x) = if(x == 0, (), 1 / x)\nNotEmpty(v) = v != ()\nfilter(map([0, 2, 4], Recip), NotEmpty)", "ok L[0.5, 0.25]", "" },
         { "REAL-tutorial-rectangle-map", "Rect((w, h)) = w * h, 2 * (w + h)\nSizes = [(3, 4), (5, 6)]\nSizes.map(Rect)", "ok L[S[12, 14], S[30, 22]]", "" },
         { "REAL-tutorial-rectangle-calls", "Rect((w, h)) = w * h, 2 * (w + h)\n[Rect((3, 4)), Rect((5, 6))]", "ok L[S[12, 14], S[30, 22]]", "" },
-        { "ADV-defend-A-AD1-continuation-row-silent-wrong", "Net(q) = {\n  q * 10\n  - 4\n}\nM = map([1, 2, 3], Net)\n[contains(M, 26), avg(atoms(M))]", "ok L[false, 8]", "" },
-        { "ADV-defend-A-AD2-brace-wrapper-bypasses-guard", "Net(q) = {\n  q * 10\n  - 4\n}\nM = map([1, 2, 3], {Net(n)})\n[contains(M, 26), avg(atoms(M))]", "ok L[false, 8]", "" },
+        { "ADV-defend-A-AD1-continuation-row-silent-wrong", "Net(q) = {\n  q * 10\n  -4\n}\nM = map([1, 2, 3], Net)\n[contains(M, 26), avg(atoms(M))]", "ok L[false, 8]", "" },
+        { "ADV-defend-A-AD2-brace-wrapper-bypasses-guard", "Net(q) = {\n  q * 10\n  -4\n}\nM = map([1, 2, 3], {Net(n)})\n[contains(M, 26), avg(atoms(M))]", "ok L[false, 8]", "" },
         { "ADV-defend-A-AD3-empty-as-skip-count", "Valid(x) = if(x >= 0, x, ())\ncount(map([3, -1, 4], Valid))", "ok 3", "" },
         { "ADV-defend-A-AD4-running-max-forgot-else", "MaxStep(x, acc) = if(x > acc, x, ())\nBest = reduce([3, 1], MaxStep, 0)\n[Best, Best == 3]", "ok L[S[], false]", "" },
         { "ADV-defend-A-AD5-append-forgot-spread-nests", "Append(x, acc) = acc, x\nR = reduce([1, 2, 3], Append, ())\n[count(R), R]", "ok L[2, S[S[S[S[], 1], 2], 3]]", "" },
@@ -108,7 +108,7 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-defend-A-AD7-map-equals-one-iteration-repeat", "D(x) = x, x\nE(x) = ()\nZ(x) = { ()* }\n[map([5], D)[0] == repeat(D, 1, 5), map([5], E)[0] == repeat(E, 1, 5), map([5], Z)[0] == repeat(Z, 1, 5)]", "ok L[true, true, true]", "" },
         { "ADV-defend-A-AD8-compat-positive-control-special-routes", "H(x) = (x, x * 10)\nP = [1, 2].map(H)\nStep(n) = n + count(map([n, n], H))\nColl(*xs) = xs\nR(x, acc) = [acc*, x * 2]\n[P[1], repeat(Step, 3, 0), Coll(P*), count(filter(range(1, 4), {last(first(map([k], H))) > 15})), last(P[0]).string, reduce([1, 2], R, [])]", "ok L[S[2, 20], 6, L[S[1, 10], S[2, 20]], 3, '10', L[2, 4]]", "" },
         { "ADV-attack-B-ADV-B1-reduce-empty-skip-discards-state", "Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())", "ok 3", "" },
-        { "ADV-attack-B-ADV-B2-accidental-row-never-detected", "Net(x) = {\n  x * 2\n  - 2\n}\n[1, 2, 3].map(Net).filter({v != 0}).count", "ok 3", "" },
+        { "ADV-attack-B-ADV-B2-accidental-row-never-detected", "Net(x) = {\n  x * 2\n  -2\n}\n[1, 2, 3].map(Net).filter({v != 0}).count", "ok 3", "" },
         { "ADV-attack-B-ADV-B3-lookup-shape-depends-on-match-count", "Data = [10, 20, 20]\nFind(k) = { filter(Data, {v == k})* }\nmap([10, 20, 30], Find)", "ok L[10, S[20, 20], S[]]", "" },
         { "ADV-attack-B-ADV-B4-reduce-debug-row-displaced-blame", "Total(x, acc) = trace(x), acc + x\nreduce([1, 2, 3], Total, 0)", "err TypeMismatch", "trace(1) | trace(2)" },
         { "ADV-attack-B-ADV-B5-structured-fold-empty-skip-same-code-new-site", "Acc(x, (s, n)) = if(x < 0, (), (s + x, n + 1))\nreduce([4, -1, 6], Acc, (0, 0))", "err ArityMismatch", "" },
@@ -251,8 +251,8 @@ public sealed class CallbackResultBoundaryTests
     [Theory]
     [InlineData("F(0) = 1, 2\nF(n) = n, n\nmap([0, 3], F)", "F0(x) = 1, 2\nF1(x) = x, x\n[map([0], F0)[0], map([3], F1)[0]]")]
     [InlineData("F(0) = ()\nF(n) = n\nmap([0, 3], F)", "E(x) = ()\nI(x) = x\n[map([0], E)[0], map([3], I)[0]]")]
-    [InlineData("F(0) = []*\nF(n) = [n, n]*\nK = 0\nmap([0, 3], F)", "Z(x) = { []* }\nT(x) = { [x, x]* }\n[map([0], Z)[0], map([3], T)[0]]")]
-    [InlineData("R(e, 0) = ()\nR(e, acc) = [e, acc]*\nK = 0\n[reduce([1, 2], R, 0)]", "E(e, acc) = ()\nP(e, acc) = e, acc\n[P(2, E(1, 0))]")]
+    [InlineData("F(0) = { []* }\nF(n) = { [n, n]* }\nK = 0\nmap([0, 3], F)", "Z(x) = { []* }\nT(x) = { [x, x]* }\n[map([0], Z)[0], map([3], T)[0]]")]
+    [InlineData("R(e, 0) = ()\nR(e, acc) = { [e, acc]* }\nK = 0\n[reduce([1, 2], R, 0)]", "E(e, acc) = ()\nP(e, acc) = e, acc\n[P(2, E(1, 0))]")]
     public async Task FamilyCallback_EqualsItsSelectedClausesAsUserCallbacks(string family, string user)
     {
         var (fam, _) = await AllRoutesAsync(family);

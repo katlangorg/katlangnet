@@ -127,6 +127,11 @@ public sealed record StructuralProgram(
     public static readonly Decimal128 FirstSentinel = 101m;
     public static readonly Decimal128 FirstTripwire = 666m;
 
+    // Q-65: every generated root ends with this real output row. It closes a
+    // preceding spread explicitly and participates in all full-result oracles.
+    // It lies outside the ordinary, branch-sentinel and tripwire atom pools.
+    public static readonly Decimal128 RootControl = 997m;
+
     public string Render() => StructuralRenderer.Render(this);
 
     /// <summary>All symbols declared anywhere, with their declaration scope path.</summary>
@@ -137,7 +142,12 @@ public sealed record StructuralProgram(
     /// binding graph: every reference's nearest visible declaration of its
     /// rendered name must be exactly the reference's target symbol, and no two
     /// declarations in ONE scope may share a rendered name (duplicateProperty).</summary>
-    public void ValidateNaming() => ScopeGraph.Build(Root).ValidateNaming(Names);
+    public void ValidateNaming()
+    {
+        if (Root.Rows.Count == 0 || Root.Rows[^1] is not MExpr.Atom control || control.Value != RootControl)
+            throw new InvalidOperationException("A structural fixture must retain its explicit final root control row.");
+        ScopeGraph.Build(Root).ValidateNaming(Names);
+    }
 
     /// <summary>The scope-model dump printed in failure reports.</summary>
     public string DescribeScopes() => ScopeGraph.Build(Root).Describe(Names);
@@ -414,11 +424,11 @@ public sealed class ScopeGraph
 /// one-item plain parens are never emitted (parse-time unwrap) — only
 /// <c>(spread*)</c> groups keep a one-item form; declarations render before
 /// rows in every scope so references never depend on declaration order.
-/// The star rule is layout-independent (SYN-07B): a line-final <c>*</c>
-/// followed by an operand on the next line is multiplication, so a spread ROW
-/// followed by another row is closed with the trailing comma (<c>X*,</c>
-/// newline <c>Y</c> — the same two slots), and the last declaration before the
-/// rows closes a spread-ending body explicitly: a brace body for definitions
+/// Q-65: a physical line-final <c>*</c> always announces multiplication.
+/// A spread ROW followed by another row is closed with a trailing comma
+/// (<c>X*,</c> newline <c>Y</c> — the same two slots); every root has a real
+/// following control row. Every spread-ending declaration closes explicitly:
+/// a brace body for definitions
 /// (<c>F(x) = { x* }</c>, merged into the definition exactly like the bare
 /// body) and capture parentheses for a deconstruction right-hand side
 /// (<c>x, y = (V*)</c>, the capture the deconstruction performs anyway).
@@ -439,11 +449,9 @@ public static class StructuralRenderer
         for (var d = 0; d < scope.Decls.Count; d++)
         {
             NewLine(sb, indent, ref first);
-            // Only the declaration directly followed by an output row can run
-            // into the next line's operand; a declaration followed by another
-            // declaration is closed by the declaration head itself.
-            var rowFollows = d == scope.Decls.Count - 1 && scope.Rows.Count > 0;
-            RenderDecl(scope.Decls[d], names, sb, indent, closeTrailingSpread: rowFollows);
+            // A later declaration and EOF never close a spread. The same-line
+            // brace or capture closer does, without changing the body value.
+            RenderDecl(scope.Decls[d], names, sb, indent, closeTrailingSpread: true);
         }
 
         for (var r = 0; r < scope.Rows.Count; r++)
@@ -533,9 +541,7 @@ public static class StructuralRenderer
                     }
 
                     sb.Append(") = ");
-                    // Only the family's last clause is followed by anything
-                    // other than another clause head.
-                    RenderBodyRows([clause.Body], names, sb, indent, closeTrailingSpread && c == fam.Clauses.Count - 1);
+                    RenderBodyRows([clause.Body], names, sb, indent, closeTrailingSpread);
                 }
 
                 return;
@@ -641,7 +647,10 @@ public static class StructuralRenderer
             case MExpr.Brace b:
                 sb.Append("{\n");
                 RenderScopeItems(b.Scope, names, sb, indent + 1);
-                sb.Append('\n').Append(new string(' ', indent * 2)).Append('}');
+                if (b.Scope.Rows.Count > 0 && b.Scope.Rows[^1] is MExpr.Spread)
+                    sb.Append(" }");
+                else
+                    sb.Append('\n').Append(new string(' ', indent * 2)).Append('}');
                 return;
             case MExpr.IndexErr:
                 sb.Append("(1, 2)[9]");

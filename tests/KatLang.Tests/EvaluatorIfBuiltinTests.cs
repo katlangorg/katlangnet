@@ -61,7 +61,7 @@ public class EvaluatorIfBuiltinTests
 
     [Fact]
     public void Eval_If_SpreadResult_OpensSelectedBranchIntoItems()
-        => AssertEvalCounted("X = 1, 2, 3\nif(true, X, X)*", 3, ResultFromAtoms(1, 2, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("X = 1, 2, 3\nif(true, X, X)*", 3, ResultFromAtoms(1, 2, 3));
 
     // Issue #131: an explicit spread argument opens its value into the three `if`
     // call-argument slots, so `if(X*)` with `X = true, 2, 3` is equivalent to

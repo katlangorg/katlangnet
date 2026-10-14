@@ -917,34 +917,16 @@ public sealed class Parser
     }
 
     // ── Physical-line continuation policy ───────────────────────────────────
-    // The parser constitution: A PHYSICAL NEWLINE ENDS A CLOSED EXPRESSION.
-    // One policy table governs every token that can continue a closed
-    // expression; every line-sensitive parser path consults it through
-    // MayContinueClosedExpression. The only cross-line whitelisted
-    // continuation is a leading '.' (method-chain layout); anything inside an
-    // already-open delimiter ('(' .. ')', '[' .. ']', '{' .. '}') spans lines until the
-    // delimiter closes, because those tokens never reach a closed-expression
-    // boundary. Call delimiters '(' and '{', the selection bracket '[', postfix
-    // grace '~', and binary operators continue on the same physical line only —
-    // the trailing-operator idiom (`A -` newline `1`) works because the
-    // operator itself sits on the same line; only its right operand starts a
-    // new line. The star '*' is covered by the binary-operator row: a
-    // same-line star continues the expression either as infix multiplication
-    // or as the postfix spread marker — disambiguated in ParsePostfix by
-    // WHAT FOLLOWS the star, never by spacing or by the newline: a star is
-    // the spread marker exactly when no multiplication operand can follow it
-    // (a closing delimiter, a comma, end of input, a token that cannot start
-    // an expression, or a declaration head comes next), so `a*` newline `b`
-    // and `a *` newline `b` are both the multiplication `a * b` (SYN-07B);
-    // a star classified as a spread marker must additionally be directly
-    // attached to its operand (`a *` with nothing to multiply is a
-    // malformed marker, not a spread). A star on a later line never
-    // continues — a '*'-led line is collect-marker (binding) syntax or an
-    // error. Comments (and characters the lexer reported) are
-    // semantically invisible for all of these decisions: Current/Advance/
-    // Previous skip those tokens and no rule may consult skipped tokens
-    // to relax a newline boundary, so `A` newline `-1` and `A # note`
-    // newline `-1` parse identically.
+    // Q-65 grammar role first: an independent expression/declaration wins
+    // across a physical newline; otherwise ordinary continuation crosses it.
+    // All binary rows reuse the precedence registry. Prefix unary minus is
+    // eligible only with exact attachment; detached minus and leading star
+    // can continue binary arithmetic. Postfix calls/selection and Grace keep
+    // their same-line/independent-expression rules. Comma belongs only to its
+    // expression-list consumer. A physical line-final star (EOF included)
+    // announces multiplication; actual spread requires explicit same-line
+    // closure and is then checked for attachment. Comments/reported chars and
+    // blank lines do not select grammar roles or reconstruct attachment.
 
     private readonly record struct ContinuationPolicy(
         bool CanContinueSameLine,
@@ -956,7 +938,8 @@ public sealed class Parser
     // which always reports a diagnostic first.
     private static ContinuationPolicy GetContinuationPolicy(TokenKind kind) => kind switch
     {
-        TokenKind.Dot => new(CanContinueSameLine: true, CanContinueAcrossLine: true),
+        // Comma is consumed only by expression-list grammar, never as an operator.
+        TokenKind.Dot or TokenKind.Comma => new(CanContinueSameLine: true, CanContinueAcrossLine: true),
         TokenKind.LParen or TokenKind.LBrace => new(true, false),
         // A same-line '[' after a completed expression opens its postfix selector list
         // (spaces and tabs allowed; a '[' on a later line begins a new list literal).
@@ -967,20 +950,35 @@ public sealed class Parser
         TokenKind.Tilde => new(true, false),
         // `^` is parsed by ParsePower rather than the binary loop, so it is
         // absent from BinaryOperatorPrecedence and needs its own row with exactly
-        // the loop operators' behavior: a trailing `^` continues to a right
-        // operand on the following line, a `^`-led line never continues the
-        // previous line's closed expression.
-        TokenKind.Caret => new(true, false),
-        _ when BinaryOperatorPrecedence(kind) > 0 => new(true, false),
+        // the loop operators' behavior. It has no independent prefix meaning.
+        TokenKind.Caret => new(true, true),
+        // Reuse the precedence registry. Independent prefix/binding eligibility
+        // is decided by the grammar-priority gate, not token exceptions.
+        _ when BinaryOperatorPrecedence(kind) > 0 => new(true, true),
         _ => new(false, false),
     };
 
     private bool MayContinueClosedExpression(TokenKind kind)
     {
         var policy = GetContinuationPolicy(kind);
-        return IsSamePhysicalLineAsPreviousToken()
-            ? policy.CanContinueSameLine
-            : policy.CanContinueAcrossLine;
+        if (IsSamePhysicalLineAsPreviousToken())
+            return policy.CanContinueSameLine;
+        // Grammar role first: an independent expression/declaration wins across LF.
+        return policy.CanContinueAcrossLine
+            && !StartsDeclaration(includeCommaSpanningBindingPatterns: true)
+            && !StartsIndependentExpression();
+    }
+
+    private bool StartsIndependentExpression()
+        => Current.Kind == TokenKind.Minus ? IsAttachedUnaryMinus() : CanStartExpression(Current.Kind);
+
+    private bool IsAttachedUnaryMinus()
+    {
+        var index = NextSignificantIndex(_pos);
+        var next = _tokens[NextSignificantIndex(index + 1)];
+        return _tokens[index].Kind == TokenKind.Minus
+            && CanStartUnaryOperand(next.Kind)
+            && IsDirectlyAttached(_tokens[index], next);
     }
 
     // The line primitive used by the policy. Its only direct uses outside
@@ -989,6 +987,24 @@ public sealed class Parser
     // and the body loop's row-boundary check — never a continuation decision
     // about the current expression.
     private bool IsSamePhysicalLineAsPreviousToken() => Current.Line == Previous.Line;
+
+    // True when the significant token before the current one LEADS its physical
+    // line: no significant token precedes it there (comments and reported
+    // characters are skipped as everywhere else). This is the Q-65 leading
+    // continuation position (`1` newline `+ Good = 41`, `A` newline
+    // `.Good = 41`), where a declaration head sharing the continuation token's
+    // line is protected like one on the next line. A mid-line continuation token
+    // (`X = a + b = c`, `X = A.b = c`) leaves the head's '=' to the same-line
+    // stray-'=' diagnostic, because a declaration head starts a row.
+    private bool PreviousLeadsItsPhysicalLine()
+    {
+        // Every token from _pos up to Current is skipped, so this is Previous.
+        var previous = PreviousSignificantIndex(_pos);
+        if (previous < 0)
+            return false;
+        var before = PreviousSignificantIndex(previous);
+        return before < 0 || _tokens[before].Line != _tokens[previous].Line;
+    }
 
     // ── Comment-skipping declaration lookahead ──────────────────────────────
     // Offset 0 is the current significant token, offset 1 the next, and so
@@ -1794,30 +1810,14 @@ public sealed class Parser
     }
 
     // ── Spread marker ───────────────────────────────────────────────
-    // Expression spreading is written with the postfix spread marker `*`:
-    // a same-line star after a completed expression that has no valid
-    // right operand after it lowers to the one unary AST node
-    // SequenceSpread(expr) (shared with Lean). The multiplication-versus-
-    // spread decision is made by the NEXT significant token alone — never
-    // by whitespace, attachment, or the physical newline (SYN-07B): when a
-    // token that can begin a multiplication operand follows the star, on
-    // the same line or on a later one, the star is infix multiplication
-    // (`a*b`, `a* b`, `a *b`, `a * b`, and `a*` newline `b` all multiply),
-    // so spreading before another supplied item requires a comma (`a*, b`;
-    // a trailing comma continues the list across the newline: `a*,` newline
-    // `b`). The star is the spread marker when the surrounding syntax
-    // closes the expression before any operand could follow: a closing
-    // `)`, `]`, or `}`, a comma, end of input, a token that cannot start an
-    // expression (`.`, `;`, `==`, ...), or a declaration head (`a*` newline
-    // `b = 1` is a spread row followed by a property definition). A spread
-    // marker must then be DIRECTLY attached to its operand (the marker
-    // attachment law shared with `*name`, `~name`, `name~`): the detached
-    // `values *` that no operand follows is a malformed marker with a
-    // targeted diagnostic (ParseSpreadMarkerContinuation), so whitespace can
-    // never turn one valid reading into another — it only separates the
-    // valid `values*` from the rejected `values *`. Chained spread is
-    // `value**` — each further attached star nests one more unary spread
-    // node, building SequenceSpread(SequenceSpread(expr)).
+    // Expression spreading is written with the attached postfix marker `*`.
+    // Q-65: every physical line-final star is multiplication, including at EOF
+    // or before a later closer/declaration. Spread needs a same-line explicit
+    // closure: comma, closer, fluent dot or a chain that is itself closed there.
+    // Same-line operand syntax still makes multiplication (`a*b`, `a * b`).
+    // After spread classification, exact marker attachment is enforced; a
+    // detached spread marker is a syntax error. Chaining nests one ordinary
+    // SequenceSpread node per star; the evaluator's VALUE law is unchanged.
     // The parser only records the written layers; evaluation applies them
     // compositionally, `value**` agreeing with `(value*)*` (each layer
     // spreads the value the previous layer's supply re-captures — see
@@ -1897,7 +1897,8 @@ public sealed class Parser
 
         // Comma is the only separator and may continue the list across a
         // physical newline (trailing `open A,` newline `B` or leading
-        // `open A` newline `, B`), matching general comma continuation.
+        // `open A` newline `, B`). The expression-list comma policy
+        // likewise continues simple RHS bodies under Q-65.
         while (Current.Kind == TokenKind.Comma)
         {
             var comma = Advance(); // consume ','
@@ -1912,7 +1913,8 @@ public sealed class Parser
                         comma);
                 }
 
-                break;
+                OwnSameLineItem(Current);
+                return targets;
             }
             if (ParseOpenTargetAtom() is { } target)
                 targets.Add(target);
@@ -1974,16 +1976,15 @@ public sealed class Parser
     // an open target and tore the deconstruction apart — and its recovery
     // even consumed the collect marker of a following `*y` binding.)
     //
-    // The comma-spanning binding-pattern arm applies only to a candidate
-    // starting a NEW physical line: inside the open's own line the list's
-    // separator commas are open syntax and must not be absorbed into a
-    // binding-pattern reading, while a new-line candidate is only reachable
-    // through a trailing-comma continuation, where a declaration means the
-    // comma was dangling (see StartsDeclaration).
+    // A complete declaration after a separator comma or on a later line
+    // stays intact. The first target on the open line does not scan the
+    // open list's own commas as a declaration head. Without '=' the target
+    // list remains ordinary comma-separated open syntax.
     private bool StartsOpenTargetAtom()
         => CanStartExpression(Current.Kind)
             && !StartsDeclaration(
-                includeCommaSpanningBindingPatterns: !IsSamePhysicalLineAsPreviousToken());
+                includeCommaSpanningBindingPatterns: Previous.Kind == TokenKind.Comma
+                    || !IsSamePhysicalLineAsPreviousToken());
 
     /// <summary>
     /// Parses exactly one open target atom: a string-literal target of either quote kind
@@ -1991,7 +1992,7 @@ public sealed class Parser
     /// <see cref="DiagnosticCode.InterpolationNotAllowedHere"/>), or one plain
     /// expression (resolve, argumentless dotted path, or parenthesized block —
     /// anything else is rejected by open-form validation). A spread-marked
-    /// open target (`open A*`) parses to a SequenceSpread expression and is
+    /// open target (`open A*, B`) parses to a SequenceSpread expression and is
     /// rejected by open-form validation (spread is not an open form).
     /// </summary>
     private Expr? ParseOpenTargetAtom()
@@ -2083,11 +2084,11 @@ public sealed class Parser
     // ── Star-marker diagnostics ─────────────────────────────────────────────
     // Prefix `*name` (directly attached) is the ONLY collecting-binding
     // spelling, valid only in binding positions. Postfix `expr*` (directly
-    // attached, and no right operand follows the star on any line) is the
+    // attached, with an explicit same-line spread closure) is the
     // ONLY spread spelling, valid only as a whole expression-list slot or
     // fluent dot-chain receiver. A star that a right operand follows is infix
-    // multiplication, however it is spaced; a star that no operand follows
-    // and that is NOT attached to the expression before it (`values *`) is a
+    // multiplication, however it is spaced. After same-line spread classification,
+    // a marker NOT attached to its operand (`F(values *)`) is a
     // malformed spread marker — never silently a multiplication and never
     // silently a spread (MARKER ATTACHMENT LAW: structural/annotation
     // markers `*name`, `name*`, `~name`, `name~` are directly attached;
@@ -2150,7 +2151,7 @@ public sealed class Parser
     /// <summary>
     /// The <see cref="MisplacedSpreadDiagnostic"/> variant for `A*` newline `B*`: the
     /// first line's final `*` is multiplication because an operand follows it on the
-    /// next line (the star rule is layout-independent), so the second line's spread
+    /// next line (a physical line-final star announces multiplication), so the second line's spread
     /// became a scalar operand. Names the cause and distinguishes separate spread
     /// rows from capturing the first spread as one value.
     /// </summary>
@@ -2521,7 +2522,8 @@ public sealed class Parser
     /// been classified as a spread — see <see cref="IsPostfixSpreadMarkerStar"/>
     /// and <see cref="ParseSpreadMarkerContinuation"/>), every Grace marker
     /// to the name or neighbouring marker it belongs to (`~x`, `x~`), and the
-    /// `.~` member-Grace pair. Ordinary operators never consult it.
+    /// `.~` member-Grace pair, and the attached prefix unary-minus role.
+    /// Ordinary binary operators never consult it.
     /// </summary>
     private static bool IsDirectlyAttached(Token first, Token second)
         => second.Position == first.Position + first.Length;
@@ -3189,7 +3191,7 @@ public sealed class Parser
         if (!IsSamePhysicalLineAsPreviousToken() || !CanStartPatternAtom(Current.Kind))
             return false;
 
-        if (Current.Kind == TokenKind.Star && !CanStartMultiplicationOperand(PeekSignificant(1).Kind))
+        if (Current.Kind == TokenKind.Star && !CanStartUnaryOperand(PeekSignificant(1).Kind))
             return false;
 
         ReportUnseparatedSameLineItem(Current, UnseparatedPatternItemMessage);
@@ -3389,7 +3391,7 @@ public sealed class Parser
 
             case TokenKind.Minus:
                 {
-                    Advance(); // consume '-'
+                    var minus = Advance(); // consume '-'
                     if (Current.Kind != TokenKind.Number)
                     {
                         ReportError(DiagnosticCode.UnexpectedToken, "Expected number after '-' in pattern.");
@@ -3400,6 +3402,12 @@ public sealed class Parser
                         return RecoveryBinder();
                     }
                     var token = Advance();
+                    if (!IsDirectlyAttached(minus, token))
+                    {
+                        ReportErrorAt(DiagnosticCode.UnexpectedToken,
+                            "A negative pattern's '-' must be directly attached to its number: write '-2'.", minus);
+                        return RecoveryBinder();
+                    }
                     return new Pattern.LitInt(-token.NumValue);
                 }
 
@@ -3443,9 +3451,10 @@ public sealed class Parser
                     // Postfix `*` after a binding name is spread syntax, never
                     // binding syntax. Report the targeted marker-side diagnostic
                     // when the star is clearly meant as a marker — nothing that
-                    // could begin a multiplication operand follows it (the ONE
-                    // classifier the expression-level star decision uses, so
-                    // spacing and line breaks never matter here either); a star
+                    // could begin a unary-level operand follows it (the ONE
+                    // operand classifier the expression-level star decision also
+                    // uses; a pattern has no multiplication, so the expression
+                    // level's line-final star law has no pattern role); a star
                     // followed by an operand-like token is left to the caller:
                     // the pattern list reads it as the collect marker of a next
                     // binding missing its comma (StartsUnseparatedPatternItem,
@@ -3454,7 +3463,7 @@ public sealed class Parser
                     if (Current.Kind == TokenKind.Star
                         && MayContinueClosedExpression(TokenKind.Star))
                     {
-                        var looksLikeMarker = !CanStartMultiplicationOperand(PeekSignificant(1).Kind);
+                        var looksLikeMarker = !CanStartUnaryOperand(PeekSignificant(1).Kind);
                         if (looksLikeMarker)
                         {
                             var lastStar = Advance();
@@ -3597,11 +3606,10 @@ public sealed class Parser
     /// </summary>
     private Algorithm ParseOutputLine(bool preserveWrittenBlock = false)
     {
-        // Definition bodies are line-bounded: a newline ends the body and never
-        // continues it as another expression-list row. An expression on a
-        // following line is parsed by the surrounding output/algorithm context,
-        // not absorbed into this body. A same-line comma, an already-open
-        // delimiter, a same-line trailing/leading binary operator, and a
+        // Definition bodies end before an independent next-line expression,
+        // which is parsed by the surrounding output/algorithm context.
+        // Grammar-eligible continuation can still extend the body. An explicit comma, an already-open
+        // delimiter, a grammar-eligible trailing/leading binary operator, and a
         // leading '.' (method-chain layout) still continue the body. A second
         // same-line item without a comma is the SYN-07A separator error and is
         // RECOVERED INTO THIS BODY as its next slot (`P = a b` keeps `b` in P),
@@ -3631,10 +3639,11 @@ public sealed class Parser
     /// <summary>
     /// Normalizes and validates open expressions. The list arriving here
     /// comes from ParseOpenTargetList's dedicated comma-list parsing — one
-    /// individual target per entry, matching Lean's per-target model. A
-    /// spread-marked target (`open A*`) parses to a SequenceSpread and is
-    /// rejected here by open-form validation before evaluator or runtime
-    /// involvement — spread is not an open form.
+    /// individual target per entry, matching Lean's per-target model. An
+    /// explicitly same-line-closed spread-marked target (`open A*, B`) parses
+    /// to a SequenceSpread and is rejected here by open-form validation before
+    /// evaluator or runtime involvement — spread is not an open form. (A
+    /// line-final `open A*` is an incomplete multiplication under Q-65.)
     /// DotCall(obj, name, null) is the canonical form for dotted paths in opens.
     /// Rejects DotCall with args as invalid.
     /// Lean: Expr.openForm? — only Block, Resolve, and argumentless DotCall
@@ -3751,7 +3760,7 @@ public sealed class Parser
     /// Predicate for valid open forms at parse time.
     /// Lean: Expr.openForm? — only AlgorithmExpr, Resolve, and
     /// argumentless DotCall post-elaboration. Spread is NOT an open form (a
-    /// spread-marked target such as `open A*` is rejected here), and a
+    /// spread-marked target such as `open A*, B` is rejected here), and a
     /// Capture is NOT an open form (`open (M, M)` is a captured value target,
     /// rejected with the targeted captured-open diagnostic above).
     /// DotCall with args is NOT a valid open form.
@@ -3814,13 +3823,14 @@ public sealed class Parser
     /// </summary>
     private List<Expr> ParseExpressionListOperand(bool allowNewlineSeparator)
     {
-        // Spread slots need no extra handling here: a postfix `*` with no
-        // right operand after it parses as a postfix continuation directly
-        // to Expr.SequenceSpread. A spread expression is always one whole
-        // slot — a following token that could start an expression (on this
-        // line or the next) makes the star multiplication instead, so
-        // spreading before another supplied item requires an explicit comma
-        // (`a*, b`, or the trailing `a*,` newline `b`).
+        // Spread slots need no extra handling here: a postfix `*` that same-line
+        // syntax closes (a comma, a closer, a fluent dot) parses as a postfix
+        // continuation directly to Expr.SequenceSpread. A spread expression is
+        // always one whole slot — a same-line operand makes the star
+        // multiplication, and a physical line-final star always announces
+        // multiplication (Q-65), so spreading before another supplied item
+        // requires an explicit same-line comma (`a*, b`, or the trailing
+        // `a*,` newline `b`).
         var exprs = new List<Expr>();
         exprs.Add(ParseExpression());
 
@@ -3828,6 +3838,11 @@ public sealed class Parser
         {
             if (Current.Kind == TokenKind.Comma)
             {
+                // Q-65: a leading comma explicitly continues this expression list,
+                // including a simple definition body. Independent newline slots
+                // still require allowNewlineSeparator; comma never changes that gate.
+                if (!MayContinueClosedExpression(TokenKind.Comma))
+                    break;
                 Advance(); // consume ','
             }
             else if (Current.Kind == TokenKind.Semicolon)
@@ -3867,7 +3882,7 @@ public sealed class Parser
     /// being parsed. A slot that begins on a later physical line is admitted
     /// silently only in contexts that opt into multiline expression lists
     /// (<paramref name="allowNewlineSeparator"/>); definition bodies opt out,
-    /// so a newline ends them. A slot that begins on the SAME physical line as
+    /// so an independent newline slot ends them. A slot that begins on the SAME physical line as
     /// the closed expression before it is the SYN-07A separator error: it is
     /// reported at its first token and then admitted anyway (recovery as a
     /// slot boundary), so whitespace never silently creates structure and the
@@ -3879,7 +3894,7 @@ public sealed class Parser
     /// before this check runs: a '(' or '{' after a callable target on the
     /// same physical line is a call delimiter handled by
     /// <see cref="ParsePostfix"/> (`F (1, 2)` is the call `F(1, 2)`), a
-    /// same-line binary operator continues arithmetic (`F(1 -2)` is the one
+    /// binary operator follows the central continuation policy (`F(1 -2)` is the one
     /// argument `1 - 2`), and a leading '.' continues a dot chain across
     /// lines. A physical newline never continues a closed expression into a
     /// call, so `F` newline `(1, 2)` reaches this check and separates as the
@@ -3941,12 +3956,9 @@ public sealed class Parser
     /// copy of the relation: the slot-boundary rule always includes it (its
     /// expression list consumes commas before the boundary check, so trailing
     /// commas always belong to the candidate), while open-target recovery
-    /// includes it only for a candidate that starts a NEW physical line —
-    /// inside the open's own line the list's separator commas must not be
-    /// absorbed into a binding-pattern reading (<c>open A, B = 1</c> keeps
-    /// <c>A</c> and stops at <c>B</c>; <c>open A, B, C</c> continues), while
-    /// a new-line candidate is only reachable through a trailing-comma
-    /// continuation, and a declaration there means the comma was dangling
+    /// includes it after a separator comma or on a later physical line. The
+    /// first target on the open line retains the open list's own comma syntax;
+    /// an already-owed target that starts a declaration leaves that head intact.
     /// (<c>open A,</c> newline <c>x, y = 1</c> keeps the whole
     /// deconstruction).</para>
     ///
@@ -3964,11 +3976,10 @@ public sealed class Parser
     /// <summary>
     /// Index form of <see cref="StartsDeclaration"/>: the same relation
     /// evaluated at the significant token at <paramref name="index"/> instead
-    /// of the current position. The postfix spread/multiplication decision
-    /// (<see cref="IsPostfixSpreadMarkerStar"/>) consults it for the token
-    /// after a star, so a star followed by a declaration head is a spread
-    /// through the SAME relation the slot boundary stops at — the two
-    /// boundary decisions cannot drift apart.
+    /// of the current position. Same-line star classification and operand
+    /// recovery consult this relation so a declaration head is never read as
+    /// an operand. The physical line-final star rule has priority over spread
+    /// classification, including when the next line begins a declaration.
     /// </summary>
     private bool StartsDeclarationAt(int index, bool includeCommaSpanningBindingPatterns)
     {
@@ -4021,13 +4032,13 @@ public sealed class Parser
     // always rejects it in expression position. `not` is included above because
     // it starts an expression, but only at its own tier BELOW the comparisons
     // (NotPrecedence), so it can never begin a multiplication's right operand:
-    // a star followed by `not` — on the same line or the next — is the spread
-    // marker, exactly like a star followed by a declaration head. This is the
+    // a same-line star followed by `not` keeps its invalid-slot recovery;
+    // a line-final star never becomes spread through that follower. This is the
     // ONE classifier for "a star could take this as its operand": it decides
     // spread-marker versus multiplication in IsPostfixSpreadMarkerStar, and it
     // decides whether the misplaced-prefix-star recovery in ParsePrimary has an
     // operand to resume on.
-    private static bool CanStartMultiplicationOperand(TokenKind kind)
+    private static bool CanStartUnaryOperand(TokenKind kind)
         => CanStartExpression(kind) && kind is not (TokenKind.KeywordOpen or TokenKind.KeywordNot);
 
     // ── Expression parsing (precedence climbing) ────────────────────────────
@@ -4115,11 +4126,9 @@ public sealed class Parser
         {
             var prec = BinaryOperatorPrecedence(Current.Kind);
             if (prec < minPrecedence) break;
-            // A binary operator never continues a closed expression across a
-            // physical newline (write the operator before the newline to
-            // continue arithmetic: `A -` newline `1` is the subtraction).
-            // Comments are invisible here: `A # note` newline `-1` breaks
-            // exactly like `A` newline `-1` and starts the next output row.
+            // Grammar-priority continuation uses the ONE syntactic policy.
+            // An attached leading minus starts an independent expression;
+            // a detached minus can use the preceding binary left operand.
             if (!MayContinueClosedExpression(Current.Kind)) break;
 
             var operatorToken = Advance(); // consume operator token
@@ -4134,8 +4143,8 @@ public sealed class Parser
                 // level extend ONE chain — `a < b == c` compares a with b and b
                 // with c — and never nest, because the right operand climbs from
                 // the additive tier and can never absorb a comparison operator.
-                // The chain closes at the first token that is not a same-line
-                // comparison operator, so a PARENTHESIZED comparison arriving
+                // The chain closes at the first token that cannot continue it,
+                // so a PARENTHESIZED comparison arriving
                 // as `lhs` (`(a < b) == c`) starts a new chain with the group
                 // as its first operand instead of merging into it. Spread
                 // operands are rejected exactly as for binary operators.
@@ -4208,9 +4217,10 @@ public sealed class Parser
     {
         lhs = RejectMisplacedSpreadOperand(lhs);
         // A spread right operand of a `*` whose operand starts on a LATER line is the
-        // one place the layout-independent star rule (SYN-07B) turns two intended
-        // spread rows (`A*` newline `B*`) into a multiplication with a spread operand:
-        // the line-final star continued as multiplication onto the next row. The
+        // one place the line-final star law (Q-65: a physical line-final star always
+        // announces multiplication) turns two intended spread rows (`A*` newline
+        // `B*`) into a multiplication with a spread operand: the line-final star
+        // continued as multiplication onto the next row. The
         // structured code is the ordinary misplaced-spread rejection; only the
         // explanation names the cause and distinguishes the possible repairs.
         rhs = RejectMisplacedSpreadOperand(
@@ -4329,6 +4339,27 @@ public sealed class Parser
             // (ParseExpressionCore), below the comparisons, so a `not`
             // reaching this level is diagnosed by ParsePrimary.
             var start = Advance(); // consume '-'
+            if (Current.Kind == TokenKind.EndOfFile || !IsDirectlyAttached(start, Current))
+            {
+                // A directly adjacent reported character can fill an owed
+                // missing operand; it never reconstructs attachment to a real
+                // token after a gap, and the source stays lexically erroneous.
+                if ((Current.Kind == TokenKind.EndOfFile || IsClosingDelimiter(Current.Kind))
+                    && TakeReportedCharacterBeforeCurrent(requiredLine: start.Line) is { } standIn
+                    && IsDirectlyAttached(start, standIn))
+                    return CreateUnaryExpression(start, PlaceholderAt(standIn));
+                ReportErrorAt(DiagnosticCode.UnexpectedToken,
+                    "Unary '-' must be directly attached to its operand: write '-2' for negation. Binary subtraction needs a preceding left operand.", start);
+                if (Current.Kind == TokenKind.EndOfFile || IsClosingDelimiter(Current.Kind)
+                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+                {
+                    OwnSameLineItem(Current);
+                    return new Expr.Num(0) { Span = new SourceSpan(start.Span.End, start.Span.End) };
+                }
+                // A malformed prefix never becomes an attached unary node.
+                // Ordinary operand recovery still preserves declarations/closers.
+                return ParseUnary();
+            }
             return CreateUnaryExpression(start, ParseUnary());
         }
         return ParsePower();
@@ -4362,10 +4393,9 @@ public sealed class Parser
     /// `^` right-associative (`2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`, because the
     /// exponent's own unary level ends in another ParsePower).</para>
     ///
-    /// <para>Physical-line rule: `^` continues a closed expression on the same
-    /// physical line only (its ContinuationPolicy row) — a trailing `^`
-    /// continues to its right operand on the following line, and a `^`-led
-    /// line never continues the previous expression.</para>
+    /// <para>Physical-line rule: leading and trailing `^` continue through the
+    /// shared grammar-priority policy. It cannot start an independent expression;
+    /// the existing right-associative precedence is unchanged.</para>
     ///
     /// <para>Nesting accounting: deliberately NO charge of its own. The
     /// exponent recursion re-enters ParseUnary while the current ParseUnary
@@ -4405,21 +4435,10 @@ public sealed class Parser
             {
                 case TokenKind.Star when MayContinueClosedExpression(TokenKind.Star)
                     && IsPostfixSpreadMarkerStar():
-                    // Postfix spread marker: expr* — a same-line star after
-                    // the completed expression with no valid right operand
-                    // after it (IsPostfixSpreadMarkerStar decides from the
-                    // next significant token, on any line). Every other
-                    // same-line star is left for the multiplicative level
-                    // (`a*b`, `a* b`, `a *b`, `a * b`, `a *` newline `b`, and
-                    // `a*` newline `b` all multiply), so spreading before
-                    // another supplied item requires a comma: `a*, b`. Each
-                    // additional star adds one spread layer (`value**`;
-                    // every same-line star belongs to the expression before
-                    // it, so a collecting deconstruction `*r = ...` starts
-                    // its own line — the '*'-led-line rule). Only AFTER that
-                    // classification is the marker's attachment enforced:
-                    // a detached `values *` is a malformed marker
-                    // (ParseSpreadMarkerContinuation), never a multiplication.
+                    // The star has an explicit same-line closure; a physical
+                    // line-final star is left to multiplication. Classification
+                    // precedes the exact attachment check, and each additional
+                    // closed star nests one ordinary spread node.
                     lhs = ParseSpreadMarkerContinuation(lhs);
                     break;
 
@@ -4472,9 +4491,10 @@ public sealed class Parser
 
                 case TokenKind.Dot when MayContinueClosedExpression(TokenKind.Dot):
                     // Dot-call syntax: expr.Name or expr.Name(args). The
-                    // leading '.' is the one whitelisted postfix continuation
-                    // that may cross a physical newline (method-chain layout)
-                    // — encoded in the continuation policy table.
+                    // dot is the one POSTFIX continuation that may cross a
+                    // physical newline (method-chain layout); calls, selection
+                    // and postfix Grace stay same-line — all encoded in the
+                    // continuation policy table.
                     var dotToken = Advance(); // consume '.'
                     lhs = ParseDotCallContinuation(lhs, dotToken);
                     break;
@@ -4591,37 +4611,24 @@ public sealed class Parser
             or TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace or TokenKind.Tilde;
 
     /// <summary>
-    /// True when the current same-line star is the postfix SPREAD marker for
-    /// the just-completed expression rather than infix multiplication. The
-    /// decision is made by the NEXT significant token alone (SYN-07B):
-    /// whitespace before the star, source attachment, and the physical
-    /// newline after it never take part in it. The star is multiplication
-    /// when a token that can begin a multiplication operand follows it — on
-    /// the same line or on a later one, so `a*` newline `b` continues exactly
-    /// like the trailing operator `a *` newline `b` — unless those tokens
-    /// begin a DECLARATION: a declaration head is never an operand (`a*`
-    /// newline `b = 1` is a spread row followed by a property definition),
-    /// decided through the same <see cref="StartsDeclarationAt"/> relation
-    /// the slot boundary stops at. The star is the spread marker when
-    /// the surrounding syntax closes the expression before any operand could
-    /// follow: a closing delimiter, a comma, end of input, a token that
-    /// cannot start an expression, a `not` (which starts an expression only
-    /// below the comparisons and so never a multiplication operand), or a
-    /// declaration head. Comments after the star are invisible, exactly like
-    /// every other line-sensitive decision.
-    /// Attachment is a SEPARATE, later check: once a star is classified as a
-    /// spread marker, <see cref="ParseSpreadMarkerContinuation"/> requires it
-    /// to be directly attached to the expression it spreads and reports a
-    /// detached marker (`values *` that no operand follows) as malformed —
-    /// this method must never consult attachment, or `values *` newline
-    /// `other` would stop being the multiplication it is.
+    /// True when same-line syntax closes the current star as a spread marker.
+    /// A physical line-final star, including EOF and later-line closers or
+    /// declarations, is multiplication. Same-line operand syntax multiplies;
+    /// explicit comma/closer/fluent-dot/chained-spread syntax can close spread.
+    /// Existing same-line malformed follower recovery remains diagnostic-only.
+    /// Attachment is checked after classification, never used to choose the
+    /// binary role. Comments and blank lines cannot manufacture closure.
     /// </summary>
     private bool IsPostfixSpreadMarkerStar()
     {
         var starIndex = NextSignificantIndex(_pos);
         var nextIndex = NextSignificantIndex(starIndex + 1);
         var next = _tokens[nextIndex];
-        if (!CanStartMultiplicationOperand(next.Kind))
+        // Q-65 owner addendum: a physical line-final star (including EOF)
+        // announces multiplication. Only same-line syntax can close a spread.
+        if (next.Kind == TokenKind.EndOfFile || next.Line != _tokens[starIndex].Line)
+            return false;
+        if (!CanStartUnaryOperand(next.Kind))
             return true;
         if (StartsDeclarationAt(nextIndex, includeCommaSpanningBindingPatterns: true))
             return true;
@@ -4732,6 +4739,27 @@ public sealed class Parser
         // markers are contiguous and the last one is attached to the member
         // name (`a.~t`, `a.~~t`; never `a.~ t`), a gap reporting the
         // attachment diagnostic and recovering to the plain member.
+        // A declaration head cannot supply a member name after a trailing dot
+        // (the head begins the next line) or a LEADING dot (Q-65: the head shares
+        // the dot's line). A mid-line dot is no row start: `X = A.b = 3` keeps
+        // the member `b` and the same-line stray-'=' diagnostic. Check before
+        // Grace so rejected heads keep their own marker and diagnostic ownership.
+        if ((!IsSamePhysicalLineAsPreviousToken() || PreviousLeadsItsPhysicalLine())
+            && StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+        {
+            if (TakeReportedCharacterBeforeCurrent() is null)
+            {
+                ReportErrorAt(
+                    DiagnosticCode.UnexpectedToken,
+                    !IsSamePhysicalLineAsPreviousToken()
+                        ? "Expected property name after '.'. The next line begins a declaration, which never continues an expression."
+                        : "Expected property name after '.'. A declaration head cannot be a dot member.",
+                    dotToken);
+            }
+            OwnSameLineItem(Current);
+            return lhs;
+        }
+
         Token? memberGraceStart = null;
         var memberGraceWeight = 0;
         var memberGraceAttached = true;
@@ -4759,26 +4787,6 @@ public sealed class Parser
             }
 
             memberGraceAttached &= IsDirectlyAttached(lastMarker, Current);
-        }
-
-        // A trailing '.' continues its dot chain onto the next line (`a.` newline
-        // `b`), but a declaration head there is never the member: the dangling dot
-        // is the error, and the declaration keeps its scope (see RecoverAtOperandStart).
-        // A reported character between the dot and what follows stands in the missing
-        // member name (`A.@`): the lexer's diagnostic is the one report.
-        if (memberGraceStart is null
-            && !IsSamePhysicalLineAsPreviousToken()
-            && StartsDeclaration(includeCommaSpanningBindingPatterns: true))
-        {
-            if (TakeReportedCharacterBeforeCurrent() is null)
-            {
-                ReportErrorAt(
-                    DiagnosticCode.UnexpectedToken,
-                    "Expected property name after '.'. The next line begins a declaration, which never continues an expression.",
-                    dotToken);
-            }
-
-            return lhs;
         }
 
         if (Current.Kind != TokenKind.Identifier)
@@ -4983,8 +4991,12 @@ public sealed class Parser
         // operand a reported character stands in, and a declaration head that a line
         // ending in an incomplete expression would otherwise swallow (see
         // RecoverAtOperandStart). Only reached off the common path: a token that
-        // cannot begin an operand, or one on a later line.
-        if ((!CanStartExpression(Current.Kind) || !IsSamePhysicalLineAsPreviousToken())
+        // cannot begin an operand, one on a later line, or one sharing the line of a
+        // LEADING continuation token (Q-65). A mid-line operator, comma, or dot is
+        // not a row start, so `X = a + b = c` keeps the same-line stray '='.
+        if ((!CanStartExpression(Current.Kind) || !IsSamePhysicalLineAsPreviousToken()
+                || (GetContinuationPolicy(Previous.Kind).CanContinueAcrossLine
+                    && PreviousLeadsItsPhysicalLine()))
             && RecoverAtOperandStart() is { } recovered)
             return recovered;
 
@@ -5157,7 +5169,7 @@ public sealed class Parser
                     while (Current.Kind == TokenKind.Star)
                         Advance(); // consume a malformed star run whole, one diagnostic
 
-                    if (CanStartMultiplicationOperand(Current.Kind)
+                    if (CanStartUnaryOperand(Current.Kind)
                         && IsSamePhysicalLineAsPreviousToken())
                         return ParseUnary(); // recovery: the operand the star was attached to
 
@@ -5256,15 +5268,22 @@ public sealed class Parser
     /// <c>-</c> or <c>not</c>, or the <c>=</c> of a definition whose body would start on
     /// the next line — and the next line begins a declaration (<c>1 +</c> newline
     /// <c>Good = 41</c>, <c>x,</c> newline <c>y = 1, 2</c>, <c>A =</c> newline
-    /// <c>B = 1</c>), the incomplete line is the one error, reported at the token that
-    /// dangles, and the declaration is left intact for the body loop that owns it. Taking
-    /// its name as the operand would tear a correctly written one-line head apart into an
-    /// operand plus a stray <c>=</c> — and no valid program ever has a declaration head in
-    /// operand position, so this changes recovery only. The same relation already keeps a
-    /// declaration out of a star's operand (<see cref="IsPostfixSpreadMarkerStar"/>), a
-    /// semicolon's recovery slot, and a dangling <c>open</c> list. A reported character
-    /// between the dangling token and the declaration stands in the operand the same way,
-    /// so the lexer's report is then the only one.</para>
+    /// <c>B = 1</c>), or when that token is a LEADING continuation token whose own line
+    /// the declaration shares (Q-65: <c>1</c> newline <c>+ Good = 41</c>), the incomplete
+    /// expression is the one error, reported at the token that dangles, and the
+    /// declaration is left intact for the body loop that owns it. Taking its name as the
+    /// operand would tear a correctly written one-line head apart into an operand plus a
+    /// stray <c>=</c> — and no valid program ever has a declaration head in operand
+    /// position, so this changes recovery only. A head after a MID-line continuation
+    /// token is no row start (<c>X = a + b = c</c>); unless its first token cannot begin
+    /// an operand at all (<c>public</c>, a collect <c>*</c>), <see cref="ParsePrimary"/>
+    /// does not route it here, so its <c>=</c> keeps the same-line stray-<c>=</c>
+    /// diagnostic. The
+    /// same relation keeps a declaration out of a same-line star's operand
+    /// (<see cref="IsPostfixSpreadMarkerStar"/>), a semicolon's recovery slot, and a
+    /// dangling <c>open</c> list. A reported character between the dangling token and the
+    /// declaration stands in the operand the same way, so the lexer's report is then the
+    /// only one.</para>
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private Expr.Num? RecoverAtOperandStart()
@@ -5273,19 +5292,34 @@ public sealed class Parser
             && (IsClosingDelimiter(Current.Kind)
                 || Current.Kind is TokenKind.EndOfFile or TokenKind.Comma or TokenKind.Semicolon
                 || MayContinueClosedExpression(Current.Kind))
-            && TakeReportedCharacterBeforeCurrent() is { } standIn)
+            && TakeReportedCharacterBeforeCurrent(requiredLine:
+                Previous.Kind == TokenKind.Bad ? Current.Line : null) is { } standIn)
             return PlaceholderAt(standIn);
 
-        if (IsSamePhysicalLineAsPreviousToken() || !StartsDeclaration(includeCommaSpanningBindingPatterns: true))
+        if (Previous.Kind == TokenKind.Star
+            && (Current.Kind == TokenKind.EndOfFile || IsClosingDelimiter(Current.Kind)))
+        {
+            var star = Previous;
+            ReportErrorAt(DiagnosticCode.UnexpectedToken, "Expected an expression after '*'. A line-final star continues multiplication; close a spread slot on the same line.", star);
+            return new Expr.Num(0) { Span = new SourceSpan(star.Span.End, star.Span.End) };
+        }
+
+        if (!StartsDeclaration(includeCommaSpanningBindingPatterns: true))
             return null;
 
         if (TakeReportedCharacterBeforeCurrent() is { } reported)
             return PlaceholderAt(reported);
 
         var dangling = Previous;
+        // A leading operator/comma and the following head may share the next
+        // line. Protect that head too; this is an owned recovery boundary.
+        OwnSameLineItem(Current);
+        var headExplanation = IsSamePhysicalLineAsPreviousToken()
+            ? "A declaration head never continues an expression."
+            : "The next line begins a declaration, which never continues an expression.";
         ReportErrorAt(
             DiagnosticCode.UnexpectedToken,
-            $"Expected an expression after {DescribeTokenKind(dangling.Kind)}. The next line begins a declaration, which never continues an expression.",
+            $"Expected an expression after {DescribeTokenKind(dangling.Kind)}. {headExplanation}",
             dangling);
         return new Expr.Num(0) { Span = new SourceSpan(dangling.Span.End, dangling.Span.End) };
     }

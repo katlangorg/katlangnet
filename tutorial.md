@@ -1202,7 +1202,7 @@ A star after a value opens it: `value*` hands the value's items to the surroundi
 ```
 Coordinates = 10, 20
 Coordinates
-Coordinates*
+Coordinates*, 997
 ```
 
 **Results:**
@@ -1210,6 +1210,7 @@ Coordinates*
 (10, 20)
 10
 20
+997
 ```
 
 In a call, they become separate arguments:
@@ -1269,7 +1270,7 @@ Add(Bad*)
 
 This happens before the called algorithm does anything, so not even `if` can skip a spread: with the same `Bad`, `if(false, Bad*, 0)` fails in the same way, while `if(false, Bad, 0)` is `0`, because `if` never evaluates an ordinary argument in the branch it does not choose.
 
-When another item follows a spread, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`: a star followed by an operand always multiplies, even when the operand is on the next line.
+When another item follows a spread, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`. A physical line-final star also announces multiplication, including at EOF or before a later declaration or closer; those endings report a missing operand. Spread requires a same-line explicit closure, as in `F(A*)`, `[A*]`, `A*, B` or `A*.F`.
 
 ### Unpacking an Argument
 
@@ -1727,7 +1728,7 @@ Scores.first
 Add a star to use the items of a result directly:
 
 ```
-[3, 1, 2].order*
+[3, 1, 2].order*, 997
 ```
 
 **Results:**
@@ -1735,6 +1736,7 @@ Add a star to use the items of a result directly:
 1
 2
 3
+997
 ```
 
 ### Callbacks Receive One Element
@@ -2072,6 +2074,8 @@ The last chapters rest on one idea: a value stays one value until you open it ex
 ---
 
 ## Deconstruction
+
+Deconstruction shares one right-hand-side calculation. After `a, b = 10, 20`, both `a` and `a()` select the first result of that shared calculation. An explicit target call does not run the right-hand side again; if it is the first access to any target, it starts the first calculation. This also holds for an effectful right-hand side such as `a, b = randomInt(1, 100), 20`: repeated `a()` calls reuse its draw. An ordinary property such as `A = randomInt(1, 100)` keeps its usual behavior: `A` reads the cached value and `A()` requests a fresh evaluation of A’s body.
 
 One definition can bind several names at once:
 
@@ -2649,7 +2653,7 @@ Each line of a program is an output row or a definition. On one line, items must
 1 2 3
 ```
 
-A line ends its expression. To continue an expression on the next line, end the line with an operator or a comma, keep a `(`, `[`, or `{` open, or start the next line with `.` to continue a dot chain:
+A complete expression ends at a newline by default. Incomplete syntax can continue: end the line with an operator or comma, or keep a delimiter open. A following line can also continue it with a designated leading token, such as `+`, an expression-list comma or `.`. The full token table is in [the physical-line rules](docs/design/language-rules/syntax.md#lexical-identity-and-physical-lines-q-65); comments, blank lines and indentation do not affect the choice:
 
 ```
 Total = 1 +
@@ -2668,11 +2672,11 @@ Total, Values.sum
 30
 ```
 
-Conversely, a new line never continues an expression that is already complete. `Add` followed by a line `(1, 2)` is two rows, not a call, so keep a call's opening parenthesis on the same line as its name; and `A` followed by a line `-1` is the two rows `A` and `-1`, not a subtraction. Each definition starts on its own line: `x = 1 y = 2` is an error.
+Grammar role has priority on the next line: a valid independent expression or declaration stays independent; otherwise ordinary continuation applies. Unary minus requires direct attachment: `10` then `-2` is two rows, but `10` then `- 2` is subtraction, and detached `- 2` without a left operand is a syntax error. Leading `* 2` likewise continues multiplication. `Add` followed by a line `(1, 2)` is two rows, not a call, so keep a call's opening parenthesis on the same line as its name; and `A` followed by a line `-1` is the two rows `A` and `-1`, not a subtraction. Each definition starts on its own line: `x = 1 y = 2` is an error. `P = 1` followed by `, 2` continues P's two-slot body, and `10` followed by `+ 2` is one addition. A continuation announces itself at the start of its line; the end of the preceding line alone does not always settle whether the expression is finished.
 
 ### Spread or Multiplication?
 
-A star after a value is a multiplication whenever an operand follows it, on the same line or on a later one (blank lines and comments in between change nothing). It is a spread only when nothing can follow: before a comma, a closing bracket, a new definition, or the end of the program. So when another item follows a spread, write a comma:
+A physical line-final star announces multiplication, attached or spaced. `7*` at the end of the program reports a missing operand; a following definition stays a definition and leaves the multiplication incomplete. Spread requires an explicit same-line boundary, as in `F(A*)`, `[A*]` or `A*, B`. Comments and blank lines do not close a spread. So when another output follows a spread, write a comma:
 
 ```
 A = 2
@@ -2689,7 +2693,7 @@ A* B
 6
 ```
 
-A star at the end of a line follows the same rule. When the next line of code begins with an operand rather than a new definition, the star is a multiplication and the expression continues on that line, with the usual operator precedence. This matters most at the end of a definition, because the row after it would become part of the definition. Close a definition that ends in a spread with parentheses (braces work too):
+A physical line-final star announces multiplication. When a valid operand follows, expression parsing continues with the usual operator precedence. A declaration, later-line closer or EOF instead leaves a missing operand; the declaration/closer keeps its owner. Close a definition that ends in spread with a same-line delimiter:
 
 ```
 A = (1, 2)
@@ -2700,7 +2704,7 @@ X
 
 **Result:** `(1, 2)`
 
-Without the parentheses, `X = A*` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. This is not an error: it is a valid multiplication, just not the one intended.
+Without the parentheses, `X = A*` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. This multiplication layout is not an error when an operand follows: it is a valid multiplication, just not the one intended.
 
 ### Common Mistakes
 
@@ -2711,7 +2715,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 - **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
-- **A star at the end of a line can continue onto the next line.** When the next line of code begins with an operand rather than a new definition, a line-final `*` is a multiplication and the expression continues there, with the usual operator precedence. End a spread row with a comma (`A*,`), and close a definition that ends in a spread with parentheses (`X = (A*)`) ([Spread or Multiplication?](#spread-or-multiplication)).
+- **A line-final `*` announces multiplication.** A valid operand continues with the usual operator precedence; EOF or a new definition leaves a missing operand. Close spread explicitly on the same line: `A*, B` or `X = (A*)` / `X = { A* }` ([Spread or Multiplication?](#spread-or-multiplication)).
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
 - **Parentheses compute, braces define.** `(n + 1)` is a value computed now; `{n + 1}` is an algorithm with the parameter `n`.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
@@ -2803,3 +2807,5 @@ Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderD
 | `div`, `mod` | Integer division and remainder |
 | `public` | Make a member available to `open` |
 | `open` | Use the public members of other algorithms without a prefix |
+
+Bare root-final spread (`Values*`) is no longer valid: EOF is not a spread delimiter. Use an explicitly closed receiver or a same-line comma followed by a real output slot; grouping into a capture or brace creates one value and changes root row structure.

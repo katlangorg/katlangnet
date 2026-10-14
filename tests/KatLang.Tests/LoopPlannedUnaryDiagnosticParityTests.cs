@@ -366,7 +366,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
             {
                 "chained double negation",
                 """
-                S(x) = - -x
+                S(x) = --x
                 repeat(S, 2, 3)
                 """,
                 "3"

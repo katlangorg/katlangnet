@@ -170,7 +170,7 @@ public class EvaluatorDefensiveBranchTests
     [Fact]
     public void SpreadOfAnOutputlessBlock_AgreesWithTheSurfaceSpelling()
     {
-        var parsed = Parser.Parse("A = {\n    Q = 1\n}\nA*");
+        var parsed = Parser.Parse("A = {\n    Q = 1\n}\nA*, 997");
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root));

@@ -392,7 +392,7 @@ public class EvaluatorExpressionListTests
     public void Eval_SlotBeforePostfixSequenceSpread_CreatesExpressionListSlots(string source)
     {
         var program = "A = 1\nB = 2, 3\n" + source;
-        AssertEvalCounted(program, 3, ResultFromAtoms(1, 2, 3));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(program, 3, ResultFromAtoms(1, 2, 3));
     }
 
     [Theory]
@@ -433,7 +433,7 @@ public class EvaluatorExpressionListTests
     public void Eval_CommaSlotsBeforePostfixSequenceSpread_PreserveCommaStructure(string source)
     {
         var program = "A = 1, 2\nB = 3\nC = 4\n" + source;
-        AssertEvalCounted(program, 3, Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3), Atom(4)]));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(program, 3, Result.FromItems([SequenceValue(Atom(1), Atom(2)), Atom(3), Atom(4)]));
     }
 
     [Theory]
@@ -447,7 +447,7 @@ public class EvaluatorExpressionListTests
     public void Eval_DefinitionSeparatedCommaSlotSpreadContribution_PreservesCommaStructure()
     {
         var program = "A = 1\nB = 2\nC = 3\n\nA\nP = 9\nB, C*";
-        AssertEvalCounted(program, 3, ResultFromAtoms(1, 2, 3));
+        EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel(program, 3, ResultFromAtoms(1, 2, 3));
     }
 
     /// <summary>

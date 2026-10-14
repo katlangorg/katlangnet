@@ -66,14 +66,15 @@ public enum StructuralRule
     /// observed call (fresh literal, tripwire body) into the literal prefix.</summary>
     InsertUnreachableClause,
 
-    /// <summary>KNOWN-DELTA: sole root row <c>P*</c> (supply n ≥ 2) becomes
-    /// <c>(P*)</c>. Capture reifies the supply into ONE value: raw structure
-    /// unchanged, emitted count becomes 1 (counted-matrix law).</summary>
+    /// <summary>KNOWN-DELTA: focused root row <c>P*</c> (supply n ≥ 2) becomes
+    /// <c>(P*)</c>, each beside the real root control. Capture reifies the
+    /// supply into ONE value: the full root gains a nested sequence and its
+    /// emitted count becomes 2 (one captured value plus the control).</summary>
     CaptureKnownDelta,
 
-    /// <summary>KNOWN-DELTA: sole root row <c>P</c> (a named multi-row producer,
-    /// value boundary, n = 1) becomes <c>P*</c>: raw unchanged, emitted count
-    /// becomes the producer's row count (counted-matrix law).</summary>
+    /// <summary>KNOWN-DELTA: focused root row <c>P</c> becomes <c>P*</c>, each
+    /// beside the real root control. Spread opens the producer's sequence
+    /// into root slots, so the full count becomes producer rows plus one.</summary>
     SpreadKnownDelta,
 
     /// <summary>KNOWN-ERROR: change a literal-only family call's argument to a
@@ -96,8 +97,9 @@ public abstract record ExpectedRelation
     /// <summary>Neutral raw + count + display all equal.</summary>
     public sealed record Equivalent : ExpectedRelation;
 
-    /// <summary>Raw structure identical; emitted count becomes exactly this.</summary>
-    public sealed record RawPreservedCountBecomes(int NewCount) : ExpectedRelation;
+    /// <summary>Both complete root observations are known from producer atoms
+    /// and the real control, including the boundary-induced nesting change.</summary>
+    public sealed record ExactRootDelta(string OriginalRaw, int OriginalCount, string NewRaw, int NewCount) : ExpectedRelation;
 
     /// <summary>ok → err with exactly this category.</summary>
     public sealed record BecomesRuntimeError(string Category) : ExpectedRelation;
@@ -108,7 +110,7 @@ public abstract record ExpectedRelation
     public override string ToString() => this switch
     {
         Equivalent => "exact semantic equivalence",
-        RawPreservedCountBecomes c => $"raw preserved, emitted count becomes {c.NewCount}",
+        ExactRootDelta c => $"known full root {c.OriginalRaw} n={c.OriginalCount} becomes {c.NewRaw} n={c.NewCount}",
         BecomesRuntimeError e => $"ok → err {e.Category}",
         BecomesFrontEndError => "ok → front-end rejection",
         _ => GetType().Name,
@@ -531,37 +533,39 @@ public static class StructuralTransforms
             }
         }
 
-        // ── Known-delta rules (sole-row focus programs) ─────────────────────
-        if (program.Root.Rows is [MExpr.Spread { Operand: MExpr.Ref pref }]
+        // ── Known-delta rules (one work row beside the real root control) ────
+        if (program.Root.Rows is [MExpr.Spread { Operand: MExpr.Ref pref }, MExpr.Atom control]
+            && control.Value == StructuralProgram.RootControl
             && FindValueDecl(program.Root, pref.Target) is { } producer
             && producer.Rows.Count >= 2
             && producer.Rows.All(r => r is MExpr.Atom))
         {
             candidates.Add(new TransformCandidate(
                 StructuralRule.CaptureKnownDelta,
-                $"sole root row P* (supply {producer.Rows.Count}) becomes (P*): capture reifies the supply into ONE value "
-                + "— raw unchanged, emitted count 1",
+                $"P*, 997 (supply {producer.Rows.Count} plus control) becomes (P*), 997: capture reifies the supply "
+                + "into ONE nested value, so the full root emits 2 slots",
                 program with
                 {
-                    Root = new MScope(program.Root.Decls, [new MExpr.Group([new MExpr.Spread(new MExpr.Ref(pref.Target))])]),
+                    Root = new MScope(program.Root.Decls, [new MExpr.Group([new MExpr.Spread(new MExpr.Ref(pref.Target))]), control]),
                 },
-                new ExpectedRelation.RawPreservedCountBecomes(1)));
+                RootBoundaryDelta(producer, capturing: true)));
         }
 
-        if (program.Root.Rows is [MExpr.Ref soleRef]
+        if (program.Root.Rows is [MExpr.Ref soleRef, MExpr.Atom refControl]
+            && refControl.Value == StructuralProgram.RootControl
             && FindValueDecl(program.Root, soleRef.Target) is { } refProducer
             && refProducer.Rows.Count >= 2
             && refProducer.Rows.All(r => r is MExpr.Atom))
         {
             candidates.Add(new TransformCandidate(
                 StructuralRule.SpreadKnownDelta,
-                $"sole root row P (value boundary, n=1) becomes P*: spread re-supplies the {refProducer.Rows.Count} items "
-                + "— raw unchanged, emitted count becomes the supply count",
+                $"P, 997 (one sequence value plus control) becomes P*, 997: spread re-supplies the {refProducer.Rows.Count} items "
+                + "as root slots beside the control",
                 program with
                 {
-                    Root = new MScope(program.Root.Decls, [new MExpr.Spread(new MExpr.Ref(soleRef.Target))]),
+                    Root = new MScope(program.Root.Decls, [new MExpr.Spread(new MExpr.Ref(soleRef.Target)), refControl]),
                 },
-                new ExpectedRelation.RawPreservedCountBecomes(refProducer.Rows.Count)));
+                RootBoundaryDelta(refProducer, capturing: false)));
         }
 
         // ── RemoveRequiredBinding ───────────────────────────────────────────
@@ -603,6 +607,21 @@ public static class StructuralTransforms
 
     private static MDecl.Value? FindValueDecl(MScope root, Sym symbol)
         => root.Decls.OfType<MDecl.Value>().FirstOrDefault(v => v.Symbol == symbol);
+
+    // These atoms are the generator's known literals, never evaluator output.
+    // A supply beside 997 has N+1 root slots; its capture beside 997 has two
+    // slots, the first holding the intact N-item sequence.
+    private static ExpectedRelation.ExactRootDelta RootBoundaryDelta(MDecl.Value producer, bool capturing)
+    {
+        var atoms = string.Join(", ", producer.Rows.Cast<MExpr.Atom>()
+            .Select(a => a.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var control = StructuralProgram.RootControl.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var spreadRaw = $"S[{atoms}, {control}]";
+        var captureRaw = $"S[S[{atoms}], {control}]";
+        return capturing
+            ? new(spreadRaw, producer.Rows.Count + 1, captureRaw, 2)
+            : new(captureRaw, 2, spreadRaw, producer.Rows.Count + 1);
+    }
 
     private static IReadOnlyList<(MScope Scope, MDecl Decl)> CollectRootDecls(MScope root)
         => root.Decls.Select(d => (root, d)).ToList();

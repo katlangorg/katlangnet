@@ -8715,84 +8715,30 @@ infixr:75 " ^ " => fun a b => Expr.binary BinaryOp.pow a b
 -- load elaboration (compile-time module loading)
 --------------------------------------------------------------------------------
 
-/-- Elaboration errors for load directives (distinct from runtime EvalM errors).
-    These are reported during the elaboration pass, before evaluation. -/
-inductive LoadError where
-  | domainNotAllowed : String -> LoadError           -- host not in allowlist
-  | invalidUrl       : String -> LoadError           -- malformed URL
-  | notHttps         : String -> LoadError           -- non-HTTPS scheme
-  | urlNotLiteral    : LoadError                     -- non-constant URL expression
-  | runtimePosition  : LoadError                     -- load in non-allowed position
-  | cycleDetected    : List String -> LoadError      -- URL cycle stack
-  | fetchFailed      : String -> String -> LoadError -- url, reason
-  | sizeLimitExceeded : String -> Nat -> LoadError   -- url, size
-  | parseError       : String -> LoadError           -- url with parse errors
-  deriving Repr
+/- Descriptive C# load boundary (Q-63, owner decision 2026-10-13).
 
-/-- Context for the load elaboration pass. Tracks:
-    - allowedHosts: set of permitted domain names
-    - cache: previously loaded URLs → their elaborated algorithms
-    - inProgress: URLs currently being loaded (for cycle detection)
-    - fetch: abstract code fetcher URL → source text -/
-structure LoadCtx where
-  allowedHosts : List String
-  cache        : Assoc String Algorithm
-  inProgress   : List String
-  fetch        : String -> Option String   -- abstract host acquisition; C# awaits DownloadCode before this model
+  Source acquisition and load elaboration are implemented by the C# frontend and
+  hosting infrastructure. The current Lean evaluator supplies no complete executable
+  load-elaboration model; this text is descriptive, not a proof of C# loading.
 
-/-- Positions where load is allowed (compile-time only).
-    load is a directive, not a runtime expression. -/
-inductive LoadPosition where
-  | propertyDef : LoadPosition   -- RHS of Name = load('url')
-  | openList    : LoadPosition   -- inside open load('url') or open target1, target2
-  deriving Repr, BEq
+  Property/clause definition bodies and open targets enter an allowed load context.
+  Transparent nested blocks, capture/list items, spreads, Grace and argumentless dot
+  receivers inherit it. Ordinary call arguments, operator operands, selection,
+  interpolation holes and root output rows are runtime positions and reject load.
+  C# ModuleLoader owns literal/URL admission, transport, canonical module identity,
+  caching and cycles. Deferred regions retain directives until materialization;
+  unavailable or refused directives remain in an unevaluable analysis tree.
 
-/- **load elaboration judgment**
-
-  The elaboration pass transforms surface `Call(Resolve("load"), ...)` nodes into
-  `Expr.algorithmExpr (parseModule (fetch url))` nodes.  `load` is NOT a core Expr
-  constructor — it exists only as surface syntax represented via
-  `call (resolve "load") (alg with output = [stringLiteral url])`.
-  The elaborator extracts the URL from the stringLiteral argument and enforces:
-
-  2. **Allowed position**: load may only appear in:
-     - Property definition RHS: `Lib = load('https://katlang.org/lib.kat')`
-     - Open declarations: `open load('https://katlang.org/lib.kat')`
-     load in runtime positions (binary expressions, call arguments, if/while
-     branches, interpolation holes, etc.) is rejected.
-
-  3. **Domain allowlist**: The URL's host must be in `LoadCtx.allowedHosts`
-     (default: ["katlang.org"]). Subdomains are permitted.
-
-  4. **HTTPS only**: Only `https://` URLs are accepted.
-
-  5. **Cycle detection**: If URL is in `LoadCtx.inProgress`, elaboration fails
-     with `cycleDetected`.
-
-  6. **Caching**: If URL is in `LoadCtx.cache`, the cached algorithm is reused.
-     Same URL → same content → same AST (determinism within a run).
-
-  7. **Size limit**: Fetched source must not exceed a reasonable limit.
-
-  **Post-condition (invariant)**: After elaboration completes successfully,
-  the resulting AST satisfies `postElabInvariant` / `postElabInvariantAlg`,
-  which guarantees:
-    1. Runtime `Expr.stringLiteral` nodes may remain as ordinary first-class values.
-    2. No unresolved load calls remain (i.e., no `call (resolve "load") _` nodes).
-  All load directives have been replaced with `Expr.algorithmExpr` containing the
-  parsed and elaborated remote algorithm. The evaluator never sees unresolved
-  load calls.
-
-  Formally:
-    elaborate(call(resolve("load"), [stringLiteral url])) = block(parseModule(fetch(url)))
-    ∀ e ∈ elaborated AST, e ≠ Expr.call (Expr.resolve "load") _
+  The executable structural predicates below check the post-elaboration core AST.
+  They neither execute acquisition nor prove the C# loader, deferred-region schedule
+  or refusal policy. Successful materialized regions contain no unresolved load.
 -/
 mutual
 /-- Post-elaboration invariant: returns true iff the expression tree contains
     no unresolved load calls (`call (resolve "load") _`) and every dot edge
     satisfies the elaborated dot-edge contract. Runtime `Expr.stringLiteral`
     nodes are allowed as ordinary first-class values.
-    An AST satisfying this predicate is ready for semantic evaluation. -/
+    This structural predicate is not a proof of C# load elaboration or hosting. -/
 partial def postElabInvariant : Expr -> Bool
   | .stringLiteral _ => true
   -- Holes are ordinary expressions: a `load` call or an incoherent dot edge inside one

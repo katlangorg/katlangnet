@@ -17,6 +17,16 @@ public class PostfixSelectionSyntaxTests
     private static Expr SingleRow(string source)
         => Assert.Single(SourceProvenance.ParseSyntaxValidRoot(source).Output);
 
+    // A fragment can end in spread only inside an explicitly closed slot.
+    // The real control remains in the parsed program and is asserted here.
+    private static Expr CommaClosedSlot(string fragment)
+    {
+        var root = SourceProvenance.ParseSyntaxValidRoot(fragment + ", 997");
+        Assert.Equal(2, root.Output.Count);
+        Assert.Equal(997m, Assert.IsType<Expr.Num>(root.Output[1]).Value);
+        return root.Output[0];
+    }
+
     private static string Shape(Expr expr) => expr switch
     {
         Expr.Index index => $"sel({Shape(index.Target)}; {string.Join(", ", index.Selectors.Select(Shape))})",
@@ -107,7 +117,7 @@ public class PostfixSelectionSyntaxTests
     [InlineData("(A*)[0]", "sel((A*); 0)")]
     [InlineData("A[0]*", "sel(A; 0)*")]
     public void SelectionComposes_AsAPostfixForm(string row, string expected)
-        => Assert.Equal(expected, Shape(SingleRow(row)));
+        => Assert.Equal(expected, Shape(CommaClosedSlot(row)));
 
     [Theory]
     [InlineData("A*[0]")]

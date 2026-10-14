@@ -145,14 +145,14 @@ public class ConcurrencyDifferentialTests
     /// A pure differential cannot see a defect that skews baseline and
     /// concurrent observation identically. These hand-derived anchors pin the
     /// sentinels' absolute counted meaning (counted-matrix rules): MultiOut
-    /// emits 2+1+1+1 = 5 rows, ZeroOut emits 0, the failure sentinels fail,
+    /// emits 2+1+1+1 = 5 rows, ZeroOut contributes zero spread items beside its one control, the failure sentinels fail,
     /// and the heavy loop is legal without a step budget but exceeds TinySteps.
     /// </summary>
     [Fact]
     public void PowerAnchors_SentinelBaselinesKeepTheirHandDerivedMeaning()
     {
         Assert.Contains(" n=5 ", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.MultiOut), StringComparison.Ordinal);
-        Assert.Contains(" n=0 ", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.ZeroOut), StringComparison.Ordinal);
+        Assert.Contains("ok raw=997 n=1 ", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.ZeroOut), StringComparison.Ordinal);
         Assert.StartsWith("err", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.FailingIndex), StringComparison.Ordinal);
         Assert.StartsWith("err", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.RecursionRunaway), StringComparison.Ordinal);
         Assert.StartsWith("err", ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, ConcurrencyCorpus.HeavyLoop, ConcurrencyCorpus.TinySteps), StringComparison.Ordinal);

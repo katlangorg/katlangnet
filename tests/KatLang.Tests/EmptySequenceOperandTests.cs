@@ -334,7 +334,7 @@ public class EmptySequenceOperandTests
     public void OrdinaryUnaryOperators_StillCompute()
     {
         AssertAtom(-7, "-7");
-        AssertAtom(7, "- -7");
+        AssertAtom(7, "--7");
         AssertAtom(0, "-0");
         AssertBool(true, "not false");
         AssertBool(false, "not true");

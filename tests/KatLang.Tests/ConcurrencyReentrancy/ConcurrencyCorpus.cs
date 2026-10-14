@@ -79,13 +79,13 @@ public static class ConcurrencyCorpus
     /// matrix / lifetime campaigns.</summary>
     public const string MultiOut = "P0 = ()\nP1 = 7\nP2 = 10, 20\nItems(*i) = i.count\nP2*, P1, (P0, P1), Items(P2*)";
 
-    /// <summary>Zero visible output (spread of the empty sequence).</summary>
-    public const string ZeroOut = "Z = ()\nZ*";
+    /// <summary>Empty spread contributes zero items beside the explicit 997 control.</summary>
+    public const string ZeroOut = "Z = ()\nZ*, 997";
 
     public const string Scalar = "6 * 7";
 
     /// <summary>Capture/spread interplay with index selection.</summary>
-    public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S[1])*";
+    public const string CaptureSpread = "S = 1, (2, 3), 4\nS*, (S[1])*, 997";
 
     /// <summary>Per-call brace scopes: each call mints fresh scope contexts
     /// (Evaluator.AsScopeCtx), each carrying its own owner.</summary>
@@ -220,7 +220,7 @@ public static class ConcurrencyCorpus
         {
             Id = "indep/zero-vs-multi-counted",
             Scenario = ConcurrencyScenario.IndependentRun,
-            Invariant = "A zero-output run beside a multi-output run keeps both emitted counts exact (root output accumulation is per-run state).",
+            Invariant = "An empty-spread contribution beside a multi-output run keeps both emitted counts exact (root output accumulation is per-run state).",
             ProgramA = ZeroOut, EntryA = EvalEntryPoint.RunCounted,
             ProgramB = MultiOut, EntryB = EvalEntryPoint.RunCounted,
             ExpectedClassA = "ok", ExpectedClassB = "ok",
@@ -279,7 +279,7 @@ public static class ConcurrencyCorpus
         {
             Id = "cross/counted-vs-engine-zero",
             Scenario = ConcurrencyScenario.CrossEntryPoint,
-            Invariant = "Zero-output semantics survive cross-entry-point concurrency (counted n=0 vs engine zero-row display).",
+            Invariant = "Empty spread contributes no rows beside the explicit control across counted and engine entry points.",
             ProgramA = ZeroOut, EntryA = EvalEntryPoint.RunCounted,
             ProgramB = ZeroOut, EntryB = EvalEntryPoint.EngineRun,
             ExpectedClassA = "ok", ExpectedClassB = "engine ok",
@@ -314,7 +314,7 @@ public static class ConcurrencyCorpus
         {
             Id = "same/zero-engine",
             Scenario = ConcurrencyScenario.SameProgram,
-            Invariant = "The same zero-output source through two simultaneous engine runs.",
+            Invariant = "The same empty-spread source with an explicit control through two simultaneous engine runs.",
             ProgramA = ZeroOut, EntryA = EvalEntryPoint.EngineRun,
             ProgramB = ZeroOut, EntryB = EvalEntryPoint.EngineRun,
         },

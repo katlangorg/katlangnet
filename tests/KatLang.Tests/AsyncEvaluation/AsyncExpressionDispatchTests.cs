@@ -258,7 +258,7 @@ public class AsyncExpressionDispatchTests
         { "Comparison.LaterLink", "P = 5\n1 < 2 < P" },
         { "Index.Target", "P = (1, 2)\nP[0]" },
         { "Index.Selector", "P = 1\n(7, 8)[P]" },
-        { "SequenceSpread.Operand", "P = (1, 2)\nP*" },
+        { "SequenceSpread.Operand", "P = (1, 2)\nP*, 997" },
         { "ListLiteral.Item", "P = 5\n[P, 2]" },
         { "Capture.Row", "P = 5\n(P, 2)" },
         { "AlgorithmExpr.OutputRow", "P = 5\n{P}" },

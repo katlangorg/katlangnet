@@ -345,7 +345,7 @@ public class TutorialSemanticContractTests
         Assert.Equal("(1, 1)", captured.ToDisplayString());
 
         // ... and only the explicit spread opens it into rows.
-        Assert.Equal(2, RunSuccess("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*").OutputRows.Count);
+        Assert.Equal(3, RunSuccess("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*, 997").OutputRows.Count);
     }
 
     // ── "Formulas That Use Formulas": forwarded inputs follow the formula's own names and are handed on by name ──

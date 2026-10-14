@@ -16,6 +16,32 @@ namespace KatLang.Tests;
 /// </summary>
 internal static class EvaluatorTestSupport
 {
+    // Q-65 source fixtures: terminal bare spread is invalid. Supply observers
+    // explicitly close that fragment with one real output sentinel. Expectations
+    // include its known slot; no recovery AST or evaluator result is rewritten.
+    internal static string CloseRootSpreadWithSentinel(string rootSpreadFragment)
+        => rootSpreadFragment.Insert(rootSpreadFragment.LastIndexOf('*') + 1, ", 997");
+
+    internal static void AssertRootSpreadCountedWithSentinel(string source, int emitted, Result expected)
+    {
+        IReadOnlyList<Result> slots = emitted == 0 ? [] : emitted == 1 ? [expected]
+            : Assert.IsType<Result.SequenceValue>(expected).Items;
+        AssertEvalCounted(CloseRootSpreadWithSentinel(source), emitted + 1,
+            Result.FromItems([.. slots, Atom(997)]));
+    }
+
+    internal static void AssertRootSpreadAtomsWithSentinel(string source, params Decimal128[] expected)
+        => AssertEval(CloseRootSpreadWithSentinel(source), [.. expected, 997]);
+
+    internal static void AssertRootSpreadLoopAtomsWithSentinel(string source, params Decimal128[] expected)
+        => AssertEvalLoopModes(CloseRootSpreadWithSentinel(source), [.. expected, 997]);
+
+    internal static void AssertRootSpreadResultsWithSentinel(string source, params Result[] expected)
+        => AssertEvalResults(CloseRootSpreadWithSentinel(source), [.. expected, Atom(997)]);
+
+    internal static void AssertRootSpreadEmptyWithSentinel(string source)
+        => AssertRootSpreadCountedWithSentinel(source, 0, Result.FromItems([]));
+
     // Must match the constant the Math prelude serves (Decimal128's own
     // correctly-rounded 34-digit value).
     internal static readonly Decimal128 KatPi = Decimal128.Pi;

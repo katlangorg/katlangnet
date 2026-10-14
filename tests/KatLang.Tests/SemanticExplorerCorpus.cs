@@ -223,7 +223,7 @@ public static class SemanticExplorerCorpus
         new("seqWrapSolo",
             v => $"({v.Source})"),
         new("spreadRoot",
-            v => $"{v.Source}*"),
+            v => $"{v.Source}*, 997"),
         new("spreadInSeq",
             v => $"({v.Source}*, 99)"),
         new("count",
@@ -313,7 +313,7 @@ public static class SemanticExplorerCorpus
         // and capture receivers across every corpus value (the hand-written
         // stackedSpread* CoreTests guards pin the law on selected values only).
         new("spreadRootStacked",
-            v => $"{v.Source}**"),
+            v => $"{v.Source}**, 997"),
         new("collectingStacked",
             v => $"F(*a) = a\nF({v.Source}**)"),
         new("captureStacked",
@@ -430,7 +430,7 @@ public static class SemanticExplorerCorpus
         Special("spreadWithSiblingSeqLiteral", "x = (1, 2)\n(x*, 99)"),
         Special("spreadEmptyBetween", "(1*, (), 2*)"),
         Special("rootSpreadExtra", "A = (1, 2)\nA*, 99"),
-        Special("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*"),
+        Special("spreadOfSpreadSeqLiteral", "A = (1, 2)\n((A*, 99))*, 997"),
         Special("eqSpreadSeqLiteral", "P = (1, 2)\n(P*, 99) == (1, 2, 99)"),
         Special("loopSpreadHistoryFlat",
             "Step((*history), previous) = (history*, previous + 1), previous + 1\nStep.repeat(2, (1, 2), 2)[0]"),
@@ -514,7 +514,7 @@ public static class SemanticExplorerCorpus
         // typeMismatch (callable-shaped is the zero-argument law's verdict, not "declares
         // parameters").
         Special("collectorZeroArgumentCallableFailureIsItsOwn", "Bad(*xs) = 1 / 0\nColl(*ys) = ys\nColl(Bad)"),
-        Special("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*"),
+        Special("listInSeqSpreadKeepsList", "A = [1, 2]\n(A, 9)*, 997"),
         Special("listFixedCallBoundary", "F(a, b) = a\nF([1, 2], 3)"),
         Special("listCollectingSpreadCall", "F(*a) = a\nA = [1, 2]\nF(A*, 9)"),
         // Spread of a DIRECT written block whose output is missing: the
@@ -524,14 +524,14 @@ public static class SemanticExplorerCorpus
         // `EvalSequenceSpreadOperandItems`). Pinned as the spread-specific
         // error at every spread position, identical to the resolved-name
         // spelling (T4-2 — this arm was previously uncovered).
-        Special("spreadNoOutputBlockRoot", "{A = 1}*"),
+        Special("spreadNoOutputBlockRoot", "{A = 1}*, 997"),
         Special("spreadNoOutputBlockList", "[{A = 1}*]"),
         Special("spreadNoOutputBlockCallArg", "F(a) = a\nF({A = 1}*)"),
-        Special("spreadNoOutputResolved", "X = {A = 1}\nX*"),
+        Special("spreadNoOutputResolved", "X = {A = 1}\nX*, 997"),
         // C#-only parse-level cases (no comparable Lean program).
         Special("trailingComma", "(3,)",
             "A trailing comma is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
-        Special("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*",
+        Special("spreadAsBinaryOperand", "A = (1, 2)\nA* == A*, 997",
             "A spread used as a binary operand is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
         Special("semicolonSeparator", "1 ; 2",
             "Semicolon separation is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
@@ -583,7 +583,7 @@ public static class SemanticExplorerCorpus
         // The loop cardinality law (Q-24 + Q-26, October 2026): patterns bind, rows produce, `*` opens.
         Special("loopResultIsOneRow", "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1)"),
         Special("loopResultBesideAnotherRow", "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1), 7"),
-        Special("loopResultSpreadOpensIt", "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1)*"),
+        Special("loopResultSpreadOpensIt", "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1)*, 997"),
         Special("loopZeroSlotResult", "Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9"),
         Special("repeatedNameStepSpreadRowIsTwoSlots", "Dup(x, x) = { (x + 1, x + 1)* }\nDup.repeat(2, 1, 1)"),
         Special("repeatedNameStepDivergingRowsRebindFails", "Dup(x, x) = { x + 1, x + 2 }\nDup.repeat(2, 1, 1)"),

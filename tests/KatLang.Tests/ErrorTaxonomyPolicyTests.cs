@@ -355,7 +355,7 @@ public class ErrorTaxonomyPolicyTests
         "F(x) = x\nF(1, 2)", "Add(x, y) = x + y\nAdd((1, 2))", "count()", "count([1], [2])", "range(1)",
         "H(x, *rest) = x\nH()", "S(a, b) = a, b\nrepeat(S, 1, 1)", "P((a, b)) = a\nP((1, 2, 3))",
         "a, b = 1, 2, 3\na",
-        "while(W, ())\nW(x) = x*", "Same(x, x) = x\nSame(4, 5)", "5.string(1)",
+        "while(W, ())\nW(x) = { x* }", "Same(x, x) = x\nSame(4, 5)", "5.string(1)",
         "F(g) = g\nInc(x) = x + 1\nF(Inc)",
         // the clause-family supply cardinality witness the investigation's mutation sweep found missing
         "F(0) = 0\nF(n) = n\nF(1, 2)",
@@ -408,7 +408,7 @@ public class ErrorTaxonomyPolicyTests
     /// innermost variant stays <c>BadArity</c>, NEED-04 and the loop-output rule unchanged).</summary>
     [Theory]
     [InlineData("Same(x, x) = x\nSame(4, 5)", "repeated parameter 'x' requires equal arguments: Bad arity")]
-    [InlineData("while(W, ())\nW(x) = x*", "a while step must output at least its continuation flag: Bad arity")]
+    [InlineData("while(W, ())\nW(x) = { x* }", "a while step must output at least its continuation flag: Bad arity")]
     public void CardinalityVerdicts_NameTheirContract(string source, string message)
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
