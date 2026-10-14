@@ -1408,10 +1408,10 @@ public static partial class Evaluator
             emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
         }
 
-        if (ReserveSequenceCaptureAtRows(reserveCtx, results.Count, rows) is { } capturedLimitError)
-            return capturedLimitError;
+        var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, rows);
+        if (capturedR.IsError) return capturedR.Error;
 
-        var counted = new CountedResult(CombineOutputSlots(results), emittedCount);
+        var counted = new CountedResult(capturedR.Value, emittedCount);
         return EvalResult<PreparedAlgorithmOutput>.Ok(new(counted, results));
     }
 
@@ -1584,7 +1584,7 @@ public static partial class Evaluator
                 await EvalExplicitSequenceValueRowSlotsAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (nestedItemsR.IsError) return nestedItemsR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
+            return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, captureBody);
         }
 
         if (expr is Expr.AlgorithmExpr(var algorithm))
@@ -1599,7 +1599,7 @@ public static partial class Evaluator
                     await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false));
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
-                return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
+                return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, wired.Output);
             }
         }
 

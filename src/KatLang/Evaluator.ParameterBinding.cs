@@ -337,8 +337,9 @@ public static partial class Evaluator
         // A nested capture element (a multi-slot group `((1, 2), 3)`, a lone
         // spread group `(A*)`, or a host-built single-row capture — the parser
         // writes `(A)` as `A`) materializes exactly one element, combined with
-        // the same shallow singleton-erasing rule as ordinary capture
-        // evaluation (CombineOutputSlots): a lone row IS its already-evaluated
+        // the same shallow singleton-erasing rule, and reserved by the same owner
+        // (MakeCheckedSequenceCaptureAtRows, through the MakeCheckedUnfoldedSlot
+        // leaf), as ordinary capture evaluation: a lone row IS its already-evaluated
         // value and an all-spread-empty group is `()` — never a
         // literal-unwritable orphan such as `(5)`. This is the same value
         // EvalCounted produces for the node, unfolded one level so nested
@@ -359,7 +360,7 @@ public static partial class Evaluator
                 expr, captureBody, EvalExplicitSequenceValueRowSlots(captureBody, ctx, valEnv));
             if (nestedItemsR.IsError) return nestedItemsR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
+            return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, captureBody);
         }
 
         if (expr is Expr.AlgorithmExpr(var algorithm))
@@ -375,7 +376,7 @@ public static partial class Evaluator
                     expr, wired.Output, EvalExplicitSequenceValueItems(wired, ctx, valEnv));
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
-                return EvalResult<IReadOnlyList<Result>>.Ok([CombineOutputSlots(nestedItemsR.Value)]);
+                return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, wired.Output);
             }
         }
 

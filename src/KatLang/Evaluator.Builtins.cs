@@ -49,8 +49,8 @@ public static partial class Evaluator
     /// funnel that calls this sits on every call-recursion level, and an eager span copy
     /// (a 20-byte value) per level measurably fattened that frame (frame-size discipline).
     /// </summary>
-    private static EvalError? ReserveSequenceCaptureAtRows(EvalCtx ctx, int slotCount, IReadOnlyList<Expr> rows)
-        => slotCount >= 2 && ctx.Budget.TryReserveCollection(slotCount) is { } error
+    private static EvalError? ReserveSequenceCaptureAtRows(EvaluationBudget budget, int slotCount, IReadOnlyList<Expr> rows)
+        => slotCount >= 2 && budget.TryReserveCollection(slotCount) is { } error
             ? AtFirstSpanIfMissing(error, rows)
             : null;
 
@@ -72,6 +72,43 @@ public static partial class Evaluator
         => ReserveSequenceCapture(ctx, items.Count, span) is { } error
             ? error
             : EvalResult<Result>.Ok(CombineOutputSlots(items));
+
+    /// <summary>
+    /// Materializes a completed output-slot supply, ordinary or unfolded as a nested
+    /// list element. Every sequence owns its immediate-item reservation exactly once;
+    /// its resulting value subsequently occupies one parent slot. Call only after all
+    /// rows succeed. Preserve the ordinary row-positioned refusal and lazy span read.
+    /// Takes the run's budget, not the context: its callers sit on recursive frames,
+    /// and a by-value <see cref="EvalCtx"/> argument costs each call site a context copy.
+    /// </summary>
+    private static EvalResult<Result> MakeCheckedSequenceCaptureAtRows(
+        EvaluationBudget budget,
+        IReadOnlyList<Result> items,
+        IReadOnlyList<Expr> rows)
+        => ReserveSequenceCaptureAtRows(budget, items.Count, rows) is { } error
+            ? error
+            : EvalResult<Result>.Ok(CombineOutputSlots(items));
+
+    /// <summary>
+    /// The unfolded nested list element's own materialization (a written capture or a
+    /// plain block; <see cref="EvalExplicitSequenceValueExprSlots"/> and its async twin):
+    /// <see cref="MakeCheckedSequenceCaptureAtRows"/> over the element's completed
+    /// supply, positioned by the rule the ordinary dispatch applies to the same node, and
+    /// returned as the element's ONE slot. A leaf frame: the recursive written-slot frames
+    /// of both twins hold none of its temporaries (frame-size discipline).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<IReadOnlyList<Result>> MakeCheckedUnfoldedSlot(
+        EvaluationBudget budget,
+        IReadOnlyList<Result> items,
+        Expr expr,
+        IReadOnlyList<Expr> rows)
+    {
+        var capturedR = WithPreferredSpanOf(expr, rows, MakeCheckedSequenceCaptureAtRows(budget, items, rows));
+        return capturedR.IsError
+            ? capturedR.Error
+            : EvalResult<IReadOnlyList<Result>>.Ok([capturedR.Value]);
+    }
 
     /// <summary>
     /// The completed <c>while</c>/<c>repeat</c> result (LOOP-07, Q-26 decided October 2026):
