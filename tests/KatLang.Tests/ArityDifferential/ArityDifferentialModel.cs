@@ -185,7 +185,9 @@ public static class ReceiverLaws
         [ReceiverLaw.SPREAD_CONTRIBUTES_ITEMS] =
             "CoreArityAlgebra: items (spread : Value -> Supply); KatLangArityLaws: spreadItems_sequenceValue, spreadItems_listValue, spreadItems_empty_list",
         [ReceiverLaw.REPEATED_SPREAD_CAPTURE_COMPOSITION] =
-            "CoreArityAlgebraProofs: repeated_spread_cardinality, repeated_spread_fixed_iff, repeated_spread_multi_item_fixed_point, repeated_spread_not_recursive_flattening; CoreTests: stackedSpreadAgreesWithGroupedCompositionalForm, stackedSpreadMultiItemFixedPoint, stackedSpreadMixedSupplyStaysUnopened",
+            "CoreArityAlgebraProofs: repeated_spread_cardinality, repeated_spread_fixed_iff, repeated_spread_multi_item_fixed_point, repeated_spread_not_recursive_flattening; "
+            + "KatLangArityLaws: reopen_spread_opens_only_a_lone_item, reopen_spread_fixed_iff, reopen_spread_is_not_recursive_flattening, grouped_spread_layer_is_reopen, combineOutputSlots_eq_capture_iff_canonical (production, over the total combineOutputSlots / countedTopLevelValues / reopenSpreadItems / reopenSpreadLayers / spreadSupplyResult); "
+            + "CoreTests: stackedSpreadAgreesWithGroupedCompositionalForm, stackedSpreadMultiItemFixedPoint, stackedSpreadMixedSupplyStaysUnopened, RepeatedSpread",
         [ReceiverLaw.CAPTURE_CANONICALIZES_SUPPLY] =
             "CoreArityAlgebra: capture; CoreArityAlgebraProofs: capture_singleton, capture_items_of_canonical_non_list, capture_items_of_list; KatLangArityLaws: capture_spreadItems_of_canonical_non_list, capture_spreadItems_of_list",
         [ReceiverLaw.COLLECT_PRESERVES_EXACT_SUPPLY] =

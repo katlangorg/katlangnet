@@ -304,6 +304,22 @@ The theorem family in `CoreArityAlgebraProofs.lean`:
   `repeated_spread_mixed_not_recursive_flattening` — concrete pins mirroring
   the authoritative `stackedSpread*` guards (below).
 
+Over the authoritative `Result` model, `KatLangArityLaws.lean` § Repeated spread
+over the real model proves the same family for the TOTAL production helpers the
+evaluator calls — `reopenSpreadItems` (one further layer, `spread(capture(items))`)
+and `reopenSpreadLayers` (one step per extra written star):
+`reopen_spread_opens_only_a_lone_item` (the cardinality split),
+`reopen_spread_zero`, `reopen_spread_singleton`,
+`reopen_spread_fixed_point_of_non_singleton`, `reopen_spread_fixed_iff` (the
+algebra's lone atom generalized to the real model's non-structures) and
+`reopen_spread_is_not_recursive_flattening`; `spreadItems_canonical_of_canonical`
+is the real-model `canonicalSupply_items_of_canonical`; and the grouped spelling
+`(value*)*` is linked through the shallow `combineOutputSlots` of its capture arm
+(`grouped_spread_layer_is_reopen`, `stacked_spread_layer_is_grouped_layer`).
+That the `partial` evaluator routes both spellings through those helpers and
+evaluates the operand once is guard-checked (CoreTests `RepeatedSpread`); the
+equation `value** ≡ (value*)*` over evaluation itself has no theorem (Q-66).
+
 ## Collecting binding collects an exact list
 
 Python's `*rest` binds to a fresh `list`, a container type distinct from the
@@ -379,11 +395,13 @@ section laws such as `sequenceItems? (Val.seq xs) = some xs` and to model
 pre-normalization structure. Observable KatLang sequence values, by contrast,
 are **canonical**: every construction/capture boundary that stores or returns a
 newly built sequence value goes through `capture` / `normalize`. In the full
-model, capture and written-construction sites apply the deep `Result.normalize`,
-while output boundaries combine with the *shallow* singleton-erasing
-`combineOutputSlots`; the two agree because the
-combined items are themselves already canonical (item internals are never
-renormalized). A literal-unwritable singleton orphan such as a stored `(5)` is
+model, the spread expression's value and its reopening layers, the loop result
+and the internal join apply the deep `Result.normalize`, while output rows, the
+written `.capture` arm, written-slot reification and selection combine with the
+*shallow* singleton-erasing `combineOutputSlots`; the two agree exactly on
+canonical items (`combineOutputSlots_eq_capture_iff_canonical` over `Result`), and the
+combined items are canonical by the runtime invariant, which is assumed, not
+proved of the evaluator (item internals are never renormalized). A literal-unwritable singleton orphan such as a stored `(5)` is
 therefore never observable (`normalize_idempotent`, `orphanFree_normalize`,
 `capture_canonical`, `capture_orphanFree`). Exact list values carry no orphan
 rule at all: `[x]` is literal-writable, so `orphanFree` checks only their
@@ -514,7 +532,10 @@ binders were retired on 2026-10-12; production collectors materialize through
   `stackedSpreadMultiItemFixedPoint`, and
   `stackedSpreadMixedSupplyStaysUnopened` in `CoreTests/ListValues.lean` (CoreTests target) pin the same
   behavior end to end through the real spread evaluation path, including
-  the direct `A**` = `(A*)*` equality on the multi-item fixed point.
+  the direct `A**` = `(A*)*` equality on the multi-item fixed point. The
+  re-capture-and-spread step is the total `reopenSpreadItems`, whose laws are
+  theorems over `Result` (see the repeated-spread section above), and CoreTests
+  `RepeatedSpread` checks every one-to-three-star spelling against it.
 
 See the provenance table in the file header for the exact `KatLang.lean`
 correspondences, and `KatLangArityLaws.lean` for the theorems over the real `Result` model

@@ -1320,6 +1320,85 @@ public class StarSyntaxTests
         Assert.Equal(baseline, stackedForm);
     }
 
+    [Theory]
+    // Visible empties are items of a multi-item supply, which every further
+    // layer re-supplies exactly.
+    [InlineData("[(), []]", "[(), []]", "[(), []]", "[(), []]")]
+    // A LONE visible empty is one item where it is first supplied and opens
+    // to zero items at the next star: the capture boundary erases the
+    // singleton grouping (`[[()]]` supplies its lone `()` one star later).
+    [InlineData("[()]", "[()]", "[]", "[]")]
+    [InlineData("[[]]", "[[]]", "[]", "[]")]
+    [InlineData("[[()]]", "[[()]]", "[()]", "[]")]
+    // A lone structured chain opens exactly one boundary per written star.
+    [InlineData("[[[7]]]", "[[[7]]]", "[[7]]", "[7]")]
+    // Zero items stay zero at every star.
+    [InlineData("()", "[]", "[]", "[]")]
+    public void RepeatedSpread_EverySpellingFollowsTheReopeningLaw(
+        string operand, string oneStar, string twoStars, string threeStars)
+    {
+        // Every written star after the first re-captures the previous supply
+        // and spreads the captured value (Lean `reopenSpreadItems`; the laws
+        // are `KatLangArityLaws.lean` § Repeated spread over the real model).
+        // Every mixed spelling with the same number of stars supplies the
+        // same items: stacked, grouped, and both mixed.
+        string Collected(string spelling)
+            => Display($"{CollectDeclaration}A = {operand}\nCollect({spelling})");
+
+        Assert.Equal(oneStar, Collected("A*"));
+        Assert.Equal(twoStars, Collected("A**"));
+        Assert.Equal(twoStars, Collected("(A*)*"));
+        Assert.Equal(threeStars, Collected("A***"));
+        Assert.Equal(threeStars, Collected("(A**)*"));
+        Assert.Equal(threeStars, Collected("(A*)**"));
+        Assert.Equal(threeStars, Collected("((A*)*)*"));
+    }
+
+    [Fact]
+    public void RepeatedSpread_EvaluatesALoneStructuredOperandExactlyOnce_StepAccounting()
+    {
+        // The operand of the step-accounting test above is a two-item fixed
+        // point; here every further star changes the supply (`[[[1]]]**`
+        // supplies `[1]`, `[[[1]]]***` supplies `1`), and the operand still
+        // runs once under every stacked and grouped spelling.
+        const long budgetCap = 100_000;
+
+        static bool Succeeds(string source, long maxSteps)
+            => KatLangEngine.Run(
+                source,
+                new RunOptions { EvaluationLimits = new EvaluationLimits { MaxSteps = maxSteps } })
+                is RunResult.Success;
+
+        static long MinimalSteps(string source)
+        {
+            long low = 1, high = budgetCap;
+            Assert.True(Succeeds(source, budgetCap), $"expected success under {budgetCap} steps: {source}");
+            while (low < high)
+            {
+                var mid = low + ((high - low) / 2);
+                if (Succeeds(source, mid))
+                    high = mid;
+                else
+                    low = mid + 1;
+            }
+
+            return low;
+        }
+
+        const string preamble =
+            "Inner(seed) = [[[seed]]]\n" +
+            "Make(seed) = Inner(seed)\n";
+        var baseline = MinimalSteps(preamble + "count(Make(1))");
+
+        Assert.Equal(2, baseline);
+        foreach (var spelling in new[]
+                 {
+                     "Make(1)*", "Make(1)**", "(Make(1)*)*",
+                     "Make(1)***", "(Make(1)**)*", "(Make(1)*)**", "((Make(1)*)*)*",
+                 })
+            Assert.Equal(baseline, MinimalSteps(preamble + $"count(({spelling}))"));
+    }
+
     [Fact]
     public void RepeatedSpread_BoundedLongChain_IsStackSafeAndStaysAFixedPoint()
     {

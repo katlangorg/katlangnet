@@ -56,7 +56,7 @@ Everything lives in `tests/KatLang.Tests/ArityDifferential/`:
 | `OpenLoneStructure` | `CoreArityAlgebra.openLoneStructure` |
 | `IsLoneStructure` | `CoreArityAlgebra.loneStructure` |
 | `BindPats` / `BindArgs` / `BindDeconstruct` | `CoreArityAlgebra.bindPats` / `bindArgs = bindPats` (and `bindCallback = bindArgs`) / `bindDeconstruct = bindPats ∘ openLoneStructure` (`bindPats_collect_exact` allocation) |
-| `SpreadSupply(v, stars)` | first star `items`, each further star `items ∘ capture` — `repeated_spread_cardinality`; evaluator: `evalSequenceSpreadCounted` |
+| `SpreadSupply(v, stars)` | first star `items`, each further star `items ∘ capture` — `repeated_spread_cardinality`; real model: the total `reopenSpreadItems` / `reopenSpreadLayers` (`reopen_spread_opens_only_a_lone_item`, `grouped_spread_layer_is_reopen`); evaluator: `evalSequenceSpreadCounted` |
 | `ValueCount` | `Result.valueCount` (`valueCount_le_one`, `valueCount_empty_list`) |
 | `RootNonSpreadRow` | `evalAlgOutputCountedCore`'s non-spread slot rule (a non-spread row is one visible slot even when empty) |
 

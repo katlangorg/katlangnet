@@ -204,7 +204,8 @@ this operation — collecting binding is `collect`.
 Raw `Val.seq` may still be appropriate internally, for example when modeling
 syntax, pre-normalization structure, or already-canonical shallow combination
 (the full model's `combineOutputSlots`, which
-coincides with `normalize` on canonical items). The invariant is only that
+coincides with `normalize` exactly on canonical items — proved over `Result` as
+`combineOutputSlots_eq_capture_iff_canonical` in `KatLangArityLaws.lean`). The invariant is only that
 observable capture/construction boundaries must not mint literal-unwritable
 singleton "orphan" values such as a stored `(5)` that compares unequal to `5`.
 

@@ -18,9 +18,11 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
 
 * a PRODUCTION theorem — about TOTAL definitions of `KatLang.lean` that the evaluator
   calls (value views such as `Result.normalize`, `Result.spreadItems`,
-  `Result.projectionItems`, `reCountValueBoundary`; the selection core `selectPosition` /
-  `selectWith` / `selectionResult`; `prepareLexicalDotCallArgs`; the Model-C binder
-  `bindNeedPatterns` and its allocation `needLevelSources`). It says nothing about the
+  `Result.projectionItems`, `reCountValueBoundary`; the slot combination `combineOutputSlots`
+  and the spread-row view `countedTopLevelValues`; the repeated-spread helpers
+  `reopenSpreadItems` / `reopenSpreadLayers` / `spreadSupplyResult`; the selection core
+  `selectPosition` / `selectWith` / `selectionResult`; `prepareLexicalDotCallArgs`; the Model-C
+  binder `bindNeedPatterns` and its allocation `needLevelSources`). It says nothing about the
   `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeed`,
   `formNeedSupply`, `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
   a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
@@ -31,8 +33,10 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   `staticAliasTarget?`). It proves the specification, never the C# implementation, whose
   agreement rests on tests;
 * a LOCAL theorem — about a helper defined in this file (`captureForArityLaw`,
-  `selectionOf`, `selectionTrace`, `plainNeedBinding`, `atomsBuiltinResultForLaw`, …),
-  whose docstring names the production definitions it wraps;
+  `selectionOf`, `selectionTrace`, `plainNeedBinding`, `atomsBuiltinResultForLaw`, the
+  C#-shaped `shallowSpreadLayersForLaw` / `shallowSpreadResultForLaw`, …), whose docstring
+  names the production definitions it wraps (or, for the C#-shaped ones, the C# source it
+  models — no theorem here proves C# code);
 * the ALGEBRA CORRESPONDENCE `algebra_binder_is_the_production_allocation` — the paper
   algebra's binder is the production ALLOCATION under its guard, not the binder's result.
 
@@ -47,8 +51,12 @@ the arity algebra as its allocation — are proved in § Model-C production bind
 (R8/X-13); its demand order, failure precedence and repeated-name binding are executed by
 the `bindNeedPatterns` guards in CoreTests.ModelC and CoreTests.RepeatedNameConstraints (no
 theorem: a demand-order trace and repeated-name laws over the Model-C binder are open
-formalization work). The final section,
-§ String interpolation (STR-02), proves the interpolation combinator's laws — left to right,
+formalization work). § Repeated spread over the real model (Q-66 item 4) proves the
+repeated-spread laws over `Result` and the production reopening helpers: shallow slot
+combination is ordinary capture on canonical slots, the grouped `(A*)*` layer is the stacked
+`A**` step, only a lone item opens one more boundary, and repeated spread never flattens (the
+`partial` evaluator's routing through those helpers is guard-checked by CoreTests.RepeatedSpread).
+The final section, § String interpolation (STR-02), proves the interpolation combinator's laws — left to right,
 each hole once, the first failure stops — for every hole channel, and the structural value text.
 -/
 
@@ -2352,8 +2360,11 @@ mutual
 end
 
 /-- Capture canonicity over `captureForArityLaw` (the normalizing construction of the
-spread value and the loop state; that the written `.capture` arm, which combines its slots with
-`combineOutputSlots`, agrees with it on canonical items is NOT proved here): a captured item supply
+spread value and the loop state; the written `.capture` arm combines its slots with the shallow
+`combineOutputSlots`, which equals it exactly on canonical slots —
+`combineOutputSlots_eq_capture_iff_canonical` in § Repeated spread over the real model — while
+that the arm applies it, and that its slots are canonical, stay facts of the `partial` source and
+the runtime invariant): a captured item supply
 is already canonical, so capture is a fixed point of `Result.normalize`
 (corollary of `normalize_idempotent`, since
 `captureForArityLaw xs = Result.normalize (Result.sequenceValue xs)`). -/
@@ -2362,7 +2373,8 @@ theorem captureForArityLaw_canonical (xs : List Result) :
   normalize_idempotent (Result.sequenceValue xs)
 
 /-- `captureForArityLaw` never mints an orphan (its agreement with the written `.capture`
-arm on canonical items, VAL-03, is not proved here): every captured value is
+arm's `combineOutputSlots` on canonical slots, VAL-03, is `combineOutputSlots_eq_capture_of_canonical`;
+canonicality of evaluated slots is the invariant, not a theorem): every captured value is
 orphan-free (corollary of `orphanFree_normalize`). -/
 theorem captureForArityLaw_orphanFree (xs : List Result) :
     orphanFreeResult (captureForArityLaw xs) = true :=
@@ -2477,6 +2489,704 @@ theorem capture_empty_list_spread_neutral (before after : List Result) :
     captureForArityLaw (before ++ (Result.listValue []).spreadItems ++ after)
       = captureForArityLaw (before ++ after) :=
   capture_zero_item_spread_neutral rfl before after
+
+/-
+## Repeated spread over the real model (Q-66 item 4, October 2026)
+
+The paper algebra proves repeated spread as `items (capture (items v))`
+(`CoreArityAlgebraProofs.lean` § Repeated spread is capture-mediated composition). This section
+proves the same family over the authoritative `Result` model and the TOTAL production helpers the
+evaluator calls:
+
+* `combineOutputSlots` — the SHALLOW slot combination of the shared output-row loop
+  (`evalOutputRowsPreparedCore`, which the written `.capture` arm reaches), of written-slot
+  reification (`evalExplicitSequenceValueExprSlots`) and of `selectionResult`: zero slots `()`,
+  one slot itself, several one sequence of them, with NO renormalization;
+* `reopenSpreadItems` — one further written spread layer, `spread(capture(items))`;
+  `reopenSpreadLayers` — that step once per extra written star; `spreadSupplyResult` — a spread
+  expression's counted result (`evalSequenceSpreadCounted` returns
+  `spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied)`);
+* `countedTopLevelValues` — how a spread ROW of a capture recovers its slots.
+
+Results:
+
+1. shallow combination IS ordinary capture exactly when the slots are canonical
+   (`combineOutputSlots_eq_capture_iff_canonical`, whose reverse direction (`.mpr`) is the bridge
+   `combineOutputSlots_eq_capture_of_canonical` and whose forward direction (`.mp`) is its
+   converse; unconditionally it is capture after normalizing
+   the slots, `normalize_sequenceValue_eq_combineOutputSlots_map_normalize`, and
+   `combineOutputSlots_keeps_a_raw_slot` is a concrete raw slot it keeps);
+2. opening a canonical value yields a canonical supply (`spreadItems_canonical_of_canonical`), so
+   a canonical operand meets that premise without any extra assumption, and a reopened supply is
+   canonical unconditionally (`reopenSpreadItems_canonical`);
+3. the grouped spelling's layer — `(…)*` over a spread row, `combineOutputSlots` of the inner
+   spread's recovered slots — IS the stacked step, for every supply and every number of inner
+   layers, with NO canonicality premise (`grouped_spread_layer_is_reopen`,
+   `stacked_spread_layer_is_grouped_layer`);
+4. the repeated-spread laws: only a LONE item opens one more boundary
+   (`reopen_spread_opens_only_a_lone_item`), zero items stay zero at every layer
+   (`reopen_spread_zero`), a zero- or multi-item canonical supply is a fixed point at every layer
+   (`reopen_spread_fixed_point_of_non_singleton`), a lone item reopens as its own spread view
+   (`reopen_spread_singleton`), the complete fixed-point characterization
+   (`reopen_spread_fixed_iff`), and repeated spread is never recursive flattening
+   (`reopen_spread_is_not_recursive_flattening`);
+5. the SHALLOW layer loop of C# `EvalSequenceSpreadCounted` (modelled locally by
+   `shallowSpreadLayersForLaw` / `shallowSpreadResultForLaw`, read from its source) agrees with
+   these helpers on every canonical operand, at every layer count
+   (`shallow_spread_agrees_on_canonical_operand`).
+
+EVIDENCE. Every theorem in this section is a PRODUCTION theorem about the total definitions above,
+except `reopenSpreadItems_eq_spread_capture`, a LOCAL theorem that reads the production step
+through this file's alias `captureForArityLaw`, and the three `shallow_spread_*` theorems of
+§ The C#-shaped layer loop, LOCAL theorems over its two LOCAL models of C# source (no theorem here
+proves C# code; C# correspondence rests on that inspection plus `StarSyntaxTests` and the
+differential corpora).
+
+NOT PROVED HERE. That the `partial` evaluator evaluates a spread operand ONCE and routes `A**`
+through `reopenSpreadLayers` and `(A*)*` through the capture arm's `countedTopLevelValues` /
+`combineOutputSlots` is a fact of its source, pinned by CoreTests `RepeatedSpread`; that every
+evaluated value is canonical is the intended runtime invariant, assumed where a theorem states
+`v.normalize = v` and never proved of the evaluator. An evaluator-level theorem
+`eval (E**) = eval ((E*)*)` over arbitrary expressions — errors and resources included — needs a
+total (fuel-indexed) evaluator and remains open (Q-66 item 4).
+-/
+
+/-! ### Shallow slot combination is ordinary capture on canonical slots -/
+
+/-- Zero slots combine to the empty sequence value `()` — never the empty list `[]`. -/
+theorem combineOutputSlots_nil : combineOutputSlots [] = Result.sequenceValue [] := rfl
+
+/-- One slot is returned WHOLE: a lone structured slot is not opened, and a lone `()` slot is
+returned as `()` — the same VALUE zero slots combine to (`combineOutputSlots_nil`); that a
+non-spread `()` row still counts as one visible slot is the row loop's emitted count, a fact of
+the `partial` source, not of this function. -/
+theorem combineOutputSlots_singleton (v : Result) : combineOutputSlots [v] = v := rfl
+
+/-- Two or more slots form ONE sequence of exactly those slots: no slot is dropped (a `()` slot
+stays an element, `combineOutputSlots [(), 1] = ((), 1)`), opened or renormalized. With
+`combineOutputSlots_nil` and `combineOutputSlots_singleton` this is the whole definition — the
+`0 / 1 / many` rule C# `CombineOutputSlots` has by inspection. -/
+theorem combineOutputSlots_multi (a b : Result) (rest : List Result) :
+    combineOutputSlots (a :: b :: rest) = Result.sequenceValue (a :: b :: rest) := rfl
+
+example : combineOutputSlots [Result.sequenceValue []] = Result.sequenceValue [] := rfl
+example : combineOutputSlots [Result.sequenceValue [], Result.atom 1]
+    = Result.sequenceValue [Result.sequenceValue [], Result.atom 1] := rfl
+
+/-- Ordinary capture is shallow combination of the NORMALIZED slots, for every supply: both
+sides are the same `0 / 1 / many` match over `xs.map Result.normalize`. -/
+theorem normalize_sequenceValue_eq_combineOutputSlots_map_normalize (xs : List Result) :
+    Result.normalize (Result.sequenceValue xs) = combineOutputSlots (xs.map Result.normalize) := by
+  cases h : xs.map Result.normalize with
+  | nil => simp [Result.normalize, h, combineOutputSlots]
+  | cons a t =>
+      cases t with
+      | nil => simp [Result.normalize, h, combineOutputSlots]
+      | cons b t2 => simp [Result.normalize, h, combineOutputSlots]
+
+/-- THE CAPTURE BRIDGE: on canonical slots the shallow production combination
+`combineOutputSlots` (the written `.capture` arm's, through `evalOutputRowsPreparedCore`) IS
+ordinary normalizing capture `Result.normalize (Result.sequenceValue xs)` — the production
+expression of `reopenSpreadItems` and `spreadSupplyResult`, and this file's `captureForArityLaw xs`
+by `rfl` — for every number of slots and every value kind (atoms, strings, Booleans, sequences,
+exact lists, `()`, `[]`, nested structure). Canonical slots are the intended runtime invariant of
+evaluated values; the theorem assumes it of `xs` and proves nothing about the evaluator
+establishing it. -/
+theorem combineOutputSlots_eq_capture_of_canonical (xs : List Result)
+    (h : ∀ r ∈ xs, r.normalize = r) :
+    combineOutputSlots xs = Result.normalize (Result.sequenceValue xs) := by
+  rw [normalize_sequenceValue_eq_combineOutputSlots_map_normalize, map_normalize_id_of_canonical h]
+
+/-- Shallow combination of canonical slots is canonical. -/
+theorem combineOutputSlots_canonical_of_canonical (xs : List Result)
+    (h : ∀ r ∈ xs, r.normalize = r) :
+    (combineOutputSlots xs).normalize = combineOutputSlots xs := by
+  rw [combineOutputSlots_eq_capture_of_canonical xs h]
+  exact normalize_idempotent (Result.sequenceValue xs)
+
+private theorem canonical_of_map_normalize_eq : ∀ {xs : List Result},
+    xs.map Result.normalize = xs -> ∀ r ∈ xs, r.normalize = r
+  | [], _ => by simp
+  | a :: t, h => by
+      simp only [List.map_cons, List.cons.injEq] at h
+      intro r hr
+      rcases List.mem_cons.mp hr with he | hmem
+      · subst he
+        exact h.1
+      · exact canonical_of_map_normalize_eq h.2 r hmem
+
+/-- THE BRIDGE'S EXACT CONDITION: shallow combination equals ordinary capture EXACTLY when every
+slot is canonical — the premise of `combineOutputSlots_eq_capture_of_canonical` is necessary for
+every supply, not only sufficient. -/
+theorem combineOutputSlots_eq_capture_iff_canonical (xs : List Result) :
+    combineOutputSlots xs = Result.normalize (Result.sequenceValue xs) ↔
+      ∀ r ∈ xs, r.normalize = r := by
+  refine ⟨fun heq => ?_, combineOutputSlots_eq_capture_of_canonical xs⟩
+  rw [normalize_sequenceValue_eq_combineOutputSlots_map_normalize] at heq
+  match xs, heq with
+  | [], _ =>
+      intro r hr
+      simp at hr
+  | [x], heq =>
+      intro r hr
+      simp only [List.mem_singleton] at hr
+      subst hr
+      simpa [combineOutputSlots] using heq.symm
+  | a :: b :: t, heq =>
+      apply canonical_of_map_normalize_eq
+      simp only [combineOutputSlots, List.map_cons] at heq
+      exact (Result.sequenceValue.inj heq).symm
+
+/-- A concrete raw slot the shallow combination keeps exactly as it is (the orphan `(1)`), where
+capture normalizes it — a non-canonical supply on which the two differ, as the forward direction
+(`.mp`) of `combineOutputSlots_eq_capture_iff_canonical` requires: `combineOutputSlots` really is
+shallow. -/
+theorem combineOutputSlots_keeps_a_raw_slot :
+    combineOutputSlots [Result.sequenceValue [Result.atom 1], Result.atom 2]
+      ≠ Result.normalize (Result.sequenceValue [Result.sequenceValue [Result.atom 1], Result.atom 2]) := by
+  simp [combineOutputSlots, Result.normalize]
+
+/-! ### Opening a canonical value yields a canonical supply -/
+
+/-- No value is an element of its own sequence payload (the sequence companion of
+`mem_ne_listValue`). -/
+theorem mem_ne_sequenceValue {w : Result} {ys : List Result} (h : w ∈ ys) :
+    w ≠ Result.sequenceValue ys := by
+  intro he
+  have hlt : sizeOf w < sizeOf ys := List.sizeOf_lt_of_mem h
+  have hsz : sizeOf (Result.sequenceValue ys) = 1 + sizeOf ys := by simp
+  rw [he, hsz] at hlt
+  omega
+
+/-- Every item the spread view supplies from a canonical value is canonical (the real-model face
+of the algebra's `canonicalSupply_items_of_canonical`). A canonical SEQUENCE value's payload is
+its own normalization: the one-element case is impossible, since `Result.normalize` never leaves
+the orphan `(w)` (`orphanFree_normalize`). This is what lets the repeated-spread laws below assume
+canonicality of the OPERAND value only. -/
+theorem spreadItems_canonical_of_canonical {v : Result} (h : v.normalize = v) :
+    ∀ r ∈ v.spreadItems, r.normalize = r := by
+  cases v with
+  | atom n =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
+  | str s =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
+  | bool b =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
+  | listValue rs =>
+      rw [normalize_listValue] at h
+      exact canonical_of_map_normalize_eq (Result.listValue.inj h)
+  | sequenceValue rs =>
+      show ∀ r ∈ rs, r.normalize = r
+      cases hm : rs.map Result.normalize with
+      | nil =>
+          have hrs : rs = [] := List.map_eq_nil_iff.mp hm
+          subst hrs
+          simp
+      | cons u tl =>
+          cases tl with
+          | nil =>
+              exfalso
+              cases rs with
+              | nil => simp at hm
+              | cons w t =>
+                  cases t with
+                  | cons b t2 => simp at hm
+                  | nil =>
+                      have hnu : w.normalize = u := by simpa using hm
+                      have hseq : Result.normalize (Result.sequenceValue [w]) = u := by
+                        simp [Result.normalize, hnu]
+                      rw [hseq] at h
+                      have ho := orphanFree_normalize w
+                      rw [hnu, h] at ho
+                      simp [orphanFreeResult] at ho
+          | cons b tl2 =>
+              have hn : Result.normalize (Result.sequenceValue rs)
+                  = Result.sequenceValue (u :: b :: tl2) := by
+                simp [Result.normalize, hm]
+              rw [hn] at h
+              have heq : u :: b :: tl2 = rs := Result.sequenceValue.inj h
+              rw [← heq] at hm
+              exact canonical_of_map_normalize_eq (heq ▸ hm)
+
+/-! ### The reopening step (`reopenSpreadItems`) -/
+
+/-- One further spread layer is `spread(capture(items))` — the production definition, read
+through the capture alias. -/
+theorem reopenSpreadItems_eq_spread_capture (items : List Result) :
+    reopenSpreadItems items = (captureForArityLaw items).spreadItems := rfl
+
+/-- A reopened supply is canonical, unconditionally: it is the spread view of a captured, hence
+canonical, value. Every layer after the first therefore meets the canonical-supply premise of the
+laws below on its own. -/
+theorem reopenSpreadItems_canonical (items : List Result) :
+    ∀ r ∈ reopenSpreadItems items, r.normalize = r :=
+  spreadItems_canonical_of_canonical (normalize_idempotent (Result.sequenceValue items))
+
+/-- On a canonical supply the reopening step is spread after the SHALLOW combination: the
+normalizing capture of `reopenSpreadItems` and `combineOutputSlots` agree there. -/
+theorem reopenSpreadItems_eq_spread_combineOutputSlots_of_canonical {items : List Result}
+    (h : ∀ r ∈ items, r.normalize = r) :
+    reopenSpreadItems items = (combineOutputSlots items).spreadItems := by
+  rw [combineOutputSlots_eq_capture_of_canonical items h]
+  rfl
+
+/-- THE REOPENING THEOREM at the value level: for a canonical value `v`, one further spread layer
+over `v*` is `spread(combineOutputSlots(spread(v)))` — and, by `reopenSpreadItems_eq_spread_capture`,
+`spread(capture(spread(v)))`, the algebra's `items (capture (items v))`. Only `v`'s canonicality
+is assumed; its supply's follows (`spreadItems_canonical_of_canonical`). -/
+theorem reopen_spread_is_spread_capture_spread {v : Result} (hv : v.normalize = v) :
+    reopenSpreadItems v.spreadItems = (combineOutputSlots v.spreadItems).spreadItems :=
+  reopenSpreadItems_eq_spread_combineOutputSlots_of_canonical
+    (spreadItems_canonical_of_canonical hv)
+
+/-! ### Stacked and grouped layers are one operation -/
+
+/-- A spread ROW recovers exactly the normalized items of its supply: the capture arm's row loop
+reads the inner spread's counted result through `countedTopLevelValues`, which inverts
+`spreadSupplyResult` up to normalization — for every supply, `()` items included (a lone `()`
+item has count 1, so it is recovered as one slot, never dropped). -/
+theorem countedTopLevelValues_spreadSupplyResult (items : List Result) :
+    countedTopLevelValues (spreadSupplyResult items) = items.map Result.normalize := by
+  match items with
+  | [] => rfl
+  | [x] =>
+      show [Result.normalize (Result.sequenceValue [x])] = [x.normalize]
+      rw [normalize_sequenceValue_singleton]
+  | a :: b :: t =>
+      have hn : Result.normalize (Result.sequenceValue (a :: b :: t))
+          = Result.sequenceValue ((a :: b :: t).map Result.normalize) := by
+        simp [Result.normalize]
+      show countedTopLevelValues
+          (Result.normalize (Result.sequenceValue (a :: b :: t)), t.length + 2)
+        = (a :: b :: t).map Result.normalize
+      rw [hn]
+      rfl
+
+/-- THE GROUPED LAYER IS THE STACKED STEP, for every supply (no canonicality premise): the written
+capture `(S*)` combines the spread row's recovered slots shallowly, and spreading that value is
+exactly `reopenSpreadItems S` — what the stacked `**` applies. So, once the operand has been
+evaluated to the supply `S`, `(A*)*` and `A**` perform the same value operation. -/
+theorem grouped_spread_layer_is_reopen (items : List Result) :
+    (combineOutputSlots (countedTopLevelValues (spreadSupplyResult items))).spreadItems
+      = reopenSpreadItems items := by
+  rw [countedTopLevelValues_spreadSupplyResult,
+    ← normalize_sequenceValue_eq_combineOutputSlots_map_normalize]
+  rfl
+
+/-- The last of `n + 1` layers can be taken outermost. -/
+theorem reopenSpreadLayers_succ_eq_reopen (n : Nat) (items : List Result) :
+    reopenSpreadLayers (n + 1) items = reopenSpreadItems (reopenSpreadLayers n items) := by
+  induction n generalizing items with
+  | zero => rfl
+  | succ k ih =>
+      show reopenSpreadLayers (k + 1) (reopenSpreadItems items) = _
+      rw [ih]
+      rfl
+
+/-- Grouping any stacked chain once more is one more stacked layer, for every supply and every
+`n`: `n + 2` written stars (`reopenSpreadLayers (n + 1)` over the first star's supply) equal the
+grouped `(A^(n+1 stars))*`. Every mixed spelling (`(A*)**`, `((A*)*)*`, `(A**)*`, …) therefore
+reduces to `reopenSpreadLayers` over the operand's supply; the final counted results then agree,
+both being `spreadSupplyResult` of the same items. -/
+theorem stacked_spread_layer_is_grouped_layer (n : Nat) (items : List Result) :
+    reopenSpreadLayers (n + 1) items =
+      (combineOutputSlots
+        (countedTopLevelValues (spreadSupplyResult (reopenSpreadLayers n items)))).spreadItems := by
+  rw [grouped_spread_layer_is_reopen, reopenSpreadLayers_succ_eq_reopen]
+
+/-- Every number of reopening layers over a canonical supply yields a canonical supply. -/
+theorem reopenSpreadLayers_canonical {xs : List Result} (h : ∀ r ∈ xs, r.normalize = r) :
+    ∀ n : Nat, ∀ r ∈ reopenSpreadLayers n xs, r.normalize = r
+  | 0 => h
+  | Nat.succ n => by
+      rw [reopenSpreadLayers_succ_eq_reopen]
+      exact reopenSpreadItems_canonical _
+
+/-! ### Cardinality: only a lone item opens one more boundary -/
+
+/-- `()*` re-captures as `()`, which spreads to nothing. -/
+theorem reopenSpreadItems_nil : reopenSpreadItems [] = [] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+
+/-- The reopening step on ARBITRARY raw supplies: nothing for no items, the normalized lone item's
+spread view for one, and the element-wise normalized items for two or more (the real-model face of
+the algebra's `items_capture`). -/
+theorem reopenSpreadItems_cardinality (xs : List Result) :
+    reopenSpreadItems xs =
+      match xs with
+      | [] => []
+      | [x] => (Result.normalize x).spreadItems
+      | a :: b :: t => (a :: b :: t).map Result.normalize := by
+  match xs with
+  | [] => exact reopenSpreadItems_nil
+  | [x] =>
+      show (Result.normalize (Result.sequenceValue [x])).spreadItems = _
+      rw [normalize_sequenceValue_singleton]
+  | a :: b :: t =>
+      show (Result.normalize (Result.sequenceValue (a :: b :: t))).spreadItems = _
+      have hn : Result.normalize (Result.sequenceValue (a :: b :: t))
+          = Result.sequenceValue ((a :: b :: t).map Result.normalize) := by
+        simp [Result.normalize]
+      rw [hn]
+      rfl
+
+/-- On a canonical supply the normalization is invisible: a lone item `x` reopens as `x`'s own
+spread view, and every other supply — empty or multi-item — is re-supplied exactly. -/
+theorem reopenSpreadItems_of_canonical {xs : List Result} :
+    (∀ r ∈ xs, r.normalize = r) ->
+    reopenSpreadItems xs =
+      match xs with
+      | [x] => x.spreadItems
+      | other => other := by
+  intro h
+  rw [reopenSpreadItems_cardinality]
+  match xs, h with
+  | [], _ => rfl
+  | [x], h =>
+      show (Result.normalize x).spreadItems = x.spreadItems
+      rw [h x List.mem_cons_self]
+  | a :: b :: t, h =>
+      show (a :: b :: t).map Result.normalize = a :: b :: t
+      exact map_normalize_id_of_canonical h
+
+/-- THE REPEATED-SPREAD CARDINALITY LAW over `Result` (the algebra's
+`repeated_spread_cardinality`): for a canonical value, `v**` re-supplies `v*` unchanged unless
+`v*` is ONE item, which then opens its own boundary. Repeated spread opens exactly the boundary
+the capture composition exposes — nothing else. -/
+theorem reopen_spread_opens_only_a_lone_item {v : Result} (hv : v.normalize = v) :
+    reopenSpreadItems v.spreadItems =
+      match v.spreadItems with
+      | [x] => x.spreadItems
+      | other => other :=
+  reopenSpreadItems_of_canonical (spreadItems_canonical_of_canonical hv)
+
+/-- No items stay no items, at every layer. -/
+theorem reopenSpreadLayers_nil : ∀ n : Nat, reopenSpreadLayers n [] = []
+  | 0 => rfl
+  | Nat.succ n => by
+      show reopenSpreadLayers n (reopenSpreadItems []) = []
+      rw [reopenSpreadItems_nil]
+      exact reopenSpreadLayers_nil n
+
+/-- Exactly `()` and `[]` spread to no items. -/
+theorem spreadItems_eq_nil_iff (v : Result) :
+    v.spreadItems = [] ↔ v = Result.sequenceValue [] ∨ v = Result.listValue [] := by
+  cases v with
+  | atom n => simp [Result.spreadItems, Result.toItems]
+  | str s => simp [Result.spreadItems, Result.toItems]
+  | bool b => simp [Result.spreadItems, Result.toItems]
+  | sequenceValue rs => simp [Result.spreadItems, Result.toItems]
+  | listValue rs => simp [Result.spreadItems]
+
+/-- ZERO: a value whose spread supplies no items — `()` or `[]` (`spreadItems_eq_nil_iff`) —
+supplies no items under any number of further layers (`[]**` is zero items: `[]* = []`,
+`capture [] = ()`, `()* = []`). No canonicality premise. -/
+theorem reopen_spread_zero {v : Result} (h : v.spreadItems = []) (n : Nat) :
+    reopenSpreadLayers n v.spreadItems = [] := by
+  rw [h]
+  exact reopenSpreadLayers_nil n
+
+/-- A canonical supply that is not exactly one item is a fixed point of the reopening step. -/
+theorem reopenSpreadItems_fixed_of_non_singleton {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) (hlen : xs.length ≠ 1) :
+    reopenSpreadItems xs = xs := by
+  rw [reopenSpreadItems_of_canonical h]
+  match xs, hlen with
+  | [], _ => rfl
+  | [_], hlen => exact absurd rfl hlen
+  | _ :: _ :: _, _ => rfl
+
+/-- … and so of every number of layers. -/
+theorem reopenSpreadLayers_fixed_of_non_singleton {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) (hlen : xs.length ≠ 1) :
+    ∀ n : Nat, reopenSpreadLayers n xs = xs
+  | 0 => rfl
+  | Nat.succ n => by
+      show reopenSpreadLayers n (reopenSpreadItems xs) = xs
+      rw [reopenSpreadItems_fixed_of_non_singleton h hlen]
+      exact reopenSpreadLayers_fixed_of_non_singleton h hlen n
+
+/-- MULTI-ITEM FIXED POINT: when `v*` is not exactly one item, `v**`, `v***`, … supply exactly what
+`v*` supplies, every structured item kept whole (`[[1, 2], [3, 4]]**` supplies the two inner lists,
+never `1, 2, 3, 4`). -/
+theorem reopen_spread_fixed_point_of_non_singleton {v : Result} (hv : v.normalize = v)
+    (hlen : v.spreadItems.length ≠ 1) (n : Nat) :
+    reopenSpreadLayers n v.spreadItems = v.spreadItems :=
+  reopenSpreadLayers_fixed_of_non_singleton (spreadItems_canonical_of_canonical hv) hlen n
+
+/-- A lone RAW item reopens as its normalization's spread view. -/
+theorem reopenSpreadItems_singleton (x : Result) :
+    reopenSpreadItems [x] = (Result.normalize x).spreadItems := by
+  show (Result.normalize (Result.sequenceValue [x])).spreadItems = _
+  rw [normalize_sequenceValue_singleton]
+
+/-- A lone canonical item reopens as its own spread view. -/
+theorem reopenSpreadItems_singleton_of_canonical {x : Result} (hx : x.normalize = x) :
+    reopenSpreadItems [x] = x.spreadItems := by
+  rw [reopenSpreadItems_singleton, hx]
+
+/-- SINGLETON: when `v*` is the one item `x`, the capture boundary erases the singleton grouping
+and `v**` supplies `x*` — the ONLY case in which a further layer opens another boundary (a lone
+sequence or list opens one level, a lone `()` or `[]` gives no items, a lone scalar is itself).
+`x`'s canonicality follows from `v`'s. -/
+theorem reopen_spread_singleton {v x : Result} (hv : v.normalize = v)
+    (h : v.spreadItems = [x]) :
+    reopenSpreadItems v.spreadItems = x.spreadItems := by
+  have hx : x.normalize = x := by
+    have hc := spreadItems_canonical_of_canonical hv
+    rw [h] at hc
+    exact hc x List.mem_cons_self
+  rw [h, reopenSpreadItems_singleton_of_canonical hx]
+
+-- Each supply shape on concrete values (the first spread's supply, then further layers).
+-- `[7]**`: a lone scalar is itself.
+example : reopenSpreadItems (Result.listValue [Result.atom 7]).spreadItems = [Result.atom 7] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+-- `[(1, 2)]**`: a lone sequence value opens one level.
+example : reopenSpreadItems (Result.listValue [Result.sequenceValue [Result.atom 1, Result.atom 2]]).spreadItems
+    = [Result.atom 1, Result.atom 2] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+-- `[[1, 2]]**`: a lone LIST opens too — capture erases only the singleton sequence grouping and
+-- returns the list `[1, 2]` itself (normalization never removes a list boundary); the next
+-- layer's spread opens that list.
+example : reopenSpreadItems (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2]]).spreadItems
+    = [Result.atom 1, Result.atom 2] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems]
+-- `[()]**` and `[[]]**`: a lone visible empty item is one item at `*`, zero items at `**`.
+example : reopenSpreadItems (Result.listValue [Result.sequenceValue []]).spreadItems = [] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+example : reopenSpreadItems (Result.listValue [Result.listValue []]).spreadItems = [] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems]
+-- `[(), []]**`: two visible empty items are a multi-item supply, kept exactly.
+example : reopenSpreadItems (Result.listValue [Result.sequenceValue [], Result.listValue []]).spreadItems
+    = [Result.sequenceValue [], Result.listValue []] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+-- `[[[7]]]**` supplies `[7]` and `[[[7]]]***` supplies `7`: one boundary per written star.
+example : reopenSpreadLayers 1
+    (Result.listValue [Result.listValue [Result.listValue [Result.atom 7]]]).spreadItems
+    = [Result.listValue [Result.atom 7]] := by
+  simp [reopenSpreadLayers, reopenSpreadItems, Result.normalize, Result.spreadItems]
+example : reopenSpreadLayers 2
+    (Result.listValue [Result.listValue [Result.listValue [Result.atom 7]]]).spreadItems
+    = [Result.atom 7] := by
+  simp [reopenSpreadLayers, reopenSpreadItems, Result.normalize, Result.spreadItems]
+
+/-! ### The complete fixed-point characterization -/
+
+/-- A value's spread view is exactly itself-as-one-item iff it is not an openable structure. -/
+theorem spreadItems_eq_singleton_self_iff (x : Result) :
+    x.spreadItems = [x] ↔ x.structureItems? = none := by
+  cases x with
+  | atom n => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | str s => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | sequenceValue rs =>
+      simp only [Result.structureItems?, reduceCtorEq, iff_false]
+      intro h
+      have hrs : rs = [Result.sequenceValue rs] := h
+      have hmem : Result.sequenceValue rs ∈ [Result.sequenceValue rs] := List.mem_cons_self
+      rw [← hrs] at hmem
+      exact mem_ne_sequenceValue hmem rfl
+  | listValue rs =>
+      simp only [Result.structureItems?, reduceCtorEq, iff_false]
+      intro h
+      have hrs : rs = [Result.listValue rs] := h
+      have hmem : Result.listValue rs ∈ [Result.listValue rs] := List.mem_cons_self
+      rw [← hrs] at hmem
+      exact mem_ne_listValue hmem rfl
+
+/-- The reopening step fixes a canonical supply iff it is not one item, or its lone item is not
+an openable structure (a number, string or Boolean). -/
+theorem reopenSpreadItems_fixed_iff {xs : List Result} (h : ∀ r ∈ xs, r.normalize = r) :
+    reopenSpreadItems xs = xs ↔
+      xs.length ≠ 1 ∨ ∃ x, xs = [x] ∧ x.structureItems? = none := by
+  constructor
+  · intro hfix
+    match xs, h, hfix with
+    | [], _, _ =>
+        left
+        simp
+    | _ :: _ :: _, _, _ =>
+        left
+        simp
+    | [x], h, hfix =>
+        right
+        refine ⟨x, rfl, ?_⟩
+        rw [reopenSpreadItems_singleton_of_canonical (h x List.mem_cons_self)] at hfix
+        exact (spreadItems_eq_singleton_self_iff x).mp hfix
+  · rintro (hlen | ⟨x, rfl, hx⟩)
+    · exact reopenSpreadItems_fixed_of_non_singleton h hlen
+    · rw [reopenSpreadItems_singleton_of_canonical (h x List.mem_cons_self)]
+      exact (spreadItems_eq_singleton_self_iff x).mpr hx
+
+/-- THE COMPLETE FIXED-POINT CHARACTERIZATION over `Result` (the algebra's
+`repeated_spread_fixed_iff`, with the algebra's lone ATOM generalized to the real model's
+non-structures — numbers, strings, Booleans): for a canonical value, `v**` supplies exactly what
+`v*` supplies iff `v*` is not one item, or its lone item is not a sequence or list value. -/
+theorem reopen_spread_fixed_iff {v : Result} (hv : v.normalize = v) :
+    reopenSpreadItems v.spreadItems = v.spreadItems ↔
+      v.spreadItems.length ≠ 1 ∨ ∃ x, v.spreadItems = [x] ∧ x.structureItems? = none :=
+  reopenSpreadItems_fixed_iff (spreadItems_canonical_of_canonical hv)
+
+/-! ### Repeated spread is never recursive flattening -/
+
+private theorem sum_sizeOf_lt : ∀ (ys : List Result), (ys.map sizeOf).sum < sizeOf ys
+  | [] => by simp
+  | y :: ys => by
+      have ih := sum_sizeOf_lt ys
+      simp only [List.map_cons, List.sum_cons, List.cons.sizeOf_spec]
+      omega
+
+private theorem spread_weight (r : Result) :
+    (r.spreadItems.map sizeOf).sum ≤ sizeOf r ∧
+      ((r.spreadItems.map sizeOf).sum = sizeOf r → r.structureItems? = none) := by
+  cases r with
+  | atom n => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | str s => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | sequenceValue rs =>
+      have hlt := sum_sizeOf_lt rs
+      have hs : sizeOf (Result.sequenceValue rs) = 1 + sizeOf rs := by simp
+      show (rs.map sizeOf).sum ≤ _ ∧ ((rs.map sizeOf).sum = _ → _)
+      rw [hs]
+      exact ⟨by omega, fun h => absurd h (by omega)⟩
+  | listValue rs =>
+      have hlt := sum_sizeOf_lt rs
+      have hs : sizeOf (Result.listValue rs) = 1 + sizeOf rs := by simp
+      show (rs.map sizeOf).sum ≤ _ ∧ ((rs.map sizeOf).sum = _ → _)
+      rw [hs]
+      exact ⟨by omega, fun h => absurd h (by omega)⟩
+
+private theorem flatMap_spread_weight : ∀ (xs : List Result),
+    ((xs.flatMap Result.spreadItems).map sizeOf).sum ≤ (xs.map sizeOf).sum ∧
+      (((xs.flatMap Result.spreadItems).map sizeOf).sum = (xs.map sizeOf).sum →
+        ∀ r ∈ xs, r.structureItems? = none)
+  | [] => by simp
+  | x :: xs => by
+      obtain ⟨h1, h2⟩ := spread_weight x
+      obtain ⟨ih1, ih2⟩ := flatMap_spread_weight xs
+      simp only [List.flatMap_cons, List.map_append, List.sum_append, List.map_cons,
+        List.sum_cons]
+      refine ⟨by omega, ?_⟩
+      intro heq r hr
+      rcases List.mem_cons.mp hr with he | hmem
+      · subst he
+        exact h2 (by omega)
+      · exact ih2 (by omega) r hmem
+
+/-- Opening every member of a supply one more level changes nothing iff no member is an openable
+structure (a size argument: opening a structure strictly shrinks the supply's total size). -/
+theorem flatMap_spreadItems_eq_self_iff (xs : List Result) :
+    xs.flatMap Result.spreadItems = xs ↔ ∀ r ∈ xs, r.structureItems? = none := by
+  constructor
+  · intro h
+    exact (flatMap_spread_weight xs).2 (by rw [h])
+  · intro h
+    induction xs with
+    | nil => rfl
+    | cons x xs ih =>
+        have hx := h x List.mem_cons_self
+        have hxs := ih (fun r hr => h r (List.mem_cons_of_mem x hr))
+        rw [List.flatMap_cons, (spreadItems_eq_singleton_self_iff x).mpr hx, hxs]
+        rfl
+
+/-- On a canonical supply that is not one item, the reopening step agrees with opening every
+member (a `concatMap`-style per-item lift) iff there is no structured member to open — so any
+structured member tells the two apart. -/
+theorem reopenSpreadItems_is_flattening_iff {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) (hlen : xs.length ≠ 1) :
+    reopenSpreadItems xs = xs.flatMap Result.spreadItems ↔
+      ∀ r ∈ xs, r.structureItems? = none := by
+  rw [reopenSpreadItems_fixed_of_non_singleton h hlen]
+  constructor
+  · intro heq
+    exact (flatMap_spreadItems_eq_self_iff xs).mp heq.symm
+  · intro hs
+    exact ((flatMap_spreadItems_eq_self_iff xs).mpr hs).symm
+
+/-- NO RECURSIVE FLATTENING (the general form of the algebra's
+`repeated_spread_not_recursive_flattening`): when `v*` is not one item and supplies a structured
+item, NO number of further written stars opens it — every layer re-supplies `v*` exactly, which
+differs from opening its members. -/
+theorem reopen_spread_is_not_recursive_flattening {v : Result} (hv : v.normalize = v)
+    (hlen : v.spreadItems.length ≠ 1)
+    (hs : ∃ r ∈ v.spreadItems, r.structureItems? ≠ none) (n : Nat) :
+    reopenSpreadLayers n v.spreadItems ≠ v.spreadItems.flatMap Result.spreadItems := by
+  rw [reopen_spread_fixed_point_of_non_singleton hv hlen n]
+  intro heq
+  obtain ⟨r, hr, hne⟩ := hs
+  exact hne ((flatMap_spreadItems_eq_self_iff _).mp heq.symm r hr)
+
+-- `[[1, 2], [3, 4]]**` supplies the two inner lists, not `1, 2, 3, 4`.
+example : reopenSpreadItems
+      (Result.listValue [Result.listValue [Result.atom 1, Result.atom 2],
+        Result.listValue [Result.atom 3, Result.atom 4]]).spreadItems
+    = [Result.listValue [Result.atom 1, Result.atom 2],
+       Result.listValue [Result.atom 3, Result.atom 4]] := by
+  simp [reopenSpreadItems, Result.normalize, Result.spreadItems, Result.toItems]
+
+/-! ### The C#-shaped layer loop
+
+C# `Evaluator.EvalSequenceSpreadCounted` (and its async twin) re-captures between layers and at
+the last layer with `MakeCheckedSequenceCapture` — a resource reservation (a C#-only limit tier)
+followed by the SHALLOW `CombineOutputSlots` — where Lean's `reopenSpreadItems` /
+`spreadSupplyResult` use the normalizing capture. The two definitions below are LOCAL models of
+that loop's structural rule, read from the C# source (Lean proves nothing about C# code); the
+theorems prove that the shallow rule computes the same supply and counted result as the
+production helpers on every canonical operand, at every layer count. -/
+
+/-- LOCAL model of the C# layer loop's supply: each further layer spreads the SHALLOW combination
+of the previous supply. -/
+def shallowSpreadLayersForLaw : Nat -> List Result -> List Result
+  | 0, items => items
+  | Nat.succ n, items => shallowSpreadLayersForLaw n (combineOutputSlots items).spreadItems
+
+/-- LOCAL model of the C# spread expression's counted result: the shallow combination of the final
+supply with its item count. -/
+def shallowSpreadResultForLaw (layers : Nat) (items : List Result) : CountedResult :=
+  (combineOutputSlots (shallowSpreadLayersForLaw layers items),
+    (shallowSpreadLayersForLaw layers items).length)
+
+/-- The shallow layer rule and the production reopening agree on every canonical supply. -/
+theorem shallow_spread_layers_agree_on_canonical_supply {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) (n : Nat) :
+    shallowSpreadLayersForLaw n xs = reopenSpreadLayers n xs := by
+  induction n generalizing xs with
+  | zero => rfl
+  | succ k ih =>
+      show shallowSpreadLayersForLaw k (combineOutputSlots xs).spreadItems
+        = reopenSpreadLayers k (reopenSpreadItems xs)
+      rw [← reopenSpreadItems_eq_spread_combineOutputSlots_of_canonical h]
+      exact ih (reopenSpreadItems_canonical xs)
+
+/-- … and so do the counted results. -/
+theorem shallow_spread_result_agrees_on_canonical_supply {xs : List Result}
+    (h : ∀ r ∈ xs, r.normalize = r) (n : Nat) :
+    shallowSpreadResultForLaw n xs = spreadSupplyResult (reopenSpreadLayers n xs) := by
+  unfold shallowSpreadResultForLaw spreadSupplyResult
+  rw [shallow_spread_layers_agree_on_canonical_supply h n,
+    combineOutputSlots_eq_capture_of_canonical _ (reopenSpreadLayers_canonical h n)]
+
+/-- THE C#-SHAPED RULE AT THE VALUE LEVEL: for a canonical operand value `v`, a spread with
+`n + 1` written stars yields the same counted result under the LOCAL model of C#'s shallow layer
+rule (`shallowSpreadResultForLaw`, read from the C# source) as under the production helpers
+`evalSequenceSpreadCounted` applies — on the canonical values the runtime invariant promises, the
+shallow and the normalizing capture compute the same supply and count. This proves the modelled
+rule, not C# code; C#'s per-layer collection reservation is outside the model. -/
+theorem shallow_spread_agrees_on_canonical_operand {v : Result} (hv : v.normalize = v)
+    (n : Nat) :
+    shallowSpreadResultForLaw n v.spreadItems
+      = spreadSupplyResult (reopenSpreadLayers n v.spreadItems) :=
+  shallow_spread_result_agrees_on_canonical_supply (spreadItems_canonical_of_canonical hv) n
 
 /-
 ## Result-boundary re-count laws

@@ -3546,11 +3546,12 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
   sequenceConstructLeavesLoop [expr] []
 
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
-    Used by evaluation together with `peelSequenceSpreadLayers`: stacked
-    spread is COMPOSITIONAL (`A**` agrees with `(A*)*`) — each extra written
+    (Evaluation peels with `peelSequenceSpreadLayers`, which also counts the
+    written layers, and applies them with the total `reopenSpreadLayers`.)
+    Stacked spread is COMPOSITIONAL (`A**` agrees with `(A*)*`) — each extra written
     layer re-captures the previous layer's item supply into one value
     (`Result.normalize ∘ Result.sequenceValue`, the ordinary expression
-    capture) and spreads that captured value, applied iteratively
+    capture) and spreads that captured value (`reopenSpreadItems`), applied iteratively
     (stack-safe for deep `A**` chains, matching the C# evaluator). A
     multi-item supply re-captures as a sequence whose spread restores the
     same items, so extra layers are fixed points there
@@ -3569,6 +3570,46 @@ partial def peelSequenceSpread : Expr -> Expr
 partial def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
   | .sequenceSpread operand, n => peelSequenceSpreadLayers operand (n + 1)
   | e, n => (e, n)
+
+/-- ONE further written spread layer over an item supply (October 2026): the
+    previous layer's supply is captured by ORDINARY capture (`Result.normalize ∘
+    Result.sequenceValue`) and the captured value is spread (`Result.spreadItems`) —
+    `spread(capture(items))`. TOTAL, so its laws are theorems (`KatLangArityLaws.lean`
+    § Repeated spread over the real model): a zero- or multi-item canonical supply is a fixed
+    point whose members are never opened, and only a LONE item lets the next layer open that
+    item's own boundary (`reopen_spread_opens_only_a_lone_item`); the grouped spelling's
+    capture boundary — the `.capture` arm's shallow `combineOutputSlots` over the inner
+    spread's slots — computes exactly this step (`grouped_spread_layer_is_reopen`), so once the
+    operand is evaluated `A**` and `(A*)*` perform the same value operation (that the `partial`
+    evaluator routes both spellings so is a fact of its source, guard-checked by CoreTests
+    `RepeatedSpread`). `evalSequenceSpreadCounted` applies it through `reopenSpreadLayers`.
+    C#: the layer loop of `Evaluator.EvalSequenceSpreadCounted` (and its async twin), which
+    re-captures with the SHALLOW `MakeCheckedSequenceCapture` (`CombineOutputSlots` after a
+    resource reservation); that shallow rule, modelled LOCALLY by `shallowSpreadLayersForLaw`,
+    computes the same supply on canonical supplies
+    (`shallow_spread_layers_agree_on_canonical_supply`) — a proof about the rule, not the C#
+    code, whose correspondence rests on inspection and tests. -/
+def reopenSpreadItems (items : List Result) : List Result :=
+  (Result.normalize (Result.sequenceValue items)).spreadItems
+
+/-- `layers` further written spread layers over an item supply: `reopenSpreadItems` applied
+    `layers` times, one boundary per written star — never all boundaries at once. This is the
+    former local `reopen` of `evalSequenceSpreadCounted`, extracted unchanged so its laws are
+    theorems; it is tail-recursive, so deep `A***…` chains stay stack-safe. -/
+def reopenSpreadLayers : Nat -> List Result -> List Result
+  | 0, items => items
+  | n + 1, items => reopenSpreadLayers n (reopenSpreadItems items)
+
+/-- The counted result of a spread expression over its final item supply: the supply's
+    ordinary capture, emitting the supply's item count (the expression-level face of
+    `spread : Value -> Supply`; consumers that read the expression as one value re-count at
+    their value boundary, and a spread ROW recovers the supply's NORMALIZED items — the items
+    themselves on a canonical supply — through `countedTopLevelValues`,
+    `countedTopLevelValues_spreadSupplyResult`).
+    `evalSequenceSpreadCounted` returns it. C#: the final layer of
+    `Evaluator.EvalSequenceSpreadCounted` (`CountedResult(capture, items.Count)`). -/
+def spreadSupplyResult (items : List Result) : CountedResult :=
+  (Result.normalize (Result.sequenceValue items), items.length)
 
 def describeSequenceItem : Result -> String
   | .atom n => s!"numeric value {n}"
@@ -7139,25 +7180,26 @@ mutual
       once and spreading immediate top-level items. Nested sequence-value
       members are not recursively flattened. Directly-nested spreads (`A**`)
       are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
-      nesting) and then each written layer is applied COMPOSITIONALLY: every
+      nesting), the operand is evaluated ONCE, and then each further written
+      layer is applied COMPOSITIONALLY by the total `reopenSpreadLayers`: every
       written `sequenceSpread` layer opens exactly one boundary of the value
-      the previous layer's supply re-captures, so `A**` agrees with `(A*)*`.
+      the previous layer's supply re-captures (`reopenSpreadItems`), so `A**`
+      agrees with `(A*)*`.
       For sequence values
       the extra layers are fixed points (value-equivalent to a single spread);
       a singleton-list chain opens one list boundary per layer
       (`[[7]]**` supplies `7`), while a multi-element list re-captures as
       a sequence after the first layer and then stays fixed
-      (`[[1, 2], [3, 4]]**` supplies the two inner lists unchanged). -/
+      (`[[1, 2], [3, 4]]**` supplies the two inner lists unchanged). The
+      post-evaluation operation is total and its laws are theorems
+      (`KatLangArityLaws.lean` § Repeated spread over the real model); that this
+      `partial` definition evaluates the operand once and applies it is a fact
+      of this source, pinned by CoreTests `RepeatedSpread`. -/
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let (operand, layers) := peelSequenceSpreadLayers e 0
     let supplied <- evalSequenceSpreadOperandItems operand ctx env
-    let rec reopen : Nat -> List Result -> List Result
-      | 0, items => items
-      | n + 1, items =>
-          reopen n (Result.spreadItems (Result.normalize (Result.sequenceValue items)))
-    let items := reopen (layers - 1) supplied
-    pure (Result.normalize (Result.sequenceValue items), items.length)
+    pure (spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied))
 
   /-- Evaluate a surface list literal `[e1, ..., en]` as exactly ONE exact
       immutable list value. Element slots reuse the written-parentheses

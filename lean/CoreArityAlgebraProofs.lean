@@ -1700,8 +1700,17 @@ in `CoreTests/ListValues.lean`) pin the same behavior end to end through the ful
 model's `Result.spreadItems` after `Result.normalize ∘ Result.sequenceValue`
 — exactly the composition `items ∘ capture` mirrors. They are executable
 `#guard`s over the `partial` evaluator on concrete values, not theorems; the
-first two compare the stacked and grouped spellings directly. No `Result`- or
-`Expr`-level theorem transfers the laws below (Q-66).
+first two compare the stacked and grouped spellings directly. Over the real
+`Result` model the same family is proved for the production reopening helpers
+the evaluator calls (`KatLangArityLaws.lean` § Repeated spread over the real
+model: `reopen_spread_opens_only_a_lone_item`, `reopen_spread_zero`,
+`reopen_spread_singleton`, `reopen_spread_fixed_point_of_non_singleton`,
+`reopen_spread_fixed_iff`, `reopen_spread_is_not_recursive_flattening`), with
+the grouped spelling's capture layer proved to be the stacked step
+(`grouped_spread_layer_is_reopen`, through `combineOutputSlots`); the routing
+of the `partial` evaluator through those helpers is guard-checked
+(CoreTests `RepeatedSpread`). No `Expr`-level theorem — `E** ≡ (E*)*` over
+evaluation itself — exists (Q-66).
 
 The theorems below prove the exact behavior of that composition:
 

@@ -678,9 +678,10 @@ def deeplyNestedSpreadExpr (depth : Nat) : KatLang.Expr :=
   buildNestedSpread depth (KatLang.Expr.num 1)
 
 -- Deeply-nested unary spread must stay stack-safe: `evalSequenceSpreadCounted`
--- peels the nesting iteratively via `peelSequenceSpread` rather than recursing
--- once per level. A recursive peel would overflow at this depth. Each level
--- spreads the same single item, so the flat result is `[1]` with count 1.
+-- peels the nesting iteratively via `peelSequenceSpreadLayers` and applies the
+-- extra layers with the tail-recursive total `reopenSpreadLayers`, rather than
+-- recursing once per level. A recursive peel would overflow at this depth. Each
+-- level spreads the same single item, so the flat result is `[1]` with count 1.
 def deepNestedSequenceSpreadIsStackSafe : Bool :=
   match KatLang.runEvalM (KatLang.evalCounted (deeplyNestedSpreadExpr 8192)
       { callStack := [KatLang.preludeAlg] } []) with

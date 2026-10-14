@@ -262,10 +262,12 @@ identities), `git diff --check`, and all Lean targets including
 
 - **Theorem-level**: general laws proved over total functions of the real
   model (`lean/KatLangArityLaws.lean`: `normalize_idempotent`,
-  `orphanFree_normalize`, capture canonicity, the spread/capture round-trip)
-  and over the paper algebra (`lean/CoreArityAlgebraProofs.lean`). These
-  cover the normalization/binding fragment only — the evaluator itself is
-  `partial` and is NOT covered by theorems.
+  `orphanFree_normalize`, capture canonicity, the spread/capture round-trip,
+  shallow slot combination as capture on canonical slots, the repeated-spread
+  reopening laws) and over the paper algebra (`lean/CoreArityAlgebraProofs.lean`).
+  These cover the normalization/binding fragment and the total helpers the
+  evaluator calls only — the evaluator itself is `partial` and is NOT covered
+  by theorems.
 - **Bounded differential validation**: the generated `#guard` corpora
   (explorer + language spec). Say "generated guards over the representable
   partition", never "formally verified evaluator".
