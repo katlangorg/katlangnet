@@ -635,11 +635,22 @@ public class EvaluatorSpreadTests
             """,
             3m);
 
-        // Without the comma the newline changes nothing about the star
-        // (SYN-07B): `2` is a valid right operand, so `F(X*` newline `2)` is
-        // the ONE-argument multiplication `F(X * 2)` exactly like `F(X* 2)`,
-        // and the two-parameter F reports an arity error.
-        foreach (var source in new[] { "X = 1\nF(a, b) = a + b\nF(X*\n2)", "X = 1\nF(a, b) = a + b\nF(X* 2)" })
+        // Without the comma, an ATTACHED line-final star completes the spread
+        // slot (issue #183), so the open argument list's newline separates the
+        // next slot: `F(X*` newline `2)` is the same TWO slots.
+        AssertEval(
+            """
+            X = 1
+            F(a, b) = a + b
+            F(X*
+            2)
+            """,
+            3m);
+
+        // A same-line operand, or a DETACHED line-final star, makes the star
+        // multiplication: `F(X* 2)` and `F(X *` newline `2)` are the ONE-argument
+        // `F(X * 2)`, and the two-parameter F reports an arity error.
+        foreach (var source in new[] { "X = 1\nF(a, b) = a + b\nF(X *\n2)", "X = 1\nF(a, b) = a + b\nF(X* 2)" })
             AssertEvalFailsWithArityMismatch(source, expected: 2, actual: 1);
     }
 

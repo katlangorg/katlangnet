@@ -699,12 +699,12 @@ public class TutorialSemanticContractTests
         Assert.Equal(new SourceSpan(2, 8, 2, 10), diagnostic.Span);
     }
 
-    // ── "Spread or Multiplication?" (Q-33): a line-final star is classified like every star ──
+    // ── "Spread or Multiplication?" (issue #183): attachment classifies a line-final star ──
 
     private const string ClosedSpreadDefinition = "A = (1, 2)\nX = (A*)\n\nX";
 
     [Fact]
-    public void LineFinalStar_ParenthesesKeepTheSpreadInTheDefinition_WhileWithoutThemTheRowIsMultiplied()
+    public void LineFinalStar_AttachedEndsTheDefinition_WhileADetachedStarMultipliesTheNextRow()
     {
         // The tutorial example: the parentheses close X's body, so X captures the spread of A and
         // the line `X` stays the program's one output row.
@@ -716,11 +716,21 @@ public class TutorialSemanticContractTests
         Assert.Equal("X", Assert.IsType<Expr.Resolve>(Assert.Single(closed.Root.Output)).Name);
         Assert.Equal("(1, 2)", Display(ClosedSpreadDefinition));
 
-        // The explanation: without the parentheses the star is followed by `X`, which begins an
-        // operand and no declaration, so the body continues as `X = A * X` and no output row is
-        // left. The source is valid — no diagnostic of any kind — and the engine reports the
-        // program's absent output.
-        const string unclosed = "A = (1, 2)\nX = A*\n\nX";
+        // Without the parentheses an ATTACHED line-final star still ends X's body: the spread
+        // completes the definition and `X` is the program's output row, with the same value.
+        const string attached = "A = (1, 2)\nX = A*\n\nX";
+        var spreadBody = SourceProvenance.ParseValid(attached);
+        Assert.Empty(spreadBody.Diagnostics);
+        var bodySpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(PropertyOf(spreadBody.Root, "X").Value.Output));
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(bodySpread.Operand).Name);
+        Assert.Equal("X", Assert.IsType<Expr.Resolve>(Assert.Single(spreadBody.Root.Output)).Name);
+        Assert.Equal("(1, 2)", Display(attached));
+
+        // The explanation of the other spelling: a DETACHED star is multiplication, followed by
+        // `X`, which begins an operand and no declaration, so the body continues as `X = A * X`
+        // and no output row is left. The source is valid — no diagnostic of any kind — and the
+        // engine reports the program's absent output.
+        const string unclosed = "A = (1, 2)\nX = A *\n\nX";
         var open = SourceProvenance.ParseValid(unclosed);
         Assert.Empty(open.Diagnostics);
         var product = Assert.IsType<Expr.Binary>(Assert.Single(PropertyOf(open.Root, "X").Value.Output));

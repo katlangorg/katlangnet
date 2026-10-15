@@ -11,10 +11,13 @@ namespace KatLang.Tests;
 /// <c>value*</c> contributes the items of <c>value</c> to the surrounding
 /// item supply. Infix <c>*</c> multiplies two values.
 ///
-/// Q-65 (2026-10-14): every physical line-final star announces multiplication,
-/// including EOF/later declarations/closers. Spread needs explicit same-line
-/// closure and then exact attachment. VALUE supply and repeated-spread laws
-/// below retain their existing semantics.
+/// Issue #183 (2026-10-14, refining Q-65): a physical line-final star — EOF,
+/// later declarations and closers included — is classified by attachment: an
+/// attached <c>A*</c> is a spread that completes the expression, a detached
+/// <c>A *</c> is multiplication that leaves it incomplete. A star with a
+/// same-line follower is a spread only before an explicit same-line closure,
+/// which is then checked for exact attachment. VALUE supply and repeated-spread
+/// laws below retain their existing semantics.
 /// </summary>
 public class StarSyntaxTests
 {
@@ -101,18 +104,19 @@ public class StarSyntaxTests
     // ── Layout independence (SYN-07B) ───────────────────────────────────────
 
     [Theory]
-    [InlineData("A = 4\nB = 6\nA*\nB")]
     [InlineData("A = 4\nB = 6\nA *\nB")]
     [InlineData("A = 4\nB = 6\nA* B")]
     [InlineData("A = 4\nB = 6\nA * B")]
-    [InlineData("A = 4\nB = 6\nA* # a comment never changes the decision\nB")]
-    [InlineData("A = 4\nB = 6\nA*\n\n\nB")]
-    public void LineEndingStar_WithAnOperandOnTheNextLine_IsMultiplication_RegardlessOfAttachment(string source)
+    [InlineData("A = 4\nB = 6\nA*B")]
+    [InlineData("A = 4\nB = 6\nA * # a comment never changes the decision\nB")]
+    [InlineData("A = 4\nB = 6\nA *\n\n\nB")]
+    [InlineData("A = 4\nB = 6\nA\n* B")]
+    public void SameLineOrDetachedLineEndingStar_WithAnOperand_IsMultiplication(string source)
     {
-        // The issue's acceptance matrix: attached or detached, same line or
-        // across the newline, the star multiplies whenever a valid right
-        // operand follows. Whitespace around the star never changes its
-        // meaning, and a newline does not terminate a pending multiplication.
+        // The issue's acceptance matrix: with a same-line operand the star
+        // multiplies whatever its spacing, and a DETACHED line-final star
+        // (issue #183) leaves the expression incomplete, so the next line's
+        // operand completes the multiplication.
         Assert.Equal("24", Display(source));
 
         var parse = Parser.Parse(source);
@@ -122,28 +126,45 @@ public class StarSyntaxTests
     }
 
     [Theory]
-    [InlineData("a = (1, 2)\nb = 5\na*\nb", "1\n2\n5")]
-    [InlineData("a = (1, 2)\nb = 5\na *\nb", "1\n2\n5")]
-    public void LineEndingStar_BeforeAnOperandRow_IsMultiplication_NeverASpreadRow(string source, string spreadReading)
+    [InlineData("A = 4\nB = 6\nA*\nB")]
+    [InlineData("A = 4\nB = 6\nA* # a comment never changes the decision\nB")]
+    [InlineData("A = 4\nB = 6\nA*\n\n\nB")]
+    [InlineData("A = 4\nB = 6\nA*\r\nB")]
+    public void AttachedLineEndingStar_IsACompletedSpread_AndTheNextLineIsItsOwnRow(string source)
     {
-        // The former attached-spread reading (`a*` newline `b` as a spread row
-        // followed by a `b` row) no longer exists: both spellings are the
-        // multiplication `a * b`, which fails on the sequence operand.
-        Assert.NotEmpty(FailureErrors(source));
-        Assert.Equal(spreadReading, Display("a = (1, 2)\nb = 5\na*,\nb"));
+        // Issue #183: an attached line-final star is the spread marker and
+        // completes the expression, so the next line begins an independent row.
+        Assert.Equal("4\n6", Display(source));
+
+        var parse = Parser.Parse(source);
+        Assert.Empty(parse.Diagnostics);
+        Assert.Equal(2, parse.Root.Output.Count);
+        Assert.IsType<Expr.SequenceSpread>(parse.Root.Output[0]);
+        Assert.DoesNotContain(parse.Root.Output, static e => e is Expr.Binary);
+    }
+
+    [Fact]
+    public void LineEndingStar_BeforeAnOperandRow_IsASpreadRowAttached_AndMultiplicationDetached()
+    {
+        // `a*` newline `b` is the spread row followed by the `b` row, exactly
+        // like the comma-closed `a*,` newline `b`; the detached `a *` newline
+        // `b` is the multiplication `a * b`, which fails on the sequence operand.
+        Assert.Equal("1\n2\n5", Display("a = (1, 2)\nb = 5\na*\nb"));
+        Assert.Equal("1\n2\n5", Display("a = (1, 2)\nb = 5\na*,\nb"));
+        Assert.NotEmpty(FailureErrors("a = (1, 2)\nb = 5\na *\nb"));
     }
 
     [Theory]
-    [InlineData("a = 2\nb = 3\na*\n-b", "-6")]
-    [InlineData("a = 2\na*\n(3)", "6")]
-    [InlineData("a = 2\na*\n{3}", "6")]
+    [InlineData("a = 2\nb = 3\na *\n-b", "-6")]
+    [InlineData("a = 2\na *\n(3)", "6")]
+    [InlineData("a = 2\na *\n{3}", "6")]
     // A `~`-led operand: Grace on a FREE name (`K(3, 2)` binds b = 3, a = 2 after
     // `~b` moves `b` first); Grace on a bound property would be the
     // ineligible-Grace error instead (GraceEffectivenessTests).
-    [InlineData("K = a*\n~b\nK(3, 2)", "6")]
-    [InlineData("a = 2\nb = false\na*\nif(not b, 1, 0)", "2")]
-    [InlineData("a = 2\na*\n3", "6")]
-    public void OperandLikeTokensOnTheNextLine_AreMultiplicationOperands(string source, string expected)
+    [InlineData("K = a *\n~b\nK(3, 2)", "6")]
+    [InlineData("a = 2\nb = false\na *\nif(not b, 1, 0)", "2")]
+    [InlineData("a = 2\na *\n3", "6")]
+    public void OperandLikeTokensOnTheNextLine_AreMultiplicationOperands_AfterADetachedStar(string source, string expected)
     {
         // Every token that begins a right operand does so across the newline
         // exactly as on the same line (compare OperandLikeTokensAfterStar_AreMultiplication).
@@ -151,12 +172,57 @@ public class StarSyntaxTests
     }
 
     [Theory]
-    [InlineData("a = 2\na*\n'x'")]
-    [InlineData("a = 2\na*\n\"x\"")]
-    [InlineData("a = 2\na*\n\"{a}\"")]
-    [InlineData("a = 2\na*\n[1]")]
-    public void StringOrListOnTheNextLine_IsAMultiplicationOperand_AndFailsAtRuntime(string source)
-        => Assert.NotEmpty(FailureErrors(source));
+    [InlineData("a = 2\nb = 3\na*\n-b", "2\n-3")]
+    [InlineData("a = 2\na*\n(3)", "2\n3")]
+    [InlineData("a = 2\na*\n{3}", "2\n3")]
+    [InlineData("a = 2\nb = false\na*\nif(not b, 1, 0)", "2\n1")]
+    [InlineData("a = 2\na*\n3", "2\n3")]
+    public void OperandLikeTokensOnTheNextLine_BeginTheirOwnRow_AfterAnAttachedStar(string source, string expected)
+        => Assert.Equal(expected, Display(source));
+
+    [Theory]
+    [InlineData("a = 2\na *\n'x'")]
+    [InlineData("a = 2\na *\n\"x\"")]
+    [InlineData("a = 2\na *\n\"{a}\"")]
+    [InlineData("a = 2\na *\n[1]")]
+    public void StringOrListOnTheNextLine_IsAMultiplicationOperand_AfterADetachedStar_AndFailsAtRuntime(string source)
+    {
+        // The next line is the multiplication's right operand: the source parses cleanly to ONE
+        // multiplication row (never the missing-operand recovery), and only evaluation fails.
+        var parse = Parser.Parse(source);
+        Assert.Empty(parse.Diagnostics);
+        var product = Assert.IsType<Expr.Binary>(Assert.Single(parse.Root.Output));
+        Assert.Equal(BinaryOp.Mul, product.Op);
+        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+    }
+
+    [Theory]
+    [InlineData("a = 2\na*\n'x'", "2\nx")]
+    [InlineData("a = 2\na*\n\"x\"", "2\nx")]
+    [InlineData("a = 2\na*\n\"{a}\"", "2\n2")]
+    [InlineData("a = 2\na*\n[1]", "2\n[1]")]
+    public void StringOrListOnTheNextLine_IsItsOwnRow_AfterAnAttachedStar(string source, string expected)
+        => Assert.Equal(expected, Display(source));
+
+    [Theory]
+    [InlineData("A = (1, 2)\nA *\nB = 5\nB")]
+    [InlineData("A = (1, 2)\nA *\npublic B = 5\nB")]
+    [InlineData("A = (1, 2)\nA *\nF(x) = x + 4\nF(1)")]
+    [InlineData("A = (1, 2)\nA *\nx, y = 4, 5\ny")]
+    [InlineData("A = (1, 2)\nA *\n*items = 4, 5\nitems[1]")]
+    [InlineData("A = (1, 2)\nA *\nx, *rest = 4, 5\nrest[0]")]
+    public void DetachedLineEndingStar_BeforeADeclarationHead_ReportsMissingMultiplicationOperand(string source)
+    {
+        // A declaration head is never a multiplication operand, so the detached
+        // star before it announces incomplete multiplication — through the SAME
+        // declaration relation the adjacency boundary stops at. `B` beginning an
+        // expression lexically never re-reads the head as an operand.
+        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+
+        var parse = Parser.Parse(source);
+        Assert.Contains(parse.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken);
+        Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parse.Root.Output[0]).Op);
+    }
 
     [Theory]
     [InlineData("A = (1, 2)\nA*\nB = 5\nB")]
@@ -165,27 +231,21 @@ public class StarSyntaxTests
     [InlineData("A = (1, 2)\nA*\nx, y = 4, 5\ny")]
     [InlineData("A = (1, 2)\nA*\n*items = 4, 5\nitems[1]")]
     [InlineData("A = (1, 2)\nA*\nx, *rest = 4, 5\nrest[0]")]
-    public void LineEndingStar_BeforeADeclarationHead_ReportsMissingMultiplicationOperand(string source)
+    public void AttachedLineEndingStar_BeforeADeclarationHead_IsACompletedSpreadRow(string source)
     {
-        // A declaration head is never a multiplication operand, so the star
-        // before it announces incomplete multiplication — through the SAME declaration
-        // relation the adjacency boundary stops at. `B` beginning an
-        // expression lexically never re-reads the star as multiplication.
-        Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
-
+        // The attached star completed its row, so the declaration simply follows.
+        Assert.Equal("1\n2\n5", Display(source));
         var parse = Parser.Parse(source);
-        Assert.Contains(parse.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken);
-        Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parse.Root.Output[0]).Op);
+        Assert.Empty(parse.Diagnostics);
+        Assert.IsType<Expr.SequenceSpread>(parse.Root.Output[0]);
     }
 
     [Fact]
     public void DetachedStar_BeforeADeclarationHead_IsIncompleteMultiplication()
     {
-        // The declaration head still closes the expression (the star is
-        // classified as a spread, never as multiplication), and only THEN the
-        // marker attachment law rejects the detached spelling: `A *` newline
-        // `B = 5` is neither `A * B` nor a spread — it is the attachment error,
-        // with the definition of `B` left intact.
+        // A detached line-final star is multiplication (issue #183), and the
+        // declaration head is never its operand: `A *` newline `B = 5` is the
+        // one missing-operand error, with the definition of `B` left intact.
         var parse = Parser.ParseSyntax("A = (1, 2)\nA *\nB = 5\nB");
 
         var error = Assert.Single(parse.Diagnostics);
@@ -197,12 +257,12 @@ public class StarSyntaxTests
     }
 
     [Fact]
-    public void LineEndingStar_BeforeAGraceMarkedPropertyDefinition_ReportsMissingOperandAndPreservesTheHead()
+    public void DetachedLineEndingStar_BeforeAGraceMarkedPropertyDefinition_ReportsMissingOperandAndPreservesTheHead()
     {
         // `~Name = ...` is the invalid-grace property prefix: still a
         // declaration head, so multiplication lacks its operand while the rejected
         // grace marker keeps its own diagnostic.
-        var parse = Parser.ParseSyntax("A = (1, 2)\nA*\n~B = 5\nB");
+        var parse = Parser.ParseSyntax("A = (1, 2)\nA *\n~B = 5\nB");
 
         Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parse.Root.Output[0]).Op);
         Assert.Contains(parse.Root.Properties, static p => p.Name == "B");
@@ -210,8 +270,19 @@ public class StarSyntaxTests
         Assert.Contains(parse.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken);
     }
 
+    [Fact]
+    public void AttachedLineEndingStar_BeforeAGraceMarkedPropertyDefinition_LeavesOnlyTheGraceDiagnostic()
+    {
+        // The attached star completed its spread row; the head keeps its own report.
+        var parse = Parser.ParseSyntax("A = (1, 2)\nA*\n~B = 5\nB");
+
+        Assert.IsType<Expr.SequenceSpread>(parse.Root.Output[0]);
+        Assert.Contains(parse.Root.Properties, static p => p.Name == "B");
+        Assert.Equal(DiagnosticCode.InvalidGraceMarker, Assert.Single(parse.Diagnostics).Code);
+    }
+
     [Theory]
-    [InlineData("a = (1, 2)\na*", "!missingOperand")]
+    [InlineData("a = (1, 2)\na*", "1\n2")]
     [InlineData("a = (1, 2)\n(a*)", "(1, 2)")]
     [InlineData("a = (1, 2)\n[a*]", "[1, 2]")]
     [InlineData("a = (1, 2)\n{ a* }", "(1, 2)")]
@@ -219,21 +290,17 @@ public class StarSyntaxTests
     [InlineData("a = (1, 2)\na*,\n9", "1\n2\n9")]
     [InlineData("F(*items) = items\na = (1, 2)\nF(a*)", "[1, 2]")]
     [InlineData("F(*items) = items\na = (1, 2)\nF(a*, 3)", "[1, 2, 3]")]
-    [InlineData("F(*items) = items\na = (1, 2)\nF(a*\n)", "!missingOperand")]
-    [InlineData("a = 7\na*", "!missingOperand")]
+    [InlineData("F(*items) = items\na = (1, 2)\nF(a*\n)", "[1, 2]")]
+    [InlineData("a = 7\na*", "7")]
     [InlineData("a = 'text'\n[a*]", "[text]")]
     public void ClosingBoundaryAfterAttachedStar_IsASpread(string source, string expected)
     {
-        // A closing `)`, `]`, or `}`, a comma, or end of input closes the
-        // expression before any operand could follow, so the attached star is
-        // the spread marker. Spread stays total: a scalar or string operand
-        // supplies itself as one item.
-        if (expected == "!missingOperand")
-        {
-            Assert.True(Parser.ParseSyntax(source).HasErrors);
-            Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
-        }
-        else Assert.Equal(expected, Display(source));
+        // A closing `)`, `]`, or `}`, a comma, or the end of the physical line
+        // (EOF and a later-line closer included, issue #183) closes the
+        // expression after an attached star, so the star is the spread marker.
+        // Spread stays total: a scalar or string operand supplies itself as one
+        // item.
+        Assert.Equal(expected, Display(source));
     }
 
     // ── Marker attachment law: the detached spread marker ───────────────────
@@ -292,7 +359,7 @@ public class StarSyntaxTests
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
         Assert.Equal(DiagnosticCode.InvalidSpreadMarker, error.Code);
         Assert.Equal(
-            $"The spread marker `*` must be directly attached to the expression it spreads: write `{proposedRewrite}` (a detached `*` that no right operand follows is not multiplication either).",
+            $"The spread marker `*` must be directly attached to the expression it spreads: write `{proposedRewrite}` (a detached `*` followed on its line by something it cannot multiply is not multiplication either).",
             error.Message);
         Assert.Equal(expectedSpan, error.Span);
 
@@ -324,38 +391,48 @@ public class StarSyntaxTests
     [InlineData("values = 6\nother = 7\nvalues *\nother")]
     public void DetachedStar_WithARightOperand_IsStillMultiplication_NotAnAttachmentError(string source)
     {
-        // The attachment law is checked only AFTER classification: a detached
-        // star that a right operand follows — on the same line or the next —
-        // is the ordinary multiplication, and no attachment diagnostic fires.
+        // A detached star that a right operand follows — on the same line, or on
+        // the next because a detached line-final star is multiplication (issue
+        // #183) — is the ordinary multiplication; no attachment diagnostic fires.
         var parse = Parser.ParseSyntax(source);
         Assert.DoesNotContain(parse.Diagnostics, static d => d.Code == DiagnosticCode.InvalidSpreadMarker);
         Assert.Contains(parse.Root.Output, static e => e is Expr.Binary { Op: BinaryOp.Mul });
     }
 
     [Fact]
-    public void DefinitionBody_EndingInAStar_ContinuesIntoTheNextRow_AsMultiplication()
+    public void DefinitionBody_EndingInAStar_EndsAtTheLineAttached_AndContinuesDetached()
     {
-        // A definition body is line-bounded, but a same-line trailing operator
-        // continues it across the newline, so `X = A*` newline `B` is the
-        // multiplication `X = A * B` exactly like `X = A *` newline `B`.
-        Assert.Equal("24", Display("A = 4\nB = 6\nX = A*\nB\nX"));
+        // A definition body is line-bounded. An attached line-final star
+        // completes it (issue #183), so `X = A*` newline `B` is the spread body
+        // and the row `B`; a detached trailing star continues it across the
+        // newline, so `X = A *` newline `B` is the multiplication `X = A * B`.
+        Assert.Equal("6\n4", Display("A = 4\nB = 6\nX = A*\nB\nX"));
         Assert.Equal("24", Display("A = 4\nB = 6\nX = A *\nB\nX"));
 
-        var parse = Parser.Parse("A = 4\nB = 6\nX = A*\nB\nX");
-        Assert.Empty(parse.Diagnostics);
-        var x = Assert.Single(parse.Root.Properties, static p => p.Name == "X");
-        var binary = Assert.IsType<Expr.Binary>(Assert.Single(x.Value.Output));
+        var spread = Parser.Parse("A = 4\nB = 6\nX = A*\nB\nX");
+        Assert.Empty(spread.Diagnostics);
+        var spreadX = Assert.Single(spread.Root.Properties, static p => p.Name == "X");
+        Assert.IsType<Expr.SequenceSpread>(Assert.Single(spreadX.Value.Output));
+        Assert.Equal(2, spread.Root.Output.Count);
+
+        var product = Parser.Parse("A = 4\nB = 6\nX = A *\nB\nX");
+        Assert.Empty(product.Diagnostics);
+        var productX = Assert.Single(product.Root.Properties, static p => p.Name == "X");
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(productX.Value.Output));
         Assert.Equal(BinaryOp.Mul, binary.Op);
-        Assert.Single(parse.Root.Output);
+        Assert.Single(product.Root.Output);
     }
 
     [Fact]
-    public void UnclosedSpreadStepBody_AbsorbsTheFollowingCallAsMultiplication()
+    public void SpreadStepBody_EndsAtTheLineAttached_WhileADetachedStarAbsorbsTheFollowingCall()
     {
-        // Q-33 (decided 2026-10-09): a line-final star is classified like every star. `repeat`
-        // begins an operand and no declaration, so the star multiplies and the step body
-        // continues across the newline: `Step(*x) = x.skip(1) * repeat(Step, 1, 7, 8)`.
-        const string source = "Step(*x) = x.skip(1)*\nrepeat(Step, 1, 7, 8)";
+        // Attached (issue #183): `x.skip(1)*` completes the step body, and the `repeat` call is
+        // the root row, which runs the spread step.
+        Assert.Equal("8", Display("Step(*x) = x.skip(1)*\nrepeat(Step, 1, 7, 8)"));
+
+        // Detached: `repeat` begins an operand and no declaration, so the star multiplies and the
+        // step body continues across the newline: `Step(*x) = x.skip(1) * repeat(Step, 1, 7, 8)`.
+        const string source = "Step(*x) = x.skip(1) *\nrepeat(Step, 1, 7, 8)";
         var parsed = SourceProvenance.ParseValid(source);
         Assert.Empty(parsed.Diagnostics);
         Assert.Empty(parsed.Root.Output);
@@ -364,7 +441,6 @@ public class StarSyntaxTests
         Assert.Equal("repeat", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.Call>(body.Right).Function).Name);
         // This is valid arithmetic in an unused definition, and the layout is language law with no
         // warning or error, so the engine reports no program output — never an invented diagnostic.
-        // The brace body closes the spread-ending step instead.
         Assert.IsType<RunResult.NoProgramOutput>(KatLangEngine.Run(source));
         Assert.Equal("8", Display("Step(*x) = { x.skip(1)* }\nrepeat(Step, 1, 7, 8)"));
     }
@@ -372,36 +448,56 @@ public class StarSyntaxTests
     [Theory]
     [InlineData("A = (1, 2)\nX = (A*)\nX", "(1, 2)")]
     [InlineData("A = (1, 2)\nX = { A* }\nX", "(1, 2)")]
+    [InlineData("A = (1, 2)\nX = A*\nX", "(1, 2)")]
     [InlineData("A = (1, 2)\nX = A*\nY = 5\nX", "(1, 2)")]
     [InlineData("A = (1, 2)\nX\nX = A*", "(1, 2)")]
-    public void DefinitionBody_EndingInASpread_RequiresSameLineExplicitClosure(string source, string expected)
+    public void DefinitionBody_EndingInASpread_IsClosedByTheEndOfTheLine_OrExplicitly(string source, string expected)
     {
-        // The idioms that keep a body-final spread a spread: capture
-        // parentheses, a brace body, a following declaration, or end of input
-        // (nothing that could be an operand follows the star).
-        if (source.Contains("X = A*", StringComparison.Ordinal))
-            Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
-        else Assert.Equal(expected, Display(source));
+        // Every idiom keeps a body-final spread a spread: capture parentheses,
+        // a brace body, and — since issue #183 — the end of the physical line
+        // after an attached star (a following row, declaration, or EOF).
+        Assert.Equal(expected, Display(source));
     }
 
     [Fact]
-    public void LineEndingStar_BeforeALeadingDotLine_IsIncompleteMultiplication()
+    public void LineEndingStar_BeforeALeadingDotLine_IsAFluentReceiverAttached_AndIncompleteMultiplicationDetached()
     {
-        Assert.True(Parser.ParseSyntax("A=(1,2)\nA*\n.count").HasErrors);
+        Assert.True(Parser.ParseSyntax("A=(1,2)\nA *\n.count").HasErrors);
+        Assert.Equal("2", Display("F(*xs)=xs.count\nA=(1,2)\nA*\n.F"));
         Assert.Equal("2", Display("F(*xs)=xs.count\nA=(1,2)\nA*.F"));
     }
 
     [Fact]
-    public void LineFinalStar_AlwaysAnnouncesMultiplication_AcrossEveryFollowingTokenKind()
+    public void DetachedLineFinalStar_AnnouncesMultiplication_AcrossEveryFollowingTokenKind()
+    {
+        const string preamble = "A=4\nB=6\n";
+        foreach (var follower in new[] { "B", "6", "'x'", "\"x\"", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
+        {
+            var parsed = Parser.ParseSyntax(preamble + "A *\n" + follower);
+            Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parsed.Root.Output[0]).Op);
+            Assert.DoesNotContain(parsed.Root.Output, e => e is Expr.SequenceSpread);
+            if (follower is "B=1" or "F(x)=x" or "x,y=1,2" or "open B" or "public B=1")
+                Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken && d.Message.Contains("after '*'", StringComparison.Ordinal));
+            else if (follower != "not B")
+            {
+                // An operand follower is the multiplication's right operand itself: one clean
+                // row, never the missing-operand recovery (`not` cannot begin that operand).
+                Assert.Empty(parsed.Diagnostics.ToArray());
+                Assert.Single(parsed.Root.Output);
+            }
+        }
+    }
+
+    [Fact]
+    public void AttachedLineFinalStar_CompletesASpread_AcrossEveryFollowingTokenKind()
     {
         const string preamble = "A=4\nB=6\n";
         foreach (var follower in new[] { "B", "6", "'x'", "\"x\"", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
         {
             var parsed = Parser.ParseSyntax(preamble + "A*\n" + follower);
-            Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parsed.Root.Output[0]).Op);
-            Assert.DoesNotContain(parsed.Root.Output, e => e is Expr.SequenceSpread);
-            if (follower is "B=1" or "F(x)=x" or "x,y=1,2" or "open B" or "public B=1")
-                Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken && d.Message.Contains("after '*'", StringComparison.Ordinal));
+            Assert.IsType<Expr.SequenceSpread>(parsed.Root.Output[0]);
+            Assert.DoesNotContain(parsed.Root.Output, e => e is Expr.Binary);
+            Assert.DoesNotContain(parsed.Diagnostics, d => d.Message.Contains("after '*'", StringComparison.Ordinal));
         }
     }
 
@@ -427,9 +523,11 @@ public class StarSyntaxTests
     public void NotAfterAStar_IsNeverAMultiplicationOperand()
     {
         // `not` binds below the comparisons, so it cannot begin a multiplication's
-        // right operand: the star is the spread marker and `not b` is the next row
-        // (the spread row shows the spread items, the negation row shows `true`).
-        Assert.True(Parser.ParseSyntax("a = 2\nb = false\na*\nnot b").HasErrors);
+        // right operand. After an attached line-final star the spread row is
+        // complete and `not b` is the next row (issue #183); after a detached one
+        // the multiplication's operand is missing and `not` is misplaced there.
+        Assert.Equal("2\ntrue", Display("a = 2\nb = false\na*\nnot b"));
+        Assert.True(Parser.ParseSyntax("a = 2\nb = false\na *\nnot b").HasErrors);
 
         // On the same line the second item needs the ordinary comma (SYN-07A); the
         // star decision itself is identical.
@@ -1092,32 +1190,51 @@ public class StarSyntaxTests
     }
 
     /// <summary>
-    /// `A*` newline `B*` is the layout-independent star rule's one trap for two
-    /// intended spread rows: the first line's final star has an operand on the next
-    /// line, so it multiplies, and the second line's spread becomes its right operand.
-    /// The rejection keeps the ordinary structured code (MisplacedSpread, spanning the
-    /// second spread) but explains the actual cause — the line-final `*` — and the two
-    /// spellings that separate the expressions, instead of the generic scalar-operand wording that
-    /// would send the user to the wrong star.
+    /// `A *` newline `B*` is the detached line-final star's one trap for two intended
+    /// spread rows: the first line's final star is detached, so it is multiplication
+    /// (issue #183), and the second line's spread becomes its right operand. The
+    /// rejection keeps the ordinary structured code (MisplacedSpread, spanning the
+    /// second spread) but explains the actual cause — the detached line-final `*` —
+    /// and the two repairs, instead of the generic scalar-operand wording that would
+    /// send the user to the wrong star.
     /// </summary>
     [Theory]
-    [InlineData("A = 1, 2\nB = 3, 4\nA*\nB*", 4, 1, 4, 3)]
+    [InlineData("A = 1, 2\nB = 3, 4\nA *\nB*", 4, 1, 4, 3)]
     [InlineData("A = 1, 2\nB = 3, 4\nA * # a comment\n\nB*", 5, 1, 5, 3)]
-    [InlineData("A = 1, 2\nB = 3, 4\nX = A*\nB*\nY = X\nY", 4, 1, 4, 3)]
-    [InlineData("A*\r\nB*", 2, 1, 2, 3)]
-    [InlineData("A*# comment\r\n\tB*# end", 2, 2, 2, 4)]
-    [InlineData("A*\nB**", 2, 1, 2, 4)]
-    [InlineData("A~*\nB~*", 2, 1, 2, 4)]
-    [InlineData("A*\n~B*", 2, 1, 2, 4)]
-    public void SpreadRowFollowedBySpreadRow_ExplainsTheLineFinalStarContinuation(
+    [InlineData("A = 1, 2\nB = 3, 4\nX = A *\nB*\nY = X\nY", 4, 1, 4, 3)]
+    [InlineData("A *\r\nB*", 2, 1, 2, 3)]
+    [InlineData("A *# comment\r\n\tB*# end", 2, 2, 2, 4)]
+    [InlineData("A *\nB**", 2, 1, 2, 4)]
+    [InlineData("A~ *\nB~*", 2, 1, 2, 4)]
+    [InlineData("A *\n~B*", 2, 1, 2, 4)]
+    public void SpreadRowAfterADetachedLineFinalStar_ExplainsTheMultiplicationContinuation(
         string source, int line, int column, int endLine, int endColumn)
     {
         var error = SingleError(CloseLastSpread(source));
         Assert.Equal(DiagnosticCode.MisplacedSpread, error.Code);
         Assert.Equal(new SourceSpan(line, column, endLine, endColumn), error.Span);
-        Assert.Contains("on an earlier line continued as multiplication", error.Message);
-        Assert.Contains("`A*,`", error.Message);
-        Assert.Contains("`(A*)`", error.Message);
+        Assert.Contains("is separated from its left operand", error.Message);
+        Assert.Contains("attach the marker to its operand (`A*`)", error.Message);
+        Assert.Contains("remove the right operand's spread marker", error.Message);
+    }
+
+    [Theory]
+    [InlineData("A = 1, 2\nB = 3, 4\nA*\nB*")]
+    [InlineData("A = 1, 2\nB = 3, 4\nA* # a comment\n\nB*")]
+    [InlineData("A = 1, 2\nB = 3, 4\nX = A*\nB*\nY = X\nY")]
+    [InlineData("A*\r\nB*")]
+    [InlineData("A*# comment\r\n\tB*# end")]
+    [InlineData("A*\nB**")]
+    [InlineData("A~*\nB~*")]
+    [InlineData("A*\n~B*")]
+    public void SpreadRowAfterAnAttachedLineFinalStar_IsItsOwnRow(string source)
+    {
+        // The attached twins: each line is a completed spread row (issue #183), so
+        // nothing is misplaced and nothing is reported.
+        var parsed = Parser.ParseSyntax(source);
+        Assert.Empty(parsed.Diagnostics.ToArray());
+        Assert.All(parsed.Root.Output, static row => Assert.IsNotType<Expr.Binary>(row));
+        Assert.IsType<Expr.SequenceSpread>(parsed.Root.Output[0]);
     }
 
     [Theory]
@@ -1140,18 +1257,20 @@ public class StarSyntaxTests
     }
 
     [Fact]
-    public void LineFinalStarAdvice_DistinguishesCaptureAndSpread_AndRepairsMultiplication()
+    public void LineFinalStarAdvice_NamesBothRepairs_AndEachRepairWorks()
     {
-        var error = SingleError("A* # continuation\n\n# another comment\nB*, 0");
+        var error = SingleError("A * # continuation\n\n# another comment\nB*, 0");
         Assert.Contains("earlier line", error.Message);
-        Assert.Contains("captures", error.Message);
+        Assert.Contains("attach the marker to its operand", error.Message);
         Assert.Contains("remove the right operand's spread marker", error.Message);
         Assert.DoesNotContain("write both operands on one line", error.Message);
         // Reflowing alone is not a repair. Removing the misplaced spread works
-        // on either layout; grouping the first spread changes its value boundary.
+        // on either layout; attaching the first star (or a comma) separates the
+        // spread rows; grouping the first spread changes its value boundary.
         Assert.Equal(DiagnosticCode.MisplacedSpread, SingleError("A* B*, 0").Code);
         Assert.Equal("24", Display("A = 4\nB = 6\nA * B"));
         Assert.Equal("24", Display("A = 4\nB = 6\nA *\nB"));
+        Assert.Equal("1\n2\n3\n4\n0", Display("A = 1, 2\nB = 3, 4\nA*\nB*, 0"));
         Assert.Equal("1\n2\n3\n4\n0", Display("A = 1, 2\nB = 3, 4\nA*,\nB*, 0"));
         Assert.Equal("(1, 2)\n3\n4\n0", Display("A = 1, 2\nB = 3, 4\n(A*)\nB*, 0"));
     }
@@ -1159,7 +1278,7 @@ public class StarSyntaxTests
     [Fact]
     public void LineFinalStarDiagnostic_RecoversWithoutConsumingTheNextDeclaration()
     {
-        var parsed = Parser.ParseSyntax("A*\nB*, 0\nAfter = 5\nAfter");
+        var parsed = Parser.ParseSyntax("A *\nB*, 0\nAfter = 5\nAfter");
         Assert.Equal(DiagnosticCode.MisplacedSpread, Assert.Single(parsed.Diagnostics).Code);
         Assert.Equal("After", Assert.Single(parsed.Root.Properties).Name);
         Assert.Equal(3, parsed.Root.Output.Count);
@@ -1168,17 +1287,33 @@ public class StarSyntaxTests
         Assert.Equal("A", Assert.IsType<Expr.Resolve>(recovered.Left).Name);
         Assert.Equal("B", Assert.IsType<Expr.Resolve>(recovered.Right).Name);
         Assert.Equal("After", Assert.IsType<Expr.Resolve>(parsed.Root.Output[2]).Name);
+
+        // Attached, the same text is two spread rows, a number row and the declaration's row.
+        var attached = Parser.ParseSyntax("A*\nB*, 0\nAfter = 5\nAfter");
+        Assert.Empty(attached.Diagnostics.ToArray());
+        Assert.Equal("After", Assert.Single(attached.Root.Properties).Name);
+        Assert.Equal(4, attached.Root.Output.Count);
+        Assert.IsType<Expr.SequenceSpread>(attached.Root.Output[0]);
+        Assert.IsType<Expr.SequenceSpread>(attached.Root.Output[1]);
     }
 
     [Fact]
-    public void ConsecutiveLineFinalMultiplicationsInDefinition_StillHaveNoProgramOutput()
+    public void ConsecutiveAttachedLineFinalStarsInADefinition_EndTheDefinitionAtTheFirstLine()
     {
-        // F13b, decided as Q-33 (2026-10-09): the current parse is law, with no new diagnostic.
-        // Each line-final star is followed by a token that begins an operand and no declaration,
-        // so both multiply and the definition continues across both newlines:
-        // `X = (A * B) * X`, leaving no output row. The source is valid and reports nothing —
-        // neither the F13a explanation (no spread exists here) nor any warning.
-        const string source = "A = 4\nB = 6\nX = A*\nB*\nX";
+        // Issue #183: `X = A*` is complete, `B*` is a spread row of its own, `X` reads X.
+        Assert.Equal("6\n4", Display("A = 4\nB = 6\nX = A*\nB*\nX"));
+    }
+
+    [Fact]
+    public void ConsecutiveDetachedLineFinalMultiplicationsInDefinition_StillHaveNoProgramOutput()
+    {
+        // F13b, decided as Q-33 (2026-10-09) and kept by issue #183 for DETACHED stars: the
+        // parse is law, with no new diagnostic. Each detached line-final star is followed by a
+        // token that begins an operand and no declaration, so both multiply and the definition
+        // continues across both newlines: `X = (A * B) * X`, leaving no output row. The source
+        // is valid and reports nothing — neither the F13a explanation (no spread exists here)
+        // nor any warning.
+        const string source = "A = 4\nB = 6\nX = A *\nB *\nX";
         var parsed = SourceProvenance.ParseValid(source);
         Assert.Empty(parsed.Diagnostics);
         Assert.Empty(parsed.Root.Output);
@@ -1552,8 +1687,9 @@ public class StarSyntaxTests
         // The star disambiguation is unchanged by postfix selection: '[' begins
         // a multiplication operand (a list literal), so `values*[0]` is the
         // multiplication `values * [0]` — on the same line, with spaces, and
-        // across a newline — never a selection applied to a spread.
-        foreach (var source in new[] { "values = (1, 2)\nvalues*[0]", "values = (1, 2)\nvalues *[0]", "values = (1, 2)\nvalues*\n[0]" })
+        // across a newline after a DETACHED star — never a selection applied to
+        // a spread.
+        foreach (var source in new[] { "values = (1, 2)\nvalues*[0]", "values = (1, 2)\nvalues *[0]", "values = (1, 2)\nvalues *\n[0]" })
         {
             var parse = Parser.Parse(source);
             Assert.Empty(parse.Diagnostics);
@@ -1561,6 +1697,14 @@ public class StarSyntaxTests
             Assert.Equal(BinaryOp.Mul, product.Op);
             Assert.IsType<Expr.ListLiteral>(product.Right);
         }
+
+        // After an ATTACHED line-final star (issue #183) the spread row is complete and the
+        // next line's '[' begins a new list literal: still never a selection of the spread.
+        var rows = Parser.Parse("values = (1, 2)\nvalues*\n[0]");
+        Assert.Empty(rows.Diagnostics);
+        Assert.IsType<Expr.SequenceSpread>(rows.Root.Output[0]);
+        Assert.IsType<Expr.ListLiteral>(rows.Root.Output[1]);
+        Assert.Equal("1\n2\n[0]", Display("values = (1, 2)\nvalues*\n[0]"));
 
         // Capture-then-select, select-then-spread and a spread SELECTOR slot are
         // the spellings of the other intentions.

@@ -923,10 +923,15 @@ public sealed class Parser
     // eligible only with exact attachment; detached minus and leading star
     // can continue binary arithmetic. Postfix calls/selection and Grace keep
     // their same-line/independent-expression rules. Comma belongs only to its
-    // expression-list consumer. A physical line-final star (EOF included)
-    // announces multiplication; actual spread requires explicit same-line
-    // closure and is then checked for attachment. Comments/reported chars and
-    // blank lines do not select grammar roles or reconstruct attachment.
+    // expression-list consumer. A physical line-final star (EOF included) is
+    // classified by attachment (issue #183, refining Q-65): attached `A*` is a
+    // spread that completes the expression, detached `A *` is multiplication
+    // that leaves it incomplete; the newline decision below then applies to
+    // the completed or incomplete expression unchanged. A star with a
+    // same-line follower keeps the spacing-independent classification, and a
+    // same-line-closed spread is then checked for attachment. Comments,
+    // reported chars and blank lines do not select grammar roles or
+    // reconstruct attachment.
 
     private readonly record struct ContinuationPolicy(
         bool CanContinueSameLine,
@@ -1811,12 +1816,15 @@ public sealed class Parser
 
     // ── Spread marker ───────────────────────────────────────────────
     // Expression spreading is written with the attached postfix marker `*`.
-    // Q-65: every physical line-final star is multiplication, including at EOF
-    // or before a later closer/declaration. Spread needs a same-line explicit
-    // closure: comma, closer, fluent dot or a chain that is itself closed there.
-    // Same-line operand syntax still makes multiplication (`a*b`, `a * b`).
-    // After spread classification, exact marker attachment is enforced; a
-    // detached spread marker is a syntax error. Chaining nests one ordinary
+    // Issue #183 (refining Q-65): a physical line-final star, EOF or a later
+    // closer/declaration included, is classified by attachment — attached `a*`
+    // is a spread that completes the expression, detached `a *` is
+    // multiplication that leaves it incomplete. A star with a same-line follower
+    // is a spread only before an explicit closure: comma, closer, fluent dot or
+    // a further spread-classified star; same-line operand syntax still makes
+    // multiplication (`a*b`, `a * b`). After same-line spread classification,
+    // exact marker attachment is enforced; a detached spread marker is a
+    // syntax error. Chaining nests one ordinary
     // SequenceSpread node per star; the evaluator's VALUE law is unchanged.
     // The parser only records the written layers; evaluation applies them
     // compositionally, `value**` agreeing with `(value*)*` (each layer
@@ -2084,10 +2092,12 @@ public sealed class Parser
     // ── Star-marker diagnostics ─────────────────────────────────────────────
     // Prefix `*name` (directly attached) is the ONLY collecting-binding
     // spelling, valid only in binding positions. Postfix `expr*` (directly
-    // attached, with an explicit same-line spread closure) is the
-    // ONLY spread spelling, valid only as a whole expression-list slot or
-    // fluent dot-chain receiver. A star that a right operand follows is infix
-    // multiplication, however it is spaced. After same-line spread classification,
+    // attached, closed by explicit same-line syntax or by the end of its
+    // physical line) is the ONLY spread spelling, valid only as a whole
+    // expression-list slot or fluent dot-chain receiver. A star that a
+    // same-line right operand follows is infix multiplication, however it is
+    // spaced, and so is a DETACHED star that ends its line (issue #183). After
+    // same-line spread classification,
     // a marker NOT attached to its operand (`F(values *)`) is a
     // malformed spread marker — never silently a multiplication and never
     // silently a spread (MARKER ATTACHMENT LAW: structural/annotation
@@ -2098,7 +2108,7 @@ public sealed class Parser
         $"The collect marker `*` must be directly attached to its binding name: write `*{name}`.";
 
     private static string SpreadMarkerAttachmentDiagnostic(Expr operand) =>
-        $"The spread marker `*` must be directly attached to the expression it spreads: write `{ExprNameRenderer.Render(operand, ExprNameMode.SpreadOperand)}*` (a detached `*` that no right operand follows is not multiplication either).";
+        $"The spread marker `*` must be directly attached to the expression it spreads: write `{ExprNameRenderer.Render(operand, ExprNameMode.SpreadOperand)}*` (a detached `*` followed on its line by something it cannot multiply is not multiplication either).";
 
     private static string RepeatedCollectMarkerDiagnostic(string name) =>
         $"A collecting binding uses exactly one collect marker: write `*{name}`.";
@@ -2149,14 +2159,15 @@ public sealed class Parser
         "A spread expression contributes items to the surrounding item supply and cannot be used as a scalar operand. Spread the whole expression instead, e.g. `(A + B)*`.";
 
     /// <summary>
-    /// The <see cref="MisplacedSpreadDiagnostic"/> variant for `A*` newline `B*`: the
-    /// first line's final `*` is multiplication because an operand follows it on the
-    /// next line (a physical line-final star announces multiplication), so the second line's spread
-    /// became a scalar operand. Names the cause and distinguishes separate spread
-    /// rows from capturing the first spread as one value.
+    /// The <see cref="MisplacedSpreadDiagnostic"/> variant for `A *` newline `B*`: the
+    /// first line's final `*` is DETACHED from its left operand, so it is multiplication
+    /// that leaves the expression incomplete (issue #183: a line-final star is classified
+    /// by attachment), and the second line's spread became its scalar right operand.
+    /// Names the cause and the two repairs: attach the marker for a spread row, or drop
+    /// the right operand's marker for multiplication.
     /// </summary>
     private const string LineFinalStarContinuationDiagnostic =
-        "The final `*` on an earlier line continued as multiplication, making this spread expression its right operand. A spread cannot be a scalar operand. For separate spread rows, add a comma (`A*,`). Grouping (`(A*)`) also ends the row but captures its items as one value. For multiplication, remove the right operand's spread marker (`A * B`); the operands may be on different lines.";
+        "The `*` ending an earlier line is separated from its left operand, so it is multiplication that continued onto this line, making this spread expression its right operand. A spread cannot be a scalar operand. For separate spread rows, attach the marker to its operand (`A*`). For multiplication, remove the right operand's spread marker (`A * B`); the operands may be on different lines.";
 
     /// <summary>
     /// Rejects a spread expression used as an operand of a larger expression
@@ -3642,8 +3653,10 @@ public sealed class Parser
     /// individual target per entry, matching Lean's per-target model. An
     /// explicitly same-line-closed spread-marked target (`open A*, B`) parses
     /// to a SequenceSpread and is rejected here by open-form validation before
-    /// evaluator or runtime involvement — spread is not an open form. (A
-    /// line-final `open A*` is an incomplete multiplication under Q-65.)
+    /// evaluator or runtime involvement — spread is not an open form. So is
+    /// an attached line-final `open A*` (issue #183: an attached line-final
+    /// star is a spread), while a detached line-final `open A *` is an
+    /// incomplete multiplication.
     /// DotCall(obj, name, null) is the canonical form for dotted paths in opens.
     /// Rejects DotCall with args as invalid.
     /// Lean: Expr.openForm? — only Block, Resolve, and argumentless DotCall
@@ -3824,13 +3837,15 @@ public sealed class Parser
     private List<Expr> ParseExpressionListOperand(bool allowNewlineSeparator)
     {
         // Spread slots need no extra handling here: a postfix `*` that same-line
-        // syntax closes (a comma, a closer, a fluent dot) parses as a postfix
+        // syntax closes (a comma, a closer, a fluent dot), or that ends its
+        // physical line ATTACHED to its operand (issue #183), parses as a postfix
         // continuation directly to Expr.SequenceSpread. A spread expression is
         // always one whole slot — a same-line operand makes the star
-        // multiplication, and a physical line-final star always announces
-        // multiplication (Q-65), so spreading before another supplied item
-        // requires an explicit same-line comma (`a*, b`, or the trailing
-        // `a*,` newline `b`).
+        // multiplication — so spreading before another item on the same line
+        // requires an explicit comma (`a*, b`), while an attached line-final
+        // spread completes its slot and the next line begins the next one
+        // wherever newline separators are allowed (`a*` newline `b`). A DETACHED
+        // line-final star (`a *` newline `b`) is multiplication instead.
         var exprs = new List<Expr>();
         exprs.Add(ParseExpression());
 
@@ -3978,8 +3993,10 @@ public sealed class Parser
     /// evaluated at the significant token at <paramref name="index"/> instead
     /// of the current position. Same-line star classification and operand
     /// recovery consult this relation so a declaration head is never read as
-    /// an operand. The physical line-final star rule has priority over spread
-    /// classification, including when the next line begins a declaration.
+    /// an operand. A physical line-final star never consults it: attachment
+    /// alone classifies that star (issue #183), whatever the next line begins —
+    /// an attached `A*` completes its row before a following declaration, and a
+    /// detached `A *` leaves the declaration to operand recovery.
     /// </summary>
     private bool StartsDeclarationAt(int index, bool includeCommaSpanningBindingPatterns)
     {
@@ -4033,7 +4050,8 @@ public sealed class Parser
     // it starts an expression, but only at its own tier BELOW the comparisons
     // (NotPrecedence), so it can never begin a multiplication's right operand:
     // a same-line star followed by `not` keeps its invalid-slot recovery;
-    // a line-final star never becomes spread through that follower. This is the
+    // a line-final star is classified by attachment alone, never through a
+    // next-line follower (issue #183). This is the
     // ONE classifier for "a star could take this as its operand": it decides
     // spread-marker versus multiplication in IsPostfixSpreadMarkerStar, and it
     // decides whether the misplaced-prefix-star recovery in ParsePrimary has an
@@ -4162,10 +4180,11 @@ public sealed class Parser
             // expression is a whole expression-list slot, never a binary
             // operand (`A* + B`, `1 + values*`, and `value* * 2` are errors;
             // spread the whole expression instead: `(A + B)*`). This is also
-            // the documented deterministic rejection for `value**next`,
-            // `value** next`, and `value**` newline `next`: the second star
-            // has a right operand, so it is multiplication whose left
-            // operand is a spread.
+            // the documented deterministic rejection for `value**next` and
+            // `value** next` (and the detached `value* *` newline `next`): the
+            // second star has a right operand, so it is multiplication whose
+            // left operand is a spread. An attached line-final `value**` is two
+            // spread layers instead, and `next` on the following line its own row.
             lhs = CreateBinaryExpression(BinaryOpOf(operatorToken.Kind), lhs, rhs, operatorToken);
         }
 
@@ -4217,10 +4236,10 @@ public sealed class Parser
     {
         lhs = RejectMisplacedSpreadOperand(lhs);
         // A spread right operand of a `*` whose operand starts on a LATER line is the
-        // one place the line-final star law (Q-65: a physical line-final star always
-        // announces multiplication) turns two intended spread rows (`A*` newline
-        // `B*`) into a multiplication with a spread operand: the line-final star
-        // continued as multiplication onto the next row. The
+        // one place the line-final star law (issue #183: a DETACHED line-final star is
+        // multiplication) turns two intended spread rows (`A *` newline `B*`) into a
+        // multiplication with a spread operand: the detached line-final star continued
+        // as multiplication onto the next row. The
         // structured code is the ordinary misplaced-spread rejection; only the
         // explanation names the cause and distinguishes the possible repairs.
         rhs = RejectMisplacedSpreadOperand(
@@ -4435,10 +4454,11 @@ public sealed class Parser
             {
                 case TokenKind.Star when MayContinueClosedExpression(TokenKind.Star)
                     && IsPostfixSpreadMarkerStar():
-                    // The star has an explicit same-line closure; a physical
-                    // line-final star is left to multiplication. Classification
-                    // precedes the exact attachment check, and each additional
-                    // closed star nests one ordinary spread node.
+                    // The star has an explicit same-line closure, or it ends its
+                    // physical line attached to its operand (issue #183: an
+                    // attached line-final star completes the expression; a
+                    // detached one is left to multiplication). Each additional
+                    // spread-classified star nests one ordinary spread node.
                     lhs = ParseSpreadMarkerContinuation(lhs);
                     break;
 
@@ -4611,23 +4631,41 @@ public sealed class Parser
             or TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace or TokenKind.Tilde;
 
     /// <summary>
-    /// True when same-line syntax closes the current star as a spread marker.
-    /// A physical line-final star, including EOF and later-line closers or
-    /// declarations, is multiplication. Same-line operand syntax multiplies;
-    /// explicit comma/closer/fluent-dot/chained-spread syntax can close spread.
-    /// Existing same-line malformed follower recovery remains diagnostic-only.
-    /// Attachment is checked after classification, never used to choose the
-    /// binary role. Comments and blank lines cannot manufacture closure.
+    /// THE star classifier: true when the current star, after a completed expression, is
+    /// the postfix spread marker, false when it is binary multiplication. Purely
+    /// syntactic — no value, name, type, or arity participates.
+    /// <para>A star that is the FINAL significant token of its physical line — EOF, a
+    /// later-line token, closer, or declaration next, across trailing comments and blank
+    /// lines — is classified by ATTACHMENT (issue #183 refinement of Q-65, decided
+    /// 2026-10-14): an attached <c>expr*</c> is the spread marker and COMPLETES the
+    /// expression, so the canonical newline rule then lets the next line begin an
+    /// independent row or declaration (<c>A*</c> newline <c>B</c> is two rows); a detached
+    /// <c>expr *</c> is multiplication that leaves the expression INCOMPLETE, so it continues
+    /// onto the next line (<c>A *</c> newline <c>B</c> is <c>A * B</c>) and a declaration
+    /// there is protected by operand recovery. Attachment is the exact source-offset
+    /// adjacency of <see cref="IsDirectlyAttached"/> to the token the preceding expression
+    /// ends with (<see cref="OperandEndBeforeStar"/>: the operand's last token, a reported
+    /// character standing in as the operand, or the previous star of a run) — positions,
+    /// never token adjacency after skipped tokens are removed: a reported character between
+    /// the operand and the star leaves it detached (<c>A@*</c>), while comments, blank lines,
+    /// and reported characters AFTER the star change nothing.</para>
+    /// <para>A star with a same-line follower keeps the spacing-independent rule: same-line
+    /// operand syntax multiplies (<c>A*B</c>, <c>A* B</c>, <c>A *B</c>, <c>A * B</c>, and
+    /// <c>A*[0]</c>), while explicit comma/closer/fluent-dot/chained-spread syntax closes a
+    /// spread, whose attachment <see cref="ParseSpreadMarkerContinuation"/> then checks
+    /// (<c>F(A *)</c> is the malformed marker). Existing same-line malformed follower
+    /// recovery remains diagnostic-only.</para>
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private bool IsPostfixSpreadMarkerStar()
     {
         var starIndex = NextSignificantIndex(_pos);
         var nextIndex = NextSignificantIndex(starIndex + 1);
         var next = _tokens[nextIndex];
-        // Q-65 owner addendum: a physical line-final star (including EOF)
-        // announces multiplication. Only same-line syntax can close a spread.
+        // Issue #183 (refining Q-65): a physical line-final star (EOF included) is
+        // classified by attachment — attached spreads and completes, detached multiplies.
         if (next.Kind == TokenKind.EndOfFile || next.Line != _tokens[starIndex].Line)
-            return false;
+            return IsDirectlyAttached(OperandEndBeforeStar(starIndex), _tokens[starIndex]);
         if (!CanStartUnaryOperand(next.Kind))
             return true;
         if (StartsDeclarationAt(nextIndex, includeCommaSpanningBindingPatterns: true))
@@ -4637,7 +4675,7 @@ public sealed class Parser
         // Grace needs a bare name. Keep the spread and let postfix recovery
         // reject the annotation on that non-name operand. Inspect the whole
         // run structurally, so `x*~.F`, `x*~ .F`, and `x*~~.F` recover alike;
-        // attachment and line checks must never classify the star.
+        // attachment must never classify a star that has a same-line follower.
         if (next.Kind != TokenKind.Tilde)
             return false;
         do
@@ -4646,6 +4684,26 @@ public sealed class Parser
         }
         while (_tokens[nextIndex].Kind == TokenKind.Tilde);
         return _tokens[nextIndex].Kind == TokenKind.Dot;
+    }
+
+    /// <summary>
+    /// The token the completed expression before the star at <paramref name="starIndex"/> ENDS
+    /// with — the reference of the postfix star's attachment test. That is the significant
+    /// token before the star (the operand's last token, or the previous star of a run), except
+    /// when the token directly before the star is a reported character that the operand
+    /// recovery claimed as the operand itself (<c>X = @*</c>, <see cref="TakeReportedCharacterBeforeCurrent"/>):
+    /// the grammar's significant-token view skips it, yet it IS the operand, so the star's
+    /// attachment is measured against it. Exact source offsets still decide: an unclaimed
+    /// reported character between an operand and its star (<c>A@*</c>) leaves the star detached.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private Token OperandEndBeforeStar(int starIndex)
+    {
+        if (starIndex > 0
+            && _tokens[starIndex - 1] is { Kind: TokenKind.Bad } rawBefore
+            && rawBefore.Position == _lastReportedCharacterFill)
+            return rawBefore;
+        return Previous;
     }
 
     /// <summary>
@@ -4669,16 +4727,21 @@ public sealed class Parser
     /// spread (the current star) and enforces the marker attachment law: the
     /// marker must be DIRECTLY attached to the completed expression's last
     /// token (<see cref="IsDirectlyAttached"/> — the same source-offset
-    /// adjacency the collect marker and Grace require). Attachment is checked
-    /// only here, AFTER classification, so it never participates in the
-    /// spread-versus-multiplication decision: `values *` newline `other` is
-    /// the multiplication `values * other` exactly like `values*` newline
-    /// `other`, while `values *` that no operand follows is a malformed
-    /// marker. A detached marker decorates nothing: the diagnostic spans the
-    /// operand through the last consumed star, the whole same-line run of
-    /// further spread-classified stars is consumed with it (one diagnostic
-    /// per malformed run), and the recovered tree keeps the plain operand —
-    /// no <see cref="Expr.SequenceSpread"/> is built from a detached marker,
+    /// adjacency the collect marker and Grace require). A star with a
+    /// same-line follower was classified WITHOUT consulting attachment, so its
+    /// attachment is checked only here, AFTER classification: `values *,` and
+    /// `F(values *)` are malformed markers, never multiplication. A physical
+    /// line-final star was classified BY attachment (issue #183), so it
+    /// reaches this method attached unless it continues a malformed run:
+    /// `values*` newline `other` is the spread row `values*` followed by the
+    /// row `other`, while `values *` newline `other` never arrives here — it
+    /// is the multiplication `values * other`. A detached marker decorates
+    /// nothing: the diagnostic spans the operand through the last consumed
+    /// star, the whole SAME-LINE run of further spread-classified stars is
+    /// consumed with it (one diagnostic per malformed run; an attached
+    /// line-final star ends the run, `values **` at the end of a line
+    /// included), and the recovered tree keeps the plain operand — no
+    /// <see cref="Expr.SequenceSpread"/> is built from a detached marker,
     /// mirroring the collect marker's never-a-collecting-binding recovery.
     /// Kept out of <see cref="ParsePostfix"/> so its locals never enlarge that
     /// hot recursive frame (native stack-margin calibration).
@@ -4686,16 +4749,18 @@ public sealed class Parser
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private Expr ParseSpreadMarkerContinuation(Expr operand)
     {
-        var operandEnd = Previous;
+        var operandEnd = OperandEndBeforeStar(NextSignificantIndex(_pos));
         var starToken = Advance(); // consume the spread marker '*'
         if (IsDirectlyAttached(operandEnd, starToken))
             return CreateSpreadExpression(operand, starToken);
 
         // Detached marker: consume the rest of the malformed same-line run
         // (further stars that would themselves be spread markers), report
-        // once, and recover to the operand itself.
+        // once, and recover to the operand itself. The run never crosses a
+        // physical line: after an attached line-final star of the run, a star
+        // on the next line is classified on its own.
         while (Current.Kind == TokenKind.Star
-            && MayContinueClosedExpression(TokenKind.Star)
+            && IsSamePhysicalLineAsPreviousToken()
             && IsPostfixSpreadMarkerStar())
         {
             Advance();
@@ -5296,11 +5361,14 @@ public sealed class Parser
                 Previous.Kind == TokenKind.Bad ? Current.Line : null) is { } standIn)
             return PlaceholderAt(standIn);
 
+        // Only a multiplication star reaches here before the end of input or a closer: a
+        // star separated from its left operand at the end of its line (issue #183; an
+        // attached line-final star is a spread and never needs an operand).
         if (Previous.Kind == TokenKind.Star
             && (Current.Kind == TokenKind.EndOfFile || IsClosingDelimiter(Current.Kind)))
         {
             var star = Previous;
-            ReportErrorAt(DiagnosticCode.UnexpectedToken, "Expected an expression after '*'. A line-final star continues multiplication; close a spread slot on the same line.", star);
+            ReportErrorAt(DiagnosticCode.UnexpectedToken, "Expected an expression after '*'. A `*` that ends its line separated from its left operand is multiplication and needs a right operand; attach it (`A*`) to spread instead.", star);
             return new Expr.Num(0) { Span = new SourceSpan(star.Span.End, star.Span.End) };
         }
 

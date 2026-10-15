@@ -127,8 +127,10 @@ public sealed record StructuralProgram(
     public static readonly Decimal128 FirstSentinel = 101m;
     public static readonly Decimal128 FirstTripwire = 666m;
 
-    // Q-65: every generated root ends with this real output row. It closes a
-    // preceding spread explicitly and participates in all full-result oracles.
+    // Every generated root ends with this real output row. It closes a
+    // preceding spread explicitly (the generator never relies on an attached
+    // line-final star ending a row, issue #183, although that is valid too) and
+    // participates in all full-result oracles.
     // It lies outside the ordinary, branch-sentinel and tripwire atom pools.
     public static readonly Decimal128 RootControl = 997m;
 
@@ -424,8 +426,10 @@ public sealed class ScopeGraph
 /// one-item plain parens are never emitted (parse-time unwrap) — only
 /// <c>(spread*)</c> groups keep a one-item form; declarations render before
 /// rows in every scope so references never depend on declaration order.
-/// Q-65: a physical line-final <c>*</c> always announces multiplication.
-/// A spread ROW followed by another row is closed with a trailing comma
+/// The generator closes every spread explicitly rather than relying on the
+/// end of a line (issue #183: an attached line-final <c>*</c> also ends its
+/// row, a detached one multiplies). A spread ROW followed by another row is
+/// closed with a trailing comma
 /// (<c>X*,</c> newline <c>Y</c> — the same two slots); every root has a real
 /// following control row. Every spread-ending declaration closes explicitly:
 /// a brace body for definitions

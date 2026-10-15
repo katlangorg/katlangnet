@@ -205,17 +205,25 @@ public class MaintainedDocumentationConsistencyTests
         { @"\bneighbours\s+marked\s+the\s+same\s+way\s+move\s+together\b", "the unconditional same-marked-neighbours group claim (X-49 F1)" },
         { @"\bequally\s+marked\s+runs\s+move\s+as\s+a\s+unit\b", "the unconditional equally-marked-run group claim (X-49 F1)" },
         { @"\badjacent\s+names\s+with\s+one\s+common\s+weight\s+move\s+as\s+a\s+unit\b", "the unconditional adjacent-equal-weight group claim (X-49 F1)" },
-        // Q-33 (decided 2026-10-09): a line-final star is classified like every star. It multiplies
-        // only when the next significant token can begin an operand and does not begin a
-        // declaration, and the continuation is ordinary expression parsing with ordinary precedence
-        // (`x, y = V*` newline `x + y` is `(V * x) + y`). The layout is law with no warning or error,
-        // and Q-33 is closed. No current text drops the condition, makes the next line the star's
-        // operand, reopens the question, or carries the rejected prototypes' switches or wording.
+        // Q-33 (decided 2026-10-09) and issue #183 (2026-10-14): a line-final star is classified by
+        // attachment — attached it is a completed spread, detached it is multiplication whose
+        // continuation is ordinary expression parsing with ordinary precedence (`x, y = V *` newline
+        // `x + y` is `(V * x) + y`). The layout is law with no warning or error. No current text
+        // makes the next line the star's operand as such, reopens the question, or carries the
+        // rejected Q-33 prototypes' switches or wording.
         { @"\bmultipl(?:y|ies|ying)\s+by\s+the\s+(?:next|following)\s+(?:physical\s+)?(?:line|row)\b", "a line-final star multiplying by the next line as such (Q-33 wording correction A)" },
         { @"\b(?:next|following|that)\s+(?:physical\s+)?line\s+(?:is|becomes|forms)\s+(?:its|the(?:\s+star's)?)\s+(?:whole\s+)?(?:right\s+)?operand\b", "the next line as the star's operand (Q-33 wording correction B)" },
         { @"\b(?:Q-33|F13b)\b[^.]{0,60}\b(?:remains\s+open|is\s+(?:still\s+)?(?:open|undecided|unresolved)|open\s+(?:language-design\s+)?question)\b", "the line-final star layout as an open question (before Q-33)" },
         { @"\bKATLANG_Q33_POLICY\b|\bQ33(?:Policy|Warn\w*|Forces\w*|StarIsAttached)\b|\btouches\s+its\s+operand\s+(?:and\s+ends\s+the\s+line|at\s+the\s+end\s+of\s+a\s+line)\b", "a rejected Q-33 prototype policy, warning, or error (the owner kept P0)" },
-        { @"\bdetach(?:ed|ing)?\s+the\s+star\b[^.]{0,40}\bto\s+multiply\b|\bto\s+multiply\b[^.]{0,60}\bdetach\s+the\s+star\b", "attached and detached line-final stars as different valid operations (rejected with P2A)" },
+        // Issue #183 (owner decision 2026-10-14) superseded Q-65's unconditional line-final
+        // multiplication subrule: no current text says every physical line-final star multiplies,
+        // that EOF cannot end a spread, that `7*` at EOF is a missing operand, that the attached and
+        // detached line-final spellings both multiply, or that spread needs same-line closure.
+        { @"\bphysical\s+line-final\s+star\s+(?:always\s+)?announces\s+multiplication\b", "every physical line-final star as multiplication (superseded by issue #183)" },
+        { @"\bEOF\s+(?:is\s+not\s+a\s+spread\s+(?:boundary|delimiter)|cannot\s+(?:silently\s+)?close\s+(?:it\s+)?as\s+spread)\b", "EOF never ending a spread (superseded by issue #183)" },
+        { @"`7\*`\s+at\s+(?:EOF|the\s+end\s+of\s+the\s+program)\s+(?:is|reports)\s+a\s+missing", "an attached `7*` at EOF as a missing operand (superseded by issue #183)" },
+        { @"`A\*`\s+newline\s+`B`\s+and\s+`A\s\*`\s+newline\s+`B`\s+(?:both\s+)?multipl", "attached and detached line-final stars both multiplying (superseded by issue #183)" },
+        { @"\bspread\s+(?:requires|needs)\s+(?:an\s+)?explicit\s+same-line\s+(?:closure|boundary)\b", "spread requiring explicit same-line closure (superseded by issue #183)" },
         // Q-25 (decided 2026-10-10, Option B): a `map` transform or `reduce` step returns its
         // ORDINARY call result — several rows are one sequence value, `()` and `[]` are ordinary
         // values, nothing is spread — so no current text demands that a mapper or reducer emit
@@ -505,36 +513,54 @@ public class MaintainedDocumentationConsistencyTests
         Assert.Contains("2413", text);
     }
 
+    /// <summary>The canonical newline rule, verbatim (owner decision, issue #183, 2026-10-14).</summary>
+    private const string CanonicalNewlineRule =
+        "Newlines separate complete expressions by default. An incomplete expression continues when valid syntax "
+        + "permits it, without consuming a new declaration. Otherwise, an independent expression or declaration begins "
+        + "a new construct. Syntax that cannot stand alone but can legally continue the preceding expression attaches "
+        + "backward. All decisions are syntactic, never based on evaluated values.";
+
     /// <summary>
-    /// Q-33 (decided 2026-10-09): each normative statement of the line-final star law keeps both
-    /// qualifications — the star multiplies only when the next significant token can begin an
-    /// operand and does NOT begin a declaration, and the continuation keeps ordinary precedence —
-    /// says the layout is no warning or error, and names the closing forms. The behavior is pinned
-    /// by <c>LineFinalStarLawTests</c> and the spec corpus; this guards the restatements.
+    /// Issue #183 (owner decision 2026-10-14, refining Q-65): each normative statement of the
+    /// line-final star law states the canonical newline rule verbatim, both attachment roles —
+    /// an attached line-final star completes a spread, a detached one is multiplication — EOF,
+    /// the protected declaration, and the exact-adjacency attachment test. The behavior is pinned
+    /// by <c>LineFinalStarAttachmentTests</c>, <c>LineFinalStarLawTests</c> and the spec corpus;
+    /// this guards the restatements.
     /// </summary>
     [Theory]
     [InlineData("AGENTS.md")]
     [InlineData("docs/design/language-rules/syntax.md")]
-    public void LineFinalStarPriority_IsExplicitAndRequiresSameLineClosure(string relativePath)
+    public void LineFinalStarClassification_StatesTheCanonicalRuleAndBothAttachmentRoles(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath)).ReplaceLineEndings("\n");
-        Assert.Matches(@"(?i)physical line-final star(?: always)? announces multiplication", text);
-        Assert.Contains("EOF", text);
-        Assert.Contains("same-line", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(CanonicalNewlineRule, text, StringComparison.Ordinal);
+        Assert.Matches(@"(?i)\battached line-final star\b", text);
+        Assert.Matches(@"(?i)\bdetached\b[^.]{0,80}\bmultiplication\b", text);
+        Assert.Contains("#183", text, StringComparison.Ordinal);
+        Assert.Contains("EOF", text, StringComparison.Ordinal);
         Assert.Contains("declaration", text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("direct", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IsDirectlyAttached", text, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The tutorial teaches the same law in user terms: the section on the star states the
-    /// new-definition exception and ordinary precedence and shows a closed spread-ending
-    /// definition, and the list of common mistakes names both repairs.
+    /// The tutorial teaches the same law in user terms: the line-layout section states the canonical
+    /// newline rule; the section on the star shows the attached spread row and the detached
+    /// multiplication side by side, the declaration and EOF behavior, ordinary precedence, a
+    /// spread-ending definition in both spellings; and the list of common mistakes names both
+    /// readings and the same-line comma.
     /// </summary>
     [Fact]
-    public void Tutorial_TeachesTheLineFinalStarCondition_AndBothRepairs()
+    public void Tutorial_TeachesTheLineFinalStarAttachment_AndTheCanonicalNewlineRule()
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), "tutorial.md")).ReplaceLineEndings("\n");
+        Assert.Contains(CanonicalNewlineRule, MarkdownSection(text, "### Line Layout"), StringComparison.Ordinal);
+
         var section = MarkdownSection(text, "### Spread or Multiplication?");
+        Assert.Contains("Attached to the expression before it, `A*` is a spread", section);
+        Assert.Contains("Separated by a space, `A *` is a multiplication", section);
+        Assert.Contains("A = 1, 2, 3\nB = 2\n\nA*\nB *\n3\n```\n\n**Results:**\n```\n1\n2\n3\n6\n```", section);
+        Assert.Contains("`A*` alone spreads `A`", section);
         Assert.Contains("following definition stays a definition", section);
         Assert.Contains("usual operator precedence", section);
         Assert.Contains("A = (1, 2)\nX = (A*)\n\nX\n```\n\n**Result:** `(1, 2)`", section);
@@ -544,26 +570,30 @@ public class MaintainedDocumentationConsistencyTests
         var mistake = Assert.Single(
             MarkdownSection(text, "### Common Mistakes").Split('\n'),
             line => line.Contains("line-final `*`", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("attached `A*`", mistake);
+        Assert.Contains("detached `A *`", mistake);
         Assert.Contains("missing operand", mistake);
         Assert.Contains("usual operator precedence", mistake);
         Assert.Contains("`A*, B`", mistake);
-        Assert.Contains("`X = (A*)`", mistake);
     }
 
     /// <summary>
-    /// The generator guidance keeps the declaration exception and the closing idioms beside its
-    /// statement that a line-final star before an operand multiplies.
+    /// The generator guidance states both readings of a line-final star (issue #183) beside the
+    /// closing idioms, and carries the generated spec examples of both.
     /// </summary>
     [Theory]
     [InlineData(".github/agents/katlang-generator.agent.md")]
     [InlineData("experimental/prompts/katlang-generator.txt")]
-    public void GeneratorGuidance_StatesStarPriorityAndTheClosingIdioms(string relativePath)
+    public void GeneratorGuidance_StatesBothLineFinalStarReadingsAndTheClosingIdioms(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
-        Assert.Contains("line-final star announces multiplication", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("an attached line-final star is a spread that completes the expression", text, StringComparison.Ordinal);
+        Assert.Contains("a detached line-final star announces multiplication", text, StringComparison.Ordinal);
+        Assert.Matches(@"`A\*` newline `B` is two rows", text);
         Assert.Matches(@"`[Aa]\*,` newline `[Bb]`", text);
         Assert.Contains("y = (A*)", text);
         Assert.Contains("[line-final-star-in-definition-continues]", text);
+        Assert.Contains("[line-final-star-attached-at-eof-is-spread]", text);
     }
 
     private static string MarkdownSection(string text, string heading)

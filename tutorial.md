@@ -1270,7 +1270,7 @@ Add(Bad*)
 
 This happens before the called algorithm does anything, so not even `if` can skip a spread: with the same `Bad`, `if(false, Bad*, 0)` fails in the same way, while `if(false, Bad, 0)` is `0`, because `if` never evaluates an ordinary argument in the branch it does not choose.
 
-When another item follows a spread, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`. A physical line-final star also announces multiplication, including at EOF or before a later declaration or closer; those endings report a missing operand. Spread requires a same-line explicit closure, as in `F(A*)`, `[A*]`, `A*, B` or `A*.F`.
+When another item follows a spread on the same line, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`. At the end of a line the star's spacing decides: an attached `A*` is a finished spread, so the next line is a new item, while a detached `A *` is a multiplication that continues on the next line ([Spread or Multiplication?](#spread-or-multiplication)).
 
 ### Unpacking an Argument
 
@@ -2653,7 +2653,11 @@ Each line of a program is an output row or a definition. On one line, items must
 1 2 3
 ```
 
-A complete expression ends at a newline by default. Incomplete syntax can continue: end the line with an operator or comma, or keep a delimiter open. A following line can also continue it with a designated leading token, such as `+`, an expression-list comma or `.`. The full token table is in [the physical-line rules](docs/design/language-rules/syntax.md#lexical-identity-and-physical-lines-q-65); comments, blank lines and indentation do not affect the choice:
+KatLang follows one newline rule:
+
+> Newlines separate complete expressions by default. An incomplete expression continues when valid syntax permits it, without consuming a new declaration. Otherwise, an independent expression or declaration begins a new construct. Syntax that cannot stand alone but can legally continue the preceding expression attaches backward. All decisions are syntactic, never based on evaluated values.
+
+Incomplete syntax can continue: end the line with an operator or comma, or keep a delimiter open. A following line can also continue it with a designated leading token, such as `+`, an expression-list comma or `.`. The full token table is in [the physical-line rules](docs/design/language-rules/syntax.md#lexical-identity-and-physical-lines-q-65); comments, blank lines and indentation do not affect the choice:
 
 ```
 Total = 1 +
@@ -2672,11 +2676,30 @@ Total, Values.sum
 30
 ```
 
-Grammar role has priority on the next line: a valid independent expression or declaration stays independent; otherwise ordinary continuation applies. Unary minus requires direct attachment: `10` then `-2` is two rows, but `10` then `- 2` is subtraction, and detached `- 2` without a left operand is a syntax error. Leading `* 2` likewise continues multiplication. `Add` followed by a line `(1, 2)` is two rows, not a call, so keep a call's opening parenthesis on the same line as its name; and `A` followed by a line `-1` is the two rows `A` and `-1`, not a subtraction. Each definition starts on its own line: `x = 1 y = 2` is an error. `P = 1` followed by `, 2` continues P's two-slot body, and `10` followed by `+ 2` is one addition. A continuation announces itself at the start of its line; the end of the preceding line alone does not always settle whether the expression is finished.
+Grammar role has priority on the next line: a valid independent expression or declaration stays independent; otherwise ordinary continuation applies. Unary minus requires direct attachment: `10` then `-2` is two rows, but `10` then `- 2` is subtraction, and detached `- 2` without a left operand is a syntax error. Leading `* 2` likewise continues multiplication. `Add` followed by a line `(1, 2)` is two rows, not a call, so keep a call's opening parenthesis on the same line as its name; and `A` followed by a line `-1` is the two rows `A` and `-1`, not a subtraction. Each definition starts on its own line: `x = 1 y = 2` is an error. `P = 1` followed by `, 2` continues P's two-slot body, and `10` followed by `+ 2` is one addition. A continuation announces itself at the start of its line; the end of the preceding line alone does not always settle whether the expression is finished. A star at the end of a line is the one case its spacing settles on that line, as the next section shows.
 
 ### Spread or Multiplication?
 
-A physical line-final star announces multiplication, attached or spaced. `7*` at the end of the program reports a missing operand; a following definition stays a definition and leaves the multiplication incomplete. Spread requires an explicit same-line boundary, as in `F(A*)`, `[A*]` or `A*, B`. Comments and blank lines do not close a spread. So when another output follows a spread, write a comma:
+A star at the end of a line is read from its spacing. Attached to the expression before it, `A*` is a spread: the expression is finished, and the next line starts a new row or definition. Separated by a space, `A *` is a multiplication that still needs its right operand, which the next line supplies with the usual operator precedence:
+
+```
+A = 1, 2, 3
+B = 2
+
+A*
+B *
+3
+```
+
+**Results:**
+```
+1
+2
+3
+6
+```
+
+The same holds at the end of the program: `A*` alone spreads `A`, while `A *` with nothing after it reports a missing operand. A following definition stays a definition: after `A*` it simply follows the finished spread, and after `A *` it leaves the multiplication with a missing operand. Comments and blank lines change neither reading. On one line, a star followed by an operand always multiplies, whatever the spacing, so a spread followed by another item on the same line needs a comma:
 
 ```
 A = 2
@@ -2693,7 +2716,7 @@ A* B
 6
 ```
 
-A physical line-final star announces multiplication. When a valid operand follows, expression parsing continues with the usual operator precedence. A declaration, later-line closer or EOF instead leaves a missing operand; the declaration/closer keeps its owner. Close a definition that ends in spread with a same-line delimiter:
+A definition that ends in a spread therefore needs nothing special: the attached star ends it at the line. Parentheses (braces work too) close it explicitly and capture the items as one value:
 
 ```
 A = (1, 2)
@@ -2704,7 +2727,7 @@ X
 
 **Result:** `(1, 2)`
 
-Without the parentheses, `X = A*` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. This multiplication layout is not an error when an operand follows: it is a valid multiplication, just not the one intended.
+Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)`: X is the spread and `X` is the output row. Only a detached star joins the lines: `X = A *` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. That layout is not an error when an operand follows: it is a valid multiplication, just not the one intended.
 
 ### Common Mistakes
 
@@ -2715,7 +2738,7 @@ Without the parentheses, `X = A*` followed by the row `X` reads as the one defin
 - **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
-- **A line-final `*` announces multiplication.** A valid operand continues with the usual operator precedence; EOF or a new definition leaves a missing operand. Close spread explicitly on the same line: `A*, B` or `X = (A*)` / `X = { A* }` ([Spread or Multiplication?](#spread-or-multiplication)).
+- **A line-final `*` reads by its spacing.** An attached `A*` is a finished spread, so the next line starts a new row; a detached `A *` continues as multiplication with the usual operator precedence, and EOF or a new definition then leaves a missing operand. On one line, separate a spread from the next item with a comma: `A*, B`; `X = (A*)` captures the items as one value instead ([Spread or Multiplication?](#spread-or-multiplication)).
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
 - **Parentheses compute, braces define.** `(n + 1)` is a value computed now; `{n + 1}` is an algorithm with the parameter `n`.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
@@ -2808,4 +2831,4 @@ Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderD
 | `public` | Make a member available to `open` |
 | `open` | Use the public members of other algorithms without a prefix |
 
-Bare root-final spread (`Values*`) is no longer valid: EOF is not a spread delimiter. Use an explicitly closed receiver or a same-line comma followed by a real output slot; grouping into a capture or brace creates one value and changes root row structure.
+A root-final spread (`Values*`) is valid: an attached star at the end of the program completes its spread and emits the items as rows. Grouping into a capture or brace creates one value instead and changes root row structure.

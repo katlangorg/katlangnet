@@ -233,7 +233,7 @@ public sealed class CliApplicationTests
     [InlineData("1 + @", "[1:5] Unexpected character: '@'.")]
     [InlineData("A.@ 1", "[1:5] Unexpected item after a closed expression on the same line.")]
     [InlineData("A.\npublic Good = 41", "[1:2] Expected property name after '.'")]
-    [InlineData("A*\r\nB*, 997", "[2:1] The final `*` on an earlier line continued as multiplication")]
+    [InlineData("A *\r\nB*, 997", "[2:1] The `*` ending an earlier line is separated from its left operand, so it is multiplication")]
     // SYN-07A: the same-line separator rule is reported at the second item's
     // first token, with the generic three-repair wording, exactly like every
     // other parser diagnostic.

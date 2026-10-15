@@ -62,7 +62,8 @@ OpenTargetList  = OpenTarget { "," OpenTarget } ;
                      A same-line-closed spread-marked open target (open
                      A*, B) parses to a spread expression and is rejected
                      by open-form validation: spread is not an open form
-                     (a line-final open A* is an incomplete multiplication). The parser
+                     (so is an attached line-final open A*, while a detached
+                     line-final open A * is an incomplete multiplication). The parser
                      validates each target as an individual Lean-compatible
                      open form. *)
 OpenTarget      = StringLiteral              (* sugar: open 'url' → open load('url'); either quote
@@ -261,22 +262,26 @@ ExpressionListSeparator = "," | PhysicalNewline ;
                         separator: two slots on one line need ",". *)
 SequenceAtom          = Expression ;
                      (* A spread expression — a completed expression followed
-                        on the same physical line by a postfix "*" that no
-                        valid right operand follows — is legal ONLY as a
+                        by a directly attached postfix "*" that no same-line
+                        right operand follows (see SpreadMarker) — is legal ONLY as a
                         whole expression-list slot, as the operand of another
                         spread (`value**`), or as the receiver of the fluent
                         dot continuation (`operand*.Target`, which lowers to
                         the lexical call `Target(operand*)`).
-                        THE STAR RULE (Q-65 revision, 2026-10-14): a physical
-                        line-final star announces multiplication, including EOF
-                        and a later-line declaration/closer. Missing operands
-                        are diagnosed while declarations/closers stay owned.
-                        Spread requires an explicit SAME-LINE comma, closer,
-                        fluent dot or closed chained-spread layer. EOF is not a
-                        spread delimiter. Comments/blank lines do not close it.
-                        Classification precedes direct marker attachment:
-                        F(A *) is InvalidSpreadMarker, while A * newline B
-                        multiplies with ordinary operator spacing. Prefix collect
+                        THE STAR RULE (issue #183, 2026-10-14, refining Q-65):
+                        a star that is the final significant token of its
+                        physical line (EOF included; comments and blank lines
+                        change nothing) is classified by DIRECT ATTACHMENT: an
+                        attached A* is a spread that completes the expression,
+                        a detached A * is multiplication that leaves it
+                        incomplete. So A* newline B is two rows, A * newline B
+                        multiplies, A* at EOF spreads, A * at EOF and
+                        A * newline B = 5 are missing operands with the
+                        declaration preserved. With a same-line follower,
+                        spread requires an explicit comma, closer, fluent dot or
+                        further spread layer, and classification precedes direct
+                        marker attachment: F(A *) is InvalidSpreadMarker, while
+                        A* B multiplies with ordinary operator spacing. Prefix collect
                         keeps its attached binding role. A spread
                         expression contributes the items of one item-producing
                         boundary of the evaluated operand (sequence and list
@@ -324,7 +329,8 @@ SequenceAtom          = Expression ;
                      argument lists, list literals) a physical newline
                      between complete expressions separates slots without a
                      comma. A spread expression applies only to its own
-                     operand: A, B* and A newline B* parse as A, B*, while
+                     operand: A, B* and A newline B* (B* attached and
+                     line-final, issue #183) parse as A, B*, while
                      A B* is rejected like every other same-line pair.
                      Definition bodies and open targets are
                      line-bounded instead: a newline before a new independent
@@ -394,17 +400,25 @@ SequenceAtom          = Expression ;
                      newline between complete expressions separates
                      expression-list slots; in a line-bounded definition body
                      it ends the body instead (see above).
-                     THE PHYSICAL-LINE RULE (Q-65 grammar priority): a newline
-                     separates complete expressions by default. Independent next-line
-                     expression/declaration syntax has priority; otherwise ordinary
-                     continuation grammar crosses LF. The canonical role table is
-                     syntax.md, Lexical identity and physical lines. Unary minus
-                     requires direct attachment: A newline -2 is two expressions;
-                     A newline - 2 is subtraction. Leading binary star multiplies;
-                     a collecting declaration remains a declaration. A physical
-                     line-final star always announces multiplication; EOF cannot
-                     silently close it as spread. Calls/selection keep same-line
-                     attachment. No indentation or semantic information participates. *)
+                     THE PHYSICAL-LINE RULE (Q-65 grammar priority) is the
+                     canonical newline rule: "Newlines separate complete
+                     expressions by default. An incomplete expression continues
+                     when valid syntax permits it, without consuming a new
+                     declaration. Otherwise, an independent expression or
+                     declaration begins a new construct. Syntax that cannot
+                     stand alone but can legally continue the preceding
+                     expression attaches backward. All decisions are syntactic,
+                     never based on evaluated values."
+                     Operator and marker roles are resolved first, which decides
+                     whether the preceding expression is complete. The canonical
+                     role table is syntax.md, Lexical identity and physical lines.
+                     Unary minus requires direct attachment: A newline -2 is two
+                     expressions; A newline - 2 is subtraction. Leading binary star
+                     multiplies; a collecting declaration remains a declaration.
+                     A line-final star is classified by attachment (issue #183):
+                     attached A* is a completed spread, detached A * incomplete
+                     multiplication. Calls/selection keep same-line attachment.
+                     No indentation or semantic information participates. *)
 
 Expression      = OrExpr ;
                   (* Leading continuation follows the Q-65 table above;
@@ -451,12 +465,14 @@ AdditiveExpr    = MultiplicativeExpr { ( "+" | "-" ) MultiplicativeExpr } ;
 MultiplicativeExpr
               = UnaryExpr { ( "*" | "/" | "div" | "mod" ) UnaryExpr } ;
                   (* The "*" alternative applies exactly when the star is NOT
-                     a postfix spread marker: an expression-start token after
-                     the star that does not begin a declaration selects
-                     multiplication regardless of spacing and regardless of an
-                     intervening newline (the right operand may start the next
-                     physical line, as for every trailing binary operator).
-                     See SpreadExpression. *)
+                     a postfix spread marker: a same-line expression-start
+                     token after the star that does not begin a declaration
+                     selects multiplication regardless of spacing, and a star
+                     that ends its physical line DETACHED from its left operand
+                     is multiplication whose right operand may start the next
+                     physical line, as for every trailing binary operator (an
+                     attached line-final star is the spread marker instead,
+                     issue #183). See SpreadExpression. *)
 
 UnaryExpr       = "-" UnaryExpr
                 | PowerExpr ;
@@ -597,13 +613,16 @@ SpreadMarker    = "*" ;
                      Postfix "*" is the SPREAD MARKER. It forms a spread
                      expression exactly when (1) the star is on the same
                      physical line as the completed expression's last token,
-                     (2) explicit SAME-LINE closure permits spread (comma,
-                     closer, fluent dot or an explicitly closed spread chain),
-                     and (3) the marker is DIRECTLY attached to its operand.
-                     Every physical line-final star announces multiplication,
-                     including EOF or a later declaration/closer; missing operands
-                     are errors and declaration heads are retained. Multiplication
-                     spacing is ordinary. A detached actual spread marker, such as
+                     (2) either the star is the final significant token of
+                     its physical line (EOF, a later-line token, closer or
+                     declaration next; comments and blank lines change
+                     nothing) and DIRECTLY attached to its operand, or
+                     explicit SAME-LINE closure permits spread (comma, closer,
+                     fluent dot or a further spread layer), and (3) the marker
+                     is DIRECTLY attached to its operand (issue #183). A
+                     DETACHED line-final star is multiplication; its missing
+                     operand is an error and a following declaration head is
+                     retained. Same-line multiplication spacing is ordinary. A detached actual spread marker, such as
                      F(value *), reports InvalidSpreadMarker and recovers to its
                      operand alone. A spread expression evaluates
                      its operand exactly once and contributes the operand's
@@ -618,11 +637,12 @@ SpreadMarker    = "*" ;
                      inner star's item supply is re-captured into one value
                      at the ordinary expression boundary before the outer
                      star spreads it. Repeated spread is not recursive
-                     flattening. `value**next`, `value** next`, and
-                     `value**` newline `next` are rejected — the second star
-                     has a right operand, so it is multiplication whose left
-                     operand is a spread (a targeted scalar-operand error);
-                     this is never exponentiation. Examples: items*, Calculate(x)*,
+                     flattening. `value**next` and `value** next` are
+                     rejected — the second star has a same-line right operand,
+                     so it is multiplication whose left operand is a spread (a
+                     targeted scalar-operand error); this is never
+                     exponentiation. An attached line-final `value**` is two
+                     spread layers, and a next-line `next` is its own row. Examples: items*, Calculate(x)*,
                      x.Calculate*, (a + b)*, [1, 2]*, (1, 2)*, ()*, []*. *)
 
 CallArgs        = BraceArgs | ParenArgs ;

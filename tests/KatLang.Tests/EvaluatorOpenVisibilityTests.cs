@@ -117,8 +117,9 @@ public class EvaluatorOpenVisibilityTests
     {
         // A spread expression is not an open form: the parser rejects
         // it before evaluation ever runs. (The same-line comma closes the
-        // spread target; a line-final `open A*` would announce multiplication
-        // under the Q-65 star law — a different rejected open form.)
+        // spread target; an attached line-final `open A*` is the same spread
+        // target, while a detached `open A *` would be a multiplication — a
+        // different rejected open form, issue #183.)
         var source = """
             open A*, {}
             A = { public X = 1

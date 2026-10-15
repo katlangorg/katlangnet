@@ -1227,9 +1227,10 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 new SpecProbe("A = [[1, 2], [3, 4]]\nA[0]*, 997", "ok raw=S[1, 2, 997] n=3"),
-                new SpecProbe("A = [[1, 2], [3, 4]]\n(A[0])*\n(A*)[0]", "err type"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\n(A[0])*\n(A*)[0]", "ok raw=S[1, 2, L[1, 2]] n=3"),
+                new SpecProbe("A = [[1, 2], [3, 4]]\n(A[0]) *\n(A*)[0]", "err type"),
             ],
-            Explanation = "Select-then-spread and capture-then-select are different operations: `(A[0])*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*)[0]` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row: without it the `(` on the next line is a right operand and the star is the multiplication `(A[0]) * (A*)[0]` (SYN-07B), which fails on the list operands. (`A[0]*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
+            Explanation = "Select-then-spread and capture-then-select are different operations: `(A[0])*` selects the stored list `[1, 2]` and spreads its elements into two rows, while `(A*)[0]` captures the two-item spread supply as one sequence value and selects its first item — the intact list `[1, 2]`. The trailing comma closes the spread row explicitly; the end of the line closes it too, because an attached line-final star completes its spread (issue #183). A DETACHED `(A[0]) *` before the next line is instead the multiplication `(A[0]) * (A*)[0]`, which fails on the list operands. (`A[0]*` is the same select-then-spread: the star follows the completed index. `A*:0` is a targeted parse error — selection cannot be applied directly to an item supply.)",
         },
         new()
         {
@@ -4974,21 +4975,24 @@ public static class LanguageSpecCorpus
         {
             Id = "star-before-operand-row-is-multiplication",
             Category = "parser-layout",
-            Source = "A = 4\nB = 6\nA*\nB",
+            Source = "A = 4\nB = 6\nA *\nB",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "24",
             ExpectedRaw = "24",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("A = 4\nB = 6\nA *\nB", "ok raw=24 n=1"),
                 new SpecProbe("A = 4\nB = 6\nA* B", "ok raw=24 n=1"),
                 new SpecProbe("A = 4\nB = 6\nA * B", "ok raw=24 n=1"),
-                new SpecProbe("A = 4\nB = 6\nX = A*\nB\nX", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nA*B", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nA\n* B", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nX = A *\nB\nX", "ok raw=24 n=1"),
+                new SpecProbe("A = 4\nB = 6\nA*\nB", "ok raw=S[4, 6] n=2"),
+                new SpecProbe("A = 4\nB = 6\nX = A*\nB\nX", "ok raw=S[6, 4] n=2"),
                 new SpecProbe("A = (1, 2)\nB = 5\nA*,\nB", "ok raw=S[1, 2, 5] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A physical line-final star announces multiplication, attached or spaced, with ordinary precedence. A declaration or EOF cannot close it as spread; missing operands are diagnosed. A same-line comma explicitly closes a spread slot before the next item.",
+            Explanation = "A DETACHED line-final star (`A *`) is multiplication that leaves the expression incomplete, so the next line's operand completes it with ordinary precedence; a declaration or EOF there is a missing operand. An ATTACHED line-final star (`A*`) is instead a completed spread, so the next line is a row of its own (issue #183). With a same-line operand the star multiplies whatever its spacing.",
         },
         new()
         {
@@ -5004,20 +5008,23 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = (1, 2)\nA*, 997", "ok raw=S[1, 2, 997] n=3"),
                 new SpecProbe("F(*items) = items\nA = (1, 2)\nF(A*, 3)", "ok raw=L[1, 2, 3] n=1"),
                 new SpecProbe("A = (1, 2)\nX = (A*)\nX", "ok raw=S[1, 2] n=1"),
-                new SpecProbe("A = (1, 2)\nB = 3\nX = A*\nB\nX", "err type"),
-                // A physical line-final star before a declaration or EOF is
-                // incomplete multiplication (LineFinalStarPriorityTests).
-                // Detached actual spread inside a same-line closed call/group
-                // is pinned by spread-marker-must-be-attached.
+                new SpecProbe("A = (1, 2)\nB = 3\nX = A*\nB\nX", "ok raw=S[3, S[1, 2]] n=2"),
+                new SpecProbe("A = (1, 2)\nA*\nB = 5\nB", "ok raw=S[1, 2, 5] n=3"),
+                new SpecProbe("F(*items) = items\nA = (1, 2)\nF(A*\n)", "ok raw=L[1, 2] n=1"),
+                // A DETACHED line-final star before a declaration, a closer or
+                // EOF is incomplete multiplication (LineFinalStarPriorityTests,
+                // LineFinalStarAttachmentTests). A detached spread marker inside
+                // a same-line closed call/group is pinned by
+                // spread-marker-must-be-attached.
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "The stable case ID retains its historical name. Spread now requires an explicit same-line boundary: the comma closes A* before B. A physical line-final star, including EOF or a later declaration, is incomplete multiplication; declarations are preserved and cannot become operands. Spread VALUE semantics remain unchanged.",
+            Explanation = "A same-line comma closes A* before B. The end of the physical line closes an ATTACHED star too (issue #183): before a declaration, a later-line closer or EOF it is a completed spread row. A DETACHED line-final star is incomplete multiplication instead; a following declaration is preserved and never becomes its operand. Spread VALUE semantics remain unchanged.",
         },
         new()
         {
             Id = "line-final-star-in-definition-continues",
             Category = "parser-layout",
-            Source = "A = 2\nX = A*\n3\nX",
+            Source = "A = 2\nX = A *\n3\nX",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "6",
             ExpectedRaw = "6",
@@ -5026,13 +5033,15 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("A = (1, 2)\nX = (A*)\n3\nX", "ok raw=S[3, S[1, 2]] n=2"),
                 new SpecProbe("A = (1, 2)\nX = { A* }\n3\nX", "ok raw=S[3, S[1, 2]] n=2"),
-                new SpecProbe("A = 2\nX = A *\n3\nX", "ok raw=6 n=1"),
-                new SpecProbe("A = 2\nB = 3\nX = A*\nB + 1\nX", "ok raw=7 n=1"),
-                new SpecProbe("A = 2\nX = A*\n# comment\n\n3\nX", "ok raw=6 n=1"),
+                new SpecProbe("A = (1, 2)\nX = A*\n3\nX", "ok raw=S[3, S[1, 2]] n=2"),
+                new SpecProbe("A = 2\nX = A*\n3\nX", "ok raw=S[3, 2] n=2"),
+                new SpecProbe("A = 2\nB = 3\nX = A *\nB + 1\nX", "ok raw=7 n=1"),
+                new SpecProbe("A = 2\nB = 3\nX = A*\nB + 1\nX", "ok raw=S[4, 2] n=2"),
+                new SpecProbe("A = 2\nX = A *\n# comment\n\n3\nX", "ok raw=6 n=1"),
                 new SpecProbe("A = (1, 2)\nX = { A* }\nY = 3\nX", "ok raw=S[1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Q-65 revises the conflicting Q-33 subrule: every physical line-final star announces multiplication. A following operand continues with ordinary precedence; a declaration or EOF leaves a missing operand. Explicit same-line closure, X = (A*) or X = { A* }, closes spread without changing its VALUE semantics.",
+            Explanation = "A DETACHED line-final star (`X = A *`) is multiplication, so the definition continues onto the next line with ordinary precedence; a declaration or EOF there leaves a missing operand. An ATTACHED line-final star (`X = A*`) completes the definition as a spread, so the next line is a row of its own (issue #183, refining Q-65). Explicit closure, X = (A*) or X = { A* }, also keeps the spread without changing its VALUE semantics.",
         },
         new()
         {
@@ -5043,7 +5052,7 @@ public static class LanguageSpecCorpus
             ExpectedParseDiagnosticFragment = "The spread marker `*` must be directly attached to the expression it spreads",
             ExpectedDiagnosticCode = DiagnosticCode.InvalidSpreadMarker,
             IncludeInGeneratorPrompt = true,
-            Explanation = "An explicit same-line closer establishes spread; the classified marker must be directly attached, so (A *) is InvalidSpreadMarker. A terminal star at EOF instead means incomplete multiplication, attached or spaced.",
+            Explanation = "An explicit same-line closer establishes spread; the classified marker must be directly attached, so (A *) is InvalidSpreadMarker. A star that ends its physical line is instead classified BY attachment (issue #183): an attached `A*` is a completed spread, a detached `A *` incomplete multiplication.",
         },
         new()
         {
@@ -5357,12 +5366,32 @@ public static class LanguageSpecCorpus
         {
             Id = "line-final-star-at-eof-is-incomplete",
             Category = "parser-layout",
-            Source = "7*",
+            Source = "7 *",
             Outcome = SpecOutcome.ParseError,
             ExpectedParseDiagnosticFragment = "Expected an expression after '*'",
             ExpectedDiagnosticCode = DiagnosticCode.UnexpectedToken,
             IncludeInGeneratorPrompt = true,
-            Explanation = "A physical line-final '*' always announces multiplication, including at EOF and before a later closer or declaration. Spread needs an explicit same-line closure, such as F(7*), [7*] or 7*, 2. Attachment is checked after spread classification; the spread VALUE and collect-marker laws are unchanged.",
+            Explanation = "A DETACHED line-final '*' is multiplication and needs a right operand, including at EOF and before a later closer or declaration (issue #183). An ATTACHED `7*` at EOF is instead a completed spread of the scalar 7 (line-final-star-attached-at-eof-is-spread). The spread VALUE and collect-marker laws are unchanged.",
+        },
+        new()
+        {
+            Id = "line-final-star-attached-at-eof-is-spread",
+            Category = "parser-layout",
+            Source = "A = 1, 2, 3\nA*",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n3",
+            ExpectedRaw = "S[1, 2, 3]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("A = 1, 2, 3\nA*\n42", "ok raw=S[1, 2, 3, 42] n=4"),
+                new SpecProbe("A = 1, 2, 3\nA**", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("A = 1, 2, 3\nA* # the end\n", "ok raw=S[1, 2, 3] n=3"),
+                new SpecProbe("7*", "ok raw=7 n=1"),
+                new SpecProbe("A = 2\nB = 3\nA *\nB", "ok raw=6 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Issue #183 (refining Q-65): an ATTACHED star that ends its physical line — EOF included, across comments and blank lines — is the postfix spread marker and completes the expression, so `A*` alone spreads A into three output rows and an appended row (`42`) never reinterprets it. Repeated attached stars keep one spread layer each. A spread of a scalar supplies that scalar. A DETACHED `A *` is multiplication that continues onto the next line.",
         },
         new()
         {
@@ -5929,7 +5958,7 @@ public static class LanguageSpecCorpus
             [
                 new SpecProbe("A = []\nx = (A*)\nx", "ok raw=S[] n=1"),
             ],
-            Explanation = "Spread opens ONE boundary: `[]*` supplies zero items (the row vanishes), `[7]*` supplies `7`, and `[[7]]*` supplies the inner list `[7]` intact. Each spread row that is followed by another row ends with a comma: a line-final `*` directly before an operand on the next line would be multiplication (SYN-07B).",
+            Explanation = "Spread opens ONE boundary: `[]*` supplies zero items (the row vanishes), `[7]*` supplies `7`, and `[[7]]*` supplies the inner list `[7]` intact. Each spread row here ends with an explicit comma; an attached line-final `*` would end the row as well (issue #183), while a DETACHED `*` before an operand on the next line would be multiplication.",
         },
         new()
         {

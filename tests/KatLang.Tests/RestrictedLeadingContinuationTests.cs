@@ -200,13 +200,19 @@ public class RestrictedLeadingContinuationTests
     {
         foreach (var gap in new[] { "\n", " # c\n\n# c\n" })
         {
-            AssertSameAst("A * B", $"A*{gap}B");
+            // Issue #183: an attached line-final star completes its spread row, a detached
+            // one is multiplication that continues; a leading star attaches backward.
+            AssertSameAst("A*, B", $"A*{gap}B");
             AssertSameAst("A * B", $"A *{gap}B");
             AssertSameAst("A*, B", $"A*,{gap}B");
             AssertSameAst("A * B", $"A{gap}* B");
-            var dangling = Parser.ParseSyntax($"A*{gap}B=2");
+            var dangling = Parser.ParseSyntax($"A *{gap}B=2");
             Assert.True(dangling.HasErrors);
             Assert.Contains(dangling.Root.Properties, p => p.Name == "B");
+            var completed = Parser.ParseSyntax($"A*{gap}B=2");
+            Assert.False(completed.HasErrors);
+            Assert.Contains(completed.Root.Properties, p => p.Name == "B");
+            Assert.IsType<Expr.SequenceSpread>(Assert.Single(completed.Root.Output));
         }
         Assert.True(Parser.ParseSyntax("F(a\nb)=a\nF(1)").HasErrors);
         AssertSameAst("F(a,b)=a+b", "F(a\n,b)=a+b");

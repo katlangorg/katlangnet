@@ -204,7 +204,7 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     [InlineData("not\ntrue", "false")]
     [InlineData("Pair = (1, 2)\nX = Pair[\n0\n]\nX", "1")]
     [InlineData("A = { B = 3 }\nX = A.\nB\nX", "3")]
-    [InlineData("A = 2\nB = 3\nA*\nB", "6")]
+    [InlineData("A = 2\nB = 3\nA *\nB", "6")]
     public void IncompleteLine_StillContinuesIntoAnExpressionOnTheNextLine(string source, string expected)
     {
         Assert.False(Parser.Parse(source).HasErrors, source);

@@ -53,7 +53,9 @@ public class AttachedUnaryMinusTests
     [InlineData("10\n- -2", "12")]
     [InlineData("10\n-2", "S[10, -2]")]
     [InlineData("10\n* 2", "20")]
-    [InlineData("10*\n2", "20")]
+    [InlineData("10 *\n2", "20")]
+    // Issue #183: an attached line-final star is a completed spread (of the scalar 10).
+    [InlineData("10*\n2", "S[10, 2]")]
     public async Task GrammarRolePriority_DeterminesNewlineContinuation(string source, string expected)
     {
         var observed = await OnEveryRouteAsync(source);

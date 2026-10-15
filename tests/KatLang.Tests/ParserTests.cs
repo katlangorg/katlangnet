@@ -668,14 +668,13 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("A = range(1, 3)\n\nA*\nA")]
     [InlineData("A = range(1, 3)\n\nA *\nA")]
-    public void Parse_LineEndingStarBeforeOperand_IsMultiplication(string source)
+    [InlineData("A = range(1, 3)\n\nA\n* A")]
+    public void Parse_DetachedLineEndingStarBeforeOperand_IsMultiplication(string source)
     {
-        // SYN-07B: the star's meaning never depends on whitespace or on the
-        // physical newline. `A` on the next line is a valid right operand, so
-        // the line-final star — attached or detached — is the multiplication
-        // `A * A`: ONE output row, no spread node anywhere.
+        // Issue #183: a DETACHED line-final star (or a leading star) is
+        // multiplication that leaves the expression incomplete, so `A` on the
+        // next line is its right operand: ONE output row, no spread node anywhere.
         var result = Parser.ParseSyntax(source);
 
         Assert.False(result.HasErrors);
@@ -686,26 +685,58 @@ public class ParserTests
     }
 
     [Fact]
-    public void Parse_LineEndingSpreadMarkerBeforeDeclaration_DiagnosesMultiplicationAndPreservesDeclaration()
+    public void Parse_AttachedLineEndingStarBeforeOperand_IsASpreadRowAndAnIndependentRow()
     {
-        // A declaration head is never a multiplication operand, so a line-final
-        // star before `Name = ...` is the spread marker: one spread row, then
-        // the definition, then the later output row.
-        var result = Parser.ParseSyntax(
+        // Issue #183: an ATTACHED line-final star is the spread marker and completes the row,
+        // so `A` on the next line is a row of its own.
+        var result = Parser.ParseSyntax("A = range(1, 3)\n\nA*\nA");
+
+        Assert.False(result.HasErrors);
+        Assert.Equal(2, result.Root.Output.Count);
+        var spread = Assert.IsType<Expr.SequenceSpread>(result.Root.Output[0]);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(spread.Operand).Name);
+        Assert.Equal("A", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
+    }
+
+    [Fact]
+    public void Parse_LineEndingStarBeforeDeclaration_IsASpreadAttached_AndAMissingOperandDetached()
+    {
+        // A declaration head is never a multiplication operand. After an ATTACHED line-final
+        // star the spread row is complete: one spread row, then the definition, then the later
+        // output rows, with no diagnostic.
+        var attached = Parser.ParseSyntax(
             """
             A = range(1, 3)
 
             A*
             B = 5
             B
+
+            A
             """);
 
-        Assert.True(result.HasErrors);
-        Assert.Equal(2, result.Root.Output.Count);
-        var sequenceSpread = Assert.IsType<Expr.Binary>(result.Root.Output[0]);
-        Assert.Equal("A", Assert.IsType<Expr.Resolve>(sequenceSpread.Left).Name);
-        Assert.Equal("B", Assert.IsType<Expr.Resolve>(result.Root.Output[1]).Name);
-        Assert.Contains(result.Root.Properties, static p => p.Name == "B");
+        Assert.False(attached.HasErrors);
+        Assert.Equal(["A", "B"], attached.Root.Properties.Select(static p => p.Name));
+        Assert.Equal(3, attached.Root.Output.Count);
+        Assert.IsType<Expr.SequenceSpread>(attached.Root.Output[0]);
+
+        // After a DETACHED line-final star the multiplication lacks its operand; the
+        // declaration is preserved, never consumed as the operand.
+        var detached = Parser.ParseSyntax(
+            """
+            A = range(1, 3)
+
+            A *
+            B = 5
+            B
+
+            A
+            """);
+
+        Assert.True(detached.HasErrors);
+        Assert.Equal(["A", "B"], detached.Root.Properties.Select(static p => p.Name));
+        Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(detached.Root.Output[0]).Op);
+        Assert.Equal(3, detached.Root.Output.Count);
     }
 
     [Fact]
@@ -763,10 +794,24 @@ public class ParserTests
     [Fact]
     public void Parse_LineEndingStarWithTrailingComment_IsInvisibleToTheStarDecision()
     {
-        // Comments are semantically invisible: `A* # note` newline `A` parses
-        // exactly like `A*` newline `A` — the multiplication `A * A` — and
-        // `A*, # note` newline `A` exactly like `A*,` newline `A`.
+        // Comments are semantically invisible: `A * # note` newline `A` parses
+        // exactly like `A *` newline `A` — the multiplication `A * A` —,
+        // `A* # note` newline `A` exactly like `A*` newline `A` — the spread row
+        // and the row `A` (issue #183) — and `A*, # note` newline `A` exactly
+        // like `A*,` newline `A`.
         var multiplied = Parser.ParseSyntax(
+            """
+            A = range(1, 3)
+
+            A * # a comment never changes the star decision
+            A
+            """);
+
+        Assert.False(multiplied.HasErrors);
+        var binary = Assert.IsType<Expr.Binary>(Assert.Single(multiplied.Root.Output));
+        Assert.Equal(BinaryOp.Mul, binary.Op);
+
+        var spreadRow = Parser.ParseSyntax(
             """
             A = range(1, 3)
 
@@ -774,9 +819,9 @@ public class ParserTests
             A
             """);
 
-        Assert.False(multiplied.HasErrors);
-        var binary = Assert.IsType<Expr.Binary>(Assert.Single(multiplied.Root.Output));
-        Assert.Equal(BinaryOp.Mul, binary.Op);
+        Assert.False(spreadRow.HasErrors);
+        Assert.Equal(2, spreadRow.Root.Output.Count);
+        Assert.IsType<Expr.SequenceSpread>(spreadRow.Root.Output[0]);
 
         var separated = Parser.ParseSyntax(
             """
@@ -1769,8 +1814,10 @@ public class ParserTests
         // Postfix `A*` lets later output continue after the spread in every
         // spelling that closes the spread slot: a trailing comma at root and a
         // definition between the rows both produce expression-list slots after
-        // the spread. (A bare `C` row directly after `A*` would be the
-        // multiplication `A * C` — see Parse_LineEndingStarBeforeOperand_IsMultiplication.)
+        // the spread. (A bare `C` row directly after an attached line-final
+        // `A*` is a separate row too, issue #183; only after a detached `A *` would
+        // it be the multiplication `A * C` — see
+        // Parse_DetachedLineEndingStarBeforeOperand_IsMultiplication.)
         var result = Parser.ParseSyntax(source.Replace("*\n", "*, 0\n", StringComparison.Ordinal));
 
         Assert.False(result.HasErrors);
@@ -4394,22 +4441,27 @@ public class ParserTests
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(Assert.IsType<Expr.SequenceSpread>(sameLineProperty.Value.Output[0]).Operand).Name);
         Assert.Equal("b", Assert.IsType<Expr.Resolve>(sameLineProperty.Value.Output[1]).Name);
 
-        // A line-final star before an operand row is multiplication (SYN-07B):
-        // the trailing operator continues P's line-bounded body across the
-        // newline exactly like `P = a *` newline `b`, so P is `a * b` and there
-        // is no root output row at all.
-        foreach (var source in new[] { "P = a*\nb", "P = a *\nb" })
-        {
-            var newline = Parser.ParseSyntax(source);
-            Assert.False(newline.HasErrors);
-            var newlineProperty = Assert.Single(newline.Root.Properties);
-            var body = Assert.IsType<Expr.Binary>(Assert.Single(newlineProperty.Value.Output));
-            Assert.Equal(BinaryOp.Mul, body.Op);
-            Assert.Empty(newline.Root.Output);
-        }
+        // A DETACHED line-final star before an operand row is multiplication
+        // (issue #183): the trailing operator continues P's line-bounded body
+        // across the newline, so P is `a * b` and there is no root output row.
+        var detached = Parser.ParseSyntax("P = a *\nb");
+        Assert.False(detached.HasErrors);
+        var detachedProperty = Assert.Single(detached.Root.Properties);
+        var body = Assert.IsType<Expr.Binary>(Assert.Single(detachedProperty.Value.Output));
+        Assert.Equal(BinaryOp.Mul, body.Op);
+        Assert.Empty(detached.Root.Output);
 
-        // Closing the body keeps the spread a spread and `b` a separate root
-        // output row: capture parentheses (`P = (a*)`) or a brace body.
+        // An ATTACHED line-final star completes P's body: P is the spread and
+        // `b` is a separate root output row.
+        var attached = Parser.ParseSyntax("P = a*\nb");
+        Assert.False(attached.HasErrors);
+        var attachedProperty = Assert.Single(attached.Root.Properties);
+        var attachedSpread = Assert.IsType<Expr.SequenceSpread>(Assert.Single(attachedProperty.Value.Output));
+        Assert.Equal("a", Assert.IsType<Expr.Resolve>(attachedSpread.Operand).Name);
+        Assert.Equal("b", Assert.IsType<Expr.Resolve>(Assert.Single(attached.Root.Output)).Name);
+
+        // Closing the body explicitly does the same: capture parentheses
+        // (`P = (a*)`, which also captures the items as one value) or a brace body.
         var captured = Parser.ParseSyntax("P = (a*)\nb");
         Assert.False(captured.HasErrors);
         var capturedProperty = Assert.Single(captured.Root.Properties);

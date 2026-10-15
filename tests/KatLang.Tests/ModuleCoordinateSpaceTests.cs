@@ -373,10 +373,10 @@ public class ModuleCoordinateSpaceTests
         Assert.True(held.IsModuleElaborated);
         Assert.True(opened.IsModuleElaborated);
         // The spread marker, list and index syntax are really rows of the module, so the walker
-        // checks them: the trailing comma ends the spread row. Without it the line-final `*`
-        // is followed by `[`, which begins an operand and no declaration, so the star would be
-        // multiplication and the row would continue across the newline (SYN-11, Q-33): the one
-        // row `F(1, (2, 3)) * [H][0]`, with no spread node at all (pinned by LineFinalStarLawTests).
+        // checks them: the trailing comma ends the spread row explicitly. Without it the attached
+        // line-final `*` ends the row as well (issue #183); only a DETACHED `*` would be
+        // multiplication continuing across the newline: the one row `F(1, (2, 3)) * [H][0]`, with
+        // no spread node at all (both pinned by LineFinalStarLawTests).
         foreach (var view in new[] { held, opened })
         {
             Assert.Collection(

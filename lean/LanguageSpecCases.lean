@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 445
+- specification surface cases: 446
 - excluded parse-level cases (Lean has no surface parser): 70
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 353
-- probe observations (C#-only by design): 1332
+- Lean-guarded cases: 354
+- probe observations (C#-only by design): 1345
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1366,7 +1366,7 @@ def case_trailing_comma_continues_line : Expr :=
   .algorithmExpr (alg [] [] [] [.num 1, .num 2])
 #guard obs case_trailing_comma_continues_line == "ok raw=S[1, 2] n=2"
 
--- star-before-operand-row-is-multiplication [parser-layout]: A = 4 \n B = 6 \n A* \n B
+-- star-before-operand-row-is-multiplication [parser-layout]: A = 4 \n B = 6 \n A * \n B
 def case_star_before_operand_row_is_multiplication : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 4]), privateProp "B" (alg [] [] [] [.num 6])] [(.binary .mul (.resolve "A") (.resolve "B"))])
 #guard obs case_star_before_operand_row_is_multiplication == "ok raw=24 n=1"
@@ -1376,7 +1376,7 @@ def case_star_before_declaration_or_boundary_is_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [.num 5])] [(.sequenceSpread (.resolve "A")), .resolve "B"])
 #guard obs case_star_before_declaration_or_boundary_is_spread == "ok raw=S[1, 2, 5] n=3"
 
--- line-final-star-in-definition-continues [parser-layout]: A = 2 \n X = A* \n 3 \n X
+-- line-final-star-in-definition-continues [parser-layout]: A = 2 \n X = A * \n 3 \n X
 def case_line_final_star_in_definition_continues : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 2]), privateProp "X" (alg [] [] [] [(.binary .mul (.resolve "A") (.num 3))])] [.resolve "X"])
 #guard obs case_line_final_star_in_definition_continues == "ok raw=6 n=1"
@@ -1420,6 +1420,11 @@ def case_multiline_call_open_delimiter : Expr :=
 def case_newline_grammar_priority_continuation : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.binary .sub (.num 10) (.num 2))])] [.resolve "P"])
 #guard obs case_newline_grammar_priority_continuation == "ok raw=8 n=1"
+
+-- line-final-star-attached-at-eof-is-spread [parser-layout]: A = 1, 2, 3 \n A*
+def case_line_final_star_attached_at_eof_is_spread : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.sequenceSpread (.resolve "A"))])
+#guard obs case_line_final_star_attached_at_eof_is_spread == "ok raw=S[1, 2, 3] n=3"
 
 -- newline-ends-property-body [parser-layout]: P = 1 \n 2
 def case_newline_ends_property_body : Expr :=
@@ -1866,7 +1871,7 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 353 canonical Lean-guarded specification cases.
+-- 354 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2138,6 +2143,7 @@ def specCaseIds : List String := [
   "adjacency-call-across-space",
   "multiline-call-open-delimiter",
   "newline-grammar-priority-continuation",
+  "line-final-star-attached-at-eof-is-spread",
   "newline-ends-property-body",
   "comment-does-not-change-parse",
   "spread-binds-before-list",
@@ -2228,6 +2234,6 @@ def specCaseIds : List String := [
   "string-interpolation-hole-failure",
   "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 353
+#guard specCaseIds.length == 354
 
 end LanguageSpecCases

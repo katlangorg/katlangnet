@@ -18,7 +18,9 @@ namespace KatLang.Tests;
 /// exact source-offset adjacency, no whitespace/comment/newline between the
 /// tokens), and for the postfix star it is checked only AFTER the SYN-07B
 /// classification has established an explicitly closed same-line spread item.
-/// A physical line-final star announces multiplication, including at EOF. A detached marker never
+/// A physical line-final star (EOF included) is the one place attachment
+/// CLASSIFIES (issue #183): attached it is a completed spread, detached it is
+/// incomplete multiplication. A detached marker never
 /// silently keeps the marker's meaning and never silently becomes the other
 /// valid operation: it is a parse-phase error, and the recovered tree keeps
 /// the plain name/operand (no collecting binding, no spread node, no Grace
@@ -77,35 +79,45 @@ public class MarkerAttachmentTests
         return error;
     }
 
-    // ── Multiplication: spacing and line breaks never matter ────────────────
+    // ── Multiplication: same-line spacing never matters ────────────────
 
     [Theory]
     [InlineData("4*6")]
     [InlineData("4* 6")]
     [InlineData("4 *6")]
     [InlineData("4 * 6")]
-    [InlineData("A = 4\nB = 6\nA*\nB")]
     [InlineData("A = 4\nB = 6\nA *\nB")]
+    [InlineData("A = 4\nB = 6\nA\n* B")]
     [InlineData("A = 4\nB = 6\nA*B")]
     [InlineData("A = 4\nB = 6\nA* B")]
     [InlineData("A = 4\nB = 6\nA *B")]
     [InlineData("A = 4\nB = 6\nA * B")]
-    // Definition bodies: the trailing star continues the line-bounded body
-    // across the newline like every trailing binary operator.
-    [InlineData("A = 4\nB = 6\nX = A*\nB\nX")]
+    // Definition bodies: a detached trailing star continues the line-bounded
+    // body across the newline like every trailing binary operator.
     [InlineData("A = 4\nB = 6\nX = A *\nB\nX")]
     [InlineData("A = 4\nB = 6\nX = A*B\nX")]
     [InlineData("A = 4\nB = 6\nX = A * B\nX")]
     // Inside an open call-argument list and a brace body.
-    [InlineData("F(v) = v\nA = 4\nB = 6\nF(A*\nB)")]
     [InlineData("F(v) = v\nA = 4\nB = 6\nF(A *\nB)")]
-    [InlineData("A = 4\nB = 6\n{ A*\nB }")]
     [InlineData("A = 4\nB = 6\n{ A *\nB }")]
-    public void Multiplication_IsSpacingAndLineBreakIndependent(string source)
+    public void Multiplication_IsSpacingIndependent_AndCrossesALineAfterADetachedStar(string source)
     {
         AssertValid(source, "24");
         var parse = Parser.Parse(source);
         Assert.DoesNotContain(parse.Diagnostics, static d => d.Code == DiagnosticCode.InvalidSpreadMarker);
+    }
+
+    [Theory]
+    [InlineData("A = 4\nB = 6\nA*\nB", "4\n6")]
+    [InlineData("A = 4\nB = 6\nX = A*\nB\nX", "6\n4")]
+    [InlineData("F(*v) = v\nA = 4\nB = 6\nF(A*\nB)", "[4, 6]")]
+    [InlineData("A = 4\nB = 6\n{ A*\nB }", "(4, 6)")]
+    public void AttachedLineFinalStar_IsACompletedSpread_SoTheNextLineIsTheNextItem(string source, string expected)
+    {
+        // The one place attachment classifies (issue #183): the attached line-final
+        // marker completes its item, and the next line is an item of its own.
+        AssertValid(source, expected);
+        Assert.DoesNotContain(SourceProvenance.ParseValid(source).Root.Output, static e => e is Expr.Binary);
     }
 
     [Theory]
@@ -118,7 +130,7 @@ public class MarkerAttachmentTests
         // The `~~B` operand graces a FREE name (K's implicit parameter, bound by
         // `K(6)`): Grace on a bound property would be the ineligible-Grace error.
         string? baseline = null;
-        foreach (var product in new[] { "A*~~B", "A * ~~B", "A*\n~~B", "A *\r\n# comment\r\n~~B" })
+        foreach (var product in new[] { "A*~~B", "A * ~~B", "A *\n~~B", "A *\r\n# comment\r\n~~B", "A\n* ~~B" })
         {
             var source = "A = 4\n" + context.Replace("PRODUCT", product) + "\nK(6)";
             var parsed = SourceProvenance.ParseValid(source);
@@ -131,10 +143,15 @@ public class MarkerAttachmentTests
         }
     }
 
+    [Fact]
+    public void AttachedLineFinalStarBeforeDeclaration_IsACompletedSpreadRow()
+        => AssertValid("A = (1, 2)\nA*\nB = 5\nB", "1\n2\n5");
+
     [Theory]
-    [InlineData("A = (1, 2)\nA*\nB = 5\nB", 2)]
     [InlineData("A = (1, 2)\nA *\nB = 5\nB", 3)]
-    public void LineFinalStarBeforeDeclaration_IsMissingMultiplicationRegardlessOfAttachment(string source, int starColumn)
+    [InlineData("A = (1, 2)\nA\t*\nB = 5\nB", 3)]
+    [InlineData("A = (1, 2)\nA  *  # note\nB = 5\nB", 4)]
+    public void DetachedLineFinalStarBeforeDeclaration_IsMissingMultiplication(string source, int starColumn)
     {
         var error = AssertRejected(source, DiagnosticCode.UnexpectedToken, "Expected an expression after '*'");
         Assert.Equal(new SourceSpan(2, starColumn, 2, starColumn + 1), error.Span);
@@ -183,12 +200,17 @@ public class MarkerAttachmentTests
     }
 
     [Theory]
-    [InlineData("values = (1, 2)\nvalues*")]
+    [InlineData("values = (1, 2)\nvalues*", "1\n2")]
+    [InlineData("values = (1, 2)\nvalues**", "1\n2")]
+    [InlineData("values = (1, 2)\nvalues*\nB = 5\nB", "1\n2\n5")]
+    public void EofAndLaterDeclarations_CloseAnAttachedSpreadItem(string source, string expected)
+        => AssertValid(source, expected);
+
+    [Theory]
     [InlineData("values = (1, 2)\nvalues *")]
-    [InlineData("values = (1, 2)\nvalues**")]
-    [InlineData("values = (1, 2)\nvalues*\nB = 5\nB")]
     [InlineData("values = (1, 2)\nvalues *\nB = 5\nB")]
-    public void EofAndLaterDeclarations_NeverCloseASpreadItem(string source)
+    [InlineData("values = (1, 2)\nvalues* *")]
+    public void EofAndLaterDeclarations_NeverCloseADetachedStar(string source)
     {
         var syntax = Parser.ParseSyntax(source);
         Assert.Contains(syntax.Diagnostics, d => d.Code == DiagnosticCode.UnexpectedToken

@@ -40,7 +40,8 @@ public class ExactFormatterCompatibilityTests
         "DisplayDecimals = 6\n0.000000000000000000000000000",
         "SalaryExpenses(amount, recurring, reimbursed) = amount, recurring, reimbursed\n\nSalaryExpenses(3800, 1, 0)\n''\nSalaryExpenses(50, 0, 0)",
         "E = ()\nE*, 997", // zero spread contribution beside one explicit control
-        "E = ()\nE*", // line-final multiplication without a right operand
+        "E = ()\nE*", // an attached line-final spread of the empty sequence: no rows (issue #183)
+        "E = ()\nE *", // a detached line-final multiplication without a right operand
         "x, *rest = 1\nrest",
         "2 +",
         "1 / 0",

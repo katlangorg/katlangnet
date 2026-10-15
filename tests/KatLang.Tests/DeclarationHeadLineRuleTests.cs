@@ -274,15 +274,18 @@ public class DeclarationHeadLineRuleTests
     }
 
     [Theory]
-    [InlineData("A*\nB = 2", true)]
-    [InlineData("A*\nB\n= 2", false)]
-    [InlineData("A*\nB(x) = x", true)]
-    [InlineData("A*\nB(x)\n= x", false)]
-    [InlineData("A*\nB\n(x) = x", false)]
-    [InlineData("A*\nx, y = 1, 2", true)]
-    [InlineData("A*\nx, y\n= 1, 2", false)]
-    public void LineFinalStar_UsesOnlyAnActualDeclarationHead(string source, bool declaration)
+    [InlineData("A *\nB = 2", true)]
+    [InlineData("A *\nB\n= 2", false)]
+    [InlineData("A *\nB(x) = x", true)]
+    [InlineData("A *\nB(x)\n= x", false)]
+    [InlineData("A *\nB\n(x) = x", false)]
+    [InlineData("A *\nx, y = 1, 2", true)]
+    [InlineData("A *\nx, y\n= 1, 2", false)]
+    public void DetachedLineFinalStar_UsesOnlyAnActualDeclarationHead(string source, bool declaration)
     {
+        // A detached line-final star is incomplete multiplication (issue #183): an actual
+        // one-line head is protected (missing operand, the declaration survives), while a head
+        // the line rule tears apart is no head, so its first line is the multiplication operand.
         foreach (var newline in new[] { "\n", "\r\n" })
         {
             var raw = Parser.ParseSyntax(source.Replace("\n", newline, StringComparison.Ordinal));
@@ -297,6 +300,38 @@ public class DeclarationHeadLineRuleTests
                 Assert.True(raw.HasErrors);
                 Assert.Empty(raw.Root.Properties);
                 Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(raw.Root.Output[0]).Op);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("A*\nB = 2", true)]
+    [InlineData("A*\nB\n= 2", false)]
+    [InlineData("A*\nB(x) = x", true)]
+    [InlineData("A*\nB(x)\n= x", false)]
+    [InlineData("A*\nB\n(x) = x", false)]
+    [InlineData("A*\nx, y = 1, 2", true)]
+    [InlineData("A*\nx, y\n= 1, 2", false)]
+    public void AttachedLineFinalStar_CompletesItsRow_WhetherOrNotADeclarationHeadFollows(string source, bool declaration)
+    {
+        // An attached line-final star is a completed spread (issue #183), so the next line is
+        // classified on its own: an actual head is a declaration with no error, and a torn head
+        // is its rows plus the line rule's own diagnostic — never a multiplication.
+        foreach (var newline in new[] { "\n", "\r\n" })
+        {
+            var raw = Parser.ParseSyntax(source.Replace("\n", newline, StringComparison.Ordinal));
+            Assert.IsType<Expr.SequenceSpread>(raw.Root.Output[0]);
+            Assert.DoesNotContain(raw.Root.Output, static e => e is Expr.Binary);
+            Assert.DoesNotContain(raw.Diagnostics, static d => d.Message.Contains("after '*'", StringComparison.Ordinal));
+            if (declaration)
+            {
+                Assert.False(raw.HasErrors);
+                Assert.NotEmpty(raw.Root.Properties);
+            }
+            else
+            {
+                Assert.True(raw.HasErrors);
+                Assert.Empty(raw.Root.Properties);
             }
         }
     }

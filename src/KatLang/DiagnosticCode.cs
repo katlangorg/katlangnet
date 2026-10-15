@@ -273,9 +273,12 @@ public enum DiagnosticCode
 
     /// <summary>
     /// A postfix spread marker written detached from the expression it spreads
-    /// (<c>values *</c> with no right operand after the star). The marker must
-    /// be directly attached (<c>values*</c>); a detached star that no operand
-    /// follows is neither a spread nor a multiplication.
+    /// (<c>values *</c> followed on its line by something it cannot multiply —
+    /// a comma, a closer, a dot — e.g. <c>F(values *)</c>). The marker must be
+    /// directly attached (<c>values*</c>);
+    /// such a detached star is neither a spread nor a multiplication. A detached
+    /// star that ENDS its physical line is multiplication instead (issue #183),
+    /// so with no operand it is a missing-operand error, not this code.
     /// </summary>
     InvalidSpreadMarker = 40,
 

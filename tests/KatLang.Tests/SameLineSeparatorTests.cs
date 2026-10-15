@@ -24,9 +24,10 @@ namespace KatLang.Tests;
 /// already diagnosed (a rejected Grace run, a detached marker, a stray
 /// closer, a bad token, an open-target leftover) is never reported twice.</para>
 ///
-/// <para>The current SYN-07B/Q-65 rule gives physical line-final stars
-/// multiplication priority; spread needs explicit same-line closure and attachment.
-/// A slot before a spread needs its comma like
+/// <para>A physical line-final star is classified by attachment (issue #183,
+/// refining Q-65): attached it is a completed spread, so the next line is the next
+/// slot or row; detached it is multiplication. On one line a spread needs an
+/// explicit closure and attachment. A slot before a spread needs its comma like
 /// every other slot (<c>A, B*</c>, never <c>A B*</c>).</para>
 /// </summary>
 public class SameLineSeparatorTests
@@ -295,8 +296,9 @@ public class SameLineSeparatorTests
     [InlineData("x = 1\n# comment\ny = 2\nx + y", "3")]
     [InlineData("A = { public X = 1 }\nA.X", "1")]
     [InlineData("x, *rest = 1, 2, 3\nrest", "[2, 3]")]
-    // SYN-07B star behavior is untouched.
-    [InlineData("A = 2\nB = 3\nA*\nB", "6")]
+    // Star behavior: a detached line-final star multiplies, an attached one
+    // completes its spread row (issue #183).
+    [InlineData("A = 2\nB = 3\nA*\nB", "2\n3")]
     [InlineData("A = 2\nB = 3\nA *\nB", "6")]
     [InlineData("A = 2\nB = 3\nA* B", "6")]
     [InlineData("A = 2\nB = 3\nA*, B", "2\n3")]
@@ -396,9 +398,10 @@ public class SameLineSeparatorTests
     [InlineData("A = (1, 2)\nA *", "UnexpectedToken")]
     [InlineData("A = (1, 2)\nA *, 3", "InvalidSpreadMarker")]
     [InlineData("Collect(*items) = items\nA = (1, 2)\nCollect(A *)", "InvalidSpreadMarker")]
-    [InlineData("A = (1, 2)\nB = (3, 4)\nA*\nB*", "UnexpectedToken")]
-    [InlineData("A = (1, 2)\nB = (3, 4)\nA*\nB*, 997", "MisplacedSpread")]
-    [InlineData("A = (1, 2)\nA*\nB = 5\nB", "UnexpectedToken")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA *\nB*", "MisplacedSpread")]
+    [InlineData("A = (1, 2)\nB = (3, 4)\nA *\nB*, 997", "MisplacedSpread")]
+    [InlineData("A = (1, 2)\nA *\nB = 5\nB", "UnexpectedToken")]
+    [InlineData("A = (1, 2)\nA* *\nB = 5\nB", "UnexpectedToken;MisplacedSpread")]
     [InlineData("1 @ 2", "UnexpectedCharacter")]
     public void ARecoveryThatOwnsTheBoundary_ReportsOnlyItsOwnDiagnostic(string source, string expectedCodes)
     {

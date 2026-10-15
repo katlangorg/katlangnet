@@ -123,21 +123,30 @@ public class SequenceSpreadTests
             15m);
 
     [Theory]
-    [InlineData("Sum4(A*\nA)")]
-    [InlineData("Sum4(A *\nA)")]
-    public void LineEndingStar_InsideAnOpenCall_IsMultiplicationAcrossTheNewline(string call)
-        // The newline inside the open call-argument list does not change the
-        // star (SYN-07B): `A` on the next line is a valid right operand, so
-        // `Sum4(A*` newline `A)` is the ONE-argument call `Sum4(A * A)` —
-        // attached or detached — and the four-parameter callee reports an
-        // arity error for one supplied argument (the scalar operands keep the
+    // Detached (issue #183): the line-final star is multiplication, so `A` on the next
+    // line is its right operand and `Sum4(A *` newline `A)` is the ONE-argument call
+    // `Sum4(A * A)`.
+    [InlineData("Sum4(A *\nA)", 1)]
+    // Attached: the line-final star completes the spread slot, and the open argument
+    // list's newline separates the next slot, so `Sum4(A*` newline `A)` supplies TWO
+    // arguments (the scalar A spreads to itself).
+    [InlineData("Sum4(A*\nA)", 2)]
+    public void LineEndingStar_InsideAnOpenCall_SuppliesTheSlotsItsAttachmentSelects(string call, int supplied)
+    {
+        // The four-parameter callee reports the arity error with the number of supplied
+        // arguments, which tells the two layouts apart (the scalar operands keep the
         // multiplication itself valid, so arity is the only failure).
-        => AssertArityFailure(
+        var result = EvalFull(
             $"""
             A = 3
             Sum4(a, b, c, d) = a + b + c + d
             {call}
             """);
+        Assert.False(result.IsOk);
+        var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(result.Error));
+        Assert.Equal(4, arity.Expected);
+        Assert.Equal(supplied, arity.Actual);
+    }
 
     [Fact]
     public void LineEndingSpreadWithTrailingComma_SuppliesSeparateSlotsToFixedCall()

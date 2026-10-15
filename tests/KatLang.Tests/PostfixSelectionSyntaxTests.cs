@@ -122,9 +122,18 @@ public class PostfixSelectionSyntaxTests
     [Theory]
     [InlineData("A*[0]")]
     [InlineData("A *[0]")]
-    [InlineData("A*\n[0]")]
+    [InlineData("A *\n[0]")]
     public void AStarBeforeABracket_IsMultiplication(string row)
         => Assert.Equal("Mul(A, [0])", Shape(SingleRow(row)));
+
+    [Fact]
+    public void AnAttachedLineFinalStarBeforeABracket_IsASpreadRow_AndTheBracketANewList()
+    {
+        // Issue #183: the attached line-final star completes the spread row, so the next
+        // line's '[' begins a list literal — never a selection of the spread.
+        var rows = SourceProvenance.ParseSyntaxValidRoot("A*\n[0]").Output;
+        Assert.Equal(["A*", "[0]"], rows.Select(Shape));
+    }
 
     [Theory]
     [InlineData("A[0](1)", "1:5")]
