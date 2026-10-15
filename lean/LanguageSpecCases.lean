@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 446
+- specification surface cases: 448
 - excluded parse-level cases (Lean has no surface parser): 70
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 354
+- Lean-guarded cases: 356
 - probe observations (C#-only by design): 1345
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -69,6 +69,47 @@ partial def errCategory : Error -> String
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
+/-- Supplementary Q-67 fields; not a change to FORMAL-06 or `obs`.
+    Descriptions, messages, contexts, branch display names and host policy are excluded. -/
+structure SharedErrorPayload where
+  kind : String
+  names : List String := []
+  counts : List Nat := []
+  deriving BEq, Repr
+
+inductive SharedErrorObservation where
+  | matched (payload : Option SharedErrorPayload)
+  | mismatch
+  deriving BEq, Repr
+
+def exposureKind : PropExposure -> String
+  | .exported => "exported"
+  | .localCapturedAncestorParams _ => "captured"
+  | .localConditional => "conditional"
+
+partial def sharedError : Error -> Option SharedErrorPayload
+  | .withContext _ inner => sharedError inner
+  | .arityMismatch expected actual => some { kind := "arity", counts := [expected, actual] }
+  | .badArity => some { kind := "badArity" }
+  | .branchArityMismatch _ expected actual => some { kind := "branchArity", counts := [expected, actual] }
+  | .branchOutputArityMismatch _ expected actual => some { kind := "branchOutputArity", counts := [expected, actual] }
+  | .unknownName name => some { kind := "unknownName", names := [name] }
+  | .unknownProperty _ name => some { kind := "unknownProperty", names := [name] }
+  | .notPublicProperty _ name => some { kind := "notPublicProperty", names := [name] }
+  | .localOnlyProperty _ name exposure => some { kind := "localOnlyProperty", names := [name, exposureKind exposure] }
+  | .ambiguousOpen name _ => some { kind := "ambiguousOpen", names := [name] }
+  | .duplicateProperty name => some { kind := "duplicateProperty", names := [name] }
+  | .unresolvedImplicitParams names => some { kind := "unresolvedImplicitParams", names := names }
+  | .badIndex => some { kind := "index" }
+  | .divByZero => some { kind := "div0" }
+  | .demandCycle => some { kind := "demandCycle" }
+  | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
+  | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
+  | .missingOutput => some { kind := "missingOutput" }
+  | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
+  | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
+    | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ => none
+
 /-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
     root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
     C# `Evaluator.RunCounted` observation. -/
@@ -101,11 +142,63 @@ def obs (e : Expr) : String :=
   | .ok ((r, _), _), .error e2 => s!"internalMismatch counted=ok:{neutral r} plain=err:{errCategory e2}"
   | .error e1, .ok r2 => s!"internalMismatch counted=err:{errCategory e1} plain=ok:{neutral r2}"
 
+/-- Extra guards are emitted only for supported failures, so successful cases incur
+    no extra evaluator runs. Both Lean routes must agree independently. -/
+def errorObs (e : Expr) : SharedErrorObservation :=
+  match runCountedM e |>.run EvalState.empty, runResult e with
+  | .error e1, .error e2 =>
+      if sharedError e1 == sharedError e2 then .matched (sharedError e1)
+      else .mismatch
+  | _, _ => .mismatch
+
+-- Independent error-constructor projection goldens (not evaluator programs).
+#guard sharedError (.arityMismatch 2 1) == (some { kind := "arity", names := [], counts := [2, 1] })
+#guard sharedError (.arityMismatch 2 1) == (some { kind := "arity", names := [], counts := [2, 1] })
+#guard sharedError .badArity == (some { kind := "badArity", names := [], counts := [] })
+#guard sharedError (.branchArityMismatch "F" 2 1) == (some { kind := "branchArity", names := [], counts := [2, 1] })
+#guard sharedError (.branchOutputArityMismatch "F" 3 2) == (some { kind := "branchOutputArity", names := [], counts := [3, 2] })
+#guard sharedError (.unknownName "x") == (some { kind := "unknownName", names := ["x"], counts := [] })
+#guard sharedError (.unknownProperty "object" "x") == (some { kind := "unknownProperty", names := ["x"], counts := [] })
+#guard sharedError (.notPublicProperty "object" "x") == (some { kind := "notPublicProperty", names := ["x"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" .exported) == (some { kind := "localOnlyProperty", names := ["x", "exported"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" .localConditional) == (some { kind := "localOnlyProperty", names := ["x", "conditional"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" (.localCapturedAncestorParams ["a"])) == (some { kind := "localOnlyProperty", names := ["x", "captured"], counts := [] })
+#guard sharedError (.ambiguousOpen "x" ["M", "N"]) == (some { kind := "ambiguousOpen", names := ["x"], counts := [] })
+#guard sharedError (.duplicateProperty "x") == (some { kind := "duplicateProperty", names := ["x"], counts := [] })
+#guard sharedError (.unresolvedImplicitParams ["z", "a"]) == (some { kind := "unresolvedImplicitParams", names := ["z", "a"], counts := [] })
+#guard sharedError .badIndex == (some { kind := "index", names := [], counts := [] })
+#guard sharedError .divByZero == (some { kind := "div0", names := [], counts := [] })
+#guard sharedError .demandCycle == (some { kind := "demandCycle", names := [], counts := [] })
+#guard sharedError .duplicateBranchPattern == (some { kind := "duplicateBranchPattern", names := [], counts := [] })
+#guard sharedError .explicitParamsRequireOutput == (some { kind := "explicitParamsRequireOutput", names := [], counts := [] })
+#guard sharedError .missingOutput == (some { kind := "missingOutput", names := [], counts := [] })
+#guard sharedError .spreadMissingOutput == (some { kind := "spreadMissingOutput", names := [], counts := [] })
+#guard sharedError (.typeMismatch "message") == none
+#guard sharedError (.noMatchingBranch "F") == none
+#guard sharedError (.notAnAlgorithm "description") == none
+#guard sharedError (.illegalInOpen "reason") == none
+#guard sharedError (.badOpenForm "reason") == none
+#guard sharedError (.illegalInEval "reason") == none
+#guard sharedError (.withContext "context" (.arityMismatch 2 1)) == (some { kind := "arity", names := [], counts := [2, 1] })
+
+-- need-selected-signature-payload [errors]: Inc(x) = x + 1 \n F(x, y) = x(y) \n F(Inc)
+def case_need_selected_signature_payload : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["x", "y"] [] [] [(.call (.param "x") [.param "y"])])] [(.call (.resolve "F") [.resolve "Inc"])])
+#guard obs case_need_selected_signature_payload == "err arity"
+
+#guard errorObs case_need_selected_signature_payload == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- need-variadic-minimum-payload [errors]: F(x, *middle, z) = x + z \n F(1)
+def case_need_variadic_minimum_payload : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "middle", kind := .collecting }, { name := "z" }] [] [] [(.binary .add (.param "x") (.param "z"))])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_need_variadic_minimum_payload == "err arity"
+
+#guard errorObs case_need_variadic_minimum_payload == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- need-closed-core-demand-is-runtime [errors]: A(q) = q + 1 \n F(x) = A + 0 \n F(7)
 def case_need_closed_core_demand_is_runtime : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.resolve "A") (.num 0))])] [(.call (.resolve "F") [.num 7])])
 #guard obs case_need_closed_core_demand_is_runtime == "err arity"
 
+#guard errorObs case_need_closed_core_demand_is_runtime == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- need-unused-ordinary-argument [variadic-calls]: F(x) = 10 \n F(1 / 0)
 def case_need_unused_ordinary_argument : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 10])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
@@ -151,6 +244,7 @@ def case_need_wrong_arity_precedes_cell_demand : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.param "x"])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
 #guard obs case_need_wrong_arity_precedes_cell_demand == "err arity"
 
+#guard errorObs case_need_wrong_arity_precedes_cell_demand == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- need-explicit-spread-precedes-arity [variadic-calls]: F(x) = 7 \n F(9, (1 / 0)*)
 def case_need_explicit_spread_precedes_arity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "F") [.num 9, (.sequenceSpread (.binary .div (.num 1) (.num 0)))])])
@@ -181,6 +275,7 @@ def case_need_container_call_checks_cardinality_first : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [])] [(.call (.resolve "A") [.num 6])])
 #guard obs case_need_container_call_checks_cardinality_first == "err arity"
 
+#guard errorObs case_need_container_call_checks_cardinality_first == .matched (some { kind := "arity", names := [], counts := [0, 1] })
 -- need-collection-builtin-demands-its-collection-first [collection-builtins]: take(1 / 0, 'a' + 1)
 def case_need_collection_builtin_demands_its_collection_first : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "take") [(.binary .div (.num 1) (.num 0)), (.binary .add (.stringLiteral "a") (.num 1))])])
@@ -446,6 +541,7 @@ def case_fixed_call_preserves_boundaries : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pair" (alg [] [] [] [.num 10, .num 20]), privateProp "Add" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "Add") [.resolve "Pair"])])
 #guard obs case_fixed_call_preserves_boundaries == "err arity"
 
+#guard errorObs case_fixed_call_preserves_boundaries == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- spread-fills-remaining-slots [item-supply-vs-value]: Tail = 2, 3 \n Use(a, b, c) = a + b + c \n  \n Use(1, Tail*)
 def case_spread_fills_remaining_slots : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Tail" (alg [] [] [] [.num 2, .num 3]), privateProp "Use" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "Use") [.num 1, (.sequenceSpread (.resolve "Tail"))])])
@@ -471,6 +567,7 @@ def case_fixed_empty_spread_zero_items : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_fixed_empty_spread_zero_items == "err arity"
 
+#guard errorObs case_fixed_empty_spread_zero_items == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- variadic-empty-arg-vs-spread [empty-visible-vs-spread]: F(*a) = a.count \n F((), ())
 def case_variadic_empty_arg_vs_spread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [(.dotCall (.param "a") "count" none)])] [(.call (.resolve "F") [(.emptySequence 0), (.emptySequence 0)])])
@@ -536,11 +633,13 @@ def case_decon_arity_under : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_decon_arity_under == "err arity"
 
+#guard errorObs case_decon_arity_under == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- decon-arity-over [deconstruction]: x, y = 1, 2, 3 \n x
 def case_decon_arity_over : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_decon_arity_over == "err arity"
 
+#guard errorObs case_decon_arity_over == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- decon-unpacks-stored-value [deconstruction]: A = 1, 2, 3 \n x, y, z = A \n y
 def case_decon_unpacks_stored_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1, .num 2, .num 3]), privateProp "$deconstruct$0" (alg [] [] [] [.resolve "A"]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -656,6 +755,7 @@ def case_binding_failure_outranks_repeated_name_conflict : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .capture { name := "x" }, .sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.call (.resolve "P") [.num 1, .num 2, .resolve "Bad"])])
 #guard obs case_binding_failure_outranks_repeated_name_conflict == "err arity"
 
+#guard errorObs case_binding_failure_outranks_repeated_name_conflict == .matched (some { kind := "badArity", names := [], counts := [] })
 -- repeated-name-binding-is-order-independent [variadic-calls]: A = 5 \n B = 2 + 3 \n P(f, f, f) = f \n  \n P(A, 5, B)
 def case_repeated_name_binding_is_order_independent : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "B" (alg [] [] [] [(.binary .add (.num 2) (.num 3))]), privateProp "P" (alg ["f", "f", "f"] [] [] [.param "f"])] [(.call (.resolve "P") [.resolve "A", .num 5, .resolve "B"])])
@@ -1871,7 +1971,7 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 354 canonical Lean-guarded specification cases.
+-- 356 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -1879,6 +1979,8 @@ same loop that emits the guards above, while the expected total is computed
 independently from the corpus partition, so a generation bug fails `lake build`.
 -/
 def specCaseIds : List String := [
+  "need-selected-signature-payload",
+  "need-variadic-minimum-payload",
   "need-closed-core-demand-is-runtime",
   "need-unused-ordinary-argument",
   "need-unused-collector-slice",
@@ -2234,6 +2336,6 @@ def specCaseIds : List String := [
   "string-interpolation-hole-failure",
   "string-interpolation-hole-without-output"
 ]
-#guard specCaseIds.length == 354
+#guard specCaseIds.length == 356
 
 end LanguageSpecCases

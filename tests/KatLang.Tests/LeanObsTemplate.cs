@@ -11,6 +11,20 @@ namespace KatLang.Tests;
 /// </summary>
 internal static class LeanObsTemplate
 {
+    internal static void AppendErrorGuard(System.Text.StringBuilder builder, string leanName, SharedErrorPayload? payload)
+    {
+        if (payload is not null)
+            builder.Append($"#guard errorObs {leanName} == .matched {payload.Lean}\n");
+    }
+
+    internal static void AppendProjectionContracts(System.Text.StringBuilder builder)
+    {
+        builder.Append("-- Independent error-constructor projection goldens (not evaluator programs).\n");
+        foreach (var c in DifferentialErrorContracts.All)
+            builder.Append($"#guard sharedError {c.LeanError} == {c.Expected?.Lean ?? "none"}\n");
+        builder.Append('\n');
+    }
+
     /// <summary>
     /// Lean definitions for <c>neutral</c>, <c>errCategory</c>,
     /// <c>runCountedM</c>, and <c>obs</c> — the neutral observation encoding
@@ -57,6 +71,47 @@ internal static class LeanObsTemplate
           | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
           | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
+        /-- Supplementary Q-67 fields; not a change to FORMAL-06 or `obs`.
+            Descriptions, messages, contexts, branch display names and host policy are excluded. -/
+        structure SharedErrorPayload where
+          kind : String
+          names : List String := []
+          counts : List Nat := []
+          deriving BEq, Repr
+
+        inductive SharedErrorObservation where
+          | matched (payload : Option SharedErrorPayload)
+          | mismatch
+          deriving BEq, Repr
+
+        def exposureKind : PropExposure -> String
+          | .exported => "exported"
+          | .localCapturedAncestorParams _ => "captured"
+          | .localConditional => "conditional"
+
+        partial def sharedError : Error -> Option SharedErrorPayload
+          | .withContext _ inner => sharedError inner
+          | .arityMismatch expected actual => some { kind := "arity", counts := [expected, actual] }
+          | .badArity => some { kind := "badArity" }
+          | .branchArityMismatch _ expected actual => some { kind := "branchArity", counts := [expected, actual] }
+          | .branchOutputArityMismatch _ expected actual => some { kind := "branchOutputArity", counts := [expected, actual] }
+          | .unknownName name => some { kind := "unknownName", names := [name] }
+          | .unknownProperty _ name => some { kind := "unknownProperty", names := [name] }
+          | .notPublicProperty _ name => some { kind := "notPublicProperty", names := [name] }
+          | .localOnlyProperty _ name exposure => some { kind := "localOnlyProperty", names := [name, exposureKind exposure] }
+          | .ambiguousOpen name _ => some { kind := "ambiguousOpen", names := [name] }
+          | .duplicateProperty name => some { kind := "duplicateProperty", names := [name] }
+          | .unresolvedImplicitParams names => some { kind := "unresolvedImplicitParams", names := names }
+          | .badIndex => some { kind := "index" }
+          | .divByZero => some { kind := "div0" }
+          | .demandCycle => some { kind := "demandCycle" }
+          | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
+          | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
+          | .missingOutput => some { kind := "missingOutput" }
+          | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
+          | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
+            | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ => none
+
         /-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
             root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
             C# `Evaluator.RunCounted` observation. -/
@@ -88,5 +143,14 @@ internal static class LeanObsTemplate
               else s!"internalMismatch countedErr={errCategory e1} plainErr={errCategory e2}"
           | .ok ((r, _), _), .error e2 => s!"internalMismatch counted=ok:{neutral r} plain=err:{errCategory e2}"
           | .error e1, .ok r2 => s!"internalMismatch counted=err:{errCategory e1} plain=ok:{neutral r2}"
+
+        /-- Extra guards are emitted only for supported failures, so successful cases incur
+            no extra evaluator runs. Both Lean routes must agree independently. -/
+        def errorObs (e : Expr) : SharedErrorObservation :=
+          match runCountedM e |>.run EvalState.empty, runResult e with
+          | .error e1, .error e2 =>
+              if sharedError e1 == sharedError e2 then .matched (sharedError e1)
+              else .mismatch
+          | _, _ => .mismatch
         """;
 }

@@ -37,6 +37,7 @@ public class LanguageSpecRunnerTests
         {
             var parsed = Parser.Parse(specCase.Source);
             Assert.True(parsed.HasErrors, $"{caseId}: expected a parse error, but the source parsed.");
+            SemanticExplorerHarness.RequireEngineParseFailure(caseId, parsed, KatLangEngine.Run(specCase.Source));
 
             if (specCase.ExpectedParseDiagnosticFragment is { } fragment)
             {
@@ -65,6 +66,8 @@ public class LanguageSpecRunnerTests
             Assert.True(observation.Outcome == "err",
                 $"{caseId}: expected evaluation error ({specCase.ExpectedErrorCategory}), observed {observation.Neutral}.");
             Assert.Equal(specCase.ExpectedErrorCategory, observation.ErrorCategory);
+            if (specCase.ExpectedErrorPayload is { } expectedPayload)
+                Assert.Equal(expectedPayload, observation.ErrorPayload);
             return;
         }
 
@@ -137,6 +140,8 @@ public class LanguageSpecRunnerTests
     {
         foreach (var specCase in Cases)
         {
+            Assert.True(specCase.ExpectedErrorPayload is null || specCase.Outcome == SpecOutcome.EvalError,
+                $"{specCase.Id}: supplementary error payloads require EvalError.");
             switch (specCase.Outcome)
             {
                 case SpecOutcome.Evaluates:

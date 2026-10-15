@@ -91,10 +91,21 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   filter run as the spec Lean artifact.
 
 Both Lean artifacts embed the same observation machinery (`neutral`,
-`errCategory`, `runCountedM`, `obs`), emitted from the single C# constant
-`LeanObsTemplate.SharedDefinitions` — extend `errCategory` there AND
-`SemanticExplorerHarness.ErrorCategory` together when adding an `EvalError`
-kind, then regenerate both artifacts.
+`errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
+emitted from the single C# constant `LeanObsTemplate.SharedDefinitions`. When
+adding an error kind, extend `errCategory` and `sharedError` there AND
+`DifferentialErrors.Observe` (the C# category and payload policy that
+`SemanticExplorerHarness.ErrorCategory` delegates to) together, record its
+reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
+or the host-only inventory of `DifferentialObservationTests` for a C#-only
+kind), then regenerate both artifacts.
+
+Q-67 adds a separate structured-error projection (`DifferentialErrors` /
+`sharedError`, guarded by `errorObs`), while preserving the FORMAL-06 neutral
+contract. Public-engine failures are checked too, including the distinction
+between root output absence, dynamic evaluation failure and front-end rejection.
+See [Differential observations](differential-observations.md) for the complete
+constructor policy, route matrix and model boundaries.
 
 A regeneration run WRITES the artifact and then FAILS BY DESIGN (also when the
 content did not change): it is a regeneration, not a verification, and its
@@ -314,7 +325,16 @@ with `(1, 2)`, and re-spreading the result (`take(...)*` is the kept pair).
 - The generator harness (`experimental/prompts/katlang-generator-harness.ps1`)
   and its test-case JSON are untracked and outside this system; only the two
   tracked prompt files participate. Prompt examples outside the generated
-  block remain hand-maintained.
+  block remain hand-maintained. Twenty selected standalone result claims now
+  use the existing tutorial fence/claim grammar and execution assertion through
+  `PromptFile_HandwrittenResultClaimsExecute`; exact inventories prevent those
+  examples from silently dropping out. Every indented example row annotated with
+  a `# result` comment is classified by its verbatim text in
+  `PromptFile_AnnotatedExampleRowsExecuteOrAreExempt`: it executes with its
+  annotated display or error code, or carries an explicit exemption reason
+  (module loads, metavariable illustrations, definition annotations); an
+  unclassified or stale row fails. Claims inside prose sentences remain
+  outside mechanical verification, as in the tutorial.
 - Every tutorial fence with a `**Result(s):**` claim is engine-verified by
   the sweep (section 6a) or carries an explicit reviewed `spec:skip` reason;
   only claim-less fences remain outside mechanical output verification —

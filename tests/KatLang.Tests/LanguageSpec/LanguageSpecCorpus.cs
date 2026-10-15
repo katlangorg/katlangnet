@@ -99,6 +99,26 @@ public static class LanguageSpecCorpus
 
     private static IReadOnlyList<SpecCase> RawCases() =>
     [
+        new()
+        {
+            Id = "need-selected-signature-payload",
+            Category = "errors",
+            Source = "Inc(x) = x + 1\nF(x, y) = x(y)\nF(Inc)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 1]),
+            Explanation = "Cardinality of the selected F signature rejects before either argument channel is demanded (historical X-43 is superseded).",
+        },
+        new()
+        {
+            Id = "need-variadic-minimum-payload",
+            Category = "errors",
+            Source = "F(x, *middle, z) = x + z\nF(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 1]),
+            Explanation = "A collecting middle consumes no mandatory supplied slot; the two fixed positions require two.",
+        },
         // ==================== arithmetic ====================
         new()
         {
@@ -107,6 +127,7 @@ public static class LanguageSpecCorpus
             Source = "A(q) = q + 1\nF(x) = A + 0\nF(7)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [1, 0]),
             Explanation = "A closed body gains no q. Its resolved callable reference is legal, but an actual value demand rejects the ordinary zero-argument call to A(q).",
         },
         new()
@@ -204,6 +225,7 @@ public static class LanguageSpecCorpus
             Source = "F(x) = x\nF(1 / 0, 2)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [1, 2]),
             Explanation = "After explicit spread formation, wrong cardinality rejects before ordinary argument cells are demanded.",
         },
         new()
@@ -262,6 +284,7 @@ public static class LanguageSpecCorpus
             Source = "A = {\n    public X = 1\n}\nA(6)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [0, 1]),
             Explanation = "A container has no parameters, so a call that supplies an argument fails its cardinality check before the body runs: the error is the arity mismatch, not the container's missing output.",
         },
         new()
@@ -1239,6 +1262,7 @@ public static class LanguageSpecCorpus
             Source = "Pair = 10, 20\nAdd(x, y) = x + y\n\nAdd(Pair)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 1]),
             Probes =
             [
                 new SpecProbe("Pair = 10, 20\nAdd(x, y) = x + y\nAdd(Pair*)", "ok raw=30 n=1"),
@@ -1310,6 +1334,7 @@ public static class LanguageSpecCorpus
             Source = "F(a) = a\nF(()*)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [1, 0]),
             IncludeInGeneratorPrompt = true,
             Explanation = "Spreading `()` contributes zero items, so `F(()*)` supplies no arguments and the one-parameter call fails.",
         },
@@ -1485,6 +1510,7 @@ public static class LanguageSpecCorpus
             Source = "x, y = 1\nx",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 1]),
             Explanation = "Without a collecting target the item count must match exactly: one supplied item cannot bind two targets.",
         },
         new()
@@ -1494,6 +1520,7 @@ public static class LanguageSpecCorpus
             Source = "x, y = 1, 2, 3\nx",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 3]),
             Explanation = "Three supplied items cannot bind two fixed targets.",
         },
         new()
@@ -2034,6 +2061,7 @@ public static class LanguageSpecCorpus
             Source = "Bad = 1 / 0\nP(x, x, (a, b)) = a\n\nP(1, 2, Bad)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("badArity", [], []),
             Probes =
             [
                 // The second x immediately conflicts; later structural patterns are not demanded.

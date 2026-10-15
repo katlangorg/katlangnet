@@ -200,6 +200,11 @@ public class AsyncTwinDifferentialTests
 
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(syncDefault), AsyncEvaluationHarness.NeutralOf(asyncResult));
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(syncGeneric), AsyncEvaluationHarness.NeutralOf(asyncResult));
+        if (syncGeneric.IsError)
+        {
+            DifferentialErrors.RequireAgreement("async-corpus", syncGeneric.Error, asyncResult.Error);
+            DifferentialErrors.RequireAgreement("async-corpus", syncGeneric.Error, syncDefault.Error);
+        }
 
         // Host-side suspension inside the seam changes no evaluator accounting.
         Assert.Equal(syncBudget.ConsumedSteps, asyncBudget.ConsumedSteps);
@@ -228,6 +233,12 @@ public class AsyncTwinDifferentialTests
             Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: cache));
 
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(syncDefault), AsyncEvaluationHarness.NeutralOf(asyncResult));
+
+        if (syncDefault.IsError)
+        {
+            DifferentialErrors.RequireAgreement("async-corpus", syncDefault.Error, syncGeneric.Error);
+            DifferentialErrors.RequireAgreement("async-corpus", syncDefault.Error, asyncResult.Error);
+        }
 
         // Value-level equality, not just neutral-encoding equality.
         if (syncDefault.IsOk)

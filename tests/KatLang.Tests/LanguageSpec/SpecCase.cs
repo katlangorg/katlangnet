@@ -74,6 +74,9 @@ public sealed record SpecCase
     /// </summary>
     public string? ExpectedErrorCategory { get; init; }
 
+    /// <summary>Optional HAND-WRITTEN supplementary Q-67 payload; never regenerated.</summary>
+    public SharedErrorPayload? ExpectedErrorPayload { get; init; }
+
     /// <summary>
     /// Optional stable fragment of a parser diagnostic message. The structured
     /// classification lives in <see cref="ExpectedDiagnosticCode"/>; use the

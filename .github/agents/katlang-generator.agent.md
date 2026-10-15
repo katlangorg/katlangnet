@@ -25,7 +25,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - For ordinary user-defined dot-call fallback, DOT-CALL PASSES A VALUE: `A.B(C, D)` is exactly `B(A, C, D)` — the receiver is one ordinary leading argument, it never satisfies extra fixed-parameter arity, a fixed parameter binds it as one value, and a collecting parameter collects it as ONE item exactly as it collects the written argument (values stay values — a sequence and a list alike). Do not generate `(a, b).F` expecting fixed parameters `F(a, b)`; use `F(a, b)` or `a.F(b)`. With `Mean(*Vector) = Vector.sum / Vector.count` and `Arg = 1, 2, 3`, `Mean(1, 2, 3)`, `(1, 2, 3)*.Mean`, `[1, 2, 3]*.Mean`, and `Arg*.Mean` all average the three items, while `(1, 2, 3).Mean`, `Arg.Mean`, and `[1, 2, 3].Mean` each pass ONE value (`Vector = [(1, 2, 3)]` or `[[1, 2, 3]]`) and the numeric sum fails — spread the receiver (`Arg*.Mean`) when the helper needs its items.
 - A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed as `(…)` on a single row — not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit spread star at the call site to spread the returned value into separate rows/items: `F(5)*` and `X.order*` emit the items (spread opens one returned boundary). This mirrors `if` (a multi-output branch becomes one value). A collecting binding stores an exact list, so `F(*a) = sum(a)` works because the builtin opens the bound list after binding, while `a*` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows) and explicit caller-site spread. A completed `while`/`repeat` IS a value boundary too: its final state is ONE value — `Fibonacci.repeat(10, 0, 1)` with `Fibonacci(a, b) = b, a + b` is `(55, 89)` on one row, and `Fibonacci.repeat(10, 0, 1)*` emits `55` and `89` as two rows; a multi-slot loop written as a row beside other rows is one row, and a nested loop used as a step row is ONE next-state slot unless it is spread (`repeat(Inner, 2, a, b)*`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value; a `map`/`reduce` callback returns its ORDINARY call result — ONE value, exactly what calling it directly returns (a multi-row body is one sequence value, `()` and `[]` are ordinary values) — which `map` stores whole as one element and `reduce` passes whole as the next accumulator, never spread.
 - Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted[0]` selects its first element (`range(1, 3)[2]` is `3`, `[3, 1, 2].order[0]` is `1`), so no spread-capture step is needed for bracket selection. Scalar arithmetic, ordering, and logical operators reject whole list and sequence values, including `()`, through ordinary operand validation; structural `==` and `!=` remain valid — select an element first (`Sorted[0] + 1`) or spread-capture (`Sorted = { X.order* }`) when a canonical sequence VALUE is specifically wanted. Unary `-()` and `not ()` are type errors too: `-` needs a numeric scalar and `not` a Boolean, exactly as for other sequence/list operands. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
-- For a reusable collection helper that collects supplied arguments, declare a lone collecting parameter, such as `Many(*values) = values.count`. A user `*values` collecting parameter collects EXACTLY the arguments allocated to it — VALUES STAY VALUES: a non-spread argument is ONE item whatever its value (a sequence, a list, `()`, `[]` alike), and only an explicit spread supplies a value's items (which are never reopened). With `Arg = 1, 2, 3`, `Many(Arg*)` and `Many(1, 2, 3)` bind `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Arg.Many` bind `[(1, 2, 3)]` (count 1 — a collector counts arguments, while `Arg.count` counts the value's elements); `Many(Arg, 0)` binds `[(1, 2, 3), 0]` (count 2); `Many([1, 2, 3])` binds `[[1, 2, 3]]` (count 1) while `Many([1, 2, 3]*)` binds the items; `Many()` is `[]`, `Many(())` is `[()]`, and `Many((), 3)` is `[(), 3]`; nested structure stays intact (`Many(((1, 2), 3))` binds `[((1, 2), 3)]`). A parameter list with two or more captures containing one collecting parameter binds the fixed positions from the front and back first — a fixed position never opens a sequence argument — and then collects the remaining middle arguments exactly (`Tail(first, *rest) = rest` gives `Tail(1, (2, 3))` → `[(2, 3)]`, `Tail(1, (2, 3), 4)` → `[(2, 3), 4]`, and `Tail(1, (2, 3)*)` → `[2, 3]`); write an explicit spread star whenever a sequence or list value should supply separate items. The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding, so with `A = 1, 2, 3`, `x, y, z = A` binds `x = 1`, `y = 2`, `z = 3` and `x, y, z = A*` supplies the same items (`first, *rest = A` unpacks to `first = 1`, `rest = [2, 3]` — the collecting binding collects an exact list). This unpacking is assignment-specific — an ordinary call `F(A)` still passes `A` as one argument, so calls need `F(A*)`. At most one collecting binding is allowed. Do not use `atoms` unless recursive flattening is intentionally required.
+- For a reusable collection helper that collects supplied arguments, declare a lone collecting parameter, such as `Many(*values) = values.count`. A user `*values` collecting parameter collects EXACTLY the arguments allocated to it — VALUES STAY VALUES: a non-spread argument is ONE item whatever its value (a sequence, a list, `()`, `[]` alike), and only an explicit spread supplies a value's items (which are never reopened). With `Arg = 1, 2, 3`, `Many(Arg*)` and `Many(1, 2, 3)` bind `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Arg.Many` bind `[(1, 2, 3)]` (count 1 — a collector counts arguments, while `Arg.count` counts the value's elements); `Many(Arg, 0)` binds `[(1, 2, 3), 0]` (count 2); `Many([1, 2, 3])` binds `[[1, 2, 3]]` (count 1) while `Many([1, 2, 3]*)` binds the items; `Many()` returns `0`, `Many(())` returns `1`, and `Many((), 3)` returns `2`; nested structure stays intact (`Many(((1, 2), 3))` binds `[((1, 2), 3)]`). A parameter list with two or more captures containing one collecting parameter binds the fixed positions from the front and back first — a fixed position never opens a sequence argument — and then collects the remaining middle arguments exactly (`Tail(first, *rest) = rest` gives `Tail(1, (2, 3))` → `[(2, 3)]`, `Tail(1, (2, 3), 4)` → `[(2, 3), 4]`, and `Tail(1, (2, 3)*)` → `[2, 3]`); write an explicit spread star whenever a sequence or list value should supply separate items. The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding, so with `A = 1, 2, 3`, `x, y, z = A` binds `x = 1`, `y = 2`, `z = 3` and `x, y, z = A*` supplies the same items (`first, *rest = A` unpacks to `first = 1`, `rest = [2, 3]` — the collecting binding collects an exact list). This unpacking is assignment-specific — an ordinary call `F(A)` still passes `A` as one argument, so calls need `F(A*)`. At most one collecting binding is allowed. Do not use `atoms` unless recursive flattening is intentionally required.
 - Collection builtins are ordinary FIXED-ARITY callables: `count(collection)`, `sum(collection)`, `avg(collection)`, `min(collection)`, `max(collection)`, `first(collection)`, `last(collection)`, `order(collection)`, `orderDesc(collection)`, `distinct(collection)`, `take(collection, count)`, `skip(collection, count)`, `contains(collection, item)`, `map(collection, mapper)`, `filter(collection, predicate)`, and `reduce(collection, reducer, initial)`. Each receives ONE collection object plus its fixed controls. Use `()` for a canonical sequence, `[]` for an exact list, or receiver-style syntax for concise expressions — the dot receiver fills the collection parameter (`Values.count`, `X.take(2)`). After binding, the one bound collection opens one outer sequence OR list boundary (a scalar or string is a one-element collection; nested collections stay opaque items), so with `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3`, and `count(3)` is `1`. Inline items are an arity error: `count(1, 2, 3)` is three arguments, not a collection. Spread supplies ordinary argument slots that must fit the fixed arity, so `count(Values*)` and `sum(A*, B*)` are arity errors; group the spread into one collection argument instead — `count((Values*))` is `3`, and `sum((A*, B*))` is the concatenation rewrite. `count()` is an arity error, distinct from `count(())` which is `0` — absence of an argument is never an empty collection.
 - A collection builtin takes exactly one collection argument plus its fixed controls. Never generate inline-item calls (`count(1, 2, 3)`) or spread-fed calls (`count(A*)`); pass one value (`X.count`, `count(X)`) or group explicitly (`count((A*, B*))`).
 - For `filter`, `map`, and `reduce`, keep that same top-level iteration structure, and bind each callback item as the one selected value that `S[i]` would produce (a nested sequence or list item stays one intact value; `Id(x) = x` maps `((1, 2), 3)` to `[(1, 2), 3]`). `filter` still keeps or discards the original top-level item, `reduce` leaves accumulator semantics unchanged, and nothing recursively flattens. Dot-call sequence builtins on the callback variable bind the item as their one collection argument and open it one level, so `item.count` counts a sequence-valued item's members. If you need members of a sequence-value callback item, use a nested pattern `F((x, y))` or `item[i]` — THE CALLBACK LAW: each element is ONE ordinary argument, bound exactly as the direct call `F(element)`, so a flat multi-parameter callback `F(x, y)` is an arity error on a pair element.
@@ -616,33 +616,57 @@ The initial state must provide the slots the interface requires. A fixed or impl
 
 Any callable can be a step, with no wrapper: a user algorithm, a clause family, a builtin, a Math function, a host operation, an alias, or a callable passed through a parameter. Each iteration invokes the step exactly as the ordinary call `Step(state…)` would. A clause family dispatches its clauses over the current state each iteration (a state no clause matches is an error, never loop termination), which makes it a natural `while` step with a base case; a builtin runs with its ordinary argument roles and its ONE result value is ONE next-state slot (a collection result is one slot, `()` too). A value — a number, list, selection, or call result — is never a step.
 
-    Countdown(0) = 0, false
-    Countdown(n) = n - 1, true
-    Countdown.while(3)             # 0: a clause family is a while step with a base case
-    repeat(count, 1, [1, 2])       # 2: a builtin's one result is one next-state slot
+```
+Countdown(0) = 0, false
+Countdown(n) = n - 1, true
+Countdown.while(3)             # a clause family is a while step with a base case
+repeat(count, 1, [1, 2])       # a builtin's one result is one next-state slot
+```
+
+**Results:**
+```
+0
+2
+```
 
 Explicit-signature step (valid even though `x` is not a free identifier):
 
-    Step(x) = x + 1
-    Step.repeat(3, 0)              # 3
+```
+Step(x) = x + 1
+Step.repeat(3, 0)
+```
+
+**Result:** `3`
 
 Sequence-value-state step (one sequence-value slot threaded across iterations):
 
-    Step((*history, previous)) = (history*, previous + 1)
-    Step.repeat(3, (1, 2))[1]       # 5
+```
+Step((*history, previous)) = (history*, previous + 1)
+Step.repeat(3, (1, 2))[1]
+```
+
+**Result:** `5`
 
 Variadic-state step (prefix + collecting + suffix bound as an item supply; the collecting parameter collects the extra middle slots as one exact list, and `middle*` re-spreads it):
 
-    Step(first, *middle, last) = first + 1, middle*, last + 1
-    Step.repeat(2, 0, 5, 5, 10)    # (2, 5, 5, 12): the completed loop is one value
+```
+Step(first, *middle, last) = first + 1, middle*, last + 1
+Step.repeat(2, 0, 5, 5, 10)    # the completed loop is one value
+```
+
+**Result:** `(2, 5, 5, 12)`
 
 Nested capture (a nested step may capture enclosing parameters; the captured name is not a state slot):
 
-    Outer(limit) = {
-        Step = k + 1, k < limit    # k is loop state; limit is captured, not a slot
-        Step.while(0)
-    }
-    Outer(5)                       # 5
+```
+Outer(limit) = {
+    Step = k + 1, k < limit    # k is loop state; limit is captured, not a slot
+    Step.while(0)
+}
+Outer(5)
+```
+
+**Result:** `5`
 
 ### Counting Rule
 
@@ -858,7 +882,7 @@ Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The c
 
 ### `repeat`
 
-`repeat(step, count, *init)` — fixed-count iteration. `step` returns next state, `count` is a non-negative integer, and each explicit init argument becomes one initial state slot. `repeat(Step, 3, a, b)` starts with two slots; `repeat(Step, 3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: `Step = history*, next` emits history's items followed by `next` as separate slots (the comma is required — `history* next` would be the multiplication `history * next`), while `Step = (history*, next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((*history), previous) = (history*, previous + 1), previous + 1` emits the sequence-value history slot `(history*, previous + 1)` followed by the helper slot, so callers can select `:0`. This is the same whatever the step's parameter patterns: patterns only bind the incoming state and never repack the step's rows, so a structural step `Step((a, b)) = (b, a + b)*` supplies TWO next-state slots (which its one-pattern head cannot re-bind) while `Step((a, b)) = (b, a + b)` keeps ONE, and `Dup(x, x) = (x + 1, x + 1)*` supplies the same two slots as `Dup(x, x) = x + 1, x + 1`. The completed loop is ONE value (a value boundary like any call result): select outputs with `:index`; for a state `(candidate, found)`, use `repeat(...)[1]` for `found`, not `repeat(...)[0][1]`, and spread the loop result (`repeat(...)*`) only to emit or pass its final items separately.
+`repeat(step, count, *init)` — fixed-count iteration. `step` returns next state, `count` is a non-negative integer, and each explicit init argument becomes one initial state slot. `repeat(Step, 3, a, b)` starts with two slots; `repeat(Step, 3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: `Step = history*, next` emits history's items followed by `next` as separate slots (the comma is required — `history* next` would be the multiplication `history * next`), while `Step = (history*, next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((*history), previous) = (history*, previous + 1), previous + 1` emits the sequence-value history slot `(history*, previous + 1)` followed by the helper slot, so callers can select `[0]`. This is the same whatever the step's parameter patterns: patterns only bind the incoming state and never repack the step's rows, so a structural step `Step((a, b)) = (b, a + b)*` supplies TWO next-state slots (which its one-pattern head cannot re-bind) while `Step((a, b)) = (b, a + b)` keeps ONE, and `Dup(x, x) = (x + 1, x + 1)*` supplies the same two slots as `Dup(x, x) = x + 1, x + 1`. The completed loop is ONE value (a value boundary like any call result): select outputs with `[index]`; for a state `(candidate, found)`, use `repeat(...)[1]` for `found`, not `repeat(...)[0][1]`, and spread the loop result (`repeat(...)*`) only to emit or pass its final items separately.
 
 ### `while`
 
@@ -1003,19 +1027,35 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 
 Sequence-value accumulator (select fields with `[0]` / `[1]`):
 
-    AddToState(item, (total, itemCount)) = (total + item, itemCount + 1)
-    State = reduce((10, 20, 30), AddToState, (0, 0))
-    State[0], State[1]                             # 60, 3
+```
+AddToState(item, (total, itemCount)) = (total + item, itemCount + 1)
+State = reduce((10, 20, 30), AddToState, (0, 0))
+State[0], State[1]
+```
+
+**Results:**
+```
+60
+3
+```
 
 Opened sequence-value accumulator (the pattern `(*history)` opens the accumulator; a top-level `*history` would collect the one accumulator value instead and nest each step):
 
-    Append(item, (*history)) = (history*, item)
-    reduce((2, 3, 4), Append, (0, 1))            # (0, 1, 2, 3, 4)
+```
+Append(item, (*history)) = (history*, item)
+reduce((2, 3, 4), Append, (0, 1))
+```
+
+**Result:** `(0, 1, 2, 3, 4)`
 
 A sequence pattern opens only a SEQUENCE, so the initial accumulator must be one: a scalar initial such as `1` is a `TypeMismatch`. A list accumulator keeps every cardinality, a one-element start included:
 
-    ListAppend(item, [*history]) = [history*, item]
-    reduce((2, 3, 4), ListAppend, [1])           # [1, 2, 3, 4]
+```
+ListAppend(item, [*history]) = [history*, item]
+reduce((2, 3, 4), ListAppend, [1])
+```
+
+**Result:** `[1, 2, 3, 4]`
 
 ### `count`
 
@@ -1551,13 +1591,17 @@ Nested properties can reference siblings within the same block. Two access patte
 
 **With trailing output** — call the block directly to get computed results:
 
-    Order = {
-        Subtotal = price * qty
-        Tax = Subtotal * 0.1
-        Total = Subtotal + Tax
-        Total
-    }
-    Order(25, 4)
+```
+Order = {
+    Subtotal = price * qty
+    Tax = Subtotal * 0.1
+    Total = Subtotal + Tax
+    Total
+}
+Order(25, 4)
+```
+
+**Result:** `110.0`
 
 The trailing output `Total` makes `Order` callable: `Order(25, 4)` returns `110.0`.
 
@@ -1608,9 +1652,25 @@ Repeated parameter names use one order-independent compatibility rule over indep
 
 Model-C execution: ordinary arguments are suspended computations in the caller environment. Plain parameter binding, aliases and forwarding do not evaluate VALUE. First VALUE demand evaluates once; later reads share success or failure. CALLABLE projection does not force VALUE, and each actual invocation is fresh. Wrong arity precedes ordinary demand; arbitrary explicit spread may evaluate during supply formation. Collectors are lazy slices, but any collection VALUE demand materializes the complete exact eager list. Conditional clauses share one supply and inspect patterns in written order. `if` uses the same cells as an ordinary selector. Closed-list blocked lifting, including Math, remains runtime zero-argument demand (Q-15); directly written undeclared names and incompatible bare forwarding remain static errors. Effects and random draws follow first-demand order. Never generate a lazy-list or scalar-to-callable fallback.
 
+
+Collecting-count result check:
+
+```
+Many(*values) = values.count
+Many(), Many(()), Many((), 3), Many([(1, 2)]*)
+```
+
+**Results:**
+```
+0
+1
+2
+1
+```
+
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (161 of the 446-case canonical language specification,
+Verified reference examples (161 of the 448-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

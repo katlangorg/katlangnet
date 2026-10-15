@@ -66,7 +66,14 @@ public class SemanticExplorerLeanArtifactTests
         var languageSpec = LanguageSpec.LanguageSpecCorpus.AllCases();
         AssertReadOnly(languageSpec, "LanguageSpecCorpus.AllCases()");
         foreach (var specCase in languageSpec)
+        {
             AssertReadOnly(specCase.Probes, $"LanguageSpec[{specCase.Id}].Probes");
+            if (specCase.ExpectedErrorPayload is { } payload)
+            {
+                AssertReadOnly(payload.Names, $"LanguageSpec[{specCase.Id}].ExpectedErrorPayload.Names");
+                AssertReadOnly(payload.Counts, $"LanguageSpec[{specCase.Id}].ExpectedErrorPayload.Counts");
+            }
+        }
     }
     private const string ArtifactRelativePath = "lean/SemanticExplorerCases.lean";
 
@@ -118,8 +125,8 @@ public class SemanticExplorerLeanArtifactTests
     /// has no surface parser, so a case is excluded from the artifact iff it
     /// is a deliberate parse-error probe). This keeps the accounting table in
     /// docs/design/sequence-boundary-audit-2026-07.md from drifting: the
-    /// artifact guard total is always surfaceCases - parseLevelCases plus the
-    /// internal-node cases.
+    /// neutral case-guard total is surfaceCases - parseLevelCases plus the
+    /// internal-node cases. Supplementary payload/projection guards are separate.
     /// </summary>
     [Fact]
     public void CorpusPartition_LeanExclusionsAreExactlyTheParseLevelCases()
@@ -273,7 +280,8 @@ public class SemanticExplorerLeanArtifactTests
             - excluded parse-level cases (Lean has no surface parser): {allCases.Count - expectedSurface}
             - Lean-representable surface cases: {expectedSurface}
             - internal-node cases: {expectedInternal}
-            - total generated guards: {expectedSurface + expectedInternal} case guards + 2 count guards
+            - neutral guards: {expectedSurface + expectedInternal} case guards + 2 count guards
+            - supplementary errorObs guards compare supported shared payloads independently
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -287,6 +295,7 @@ public class SemanticExplorerLeanArtifactTests
         builder.Append('\n');
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
+        LeanObsTemplate.AppendProjectionContracts(builder);
 
         var surfaceIds = new List<string>();
         foreach (var explorerCase in allCases)
@@ -305,6 +314,7 @@ public class SemanticExplorerLeanArtifactTests
             builder.Append($"-- {explorerCase.Id}: {sourceComment}\n");
             builder.Append($"def case_{explorerCase.Id} : Expr :=\n  {explorerCase.LeanProgram}\n");
             builder.Append($"#guard obs case_{explorerCase.Id} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n\n");
+            LeanObsTemplate.AppendErrorGuard(builder, $"case_{explorerCase.Id}", observation.ErrorPayload);
             surfaceIds.Add(explorerCase.Id);
         }
 
@@ -342,6 +352,7 @@ public class SemanticExplorerLeanArtifactTests
             builder.Append($"-- internal__{internalCase.Id}: {internalCase.Description}\n");
             builder.Append($"def case_internal__{internalCase.Id} : Expr :=\n  {LeanAstEncoder.EncodeProgram(root)}\n");
             builder.Append($"#guard obs case_internal__{internalCase.Id} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n\n");
+            LeanObsTemplate.AppendErrorGuard(builder, $"case_internal__{internalCase.Id}", observation.ErrorPayload);
             internalIds.Add($"internal__{internalCase.Id}");
         }
 

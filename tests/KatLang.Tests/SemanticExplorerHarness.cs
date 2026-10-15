@@ -14,6 +14,9 @@ public sealed record ExplorerObservation(
     string? ErrorCategory,   // innermost error category (err only)
     Result? Value)           // raw result tree (ok only)
 {
+    /// <summary>Supplementary shared semantic fields, outside the neutral observation.</summary>
+    public SharedErrorPayload? ErrorPayload { get; init; }
+
     /// <summary>
     /// Neutral observation string shared verbatim with the generated Lean
     /// artifact: <c>ok raw=... n=...</c> or <c>err CATEGORY</c>.
@@ -37,10 +40,16 @@ public static class SemanticExplorerHarness
         => Observe(explorerCase.Id, explorerCase.Source);
 
     public static ExplorerObservation Observe(string caseId, string source)
+        => Observe(caseId, source, static text => KatLangEngine.Run(text));
+
+    internal static ExplorerObservation Observe(string caseId, string source, Func<string, RunResult> runEngine)
     {
         var parsed = Parser.Parse(source);
         if (parsed.HasErrors)
+        {
+            RequireEngineParseFailure(caseId, parsed, runEngine(source));
             return new ExplorerObservation(caseId, source, "parseError", null, null, null, null, null);
+        }
 
         var root = new Expr.AlgorithmExpr(parsed.Root);
         var counted = Evaluator.RunCounted(root);
@@ -61,15 +70,11 @@ public static class SemanticExplorerHarness
         if (counted.IsError)
         {
             var countedCategory = ErrorCategory(counted.Error);
-            var plainCategory = ErrorCategory(plain.Error);
-            if (countedCategory != plainCategory)
-            {
-                throw new InvalidOperationException(
-                    $"Plain/counted evaluator disagreement for '{caseId}': err {countedCategory} vs err {plainCategory}.");
-            }
-
+            DifferentialErrors.RequireAgreement(caseId, counted.Error, plain.Error);
+            RequireEngineFailure(caseId, counted.Error, runEngine(source));
             return new ExplorerObservation(
-                caseId, source, "err", null, null, null, countedCategory, null);
+                caseId, source, "err", null, null, null, countedCategory, null)
+                { ErrorPayload = DifferentialErrors.Observe(counted.Error).Payload };
         }
 
         if (!Result.ValueComparer.Equals(counted.Value.Value, plain.Value))
@@ -81,7 +86,7 @@ public static class SemanticExplorerHarness
 
         // Display comes from the public engine path so display-facing invariants
         // observe exactly what users see.
-        var engineRun = KatLangEngine.Run(source);
+        var engineRun = runEngine(source);
         if (engineRun is not RunResult.Success success)
         {
             throw new InvalidOperationException(
@@ -131,14 +136,9 @@ public static class SemanticExplorerHarness
         if (counted.IsError)
         {
             var countedCategory = ErrorCategory(counted.Error);
-            var plainCategory = ErrorCategory(plain.Error);
-            if (countedCategory != plainCategory)
-            {
-                throw new InvalidOperationException(
-                    $"Plain/counted evaluator disagreement for '{caseId}': err {countedCategory} vs err {plainCategory}.");
-            }
-
-            return new ExplorerObservation(caseId, "<ast>", "err", null, null, null, countedCategory, null);
+            DifferentialErrors.RequireAgreement(caseId, counted.Error, plain.Error);
+            return new ExplorerObservation(caseId, "<ast>", "err", null, null, null, countedCategory, null)
+                { ErrorPayload = DifferentialErrors.Observe(counted.Error).Payload };
         }
 
         if (!Result.ValueComparer.Equals(counted.Value.Value, plain.Value))
@@ -189,50 +189,32 @@ public static class SemanticExplorerHarness
     /// Category names must stay aligned with <c>errCategory</c> in
     /// <c>lean/SemanticExplorerCases.lean</c>.
     /// </summary>
-    public static string ErrorCategory(EvalError error)
-    {
-        while (error is EvalError.WithContext withContext)
-            error = withContext.Inner;
+    public static string ErrorCategory(EvalError error) => DifferentialErrors.Observe(error).Category;
 
-        return error switch
+    internal static void RequireEngineParseFailure(string caseId, ParseResult parsed, RunResult engine)
+    {
+        if (engine is not RunResult.ParseFailure failure
+            || failure.Errors.Any(e => e.Source is not null)
+            || !parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => KatLangError.FromDiagnostic(d).Code).SequenceEqual(failure.Errors.Select(e => e.Code)))
+            throw new InvalidOperationException($"Public engine phase/diagnostic disagreement for '{caseId}'.");
+    }
+
+    internal static void RequireEngineFailure(string caseId, EvalError error, RunResult engine)
+    {
+        // Root absence is a distinct public outcome. A demanded output-less property/call
+        // is EvalFailure even though its innermost category is also missingOutput.
+        var rootAbsence = error is EvalError.WithContext
+            { ErrorContext: ProgramEvaluationContext, Inner: EvalError.MissingOutput };
+        KatLangError diagnostic = (rootAbsence, engine) switch
         {
-            EvalError.ArityMismatch => "arity",
-            EvalError.VariadicArityMismatch => "arity",
-            EvalError.BadArity => "arity",
-            EvalError.BranchArityMismatch => "arity",
-            EvalError.BranchOutputArityMismatch => "arity",
-            EvalError.BadIndex => "index",
-            EvalError.TypeMismatch => "type",
-            EvalError.MissingOutput => "missingOutput",
-            EvalError.SpreadMissingOutput => "spreadMissingOutput",
-            EvalError.UnknownName => "unknownName",
-            EvalError.DivByZero => "div0",
-            EvalError.NoMatchingBranch => "branch",
-            EvalError.UnknownProperty => "unknownProperty",
-            EvalError.NotPublicProperty => "notPublicProperty",
-            EvalError.LocalOnlyProperty => "localOnlyProperty",
-            EvalError.NotAnAlgorithm => "notAnAlgorithm",
-            EvalError.DemandCycle => "demandCycle",
-            EvalError.IllegalInOpen => "illegalInOpen",
-            EvalError.BadOpenForm => "badOpenForm",
-            EvalError.IllegalInEval => "illegalInEval",
-            EvalError.AmbiguousOpen => "ambiguousOpen",
-            EvalError.DuplicateProperty => "duplicateProperty",
-            EvalError.DuplicateBranchPattern => "duplicateBranchPattern",
-            EvalError.ExplicitParametersRequireOutput => "explicitParamsRequireOutput",
-            EvalError.UnresolvedImplicitParams => "unresolvedImplicitParams",
-            // C#-only host resource policy: the Lean evaluator is unbounded and models
-            // no execution budget, so these categories have no Lean counterpart.
-            EvalError.EvaluationDepthExceeded => "evaluationDepthExceeded",
-            EvalError.EvaluationStepLimitExceeded => "evaluationStepLimitExceeded",
-            EvalError.EvaluationStackExhausted => "evaluationStackExhausted",
-            EvalError.CollectionSizeLimitExceeded => "collectionSizeLimitExceeded",
-            EvalError.MaterializationLimitExceeded => "materializationLimitExceeded",
-            EvalError.StringSizeLimitExceeded => "stringSizeLimitExceeded",
-            EvalError.StringMaterializationLimitExceeded => "stringMaterializationLimitExceeded",
-            EvalError.DisplayLengthLimitExceeded => "displayLengthLimitExceeded",
-            _ => error.GetType().Name,
+            (true, RunResult.NoProgramOutput none) => none.Diagnostic,
+            (false, RunResult.EvalFailure failure) when failure.Errors.Count == 1 => failure.Errors[0],
+            _ => throw new InvalidOperationException($"Public engine failure phase disagreement for '{caseId}': {engine.GetType().Name}."),
         };
+        if (diagnostic.Source is null || diagnostic.Code != error.Code)
+            throw new InvalidOperationException($"Public engine error category disagreement for '{caseId}'.");
+        DifferentialErrors.RequireAgreement(caseId, error, diagnostic.Source);
     }
 
     /// <summary>

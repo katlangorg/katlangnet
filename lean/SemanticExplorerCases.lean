@@ -14,7 +14,8 @@ Partition (machine-checked by the `*CaseIds.length` guards below):
 - excluded parse-level cases (Lean has no surface parser): 11
 - Lean-representable surface cases: 2630
 - internal-node cases: 19
-- total generated guards: 2649 case guards + 2 count guards
+- neutral guards: 2649 case guards + 2 count guards
+- supplementary errorObs guards compare supported shared payloads independently
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -63,6 +64,47 @@ partial def errCategory : Error -> String
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
 
+/-- Supplementary Q-67 fields; not a change to FORMAL-06 or `obs`.
+    Descriptions, messages, contexts, branch display names and host policy are excluded. -/
+structure SharedErrorPayload where
+  kind : String
+  names : List String := []
+  counts : List Nat := []
+  deriving BEq, Repr
+
+inductive SharedErrorObservation where
+  | matched (payload : Option SharedErrorPayload)
+  | mismatch
+  deriving BEq, Repr
+
+def exposureKind : PropExposure -> String
+  | .exported => "exported"
+  | .localCapturedAncestorParams _ => "captured"
+  | .localConditional => "conditional"
+
+partial def sharedError : Error -> Option SharedErrorPayload
+  | .withContext _ inner => sharedError inner
+  | .arityMismatch expected actual => some { kind := "arity", counts := [expected, actual] }
+  | .badArity => some { kind := "badArity" }
+  | .branchArityMismatch _ expected actual => some { kind := "branchArity", counts := [expected, actual] }
+  | .branchOutputArityMismatch _ expected actual => some { kind := "branchOutputArity", counts := [expected, actual] }
+  | .unknownName name => some { kind := "unknownName", names := [name] }
+  | .unknownProperty _ name => some { kind := "unknownProperty", names := [name] }
+  | .notPublicProperty _ name => some { kind := "notPublicProperty", names := [name] }
+  | .localOnlyProperty _ name exposure => some { kind := "localOnlyProperty", names := [name, exposureKind exposure] }
+  | .ambiguousOpen name _ => some { kind := "ambiguousOpen", names := [name] }
+  | .duplicateProperty name => some { kind := "duplicateProperty", names := [name] }
+  | .unresolvedImplicitParams names => some { kind := "unresolvedImplicitParams", names := names }
+  | .badIndex => some { kind := "index" }
+  | .divByZero => some { kind := "div0" }
+  | .demandCycle => some { kind := "demandCycle" }
+  | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
+  | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
+  | .missingOutput => some { kind := "missingOutput" }
+  | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
+  | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
+    | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ => none
+
 /-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
     root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
     C# `Evaluator.RunCounted` observation. -/
@@ -94,6 +136,45 @@ def obs (e : Expr) : String :=
       else s!"internalMismatch countedErr={errCategory e1} plainErr={errCategory e2}"
   | .ok ((r, _), _), .error e2 => s!"internalMismatch counted=ok:{neutral r} plain=err:{errCategory e2}"
   | .error e1, .ok r2 => s!"internalMismatch counted=err:{errCategory e1} plain=ok:{neutral r2}"
+
+/-- Extra guards are emitted only for supported failures, so successful cases incur
+    no extra evaluator runs. Both Lean routes must agree independently. -/
+def errorObs (e : Expr) : SharedErrorObservation :=
+  match runCountedM e |>.run EvalState.empty, runResult e with
+  | .error e1, .error e2 =>
+      if sharedError e1 == sharedError e2 then .matched (sharedError e1)
+      else .mismatch
+  | _, _ => .mismatch
+
+-- Independent error-constructor projection goldens (not evaluator programs).
+#guard sharedError (.arityMismatch 2 1) == (some { kind := "arity", names := [], counts := [2, 1] })
+#guard sharedError (.arityMismatch 2 1) == (some { kind := "arity", names := [], counts := [2, 1] })
+#guard sharedError .badArity == (some { kind := "badArity", names := [], counts := [] })
+#guard sharedError (.branchArityMismatch "F" 2 1) == (some { kind := "branchArity", names := [], counts := [2, 1] })
+#guard sharedError (.branchOutputArityMismatch "F" 3 2) == (some { kind := "branchOutputArity", names := [], counts := [3, 2] })
+#guard sharedError (.unknownName "x") == (some { kind := "unknownName", names := ["x"], counts := [] })
+#guard sharedError (.unknownProperty "object" "x") == (some { kind := "unknownProperty", names := ["x"], counts := [] })
+#guard sharedError (.notPublicProperty "object" "x") == (some { kind := "notPublicProperty", names := ["x"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" .exported) == (some { kind := "localOnlyProperty", names := ["x", "exported"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" .localConditional) == (some { kind := "localOnlyProperty", names := ["x", "conditional"], counts := [] })
+#guard sharedError (.localOnlyProperty "object" "x" (.localCapturedAncestorParams ["a"])) == (some { kind := "localOnlyProperty", names := ["x", "captured"], counts := [] })
+#guard sharedError (.ambiguousOpen "x" ["M", "N"]) == (some { kind := "ambiguousOpen", names := ["x"], counts := [] })
+#guard sharedError (.duplicateProperty "x") == (some { kind := "duplicateProperty", names := ["x"], counts := [] })
+#guard sharedError (.unresolvedImplicitParams ["z", "a"]) == (some { kind := "unresolvedImplicitParams", names := ["z", "a"], counts := [] })
+#guard sharedError .badIndex == (some { kind := "index", names := [], counts := [] })
+#guard sharedError .divByZero == (some { kind := "div0", names := [], counts := [] })
+#guard sharedError .demandCycle == (some { kind := "demandCycle", names := [], counts := [] })
+#guard sharedError .duplicateBranchPattern == (some { kind := "duplicateBranchPattern", names := [], counts := [] })
+#guard sharedError .explicitParamsRequireOutput == (some { kind := "explicitParamsRequireOutput", names := [], counts := [] })
+#guard sharedError .missingOutput == (some { kind := "missingOutput", names := [], counts := [] })
+#guard sharedError .spreadMissingOutput == (some { kind := "spreadMissingOutput", names := [], counts := [] })
+#guard sharedError (.typeMismatch "message") == none
+#guard sharedError (.noMatchingBranch "F") == none
+#guard sharedError (.notAnAlgorithm "description") == none
+#guard sharedError (.illegalInOpen "reason") == none
+#guard sharedError (.badOpenForm "reason") == none
+#guard sharedError (.illegalInEval "reason") == none
+#guard sharedError (.withContext "context" (.arityMismatch 2 1)) == (some { kind := "arity", names := [], counts := [2, 1] })
 
 -- root__e: ()
 def case_root__e : Expr :=
@@ -1120,6 +1201,7 @@ def case_fixedSpread__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_fixedSpread__e == "err arity"
 
+#guard errorObs case_fixedSpread__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- fixedSpread__n0: F(a) = a \n F(0*)
 def case_fixedSpread__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.num 0))])])
@@ -1150,11 +1232,13 @@ def case_fixedSpread__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__pbt_e == "err arity"
 
+#guard errorObs case_fixedSpread__pbt_e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__pbt_1: F(a) = a \n F((true, 1)*)
 def case_fixedSpread__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.boolLiteral true, .num 1]))])])
 #guard obs case_fixedSpread__pbt_1 == "err arity"
 
+#guard errorObs case_fixedSpread__pbt_1 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__lbt: F(a) = a \n F([true]*)
 def case_fixedSpread__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.boolLiteral true]))])])
@@ -1165,6 +1249,7 @@ def case_fixedSpread__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false]))])])
 #guard obs case_fixedSpread__lbt_bf == "err arity"
 
+#guard errorObs case_fixedSpread__lbt_bf == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__lpbt_1: F(a) = a \n F([(true, 1)]*)
 def case_fixedSpread__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])]))])])
@@ -1180,56 +1265,67 @@ def case_fixedSpread__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.num 1, .num 2]))])])
 #guard obs case_fixedSpread__p12 == "err arity"
 
+#guard errorObs case_fixedSpread__p12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__p123: F(a) = a \n F((1, 2, 3)*)
 def case_fixedSpread__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])])
 #guard obs case_fixedSpread__p123 == "err arity"
 
+#guard errorObs case_fixedSpread__p123 == .matched (some { kind := "arity", names := [], counts := [1, 3] })
 -- fixedSpread__pee: F(a) = a \n F(((), ())*)
 def case_fixedSpread__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__pee == "err arity"
 
+#guard errorObs case_fixedSpread__pee == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__pe1: F(a) = a \n F(((), 1)*)
 def case_fixedSpread__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))])])
 #guard obs case_fixedSpread__pe1 == "err arity"
 
+#guard errorObs case_fixedSpread__pe1 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__p1e: F(a) = a \n F((1, ())*)
 def case_fixedSpread__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__p1e == "err arity"
 
+#guard errorObs case_fixedSpread__p1e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__p12_3: F(a) = a \n F(((1, 2), 3)*)
 def case_fixedSpread__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))])])
 #guard obs case_fixedSpread__p12_3 == "err arity"
 
+#guard errorObs case_fixedSpread__p12_3 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__p12_34: F(a) = a \n F(((1, 2), (3, 4))*)
 def case_fixedSpread__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))])])
 #guard obs case_fixedSpread__p12_34 == "err arity"
 
+#guard errorObs case_fixedSpread__p12_34 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__pe_12: F(a) = a \n F(((), (1, 2))*)
 def case_fixedSpread__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))])])
 #guard obs case_fixedSpread__pe_12 == "err arity"
 
+#guard errorObs case_fixedSpread__pe_12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__ppe1_2: F(a) = a \n F((((), 1), 2)*)
 def case_fixedSpread__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))])])
 #guard obs case_fixedSpread__ppe1_2 == "err arity"
 
+#guard errorObs case_fixedSpread__ppe1_2 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__p12_e: F(a) = a \n F(((1, 2), ())*)
 def case_fixedSpread__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))])])
 #guard obs case_fixedSpread__p12_e == "err arity"
 
+#guard errorObs case_fixedSpread__p12_e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__ppe: F(a) = a \n F((())*)
 def case_fixedSpread__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_fixedSpread__ppe == "err arity"
 
+#guard errorObs case_fixedSpread__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- fixedSpread__pp1: F(a) = a \n F(((1))*)
 def case_fixedSpread__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.num 1))])])
@@ -1240,11 +1336,13 @@ def case_fixedSpread__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [.num 1, .num 2]))])])
 #guard obs case_fixedSpread__ppp12 == "err arity"
 
+#guard errorObs case_fixedSpread__ppp12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__le: F(a) = a \n F([]*)
 def case_fixedSpread__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_fixedSpread__le == "err arity"
 
+#guard errorObs case_fixedSpread__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- fixedSpread__l7: F(a) = a \n F([7]*)
 def case_fixedSpread__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -1255,11 +1353,13 @@ def case_fixedSpread__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])])
 #guard obs case_fixedSpread__l12 == "err arity"
 
+#guard errorObs case_fixedSpread__l12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__l12_3: F(a) = a \n F([[1, 2], 3]*)
 def case_fixedSpread__l12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))])])
 #guard obs case_fixedSpread__l12_3 == "err arity"
 
+#guard errorObs case_fixedSpread__l12_3 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__lle: F(a) = a \n F([[]]*)
 def case_fixedSpread__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])])
@@ -1280,6 +1380,7 @@ def case_fixedSpread__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))])])
 #guard obs case_fixedSpread__p_l12 == "err arity"
 
+#guard errorObs case_fixedSpread__p_l12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- fixedSpread__pl1: F(a) = a \n F(([1])*)
 def case_fixedSpread__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 1]))])])
@@ -2310,6 +2411,7 @@ def case_mixed_h__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixed_h__e == "err arity"
 
+#guard errorObs case_mixed_h__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_h__n0: F(h, *t) = h \n F(0*)
 def case_mixed_h__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.num 0))])])
@@ -2420,6 +2522,7 @@ def case_mixed_h__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixed_h__ppe == "err arity"
 
+#guard errorObs case_mixed_h__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_h__pp1: F(h, *t) = h \n F(((1))*)
 def case_mixed_h__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.num 1))])])
@@ -2435,6 +2538,7 @@ def case_mixed_h__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_mixed_h__le == "err arity"
 
+#guard errorObs case_mixed_h__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_h__l7: F(h, *t) = h \n F([7]*)
 def case_mixed_h__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "h"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -2480,6 +2584,7 @@ def case_mixed_t__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixed_t__e == "err arity"
 
+#guard errorObs case_mixed_t__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_t__n0: F(h, *t) = t \n F(0*)
 def case_mixed_t__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.num 0))])])
@@ -2590,6 +2695,7 @@ def case_mixed_t__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixed_t__ppe == "err arity"
 
+#guard errorObs case_mixed_t__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_t__pp1: F(h, *t) = t \n F(((1))*)
 def case_mixed_t__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.num 1))])])
@@ -2605,6 +2711,7 @@ def case_mixed_t__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_mixed_t__le == "err arity"
 
+#guard errorObs case_mixed_t__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixed_t__l7: F(h, *t) = t \n F([7]*)
 def case_mixed_t__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "h" }, { name := "t", kind := .collecting }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -2650,6 +2757,7 @@ def case_mixedBack_t__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixedBack_t__e == "err arity"
 
+#guard errorObs case_mixedBack_t__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_t__n0: F(*t, z) = t \n F(0*)
 def case_mixedBack_t__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.num 0))])])
@@ -2760,6 +2868,7 @@ def case_mixedBack_t__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixedBack_t__ppe == "err arity"
 
+#guard errorObs case_mixedBack_t__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_t__pp1: F(*t, z) = t \n F(((1))*)
 def case_mixedBack_t__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.num 1))])])
@@ -2775,6 +2884,7 @@ def case_mixedBack_t__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_mixedBack_t__le == "err arity"
 
+#guard errorObs case_mixedBack_t__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_t__l7: F(*t, z) = t \n F([7]*)
 def case_mixedBack_t__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "t"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -2820,6 +2930,7 @@ def case_mixedBack_z__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixedBack_z__e == "err arity"
 
+#guard errorObs case_mixedBack_z__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_z__n0: F(*t, z) = z \n F(0*)
 def case_mixedBack_z__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.num 0))])])
@@ -2930,6 +3041,7 @@ def case_mixedBack_z__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_mixedBack_z__ppe == "err arity"
 
+#guard errorObs case_mixedBack_z__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_z__pp1: F(*t, z) = z \n F(((1))*)
 def case_mixedBack_z__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.num 1))])])
@@ -2945,6 +3057,7 @@ def case_mixedBack_z__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_mixedBack_z__le == "err arity"
 
+#guard errorObs case_mixedBack_z__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- mixedBack_z__l7: F(*t, z) = z \n F([7]*)
 def case_mixedBack_z__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "t", kind := .collecting }, { name := "z" }] [] [] [.param "z"])] [(.call (.resolve "F") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -2990,31 +3103,37 @@ def case_deconPair_x__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__e == "err arity"
 
+#guard errorObs case_deconPair_x__e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_x__n0: x, y = 0 \n x
 def case_deconPair_x__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 0]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__n0 == "err arity"
 
+#guard errorObs case_deconPair_x__n0 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__n1: x, y = 1 \n x
 def case_deconPair_x__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__n1 == "err arity"
 
+#guard errorObs case_deconPair_x__n1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__bt: x, y = true \n x
 def case_deconPair_x__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral true]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__bt == "err arity"
 
+#guard errorObs case_deconPair_x__bt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__bf: x, y = false \n x
 def case_deconPair_x__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral false]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__bf == "err arity"
 
+#guard errorObs case_deconPair_x__bf == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__pbt: x, y = (true) \n x
 def case_deconPair_x__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral true]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__pbt == "err arity"
 
+#guard errorObs case_deconPair_x__pbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__pbt_e: x, y = (true, ()) \n x
 def case_deconPair_x__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3030,6 +3149,7 @@ def case_deconPair_x__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.boolLiteral true])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__lbt == "err arity"
 
+#guard errorObs case_deconPair_x__lbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__lbt_bf: x, y = [true, false] \n x
 def case_deconPair_x__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3040,11 +3160,13 @@ def case_deconPair_x__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__lpbt_1 == "err arity"
 
+#guard errorObs case_deconPair_x__lpbt_1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__p1: x, y = (1) \n x
 def case_deconPair_x__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__p1 == "err arity"
 
+#guard errorObs case_deconPair_x__p1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__p12: x, y = (1, 2) \n x
 def case_deconPair_x__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3055,6 +3177,7 @@ def case_deconPair_x__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__p123 == "err arity"
 
+#guard errorObs case_deconPair_x__p123 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- deconPair_x__pee: x, y = ((), ()) \n x
 def case_deconPair_x__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3100,11 +3223,13 @@ def case_deconPair_x__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__ppe == "err arity"
 
+#guard errorObs case_deconPair_x__ppe == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_x__pp1: x, y = ((1)) \n x
 def case_deconPair_x__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__pp1 == "err arity"
 
+#guard errorObs case_deconPair_x__pp1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__ppp12: x, y = (((1, 2))) \n x
 def case_deconPair_x__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3115,11 +3240,13 @@ def case_deconPair_x__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__le == "err arity"
 
+#guard errorObs case_deconPair_x__le == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_x__l7: x, y = [7] \n x
 def case_deconPair_x__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__l7 == "err arity"
 
+#guard errorObs case_deconPair_x__l7 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__l12: x, y = [1, 2] \n x
 def case_deconPair_x__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3135,16 +3262,19 @@ def case_deconPair_x__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__lle == "err arity"
 
+#guard errorObs case_deconPair_x__lle == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__l_e: x, y = [()] \n x
 def case_deconPair_x__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__l_e == "err arity"
 
+#guard errorObs case_deconPair_x__l_e == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__l_p12: x, y = [(1, 2)] \n x
 def case_deconPair_x__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__l_p12 == "err arity"
 
+#guard errorObs case_deconPair_x__l_p12 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_x__p_l12: x, y = ([1, 2], 3) \n x
 def case_deconPair_x__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3155,36 +3285,43 @@ def case_deconPair_x__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPair_x__pl1 == "err arity"
 
+#guard errorObs case_deconPair_x__pl1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__e: x, y = () \n y
 def case_deconPair_y__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__e == "err arity"
 
+#guard errorObs case_deconPair_y__e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_y__n0: x, y = 0 \n y
 def case_deconPair_y__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 0]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__n0 == "err arity"
 
+#guard errorObs case_deconPair_y__n0 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__n1: x, y = 1 \n y
 def case_deconPair_y__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__n1 == "err arity"
 
+#guard errorObs case_deconPair_y__n1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__bt: x, y = true \n y
 def case_deconPair_y__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral true]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__bt == "err arity"
 
+#guard errorObs case_deconPair_y__bt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__bf: x, y = false \n y
 def case_deconPair_y__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral false]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__bf == "err arity"
 
+#guard errorObs case_deconPair_y__bf == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__pbt: x, y = (true) \n y
 def case_deconPair_y__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.boolLiteral true]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__pbt == "err arity"
 
+#guard errorObs case_deconPair_y__pbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__pbt_e: x, y = (true, ()) \n y
 def case_deconPair_y__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3200,6 +3337,7 @@ def case_deconPair_y__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.boolLiteral true])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__lbt == "err arity"
 
+#guard errorObs case_deconPair_y__lbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__lbt_bf: x, y = [true, false] \n y
 def case_deconPair_y__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3210,11 +3348,13 @@ def case_deconPair_y__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__lpbt_1 == "err arity"
 
+#guard errorObs case_deconPair_y__lpbt_1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__p1: x, y = (1) \n y
 def case_deconPair_y__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__p1 == "err arity"
 
+#guard errorObs case_deconPair_y__p1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__p12: x, y = (1, 2) \n y
 def case_deconPair_y__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3225,6 +3365,7 @@ def case_deconPair_y__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__p123 == "err arity"
 
+#guard errorObs case_deconPair_y__p123 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- deconPair_y__pee: x, y = ((), ()) \n y
 def case_deconPair_y__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3270,11 +3411,13 @@ def case_deconPair_y__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__ppe == "err arity"
 
+#guard errorObs case_deconPair_y__ppe == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_y__pp1: x, y = ((1)) \n y
 def case_deconPair_y__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__pp1 == "err arity"
 
+#guard errorObs case_deconPair_y__pp1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__ppp12: x, y = (((1, 2))) \n y
 def case_deconPair_y__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3285,11 +3428,13 @@ def case_deconPair_y__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__le == "err arity"
 
+#guard errorObs case_deconPair_y__le == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPair_y__l7: x, y = [7] \n y
 def case_deconPair_y__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__l7 == "err arity"
 
+#guard errorObs case_deconPair_y__l7 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__l12: x, y = [1, 2] \n y
 def case_deconPair_y__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3305,16 +3450,19 @@ def case_deconPair_y__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__lle == "err arity"
 
+#guard errorObs case_deconPair_y__lle == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__l_e: x, y = [()] \n y
 def case_deconPair_y__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__l_e == "err arity"
 
+#guard errorObs case_deconPair_y__l_e == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__l_p12: x, y = [(1, 2)] \n y
 def case_deconPair_y__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__l_p12 == "err arity"
 
+#guard errorObs case_deconPair_y__l_p12 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPair_y__p_l12: x, y = ([1, 2], 3) \n y
 def case_deconPair_y__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
@@ -3325,36 +3473,43 @@ def case_deconPair_y__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "y"])
 #guard obs case_deconPair_y__pl1 == "err arity"
 
+#guard errorObs case_deconPair_y__pl1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__e: x, y = (()*) \n x
 def case_deconPairSpread_x__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__e == "err arity"
 
+#guard errorObs case_deconPairSpread_x__e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPairSpread_x__n0: x, y = (0*) \n x
 def case_deconPairSpread_x__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n0 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__n0 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__n1: x, y = (1*) \n x
 def case_deconPairSpread_x__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__n1 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__n1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__bt: x, y = (true*) \n x
 def case_deconPairSpread_x__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.boolLiteral true))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__bt == "err arity"
 
+#guard errorObs case_deconPairSpread_x__bt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__bf: x, y = (false*) \n x
 def case_deconPairSpread_x__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.boolLiteral false))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__bf == "err arity"
 
+#guard errorObs case_deconPairSpread_x__bf == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__pbt: x, y = ((true)*) \n x
 def case_deconPairSpread_x__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.boolLiteral true))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pbt == "err arity"
 
+#guard errorObs case_deconPairSpread_x__pbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__pbt_e: x, y = ((true, ())*) \n x
 def case_deconPairSpread_x__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3370,6 +3525,7 @@ def case_deconPairSpread_x__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.boolLiteral true]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__lbt == "err arity"
 
+#guard errorObs case_deconPairSpread_x__lbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__lbt_bf: x, y = ([true, false]*) \n x
 def case_deconPairSpread_x__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3385,6 +3541,7 @@ def case_deconPairSpread_x__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p1 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__p1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__p12: x, y = ((1, 2)*) \n x
 def case_deconPairSpread_x__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3395,6 +3552,7 @@ def case_deconPairSpread_x__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__p123 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__p123 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- deconPairSpread_x__pee: x, y = (((), ())*) \n x
 def case_deconPairSpread_x__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3440,11 +3598,13 @@ def case_deconPairSpread_x__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__ppe == "err arity"
 
+#guard errorObs case_deconPairSpread_x__ppe == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPairSpread_x__pp1: x, y = (((1))*) \n x
 def case_deconPairSpread_x__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pp1 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__pp1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__ppp12: x, y = ((((1, 2)))*) \n x
 def case_deconPairSpread_x__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.capture [.num 1, .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3455,11 +3615,13 @@ def case_deconPairSpread_x__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral []))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__le == "err arity"
 
+#guard errorObs case_deconPairSpread_x__le == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPairSpread_x__l7: x, y = ([7]*) \n x
 def case_deconPairSpread_x__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 7]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l7 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__l7 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconPairSpread_x__l12: x, y = ([1, 2]*) \n x
 def case_deconPairSpread_x__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3475,11 +3637,13 @@ def case_deconPairSpread_x__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__lle == "err arity"
 
+#guard errorObs case_deconPairSpread_x__lle == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPairSpread_x__l_e: x, y = ([()]*) \n x
 def case_deconPairSpread_x__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__l_e == "err arity"
 
+#guard errorObs case_deconPairSpread_x__l_e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- deconPairSpread_x__l_p12: x, y = ([(1, 2)]*) \n x
 def case_deconPairSpread_x__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
@@ -3495,11 +3659,13 @@ def case_deconPairSpread_x__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 1]))])]), privateProp "x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "x"])) [.resolve "$deconstruct$0"])]), privateProp "y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])) [.resolve "$deconstruct$0"])])] [.resolve "x"])
 #guard obs case_deconPairSpread_x__pl1 == "err arity"
 
+#guard errorObs case_deconPairSpread_x__pl1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- deconCollect_t__e: h, *t = () \n t
 def case_deconCollect_t__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__e == "err arity"
 
+#guard errorObs case_deconCollect_t__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollect_t__n0: h, *t = 0 \n t
 def case_deconCollect_t__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 0]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3610,6 +3776,7 @@ def case_deconCollect_t__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__ppe == "err arity"
 
+#guard errorObs case_deconCollect_t__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollect_t__pp1: h, *t = ((1)) \n t
 def case_deconCollect_t__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3625,6 +3792,7 @@ def case_deconCollect_t__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollect_t__le == "err arity"
 
+#guard errorObs case_deconCollect_t__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollect_t__l7: h, *t = [7] \n t
 def case_deconCollect_t__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3670,6 +3838,7 @@ def case_deconCollectSpread_t__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__e == "err arity"
 
+#guard errorObs case_deconCollectSpread_t__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollectSpread_t__n0: h, *t = (0*) \n t
 def case_deconCollectSpread_t__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3780,6 +3949,7 @@ def case_deconCollectSpread_t__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.emptySequence 0))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__ppe == "err arity"
 
+#guard errorObs case_deconCollectSpread_t__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollectSpread_t__pp1: h, *t = (((1))*) \n t
 def case_deconCollectSpread_t__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.num 1))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3795,6 +3965,7 @@ def case_deconCollectSpread_t__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral []))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__le == "err arity"
 
+#guard errorObs case_deconCollectSpread_t__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollectSpread_t__l7: h, *t = ([7]*) \n t
 def case_deconCollectSpread_t__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [.num 7]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3815,11 +3986,13 @@ def case_deconCollectSpread_t__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__lle == "err arity"
 
+#guard errorObs case_deconCollectSpread_t__lle == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollectSpread_t__l_e: h, *t = ([()]*) \n t
 def case_deconCollectSpread_t__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
 #guard obs case_deconCollectSpread_t__l_e == "err arity"
 
+#guard errorObs case_deconCollectSpread_t__l_e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconCollectSpread_t__l_p12: h, *t = ([(1, 2)]*) \n t
 def case_deconCollectSpread_t__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))])]), privateProp "h" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "h"])) [.resolve "$deconstruct$0"])]), privateProp "t" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [.param "t"])) [.resolve "$deconstruct$0"])])] [.resolve "t"])
@@ -3840,6 +4013,7 @@ def case_deconPrefix_p__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__e == "err arity"
 
+#guard errorObs case_deconPrefix_p__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_p__n0: *p, z = 0 \n p
 def case_deconPrefix_p__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 0]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
@@ -3950,6 +4124,7 @@ def case_deconPrefix_p__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__ppe == "err arity"
 
+#guard errorObs case_deconPrefix_p__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_p__pp1: *p, z = ((1)) \n p
 def case_deconPrefix_p__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
@@ -3965,6 +4140,7 @@ def case_deconPrefix_p__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [])]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
 #guard obs case_deconPrefix_p__le == "err arity"
 
+#guard errorObs case_deconPrefix_p__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_p__l7: *p, z = [7] \n p
 def case_deconPrefix_p__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "p"])
@@ -4010,6 +4186,7 @@ def case_deconPrefix_z__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__e == "err arity"
 
+#guard errorObs case_deconPrefix_z__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_z__n0: *p, z = 0 \n z
 def case_deconPrefix_z__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 0]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
@@ -4120,6 +4297,7 @@ def case_deconPrefix_z__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.emptySequence 0)]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__ppe == "err arity"
 
+#guard errorObs case_deconPrefix_z__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_z__pp1: *p, z = ((1)) \n z
 def case_deconPrefix_z__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [.num 1]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
@@ -4135,6 +4313,7 @@ def case_deconPrefix_z__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [])]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
 #guard obs case_deconPrefix_z__le == "err arity"
 
+#guard errorObs case_deconPrefix_z__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- deconPrefix_z__l7: *p, z = [7] \n z
 def case_deconPrefix_z__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "p" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "p"])) [.resolve "$deconstruct$0"])]), privateProp "z" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "p", kind := .collecting }, .capture { name := "z" }]] [] [] [.param "z"])) [.resolve "$deconstruct$0"])])] [.resolve "z"])
@@ -5030,6 +5209,7 @@ def case_countSpread__e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_countSpread__e == "err arity"
 
+#guard errorObs case_countSpread__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- countSpread__n0: count(0*)
 def case_countSpread__n0 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.num 0))])])
@@ -5060,11 +5240,13 @@ def case_countSpread__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.boolLiteral true, (.emptySequence 0)]))])])
 #guard obs case_countSpread__pbt_e == "err arity"
 
+#guard errorObs case_countSpread__pbt_e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__pbt_1: count((true, 1)*)
 def case_countSpread__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.boolLiteral true, .num 1]))])])
 #guard obs case_countSpread__pbt_1 == "err arity"
 
+#guard errorObs case_countSpread__pbt_1 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__lbt: count([true]*)
 def case_countSpread__lbt : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [.boolLiteral true]))])])
@@ -5075,6 +5257,7 @@ def case_countSpread__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [.boolLiteral true, .boolLiteral false]))])])
 #guard obs case_countSpread__lbt_bf == "err arity"
 
+#guard errorObs case_countSpread__lbt_bf == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__lpbt_1: count([(true, 1)]*)
 def case_countSpread__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [(.capture [.boolLiteral true, .num 1])]))])])
@@ -5090,56 +5273,67 @@ def case_countSpread__p12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.num 1, .num 2]))])])
 #guard obs case_countSpread__p12 == "err arity"
 
+#guard errorObs case_countSpread__p12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__p123: count((1, 2, 3)*)
 def case_countSpread__p123 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.num 1, .num 2, .num 3]))])])
 #guard obs case_countSpread__p123 == "err arity"
 
+#guard errorObs case_countSpread__p123 == .matched (some { kind := "arity", names := [], counts := [1, 3] })
 -- countSpread__pee: count(((), ())*)
 def case_countSpread__pee : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.emptySequence 0), (.emptySequence 0)]))])])
 #guard obs case_countSpread__pee == "err arity"
 
+#guard errorObs case_countSpread__pee == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__pe1: count(((), 1)*)
 def case_countSpread__pe1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.emptySequence 0), .num 1]))])])
 #guard obs case_countSpread__pe1 == "err arity"
 
+#guard errorObs case_countSpread__pe1 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__p1e: count((1, ())*)
 def case_countSpread__p1e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.num 1, (.emptySequence 0)]))])])
 #guard obs case_countSpread__p1e == "err arity"
 
+#guard errorObs case_countSpread__p1e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__p12_3: count(((1, 2), 3)*)
 def case_countSpread__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), .num 3]))])])
 #guard obs case_countSpread__p12_3 == "err arity"
 
+#guard errorObs case_countSpread__p12_3 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__p12_34: count(((1, 2), (3, 4))*)
 def case_countSpread__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]))])])
 #guard obs case_countSpread__p12_34 == "err arity"
 
+#guard errorObs case_countSpread__p12_34 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__pe_12: count(((), (1, 2))*)
 def case_countSpread__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.emptySequence 0), (.capture [.num 1, .num 2])]))])])
 #guard obs case_countSpread__pe_12 == "err arity"
 
+#guard errorObs case_countSpread__pe_12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__ppe1_2: count((((), 1), 2)*)
 def case_countSpread__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.capture [(.emptySequence 0), .num 1]), .num 2]))])])
 #guard obs case_countSpread__ppe1_2 == "err arity"
 
+#guard errorObs case_countSpread__ppe1_2 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__p12_e: count(((1, 2), ())*)
 def case_countSpread__p12_e : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)]))])])
 #guard obs case_countSpread__p12_e == "err arity"
 
+#guard errorObs case_countSpread__p12_e == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__ppe: count((())*)
 def case_countSpread__ppe : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.emptySequence 0))])])
 #guard obs case_countSpread__ppe == "err arity"
 
+#guard errorObs case_countSpread__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- countSpread__pp1: count(((1))*)
 def case_countSpread__pp1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.num 1))])])
@@ -5150,11 +5344,13 @@ def case_countSpread__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [.num 1, .num 2]))])])
 #guard obs case_countSpread__ppp12 == "err arity"
 
+#guard errorObs case_countSpread__ppp12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__le: count([]*)
 def case_countSpread__le : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral []))])])
 #guard obs case_countSpread__le == "err arity"
 
+#guard errorObs case_countSpread__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- countSpread__l7: count([7]*)
 def case_countSpread__l7 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [.num 7]))])])
@@ -5165,11 +5361,13 @@ def case_countSpread__l12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [.num 1, .num 2]))])])
 #guard obs case_countSpread__l12 == "err arity"
 
+#guard errorObs case_countSpread__l12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__l12_3: count([[1, 2], 3]*)
 def case_countSpread__l12_3 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3]))])])
 #guard obs case_countSpread__l12_3 == "err arity"
 
+#guard errorObs case_countSpread__l12_3 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__lle: count([[]]*)
 def case_countSpread__lle : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [(.listLiteral [])]))])])
@@ -5190,6 +5388,7 @@ def case_countSpread__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.capture [(.listLiteral [.num 1, .num 2]), .num 3]))])])
 #guard obs case_countSpread__p_l12 == "err arity"
 
+#guard errorObs case_countSpread__p_l12 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- countSpread__pl1: count(([1])*)
 def case_countSpread__pl1 : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceSpread (.listLiteral [.num 1]))])])
@@ -5540,6 +5739,7 @@ def case_index0__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__e == "err index"
 
+#guard errorObs case_index0__e == .matched (some { kind := "index", names := [], counts := [] })
 -- index0__n0: x = 0 \n x[0]
 def case_index0__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 0])])
@@ -5650,6 +5850,7 @@ def case_index0__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__ppe == "err index"
 
+#guard errorObs case_index0__ppe == .matched (some { kind := "index", names := [], counts := [] })
 -- index0__pp1: x = ((1)) \n x[0]
 def case_index0__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 0])])
@@ -5665,6 +5866,7 @@ def case_index0__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 0])])
 #guard obs case_index0__le == "err index"
 
+#guard errorObs case_index0__le == .matched (some { kind := "index", names := [], counts := [] })
 -- index0__l7: x = [7] \n x[0]
 def case_index0__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 0])])
@@ -5710,31 +5912,37 @@ def case_index1__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__e == "err index"
 
+#guard errorObs case_index1__e == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__n0: x = 0 \n x[1]
 def case_index1__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__n0 == "err index"
 
+#guard errorObs case_index1__n0 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__n1: x = 1 \n x[1]
 def case_index1__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__n1 == "err index"
 
+#guard errorObs case_index1__n1 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__bt: x = true \n x[1]
 def case_index1__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__bt == "err index"
 
+#guard errorObs case_index1__bt == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__bf: x = false \n x[1]
 def case_index1__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__bf == "err index"
 
+#guard errorObs case_index1__bf == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__pbt: x = (true) \n x[1]
 def case_index1__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pbt == "err index"
 
+#guard errorObs case_index1__pbt == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__pbt_e: x = (true, ()) \n x[1]
 def case_index1__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
@@ -5750,6 +5958,7 @@ def case_index1__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lbt == "err index"
 
+#guard errorObs case_index1__lbt == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__lbt_bf: x = [true, false] \n x[1]
 def case_index1__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [.num 1])])
@@ -5760,11 +5969,13 @@ def case_index1__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lpbt_1 == "err index"
 
+#guard errorObs case_index1__lpbt_1 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__p1: x = (1) \n x[1]
 def case_index1__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__p1 == "err index"
 
+#guard errorObs case_index1__p1 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__p12: x = (1, 2) \n x[1]
 def case_index1__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
@@ -5820,11 +6031,13 @@ def case_index1__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__ppe == "err index"
 
+#guard errorObs case_index1__ppe == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__pp1: x = ((1)) \n x[1]
 def case_index1__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pp1 == "err index"
 
+#guard errorObs case_index1__pp1 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__ppp12: x = (((1, 2))) \n x[1]
 def case_index1__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
@@ -5835,11 +6048,13 @@ def case_index1__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__le == "err index"
 
+#guard errorObs case_index1__le == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__l7: x = [7] \n x[1]
 def case_index1__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l7 == "err index"
 
+#guard errorObs case_index1__l7 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__l12: x = [1, 2] \n x[1]
 def case_index1__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [.num 1])])
@@ -5855,16 +6070,19 @@ def case_index1__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__lle == "err index"
 
+#guard errorObs case_index1__lle == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__l_e: x = [()] \n x[1]
 def case_index1__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l_e == "err index"
 
+#guard errorObs case_index1__l_e == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__l_p12: x = [(1, 2)] \n x[1]
 def case_index1__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__l_p12 == "err index"
 
+#guard errorObs case_index1__l_p12 == .matched (some { kind := "index", names := [], counts := [] })
 -- index1__p_l12: x = ([1, 2], 3) \n x[1]
 def case_index1__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 1])])
@@ -5875,346 +6093,415 @@ def case_index1__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [.num 1])])
 #guard obs case_index1__pl1 == "err index"
 
+#guard errorObs case_index1__pl1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__e: x = () \n x[9]
 def case_indexBig__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__e == "err index"
 
+#guard errorObs case_indexBig__e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__n0: x = 0 \n x[9]
 def case_indexBig__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__n0 == "err index"
 
+#guard errorObs case_indexBig__n0 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__n1: x = 1 \n x[9]
 def case_indexBig__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__n1 == "err index"
 
+#guard errorObs case_indexBig__n1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__bt: x = true \n x[9]
 def case_indexBig__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__bt == "err index"
 
+#guard errorObs case_indexBig__bt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__bf: x = false \n x[9]
 def case_indexBig__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__bf == "err index"
 
+#guard errorObs case_indexBig__bf == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pbt: x = (true) \n x[9]
 def case_indexBig__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt == "err index"
 
+#guard errorObs case_indexBig__pbt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pbt_e: x = (true, ()) \n x[9]
 def case_indexBig__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt_e == "err index"
 
+#guard errorObs case_indexBig__pbt_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pbt_1: x = (true, 1) \n x[9]
 def case_indexBig__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pbt_1 == "err index"
 
+#guard errorObs case_indexBig__pbt_1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__lbt: x = [true] \n x[9]
 def case_indexBig__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lbt == "err index"
 
+#guard errorObs case_indexBig__lbt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__lbt_bf: x = [true, false] \n x[9]
 def case_indexBig__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lbt_bf == "err index"
 
+#guard errorObs case_indexBig__lbt_bf == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__lpbt_1: x = [(true, 1)] \n x[9]
 def case_indexBig__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lpbt_1 == "err index"
 
+#guard errorObs case_indexBig__lpbt_1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p1: x = (1) \n x[9]
 def case_indexBig__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p1 == "err index"
 
+#guard errorObs case_indexBig__p1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p12: x = (1, 2) \n x[9]
 def case_indexBig__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12 == "err index"
 
+#guard errorObs case_indexBig__p12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p123: x = (1, 2, 3) \n x[9]
 def case_indexBig__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p123 == "err index"
 
+#guard errorObs case_indexBig__p123 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pee: x = ((), ()) \n x[9]
 def case_indexBig__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pee == "err index"
 
+#guard errorObs case_indexBig__pee == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pe1: x = ((), 1) \n x[9]
 def case_indexBig__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pe1 == "err index"
 
+#guard errorObs case_indexBig__pe1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p1e: x = (1, ()) \n x[9]
 def case_indexBig__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p1e == "err index"
 
+#guard errorObs case_indexBig__p1e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p12_3: x = ((1, 2), 3) \n x[9]
 def case_indexBig__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_3 == "err index"
 
+#guard errorObs case_indexBig__p12_3 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p12_34: x = ((1, 2), (3, 4)) \n x[9]
 def case_indexBig__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_34 == "err index"
 
+#guard errorObs case_indexBig__p12_34 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pe_12: x = ((), (1, 2)) \n x[9]
 def case_indexBig__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pe_12 == "err index"
 
+#guard errorObs case_indexBig__pe_12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__ppe1_2: x = (((), 1), 2) \n x[9]
 def case_indexBig__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppe1_2 == "err index"
 
+#guard errorObs case_indexBig__ppe1_2 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p12_e: x = ((1, 2), ()) \n x[9]
 def case_indexBig__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p12_e == "err index"
 
+#guard errorObs case_indexBig__p12_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__ppe: x = (()) \n x[9]
 def case_indexBig__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppe == "err index"
 
+#guard errorObs case_indexBig__ppe == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pp1: x = ((1)) \n x[9]
 def case_indexBig__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pp1 == "err index"
 
+#guard errorObs case_indexBig__pp1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__ppp12: x = (((1, 2))) \n x[9]
 def case_indexBig__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__ppp12 == "err index"
 
+#guard errorObs case_indexBig__ppp12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__le: x = [] \n x[9]
 def case_indexBig__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__le == "err index"
 
+#guard errorObs case_indexBig__le == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__l7: x = [7] \n x[9]
 def case_indexBig__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l7 == "err index"
 
+#guard errorObs case_indexBig__l7 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__l12: x = [1, 2] \n x[9]
 def case_indexBig__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l12 == "err index"
 
+#guard errorObs case_indexBig__l12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__l12_3: x = [[1, 2], 3] \n x[9]
 def case_indexBig__l12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l12_3 == "err index"
 
+#guard errorObs case_indexBig__l12_3 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__lle: x = [[]] \n x[9]
 def case_indexBig__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__lle == "err index"
 
+#guard errorObs case_indexBig__lle == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__l_e: x = [()] \n x[9]
 def case_indexBig__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l_e == "err index"
 
+#guard errorObs case_indexBig__l_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__l_p12: x = [(1, 2)] \n x[9]
 def case_indexBig__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__l_p12 == "err index"
 
+#guard errorObs case_indexBig__l_p12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__p_l12: x = ([1, 2], 3) \n x[9]
 def case_indexBig__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__p_l12 == "err index"
 
+#guard errorObs case_indexBig__p_l12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexBig__pl1: x = ([1]) \n x[9]
 def case_indexBig__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_indexBig__pl1 == "err index"
 
+#guard errorObs case_indexBig__pl1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__e: x = () \n x[-1]
 def case_indexNeg__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__e == "err index"
 
+#guard errorObs case_indexNeg__e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__n0: x = 0 \n x[-1]
 def case_indexNeg__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 0])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__n0 == "err index"
 
+#guard errorObs case_indexNeg__n0 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__n1: x = 1 \n x[-1]
 def case_indexNeg__n1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__n1 == "err index"
 
+#guard errorObs case_indexNeg__n1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__bt: x = true \n x[-1]
 def case_indexNeg__bt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__bt == "err index"
 
+#guard errorObs case_indexNeg__bt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__bf: x = false \n x[-1]
 def case_indexNeg__bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral false])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__bf == "err index"
 
+#guard errorObs case_indexNeg__bf == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pbt: x = (true) \n x[-1]
 def case_indexNeg__pbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.boolLiteral true])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pbt == "err index"
 
+#guard errorObs case_indexNeg__pbt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pbt_e: x = (true, ()) \n x[-1]
 def case_indexNeg__pbt_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pbt_e == "err index"
 
+#guard errorObs case_indexNeg__pbt_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pbt_1: x = (true, 1) \n x[-1]
 def case_indexNeg__pbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pbt_1 == "err index"
 
+#guard errorObs case_indexNeg__pbt_1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__lbt: x = [true] \n x[-1]
 def case_indexNeg__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__lbt == "err index"
 
+#guard errorObs case_indexNeg__lbt == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__lbt_bf: x = [true, false] \n x[-1]
 def case_indexNeg__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__lbt_bf == "err index"
 
+#guard errorObs case_indexNeg__lbt_bf == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__lpbt_1: x = [(true, 1)] \n x[-1]
 def case_indexNeg__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__lpbt_1 == "err index"
 
+#guard errorObs case_indexNeg__lpbt_1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p1: x = (1) \n x[-1]
 def case_indexNeg__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p1 == "err index"
 
+#guard errorObs case_indexNeg__p1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p12: x = (1, 2) \n x[-1]
 def case_indexNeg__p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p12 == "err index"
 
+#guard errorObs case_indexNeg__p12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p123: x = (1, 2, 3) \n x[-1]
 def case_indexNeg__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p123 == "err index"
 
+#guard errorObs case_indexNeg__p123 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pee: x = ((), ()) \n x[-1]
 def case_indexNeg__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pee == "err index"
 
+#guard errorObs case_indexNeg__pee == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pe1: x = ((), 1) \n x[-1]
 def case_indexNeg__pe1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pe1 == "err index"
 
+#guard errorObs case_indexNeg__pe1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p1e: x = (1, ()) \n x[-1]
 def case_indexNeg__p1e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p1e == "err index"
 
+#guard errorObs case_indexNeg__p1e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p12_3: x = ((1, 2), 3) \n x[-1]
 def case_indexNeg__p12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p12_3 == "err index"
 
+#guard errorObs case_indexNeg__p12_3 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p12_34: x = ((1, 2), (3, 4)) \n x[-1]
 def case_indexNeg__p12_34 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p12_34 == "err index"
 
+#guard errorObs case_indexNeg__p12_34 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pe_12: x = ((), (1, 2)) \n x[-1]
 def case_indexNeg__pe_12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pe_12 == "err index"
 
+#guard errorObs case_indexNeg__pe_12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__ppe1_2: x = (((), 1), 2) \n x[-1]
 def case_indexNeg__ppe1_2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__ppe1_2 == "err index"
 
+#guard errorObs case_indexNeg__ppe1_2 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p12_e: x = ((1, 2), ()) \n x[-1]
 def case_indexNeg__p12_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p12_e == "err index"
 
+#guard errorObs case_indexNeg__p12_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__ppe: x = (()) \n x[-1]
 def case_indexNeg__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__ppe == "err index"
 
+#guard errorObs case_indexNeg__ppe == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pp1: x = ((1)) \n x[-1]
 def case_indexNeg__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pp1 == "err index"
 
+#guard errorObs case_indexNeg__pp1 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__ppp12: x = (((1, 2))) \n x[-1]
 def case_indexNeg__ppp12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__ppp12 == "err index"
 
+#guard errorObs case_indexNeg__ppp12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__le: x = [] \n x[-1]
 def case_indexNeg__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__le == "err index"
 
+#guard errorObs case_indexNeg__le == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__l7: x = [7] \n x[-1]
 def case_indexNeg__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 7])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__l7 == "err index"
 
+#guard errorObs case_indexNeg__l7 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__l12: x = [1, 2] \n x[-1]
 def case_indexNeg__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__l12 == "err index"
 
+#guard errorObs case_indexNeg__l12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__l12_3: x = [[1, 2], 3] \n x[-1]
 def case_indexNeg__l12_3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__l12_3 == "err index"
 
+#guard errorObs case_indexNeg__l12_3 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__lle: x = [[]] \n x[-1]
 def case_indexNeg__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.listLiteral [])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__lle == "err index"
 
+#guard errorObs case_indexNeg__lle == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__l_e: x = [()] \n x[-1]
 def case_indexNeg__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__l_e == "err index"
 
+#guard errorObs case_indexNeg__l_e == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__l_p12: x = [(1, 2)] \n x[-1]
 def case_indexNeg__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__l_p12 == "err index"
 
+#guard errorObs case_indexNeg__l_p12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__p_l12: x = ([1, 2], 3) \n x[-1]
 def case_indexNeg__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__p_l12 == "err index"
 
+#guard errorObs case_indexNeg__p_l12 == .matched (some { kind := "index", names := [], counts := [] })
 -- indexNeg__pl1: x = ([1]) \n x[-1]
 def case_indexNeg__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.listLiteral [.num 1])])] [(.index (.resolve "x") [(.unary .minus (.num 1))])])
 #guard obs case_indexNeg__pl1 == "err index"
 
+#guard errorObs case_indexNeg__pl1 == .matched (some { kind := "index", names := [], counts := [] })
 -- eqSelf__e: x = () \n x == x
 def case_eqSelf__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.emptySequence 0)])] [(.comparison (.resolve "x") [{ op := .eq, operand := (.resolve "x") }])])
@@ -8260,6 +8547,7 @@ def case_patternHead__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
 #guard obs case_patternHead__e == "err arity"
 
+#guard errorObs case_patternHead__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- patternHead__n0: P((h, *t)) = [h, t] \n P(0)
 def case_patternHead__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 0])])
@@ -8370,6 +8658,7 @@ def case_patternHead__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
 #guard obs case_patternHead__ppe == "err arity"
 
+#guard errorObs case_patternHead__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- patternHead__pp1: P((h, *t)) = [h, t] \n P(((1)))
 def case_patternHead__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [.num 1])])
@@ -8430,6 +8719,7 @@ def case_patternHeadMap__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
 #guard obs case_patternHeadMap__e == "err arity"
 
+#guard errorObs case_patternHeadMap__e == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- patternHeadMap__n0: P((h, *t)) = [h, t] \n map([0], P)
 def case_patternHeadMap__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 0]), .resolve "P"])])
@@ -8540,6 +8830,7 @@ def case_patternHeadMap__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
 #guard obs case_patternHeadMap__ppe == "err arity"
 
+#guard errorObs case_patternHeadMap__ppe == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- patternHeadMap__pp1: P((h, *t)) = [h, t] \n map([((1))], P)
 def case_patternHeadMap__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
@@ -8600,6 +8891,7 @@ def case_patternPair__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
 #guard obs case_patternPair__e == "err arity"
 
+#guard errorObs case_patternPair__e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- patternPair__n0: P((x, y)) = [x, y] \n P(0)
 def case_patternPair__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 0])])
@@ -8665,6 +8957,7 @@ def case_patternPair__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [.num 1, .num 2, .num 3])])])
 #guard obs case_patternPair__p123 == "err arity"
 
+#guard errorObs case_patternPair__p123 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- patternPair__pee: P((x, y)) = [x, y] \n P(((), ()))
 def case_patternPair__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.emptySequence 0), (.emptySequence 0)])])])
@@ -8710,6 +9003,7 @@ def case_patternPair__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.emptySequence 0)])])
 #guard obs case_patternPair__ppe == "err arity"
 
+#guard errorObs case_patternPair__ppe == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- patternPair__pp1: P((x, y)) = [x, y] \n P(((1)))
 def case_patternPair__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 1])])
@@ -8770,6 +9064,7 @@ def case_patternPairMap__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
 #guard obs case_patternPairMap__e == "err arity"
 
+#guard errorObs case_patternPairMap__e == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- patternPairMap__n0: P((x, y)) = [x, y] \n map([0], P)
 def case_patternPairMap__n0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 0]), .resolve "P"])])
@@ -8835,6 +9130,7 @@ def case_patternPairMap__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [.num 1, .num 2, .num 3])]), .resolve "P"])])
 #guard obs case_patternPairMap__p123 == "err arity"
 
+#guard errorObs case_patternPairMap__p123 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- patternPairMap__pee: P((x, y)) = [x, y] \n map([((), ())], P)
 def case_patternPairMap__pee : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.emptySequence 0), (.emptySequence 0)])]), .resolve "P"])])
@@ -8880,6 +9176,7 @@ def case_patternPairMap__ppe : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
 #guard obs case_patternPairMap__ppe == "err arity"
 
+#guard errorObs case_patternPairMap__ppe == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- patternPairMap__pp1: P((x, y)) = [x, y] \n map([((1))], P)
 def case_patternPairMap__pp1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
@@ -9065,6 +9362,7 @@ def case_listPatternHead__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [])])])
 #guard obs case_listPatternHead__le == "err arity"
 
+#guard errorObs case_listPatternHead__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- listPatternHead__l7: P([h, *t]) = [h, t] \n P([7])
 def case_listPatternHead__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "P") [(.listLiteral [.num 7])])])
@@ -9235,6 +9533,7 @@ def case_listPatternHeadMap__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [])]), .resolve "P"])])
 #guard obs case_listPatternHeadMap__le == "err arity"
 
+#guard errorObs case_listPatternHeadMap__le == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- listPatternHeadMap__l7: P([h, *t]) = [h, t] \n map([[7]], P)
 def case_listPatternHeadMap__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "h" }, .capture { name := "t", kind := .collecting }]] [] [] [(.listLiteral [.param "h", .param "t"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 7])]), .resolve "P"])])
@@ -9320,6 +9619,7 @@ def case_listPatternPair__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true])])])
 #guard obs case_listPatternPair__lbt == "err arity"
 
+#guard errorObs case_listPatternPair__lbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__lbt_bf: P([x, y]) = [x, y] \n P([true, false])
 def case_listPatternPair__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.boolLiteral true, .boolLiteral false])])])
@@ -9330,6 +9630,7 @@ def case_listPatternPair__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.boolLiteral true, .num 1])])])])
 #guard obs case_listPatternPair__lpbt_1 == "err arity"
 
+#guard errorObs case_listPatternPair__lpbt_1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__p1: P([x, y]) = [x, y] \n P((1))
 def case_listPatternPair__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [.num 1])])
@@ -9405,11 +9706,13 @@ def case_listPatternPair__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [])])])
 #guard obs case_listPatternPair__le == "err arity"
 
+#guard errorObs case_listPatternPair__le == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- listPatternPair__l7: P([x, y]) = [x, y] \n P([7])
 def case_listPatternPair__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 7])])])
 #guard obs case_listPatternPair__l7 == "err arity"
 
+#guard errorObs case_listPatternPair__l7 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__l12: P([x, y]) = [x, y] \n P([1, 2])
 def case_listPatternPair__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 1, .num 2])])])
@@ -9425,16 +9728,19 @@ def case_listPatternPair__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.listLiteral [])])])])
 #guard obs case_listPatternPair__lle == "err arity"
 
+#guard errorObs case_listPatternPair__lle == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__l_e: P([x, y]) = [x, y] \n P([()])
 def case_listPatternPair__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.emptySequence 0)])])])
 #guard obs case_listPatternPair__l_e == "err arity"
 
+#guard errorObs case_listPatternPair__l_e == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__l_p12: P([x, y]) = [x, y] \n P([(1, 2)])
 def case_listPatternPair__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [(.capture [.num 1, .num 2])])])])
 #guard obs case_listPatternPair__l_p12 == "err arity"
 
+#guard errorObs case_listPatternPair__l_p12 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPair__p_l12: P([x, y]) = [x, y] \n P(([1, 2], 3))
 def case_listPatternPair__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])])])
@@ -9445,6 +9751,7 @@ def case_listPatternPair__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "P") [(.listLiteral [.num 1])])])
 #guard obs case_listPatternPair__pl1 == "err arity"
 
+#guard errorObs case_listPatternPair__pl1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__e: P([x, y]) = [x, y] \n map([()], P)
 def case_listPatternPairMap__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0)]), .resolve "P"])])
@@ -9490,6 +9797,7 @@ def case_listPatternPairMap__lbt : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__lbt == "err arity"
 
+#guard errorObs case_listPatternPairMap__lbt == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__lbt_bf: P([x, y]) = [x, y] \n map([[true, false]], P)
 def case_listPatternPairMap__lbt_bf : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.boolLiteral true, .boolLiteral false])]), .resolve "P"])])
@@ -9500,6 +9808,7 @@ def case_listPatternPairMap__lpbt_1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__lpbt_1 == "err arity"
 
+#guard errorObs case_listPatternPairMap__lpbt_1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__p1: P([x, y]) = [x, y] \n map([(1)], P)
 def case_listPatternPairMap__p1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "P"])])
@@ -9575,11 +9884,13 @@ def case_listPatternPairMap__le : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__le == "err arity"
 
+#guard errorObs case_listPatternPairMap__le == .matched (some { kind := "arity", names := [], counts := [2, 0] })
 -- listPatternPairMap__l7: P([x, y]) = [x, y] \n map([[7]], P)
 def case_listPatternPairMap__l7 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 7])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__l7 == "err arity"
 
+#guard errorObs case_listPatternPairMap__l7 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__l12: P([x, y]) = [x, y] \n map([[1, 2]], P)
 def case_listPatternPairMap__l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1, .num 2])]), .resolve "P"])])
@@ -9595,16 +9906,19 @@ def case_listPatternPairMap__lle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.listLiteral [])])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__lle == "err arity"
 
+#guard errorObs case_listPatternPairMap__lle == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__l_e: P([x, y]) = [x, y] \n map([[()]], P)
 def case_listPatternPairMap__l_e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.emptySequence 0)])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__l_e == "err arity"
 
+#guard errorObs case_listPatternPairMap__l_e == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__l_p12: P([x, y]) = [x, y] \n map([[(1, 2)]], P)
 def case_listPatternPairMap__l_p12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [(.capture [.num 1, .num 2])])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__l_p12 == "err arity"
 
+#guard errorObs case_listPatternPairMap__l_p12 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- listPatternPairMap__p_l12: P([x, y]) = [x, y] \n map([([1, 2], 3)], P)
 def case_listPatternPairMap__p_l12 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), .resolve "P"])])
@@ -9615,6 +9929,7 @@ def case_listPatternPairMap__pl1 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [(.listLiteral [.param "x", .param "y"])])] [(.call (.resolve "map") [(.listLiteral [(.listLiteral [.num 1])]), .resolve "P"])])
 #guard obs case_listPatternPairMap__pl1 == "err arity"
 
+#guard errorObs case_listPatternPairMap__pl1 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- filterKeep__e: T(a) = true \n filter((), T)
 def case_filterKeep__e : Expr :=
   .algorithmExpr (alg [] [] [privateProp "T" (alg ["a"] [] [] [.boolLiteral true])] [(.call (.resolve "filter") [(.emptySequence 0), .resolve "T"])])
@@ -11675,11 +11990,13 @@ def case_special__interpolationFirstFailureStops : Expr :=
   .algorithmExpr (alg [] [] [] [(.interpolatedString "a" [{ hole := (.num 1), text := "b" }, { hole := (.binary .idiv (.num 10) (.num 0)), text := "c" }, { hole := (.index (.listLiteral []) [.num 0]), text := "" }])])
 #guard obs case_special__interpolationFirstFailureStops == "err div0"
 
+#guard errorObs case_special__interpolationFirstFailureStops == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__interpolationHoleWithoutOutput: B = { \n     A = 1 \n } \n "{B}"
 def case_special__interpolationHoleWithoutOutput : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_special__interpolationHoleWithoutOutput == "err missingOutput"
 
+#guard errorObs case_special__interpolationHoleWithoutOutput == .matched (some { kind := "missingOutput", names := [], counts := [] })
 -- special__interpolationStringsUnquoted: "{['one, two', 'three']} {('a', ['b'])}"
 def case_special__interpolationStringsUnquoted : Expr :=
   .algorithmExpr (alg [] [] [] [(.interpolatedString "" [{ hole := (.listLiteral [.stringLiteral "one, two", .stringLiteral "three"]), text := " " }, { hole := (.capture [.stringLiteral "a", (.listLiteral [.stringLiteral "b"])]), text := "" }])])
@@ -11810,16 +12127,19 @@ def case_special__distinctEmpties : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "distinct") [(.emptySequence 0), (.emptySequence 0)])])
 #guard obs case_special__distinctEmpties == "err arity"
 
+#guard errorObs case_special__distinctEmpties == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- special__distinctPairsToOne: distinct((1, 2), (1, 2))
 def case_special__distinctPairsToOne : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "distinct") [(.capture [.num 1, .num 2]), (.capture [.num 1, .num 2])])])
 #guard obs case_special__distinctPairsToOne == "err arity"
 
+#guard errorObs case_special__distinctPairsToOne == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- special__takeEmpties: take((), (), 2)
 def case_special__takeEmpties : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "take") [(.emptySequence 0), (.emptySequence 0), .num 2])])
 #guard obs case_special__takeEmpties == "err arity"
 
+#guard errorObs case_special__takeEmpties == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- special__filterOneSurvivor: Big(a) = a > 2 \n filter((1, 2, 3), Big)
 def case_special__filterOneSurvivor : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Big" (alg ["a"] [] [] [(.comparison (.param "a") [{ op := .gt, operand := (.num 2) }])])] [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), .resolve "Big"])])
@@ -11840,6 +12160,7 @@ def case_special__mapPairSwap : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [.param "b", .param "a"])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
 #guard obs case_special__mapPairSwap == "err arity"
 
+#guard errorObs case_special__mapPairSwap == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__mapPairSwapOk: Swap((a, b)) = (b, a) \n map(((1, 2), (3, 4)), Swap)
 def case_special__mapPairSwapOk : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Swap" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", .param "a"])])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
@@ -11850,6 +12171,7 @@ def case_special__mapPairSwapFlatIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Swap" (alg ["a", "b"] [] [] [(.capture [.param "b", .param "a"])])] [(.call (.resolve "map") [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])]), .resolve "Swap"])])
 #guard obs case_special__mapPairSwapFlatIsArity == "err arity"
 
+#guard errorObs case_special__mapPairSwapFlatIsArity == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__mapToOne: M(a) = a \n map((7), M)
 def case_special__mapToOne : Expr :=
   .algorithmExpr (alg [] [] [privateProp "M" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "map") [.num 7, .resolve "M"])])
@@ -11990,11 +12312,13 @@ def case_special__writtenSlotArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "F") [(.capture [.num 1, .num 2])])])
 #guard obs case_special__writtenSlotArity == "err arity"
 
+#guard errorObs case_special__writtenSlotArity == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__mixedSingleGrouped: F(x, *y, z) = y \n A = (1, 2, 3, 4) \n F(A)
 def case_special__mixedSingleGrouped : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3, .num 4])]), privateProp "F" (algWithParameters [{ name := "x" }, { name := "y", kind := .collecting }, { name := "z" }] [] [] [.param "y"])] [(.call (.resolve "F") [.resolve "A"])])
 #guard obs case_special__mixedSingleGrouped == "err arity"
 
+#guard errorObs case_special__mixedSingleGrouped == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__sumEmpty: sum(())
 def case_special__sumEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "sum") [(.emptySequence 0)])])
@@ -12040,6 +12364,7 @@ def case_special__divZero : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .div (.num 1) (.num 0))])
 #guard obs case_special__divZero == "err div0"
 
+#guard errorObs case_special__divZero == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__negativeResult: 0 - 1
 def case_special__negativeResult : Expr :=
   .algorithmExpr (alg [] [] [] [(.binary .sub (.num 0) (.num 1))])
@@ -12145,11 +12470,13 @@ def case_special__chainErrorFirstOperand : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.binary .div (.num 1) (.num 0)) [{ op := .lt, operand := (.boolLiteral true) }, { op := .lt, operand := (.num 1) }])])
 #guard obs case_special__chainErrorFirstOperand == "err div0"
 
+#guard errorObs case_special__chainErrorFirstOperand == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__chainErrorAfterFalse: 3 < 2 < 1 / 0
 def case_special__chainErrorAfterFalse : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.num 3) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.binary .div (.num 1) (.num 0)) }])])
 #guard obs case_special__chainErrorAfterFalse == "err div0"
 
+#guard errorObs case_special__chainErrorAfterFalse == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__chainPropertyOperands: P = 2 \n 1 < P < 3, P == P == 2
 def case_special__chainPropertyOperands : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 2])] [(.comparison (.num 1) [{ op := .lt, operand := (.resolve "P") }, { op := .lt, operand := (.num 3) }]), (.comparison (.resolve "P") [{ op := .eq, operand := (.resolve "P") }, { op := .eq, operand := (.num 2) }])])
@@ -12215,6 +12542,7 @@ def case_special__chainMiddleOperandError : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.num 1) [{ op := .lt, operand := (.binary .div (.num 1) (.num 0)) }, { op := .lt, operand := (.boolLiteral true) }])])
 #guard obs case_special__chainMiddleOperandError == "err div0"
 
+#guard errorObs case_special__chainMiddleOperandError == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__chainGroupedSelectionReceiver: (1 < 2 < 3)[0] == true
 def case_special__chainGroupedSelectionReceiver : Expr :=
   .algorithmExpr (alg [] [] [] [(.comparison (.index (.comparison (.num 1) [{ op := .lt, operand := (.num 2) }, { op := .lt, operand := (.num 3) }]) [.num 0]) [{ op := .eq, operand := (.boolLiteral true) }])])
@@ -12315,6 +12643,7 @@ def case_special__callbackMixedCollectingRow : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "first" }, { name := "middle", kind := .collecting }, { name := "last" }] [] [] [.param "middle"])] [(.dotCall (.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])]) "map" (some [.resolve "F"]))])
 #guard obs case_special__callbackMixedCollectingRow == "err arity"
 
+#guard errorObs case_special__callbackMixedCollectingRow == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__callbackMixedCollectingRowPattern: F((first, *middle, last)) = middle \n [(1, 2, 3, 4)].map(F)
 def case_special__callbackMixedCollectingRowPattern : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameterPatterns [.sequenceValue [.capture { name := "first" }, .capture { name := "middle", kind := .collecting }, .capture { name := "last" }]] [] [] [.param "middle"])] [(.dotCall (.listLiteral [(.capture [.num 1, .num 2, .num 3, .num 4])]) "map" (some [.resolve "F"]))])
@@ -12330,6 +12659,7 @@ def case_special__collectorZeroArgumentCallableFailureIsItsOwn : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.param "ys"])] [(.call (.resolve "Coll") [.resolve "Bad"])])
 #guard obs case_special__collectorZeroArgumentCallableFailureIsItsOwn == "err div0"
 
+#guard errorObs case_special__collectorZeroArgumentCallableFailureIsItsOwn == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__listInSeqSpreadKeepsList: A = [1, 2] \n (A, 9)*, 997
 def case_special__listInSeqSpreadKeepsList : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])])] [(.sequenceSpread (.capture [.resolve "A", .num 9])), .num 997])
@@ -12350,26 +12680,31 @@ def case_special__spreadNoOutputBlockRoot : Expr :=
   .algorithmExpr (alg [] [] [] [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))), .num 997])
 #guard obs case_special__spreadNoOutputBlockRoot == "err spreadMissingOutput"
 
+#guard errorObs case_special__spreadNoOutputBlockRoot == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
 -- special__spreadNoOutputBlockList: [{A = 1}*]
 def case_special__spreadNoOutputBlockList : Expr :=
   .algorithmExpr (alg [] [] [] [(.listLiteral [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])))])])
 #guard obs case_special__spreadNoOutputBlockList == "err spreadMissingOutput"
 
+#guard errorObs case_special__spreadNoOutputBlockList == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
 -- special__spreadNoOutputBlockCallArg: F(a) = a \n F({A = 1}*)
 def case_special__spreadNoOutputBlockCallArg : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["a"] [] [] [.param "a"])] [(.call (.resolve "F") [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])))])])
 #guard obs case_special__spreadNoOutputBlockCallArg == "err spreadMissingOutput"
 
+#guard errorObs case_special__spreadNoOutputBlockCallArg == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
 -- special__spreadNoOutputResolved: X = {A = 1} \n X*, 997
 def case_special__spreadNoOutputResolved : Expr :=
   .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.resolve "X")), .num 997])
 #guard obs case_special__spreadNoOutputResolved == "err spreadMissingOutput"
 
+#guard errorObs case_special__spreadNoOutputResolved == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
 -- special__listLoneCollectingAssignment: *items = [1, 2, 3]
 def case_special__listLoneCollectingAssignment : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) [.resolve "$deconstruct$0"])])] [])
 #guard obs case_special__listLoneCollectingAssignment == "err missingOutput"
 
+#guard errorObs case_special__listLoneCollectingAssignment == .matched (some { kind := "missingOutput", names := [], counts := [] })
 -- special__minSeq: min((3, 1, 2))
 def case_special__minSeq : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "min") [(.capture [.num 3, .num 1, .num 2])])])
@@ -12445,6 +12780,7 @@ def case_special__firstEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "first") [(.emptySequence 0)])])
 #guard obs case_special__firstEmpty == "err index"
 
+#guard errorObs case_special__firstEmpty == .matched (some { kind := "index", names := [], counts := [] })
 -- special__firstDot: x = 1, 2, 3 \n x.first
 def case_special__firstDot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1, .num 2, .num 3])] [(.dotCall (.resolve "x") "first" none)])
@@ -12465,6 +12801,7 @@ def case_special__lastEmpty : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "last") [(.emptySequence 0)])])
 #guard obs case_special__lastEmpty == "err index"
 
+#guard errorObs case_special__lastEmpty == .matched (some { kind := "index", names := [], counts := [] })
 -- special__orderDescSeq: orderDesc((1, 3, 2))
 def case_special__orderDescSeq : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "orderDesc") [(.capture [.num 1, .num 3, .num 2])])])
@@ -12560,6 +12897,7 @@ def case_special__repeatedNameStepDivergingRowsRebindFails : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 2))])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1]))])
 #guard obs case_special__repeatedNameStepDivergingRowsRebindFails == "err arity"
 
+#guard errorObs case_special__repeatedNameStepDivergingRowsRebindFails == .matched (some { kind := "badArity", names := [], counts := [] })
 -- special__structuralStepSpreadRowSuppliesItems: Step2((a, b)) = { (b, a + b)* } \n repeat(Step2, 1, (0, 1)), Step2((0, 1))
 def case_special__structuralStepSpreadRowSuppliesItems : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.call (.resolve "repeat") [.resolve "Step2", .num 1, (.capture [.num 0, .num 1])]), (.call (.resolve "Step2") [(.capture [.num 0, .num 1])])])
@@ -12570,6 +12908,7 @@ def case_special__structuralStepSpreadRowCannotRebind : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.dotCall (.resolve "Step2") "repeat" (some [.num 2, (.capture [.num 0, .num 1])]))])
 #guard obs case_special__structuralStepSpreadRowCannotRebind == "err arity"
 
+#guard errorObs case_special__structuralStepSpreadRowCannotRebind == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- special__historyStepSpreadRowEqualsDirectCall: P((*h), n) = { h*, n + 1 } \n repeat(P, 1, (1, 2), 0) == P((1, 2), 0)
 def case_special__historyStepSpreadRowEqualsDirectCall : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h", kind := .collecting }], .capture { name := "n" }] [] [] [(.sequenceSpread (.param "h")), (.binary .add (.param "n") (.num 1))])] [(.comparison (.call (.resolve "repeat") [.resolve "P", .num 1, (.capture [.num 1, .num 2]), .num 0]) [{ op := .eq, operand := (.call (.resolve "P") [(.capture [.num 1, .num 2]), .num 0]) }])])
@@ -12580,6 +12919,7 @@ def case_special__nestedLoopStepRowIsOneSlot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"])])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
 #guard obs case_special__nestedLoopStepRowIsOneSlot == "err arity"
 
+#guard errorObs case_special__nestedLoopStepRowIsOneSlot == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__nestedLoopStepRowSpread: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci, 2, a, b)* } \n Two.repeat(3, 0, 1)
 def case_special__nestedLoopStepRowSpread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"]))])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
@@ -12610,6 +12950,7 @@ def case_special__loopStepFamilyRowsAreTheNextState : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Two" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 9, .num 9])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩])] [(.call (.resolve "repeat") [.resolve "Two", .num 2, .num 1])])
 #guard obs case_special__loopStepFamilyRowsAreTheNextState == "err arity"
 
+#guard errorObs case_special__loopStepFamilyRowsAreTheNextState == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- special__loopStepFamilyNoMatch: F(0) = 1 \n F(1) = 2 \n repeat(F, 1, 5)
 def case_special__loopStepFamilyNoMatch : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 5])])
@@ -12640,6 +12981,7 @@ def case_special__loopStepBuiltinCollectionNextArity : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "take", .num 2, (.listLiteral [.num 1, .num 2, .num 3]), .num 2])])
 #guard obs case_special__loopStepBuiltinCollectionNextArity == "err arity"
 
+#guard errorObs case_special__loopStepBuiltinCollectionNextArity == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__loopStepBuiltinEmptyResultIsTheFlag: while(first, [()])
 def case_special__loopStepBuiltinEmptyResultIsTheFlag : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.resolve "first", (.listLiteral [(.emptySequence 0)])])])
@@ -12720,11 +13062,13 @@ def case_special__openLocalOnlyCapturedParamsOutsideOwner : Expr :=
   .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (alg [] [(.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyCapturedParamsOutsideOwner == "err localOnlyProperty"
 
+#guard errorObs case_special__openLocalOnlyCapturedParamsOutsideOwner == .matched (some { kind := "localOnlyProperty", names := ["X", "captured"], counts := [] })
 -- special__openTwoProvidersAmbiguousAtRuntime: L1 = { \n     public X(v) = v + 101 \n } \n L2 = { \n     public X(v) = v + 202 \n } \n K(p) = { \n     open L1, L2 \n     p.X \n } \n K(10)
 def case_special__openTwoProvidersAmbiguousAtRuntime : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L1" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []), privateProp "L2" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 202))])] []), privateProp "K" (alg ["p"] [.resolve "L1", .resolve "L2"] [] [(.dotCall (.param "p") "X" none)])] [(.call (.resolve "K") [.num 10])])
 #guard obs case_special__openTwoProvidersAmbiguousAtRuntime == "err ambiguousOpen"
 
+#guard errorObs case_special__openTwoProvidersAmbiguousAtRuntime == .matched (some { kind := "ambiguousOpen", names := ["X"], counts := [] })
 -- special__openDuplicateTargetDedup: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib, Lib \n     X \n } \n A
 def case_special__openDuplicateTargetDedup : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
@@ -12745,6 +13089,7 @@ def case_special__openDuplicateInlineBlocksAmbiguousAtRuntime : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["p"] [(.algorithmExpr (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] [])), (.algorithmExpr (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []))] [] [(.dotCall (.param "p") "X" none)])] [(.call (.resolve "K") [.num 10])])
 #guard obs case_special__openDuplicateInlineBlocksAmbiguousAtRuntime == "err ambiguousOpen"
 
+#guard errorObs case_special__openDuplicateInlineBlocksAmbiguousAtRuntime == .matched (some { kind := "ambiguousOpen", names := ["X"], counts := [] })
 -- special__openInlineBlock: A = { \n     open { public X = 101 } \n     X \n } \n A
 def case_special__openInlineBlock : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [(.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []))] [] [.resolve "X"])] [.resolve "A"])
@@ -12805,21 +13150,25 @@ def case_special__openLocalOnlyMemberIsASecondProviderAtRuntime : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 101))])] []), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg ["v"] [] [] [(.binary .add (.param "v") (.param "p"))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0]), privateProp "A" (alg ["q"] [.resolve "Pub", (.dotCall (.resolve "Outer") "Lib" none)] [] [(.dotCall (.param "q") "X" none)])] [(.call (.resolve "A") [.num 5])])
 #guard obs case_special__openLocalOnlyMemberIsASecondProviderAtRuntime == "err ambiguousOpen"
 
+#guard errorObs case_special__openLocalOnlyMemberIsASecondProviderAtRuntime == .matched (some { kind := "ambiguousOpen", names := ["X"], counts := [] })
 -- special__ifSelectedParameterizedBranchIsArity: Inc(x) = x + 1 \n Probe(u) = if(true, Inc, 0) \n Probe(0)
 def case_special__ifSelectedParameterizedBranchIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifSelectedParameterizedBranchIsArity == "err arity"
 
+#guard errorObs case_special__ifSelectedParameterizedBranchIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifSelectedParameterizedFalseBranchIsArity: Inc(x) = x + 1 \n Probe(u) = if(false, 0, Inc) \n Probe(0)
 def case_special__ifSelectedParameterizedFalseBranchIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral false, .num 0, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifSelectedParameterizedFalseBranchIsArity == "err arity"
 
+#guard errorObs case_special__ifSelectedParameterizedFalseBranchIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifParameterizedConditionIsArity: Inc(x) = x + 1 \n Probe(u) = if(Inc, 1, 0) \n Probe(0)
 def case_special__ifParameterizedConditionIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.resolve "Inc", .num 1, .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifParameterizedConditionIsArity == "err arity"
 
+#guard errorObs case_special__ifParameterizedConditionIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifUnselectedParameterizedBranchStaysLazy: Inc(x) = x + 1 \n Probe(u) = if(false, Inc, 7) \n Probe(0)
 def case_special__ifUnselectedParameterizedBranchStaysLazy : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral false, .resolve "Inc", .num 7])])] [(.call (.resolve "Probe") [.num 0])])
@@ -12835,6 +13184,7 @@ def case_special__ifParameterIgnoringBodyStillArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "K", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifParameterIgnoringBodyStillArity == "err arity"
 
+#guard errorObs case_special__ifParameterIgnoringBodyStillArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifCollectingCallableSlotIsCollectedValue: Collect(*xs) = xs \n if(true, Collect, 0)
 def case_special__ifCollectingCallableSlotIsCollectedValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Collect" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "if") [.boolLiteral true, .resolve "Collect", .num 0])])
@@ -12860,16 +13210,19 @@ def case_special__ifRequiredPrefixBesideCollectorIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "x"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Head", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifRequiredPrefixBesideCollectorIsArity == "err arity"
 
+#guard errorObs case_special__ifRequiredPrefixBesideCollectorIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifRequiredSuffixBesideCollectorIsArity: Tail(*rest, z) = z \n Probe(u) = if(true, Tail, 0) \n Probe(0)
 def case_special__ifRequiredSuffixBesideCollectorIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Tail" (algWithParameters [{ name := "rest", kind := .collecting }, { name := "z" }] [] [] [.param "z"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Tail", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifRequiredSuffixBesideCollectorIsArity == "err arity"
 
+#guard errorObs case_special__ifRequiredSuffixBesideCollectorIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__ifNestedCollectingPatternIsArity: P((x, *rest)) = x \n Probe(u) = if(true, P, 0) \n Probe(0)
 def case_special__ifNestedCollectingPatternIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [.param "x"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "P", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__ifNestedCollectingPatternIsArity == "err arity"
 
+#guard errorObs case_special__ifNestedCollectingPatternIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__collectingCallableStaysACallbackAlgorithm: Only(*xs) = xs \n map((1, 2), Only)
 def case_special__collectingCallableStaysACallbackAlgorithm : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "map") [(.capture [.num 1, .num 2]), .resolve "Only"])])
@@ -12880,46 +13233,55 @@ def case_special__ifAlgorithmChannelParameterSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["g"] [] [] [(.call (.resolve "if") [.boolLiteral true, .param "g", .num 0])])] [(.call (.resolve "Apply") [.resolve "Inc"])])
 #guard obs case_special__ifAlgorithmChannelParameterSlotIsArity == "err arity"
 
+#guard errorObs case_special__ifAlgorithmChannelParameterSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, 1, Inc) \n Probe(0)
 def case_special__repeatInitialParameterizedSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatInitialParameterizedSlotIsArity == "err arity"
 
+#guard errorObs case_special__repeatInitialParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatCountParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, Inc, 0) \n Probe(0)
 def case_special__repeatCountParameterizedSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatCountParameterizedSlotIsArity == "err arity"
 
+#guard errorObs case_special__repeatCountParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__whileInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Down(s) = s - 1, s \n Probe(u) = while(Down, Inc) \n Probe(0)
 def case_special__whileInitialParameterizedSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Down" (alg ["s"] [] [] [(.binary .sub (.param "s") (.num 1)), .param "s"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "while") [.resolve "Down", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__whileInitialParameterizedSlotIsArity == "err arity"
 
+#guard errorObs case_special__whileInitialParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__atomsParameterizedSlotIsArity: Inc(x) = x + 1 \n Probe(u) = atoms(Inc) \n Probe(0)
 def case_special__atomsParameterizedSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "atoms") [.resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__atomsParameterizedSlotIsArity == "err arity"
 
+#guard errorObs case_special__atomsParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__rangeParameterizedSlotIsArity: Inc(x) = x + 1 \n Probe(u) = range(1, Inc) \n Probe(0)
 def case_special__rangeParameterizedSlotIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "range") [.num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__rangeParameterizedSlotIsArity == "err arity"
 
+#guard errorObs case_special__rangeParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__dotStringParameterizedReceiverIsArity: Inc(x) = x + 1 \n Probe(u) = Inc.string \n Probe(0)
 def case_special__dotStringParameterizedReceiverIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.resolve "Inc") "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__dotStringParameterizedReceiverIsArity == "err arity"
 
+#guard errorObs case_special__dotStringParameterizedReceiverIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__dotStringNavigatedParameterizedMemberIsArity: Lib = { Sub(x) = x } \n Probe(u) = Lib.Sub.string \n Probe(0)
 def case_special__dotStringNavigatedParameterizedMemberIsArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg ["x"] [] [] [.param "x"])] []), privateProp "Probe" (alg ["u"] [] [] [(.dotCall (.dotCall (.resolve "Lib") "Sub" none) "string" none)])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__dotStringNavigatedParameterizedMemberIsArity == "err arity"
 
+#guard errorObs case_special__dotStringNavigatedParameterizedMemberIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__reduceParameterIgnoringInitialStillRejected: K(x) = 5 \n Add(e, a) = e + a \n Probe(u) = reduce([1, 2], Add, K) \n Probe(0)
 def case_special__reduceParameterIgnoringInitialStillRejected : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "K"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__reduceParameterIgnoringInitialStillRejected == "err arity"
 
+#guard errorObs case_special__reduceParameterIgnoringInitialStillRejected == .matched (some { kind := "badArity", names := [], counts := [] })
 -- special__repeatParameterizedStepIsCallback: Inc(x) = x + 1 \n repeat(Inc, 2, 0)
 def case_special__repeatParameterizedStepIsCallback : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
@@ -12935,6 +13297,7 @@ def case_special__formulaLiftingRootValuePositionNeedsTheParameter : Expr :=
   .algorithmExpr (alg ["x"] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Inc") [.param "x"]), .num 0])])
 #guard obs case_special__formulaLiftingRootValuePositionNeedsTheParameter == "err unresolvedImplicitParams"
 
+#guard errorObs case_special__formulaLiftingRootValuePositionNeedsTheParameter == .matched (some { kind := "unresolvedImplicitParams", names := ["x"], counts := [] })
 -- special__formulaLiftingBuiltinValueSlot: Inc(x) = x + 1 \n G = count(Inc) \n G(4)
 def case_special__formulaLiftingBuiltinValueSlot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.call (.resolve "count") [(.call (.resolve "Inc") [.param "x"])])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [.num 4])])
@@ -12995,46 +13358,55 @@ def case_special__repeatedNameCallableThenValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "P") [.resolve "Inc", .num 1])])
 #guard obs case_special__repeatedNameCallableThenValue == "err arity"
 
+#guard errorObs case_special__repeatedNameCallableThenValue == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatedNameValueThenCallable: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n P(1, Inc)
 def case_special__repeatedNameValueThenCallable : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "P") [.num 1, .resolve "Inc"])])
 #guard obs case_special__repeatedNameValueThenCallable == "err arity"
 
+#guard errorObs case_special__repeatedNameValueThenCallable == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatedNameFailedThenValue: Bad = 1 / 0 \n Q(x, x) = x \n Q(Bad, 7)
 def case_special__repeatedNameFailedThenValue : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Q") [.resolve "Bad", .num 7])])
 #guard obs case_special__repeatedNameFailedThenValue == "err div0"
 
+#guard errorObs case_special__repeatedNameFailedThenValue == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__repeatedNameValueThenFailed: Bad = 1 / 0 \n Q(x, x) = x \n Q(7, Bad)
 def case_special__repeatedNameValueThenFailed : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Q") [.num 7, .resolve "Bad"])])
 #guard obs case_special__repeatedNameValueThenFailed == "err div0"
 
+#guard errorObs case_special__repeatedNameValueThenFailed == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__repeatedNameAcrossCollectorCallable: Inc(y) = y + 1 \n C(x, *r, x) = x \n C(Inc, 9, 1)
 def case_special__repeatedNameAcrossCollectorCallable : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "C" (algWithParameters [{ name := "x" }, { name := "r", kind := .collecting }, { name := "x" }] [] [] [.param "x"])] [(.call (.resolve "C") [.resolve "Inc", .num 9, .num 1])])
 #guard obs case_special__repeatedNameAcrossCollectorCallable == "err arity"
 
+#guard errorObs case_special__repeatedNameAcrossCollectorCallable == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatedNameAcrossNestedGroupFailed: Bad = 1 / 0 \n N(x, (x, y)) = y \n N(Bad, (7, 8))
 def case_special__repeatedNameAcrossNestedGroupFailed : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "N" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "y" }]] [] [] [.param "y"])] [(.call (.resolve "N") [.resolve "Bad", (.capture [.num 7, .num 8])])])
 #guard obs case_special__repeatedNameAcrossNestedGroupFailed == "err div0"
 
+#guard errorObs case_special__repeatedNameAcrossNestedGroupFailed == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__repeatedNameForwardedCallable: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Fwd(a, b) = P(a, b) \n Fwd(1, Inc)
 def case_special__repeatedNameForwardedCallable : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])]), privateProp "Fwd" (alg ["a", "b"] [] [] [(.call (.resolve "P") [.param "a", .param "b"])])] [(.call (.resolve "Fwd") [.num 1, .resolve "Inc"])])
 #guard obs case_special__repeatedNameForwardedCallable == "err arity"
 
+#guard errorObs case_special__repeatedNameForwardedCallable == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__repeatedNameDotReceiverFailed: Bad = 1 / 0 \n Q(x, x) = x \n Bad.Q(7)
 def case_special__repeatedNameDotReceiverFailed : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.dotCall (.resolve "Bad") "Q" (some [.num 7]))])
 #guard obs case_special__repeatedNameDotReceiverFailed == "err div0"
 
+#guard errorObs case_special__repeatedNameDotReceiverFailed == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__repeatedNameValuelessBeforeVerdict: Bad = 1 / 0 \n Q2(x, x, y, y) = 0 \n Q2(Bad, 7, 1, 2)
 def case_special__repeatedNameValuelessBeforeVerdict : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q2" (alg ["x", "x", "y", "y"] [] [] [.num 0])] [(.call (.resolve "Q2") [.resolve "Bad", .num 7, .num 1, .num 2])])
 #guard obs case_special__repeatedNameValuelessBeforeVerdict == "err div0"
 
+#guard errorObs case_special__repeatedNameValuelessBeforeVerdict == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__repeatedNameAccompanyingChannel: A = 5 \n P(f, f) = f, f() \n P(5, A)
 def case_special__repeatedNameAccompanyingChannel : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 5]), privateProp "P" (alg ["f", "f"] [] [] [.param "f", (.call (.param "f") [])])] [(.call (.resolve "P") [.num 5, .resolve "A"])])
@@ -13085,11 +13457,13 @@ def case_special__forwardByNameFailedArgument : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])]), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Some") [.resolve "Bad"])])
 #guard obs case_special__forwardByNameFailedArgument == "err div0"
 
+#guard errorObs case_special__forwardByNameFailedArgument == .matched (some { kind := "div0", names := [], counts := [] })
 -- special__forwardByNameCallableArgument: Inc(y) = y + 1 \n P(x, x) = x, x(5) \n Some = [P][0] \n Some(Inc)
 def case_special__forwardByNameCallableArgument : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Some" (alg ["x"] [] [] [(.index (.listLiteral [(.call (.resolve "P") [.param "x", .param "x"])]) [.num 0])]), privateProp "Inc" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "P" (alg ["x", "x"] [] [] [.param "x", (.call (.param "x") [.num 5])])] [(.call (.resolve "Some") [.resolve "Inc"])])
 #guard obs case_special__forwardByNameCallableArgument == "err arity"
 
+#guard errorObs case_special__forwardByNameCallableArgument == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- special__aliasKeepsRepeatedSignature: P(x, x) = x \n A = P \n A(7, 7)
 def case_special__aliasKeepsRepeatedSignature : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "P")), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 7])])
@@ -13100,6 +13474,7 @@ def case_special__aliasKeepsRepeatedConstraint : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "P")), privateProp "P" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "A") [.num 7, .num 8])])
 #guard obs case_special__aliasKeepsRepeatedConstraint == "err arity"
 
+#guard errorObs case_special__aliasKeepsRepeatedConstraint == .matched (some { kind := "badArity", names := [], counts := [] })
 -- special__aliasKeepsListPattern: Single([x]) = x \n A = Single \n A([7]), A([[7]])
 def case_special__aliasKeepsListPattern : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Single")), privateProp "Single" (algWithParameterPatterns [.listValue [.capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "A") [(.listLiteral [.num 7])]), (.call (.resolve "A") [(.listLiteral [(.listLiteral [.num 7])])])])
@@ -13145,6 +13520,7 @@ def case_special__aliasOfRepeatKeepsMinimumArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "R" (.alias none [] [] (.resolve "repeat")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "R") [.resolve "Inc"])])
 #guard obs case_special__aliasOfRepeatKeepsMinimumArity == "err arity"
 
+#guard errorObs case_special__aliasOfRepeatKeepsMinimumArity == .matched (some { kind := "arity", names := [], counts := [3, 1] })
 -- special__aliasChainOfBuiltin: A = count \n B = A \n C = B \n C([1, 2])
 def case_special__aliasChainOfBuiltin : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "count")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B"))] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])])])
@@ -13160,6 +13536,7 @@ def case_special__aliasOfFamilyNoMatchingBranch : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.alias none [] [] (.resolve "Fact")), privateProp "Fact" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.call (.resolve "Fact") [(.binary .sub (.param "n") (.num 1))]))])⟩])] [(.call (.resolve "F") [.num 1, .num 2])])
 #guard obs case_special__aliasOfFamilyNoMatchingBranch == "err arity"
 
+#guard errorObs case_special__aliasOfFamilyNoMatchingBranch == .matched (some { kind := "arity", names := [], counts := [1, 2] })
 -- special__aliasOfUnnameableFamily: S(1) = 1 \n S(-1) = -1 \n SA = S \n SA(-1)
 def case_special__aliasOfUnnameableFamily : Expr :=
   .algorithmExpr (alg [] [] [privateProp "SA" (.alias none [] [] (.resolve "S")), privateProp "S" (.conditional none [] [⟨.litInt 1, (alg [] [] [] [.num 1])⟩, ⟨.litInt (-1), (alg [] [] [] [(.unary .minus (.num 1))])⟩])] [(.call (.resolve "SA") [(.unary .minus (.num 1))])])
@@ -15959,6 +16336,7 @@ def case_internal__sc_spread_missing_output : Expr :=
   .algorithmExpr (alg [] [] [] [(.sequenceConstruct (.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))) (.num 3))])
 #guard obs case_internal__sc_spread_missing_output == "err spreadMissingOutput"
 
+#guard errorObs case_internal__sc_spread_missing_output == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
 -- internal__sc_count_arg: count of the internal node observes the ()-dropped value
 def case_internal__sc_count_arg : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.sequenceConstruct (.emptySequence 0) (.num 1))])])

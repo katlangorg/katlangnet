@@ -103,7 +103,11 @@ public class TutorialResultSweepTests
     public void VerifiedExample_EngineOutcomeMatchesClaim(int index, string identity)
     {
         _ = identity;
-        var example = Verified[index];
+        VerifyExample(Verified[index]);
+    }
+
+    internal static void VerifyExample(TutorialExample example)
+    {
         var run = KatLangEngine.Run(example.Source);
         var actualDisplay = run.ToDisplayString().ReplaceLineEndings("\n");
 

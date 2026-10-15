@@ -48,9 +48,8 @@ public class LanguageSpecArtifactsTests
     }
 
     /// <summary>
-    /// The generated artifact contains exactly one observation guard per
-    /// Lean-guarded case plus one count guard — enforced against the corpus
-    /// partition rather than a handwritten total.
+    /// Neutral case guards, selected canonical payload guards, independent
+    /// projection goldens and the partition guard reconcile with their sources.
     /// </summary>
     [Fact]
     public void GeneratedArtifact_GuardCountMatchesPartition()
@@ -58,7 +57,8 @@ public class LanguageSpecArtifactsTests
         var leanGuarded = LanguageSpecCorpus.AllCases().Count(c => c.IsLeanRepresentable);
         var artifact = GenerateArtifact();
         var guardLines = artifact.Split('\n').Count(line => line.StartsWith("#guard ", StringComparison.Ordinal));
-        Assert.Equal(leanGuarded + 1, guardLines);
+        var payloadGuards = LanguageSpecCorpus.AllCases().Count(c => c.IsLeanRepresentable && c.ExpectedErrorPayload is not null);
+        Assert.Equal(leanGuarded + payloadGuards + DifferentialErrorContracts.All.Count + 1, guardLines);
     }
 
     internal static string GenerateArtifact()
@@ -106,6 +106,7 @@ public class LanguageSpecArtifactsTests
         builder.Append('\n');
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
+        LeanObsTemplate.AppendProjectionContracts(builder);
 
         var emittedIds = new List<string>();
         foreach (var specCase in leanGuarded)
@@ -115,6 +116,7 @@ public class LanguageSpecArtifactsTests
             builder.Append($"-- {specCase.Id} [{specCase.Category}]: {sourceComment}\n");
             builder.Append($"def case_{leanName} : Expr :=\n  {specCase.LeanProgram}\n");
             builder.Append($"#guard obs case_{leanName} == {LeanAstEncoder.QuoteString(specCase.CanonicalNeutral ?? "")}\n\n");
+            LeanObsTemplate.AppendErrorGuard(builder, $"case_{leanName}", specCase.ExpectedErrorPayload);
             emittedIds.Add(specCase.Id);
         }
 

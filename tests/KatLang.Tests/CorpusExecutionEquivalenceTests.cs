@@ -77,8 +77,12 @@ public class CorpusExecutionEquivalenceTests
         var mismatches = new List<string>();
         foreach (var (id, program) in Corpus)
         {
-            var optimized = Neutral(Evaluator.RunCountedObserved(program, enableOptimizations: true).Result);
-            var generic = Neutral(Evaluator.RunCountedObserved(program, enableOptimizations: false).Result);
+            var optimizedResult = Evaluator.RunCountedObserved(program, enableOptimizations: true).Result;
+            var genericResult = Evaluator.RunCountedObserved(program, enableOptimizations: false).Result;
+            var optimized = Neutral(optimizedResult);
+            var generic = Neutral(genericResult);
+            if (optimizedResult.IsError && genericResult.IsError)
+                DifferentialErrors.RequireAgreement(id, genericResult.Error, optimizedResult.Error);
             if (optimized != generic)
                 mismatches.Add($"{id}: optimized={optimized} generic={generic}");
         }
