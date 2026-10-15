@@ -5,7 +5,7 @@ open KatLang KatLang.BinderTrace KatLang.FamilyDispatch
 /-!
 # Executable guards for the R3 binder trace (finite evidence, never theorems)
 
-These `#guard`s run THE production binder — the generic core at the production capabilities,
+These `#guard`s run THE production binder — the generic core using the public channels
 `⟨demandNeed, projectNeedCallable⟩` with `allocateNeed` — in the trace interpretation, over real
 need heaps (ready cells, suspended expressions that fail, completed cells), and over a few
 stateful synthetic channel records where a production heap cannot produce the situation (a
@@ -13,12 +13,15 @@ representative whose re-demand fails, a failing CALLABLE projection, two distinc
 identities with equal values, an effect counter). They pin the concrete event schedules the
 theorems of `KatLangArityLaws.BinderTrace` and `KatLangArityLaws.FamilyDispatch` characterize,
 including allocation events and their addresses. A guard is a finite witness: the universal
-statements are the theorems.
+statements are the theorems. Since R5, public `demandNeed` is a total one-step specialization
+of `NeedDemand.step`; evaluator binding sites pass the partial `demandNeedRecursive` driver,
+which invokes the same shell. Their recursive connection remains source/guard evidence.
 -/
 
 namespace KatLang.BinderGuards
 
-/-- The production channels every binding site passes. -/
+/-- Public demand/projection channels used by these guards; evaluator binding sites use
+    `demandNeedRecursive` as their VALUE channel. -/
 def productionChannels : NeedChannels := ⟨demandNeed, projectNeedCallable⟩
 
 /-- The production capabilities of the binder core. -/

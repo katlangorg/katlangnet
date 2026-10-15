@@ -1,6 +1,26 @@
 # Semantic Alignment Manifest.
 
-R3 (2026-10-15): Lean restructuring plus proofs; no observable semantic change in Lean
+R5 (2026-10-15): Lean control extraction, with no language or C# evaluator change.
+`NeedSupply.slot` / `form` are the one total `EvalM` supply assembler, injecting only
+computed-spread evaluation; `addresses` projects its sourced supply. `NeedDemand.materialize`,
+`suspendedValue` and `step` are total collector sequencing and completion control, with explicit
+expression and recursive VALUE callbacks. The public `formNeedSupplySourced`, `formNeedSupply`
+and `demandNeed` specialize them by definition after the mutual partial block. Inside that
+block, formation installs `evalCounted` directly, and `demandNeedRecursive` is a thin partial
+driver invoking the same completion shell. This driver remains opaque to the kernel.
+`KatLangArityLaws/NeedControl.lean` proves address/source/order/failure contracts over these
+actual helpers, public specialization, R3 binder composition and conditional heap invariants;
+`NeedControlGuards.lean` pins executable and negative witnesses. Completion updates the
+post-callback cell, preserving its CALLABLE memo. Publication requires that address still be
+present; nondecreasing size alone does not preserve suspension identity. Local allocation and
+conditional traversal theorems do not prove whole-run heap refinement or arbitrary dependency
+acyclicity. Migration evidence separates kernel equality to mechanically lifted old bodies,
+source-exact callback substitution, and bounded complete outcome/state comparisons
+(`artifacts/validation/r5-implementation/`). Recursive expression evaluation remains partial;
+C# agreement rests on tests. R6, R7 and Q-66 remain open. Full V3 is required.
+
+Historical R3 closeout (2026-10-15; the R5 entry above supersedes its supply/demand proof
+boundary and internal channel names): Lean restructuring plus proofs; no observable semantic change in Lean
 or C# for any program, and no executable C# change. The Model-C binder and the clause-family
 dispatcher are now ONE generic core (`NeedBinder`, `lean/KatLang.lean`) over a monad
 with `Error` exceptions and `NeedCapabilities` (VALUE demand, CALLABLE projection, cell

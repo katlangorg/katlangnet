@@ -22,10 +22,12 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   and the spread-row view `countedTopLevelValues`; the repeated-spread helpers
   `reopenSpreadItems` / `reopenSpreadLayers` / `spreadSupplyResult`; the selection core
   `selectPosition` / `selectWith` / `selectionResult`; `prepareLexicalDotCallArgs`; the Model-C
+  R5 supply/demand control `NeedSupply` / `NeedDemand` and their total public entry points
+  (proved in `KatLangArityLaws/NeedControl.lean`); the
   binder `bindNeedPatterns`, its generic core `NeedBinder` and the clause activation
   `needActivateBranch`, and its allocation `needLevelSources`). It says nothing about the
-  `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeed`,
-  `formNeedSupply`, `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
+  `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeedRecursive`,
+  `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
   a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
   guards and the Lean/C# differential corpora, never a kernel fact;
 * a SPECIFICATION theorem — about a Lean specification of a C#-only front-end decision that
@@ -181,10 +183,13 @@ theorem builtinCollectionItems_atom (n : Int) :
 production Model-C binder allocates ONE suspended collector cell over the collector's slice of
 supply cells
 (`lone_collector_collects_every_supplied_cell`, `need_level_sources_around_the_collector`), and
-`demandNeed`'s `.collector` arm materializes that cell's VALUE as `makeCollectionListResult` of the
-demanded slice values, which IS `collectSegment` at emitted count 1
-(`make_collection_list_result_is_collect_segment`; that `demandNeed` applies it is a fact of its
-`partial` source, pinned by CoreTests.ModelC). Deconstruction and nested structural patterns
+the total `NeedDemand.materialize` helper materializes that cell's VALUE as
+`makeCollectionListResult` of the demanded slice values, which IS `collectSegment` at emitted
+count 1 (`make_collection_list_result_is_collect_segment`). R5 connects the total public
+`demandNeed` collector arm to that helper by kernel theorems (`KatLang.NeedControl.Production.demand_specialization`,
+`collector_specialization` and `collector_success` in `KatLangArityLaws/NeedControl.lean`). The
+internal partial `demandNeedRecursive` driver's use of the same shell remains source/guard
+evidence, pinned by CoreTests.ModelC. Deconstruction and nested structural patterns
 open their one value before allocation. The laws below are the value-level exactness
 properties of that materialization.
 -/
@@ -245,8 +250,10 @@ of a collected list is EXACTLY the collected items. This is the value-level face
 collecting-parameter forwarding (`Forward(*items) = Target(items*)`, FWD-01): read through
 `make_collection_list_result_is_collect_segment`, spreading a materialized collector gives back
 its demanded element values. Production forwarding itself transports the collector's own slice
-CELLS, unforced (the known-slice arm of the `partial` `formNeedSupplySourced`, `spreadCollectorSlice?`; CoreTests.ModelC
-`sliceTransport`), and the target's collector then collects exactly the cells supplied
+CELLS, unforced (the known-slice arm of the total `NeedSupply.slot`, recognized by
+`spreadCollectorSlice?`; `KatLangArityLaws/NeedControl.lean` proves exact reopening and
+public `formNeedSupplySourced` specialization; CoreTests.ModelC `sliceTransport`), and the
+target's collector then collects exactly the cells supplied
 (`lone_collecting_head_allocates_one_collector_over_its_supply`). -/
 theorem spreadItems_collectSegment (xs : List Result) :
     (collectSegment xs).spreadItems = xs := rfl
@@ -342,7 +349,8 @@ theorem argumentless_dot_receiver_is_the_one_argument (receiver : Expr) :
 
 /-- Argument PREPARATION keeps a spread receiver unopened: `R*.F(args)` prepares the bundle of
 the written spread call `F(R*, args)`, the spread slot left for supply formation to open like
-every other spread slot (`formNeedSupply`, `partial`). Surface `R*.F(args)` is lowered to that
+every other spread slot (the total `NeedSupply` core, specialized by `formNeedSupply`).
+Surface `R*.F(args)` is lowered to that
 call by the C# parser, so this concerns host-built trees. -/
 theorem spread_dot_receiver_is_ordinary_spread_argument (operand : Expr) (args : OutputBundle) :
     prepareLexicalDotCallArgs (.sequenceSpread operand) (some args)
@@ -381,8 +389,11 @@ law is value-blind: `lone_collector_collects_every_supplied_cell`,
 dot-receiver laws), with `need_level_sources_around_the_collector` and
 `need_level_sources_without_collector` for every level and length; the collector cell's value is
 `make_collection_list_result_is_collect_segment`. That a written argument forms ONE cell, and
-that a spread slot forms one cell per spread item, is supply formation (`formNeedSupply`,
-`partial`), pinned by CoreTests `ExplicitValueOpening` / `ModelC`. Dot-call and selection add
+that computed spreads allocate Ready cells in opened-item order and known slices transport
+their exact addresses, is proved over the total `NeedSupply` core and public `formNeedSupply`
+specialization in `KatLangArityLaws/NeedControl.lean`. The partial evaluator's installation of
+`evalCounted` remains source/guard evidence, pinned by CoreTests `ExplicitValueOpening` / `ModelC`.
+Dot-call and selection add
 nothing to the collector: a dot receiver is an ordinary leading slot
 (`dot_receiver_is_ordinary_leading_argument`) and a selection's result is the selected value
 itself (`select_is_a_value_boundary`). The one law of this section is the spread VIEW that supply
@@ -1520,8 +1531,9 @@ theorem spread_of_selected_list_opens_one_boundary (xs ys : List Result) :
 `receiver[s1, …, sn]` replaces the retired colon form. PARENTHESES INVOKE A
 COMPUTATION; POSTFIX BRACKETS SELECT FROM A VALUE; selection never changes how its
 receiver obtains that value. The `.index` arm of `evalCounted` demands the receiver
-once, forms the selector supply like a call's (`formNeedSupply`), and instantiates
-the TOTAL core below (`selectWith`) with `demandNeed`; these laws are about that core
+once, forms the selector supply like a call's (`NeedSupply.addresses evalCounted`), and instantiates
+the TOTAL core below (`selectWith`) with `fun cell => Prod.fst <$> demandNeedRecursive cell`;
+these laws are about that core
 and the ONE positional view it shares with `count`, `first` and `last`. The arm
 itself lives in the partial evaluator block: CoreTests `VariadicSelection` pins the
 instantiation (receiver once, spreads during formation, left-to-right demand, first
@@ -1827,8 +1839,9 @@ position of the receiver, the selection core's steps (3) and (4) — `selectWith
 cell, then `selectionResult` — give exactly the value-boundary re-count of the STORED element,
 `reCountValueBoundary (selected, n)` for every count `n` the element carried: the stored value
 itself with `Result.valueCount`, its origin forgotten. The `.index` arm of `evalCounted`
-instantiates `demand` with `demandNeed` over the formed selector supply and demands the receiver
-first; that arm is `partial`, so the instantiation (and that every evaluator selection route uses
+instantiates `demand` with `fun cell => Prod.fst <$> demandNeedRecursive cell` over the selector
+supply formed by `NeedSupply.addresses evalCounted` and demands the receiver first; that arm is
+`partial`, so the instantiation (and that every evaluator selection route uses
 this core) is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
 (Strengthened from a restatement of `reCountValueBoundary_recounts` that never mentioned
 selection, R8/X-13.) -/
@@ -3537,8 +3550,10 @@ theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
 
 -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01) and REPEATED NAMES ARE CONSTRAINTS, NOT MERGES
 -- (Q-05) have NO theorem in this section. The first lives on the slot's need cell — the `.param`
--- arm of `evalCounted` demands it first (`demandNeed`: single flight, sticky failure; `partial`,
--- so a theorem needs a total interpretation of cells, open formalization work) — and is executed
+-- arm of `evalCounted` demands it first through the partial `demandNeedRecursive` driver.
+-- R5 proves completed reuse and qualified publication for the total `NeedDemand.step` shell
+-- and its public `demandNeed` specialization in `KatLangArityLaws/NeedControl.lean`; the
+-- recursive edge and whole-run at-most-once refinement remain open. This behavior is executed
 -- by `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the
 -- production binder's per-occurrence inspection (`bindNeedName`), whose order and verdict are
 -- proved since R3 in `KatLangArityLaws/BinderTrace.lean` (`repeated_name_binding` and the
@@ -3558,9 +3573,10 @@ merely because it was supplied; and a spread slot is supply assembly whose failu
 the call's failure. The laws below pin the metadata (`slotRole`, read by the lifting
 specification), the call-item assembly `collectSequenceCallableCallItems` (which evaluates
 nothing), and the per-item preparation helper `prepareSequenceBuiltinSuffixArgItem`. Supply
-formation (`formNeedSupplySourced`) and the per-slot demand
-(`demandSequenceBuiltinCallItemValue`) live in the `partial` evaluator and are pinned by
-`CoreTests/BuiltinArgumentRoles.lean`. -/
+formation is the total `NeedSupply` core, with public `formNeedSupplySourced` specialization
+proved in `KatLangArityLaws/NeedControl.lean`. Its installation of `evalCounted` at the builtin
+call site and the per-slot demand (`demandSequenceBuiltinCallItemValue`) remain in the `partial`
+evaluator, pinned by `CoreTests/BuiltinArgumentRoles.lean`. -/
 
 /-- The `collection` parameter is a VALUE slot of every collection builtin. -/
 theorem collection_position_is_a_value_slot (metadata : SequenceBuiltinMetadata) :
@@ -4059,7 +4075,7 @@ Since October 2026 the Model-C binder is a TOTAL definition of `KatLang.lean` �
 `bindNeedLevel`, `bindNeedPatterns` and the clause-family dispatcher `selectNeedFamilyBranch`
 — parametrized by the two capabilities of a supplied cell (`NeedChannels`: VALUE demand and
 CALLABLE projection). The evaluator recursion core instantiates every one of them with
-`⟨demandNeed, projectNeedCallable⟩`. Every binder law below that takes a `channels` argument is
+`⟨demandNeedRecursive, projectNeedCallable⟩`. Every binder law below that takes a `channels` argument is
 stated for ALL channels, so it holds of whatever channels a caller passes — in particular of
 that instantiation. The other laws concern the binder's channel-free parts (the allocation
 `needLevelSources` and the cardinality gate `needAcceptsCardinality`), the laws-file helpers
@@ -4067,13 +4083,17 @@ that instantiation. The other laws concern the binder's channel-free parts (the 
 paper algebra's correspondence with the allocation, or `makeCollectionListResult`.
 
 What they do NOT establish:
-* that the evaluator calls these definitions with `⟨demandNeed, projectNeedCallable⟩` — the
+* that the evaluator calls these definitions with `⟨demandNeedRecursive, projectNeedCallable⟩` — the
   call sites are bodies of `partial` defs, so that link is a fact of the source (and of every
   guard that runs a call), not of the kernel;
-* anything about `demandNeed` itself (still `partial`: the collector cell's VALUE is
-  `makeCollectionListResult` of its slice, left to right, by its definition and the
-  `CoreTests.ModelC` guards — not by a theorem), or supply formation (`formNeedSupply`,
-  `partial`), which runs BEFORE the top-level gate;
+* the behavior of the opaque recursive driver `demandNeedRecursive` or `evalCounted`.
+  Since R5, supply formation BEFORE the top-level gate and collector/completion control
+  are total (`NeedSupply`, `NeedDemand`). Their public `formNeedSupplySourced`,
+  `formNeedSupply` and `demandNeed` specializations, ordered exact-list materialization,
+  failure retention and qualified completion publication are proved in
+  `KatLangArityLaws/NeedControl.lean`. Public `demandNeed` is one unfolding of the same
+  `NeedDemand.step` used by the partial driver; this does not prove the recursive edge
+  or whole-run heap refinement;
 * in THIS section, the order of the VALUE demands and CALLABLE projections made by inspecting
   occurrences (repeated names, literals, structural patterns), or the nested levels' gates
   (they run after the container's VALUE demand and after its item cells are allocated;
@@ -4578,7 +4598,7 @@ theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : 
 
 /-- Corollary at the entry point the evaluator calls: a head of plain binders binding no name
     twice gives the same outcome AND the same run state under any two channel pairs — so the
-    production instantiation `⟨demandNeed, projectNeedCallable⟩` demands and projects
+    production instantiation `⟨demandNeedRecursive, projectNeedCallable⟩` demands and projects
     nothing while binding it. -/
 theorem plain_head_binding_is_channel_independent (first second : NeedChannels)
     (ps : List NeedPattern) (names : List Ident)
@@ -4715,11 +4735,12 @@ theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.
     have : ¬ (ps.filter CoreArityAlgebra.Pat.isCollecting).length ≤ 1 := by omega
     simp [this]
 
-/-- `makeCollectionListResult` is `collectSegment` at emitted count 1. It is the list
-    constructor `demandNeed`'s `.collector` arm applies to its demanded slice values (a source
-    fact: `demandNeed` is `partial`; pinned by CoreTests.ModelC), and several collection builtins
-    return it too. So the `collectSegment` laws of this file describe a production collector
-    cell's value only through that source fact. -/
+/-- `makeCollectionListResult` is `collectSegment` at emitted count 1. R5 connects the total
+    public `demandNeed` collector arm to `NeedDemand.materialize` by the kernel theorem
+    `KatLang.NeedControl.Production.collector_specialization`; that helper constructs exactly
+    this list of demanded slice values (`KatLang.NeedControl.Production.collector_success`).
+    The partial `demandNeedRecursive` driver's use of the same shell remains source/guard
+    evidence. Several collection builtins return this constructor too. -/
 theorem make_collection_list_result_is_collect_segment (items : List Result) :
     makeCollectionListResult items = (collectSegment items, 1) := rfl
 
@@ -4729,10 +4750,12 @@ The production Model-C binder binds supply CELLS, so its collector law is value-
 cell holds — a sequence, a list, `()`, `[]`, a scalar, a failing computation — cannot change how
 it is allocated or bound. These laws state the binder half of the exact collector law and of the
 dot-receiver laws (§ Exact collector laws, § Dot-receiver bridge laws) for every channel pair.
-They presuppose supply formation (`formNeedSupply`,
-`partial`): that a written non-spread argument — a dot receiver included — forms ONE cell, and a
-spread slot one cell per spread item, is a source fact pinned by CoreTests `ModelC` /
-`ExplicitValueOpening` / `DotReceiverSegments`, not a theorem.
+They presuppose supply formation: the total `NeedSupply` core forms ONE cell per written
+non-spread argument — a dot receiver included — and transports known-slice addresses or
+allocates Ready cells for computed-spread items. R5 proves these formation contracts and the
+public `formNeedSupply` specialization in `KatLangArityLaws/NeedControl.lean`. The partial
+evaluator's use of that core at `evalCounted` remains source/guard evidence, pinned by CoreTests
+`ModelC` / `ExplicitValueOpening` / `DotReceiverSegments`.
 -/
 
 /-- A LONE COLLECTOR COLLECTS EVERY SUPPLIED CELL, in order, whatever the cells hold: a lone
@@ -4756,7 +4779,9 @@ theorem collector_before_a_fixed_pattern_takes_all_but_the_last_cell {α : Type}
 /-- A lone collecting head BINDS by allocating ONE fresh suspended collector cell over exactly the
 supplied cells, for every channel pair and in either mode: nothing is demanded or projected, and
 no cell is reopened. With `make_collection_list_result_is_collect_segment`, the collector's value
-(once `demandNeed` materializes it, a source fact) is the exact list of the cells' values — the
+(through the total `NeedDemand.materialize` helper, with public `demandNeed` specialization
+and collector success proved in `KatLangArityLaws/NeedControl.lean`) is the exact list of the
+cells' values. The partial recursive driver's wiring remains source/guard evidence. This is the
 production face of the exact collector law and of collecting-parameter forwarding's target
 (`Target(*ys)` re-collects exactly the cells `xs*` transported). -/
 theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels : NeedChannels)

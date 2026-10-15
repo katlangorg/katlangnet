@@ -29,7 +29,10 @@ core's `EvalM` runs, not trace theorems; they read the schedule functions of `Bi
   plain position AND an inspecting one is inspected. The freshness hypothesis is a schedule fact;
   with the production allocator every allocation returns the then-current heap size, so it holds
   whenever the cells lie below the initial heap size and the channels never shrink the heap —
-  true of `demandNeed`'s append-only heap by its source (`demandNeed` is `partial`), not a theorem.
+  supported for the internal partial `demandNeedRecursive` channel by source inspection, not
+  a whole-run theorem. R5 proves local/conditional heap laws and total public `demandNeed`
+  specialization in `KatLangArityLaws/NeedControl.lean`; its callbacks still need the stated
+  heap-preservation assumptions.
 * (c) MODE CORRESPONDENCE, every head — a clause attempt (`family = true`) and an ordinary
   binding (`family = false`) perform the same invocations in the same order and reach the same
   final state; their outcomes differ ONLY where the ordinary binding raises one of four
@@ -324,7 +327,7 @@ theorem results_depend_only_on_invoked_cells (V C : Nat → Prop) (k₁ k₂ : N
     exact sources_substitution V C k₁ k₂ hk ps (needLevelSources ps cells) (needRepeatedNames ps) [] family s havoid
 
 /-- The production instance: two pairs of production channels over the one allocator
-    `allocateNeed` — the evaluator's `⟨demandNeed, projectNeedCallable⟩` against any other pair —
+    `allocateNeed` — the evaluator's `⟨demandNeedRecursive, projectNeedCallable⟩` against any other pair —
     bind every head the same way when they agree wherever the run invokes them. -/
 theorem production_results_depend_only_on_invoked_cells (V C : Nat → Prop) (c₁ c₂ : NeedChannels)
     (hv : ∀ a, ¬ V a → c₁.value a = c₂.value a) (hc : ∀ a, ¬ C a → c₁.callable a = c₂.callable a)

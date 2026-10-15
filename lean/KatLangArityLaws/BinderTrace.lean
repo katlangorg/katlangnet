@@ -554,7 +554,7 @@ theorem trace_erasure (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cell
   simp [eraseTrace, traced_patterns k ps cells family s tr]
 
 /-- TRACE ERASURE AT THE PRODUCTION BINDER: for EVERY pair of production channels — in
-    particular the evaluator's `⟨demandNeed, projectNeedCallable⟩` — the traced core over the
+    particular the evaluator's `⟨demandNeedRecursive, projectNeedCallable⟩` — the traced core over the
     production capabilities erases to exactly `bindNeedPatterns`, as a complete `EvalM` run. -/
 theorem trace_erasure_production (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
     (family : Bool) (s : EvalState) (tr : List NeedEvent) :

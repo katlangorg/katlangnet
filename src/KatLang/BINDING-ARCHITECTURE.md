@@ -1,5 +1,15 @@
 # Binding architecture ownership
 
+Lean R5 (2026-10-15) extracts total supply and collector-demand control without changing
+this C# implementation. `NeedSupply` is the one concrete `EvalM` formation core, with only
+computed-spread evaluation injected. `NeedDemand` sequences collector VALUE demands and
+publishes completion into the current cell. The total public entry points specialize these
+helpers; recursive evaluator callers install the same helpers through the thin partial
+`demandNeedRecursive` driver. `KatLangArityLaws/NeedControl.lean` proves formation provenance,
+ordered exact-list materialization, failure-state retention, memo publication and qualified
+heap invariants. The driver and expression evaluator remain opaque; whole-run heap refinement,
+R6 and R7 remain open. These are Lean theorems; C# behavior is supported by tests.
+
 ## Canonical runtime
 
 Model-C acquisition is centralized in `Evaluator.Needs.cs` and `Evaluation/NeedCell.cs`. Ordinary calls, conditional families, callbacks and generic loop steps share suspended or Ready cells and the inspecting `BindAcceptedNeedPatterns` core after the caller or `BindNeedPatterns` validates cardinality. Category adapters select the demands they execute; they do not implement separate memoization or argument-eagerness policies. See `docs/design/language-rules/call-by-need.md` for the full frozen laws.

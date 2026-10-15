@@ -461,8 +461,12 @@ the evaluator calls — not about the binder's result. The algebra models no
 repeated-name constraint (a `Pat` list may repeat a name, and `bindPats` then
 binds every occurrence positionally, while the production binder compares the
 occurrences, NEED-04, so on such a head `bindPats` success says nothing about
-production success), no structural or literal pattern, and no `demandNeed`. That `demandNeed`'s
-collector arm materializes through `makeCollectionListResult` is a source fact;
+production success), no structural or literal pattern, and no VALUE demand. R5 connects
+the total public `demandNeed` collector arm to `NeedDemand.materialize` by
+`KatLang.NeedControl.Production.demand_specialization` and `collector_specialization`, and
+proves its exact list construction with `collector_success` in
+`KatLangArityLaws/NeedControl.lean`. The partial `demandNeedRecursive` driver's wiring
+remains source/guard evidence;
 `makeCollectionListResult = (collectSegment ·, 1)` is a theorem
 (`make_collection_list_result_is_collect_segment`); `collect` corresponds to `collectSegment` by
 construction and executable guards. `bindDeconstruct`'s

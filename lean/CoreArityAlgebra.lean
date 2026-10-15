@@ -79,10 +79,12 @@ Pat / bindArgs / bindPats       the Model-C binder's ALLOCATION needLevelSources
                                 KatLangArityLaws
                                 algebra_binder_is_the_production_allocation
                                 (with two collectors production misallocates,
-                                two_collectors_misallocate; NOT proved: supply
-                                formation, which is partial, repeated-name
-                                constraints, structural/literal patterns,
-                                demandNeed); bindArgs binds
+                                two_collectors_misallocate; R5 proves total
+                                supply/collector control separately in
+                                KatLangArityLaws/NeedControl.lean; NOT modeled
+                                here: repeated-name constraints,
+                                structural/literal patterns or VALUE demand);
+                                bindArgs binds
                                 that supply as it is
 bindDeconstruct                 the unpacking arm of bindNeedOne (spreadItems of
                                 the demanded value, then bindNeedLevel) —

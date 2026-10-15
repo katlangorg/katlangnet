@@ -1760,7 +1760,7 @@ def lookupAssoc {A} (k : Ident) : Assoc Ident A -> Option A
 abbrev ValEnv := Assoc Ident Result
 
 /- A parameter's CALLABLE identity is its supplied need cell's projection
-   (`projectNeedCallable`), and its VALUE is that cell's one demand (`demandNeed`):
+   (`projectNeedCallable`), and its VALUE is that cell's one demand (`demandNeedRecursive`):
    since Model C (October 2026) there is no separate algorithm-channel tier and no
    counted callback-parameter tier — they were retired on 2026-10-13, with their C#
    counterparts, after a dependency analysis showed that no production binding site
@@ -3427,7 +3427,8 @@ def selectPosition (receiver : Result) (selector : Result) : EvalM Result := do
     selector is demanded (`selectWith_stops_at_first_failure`). Repeated selectors
     repeat stored values, never a computation; the receiver is a value already in hand.
     TOTAL and parametrized by the demand, so its laws are theorems; the `.index` arm of
-    `evalCounted` instantiates it with `demandNeed` over the formed supply.
+    `evalCounted` instantiates it with `fun cell => Prod.fst <$> demandNeedRecursive cell`
+    over the supply formed by `NeedSupply.addresses evalCounted`.
     C#: the Index case of `Evaluator.EvalExpressionSpineCounted` and its async twin. -/
 def selectWith {α : Type} (demand : α -> EvalM Result) (receiver : Result) :
     List α -> EvalM (List Result)
@@ -3481,7 +3482,8 @@ def makeCollectionListResult (items : List Result) : CountedResult :=
     binds exactly the items allocated to it and never inspects their values —
     since Model C (2026-10-02) as a lazy collector cell over the allocated supply
     cells (`bindNeedLevel`), whose VALUE demand materializes exactly this list
-    through `makeCollectionListResult` (`demandNeed`); this helper remains the
+    through `makeCollectionListResult` (`demandNeedRecursive` through the total
+    `NeedDemand.materialize` helper); this helper remains the
     value-level definition the laws state. A collector opens nothing: one written
     argument is one item whatever its value, so `Coll((1, 2))` is
     `[(1, 2)]`, `Coll([1, 2])` is `[[1, 2]]`, `Coll(())` is `[()]`, and
@@ -3666,7 +3668,7 @@ structure BoundSequenceBuiltinArguments where
     CELL (`need?`): the builtin arm of `evalResolvedCallCounted` passes the call's
     supply (`formNeedSupplySourced`, explicit spreads already opened), a builtin loop
     step its state cells and a builtin callback its element cells; a VALUE slot
-    demands the cell (`demandNeed`) and an invoking slot projects it
+    demands the cell (`demandNeedRecursive`) and an invoking slot projects it
     (`projectNeedCallable`), while `algorithm` is an inert placeholder. An argument
     WITHOUT a cell is the direct-invocation seam that hand-built fixtures use
     (`CoreTests/ParityGuards.lean`, the slot-role laws): a VALUE slot then demands
@@ -4090,7 +4092,7 @@ end CtxMsg
     outcome is established by the first VALUE demand of its cell, which evaluates
     the written argument — through this law, keyed by the argument's own shape —
     and every read reuses that outcome (AT-MOST-ONCE ARGUMENT VALUE EVALUATION,
-    `demandNeed`).
+    `demandNeedRecursive` through `NeedDemand.step`).
 
     ELIGIBILITY IS ARITY, NOT PARAMETER-LIST EMPTINESS (September 2026): a
     callable may satisfy a zero-argument value demand exactly when an ordinary
@@ -5588,14 +5590,17 @@ CALLABLE projection, passed in as `NeedChannels` (with cell allocation, the gene
 `NeedCapabilities`; see ONE GENERIC CORE below). Their own recursion is
 structural over the written patterns (never over runtime values), so they live here,
 above the evaluator recursion core, and the kernel checks their termination; the evaluator
-recursion core instantiates them with `⟨demandNeed, projectNeedCallable⟩` at every binding site
+recursion core instantiates them with `⟨demandNeedRecursive, projectNeedCallable⟩` at every binding site
 (`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepSlots` — twice —,
 `evalZeroArgumentDemandOutputCounted`). Every theorem stated for ALL channels
 (`KatLangArityLaws.lean` § Model-C production binder laws) therefore holds for the
 definitions the evaluator calls (that the `partial` call sites pass these channels is a fact
-of their source, not of the kernel). Until October 2026 these functions were `partial`
-members of the evaluator block — only because they call `demandNeed` — so no theorem could
-say anything about their behaviour (a `partial def` is an opaque constant). They still call
+of their source, not of the kernel). The total public `demandNeed` is one unfolding of the
+same `NeedDemand.step` used by the thin partial `demandNeedRecursive` driver; its specialization
+is kernel-checked in `KatLangArityLaws/NeedControl.lean`, while the recursive edge stays opaque.
+Until October 2026 these binder functions were `partial` members of the evaluator block
+because they participated in recursive VALUE demand, so no theorem could say anything about
+their behaviour (a `partial def` is an opaque constant). They still call
 a few helpers that call `partial` definitions, so their
 outcomes stay opaque to proofs: `matchPattern` (literals, via `matchPatternInto`),
 `sameRepeatedCallableIdentity` (via `sameDeclaringScope`/`compatibleActivations`),
@@ -5636,7 +5641,8 @@ structure NeedCapabilities (m : Type → Type) where
   allocate : NeedSuspension → m Nat
 
 /-- The two capabilities the binder may use on a supplied cell: its VALUE demand
-    (`demandNeed`) and its CALLABLE projection (`projectNeedCallable`, which never forces
+    (the evaluator passes `demandNeedRecursive`; public guards may pass `demandNeed`)
+    and its CALLABLE projection (`projectNeedCallable`, which never forces
     VALUE, NEED-06). Plain binding uses neither (NEED-01, NEED-03). -/
 structure NeedChannels where
   value : Nat -> EvalM CountedResult
@@ -5900,54 +5906,73 @@ def selectNeedFamilyBranch (channels : NeedChannels) (callee : Algorithm) (cells
   NeedBinder.selectFamily channels.capabilities callee cells calleeName
     (needActivateBranch callee ctx env)
 
+/- Total Model-C supply formation (R5/A2). Only evaluation of a computed spread
+    crosses the partial evaluator boundary. Ordinary acquisition and known-slice
+    reopening have no VALUE-demand callback. -/
+namespace NeedSupply
+abbrev Sourced := Nat × Option Expr
+def slot (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (ctx : EvalCtx) (env : ValEnv) (e : Expr) : EvalM (List Sourced) :=
+  match e with
+  | .sequenceSpread operand => do
+    match ← spreadCollectorSlice? operand ctx with
+    | some slice => slice.mapM (fun a => do pure (a, ← needWrittenSource? a))
+    | none => do
+      let opened ← ev e ctx env
+      (countedTopLevelValues opened).mapM (fun v => do
+        pure (← readyNeed (v, Result.valueCount v), none))
+  | _ => do pure [(← supplyNeed e ctx env, some e)]
+
+def form (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (ctx : EvalCtx) (env : ValEnv) : OutputBundle → EvalM (List Sourced)
+  | [] => pure []
+  | e :: rest => do
+    let head ← slot ev ctx env e
+    let tail ← form ev ctx env rest
+    pure (head ++ tail)
+
+/-- The address-only route projects THE sourced formation, in order. -/
+def addresses (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (ctx : EvalCtx) (env : ValEnv) (args : OutputBundle) : EvalM (List Nat) := do
+  pure ((← form ev ctx env args).map Prod.fst)
+end NeedSupply
+
+/- Total collector VALUE sequencing and completion control (R5/B2).
+    Recursive expression evaluation and element VALUE demand remain explicit callbacks;
+    this is not a second evaluator or a CALLABLE projection operation. -/
+namespace NeedDemand
+def materialize
+    (demand : Nat → EvalM CountedResult) (slice : List Nat) : EvalM CountedResult := do
+  let values ← slice.mapM (fun a => Prod.fst <$> demand a)
+  pure (makeCollectionListResult values)
+
+def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (demand : Nat → EvalM CountedResult) : NeedSuspension → EvalM CountedResult
+  | .ready value => pure value
+  | .expression e ctx env => reCountValueBoundary <$> ev e ctx env
+  | .collector slice => materialize demand slice
+
+def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.state with
+  | .completed outcome => return ← outcome
+  | .evaluating => throw Error.demandCycle
+  | .suspended =>
+    modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with state := .evaluating }) }
+    let outcome ← evalAttempt (suspendedValue ev demand cell.suspension)
+    modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with state := .completed outcome }) }
+    return ← outcome
+
+end NeedDemand
+
 mutual
 
-  /-- First VALUE demand evaluates once and stores success or ordinary failure.
-      Re-entering an evaluating cell is a language error, independent of stack depth. -/
-  partial def demandNeed (address : Nat) : EvalM CountedResult := do
-    let some cell := (<- get).needs[address]? | throw (Error.illegalInEval "invalid need address")
-    match cell.state with
-    | .completed outcome => return <- outcome
-    | .evaluating => throw Error.demandCycle
-    | .suspended =>
-      modify fun state => { state with needs := (state.needs.modify address (fun current => { current with state := .evaluating })) }
-      let outcome <- evalAttempt <| match cell.suspension with
-        | .ready value => pure value
-        | .expression source caller values => reCountValueBoundary <$> evalCounted source caller values
-        | .collector slice => do
-          let values <- slice.mapM (fun element => Prod.fst <$> demandNeed element)
-          pure (makeCollectionListResult values)
-      modify fun state => { state with needs := (state.needs.modify address (fun current => { current with state := .completed outcome })) }
-      return <- outcome
-
-  /-- Supply formation only opens spreads. Known collecting slices transport addresses.
-      THE ONE FORMATION: each formed cell is paired with its WRITTEN source — the slot as
-      written; for a transported collector slice, each cell's own original source
-      (`needWrittenSource?`); none for a spread's ready items. A builtin's VALUE slot reads
-      it for its rejection report (`demandSequenceBuiltinCallItemValue`,
-      `sequenceBuiltinValueDemandErrorWith?`); every other call projects the cells alone
-      (`formNeedSupply`). C#: `FormNeedSupply` with its `sources`. -/
-  partial def formNeedSupplySourced (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-      : EvalM (List (Nat × Option Expr)) := do
-    let rec go : List Expr -> EvalM (List (Nat × Option Expr))
-      | [] => pure []
-      | source :: rest => do
-        let head <- match source with
-          | .sequenceSpread operand => do
-            match <- spreadCollectorSlice? operand ctx with
-            | some slice => slice.mapM (fun element => do pure (element, <- needWrittenSource? element))
-            | none => do
-              let opened <- evalCounted source ctx env
-              (countedTopLevelValues opened).mapM (fun value => do
-                pure (<- readyNeed (value, Result.valueCount value), none))
-          | _ => do pure [(<- supplyNeed source ctx env, some source)]
-        let tail <- go rest
-        pure (head ++ tail)
-    go args
-
-  /-- The supply's cells (`formNeedSupplySourced` without the written sources). -/
-  partial def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Nat) := do
-    pure ((<- formNeedSupplySourced args ctx env).map Prod.fst)
+  /-- The recursive VALUE edge installs the evaluator callbacks in the ONE total
+      demand shell. Its body is a source-level connection because Lean keeps a
+      partial constant opaque; the public entry point below is total. -/
+  partial def demandNeedRecursive (address : Nat) : EvalM CountedResult :=
+    NeedDemand.step evalCounted demandNeedRecursive address
 
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
@@ -5956,7 +5981,7 @@ mutual
   partial def evalNeedUserSupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
-    let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ patterns cells | throw Error.badArity
+    let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩ patterns cells | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw Error.missingOutput
     let next <- needBindingContext ctx bindings
     let result <- evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
@@ -5967,7 +5992,7 @@ mutual
       callback invocation alike (HO-03, PAT-11). C#: `EvalNeedFamilySupply`. -/
   partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
-    let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeed, projectNeedCallable⟩ callee cells ctx env calleeName
+    let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeedRecursive, projectNeedCallable⟩ callee cells ctx env calleeName
     let result <- evalAlgOutputCounted body next values
     pure (reCountValueBoundary result)
 
@@ -6011,13 +6036,13 @@ mutual
           pure (loopStepBuiltinRows out)
     | .conditional _ _ _ _ =>
         withCtx s!"while evaluating call to {stepName}" do
-          let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeed, projectNeedCallable⟩ step cells ctx env stepName
+          let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeedRecursive, projectNeedCallable⟩ step cells ctx env stepName
           evalAlgOutputSlots body next values
     | .alias _ _ _ _ _ => do
         let target <- resolveAliasTarget step ctx
         runNeedStepSlots target ctx env cells stepName
     | .mk _ _ _ _ _ _ => do
-        let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
+        let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩
             ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
@@ -6260,7 +6285,7 @@ mutual
       if (Algorithm.parameterPatterns a).isEmpty then
         evalAlgOutputCounted a ctx env
       else do
-        let some bindings <- bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
+        let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩
             ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) []
           | throw Error.badArity
         let newCtx <- needBindingContext ctx bindings
@@ -6274,7 +6299,7 @@ mutual
     pure counted.fst
 
   /-- Demand a builtin argument slot for its VALUE. A supplied cell is its one VALUE
-      demand (`demandNeed`) — every argument the evaluator builds. An argument WITHOUT
+      demand (`demandNeedRecursive`) — every argument the evaluator builds. An argument WITHOUT
       a cell (the hand-built fixture seam) is judged by the ONE zero-argument
       value-demand law (`zeroArgumentDemandError?`) from its algorithm's effective
       signature BEFORE any body is entered — a selected `if` branch, a loop's initial
@@ -6287,7 +6312,7 @@ mutual
       it. C#: `EvalResolvedArgumentCounted`. -/
   partial def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    if let some address := arg.need? then return <- demandNeed address
+    if let some address := arg.need? then return <- demandNeedRecursive address
     match zeroArgumentDemandError? arg.source? arg.algorithm with
     | some err => .error err
     | none => evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
@@ -6465,7 +6490,7 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem := do
     if let some address := item.need? then
       if item.value?.isSome || item.error?.isSome then return item
-      match <- evalAttempt (demandNeed address) with
+      match <- evalAttempt (demandNeedRecursive address) with
       | .ok value => return { item with value? := some value.fst }
       | .error err =>
           match item.source? with
@@ -6781,7 +6806,7 @@ mutual
               if cont then loop (<- nextSlots.mapM (fun value => readyNeed (value, Result.valueCount value)))
               else pure cells
             let finalCells <- loop initialCells
-            let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeed address)
+            let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeedRecursive address)
             pure (loopResultCounted finalSlots)
 
         | .repeatBuiltin, step :: countAlg :: initAlgs => do
@@ -6802,7 +6827,7 @@ mutual
                 let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
                 repeatLoop (remaining - 1) next
               let finalCells <- repeatLoop n initialCells
-              let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeed address)
+              let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeedRecursive address)
               pure (loopResultCounted finalSlots)
 
         | .atomsBuiltin, [a] => do
@@ -6928,7 +6953,7 @@ mutual
   partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
-    let cells <- formNeedSupply args ctx env
+    let cells <- NeedSupply.addresses evalCounted ctx env args
     evalNeedUserSupply callee cells ctx env
 
   /-- Counted conditional call evaluation — the CANONICAL conditional-call
@@ -6958,7 +6983,7 @@ mutual
   partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
-    let cells <- formNeedSupply args ctx env
+    let cells <- NeedSupply.addresses evalCounted ctx env args
     evalNeedFamilySupply callee cells ctx env calleeName
 
   /-- Dispatch an already-resolved callee with plain Result output.
@@ -6982,7 +7007,7 @@ mutual
     | .builtin b => do
       -- A builtin receives the ordinary supply cells, each with its WRITTEN source (C#:
       -- `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`).
-      let cells <- formNeedSupplySourced args ctx env
+      let cells <- NeedSupply.form evalCounted ctx env args
       let supplied := cells.map fun (address, source?) =>
         ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
       applyBuiltinCountedResolved b supplied ctx env
@@ -7057,7 +7082,7 @@ mutual
     match argsOpt with
     | none => pure ()
     | some args =>
-      let items <- formNeedSupply args ctx env
+      let items <- NeedSupply.addresses evalCounted ctx env args
       if items.length = 0 then pure ()
       else .error (Error.arityMismatch 0 items.length)
 
@@ -7533,7 +7558,7 @@ mutual
         -- parameter is read through its need cell (its first demand evaluates the
         -- supplied computation once; every later read reuses the completed outcome).
         if let some address := lookupAssoc x ctx.needEnv then
-          return <- demandNeed address
+          return <- demandNeedRecursive address
         match env.lookup x with
         | some v => pure (v, Result.valueCount v)
         | none => .error (Error.unknownName x)
@@ -7580,10 +7605,10 @@ mutual
         let value <- eval receiver ctx env
         -- (2) The selector supply is formed exactly like a call's: explicit
         -- spreads run during formation, ordinary selectors stay suspended cells.
-        let cells <- formNeedSupply selectors ctx env
+        let cells <- NeedSupply.addresses evalCounted ctx env selectors
         -- (3) Each supplied selector is demanded, validated and selected left to
         -- right; the first failure ends the selection.
-        let selected <- selectWith (fun cell => Prod.fst <$> demandNeed cell) value cells
+        let selected <- selectWith (fun cell => Prod.fst <$> demandNeedRecursive cell) value cells
         -- (4) SELECTION IS A VALUE BOUNDARY: the selected values are captured by
         -- ordinary normalization of the result grouping and re-counted.
         -- C#: the Index case of `EvalExpressionSpineCounted`.
@@ -7669,6 +7694,22 @@ mutual
     pure out.fst
 
 end
+
+/-- First VALUE demand through the total completion shell. Recursive expression and
+    element evaluation still cross the opaque partial evaluator boundary. -/
+def demandNeed (address : Nat) : EvalM CountedResult :=
+  NeedDemand.step evalCounted demandNeedRecursive address
+
+/-- THE sourced supply: ordinary slots retain the current written argument, known
+    collector slices retain each transported cell's source, computed spreads none.
+    The partial callers above install this same total core at evalCounted. -/
+def formNeedSupplySourced (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
+    : EvalM (List (Nat × Option Expr)) :=
+  NeedSupply.form evalCounted ctx env args
+
+/-- The supply's cells, projected from THE sourced supply without another assembler. -/
+def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Nat) := do
+  pure ((← formNeedSupplySourced args ctx env).map Prod.fst)
 
 --------------------------------------------------------------------------------
 -- Surface syntax support: implicit parameter detection
