@@ -34,8 +34,9 @@ namespace KatLang.Tests;
 /// asserting that every successful binding is observationally the binding of ONE individual
 /// argument. Lean: <c>CoreTests/RepeatedNameConstraints.lean</c> (evaluator programs and the
 /// production binder over formed cells, both argument orders) and <c>CoreTests/ModelC.lean</c>;
-/// repeated-name binding is guard-checked, not proved (no theorem over the Model-C binder's
-/// repeated-name check yet).</para>
+/// R3 proves the Lean binder's per-occurrence repeated-name order and verdict in
+/// <c>KatLangArityLaws/BinderTrace.lean</c>; Q-28's permutation laws (roadmap R4) remain
+/// unproved. These Lean theorems do not prove the C# implementation.</para>
 /// </summary>
 public class RepeatedNameConstraintTests
 {

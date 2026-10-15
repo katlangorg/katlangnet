@@ -100,7 +100,10 @@ Lean CoreTests/ModelC already observes suspended/completed cells, unchanged
 work on repeated successful/failed demands, shared clause attempts, slice
 transport, callable projection and the separate property cache. These are
 bounded one-sided heap witnesses, not shared universal operational traces.
-Host operations remain C#-only. No R3 trace formalization is claimed.
+Host operations remain C#-only. R3 (October 2026) adds kernel theorems for the
+Lean BINDER's boundary event schedule (`KatLangArityLaws/BinderTrace.lean`,
+`FamilyDispatch.lean`, `BinderCorrespondence.lean`): they are binder-level laws over the Lean model, not a
+shared universal operational trace of the evaluator, and say nothing about C#.
 
 The explorer's eleven exclusions remain exactly the existing parse/front-end
 cases; its nineteen internal-node cases stay same-AST comparable. Its

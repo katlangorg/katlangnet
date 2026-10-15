@@ -541,7 +541,9 @@ See the provenance table in the file header for the exact `KatLang.lean`
 correspondences, and `KatLangArityLaws.lean` for the theorems over the real `Result` model
 (value-level collection, round trips and canonicality of collected lists) and the FORMAL-07
 Model-C production binder laws (allocation, cardinality gate, plain binding, and the production
-collector laws).
+collector laws). The binder's demand order (R3) is proved in the `KatLangArityLaws/`
+submodules over an external boundary trace; this algebra models none of it (it has no
+demand, no repeated-name constraint and no clause search).
 
 ## Build / validate
 

@@ -1,5 +1,51 @@
 # Semantic Alignment Manifest.
 
+R3 (2026-10-15): Lean restructuring plus proofs; no observable semantic change in Lean
+or C# for any program, and no executable C# change. The Model-C binder and the clause-family
+dispatcher are now ONE generic core (`NeedBinder`, `lean/KatLang.lean`) over a monad
+with `Error` exceptions and `NeedCapabilities` (VALUE demand, CALLABLE projection, cell
+allocation); every production name (`needSourceAddress`, `needCardinalityGate`,
+`bindNeedName`, `bindNeedOne`, `bindNeedSources`, `bindNeedLevel`, `bindNeedPatterns`,
+`selectNeedFamilyBranch`) is by definition its `EvalM` specialization at
+`NeedChannels.capabilities`, and a selected clause is activated by the one monomorphic
+`needActivateBranch`. Preservation evidence (not maintained source): kernel theorems over
+a verbatim copy of the HEAD 091ddca4 binder block prove old = new for every channel pair,
+head, supply, mode, callee, context and value environment as complete `EvalM`
+computations, plus an executable old/new comparison of 22,464 complete runs (21,312 binder and 1,152
+dispatcher runs, zero mismatches; the local, untracked
+validation directory `artifacts/validation/r3-implementation/`). New laws: `KatLangArityLaws.lean` § The
+generic binder core; `KatLangArityLaws/BinderTrace.lean` (an external boundary trace
+that erases exactly to the production run, `trace_erasure`; the syntax-indexed event
+schedule; ordering, the per-occurrence silence of plain non-repeated bindings at any
+position, repeated-name order and verdict (not Q-28's permutation laws, roadmap R4),
+first-failure truncation and production-allocation laws); `KatLangArityLaws/FamilyDispatch.lean`
+(search precedence, arbitrary-context activation, the end-to-end dispatcher, the traced
+dispatcher); `KatLangArityLaws/BinderGuards.lean` (executable guards). The `KatLangArityLaws`
+target builds these submodules through its new `globs` (`lean/lakefile.lean`); the laws
+file keeps its two imports. The four opaque helpers stay opaque and appear symbolically;
+`demandNeed`, supply formation and the `partial` callers remain source facts; no theorem
+concerns C#. "R3" here is the FORMAL-07 roadmap's demand-order binder proof
+(`artifacts/validation/formal07-research/formalization-roadmap.md`, local); its obligations (a)
+order/truncation, (b) channel substitution and (c) the family/ordinary correspondence are each
+proved (`KatLangArityLaws/BinderCorrespondence.lean` for (b) and (c)), in these precise forms:
+(b) capability records whose VALUE demands and CALLABLE projections agree wherever the run
+invokes them give the identical run (`results_depend_only_on_invoked_cells`), and its static
+form — a head invokes its channels only on cells at inspecting positions or on cells the run
+allocated (`invoked_cells_are_inspected_or_allocated`, `plain_cells_are_channel_irrelevant`),
+whose production use assumes supplied addresses are valid in the initial heap and channels
+never shrink that heap. `allocateNeed_fresh_for_valid_supply` proves the local allocator
+step; the whole-run freshness bridge and the partial channels' heap monotonicity remain
+unproved (the latter is supported by source inspection); (c) for every head a clause attempt and the ordinary binding share schedule
+and final state and differ only where the ordinary binding raises one of four
+incompatibility errors and the attempt is a non-match
+(`family_attempt_is_the_ordinary_binding`), and a literal-free head — every ordinary
+signature — is never a non-match in ordinary mode; errors are classified by value, so the
+roadmap's "non-match iff incompatibility error kind" holds only in that one direction. This
+supersedes the FORMAL-07 entry's statement that demand order and repeated-name binding are
+executably checked, never proved. That roadmap also defined an "R3′" — totalizing
+the binder's opaque helpers — which remains open and is NOT the 2026-10-14 "R3′" repeated-spread
+work, which reused the label. Q-66 stays OPEN. Full V3.
+
 Q-67 (2026-10-15): test-only correspondence strengthening; no production semantics
 or Lean evaluator changes. FORMAL-06's neutral value/count/category observation
 is unchanged. Separate shared-error payload guards, public failure-phase checks,

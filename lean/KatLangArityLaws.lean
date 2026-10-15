@@ -22,7 +22,8 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   and the spread-row view `countedTopLevelValues`; the repeated-spread helpers
   `reopenSpreadItems` / `reopenSpreadLayers` / `spreadSupplyResult`; the selection core
   `selectPosition` / `selectWith` / `selectionResult`; `prepareLexicalDotCallArgs`; the Model-C
-  binder `bindNeedPatterns` and its allocation `needLevelSources`). It says nothing about the
+  binder `bindNeedPatterns`, its generic core `NeedBinder` and the clause activation
+  `needActivateBranch`, and its allocation `needLevelSources`). It says nothing about the
   `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeed`,
   `formNeedSupply`, `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
   a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
@@ -38,7 +39,19 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   names the production definitions it wraps (or, for the C#-shaped ones, the C# source it
   models — no theorem here proves C# code);
 * the ALGEBRA CORRESPONDENCE `algebra_binder_is_the_production_allocation` — the paper
-  algebra's binder is the production ALLOCATION under its guard, not the binder's result.
+  algebra's binder is the production ALLOCATION under its guard, not the binder's result;
+* a TRACE theorem (R3, the submodules `KatLangArityLaws/BinderTrace.lean` and
+  `KatLangArityLaws/FamilyDispatch.lean`) — about THE production core (`NeedBinder`, the same
+  definitions the production binder and dispatcher are) run in a local interpretation defined
+  there (`TraceM`, the protected lifting `traced`, the schedule functions `oneEvents` …); it
+  speaks of production through `trace_erasure` / `trace_erasure_dispatch`, which erase it to
+  the production run exactly, and like every theorem here says nothing about the `partial`
+  callers or C#;
+* a CORRESPONDENCE theorem (R3, the submodule `KatLangArityLaws/BinderCorrespondence.lean`) — a
+  PRODUCTION theorem over the generic core's `EvalM` runs at any capability record, which reads
+  the schedule functions of `BinderTrace` (their meaning as the actual invocations is
+  `traced_patterns`): channel substitution, its static form, and the family/ordinary mode
+  correspondence.
 
 The superseded pre-Model-C Ready binder (completed inputs) and every theorem stated over it
 were retired on 2026-10-12 (owner decision; git history keeps them): no theorem here is about
@@ -48,10 +61,22 @@ The PRODUCTION binder's own laws — its top-level cardinality gate before every
 its allocation of a level's supply (any lengths), plain binding demanding nothing, and
 the arity algebra as its allocation — are proved in § Model-C production binder laws
 (FORMAL-07, October 2026), with the production collector and dot-receiver laws after them
-(R8/X-13); its demand order, failure precedence and repeated-name binding are executed by
-the `bindNeedPatterns` guards in CoreTests.ModelC and CoreTests.RepeatedNameConstraints (no
-theorem: a demand-order trace and repeated-name laws over the Model-C binder are open
-formalization work). § Repeated spread over the real model (Q-66 item 4) proves the
+(R8/X-13). Its DEMAND ORDER is proved since R3 (October 2026): § The generic binder core
+records that the production binder is the `EvalM` specialization of the one generic core
+`NeedBinder`, and the submodules `KatLangArityLaws/BinderTrace.lean` and
+`KatLangArityLaws/FamilyDispatch.lean` (built by this target through its `globs`) run that core
+in an external boundary trace that erases exactly to the production run and prove its
+syntax-indexed event schedule — written order, inspection, ready allocation, nesting,
+first-failure truncation, the per-occurrence silence of plain non-repeated bindings at any
+position, the repeated-name order and verdict (not Q-28's permutation laws), the clause search
+and arbitrary-context activation; `KatLangArityLaws/BinderCorrespondence.lean` proves channel
+substitution per channel (results depend on the channels only through the cells a run invokes),
+its static form (a head invokes its channels only on cells at inspecting positions or on cells
+the run allocated) and the family/ordinary mode correspondence for every head (a literal-free
+head's ordinary binding is never a non-match); `KatLangArityLaws/BinderGuards.lean` executes
+concrete schedules on real heaps. The outcomes of the four opaque helpers stay symbolic there,
+and the CoreTests.ModelC / RepeatedNameConstraints guards remain the evaluator-level
+witnesses. § Repeated spread over the real model (Q-66 item 4) proves the
 repeated-spread laws over `Result` and the production reopening helpers: shallow slot
 combination is ordinary capture on canonical slots, the grouped `(A*)*` layer is the stacked
 `A**` step, only a lone item opens one more boundary, and repeated spread never flattens (the
@@ -2126,9 +2151,14 @@ theorem valid_signature_has_at_most_one_top_level_collector (ps : List Parameter
 /-
 ## Collection views and list normalization
 
-Repeated-name binding (Q-05, NEED-04, Q-28) has NO theorem (open formalization work): the production binder
-compares each repeated occurrence with the retained earlier one as it inspects it (`bindNeedName`,
-`KatLang.lean`), so its outcomes are executed by guards — CoreTests `HigherOrderCalls`
+Repeated-name binding (Q-05, NEED-04, Q-28): the production binder compares each repeated
+occurrence with the retained earlier one as it inspects it (`bindNeedName`, `KatLang.lean`), and
+since R3 `KatLangArityLaws/BinderTrace.lean` proves that per-occurrence order and verdict
+(`repeated_name_binding`, `repeated_events_are_a_prefix_of_the_canonical_order`,
+`repeated_callable_only_after_equal_values`, `traced_repeated_failure_points`) with
+`sameRepeatedCallableIdentity` symbolic. Q-28's PERMUTATION laws (satisfiability, value up to
+`==`, identity and channel availability unchanged when the repeated arguments are permuted) have
+NO theorem (the roadmap's R4). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
 (`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
 `repeatedSuccessfulCallablePermutationsKeepBothChannels`,
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
@@ -3506,14 +3536,15 @@ inspection — not proved here — no operator reads a Boolean as `0`/`1`. -/
 theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
 
 -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01) and REPEATED NAMES ARE CONSTRAINTS, NOT MERGES
--- (Q-05) have NO theorem here. The first lives on the slot's need cell — the `.param` arm of
--- `evalCounted` demands it first (`demandNeed`: single flight, sticky failure; `partial`, so a
--- theorem needs a total interpretation of cells, open formalization work) — and is executed by
--- `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the production
--- binder's per-occurrence inspection (`bindNeedName`, whose compatibility check calls `partial`
--- definitions; repeated-name laws over it are open formalization work),
--- executed by `CoreTests/RepeatedNameConstraints.lean` (evaluator programs and the binder itself,
--- both argument orders) and `CoreTests/ModelC.lean`. A plain (non-repeated) binder transports its
+-- (Q-05) have NO theorem in this section. The first lives on the slot's need cell — the `.param`
+-- arm of `evalCounted` demands it first (`demandNeed`: single flight, sticky failure; `partial`,
+-- so a theorem needs a total interpretation of cells, open formalization work) — and is executed
+-- by `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the
+-- production binder's per-occurrence inspection (`bindNeedName`), whose order and verdict are
+-- proved since R3 in `KatLangArityLaws/BinderTrace.lean` (`repeated_name_binding` and the
+-- repeated-name trace laws; its callable-identity check calls `partial` definitions and stays
+-- symbolic), and executed by `CoreTests/RepeatedNameConstraints.lean` (evaluator programs and the
+-- binder itself, both argument orders) and `CoreTests/ModelC.lean`. A plain (non-repeated) binder transports its
 -- cell and demands nothing: `plain_patterns_bind_without_any_channel`,
 -- `binder_name_transports_a_non_repeated_cell`.
 
@@ -3764,6 +3795,262 @@ theorem literal_base_family_reference_lifts :
       = some true := by
   rfl
 
+/-!
+## The generic binder core: specialization and production equations (R3, October 2026)
+
+Since R3 the Model-C binder and the clause search are written ONCE, generically, in
+`KatLang.NeedBinder` (`KatLang.lean`), over any monad `m` with `[Monad m] [MonadExceptOf Error m]`
+and the three capabilities of `NeedCapabilities m` — VALUE demand, CALLABLE projection and cell
+allocation. The production binder the evaluator calls is that core at `EvalM`:
+
+* `bindNeedPatterns c = NeedBinder.bindPatterns c.capabilities` and likewise for every binder
+  name (§ Specialization), where `c.capabilities = ⟨c.value, c.callable, allocateNeed⟩`;
+* `selectNeedFamilyBranch c callee cells ctx env name =
+  NeedBinder.selectFamily c.capabilities callee cells name (needActivateBranch callee ctx env)`.
+
+These are DEFINITIONAL equalities and prove only that there is one implementation. That the
+refactor PRESERVED the pre-R3 binder was established once, at implementation time, by
+evidence deliberately kept OUT of the maintained proofs (a maintained copy of the old binder
+would be a second binder that can drift): kernel proofs that a verbatim copy of the HEAD
+091ddca4 binder block equals the new production binder and dispatcher for every channel pair,
+pattern list, cell list, family flag, callee, context and value environment — complete `EvalM`
+computations, hence every outcome and the complete final `EvalState` — recorded in the R3
+implementation evidence (`artifacts/validation/r3-implementation/`, a local validation
+directory, not part of the repository). The maintained regression net is the guards and the
+Lean/C# corpora.
+
+§ Production equations restates each production BINDER definition's pre-R3 body as a theorem
+(by `rfl`; the dispatcher's equation is its form over `chooseBranch` / `needActivateBranch`,
+equal to the pre-R3 `let rec` body by the migration evidence), so proofs written against the
+monomorphic binder (§ Model-C production binder laws below) keep their shape. § Generic laws
+are stated for every monad and capability record: those without `[LawfulMonad m]` hold of
+`EvalM`, of the external trace interpretation (`KatLangArityLaws.BinderTrace`) and of any later
+interpretation alike; the one that needs `[LawfulMonad m]` holds of the trace interpretation and
+has its own `EvalM` form, `production_plain_step`.
+
+Opaque helpers. The core calls helpers that reach `partial` definitions — literal matching
+`matchPattern` (via `matchPatternInto`/`matchStructureInto`), repeated callable identity
+`sameRepeatedCallableIdentity` (via `sameDeclaringScope`/`compatibleActivations`), the
+kind-mismatch payload `structuralPatternKindMismatch` (via `ParameterPattern.displayName` and
+`resultDiagnosticString`) and the duplicate-clause check `Algorithm.hasDuplicateBranchPatterns`
+(via `Pattern.matchEquivalentWithRenaming`). No theorem here or in the R3 modules unfolds them:
+their outcomes appear symbolically, as the very terms the binder computes.
+-/
+
+namespace KatLang.BinderCore
+
+/-! ## Specialization: the production binder IS the generic core at `EvalM` -/
+
+theorem production_source_address_is_the_core (source : NeedSource Nat) :
+    needSourceAddress source = NeedBinder.sourceAddress allocateNeed source := rfl
+
+theorem production_gate_is_the_core (ps : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : EvalM (Option NeedEnv)) :
+    needCardinalityGate ps count family accepted = NeedBinder.cardinalityGate ps count family accepted := rfl
+
+theorem production_name_is_the_core (c : NeedChannels) (name : Ident) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedName c name address repeated bound family
+      = NeedBinder.bindName c.capabilities name address repeated bound family := rfl
+
+theorem production_one_is_the_core (c : NeedChannels) (p : NeedPattern) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne c p address repeated bound family
+      = NeedBinder.bindOne c.capabilities p address repeated bound family := rfl
+
+theorem production_sources_is_the_core (c : NeedChannels) (ps : List NeedPattern)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedSources c ps sources repeated bound family
+      = NeedBinder.bindSources c.capabilities ps sources repeated bound family := rfl
+
+theorem production_level_is_the_core (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedLevel c ps cells repeated bound family
+      = NeedBinder.bindLevel c.capabilities ps cells repeated bound family := rfl
+
+/-- THE SPECIALIZATION THEOREM: the production binder the evaluator calls at every binding
+    site is the generic core at `EvalM` with the production capabilities. -/
+theorem production_binder_is_the_core (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
+    (family : Bool) :
+    bindNeedPatterns c ps cells family = NeedBinder.bindPatterns c.capabilities ps cells family := rfl
+
+/-- The production dispatcher is the generic dispatcher with the production capabilities and
+    the one activation `needActivateBranch` over the incoming context and values. -/
+theorem production_dispatcher_is_the_core (c : NeedChannels) (callee : Algorithm) (cells : List Nat)
+    (ctx : EvalCtx) (env : ValEnv) (name : String) :
+    selectNeedFamilyBranch c callee cells ctx env name
+      = NeedBinder.selectFamily c.capabilities callee cells name (needActivateBranch callee ctx env) := rfl
+
+/-! ## Production equations: the pre-R3 bodies, as theorems -/
+
+theorem needSourceAddress_cell (address : Nat) :
+    needSourceAddress (.cell address) = pure address := rfl
+
+theorem needSourceAddress_collector (slice : List Nat) :
+    needSourceAddress (.collector slice) = allocateNeed (.collector slice) := rfl
+
+theorem needSourceAddress_missing :
+    needSourceAddress .missing = (throw Error.badArity : EvalM Nat) := rfl
+
+theorem needCardinalityGate_eq (ps : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : EvalM (Option NeedEnv)) :
+    needCardinalityGate ps count family accepted =
+      if !needAcceptsCardinality ps count then
+        if family then pure none
+        else throw (Error.arityMismatch (needMinimumSuppliedSlots ps) count)
+      else accepted := rfl
+
+theorem bindNeedName_eq (c : NeedChannels) (name : Ident) (address : Nat) (repeated : List Ident)
+    (bound : NeedEnv) (family : Bool) :
+    bindNeedName c name address repeated bound family = (do
+      if repeated.contains name then
+        let value <- c.value address
+        if let some previous := lookupAssoc name bound then
+          let before <- c.value previous
+          if !(before == value) then
+            if family then return none
+            else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
+          let first <- c.callable previous
+          let second <- c.callable address
+          if let some a := first then
+            if let some b := second then
+              if !sameRepeatedCallableIdentity a b then
+                if family then return none
+                else throw (Error.typeMismatch "Repeated bind equality requires the same callable identity")
+          if first.isSome || second.isNone then return some bound
+      pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) : EvalM (Option NeedEnv)) := rfl
+
+theorem bindNeedOne_bind (c : NeedChannels) (name : Ident) (collecting : Bool) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne c (.bind name collecting) address repeated bound family
+      = bindNeedName c name address repeated bound family := rfl
+
+theorem bindNeedOne_literal (c : NeedChannels) (literal : Pattern) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne c (.literal literal) address repeated bound family = (do
+      let (value, _) <- c.value address
+      pure (if (matchPattern literal value).isSome then some bound else none)) := rfl
+
+/-- The structural arms (sequence, list, unpacking receiver) in their pre-R3 form. -/
+theorem bindNeedOne_structural (c : NeedChannels) (pattern : NeedPattern) (ps : List NeedPattern)
+    (hp : pattern = .sequence ps ∨ pattern = .list ps ∨ pattern = .unpack ps)
+    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedOne c pattern address repeated bound family = (do
+      let (value, _) <- c.value address
+      let items? := match pattern with
+        | .list _ => Result.listPatternItems? value
+        | .sequence _ => Result.sequencePatternItems? value
+        | _ => some (Result.spreadItems value)
+      match items? with
+      | none => if family then pure none else throw (structuralPatternKindMismatch pattern.toParameter value)
+      | some items => do
+          let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
+          needCardinalityGate ps cells.length family
+            (bindNeedSources c ps (needLevelSources ps cells) repeated bound family)) := by
+  rcases hp with rfl | rfl | rfl <;> rfl
+
+theorem bindNeedSources_nil (c : NeedChannels) (sources : List (NeedSource Nat))
+    (repeated : List Ident) (current : NeedEnv) (family : Bool) :
+    bindNeedSources c [] sources repeated current family = pure (some current) := rfl
+
+theorem bindNeedSources_cons (c : NeedChannels) (p : NeedPattern) (rest : List NeedPattern)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (current : NeedEnv) (family : Bool) :
+    bindNeedSources c (p :: rest) sources repeated current family = (do
+      let address <- needSourceAddress (sources.headD .missing)
+      match <- bindNeedOne c p address repeated current family with
+      | none => pure none
+      | some next => bindNeedSources c rest sources.tail repeated next family) := rfl
+
+theorem bindNeedLevel_eq (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    bindNeedLevel c ps cells repeated bound family
+      = needCardinalityGate ps cells.length family
+          (bindNeedSources c ps (needLevelSources ps cells) repeated bound family) := rfl
+
+theorem bindNeedPatterns_eq (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat) (family : Bool) :
+    bindNeedPatterns c ps cells family = bindNeedLevel c ps cells (needRepeatedNames ps) [] family := rfl
+
+/-- The production clause search: `NeedBinder.chooseBranch` over the production binder and
+    activation. -/
+theorem chooseBranch_production_cons (c : NeedChannels) (callee : Algorithm) (cells : List Nat)
+    (ctx : EvalCtx) (env : ValEnv) (name : String) (branch : CondBranch) (rest : List CondBranch) :
+    NeedBinder.chooseBranch c.capabilities cells name (needActivateBranch callee ctx env) (branch :: rest)
+      = (do
+          match <- bindNeedPatterns c (needClauseHead branch.pattern) cells true with
+          | none => NeedBinder.chooseBranch c.capabilities cells name (needActivateBranch callee ctx env) rest
+          | some bindings => needActivateBranch callee ctx env branch bindings) := rfl
+
+theorem selectNeedFamilyBranch_eq (c : NeedChannels) (callee : Algorithm) (cells : List Nat)
+    (ctx : EvalCtx) (env : ValEnv) (name : String) :
+    selectNeedFamilyBranch c callee cells ctx env name = (do
+      if callee.hasDuplicateBranchPatterns then throw Error.duplicateBranchPattern
+      let branches := Algorithm.branches callee
+      if !branches.any (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) then
+        throw (Error.arityMismatch ((branches.head?.map (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0) cells.length)
+      NeedBinder.chooseBranch c.capabilities cells name (needActivateBranch callee ctx env) branches) := rfl
+
+/-! ## Generic laws: every monad, every capability record
+
+A theorem here without `[LawfulMonad m]` holds of the production `EvalM` binder (by
+§ Specialization) and of every other interpretation of the one core. A theorem needing the monad
+laws states `[LawfulMonad m]` and so applies to lawful interpretations such as the trace monad;
+`EvalM` has no such global instance (none is needed by the R3 results), so its counterpart is
+proved directly from `EvalM.pure_bind` (`production_plain_step`). -/
+
+section Generic
+
+variable {m : Type → Type} [Monad m] [MonadExceptOf Error m]
+
+/-- A non-repeated name TRANSPORTS its cell: no VALUE demand, no CALLABLE projection, no
+    allocation — the pure environment update, in every interpretation and either mode. -/
+theorem core_plain_name_is_pure (k : NeedCapabilities m) (name : Ident) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (h : repeated.contains name = false) :
+    NeedBinder.bindName k name address repeated bound family
+      = pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) := by
+  simp only [NeedBinder.bindName, h, Bool.false_eq_true, ↓reduceIte]
+
+/-- An unaccepted count at a level is rejected by the gate alone, in every interpretation:
+    the family non-match `pure none`, otherwise the arity error with the level's minimum and
+    the complete supply count. The level's patterns never run. -/
+theorem core_level_rejects_unaccepted_count (k : NeedCapabilities m) (ps : List NeedPattern)
+    (cells : List Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (h : needAcceptsCardinality ps cells.length = false) :
+    NeedBinder.bindLevel k ps cells repeated bound family
+      = if family then pure none
+        else throw (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length) := by
+  simp only [NeedBinder.bindLevel, NeedBinder.cardinalityGate, h, Bool.not_false, ↓reduceIte]
+
+/-- MIXED-HEAD PLAIN STEP, every lawful interpretation: a non-repeated name bound from a
+    supplied cell contributes exactly the environment update, and the arbitrary remaining
+    traversal — nested, repeated, literal, collecting, allocating — runs unchanged after it.
+    The occurrence itself uses no capability; a LATER pattern may still demand the same
+    address. -/
+theorem core_plain_step [LawfulMonad m] (k : NeedCapabilities m) (name : Ident) (collecting : Bool)
+    (address : Nat) (rest : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident)
+    (bound : NeedEnv) (family : Bool) (h : repeated.contains name = false) :
+    NeedBinder.bindSources k (.bind name collecting :: rest) (.cell address :: sources) repeated bound family
+      = NeedBinder.bindSources k rest sources repeated
+          (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) family := by
+  simp only [NeedBinder.bindSources, NeedBinder.sourceAddress, NeedBinder.bindOne, NeedBinder.bindName,
+    h, Bool.false_eq_true, ↓reduceIte, pure_bind, List.headD_cons, List.tail_cons]
+
+end Generic
+
+/-- MIXED-HEAD PLAIN STEP at the production binder (`EvalM` has no `LawfulMonad` instance; its
+    own `EvalM.pure_bind` suffices): a non-repeated name bound from a supplied cell is exactly its
+    environment update, for every channel pair, any remaining patterns and either mode. -/
+theorem production_plain_step (c : NeedChannels) (name : Ident) (collecting : Bool) (address : Nat)
+    (rest : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv)
+    (family : Bool) (h : repeated.contains name = false) :
+    bindNeedSources c (.bind name collecting :: rest) (.cell address :: sources) repeated bound family
+      = bindNeedSources c rest sources repeated
+          (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) family := by
+  rw [bindNeedSources_cons, List.headD_cons, needSourceAddress_cell, EvalM.pure_bind, bindNeedOne_bind,
+    production_name_is_the_core, core_plain_name_is_pure _ _ _ _ _ _ h, EvalM.pure_bind]
+  rfl
+
+end KatLang.BinderCore
+
 /-
 ## Model-C production binder laws (FORMAL-07, October 2026)
 
@@ -3787,16 +4074,22 @@ What they do NOT establish:
   `makeCollectionListResult` of its slice, left to right, by its definition and the
   `CoreTests.ModelC` guards — not by a theorem), or supply formation (`formNeedSupply`,
   `partial`), which runs BEFORE the top-level gate;
-* the order or effects of the VALUE demands made by inspecting occurrences (repeated names,
-  literals, structural patterns), and the nested levels' gates (they run after the
-  container's VALUE demand and after its item cells are allocated; `nested_*_level_*` below
-  only identify them with `bindNeedLevel`);
+* in THIS section, the order of the VALUE demands and CALLABLE projections made by inspecting
+  occurrences (repeated names, literals, structural patterns), or the nested levels' gates
+  (they run after the container's VALUE demand and after its item cells are allocated;
+  `nested_*_level_*` below only identify them with `bindNeedLevel`) — since R3 that order is
+  proved in `KatLangArityLaws/BinderTrace.lean` over the external boundary trace, the
+  clause search and activation in `KatLangArityLaws/FamilyDispatch.lean`, and channel
+  substitution and the family/ordinary mode correspondence in
+  `KatLangArityLaws/BinderCorrespondence.lean`;
 * outcomes decided by helpers that call `partial` definitions and are therefore opaque:
   literal matching (`matchPattern`), repeated callable identity
   (`sameRepeatedCallableIdentity`), the kind-mismatch payload
   (`structuralPatternKindMismatch`) and the duplicate-clause check
   (`Algorithm.hasDuplicateBranchPatterns`);
-* the bound ENVIRONMENT for repeated names (allocation is position-only), or anything about C#.
+* the bound ENVIRONMENT for repeated names (allocation is position-only; the repeated-name
+  verdict is `repeated_name_binding` in `KatLangArityLaws/BinderTrace.lean`), or anything
+  about C#.
 
 The precondition "at most one collecting binding per pattern level" is the pre-evaluation
 gate `validateAlgorithmTree` (X-02); that every binder input passed that gate is an
@@ -3993,7 +4286,7 @@ theorem binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChann
     (h : needAcceptsCardinality ps cells.length = false) (state : EvalState) :
     (bindNeedLevel channels ps cells repeated bound false).runState state
       = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) := by
-  simp [bindNeedLevel, needCardinalityGate, h]
+  simp [BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq, h]
   rfl
 
 /-- In a clause attempt the same unaccepted count is a NON-MATCH, again before any effect. -/
@@ -4001,7 +4294,7 @@ theorem family_binder_treats_unaccepted_supply_as_a_non_match (channels : NeedCh
     (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedEnv)
     (h : needAcceptsCardinality ps cells.length = false) :
     bindNeedLevel channels ps cells repeated bound true = pure none := by
-  simp [bindNeedLevel, needCardinalityGate, h]
+  simp [BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq, h]
 
 /-- The top-level entry point the evaluator calls. -/
 theorem call_binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)
@@ -4029,8 +4322,8 @@ theorem family_dispatch_rejects_unaccepted_supply_before_any_effect (channels : 
               (fun branch => needMinimumSuppliedSlots (needClauseHead branch.pattern))).getD 0)
             cells.length), state) := by
   cases hdup : callee.hasDuplicateBranchPatterns
-  · simp [selectNeedFamilyBranch, hdup, hnone]; rfl
-  · simp [selectNeedFamilyBranch, hdup]; rfl
+  · simp [BinderCore.selectNeedFamilyBranch_eq, hdup, hnone]; rfl
+  · simp [BinderCore.selectNeedFamilyBranch_eq, hdup]; rfl
 
 /-- The nested level a SEQUENCE pattern opens is bound by the same `bindNeedLevel` — gate,
     allocation and patterns — after its container's VALUE demand and kind check, over fresh
@@ -4045,8 +4338,7 @@ theorem nested_sequence_level_is_bind_need_level (channels : NeedChannels) (ps :
       | some items => do
           let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
           bindNeedLevel channels ps cells repeated bound family) := by
-  simp only [bindNeedOne, bindNeedLevel]
-  congr 1
+  rfl
 
 /-- The LIST pattern's twin of `nested_sequence_level_is_bind_need_level`. -/
 theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
@@ -4059,8 +4351,7 @@ theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : Lis
       | some items => do
           let cells <- items.mapM (fun item => readyNeed (item, Result.valueCount item))
           bindNeedLevel channels ps cells repeated bound family) := by
-  simp only [bindNeedOne, bindNeedLevel]
-  congr 1
+  rfl
 
 /-- The deconstruction UNPACKING receiver's level: the demanded value's one-level items
     (`Result.spreadItems`, never a kind mismatch) bound by `bindNeedLevel`. -/
@@ -4070,7 +4361,7 @@ theorem nested_unpack_level_is_bind_need_level (channels : NeedChannels) (ps : L
       let (value, _) <- channels.value address
       let cells <- (Result.spreadItems value).mapM (fun item => readyNeed (item, Result.valueCount item))
       bindNeedLevel channels ps cells repeated bound family) := by
-  simp only [bindNeedOne, bindNeedLevel]
+  rfl
 
 /-! ### Allocation: each pattern its cell, the collector its exact slice -/
 
@@ -4230,8 +4521,8 @@ theorem binder_name_transports_a_non_repeated_cell (channels : NeedChannels) (na
     (h : repeated.contains name = false) :
     bindNeedName channels name address repeated bound family
       = pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) := by
-  have h' : name ∉ repeated := by simpa using h
-  simp [bindNeedName, h']
+  rw [BinderCore.production_name_is_the_core]
+  exact BinderCore.core_plain_name_is_pure _ _ _ _ _ _ h
 
 /-- The name a plain binder pattern binds (a collecting binding included). -/
 def KatLang.NeedPattern.plainName? : NeedPattern -> Option Ident
@@ -4260,7 +4551,7 @@ theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : 
   induction ps generalizing names sources current with
   | nil =>
       cases names with
-      | nil => simp [bindNeedSources, plainNeedBinding]
+      | nil => simp [BinderCore.bindNeedSources_nil, plainNeedBinding]
       | cons _ _ => simp at hnames
   | cons p rest ih =>
       cases names with
@@ -4275,7 +4566,7 @@ theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : 
               have hn : repeated.contains name = false := hrepeated name (by simp)
               have hr' : ∀ m ∈ names', repeated.contains m = false :=
                 fun m hm => hrepeated m (by simp [hm])
-              simp only [bindNeedSources, plainNeedBinding, bindNeedOne,
+              simp only [BinderCore.bindNeedSources_cons, plainNeedBinding, BinderCore.bindNeedOne_bind,
                 binder_name_transports_a_non_repeated_cell channels _ _ _ _ _ hn]
               congr 1
               funext address
@@ -4295,7 +4586,7 @@ theorem plain_head_binding_is_channel_independent (first second : NeedChannels)
     (hdistinct : needRepeatedNames ps = []) (cells : List Nat) (family : Bool) :
     bindNeedPatterns first ps cells family = bindNeedPatterns second ps cells family := by
   have hr : ∀ name ∈ names, ([] : List Ident).contains name = false := by simp
-  simp only [bindNeedPatterns, bindNeedLevel, hdistinct,
+  simp only [BinderCore.bindNeedPatterns_eq, BinderCore.bindNeedLevel_eq, hdistinct,
     plain_patterns_bind_without_any_channel first ps names hnames [] hr,
     plain_patterns_bind_without_any_channel second ps names hnames [] hr]
 
@@ -4480,11 +4771,11 @@ theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels :
     simp [needAcceptsCardinality, needMinimumSuppliedSlots, NeedPattern.isCollecting, List.filter_cons]
   have hplain := plain_patterns_bind_without_any_channel channels [.bind name true] [name] rfl []
     (by simp) [.collector cells] [] family
-  unfold bindNeedPatterns bindNeedLevel needCardinalityGate
+  rw [BinderCore.bindNeedPatterns_eq, BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq]
   rw [hr, hacc, lone_collector_collects_every_supplied_cell]
   simp only [Bool.not_true, Bool.false_eq_true, if_false]
   rw [hplain]
-  simp [plainNeedBinding, needSourceAddress]
+  simp [plainNeedBinding, BinderCore.needSourceAddress_collector]
 
 /-- ONE CELL NEVER SATISFIES TWO FIXED PATTERNS: a one-cell supply against `[a, *r, z]` fails with
 `arityMismatch 2 1` and leaves the run state unchanged, for every channel pair — so the cell (a dot

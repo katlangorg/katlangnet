@@ -13,8 +13,12 @@ lean_lib «CoreTests» where
 lean_lib «AstDemo» where
   srcDir := "."
 
+-- The laws file and its submodules `KatLangArityLaws/*.lean` (the R3 binder-order proofs and
+-- their executable guards, which import the laws file): `lake build KatLangArityLaws` builds
+-- them all.
 lean_lib «KatLangArityLaws» where
   srcDir := "."
+  globs := #[.andSubmodules `KatLangArityLaws]
 
 -- Isolated arity-algebra model extracted from `KatLang.lean` (paper artifact).
 -- Self-contained: it does not import `KatLang`, so it cannot affect the
